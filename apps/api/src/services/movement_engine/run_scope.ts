@@ -166,8 +166,9 @@ interface RunScope {
    *  plugin or adapter the engine calls into can honour the pin without the
    *  engine threading it through every seam. */
   readonly languageVersion: LanguageVersion;
-  /** The cross-run write locks this segment's effects take, held until the
-   *  segment ends (`effect_locks.ts`). Absent outside a run. */
+  /** The holder of the cross-run write locks this segment's effects take,
+   *  each held for its effect (`effect_locks.ts`); the holder's session lives
+   *  for the segment. Absent outside a run. */
   readonly writeLockHolder: WriteLockHolder | undefined;
 }
 

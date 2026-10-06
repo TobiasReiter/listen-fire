@@ -32,7 +32,9 @@
 // advisory locks have no notion of "shared within a group", and one lock per
 // key value would be one more lock per write for no gain once the type is
 // held. Each is let go with the effect's own locks; the segment's end lets go
-// of anything left.
+// of anything left. Nested acquisition always goes identity type, then record;
+// an inversion across runs is caught by Postgres (40P01) and fails the write
+// loudly rather than hanging.
 //
 // Over-locking only costs waiting; under-locking costs a duplicate. So every
 // key here is at least as coarse as any system's own matching: the system is

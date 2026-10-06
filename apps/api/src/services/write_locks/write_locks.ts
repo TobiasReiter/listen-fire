@@ -1,6 +1,7 @@
-// Cross-segment write locks (cloud-native DESIGN §6). A movement segment takes
-// one holder, acquires the names its writes need, and releases everything when
-// the segment ends. Two backends share the holder logic below: Postgres
+// Cross-run write locks (cloud-native DESIGN §6). A movement segment takes one
+// holder, and each effect acquires the names its write needs and gives them
+// back when the effect is done; only the holder's session lives for the
+// segment, and closing it lets go of anything left. Two backends share the holder logic below: Postgres
 // advisory locks across processes (`postgres.ts`), and an in-process gate for
 // tests and single-process embeds.
 
@@ -29,9 +30,11 @@ export interface WriteLockHolder {
    * With `names`: give back one count of each, as one earlier `acquire(names)`
    * took them, in reverse order; a name whose count reaches zero is unlocked.
    *
-   * Without: release everything and drop the underlying session. Idempotent.
-   * Waits for any acquire still in flight on this holder, so a lock granted
-   * after the release began is released too rather than leaked.
+   * Without: release everything, drop the underlying session and close the
+   * holder; any later acquire rejects MOVENG_RUNTIME 'write lock holder is
+   * closed'. Idempotent. Waits for any acquire still in flight on this
+   * holder, so a lock granted after the release began is released too rather
+   * than leaked.
    */
   release(names?: readonly string[]): Promise<void>;
 }
@@ -51,6 +54,10 @@ export function writeLockTimeout(name: string): MovementEngineError {
 
 export function writeLockDeadlock(name: string): MovementEngineError {
   return new MovementEngineError('MOVENG_RUNTIME', `write lock deadlock: ${name}`, { name });
+}
+
+export function writeLockHolderClosed(): MovementEngineError {
+  return new MovementEngineError('MOVENG_RUNTIME', 'write lock holder is closed');
 }
 
 /** `name` is the lock being waited for when the session dropped, when there is one. */
@@ -83,6 +90,7 @@ export class ScopedHolder implements WriteLockHolder {
   // first (which would deadlock the in-memory gate).
   private readonly holdings = new Map<string, Holding>();
   private readonly inFlight = new Set<Promise<void>>();
+  private closed = false;
 
   constructor(
     private readonly scope: string,
@@ -98,6 +106,9 @@ export class ScopedHolder implements WriteLockHolder {
   }
 
   private async acquireSorted(names: readonly string[]): Promise<void> {
+    // A closed holder has no session to lock on; acquiring would quietly open
+    // a fresh one that nothing ever releases.
+    if (this.closed) throw writeLockHolderClosed();
     // Without this a re-acquire of a name taken before the session dropped
     // would share the stale holding, and the write would run unlocked.
     this.session.assertIntact();
@@ -133,6 +144,7 @@ export class ScopedHolder implements WriteLockHolder {
       await this.giveBack(sortedNames(names));
       return;
     }
+    this.closed = true;
     await Promise.allSettled([...this.inFlight]);
     this.holdings.clear();
     await this.session.unlockAll();

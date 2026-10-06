@@ -99,8 +99,9 @@ class PostgresSession implements LockSession {
   }
 
   private async open(): Promise<Client> {
-    // A segment can hold its locks for minutes; keepalive lets a dead peer
-    // (or a NAT dropping an idle connection) surface as a lost session.
+    // The session lives for the whole segment, idle between effects for
+    // minutes; keepalive lets a dead peer (or a NAT dropping an idle
+    // connection) surface as a lost session.
     const client = new Client({ connectionString: this.opts.connectionString, keepAlive: true });
     // An unhandled 'error' on a pg Client crashes the process. A dropped
     // session took its locks with it, so the holder refuses further acquires.

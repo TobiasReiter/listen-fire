@@ -1,7 +1,7 @@
 // Two RUNS writing one identity at once — the cross-run locks beneath each
 // run's own effect locks. Each run finds nothing in the slow CRM's window and
 // would create; with the locks, the second run's search waits until the first
-// run's segment has ended, finds the record, and updates it. Proved against
+// run's write is done, finds the record, and updates it. Proved against
 // both lock tables: the in-process one and Postgres advisory locks.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports

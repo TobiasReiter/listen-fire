@@ -188,4 +188,16 @@ describe('InMemoryWriteLocks', () => {
     expect(cAcquire.settled()).toBe(true);
     await Promise.all([a.release(), b.release(), c.release()]);
   });
+
+  it('a released holder is closed: a later acquire rejects', async () => {
+    const locks = new InMemoryWriteLocks();
+    const a = locks.holder('t');
+    await a.acquire(['x']);
+    await a.release();
+    await expect(a.acquire(['y'])).rejects.toMatchObject({
+      code: 'MOVENG_RUNTIME',
+      message: expect.stringContaining('write lock holder is closed'),
+    });
+    await a.release();
+  });
 });
