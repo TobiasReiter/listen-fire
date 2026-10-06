@@ -41,13 +41,16 @@ export async function awaitHarnessWorkSettled(
   };
 }
 
-/** The harness sequence both waiting doors run: enqueue → drain → settle → read. */
+/** The harness sequence both waiting doors run: enqueue → drain → settle → read.
+ *  The drain is each delivering team's own: a harness door must not fire other
+ *  tenants' due rows (their cron, their timers) on its request. */
 export async function runHarnessDelivery<T>(
   enqueue: () => Promise<HarnessDelivery<T>>,
   opts: { settleTimeoutMs?: number } = {},
 ): Promise<T> {
   const enqueued = await enqueue();
-  await drainUntilIdle({ owner: 'door' });
+  const teamIds = [...new Set(enqueued.teamIds)];
+  await Promise.all(teamIds.map((teamId) => drainUntilIdle({ owner: 'door', teamId })));
   const settle = await awaitHarnessWorkSettled(enqueued.teamIds, {
     ...(opts.settleTimeoutMs !== undefined ? { timeoutMs: opts.settleTimeoutMs } : {}),
   });

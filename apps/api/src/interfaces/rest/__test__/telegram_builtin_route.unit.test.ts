@@ -175,9 +175,13 @@ describe('POST /builtin — test-harness deliveries stay synchronous', () => {
 
     const res = await post(UPDATE);
 
-    expect(order).toEqual(['enqueue', 'drain', 'settle', 'settle', 'read']);
+    expect(order).toEqual(['enqueue', 'drain', 'drain', 'settle', 'settle', 'read']);
     expect(awaitTeamWorkSettled.mock.calls.map(([input]) => input.teamId)).toEqual(['team-A', 'team-B']);
-    expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door' });
+    // Each routed team's own rows only: never another tenant's due work.
+    expect(drainUntilIdle.mock.calls.map(([input]) => input)).toEqual([
+      { owner: 'door', teamId: 'team-A' },
+      { owner: 'door', teamId: 'team-B' },
+    ]);
     expect(notifyWork).not.toHaveBeenCalled();
     expect(res.status).toBe(200);
     // The dispatch outcome, not the capture list — what it always reported.

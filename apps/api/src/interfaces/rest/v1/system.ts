@@ -11,7 +11,7 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import { drainUntilIdle } from '../../../services/work/drain';
+import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
 import { requireScope } from './require_scope';
 
@@ -229,19 +229,22 @@ const sendMessageHandler: RequestHandler = async (req, res) => {
 
 const drainBodySchema = z
   .object({
-    limit: z.number().int().positive().optional(),
-    maxPasses: z.number().int().positive().optional(),
+    // Bounded so one call cannot hold a request open for an unbounded drain.
+    limit: z.number().int().positive().max(100).optional(),
+    maxPasses: z.number().int().positive().max(50).optional(),
   })
   .strict();
 
 /** The tick a scheduler calls when `AUTOMATIONS_DRAIN_MODE=external`. Each call
- *  drains until idle (bounded by `maxPasses`) and reports what it did. */
+ *  drains until idle (bounded by `maxPasses`), records the drain worker's pulse
+ *  as a loop pass would, and reports what it did. */
 const drainAutomationsHandler: RequestHandler = async (req, res) => {
   const body = drainBodySchema.safeParse(req.body ?? {});
   if (!body.success) {
     return res.status(400).json({ error: 'invalid_body', issues: body.error.issues });
   }
   const result = await drainUntilIdle({ owner: `http:${randomUUID()}`, ...body.data });
+  recordExternalDrainPass(result);
   return res.status(200).json(result);
 };
 

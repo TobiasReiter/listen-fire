@@ -8,7 +8,7 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 ### Changed
 
-- Automations background work (cron, polls, timer resumes, inbound dispatch, await wakes, housekeeping) now runs from the `automations.work` table through one `drain` worker. Deployments may run it as an in-process loop (default) or tick it externally (`AUTOMATIONS_DRAIN_MODE=external` + `POST /api/v1/system/automations/drain`). The automations unit no longer needs a single instance. The boot-time orphan sweep is replaced by lease expiry.
+- Automations background work (cron, polls, timer resumes, inbound dispatch, await wakes, housekeeping) now runs from the `automations.work` table through one `drain` worker. Deployments may run it as an in-process loop (default) or tick it externally (`AUTOMATIONS_DRAIN_MODE=external` + `POST /api/v1/system/automations/drain`, body capped at `limit` 100 and `maxPasses` 50). Automations still runs as one instance this release: the drain keeps the automations lock until cross-process write locks land, and the lock is retired then. The boot-time orphan sweep is replaced by lease expiry plus a sweep every 30 seconds that fails a run whose process died mid-step, with its inbound event. Events within one inbound delivery may now run concurrently or out of order. In external mode each tick records the drain's pulse on `/healthz/workers`, and the boot log names the drain mode.
 
 <!-- add merged PRs here -->
 

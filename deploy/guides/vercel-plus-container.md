@@ -15,7 +15,7 @@ This is not a preference and it is not a gap waiting to be closed. **The API nee
 Three independent reasons, each sufficient on its own:
 
 - **The process is long-running.** Everything is mounted in one process that listens on one port. There is no serverless adapter anywhere in the tree, and building one is not on any roadmap here.
-- **The workers are in-process.** The other units' loops hold a per-unit advisory lock, and a request-scoped runtime has no process to hold one. Automations' work (schedules, polls, webhook refresh, resumes) is rows in a work table run by one drain worker, which can be ticked from outside with `AUTOMATIONS_DRAIN_MODE=external` and `POST /api/v1/system/automations/drain`; but the API process is still long-running, so that does not make a serverless shape possible.
+- **The workers are in-process.** Every unit's loops hold a per-unit advisory lock, and a request-scoped runtime has no process to hold one. Automations' work (schedules, polls, webhook refresh, resumes) is rows in a work table run by one drain worker, which can be ticked from outside with `AUTOMATIONS_DRAIN_MODE=external` and `POST /api/v1/system/automations/drain`; but the API process is still long-running, so that does not make a serverless shape possible.
 - **There is a WebSocket server.** Live run updates ride it, and Vercel rewrites do not carry protocol upgrades.
 
 The last one is already handled in the code rather than left to bite you: the web app's WebSocket client connects straight to `NEXT_PUBLIC_API_URL` instead of going through the rewrite. The consequence is that **the API needs its own public hostname with TLS and correct CORS** — not merely an origin the Vercel project can reach.

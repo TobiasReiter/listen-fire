@@ -144,7 +144,7 @@ describe('POST /:provider/:subscriptionId — test-harness deliveries', () => {
 
     expect(order).toEqual(['enqueue', 'drain', 'settle', 'read']);
     expect(awaitTeamWorkSettled).toHaveBeenCalledWith({ teamId: 'team-1', timeoutMs: 30_000 });
-    expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door' });
+    expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door', teamId: 'team-1' });
     expect(notifyWork).not.toHaveBeenCalled();
     expect(res.status).toBe(200);
     expect(res.body).toEqual({

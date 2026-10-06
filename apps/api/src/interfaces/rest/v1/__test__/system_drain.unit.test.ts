@@ -7,9 +7,11 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 const drainUntilIdle = jest.fn();
+const recordExternalDrainPass = jest.fn();
 
 jest.mock('../../../../services/work/drain', () => ({
   drainUntilIdle: (opts: unknown) => drainUntilIdle(opts),
+  recordExternalDrainPass: (result: unknown) => recordExternalDrainPass(result),
 }));
 jest.mock('../../../../services/context', () => ({ currentContext: jest.fn() }));
 jest.mock('../../../../services/system_debug', () => ({ listTgRuns: jest.fn(), getTgRun: jest.fn() }));
@@ -65,7 +67,7 @@ describe('POST /system/automations/drain', () => {
   });
 
   it('drains with the body limit and answers with the drain result', async () => {
-    const result = { claimed: 3, ran: 2, recovered: 1, failed: 0 };
+    const result = { claimed: 3, ran: 2, recovered: 1, failed: 0, claimFailed: false };
     drainUntilIdle.mockResolvedValue(result);
 
     const res = await tick({ limit: 5, maxPasses: 2 });
@@ -77,10 +79,11 @@ describe('POST /system/automations/drain', () => {
       limit: 5,
       maxPasses: 2,
     });
+    expect(recordExternalDrainPass).toHaveBeenCalledWith(result);
   });
 
   it('drains with the defaults when no body is sent', async () => {
-    drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0 });
+    drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false });
     const res = await tick();
     expect(res.status).toBe(200);
     expect(drainUntilIdle).toHaveBeenCalledWith({ owner: expect.stringMatching(/^http:/) });
@@ -90,5 +93,17 @@ describe('POST /system/automations/drain', () => {
     const res = await tick({ limit: 0 });
     expect(res.status).toBe(400);
     expect(drainUntilIdle).not.toHaveBeenCalled();
+    expect(recordExternalDrainPass).not.toHaveBeenCalled();
+  });
+
+  it('caps a tick at 100 rows a pass and 50 passes', async () => {
+    drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false });
+
+    expect((await tick({ limit: 101 })).status).toBe(400);
+    expect((await tick({ maxPasses: 51 })).status).toBe(400);
+    expect(drainUntilIdle).not.toHaveBeenCalled();
+
+    expect((await tick({ limit: 100, maxPasses: 50 })).status).toBe(200);
+    expect(drainUntilIdle).toHaveBeenCalledTimes(1);
   });
 });
