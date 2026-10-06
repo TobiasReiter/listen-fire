@@ -26,6 +26,43 @@ pub fn parse_program(source: &str, version: u32) -> Parsed {
     Ok(to_value(&program))
 }
 
+/// The same `Program` with every slot's expression parsed up front: each
+/// `ExprSlot` gains `tree` (its `MExpr`, offsets into `raw`) or `error` (the
+/// expression grammar's refusal), which is what reading the slot lazily
+/// would have produced. The slots are parsed after the statement parse, one
+/// at a time, so the two recursions never stack.
+pub fn parse_program_eager(source: &str, version: u32) -> Parsed {
+    let program = stmt::parse_program(source, version, true).map_err(|e| to_value(&e))?;
+    let mut value = to_value(&program);
+    attach_slot_trees(&mut value);
+    Ok(value)
+}
+
+/// Finds every object the statement parser marked as a slot, unmarks it and
+/// adds its parse.
+fn attach_slot_trees(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if map.remove("__slot").is_some() {
+                let parsed = map.get("raw").and_then(Value::as_str).map(expr::parse_expression);
+                match parsed {
+                    Some(Ok(tree)) => {
+                        map.insert("tree".into(), to_value(&tree));
+                    }
+                    Some(Err(error)) => {
+                        map.insert("error".into(), to_value(&error));
+                    }
+                    None => {}
+                }
+                return;
+            }
+            map.values_mut().for_each(attach_slot_trees);
+        }
+        Value::Array(items) => items.iter_mut().for_each(attach_slot_trees),
+        _ => {}
+    }
+}
+
 /// The expression grammar reads no version: one grammar serves them all.
 pub fn parse_expression(source: &str, _version: u32) -> Parsed {
     let tree = expr::parse_expression(source).map_err(|e| to_value(&e))?;
@@ -64,6 +101,21 @@ pub fn to_sorted_json<T: Serialize>(value: &T) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eager_slots_carry_their_parse_and_nothing_else_does() {
+        let program = parse_program_eager("await sleep(2d)\nx = a +\ny = b", 3).unwrap();
+        let text = String::from_utf8(to_sorted_json(&program)).unwrap();
+        assert!(!text.contains("__slot"), "{text}");
+        // A duration literal is `{raw, span}` too, and is not an expression.
+        assert_eq!(program.pointer("/statements/0/await/source/duration"), Some(&json!({
+            "raw": "2d",
+            "span": { "start": { "line": 1, "col": 13 }, "end": { "line": 1, "col": 15 } },
+        })));
+        let refused = program.pointer("/statements/1/value/expr").unwrap();
+        assert!(refused.get("error").and_then(|e| e.get("message")).is_some() && refused.get("tree").is_none());
+        assert_eq!(program.pointer("/statements/2/value/expr/tree/kind"), Some(&json!("name")));
+    }
 
     #[test]
     fn struct_fields_come_out_sorted() {

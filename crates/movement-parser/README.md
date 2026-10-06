@@ -34,7 +34,8 @@ toolchain ships with a rebuilt artifact.
 |---|---|---|
 | `alloc` | `(len) -> ptr` | caller writes UTF-8 input here |
 | `dealloc` | `(ptr, len)` | frees an input or an output buffer |
-| `parse_program` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | |
+| `parse_program` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | the `Program` as ast.ts types it; slots are `{raw, span}` |
+| `parse_program_eager` | as `parse_program` | the same `Program`, each slot also carrying `tree` (its `MExpr`) or `error` (`{message, pos}`) |
 | `parse_expression` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `parse_nested_call` | `(raw_ptr, raw_len, at_start, at_end, origin_line, origin_col, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `last_panic` | `(out_ptr_ptr, out_len_ptr)` | the last panic's message, in a static buffer (not freed) |
@@ -56,9 +57,13 @@ deep`. Two stacks are at stake in WASM. The engine's own (V8 throws a
 `RangeError` at about 450 levels of parentheses on Node's default stack) and
 the shadow stack in linear memory, which the build script places first
 (`--stack-first`) and sizes at 2 MiB; at the limit the deepest texts use
-512–768 KiB of it. Overflowing the shadow stack is an out-of-bounds trap,
-which hangs Node 22 on macOS rather than throwing, so the limit must stay
-well inside it.
+512–768 KiB of it. The statement grammar shares the same counter; its
+deepest constructs at the limit (nested blocks, callbacks, closures in
+collection calls) need 256–512 KiB (measured 2026-10-06 with 256 KiB and
+512 KiB builds), and a slot's expression is parsed only after the
+statement parse returns, so the two never stack. Overflowing the shadow
+stack is an out-of-bounds trap, which hangs Node 22 on macOS rather than
+throwing, so the limit must stay well inside it.
 
 ## JSON output
 

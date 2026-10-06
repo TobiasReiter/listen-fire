@@ -64,6 +64,23 @@ pub unsafe extern "C" fn parse_program(
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
+/// `parse_program` with every slot's expression parsed up front.
+///
+/// # Safety
+/// As `parse_program`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn parse_program_eager(
+    src_ptr: *const u8,
+    src_len: u32,
+    version: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    install_panic_hook();
+    let parsed = unsafe { utf8(src_ptr, src_len) }.and_then(|src| crate::parse_program_eager(src, version));
+    unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
+}
+
 /// # Safety
 /// As `parse_program`.
 #[unsafe(no_mangle)]

@@ -70,6 +70,44 @@ fn every_pinned_program_parses_as_pinned() {
     assert!(diffs.is_empty(), "{} of {} programs differ from their pins", diffs.len(), records.len());
 }
 
+/// The eager export is the pinned program plus a parse on every slot: take
+/// `tree` / `error` back off and it is the plain output, and every slot —
+/// and nothing else, a duration literal's identical `{raw, span}` included —
+/// carries exactly one of the two.
+#[test]
+fn the_eager_program_is_the_plain_one_with_every_slot_parsed() {
+    let mut slots = 0usize;
+    for record in records() {
+        let Ok(plain) = movement_parser::parse_program(&record.source, record.version) else { continue };
+        let mut eager = movement_parser::parse_program_eager(&record.source, record.version)
+            .unwrap_or_else(|e| panic!("eager parse failed where the plain one did not: {e}"));
+        slots += strip_slot_parses(&mut eager, None, &record.source);
+        assert_eq!(eager, plain, "{:?}", prefix(&record.source, 80));
+    }
+    assert!(slots > 10_000, "only {slots} slots seen");
+}
+
+/// Removes each slot's `tree`/`error`, checking it had exactly one and that
+/// it was where a slot is; returns how many it removed.
+fn strip_slot_parses(value: &mut Value, key: Option<&str>, source: &str) -> usize {
+    match value {
+        Value::Object(map) => {
+            let tree = map.remove("tree");
+            let error = map.remove("error");
+            let is_braces = map.len() == 2 && map.contains_key("raw") && map.contains_key("span");
+            let is_duration = matches!(key, Some("duration" | "every"));
+            if is_braces && !is_duration {
+                assert!(tree.is_some() != error.is_some(), "slot without exactly one parse in {source:?}: {map:?}");
+                return 1;
+            }
+            assert!(tree.is_none() && error.is_none(), "a non-slot was parsed in {source:?}: {map:?}");
+            map.iter_mut().map(|(k, v)| strip_slot_parses(v, Some(k.as_str()), source)).sum()
+        }
+        Value::Array(items) => items.iter_mut().map(|v| strip_slot_parses(v, key, source)).sum(),
+        _ => 0,
+    }
+}
+
 fn diff(record: &Record) -> Option<String> {
     // Versions outside the supported ones (99) go through unchanged; the pin
     // shows TypeScript reads them as the current version, so Rust must too.
