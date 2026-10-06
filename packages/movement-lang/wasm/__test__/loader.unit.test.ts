@@ -18,7 +18,24 @@ describe('the parser loader', () => {
 
   it('round-trips source through every parse export', () => {
     expect(callJson('parse_expression', "'héllo 🌍'", [3])).toEqual(ROUND_TRIP);
-    expect(callJson('parse_program', '', [3])).toEqual(NOT_IMPLEMENTED);
+    expect(callJson('parse_program', '', [3])).toEqual({ statements: [] });
+    expect(callJson('parse_program_eager', 'x = 1', [3])).toEqual({
+      statements: [
+        {
+          kind: 'assign',
+          name: 'x',
+          value: {
+            kind: 'expr',
+            expr: {
+              raw: '1',
+              span: { start: { line: 1, col: 5 }, end: { line: 1, col: 6 } },
+              tree: { kind: 'literal', value: 1, at: { start: 0, end: 1 } },
+            },
+          },
+          span: { start: { line: 1, col: 1 }, end: { line: 1, col: 6 } },
+        },
+      ],
+    });
     expect(callJson('parse_nested_call', 'f(x)', [0, 4, 1, 1, 3])).toEqual(NOT_IMPLEMENTED);
   });
 
@@ -70,7 +87,7 @@ function committedArtifact(): Uint8Array {
 }
 
 // The loader's ABI in miniature: a bump `alloc`, a no-op `dealloc`, one
-// function behind all three parse exports that writes `{"ok":true}` to the
+// function behind all four parse exports that writes `{"ok":true}` to the
 // out slots and returns status 0 — or hits `unreachable` on a leading "T" —
 // and a `last_panic` that points at a recorded panic message.
 function trappingModule(): Uint8Array {
@@ -95,6 +112,7 @@ function trappingModule(): Uint8Array {
     [...name('alloc'), ...fn(0)],
     [...name('dealloc'), ...fn(1)],
     [...name('parse_program'), ...fn(2)],
+    [...name('parse_program_eager'), ...fn(2)],
     [...name('parse_expression'), ...fn(2)],
     [...name('parse_nested_call'), ...fn(2)],
     [...name('last_panic'), ...fn(3)],

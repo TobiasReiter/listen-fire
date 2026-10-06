@@ -29,7 +29,7 @@ interface WasmModule {
   readonly __wasmModule?: never;
 }
 
-type ParserFunction = 'parse_program' | 'parse_expression' | 'parse_nested_call';
+type ParserFunction = 'parse_program' | 'parse_program_eager' | 'parse_expression' | 'parse_nested_call';
 
 interface ParserExports {
   memory: { readonly buffer: unknown };
@@ -194,6 +194,7 @@ function readExports(raw: Record<string, unknown>): ParserExports {
   const lastPanic = exported('last_panic');
   const parsers: Record<ParserFunction, (...args: number[]) => unknown> = {
     parse_program: exported('parse_program'),
+    parse_program_eager: exported('parse_program_eager'),
     parse_expression: exported('parse_expression'),
     parse_nested_call: exported('parse_nested_call'),
   };
