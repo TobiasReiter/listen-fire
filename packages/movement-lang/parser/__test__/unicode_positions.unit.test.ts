@@ -16,9 +16,13 @@ const span = (start: [number, number], end: [number, number]): Span => ({
   end: { line: end[0], col: end[1] },
 });
 
+function isKind<K extends Statement['kind']>(s: Statement | undefined, kind: K): s is Extract<Statement, { kind: K }> {
+  return s?.kind === kind;
+}
+
 function only<K extends Statement['kind']>(s: Statement | undefined, kind: K): Extract<Statement, { kind: K }> {
-  if (!s || s.kind !== kind) throw new Error(`expected '${kind}', got '${s?.kind}'`);
-  return s as Extract<Statement, { kind: K }>;
+  if (!isKind(s, kind)) throw new Error(`expected '${kind}', got '${s?.kind}'`);
+  return s;
 }
 
 function slotOf(s: Statement | undefined): { raw: string; span: Span } {

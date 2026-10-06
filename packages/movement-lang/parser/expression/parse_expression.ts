@@ -237,7 +237,7 @@ class ExpressionParser {
     }
     if (c === '.') return { ...base, end: start + 1, t: 'op', text: '.' };
     if ('()[]{},:|?;'.includes(c)) return { ...base, end: start + 1, t: 'punct', text: c };
-    this.fail(unrecognisedCharacterMessage(c), start);
+    this.fail(unrecognisedCharacterMessage(characterAt(src, start)), start);
   }
 
   /** `start` is just inside `-[` / `<-[`: a hop opens with `:`, `#`, or an
@@ -1339,4 +1339,11 @@ function describe(tok: Token, src: string): string {
   if (tok.t === 'eof') return 'end of input';
   if (tok.t === 'hop') return "a hop '-['";
   return `'${src.slice(tok.start, tok.end)}'`;
+}
+
+/** The character at `i` as a message quotes it: the whole code point, since
+ *  `src[i]` would be half of an astral character. */
+function characterAt(src: string, i: number): string {
+  const code = src.codePointAt(i);
+  return code === undefined ? '' : String.fromCodePoint(code);
 }
