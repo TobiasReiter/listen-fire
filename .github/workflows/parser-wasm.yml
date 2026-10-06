@@ -1,21 +1,39 @@
 name: parser-wasm
-# Rebuilds the committed parser artifact and fails if its bytes differ: the
-# repo ships movement_parser.wasm so the pnpm dev loop needs no Rust, and this
-# proves the shipped bytes are the crate's.
+# A prod-safety check, not a lint gate: the repo ships movement_parser.wasm so
+# the pnpm dev loop needs no Rust, and the shipped bytes must be the crate's.
+#
+#  - rebuild-matches-committed rebuilds the artifact and fails if it differs.
+#  - parser-tests runs the crate's tests (including the strict programs
+#    harness) and the TypeScript differential, which parses a corpus with both
+#    the TS parser and the committed artifact and requires identical trees.
+#
+# The committed artifact was built on macOS; the path remapping and pinned
+# toolchain in scripts/build-parser-wasm.sh are meant to make Linux produce the
+# same bytes, and this workflow's first green run is what verifies that.
 on:
   pull_request:
-    paths: &parser-paths
+    paths:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/build-parser-wasm.sh"
-      - "packages/movement-lang/wasm/movement_parser.wasm"
+      - "packages/movement-lang/**"
       - ".github/workflows/parser-wasm.yml"
   push:
     branches:
       - main
-    paths: *parser-paths
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/build-parser-wasm.sh"
+      - "packages/movement-lang/**"
+      - ".github/workflows/parser-wasm.yml"
+
+permissions:
+  contents: read
 
 jobs:
   rebuild-matches-committed:
@@ -27,6 +45,14 @@ jobs:
       # rustup reads rust-toolchain.toml and installs the pinned compiler and
       # the wasm target on first use.
       - run: rustup show active-toolchain || rustup toolchain install
+      # Registry downloads only: caching target/ would let stale intermediate
+      # output into the build whose bytes are being compared.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-${{ hashFiles('Cargo.lock') }}
       - name: Rebuild and compare
         run: |
           committed=$(sha256sum packages/movement-lang/wasm/movement_parser.wasm | cut -d' ' -f1)
@@ -35,6 +61,38 @@ jobs:
           echo "committed $committed"
           echo "rebuilt   $rebuilt"
           if [ "$committed" != "$rebuilt" ]; then
-            echo "::error::movement_parser.wasm is not what the crate builds; run scripts/build-parser-wasm.sh and commit the result"
+            echo "::error::movement_parser.wasm differs from what the crate builds. Run scripts/build-parser-wasm.sh and commit the rebuilt packages/movement-lang/wasm/movement_parser.wasm. If it differs only on Linux, the build is not reproducible across platforms: see the reproducibility notes in crates/movement-parser/README.md."
             exit 1
           fi
+
+  parser-tests:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Crate tests
+        run: cargo test --locked -p movement-parser
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: "pnpm"
+      # Full workspace install, as in api-test.yml: movement-lang's tests
+      # resolve workspace packages through symlinks a filtered install omits.
+      - run: pnpm install --frozen-lockfile
+      - name: TypeScript differential
+        working-directory: packages/movement-lang
+        env:
+          MOVEMENT_PARSER_DIFFERENTIAL: "1"
+        run: pnpm run test --testPathPattern rust_differential

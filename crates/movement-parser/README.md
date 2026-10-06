@@ -32,6 +32,14 @@ The web app copies the artifact into `apps/web/public` (under a content-hashed
 name) when `next.config.ts` loads, so a running `next dev` keeps serving the old
 parser until it is restarted.
 
+## Reproducibility
+
+The committed artifact is built on a laptop; `--remap-path-prefix` in the build
+script and the pinned toolchain are meant to make the Linux CI rebuild
+byte-identical. That is unproven until the first green run of
+`.github/workflows/parser-wasm.yml`, which fails with the two hashes when they
+differ.
+
 ## The ABI (`src/abi.rs`)
 
 | export | signature | |
