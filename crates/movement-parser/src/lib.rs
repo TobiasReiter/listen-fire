@@ -7,6 +7,7 @@ pub mod ast;
 pub mod expr;
 pub mod lexer;
 pub mod scan;
+pub mod stmt;
 pub mod tree;
 pub mod util;
 pub mod version;
@@ -18,8 +19,11 @@ use serde_json::{Value, json};
 /// object the TypeScript wrappers rewrap into their error classes.
 pub type Parsed = Result<Value, Value>;
 
-pub fn parse_program(_source: &str, _version: u32) -> Parsed {
-    Err(not_implemented())
+/// The `Program` exactly as the TypeScript parser builds it: each slot is
+/// `{raw, span}` and nothing more, so its canonical hash is the pinned one.
+pub fn parse_program(source: &str, version: u32) -> Parsed {
+    let program = stmt::parse_program(source, version, false).map_err(|e| to_value(&e))?;
+    Ok(to_value(&program))
 }
 
 /// The expression grammar reads no version: one grammar serves them all.

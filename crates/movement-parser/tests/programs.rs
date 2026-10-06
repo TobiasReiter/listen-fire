@@ -1,10 +1,9 @@
 //! Conformance against packages/movement-lang/parser/__test__/__fixtures__/
 //! programs.json: every program the TypeScript corpora parse, pinned by the
-//! sha256 of its canonical AST or by the error it throws.
+//! sha256 of its canonical AST or by the error it throws. A gate: any drift
+//! fails, and `--nocapture` prints the first differences.
 //!
-//! A progress meter while the grammar is being ported, a gate afterwards:
-//!   cargo test -p movement-parser --test programs -- --ignored --nocapture
-//!   MOVEMENT_PARSER_STRICT=1 cargo test -p movement-parser --test programs -- --ignored
+//!   cargo test -p movement-parser --test programs -- --nocapture
 
 // Each test binary compiles its own copy and uses only part of it.
 #[allow(dead_code)]
@@ -31,9 +30,7 @@ enum Expected {
 
 const SHOWN_DIFFS: usize = 20;
 
-#[test]
-#[ignore = "the program grammar is not ported yet; run with --ignored"]
-fn every_pinned_program_parses_as_pinned() {
+fn records() -> Vec<Record> {
     let path = common::fixture("parser/__test__/__fixtures__/programs.json");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     let records: Vec<Record> = text
@@ -43,6 +40,12 @@ fn every_pinned_program_parses_as_pinned() {
         .map(|(i, line)| serde_json::from_str(line).unwrap_or_else(|e| panic!("programs.json line {}: {e}", i + 1)))
         .collect();
     assert!(records.len() > 1000, "programs.json has only {} records", records.len());
+    records
+}
+
+#[test]
+fn every_pinned_program_parses_as_pinned() {
+    let records = records();
 
     let mut pass = 0usize;
     let mut diffs = Vec::new();
@@ -64,9 +67,7 @@ fn every_pinned_program_parses_as_pinned() {
     if diffs.len() > SHOWN_DIFFS {
         println!("  … and {} more", diffs.len() - SHOWN_DIFFS);
     }
-    if std::env::var("MOVEMENT_PARSER_STRICT").as_deref() == Ok("1") {
-        assert!(diffs.is_empty(), "{} of {} programs differ from their pins", diffs.len(), records.len());
-    }
+    assert!(diffs.is_empty(), "{} of {} programs differ from their pins", diffs.len(), records.len());
 }
 
 fn diff(record: &Record) -> Option<String> {
