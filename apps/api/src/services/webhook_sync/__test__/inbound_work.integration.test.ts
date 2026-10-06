@@ -63,6 +63,7 @@ import { refreshLinkedObjects } from '../linked_object_cache';
 import { linkedObjectRefreshHandler, registerLinkedObjectWork } from '../linked_object_refresh';
 import { logger } from '../../logger';
 import { runHarnessDelivery } from '../../work/harness';
+import { claimDueWork, completeWork } from '../../work/store';
 
 const mockedCatalog = movementCatalogForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -646,16 +647,36 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       expect((await receipts(teamId))[0].status).toBe('failed');
     });
 
-    it('a live running run: leaves it to finish, without dispatching', async () => {
+    it('a live running run: leaves it to finish and looks again once its heartbeat would be stale', async () => {
       const triggerId = await seedMovementTrigger(teamId);
       const { receiptId, payload } = await capturedUndrained(teamId);
       await seedRunningRun({ teamId, triggerId, receiptId, status: 'running', lastHeartbeatAt: new Date() });
+      // The re-claim holds the row, as the drain's would.
+      const [claimed] = await claimDueWork({ owner: 'test', limit: 10, leaseMs: 60_000, teamId });
+      if (!claimed?.leaseToken) throw new Error('expected to claim the dispatch row');
+      const { leaseToken } = claimed;
+      const ctx = RECOVER_CTX();
 
-      await dispatchEventHandler.recover!(payload, RECOVER_CTX());
+      await dispatchEventHandler.recover!(payload, ctx);
+      await completeWork({ id: claimed.id, leaseToken, claimedUpdatedAt: claimed.updatedAt });
 
       expect(mockedDispatch).not.toHaveBeenCalled();
       expect(await runsFor(triggerId)).toEqual([expect.objectContaining({ status: 'running' })]);
       expect((await receipts(teamId))[0].status).toBe('received');
+      const [row] = await workRows(teamId, 'dispatch_event');
+      expect(row).toMatchObject({ key: claimed.key, payload: claimed.payload, lease_until: null });
+      expect(Math.abs(new Date(row.due_at).getTime() - (ctx.now.getTime() + 60_000))).toBeLessThan(1_000);
+    });
+
+    it('a re-armed row that finds its run still live does not dispatch a second run', async () => {
+      const triggerId = await seedMovementTrigger(teamId);
+      const { receiptId, payload } = await capturedUndrained(teamId);
+      await seedRunningRun({ teamId, triggerId, receiptId, status: 'running', lastHeartbeatAt: new Date() });
+
+      await dispatchEventHandler.run(payload, testWorkContext());
+
+      expect(mockedDispatch).not.toHaveBeenCalled();
+      expect(await runsFor(triggerId)).toHaveLength(1);
     });
 
     it('a settled run never overwrites a receipt that already failed', async () => {

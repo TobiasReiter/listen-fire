@@ -35,6 +35,10 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerEvent } from '../triggers/types';
+import { markTriggerEventFailed } from '../triggers/event_store';
+import { settleUnresumableRun } from '../../interaction/run_failure';
+import type { WorkHandler } from '../../work/kinds';
+import { registerWorkHandler } from '../../work/drain';
 
 export type TriggerRunTriggerType =
   | 'webhook'
@@ -945,23 +949,65 @@ function movementStepDiagnostics(result: MovementRunResult): Record<string, unkn
  *  silence is a dead process, not a slow one. */
 export const ORPHAN_AFTER = 60 * SECOND;
 
+export type RunningSegment = 'orphaned' | 'live' | 'not_running';
+
+function lastSignOfLife(row: { started_at: Date; last_heartbeat_at: Date | null }): Date {
+  return new Date(row.last_heartbeat_at ?? row.started_at);
+}
+
 /**
- * Whether a `running` run has no live segment behind it: its heartbeat (or, if
- * it never beat, its start) is older than `staleAfterMs`. A live segment beats
- * every live-trace tick, so a fresh stamp means some process still owns the run.
+ * Whether a run is `running`, and if so whether a live segment is behind it:
+ * `orphaned` when its heartbeat (or, if it never beat, its start) is older than
+ * `staleAfterMs`. A live segment beats every live-trace tick, so a fresh stamp
+ * means some process still owns the run. Only a first firing is ever
+ * `running`; a resumed segment runs under `parked`.
  */
-export async function isOrphanedRunningRun(
+export async function runningSegment(
   runId: TriggerRunId,
   opts: { now: Date; staleAfterMs: number },
-): Promise<boolean> {
+): Promise<RunningSegment> {
   const row = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('id', '=', runId)
     .select(['status', 'started_at', 'last_heartbeat_at'])
     .executeTakeFirst();
-  if (row?.status !== 'running') return false;
-  const lastSign = new Date(row.last_heartbeat_at ?? row.started_at);
-  return lastSign.getTime() < opts.now.getTime() - opts.staleAfterMs;
+  if (row?.status !== 'running') return 'not_running';
+  const stale = lastSignOfLife(row).getTime() < opts.now.getTime() - opts.staleAfterMs;
+  return stale ? 'orphaned' : 'live';
+}
+
+const ORPHANED_SEGMENT = 'segment did not complete: process died or stalled';
+
+/**
+ * Fail every `running` run whose segment has gone silent for ORPHAN_AFTER,
+ * with the receipt that started it. The safety net under every entry path
+ * (cron, poll, run-now, a KG mutation, chat doors): a process that dies
+ * mid-segment leaves its run `running`, and only this notices.
+ */
+export async function settleOrphanedRunningRuns(now: Date): Promise<void> {
+  const cutoff = new Date(now.getTime() - ORPHAN_AFTER);
+  const orphans = await getAutomationsQb(['trigger_run'])
+    .selectFrom('trigger_run')
+    .where('status', '=', 'running')
+    .where((eb) => eb(eb.fn.coalesce('last_heartbeat_at', 'started_at'), '<', cutoff))
+    .select(['id', 'trigger_event_id'])
+    .execute();
+  for (const orphan of orphans) {
+    await settleUnresumableRun({ runId: orphan.id, reason: ORPHANED_SEGMENT });
+    if (orphan.trigger_event_id !== null) {
+      await markTriggerEventFailed(orphan.trigger_event_id, ORPHANED_SEGMENT);
+    }
+  }
+}
+
+export const runOrphanSweepHandler: WorkHandler = {
+  async run(_payload, ctx) {
+    await settleOrphanedRunningRuns(ctx.now);
+  },
+};
+
+export function registerRunOrphanSweepWork(): void {
+  registerWorkHandler('run_orphan_sweep', runOrphanSweepHandler);
 }
 
 /** What a run spent before now, off its row's summed diagnostics. A row

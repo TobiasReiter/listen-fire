@@ -33,7 +33,8 @@ import { getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
 import { settleCancelledRun, settleUnresumableRun } from '../interaction/run_failure';
-import { isOrphanedRunningRun, ORPHAN_AFTER } from '../translation_graph/runs/trigger_run';
+import { ORPHAN_AFTER, runningSegment } from '../translation_graph/runs/trigger_run';
+import { neverAsAny } from '../../lib/utils/types';
 import type { WorkHandler } from '../work/kinds';
 import { registerWorkHandler } from '../work/drain';
 import { armTimerWake, timerWorkKey } from './timer_wake';
@@ -84,20 +85,45 @@ export const resumeTimerHandler: WorkHandler = {
 
   // Any re-claim lands here: a lapsed lease, or a retry after a throw. Only a run
   // left `running` with no heartbeat was cut off mid-segment; nothing can finish
-  // that segment, so it fails. A live heartbeat is a sibling segment still
-  // executing elsewhere, and a parked run lost nothing: both run again.
+  // that segment, so it fails. A live heartbeat may be the dead process's last
+  // beat (the lease lapses before the heartbeat goes stale), so the row looks
+  // again once it would be; the orphan sweep is the primary net. A parked run
+  // lost nothing and runs again.
   async recover(payload, ctx) {
     const { runId } = resumeTimerPayloadSchema.parse(payload);
-    if (await isOrphanedRunningRun(runId, { now: ctx.now, staleAfterMs: ORPHAN_AFTER })) {
-      await settleUnresumableRun({
-        runId,
-        reason: 'segment did not complete: lease lapsed or the previous attempt failed',
-      });
-      return;
+    const segment = await runningSegment(runId, { now: ctx.now, staleAfterMs: ORPHAN_AFTER });
+    switch (segment) {
+      case 'orphaned':
+        await settleUnresumableRun({
+          runId,
+          reason: 'segment did not complete: lease lapsed or the previous attempt failed',
+        });
+        return;
+      case 'live':
+        await recheckLiveRunLater({ runId, now: ctx.now });
+        return;
+      case 'not_running':
+        await resumeTimerHandler.run(payload, ctx);
+        return;
+      default:
+        neverAsAny(segment);
     }
-    await resumeTimerHandler.run(payload, ctx);
   },
 };
+
+async function recheckLiveRunLater(input: { runId: TriggerRunId; now: Date }): Promise<void> {
+  const run = await getAutomationsQb(['trigger_run'])
+    .selectFrom('trigger_run')
+    .where('id', '=', input.runId)
+    .select('team_id')
+    .executeTakeFirst();
+  if (!run) return;
+  await armTimerWake({
+    runId: input.runId,
+    teamId: run.team_id,
+    wakeAt: new Date(input.now.getTime() + ORPHAN_AFTER),
+  });
+}
 
 /** The periodic `timer_sweep`: the cancel-race closure, then re-arms any timer
  *  park that has no work row (parked before work rows existed, or whose enqueue

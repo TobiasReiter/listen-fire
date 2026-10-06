@@ -459,24 +459,27 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     expect(await workRows(runId)).toHaveLength(0);
   });
 
-  it('a lapsed lease on a run running with a fresh heartbeat leaves the run alone', async () => {
+  it('a lapsed lease on a run running with a fresh heartbeat leaves the run alone and looks again once it would be stale', async () => {
     const { triggerId } = await seedMovementWithTrigger(teamId);
     await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
     const { runId } = await parkedRun(teamId);
-    const wakeAt = await wakeAtOf(runId);
 
     await markRunning(runId, new Date());
     await lapseLease(runId);
+    const before = Date.now();
     const result = await drainWork({ owner: 't' });
 
-    // The leaf is not due, so the fall-through to run only re-arms it.
     expect(result.recovered).toBe(1);
     expect((await runRow(runId)).status).toBe('running');
     expect(await parkedRows(runId)).toBe(1);
+    expect(slackCreates).toHaveLength(0);
     const rows = await workRows(runId);
     expect(rows).toHaveLength(1);
     expect(rows[0].lease_until).toBeNull();
-    expect(Math.abs(new Date(rows[0].due_at).getTime() - wakeAt)).toBeLessThan(1000);
+    expect(rows[0].payload).toEqual({ runId });
+    const dueAt = new Date(rows[0].due_at).getTime();
+    expect(dueAt).toBeGreaterThanOrEqual(before + 60_000 - 1_000);
+    expect(dueAt).toBeLessThan(Date.now() + 60_000 + 1_000);
   });
 
   it('the timer sweep re-arms a timer park that has no work row, idempotently', async () => {

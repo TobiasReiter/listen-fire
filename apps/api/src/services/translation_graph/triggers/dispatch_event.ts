@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { logger } from '../../logger';
-import type { WorkHandler } from '../../work/kinds';
+import type { WorkContext, WorkHandler } from '../../work/kinds';
 import { registerWorkHandler } from '../../work/drain';
 import { enqueueWork } from '../../work/store';
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -29,7 +29,8 @@ import {
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import { isOrphanedRunningRun, ORPHAN_AFTER } from '../runs/trigger_run';
+import { ORPHAN_AFTER, runningSegment } from '../runs/trigger_run';
+import { neverAsAny } from '../../../lib/utils/types';
 import { settleUnresumableRun } from '../../interaction/run_failure';
 import type { SettleReport } from '../../work/harness';
 
@@ -271,6 +272,10 @@ async function receiptStatus(storedEventId: TriggerEventId): Promise<string | un
   return row?.status;
 }
 
+function dispatchWorkKey(storedEventId: string): string {
+  return `dispatch_event:${storedEventId}`;
+}
+
 /** One work row per receipt that still needs a run. Keyed on the receipt, so a
  *  re-enqueue of the same receipt collapses onto the row already waiting. A
  *  redelivery of a receipt that never ran (still `received`) queues it again:
@@ -283,7 +288,7 @@ export async function enqueueCapturedEvents(captured: CapturedTriggerEvent[]): P
     }
     await enqueueWork({
       kind: 'dispatch_event',
-      key: `dispatch_event:${receipt.storedEventId ?? randomUUID()}`,
+      key: dispatchWorkKey(receipt.storedEventId ?? randomUUID()),
       teamId: receipt.teamId,
       // The row runs the stored receipt, which is not itself a redelivery.
       payload: { ...receipt, duplicate: false },
@@ -305,51 +310,60 @@ async function runForReceipt(
     .executeTakeFirst();
 }
 
-/** Runs one captured receipt. A dispatch failure is recorded on the receipt,
- *  not thrown, so the row completes rather than re-running a failed movement. */
-export const dispatchEventHandler: WorkHandler = {
-  async run(payload) {
-    const captured = parseCapturedTriggerEvent(payload);
-    // A row re-armed by a redelivery while its first run was going runs again
-    // once that run settles; by then the receipt says it already ran.
-    if (
-      captured.storedEventId !== undefined &&
-      (await receiptStatus(captured.storedEventId)) !== 'received'
-    ) {
-      return;
-    }
+/**
+ * Runs one captured receipt, first or re-claimed alike: a claim may find a run
+ * this receipt already started (a lapsed lease, a throw, or a row re-armed
+ * while the run went on), and must not start a second. A dispatch failure is
+ * recorded on the receipt, not thrown, so the row completes rather than
+ * re-running a failed movement.
+ */
+async function runReceipt(payload: unknown, ctx: WorkContext): Promise<void> {
+  const captured = parseCapturedTriggerEvent(payload);
+  const { storedEventId } = captured;
+  if (storedEventId === undefined) {
     await dispatchCapturedTriggerEvent({ captured });
-  },
+    return;
+  }
+  // A settled receipt (dispatched, failed, suppressed) keeps its outcome.
+  if ((await receiptStatus(storedEventId)) !== 'received') return;
+  const run = await runForReceipt(storedEventId);
+  if (run === undefined) {
+    await dispatchCapturedTriggerEvent({ captured });
+    return;
+  }
+  if (run.status !== 'running') {
+    // Parked or settled: the dispatch happened and only the receipt's mark was lost.
+    await markTriggerEventDispatched(storedEventId);
+    return;
+  }
+  const segment = await runningSegment(run.id, { now: ctx.now, staleAfterMs: ORPHAN_AFTER });
+  switch (segment) {
+    case 'orphaned':
+      await settleUnresumableRun({ runId: run.id, reason: UNFINISHED_SEGMENT });
+      await markTriggerEventFailed(storedEventId, UNFINISHED_SEGMENT);
+      return;
+    case 'live':
+      // The lease lapses before the heartbeat goes stale, so a live beat may be
+      // a dead process's last; look again once it would be stale. The orphan
+      // sweep is the primary net.
+      await enqueueWork({
+        kind: 'dispatch_event',
+        key: dispatchWorkKey(storedEventId),
+        teamId: captured.teamId,
+        payload,
+        dueAt: new Date(ctx.now.getTime() + ORPHAN_AFTER),
+      });
+      return;
+    case 'not_running':
+      // Settled between the two reads.
+      await markTriggerEventDispatched(storedEventId);
+      return;
+    default:
+      neverAsAny(segment);
+  }
+}
 
-  // A re-claim after a lapsed lease or a throw. The first attempt may have
-  // started a run: an orphaned one fails with its receipt, a live one is left
-  // to finish where it runs, and a settled or parked one means the dispatch
-  // happened and only the receipt's mark was lost.
-  async recover(payload, ctx) {
-    const captured = parseCapturedTriggerEvent(payload);
-    const { storedEventId } = captured;
-    if (storedEventId === undefined) {
-      await dispatchEventHandler.run(payload, ctx);
-      return;
-    }
-    const status = await receiptStatus(storedEventId);
-    if (status === 'dispatched') return;
-    const run = await runForReceipt(storedEventId);
-    if (run === undefined) {
-      await dispatchEventHandler.run(payload, ctx);
-      return;
-    }
-    if (run.status === 'running') {
-      if (await isOrphanedRunningRun(run.id, { now: ctx.now, staleAfterMs: ORPHAN_AFTER })) {
-        await settleUnresumableRun({ runId: run.id, reason: UNFINISHED_SEGMENT });
-        await markTriggerEventFailed(storedEventId, UNFINISHED_SEGMENT);
-      }
-      return;
-    }
-    // A receipt already settled otherwise (failed, suppressed) keeps its outcome.
-    if (status === 'received') await markTriggerEventDispatched(storedEventId);
-  },
-};
+export const dispatchEventHandler: WorkHandler = { run: runReceipt, recover: runReceipt };
 
 export function registerDispatchWork(): void {
   registerWorkHandler('dispatch_event', dispatchEventHandler);

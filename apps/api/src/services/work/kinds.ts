@@ -11,6 +11,7 @@ export const WORK_KINDS = [
   'timer_sweep', // periodic, payload {}
   'exposed_file_sweep', // periodic, payload {}
   'airtable_webhook_refresh', // periodic, payload {}
+  'run_orphan_sweep', // periodic, payload {}
 ] as const;
 
 export type WorkKind = (typeof WORK_KINDS)[number];
