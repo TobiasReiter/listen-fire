@@ -163,11 +163,18 @@ export async function completeWork(input: {
     WHERE ${heldBy(input)}`.execute(qb);
 }
 
-/** Clear the lease without rescheduling (handler threw and wants a retry at due_at). */
-export async function releaseWork(input: { id: string; leaseToken: string }): Promise<void> {
+/** Clear the lease so the row retries: at `dueAt` when given (backoff), else at its due_at.
+ *  Not a re-arm, so updated_at is left alone. */
+export async function releaseWork(input: {
+  id: string;
+  leaseToken: string;
+  dueAt?: Date;
+}): Promise<void> {
+  const dueAt = input.dueAt ?? null;
   await sql`
     UPDATE automations.work
-    SET lease_owner = NULL, lease_until = NULL, lease_token = NULL
+    SET lease_owner = NULL, lease_until = NULL, lease_token = NULL,
+        due_at = COALESCE(${dueAt}::timestamptz, due_at)
     WHERE ${heldBy(input)}`.execute(getAutomationsQb(['work']));
 }
 

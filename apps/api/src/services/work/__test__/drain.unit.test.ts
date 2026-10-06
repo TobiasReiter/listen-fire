@@ -109,7 +109,9 @@ describe('drainWork', () => {
 
     const result = await drainWork({ owner: 'me' });
 
-    expect(release).toHaveBeenCalledWith({ id: 'id-a', leaseToken: 'token-a' });
+    expect(release).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'id-a', leaseToken: 'token-a' }),
+    );
     expect(complete).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       expect.any(String),
@@ -123,7 +125,9 @@ describe('drainWork', () => {
 
     const result = await drainWork({ owner: 'me' });
 
-    expect(release).toHaveBeenCalledWith({ id: 'id-a', leaseToken: 'token-a' });
+    expect(release).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'id-a', leaseToken: 'token-a' }),
+    );
     expect(complete).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       expect.any(String),
@@ -150,6 +154,62 @@ describe('drainWork', () => {
 
     await jest.advanceTimersByTimeAsync(10 * heartbeatMs);
     expect(heartbeat).toHaveBeenCalledTimes(2);
+  });
+
+  it('a throwing handler releases with exponential backoff, capped at five minutes', async () => {
+    const clock = new Date('2030-01-01T00:00:00.000Z');
+    registerWorkHandler('resume_timer', {
+      run: async () => {
+        throw new Error('boom');
+      },
+      recover: async () => {
+        throw new Error('boom');
+      },
+    });
+    pending = [row({ attempts: 3, key: 'a' }), row({ attempts: 20, key: 'b' })];
+
+    await drainWork({ owner: 'me', now: () => clock });
+
+    expect(release).toHaveBeenCalledWith({
+      id: 'id-a',
+      leaseToken: 'token-a',
+      dueAt: new Date(clock.getTime() + 4_000),
+    });
+    expect(release).toHaveBeenCalledWith({
+      id: 'id-b',
+      leaseToken: 'token-b',
+      dueAt: new Date(clock.getTime() + 300_000),
+    });
+  });
+
+  it('a kind with no handler is released with backoff too', async () => {
+    const clock = new Date('2030-01-01T00:00:00.000Z');
+    pending = [row({ kind: 'poll_source', attempts: 1 })];
+
+    await drainWork({ owner: 'me', now: () => clock });
+
+    expect(release).toHaveBeenCalledWith({
+      id: 'id-a',
+      leaseToken: 'token-a',
+      dueAt: new Date(clock.getTime() + 1_000),
+    });
+  });
+
+  it('stops heartbeating on the first heartbeat that reports the lease lost', async () => {
+    jest.useFakeTimers();
+    const heartbeatMs = 1_000;
+    heartbeat.mockResolvedValueOnce(false);
+    registerWorkHandler('resume_timer', {
+      run: () => new Promise((resolve) => setTimeout(resolve, 5 * heartbeatMs + 1)),
+    });
+    pending = [row()];
+
+    const drained = drainWork({ owner: 'me', leaseMs: 3_000, heartbeatMs });
+    await jest.advanceTimersByTimeAsync(5 * heartbeatMs + 1);
+    await drained;
+
+    expect(heartbeat).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
   it('a claim failure resolves with nothing done', async () => {

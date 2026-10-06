@@ -54,9 +54,23 @@ function addResults(a: DrainResult, b: DrainResult): DrainResult {
 
 type RowOutcome = 'ran' | 'recovered' | 'failed';
 
-async function releaseQuietly(row: WorkRow, leaseToken: string): Promise<void> {
+const BACKOFF_BASE_MS = 1_000;
+const BACKOFF_CAP_MS = 300_000;
+
+// A failing row must not retry every drain pass forever.
+function backoffMs(attempts: number): number {
+  return Math.min(BACKOFF_BASE_MS * 2 ** (attempts - 1), BACKOFF_CAP_MS);
+}
+
+async function releaseWithBackoff(input: {
+  row: WorkRow;
+  leaseToken: string;
+  clock: () => Date;
+}): Promise<void> {
+  const { row, leaseToken, clock } = input;
+  const dueAt = new Date(clock().getTime() + backoffMs(row.attempts));
   try {
-    await releaseWork({ id: row.id, leaseToken });
+    await releaseWork({ id: row.id, leaseToken, dueAt });
   } catch (error) {
     logger.warn('[work] release failed; the lease will lapse instead', {
       kind: row.kind,
@@ -71,9 +85,9 @@ async function runRow(input: {
   owner: string;
   leaseMs: number;
   heartbeatMs: number | false;
-  now: Date;
+  clock: () => Date;
 }): Promise<RowOutcome> {
-  const { row, owner, leaseMs, heartbeatMs, now } = input;
+  const { row, owner, leaseMs, heartbeatMs, clock } = input;
   // Captured at claim: every later call on this row is fenced on this claim alone.
   const { leaseToken, updatedAt: claimedUpdatedAt } = row;
   if (!leaseToken) {
@@ -88,22 +102,29 @@ async function runRow(input: {
       key: row.key,
       attempts: row.attempts,
     });
-    await releaseQuietly(row, leaseToken);
+    await releaseWithBackoff({ row, leaseToken, clock });
     return 'failed';
   }
 
+  let leaseLost = false;
+  let timer: NodeJS.Timeout | undefined;
   const heartbeat = async (): Promise<void> => {
+    if (leaseLost) return;
     try {
       const held = await heartbeatWork({ id: row.id, leaseToken, leaseMs });
-      if (!held) logger.warn('[work] lease lost during run', { kind: row.kind, key: row.key });
+      if (!held) {
+        // Another claim owns the row now; extending is pointless, so stop rather than warn per tick.
+        leaseLost = true;
+        clearInterval(timer);
+        logger.warn('[work] lease lost during run', { kind: row.kind, key: row.key });
+      }
     } catch (error) {
       logger.warn('[work] heartbeat failed', { kind: row.kind, key: row.key, error });
     }
   };
-  const timer =
-    heartbeatMs === false ? undefined : setInterval(() => void heartbeat(), heartbeatMs);
+  if (heartbeatMs !== false) timer = setInterval(() => void heartbeat(), heartbeatMs);
 
-  const ctx: WorkContext = { now, owner, attempts: row.attempts, heartbeat };
+  const ctx: WorkContext = { now: clock(), owner, attempts: row.attempts, heartbeat };
   const isFirstAttempt = row.attempts === 1;
   try {
     const execute = isFirstAttempt ? handler.run : handler.recover ?? handler.run;
@@ -117,7 +138,7 @@ async function runRow(input: {
       error,
     });
     clearInterval(timer);
-    await releaseQuietly(row, leaseToken);
+    await releaseWithBackoff({ row, leaseToken, clock });
     return 'failed';
   }
   clearInterval(timer);
@@ -143,18 +164,18 @@ export async function drainWork(opts: DrainOptions = {}): Promise<DrainResult> {
   const limit = opts.limit ?? 10;
   const leaseMs = opts.leaseMs ?? 60_000;
   const heartbeatMs = opts.heartbeatMs ?? leaseMs / 3;
-  const now = opts.now?.() ?? new Date();
+  const clock = opts.now ?? (() => new Date());
 
   let rows: WorkRow[];
   try {
-    rows = await claimDueWork({ owner, limit, leaseMs, now });
+    rows = await claimDueWork({ owner, limit, leaseMs, now: clock() });
   } catch (error) {
     logger.warn('[work] claim failed', { owner, error });
     return emptyResult();
   }
 
   const outcomes = await Promise.all(
-    rows.map((row) => runRow({ row, owner, leaseMs, heartbeatMs, now })),
+    rows.map((row) => runRow({ row, owner, leaseMs, heartbeatMs, clock })),
   );
   const result = emptyResult();
   result.claimed = rows.length;

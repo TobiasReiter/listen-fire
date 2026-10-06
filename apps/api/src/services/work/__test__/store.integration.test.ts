@@ -321,6 +321,32 @@ describe('work store', () => {
     });
   });
 
+  it('releaseWork with dueAt moves due_at and clears the lease without bumping updated_at', async () => {
+    const key = freshKey('resume_timer');
+    await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
+    const claimed = await claimOne({ owner: 'drainer-1' });
+
+    await releaseWork({ ...claimOf(claimed), dueAt: at(4_000) });
+
+    expect(await rowByKey(key)).toMatchObject({
+      dueAt: at(4_000),
+      leaseOwner: null,
+      leaseUntil: null,
+      leaseToken: null,
+      updatedAt: claimed.updatedAt,
+    });
+  });
+
+  it('releaseWork with dueAt under a stale token leaves the row alone', async () => {
+    const key = freshKey('resume_timer');
+    await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
+    const claimed = await claimOne({ owner: 'drainer-1' });
+
+    await releaseWork({ id: claimed.id, leaseToken: randomUUID(), dueAt: at(4_000) });
+
+    expect(await rowByKey(key)).toMatchObject({ dueAt: at(0), leaseToken: claimed.leaseToken });
+  });
+
   it('ensurePeriodicWork is idempotent and keeps an existing due_at', async () => {
     const key = freshKey('cron_reconcile');
     await ensurePeriodicWork({ kind: 'cron_reconcile', key, intervalMs: 60_000, dueAt: at(0) });
