@@ -28,6 +28,10 @@ The `.wasm` is committed so the pnpm dev loop needs no Rust. CI
 differ, so a change to the crate, `Cargo.lock`, the release profile or the
 toolchain ships with a rebuilt artifact.
 
+The web app copies the artifact into `apps/web/public` (under a content-hashed
+name) when `next.config.ts` loads, so a running `next dev` keeps serving the old
+parser until it is restarted.
+
 ## The ABI (`src/abi.rs`)
 
 | export | signature | |

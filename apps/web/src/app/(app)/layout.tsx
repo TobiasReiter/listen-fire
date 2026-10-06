@@ -4,7 +4,6 @@ import { useAuth } from '@/lib/auth';
 import { AppShell } from '@/components/app-shell';
 import { ImpersonationBanner } from '@/components/impersonation-banner';
 import { ToastProvider } from '@/components/portfolio';
-import { ParserProvider } from '@/lib/parser-provider';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { isLoading } = useAuth();
@@ -19,7 +18,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <ImpersonationBanner />
         <div className="flex-1 overflow-hidden">
           <AppShell>
-            <ParserProvider>{children}</ParserProvider>
+            {children}
           </AppShell>
         </div>
       </div>

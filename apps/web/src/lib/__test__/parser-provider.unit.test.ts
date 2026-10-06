@@ -6,6 +6,9 @@
 import fs from 'fs';
 import path from 'path';
 
+// next.config.ts injects the content-hashed URL; a test names its own.
+process.env.NEXT_PUBLIC_PARSER_URL = '/movement_parser.0123456789ab.wasm';
+
 import type { ListenersPanelProps } from '@/components/movements/listeners-panel';
 
 type Modules = {
@@ -78,7 +81,7 @@ describe('the browser parser provider', () => {
   it('fetches the artifact from public/, then renders the panel from the parsed script', async () => {
     const fetched = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(artifact()));
     await provider.loadParser();
-    expect(fetched).toHaveBeenCalledWith('/movement_parser.wasm');
+    expect(fetched).toHaveBeenCalledWith('/movement_parser.0123456789ab.wasm');
     expect(lang.isParserReady()).toBe(true);
 
     const html = server.renderToStaticMarkup(gated);
