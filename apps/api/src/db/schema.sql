@@ -3769,6 +3769,7 @@ ALTER TABLE ONLY automations.trigger_run
 
 CREATE INDEX trigger_run_team_id_idx ON automations.trigger_run USING btree (team_id);
 CREATE INDEX trigger_run_trigger_id_idx ON automations.trigger_run USING btree (trigger_id);
+CREATE INDEX trigger_run_running_idx ON automations.trigger_run USING btree (id) WHERE (status = 'running'::text);
 CREATE INDEX trigger_run_created_at_idx ON automations.trigger_run USING btree (created_at);
 
 -- The run's version pin, an in-schema FK once more: a run resumes by re-parsing
