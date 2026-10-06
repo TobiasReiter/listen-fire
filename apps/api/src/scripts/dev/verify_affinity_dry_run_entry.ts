@@ -14,6 +14,9 @@
  *      its parent — and marked `rehearsed`, because that entry does not exist.
  *
  * Usage: FAKE_BASE=http://localhost:6291/affinity ts-node … verify_affinity_dry_run_entry.ts
+ *
+ * Needs DATABASE_URL: the production host's cross-run write locks are
+ * Postgres advisory locks.
  */
 import { checkProgram, fromCatalogSnapshot, parseProgram, type CatalogSnapshot } from 'movement-lang';
 import { runMovement } from '../../services/movement_engine/run';

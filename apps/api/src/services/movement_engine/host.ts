@@ -13,11 +13,12 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ActingUser, ActorCandidate, Adapter, FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
-import type { CallbackSink } from './callback_sink';
+import type { CallbackCall, CallbackParamSpec } from './callback_types';
 import type { MovementTraceEntry } from './expression';
 import type { FileTextResolution, MovementTransformInvoker } from './extraction';
 import type { ExtractCallLlmClient } from './extraction_call';
 import type { CancelGate, ParkSink, SuspensionPoint } from './run';
+import type { ParkedScopeState } from './serialize';
 
 /** Adapter resolution — the SAME seam `evaluateTranslationGraph` and provision
  *  use: one adapter per (adapterType, credential, construction args, role). */
@@ -95,6 +96,26 @@ export interface ResolveActingUserInput {
   /** The source adapter's parse of the event's actors — called only when the
    *  trigger does not already decide the user. */
   getCandidates: () => Promise<ActorCandidate[]>;
+}
+
+/** The callback seam: minting `callback(…)`, reading its call ledger,
+ *  correlating an `await cb-[:Called]->`. Separate from `ParkSink` on purpose:
+ *  a park is a leaf the run is waiting on, a callback is not one. */
+export interface CallbackSink {
+  /** Mint a callback: persist the captured continuation + signature, yield the
+   *  binding's `{ id, url }`. */
+  mint(input: {
+    address: string;
+    params: CallbackParamSpec[];
+    state: ParkedScopeState;
+    singleUse: boolean;
+    expiresAt?: Date;
+  }): Promise<{ id: string; url: string }>;
+  /** The LIVE call ledger — what `cb-[:Called]->` reads and what a re-entered
+   *  `await cb-[:Called]->` re-checks. */
+  calls(callbackId: string): Promise<CallbackCall[]>;
+  /** Register an `await cb-[:Called]->` park so a fire can wake it. */
+  correlateAwait(input: { callbackId: string; address: string }): Promise<void>;
 }
 
 export interface EngineHost {

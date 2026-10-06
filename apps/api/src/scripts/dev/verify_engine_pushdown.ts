@@ -14,6 +14,9 @@
  * Usage (fake-channels running on a spare port):
  *   FAKE_CHANNELS_PORT=6199 pnpm --filter fake-channels start
  *   FAKE_BASE=http://localhost:6199 ts-node … verify_engine_pushdown.ts
+ *
+ * Needs DATABASE_URL: the production host's cross-run write locks are
+ * Postgres advisory locks.
  */
 import type { InstanceSchema } from 'movement-lang';
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';

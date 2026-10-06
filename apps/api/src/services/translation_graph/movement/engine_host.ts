@@ -33,7 +33,7 @@ import type { LlmClient } from '../engine/batched_extraction';
 import type { TriggerRunRecorder } from '../runs/trigger_run';
 import { makeFileTextResolver } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
-import { postgresRawTextStore } from './raw_text_store';
+import { postgresRawTextStore, type RawTextStore } from './raw_text_store';
 import { postgresRecordBindings } from './record_bindings';
 import { registryTransformInvoker } from './transform_invoker';
 
@@ -54,6 +54,8 @@ export function productionEngineHost(input: {
   /** Absent ⇒ the run is never cancelled. */
   cancel?: CancelGate;
   trace?: MovementTraceEntry[];
+  /** Where file text is stored. Absent ⇒ the team's `raw_text` table. */
+  rawText?: RawTextStore;
 }): EngineHost {
   const cancel = input.cancel ?? NEVER_CANCELLED;
   const usage = usageScope({ teamId: input.teamId, triggerRunId: input.triggerRunId, cancel });
@@ -88,7 +90,10 @@ export function productionEngineHost(input: {
     files: {
       resolveFile: input.catalog.resolveFile,
       // OCR and transcription are model calls of their own.
-      resolveFileText: billedFileText(makeFileTextResolver(postgresRawTextStore(input.teamId)), usage),
+      resolveFileText: billedFileText(
+        makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId)),
+        usage,
+      ),
     },
     lookup: { resolveActingUser: resolveTeamActingUser },
     locks: processWriteLocks(),

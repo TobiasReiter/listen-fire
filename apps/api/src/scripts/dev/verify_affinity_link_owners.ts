@@ -17,6 +17,9 @@
  * a real run of the same program does.
  *
  * Usage: FAKE_BASE=http://localhost:6291/affinity ts-node … verify_affinity_link_owners.ts
+ *
+ * Needs DATABASE_URL: the production host's cross-run write locks are
+ * Postgres advisory locks.
  */
 import { checkProgram, fromCatalogSnapshot, parseProgram, type CatalogSnapshot } from 'movement-lang';
 import { runMovement } from '../../services/movement_engine/run';

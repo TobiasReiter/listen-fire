@@ -40,6 +40,9 @@
  * Usage:
  *   cd <scratch> && FAKE_CHANNELS_PORT=6412 npx tsx apps/fake-channels/src/index.ts
  *   FAKE_BASE=http://localhost:6412/affinity npx tsx apps/api/src/scripts/dev/verify_affinity_request_profile.ts
+ *
+ * Needs DATABASE_URL: the production host's cross-run write locks are
+ * Postgres advisory locks.
  */
 import { fromCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 import { runMovement } from '../../services/movement_engine/run';

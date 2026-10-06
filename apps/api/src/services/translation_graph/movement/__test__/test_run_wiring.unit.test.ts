@@ -39,6 +39,10 @@ describe('runMovementTestRun substrate', () => {
     expect(src).toMatch(/writeSink: \(w\) => writes\.push\(w\)/);
   });
 
+  it('stores file text in memory only (a test run leaves no raw_text rows)', () => {
+    expect(src).toMatch(/rawText: inMemoryRawTextStore\(\)/);
+  });
+
   it('never reaches the retired TG engine', () => {
     expect(src).not.toMatch(/evaluateTranslationGraph/);
     expect(src).not.toMatch(/from '.*\/engine'/);

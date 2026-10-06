@@ -209,7 +209,7 @@ import type {
   WriteResult,
 } from '../translation_graph/adapter';
 import { updateRecordSucceeded } from '../translation_graph/adapter';
-import type { BindingEndpoint, EngineHost, ResolveAdapter } from './host';
+import type { BindingEndpoint, CallbackSink, EngineHost, ResolveAdapter } from './host';
 import {
   newDryRunRehearsal,
   wrapAdapterForDryRun,
@@ -307,8 +307,6 @@ import {
 import { RunCancelledSignal } from './errors';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
-import { emitOpsEvent } from '../../lib/ops/emit';
-import { OpsEventType, OpsSeverity } from '../../lib/ops/types';
 import {
   ROOT_ADDRESS,
   childBranch,
@@ -339,9 +337,7 @@ import {
   type SerializedFrame,
   type SerializedScope,
 } from './serialize';
-import type { CallbackSink } from './callback_sink';
-import type { CallbackCall, CallbackParamSpec } from './callback_store';
-import { isCallbackParamType } from './callback_store';
+import { isCallbackParamType, type CallbackCall, type CallbackParamSpec } from './callback_types';
 import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
 import type { WriteLocks } from '../write_locks/write_locks';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';

@@ -17,6 +17,9 @@
  * Usage:
  *   FAKE_CHANNELS_PORT=6293 pnpm --filter fake-channels start   # or the dev loop
  *   FAKE_BASE=http://localhost:6293/affinity npx tsx apps/api/src/scripts/dev/verify_affinity_call_ceiling.ts
+ *
+ * Needs DATABASE_URL: the production host's cross-run write locks are
+ * Postgres advisory locks.
  */
 import { fromCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 import { runMovement } from '../../services/movement_engine/run';

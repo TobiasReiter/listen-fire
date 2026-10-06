@@ -18,6 +18,23 @@ export interface RawTextStore {
   getOrCreateId(content: string): Promise<string | undefined>;
 }
 
+/** A store that keeps nothing past the run: a test run must leave no
+ *  `raw_text` rows behind, yet its file text still needs ids to be cited by. */
+export function inMemoryRawTextStore(): RawTextStore {
+  const ids = new Map<string, string>();
+  return {
+    async getOrCreateId(content) {
+      const trimmed = content.trim();
+      let id = ids.get(trimmed);
+      if (id === undefined) {
+        id = `raw-text-${ids.size + 1}`;
+        ids.set(trimmed, id);
+      }
+      return id;
+    },
+  };
+}
+
 export function postgresRawTextStore(teamId: TeamId): RawTextStore {
   return { getOrCreateId: (content) => getOrCreateRawTextId(teamId, content) };
 }

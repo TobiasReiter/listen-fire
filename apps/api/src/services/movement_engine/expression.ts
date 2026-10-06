@@ -148,7 +148,7 @@ import {
 } from '../translation_graph/types';
 import { stampedPositionName } from './kg';
 import type { ExtractEmission } from './extraction';
-import type { CallbackParamSpec } from './callback_store';
+import type { CallbackParamSpec } from './callback_types';
 import { renderFileArtifact, type RenderFileArtifact } from './file_render';
 import {
   NO_PROVENANCE,

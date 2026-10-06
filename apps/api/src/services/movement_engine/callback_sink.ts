@@ -8,7 +8,6 @@ import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun
 import type { CallbackId } from '../../generated/kysely/automations/Callback';
 import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { ParkedScopeState } from './serialize';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import {
@@ -19,9 +18,8 @@ import {
   callbackUrl,
   mintCallback,
   readCallbackCalls,
-  type CallbackCall,
-  type CallbackParamSpec,
 } from './callback_store';
+import type { CallbackSink } from './host';
 
 /** The adapter-agnostic correlation map's `adapter_type` for a callback await.
  *  A RESERVED engine identity, not a system: the map is keyed on opaque text and
@@ -29,22 +27,7 @@ import {
  *  run-death / race-loss cleanup for free. */
 export const CALLBACK_AWAIT_TYPE = 'callback';
 
-export interface CallbackSink {
-  /** Mint a callback: persist the captured continuation + signature, yield the
-   *  binding's `{ id, url }`. */
-  mint(input: {
-    address: string;
-    params: CallbackParamSpec[];
-    state: ParkedScopeState;
-    singleUse: boolean;
-    expiresAt?: Date;
-  }): Promise<{ id: string; url: string }>;
-  /** The LIVE call ledger — what `cb-[:Called]->` reads and what a re-entered
-   *  `await cb-[:Called]->` re-checks. */
-  calls(callbackId: string): Promise<CallbackCall[]>;
-  /** Register an `await cb-[:Called]->` park so a fire can wake it. */
-  correlateAwait(input: { callbackId: string; address: string }): Promise<void>;
-}
+export type { CallbackSink };
 
 /**
  * The callback half of the resume worker's POLL — the durable backstop behind

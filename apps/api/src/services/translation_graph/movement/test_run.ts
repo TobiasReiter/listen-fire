@@ -29,6 +29,7 @@ import type { TriggerEvent } from '../triggers/types';
 import { loadTriggerById } from '../storage/tg_table';
 import { movementCatalogForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';
+import { inMemoryRawTextStore } from './raw_text_store';
 import { getMovementRow } from './store';
 
 /** A source field the synthetic payload should be keyed by — pulled from the
@@ -168,7 +169,12 @@ export async function runMovementTestRun(
       event,
       teamId: input.teamId,
       catalog: teamCatalog.catalog,
-      host: productionEngineHost({ teamId: input.teamId, catalog: teamCatalog }),
+      // A test run leaves nothing durable behind, its file text included.
+      host: productionEngineHost({
+        teamId: input.teamId,
+        catalog: teamCatalog,
+        rawText: inMemoryRawTextStore(),
+      }),
       dryRun: true,
       writeSink: (w) => writes.push(w),
     });
