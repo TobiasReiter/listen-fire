@@ -190,6 +190,23 @@ describe('work store', () => {
     });
   });
 
+  it('claimDueWork with a teamId claims only that team, leaving other tenants and unowned rows due', async () => {
+    const mine = freshKey('resume_timer');
+    const theirs = freshKey('resume_timer');
+    const unowned = freshKey('resume_timer');
+    const teamId = randomUUID();
+    await enqueueWork({ kind: 'resume_timer', key: mine, teamId, dueAt: at(0) });
+    await enqueueWork({ kind: 'resume_timer', key: theirs, teamId: randomUUID(), dueAt: at(0) });
+    await enqueueWork({ kind: 'resume_timer', key: unowned, dueAt: at(0) });
+
+    const claimed = await claimDueWork({ owner: 'door', limit: 100, leaseMs: LEASE_MS, now: at(1_000), teamId });
+
+    expect(claimed.map((r) => r.key)).toEqual([mine]);
+    expect((await rowByKey(theirs))?.leaseToken).toBeNull();
+    expect((await rowByKey(unowned))?.leaseToken).toBeNull();
+    expect((await claimMine({ owner: 'loop' })).map((r) => r.key).sort()).toEqual([theirs, unowned].sort());
+  });
+
   it('a live lease blocks other owners; a lapsed lease is re-claimable with attempts 2', async () => {
     const key = freshKey('resume_timer');
     await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });

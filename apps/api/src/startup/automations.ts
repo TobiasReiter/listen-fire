@@ -2,20 +2,29 @@
 // a request — the clock, the pollers, the subscription upkeep, and the two
 // ways a parked run wakes up — is a row in one work table, run by one drain.
 //
-// The drain takes no advisory lock: rows are claimed with SKIP LOCKED leases,
-// so every instance may drain at once, and a lease that lapses with a dead
-// process is how its work is recovered (which is why no boot-time orphan sweep
-// exists any more).
+// Rows are claimed with SKIP LOCKED leases, and a lease that lapses with a dead
+// process is how its work is recovered. The unit still takes its advisory lock
+// this release: two processes may resume the same leaf (a deploy's overlap, or
+// two instances) until cross-process write locks exist, and the lock is the
+// switch that retires once they do.
 
 import { neverAsAny } from '../lib/utils/types';
 import { claimLoopTick } from '../lib/worker';
-import { startDrainLoop } from '../services/work/drain';
-import { registerAutomationsWork } from '../services/work/register';
+import {
+  drainPassFailing,
+  setExternalDrainPassRecorder,
+  startDrainLoop,
+  type DrainResult,
+  type StopDrainLoop,
+} from '../services/work/drain';
+import { ensureAutomationsPeriodicWork, registerAutomationsWork } from '../services/work/register';
 import type { WorkerRegistry } from './registry';
 
 type Env = Record<string, string | undefined>;
 
 const DRAIN_MODE_VAR = 'AUTOMATIONS_DRAIN_MODE';
+const DRAIN_WORKER_ID = 'automations.drain';
+const DRAIN_EVERY_MS = 1_000;
 
 /** `loop`: this process drains on a timer. `external`: something outside the
  *  process (a scheduled HTTP tick) drives each pass. */
@@ -28,27 +37,41 @@ function drainMode(env: Env): DrainMode {
   throw new Error(`${DRAIN_MODE_VAR} must be "loop" or "external", not "${raw}".`);
 }
 
-function startDrain(env: Env): void {
+/** The worker pulse one drain pass records, in either mode. */
+function passRecorder(): ((result: DrainResult) => void) | undefined {
+  const recordPass = claimLoopTick();
+  if (!recordPass) return undefined;
+  return (result) => recordPass({ failing: drainPassFailing(result) });
+}
+
+function startDrain(env: Env): StopDrainLoop | undefined {
   const mode = drainMode(env);
   switch (mode) {
     case 'loop': {
-      const recordPass = claimLoopTick();
-      // A pass never throws; a row whose handler failed is what "failing" means here.
-      startDrainLoop({ onPass: (result) => recordPass?.({ failing: result.failed > 0 }) });
-      return;
+      console.warn(`[startup] ${DRAIN_WORKER_ID}: drain mode "loop" (in-process, every ${DRAIN_EVERY_MS} ms)`);
+      const onPass = passRecorder();
+      return startDrainLoop({
+        everyMs: DRAIN_EVERY_MS,
+        ensure: ensureAutomationsPeriodicWork,
+        ...(onPass ? { onPass } : {}),
+      });
     }
     case 'external':
-      return;
+      console.warn(
+        `[startup] ${DRAIN_WORKER_ID}: drain mode "external" (no loop; each POST /api/v1/system/automations/drain is a pass)`,
+      );
+      setExternalDrainPassRecorder(passRecorder());
+      return undefined;
     default:
-      neverAsAny(mode);
+      return neverAsAny(mode);
   }
 }
 
 const automationsWorkers: WorkerRegistry = {
   unit: 'automations',
-  workers: [{ id: 'automations.drain', start: () => startDrain(process.env) }],
+  workers: [{ id: DRAIN_WORKER_ID, start: () => startDrain(process.env) }],
   wire: registerAutomationsWork,
-  lock: false,
+  lock: true,
 };
 
 export { DRAIN_MODE_VAR, automationsWorkers };

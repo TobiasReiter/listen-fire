@@ -33,11 +33,11 @@ let claiming: { id: string; claimed: boolean } | undefined;
  * pulse as both, so it throws out of the unit's startup instead — loudly, and
  * where the fix is (the registry), rather than as a health row that lies.
  */
-function runNamedWorker(id: string, start: () => void): void {
+function runNamedWorker<T>(id: string, start: () => T): T {
   const outer = claiming;
   claiming = { id, claimed: false };
   try {
-    start();
+    return start();
   } finally {
     claiming = outer;
   }

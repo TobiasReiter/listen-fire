@@ -7,8 +7,8 @@
 // database and nothing else. A lock per unit keeps the guarantee that
 // mattered (no worker of a unit runs twice; none of the loops claim rows with
 // SKIP LOCKED, so they are not safe to double-run) and drops the one that
-// never did. A unit whose work is claimed with SKIP LOCKED leases (automations'
-// drain) opts out: every instance may run it.
+// never did. A unit whose work is safe to run on every instance at once may
+// opt out (automations' leased drain will, once cross-process write locks land).
 
 import { ADVISORY_LOCK_SCOPES } from '../constants';
 import { acquireAdvisoryLock } from '../lib/pg';
@@ -51,11 +51,15 @@ interface WorkerPulse {
   idleReason: string | null;
 }
 
+/** Stops a worker's loop and resolves once its in-flight work has wound down. */
+type WorkerStop = () => Promise<void>;
+
 interface RegisteredWorker {
   /** `<unit>.<name>`, stable, and the ONE place this loop is named. */
   id: string;
-  /** Starts the loop. May start none when this deployment has no work for it. */
-  start(): void;
+  /** Starts the loop. May start none when this deployment has no work for it.
+   *  Returns a stop when the loop must wind down before the unit's lock is released. */
+  start(): WorkerStop | void;
   /** This worker's persisted pulse, where it keeps one. */
   pulse?(): Promise<WorkerPulse>;
 }
@@ -71,21 +75,33 @@ interface WorkerRegistry {
   lock?: boolean;
 }
 
-// One signal handler for every unit's lock rather than a pair each: the
-// composed deployment holds five, and Node warns about a leak at ten.
-const releases: Array<() => Promise<void>> = [];
+// One signal handler for every unit's shutdown rather than a pair each: the
+// composed deployment holds five locks, and Node warns about a leak at ten.
+const shutdowns: Array<() => Promise<void>> = [];
 let signalsWired = false;
 
-function releaseOnShutdown(release: () => Promise<void>) {
-  releases.push(release);
+function onShutdown(shutdown: () => Promise<void>) {
+  shutdowns.push(shutdown);
   if (signalsWired) return;
   signalsWired = true;
 
-  const releaseAll = () => {
-    for (const each of releases) void each();
+  const shutdownAll = () => {
+    for (const each of shutdowns) void each();
   };
-  process.on('SIGINT', releaseAll);
-  process.on('SIGTERM', releaseAll);
+  process.on('SIGINT', shutdownAll);
+  process.on('SIGTERM', shutdownAll);
+}
+
+/** The unit's workers stop first, so none is still running when the lock frees. */
+function shutdownUnit(input: { unit: Unit; stops: WorkerStop[]; release?: () => Promise<void> }) {
+  return async () => {
+    await Promise.all(
+      input.stops.map((stop) =>
+        stop().catch((error: unknown) => console.error(`[shutdown] ${input.unit}: a worker failed to stop`, error)),
+      ),
+    );
+    await input.release?.();
+  };
 }
 
 /**
@@ -97,17 +113,22 @@ function runRegistry(registry: WorkerRegistry): void {
   const { unit, workers, wire, lock = true } = registry;
 
   runInBackground(async () => {
+    let release: (() => Promise<void>) | undefined;
     if (lock) {
       console.warn(`[startup] ${unit}: waiting for the background lock...`);
 
-      const { release } = await acquireAdvisoryLock(
+      ({ release } = await acquireAdvisoryLock(
         ADVISORY_LOCK_SCOPES.LISTEN_FIRE_API_APPLICATION,
         BACKGROUND_LOCK_IDS[unit],
-      );
-      releaseOnShutdown(release);
+      ));
     }
 
-    for (const registered of workers) runNamedWorker(registered.id, registered.start);
+    const stops: WorkerStop[] = [];
+    for (const registered of workers) {
+      const stop = runNamedWorker(registered.id, registered.start);
+      if (stop) stops.push(stop);
+    }
+    if (release || stops.length > 0) onShutdown(shutdownUnit({ unit, stops, ...(release ? { release } : {}) }));
     await wire?.();
 
     console.warn(`[startup] ${unit}: background processing started`);
@@ -118,6 +139,7 @@ export {
   BACKGROUND_LOCK_IDS,
   type WorkerPulse,
   type RegisteredWorker,
+  type WorkerStop,
   type WorkerRegistry,
   runRegistry,
 };

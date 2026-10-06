@@ -17,6 +17,8 @@ export interface DrainOptions {
   /** Default leaseMs / 3. `false` disables the timer (tests simulating a hung holder). */
   heartbeatMs?: number | false;
   now?: () => Date;
+  /** Claim only this team's rows (a harness door draining its own delivery). */
+  teamId?: string;
 }
 
 export interface DrainResult {
@@ -24,6 +26,8 @@ export interface DrainResult {
   ran: number;
   recovered: number;
   failed: number;
+  /** The claim itself threw (the database is unreachable): nothing ran, and nothing could. */
+  claimFailed: boolean;
 }
 
 const handlers = new Map<WorkKind, WorkHandler>();
@@ -40,7 +44,7 @@ export function resetWorkHandlersForTests(): void {
 }
 
 function emptyResult(): DrainResult {
-  return { claimed: 0, ran: 0, recovered: 0, failed: 0 };
+  return { claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false };
 }
 
 function addResults(a: DrainResult, b: DrainResult): DrainResult {
@@ -49,7 +53,15 @@ function addResults(a: DrainResult, b: DrainResult): DrainResult {
     ran: a.ran + b.ran,
     recovered: a.recovered + b.recovered,
     failed: a.failed + b.failed,
+    claimFailed: a.claimFailed || b.claimFailed,
   };
+}
+
+/** Whether a pass marks its worker failing. A pass never throws, so a claim
+ *  that could not reach the store, or a row whose handler failed, is what
+ *  "failing" means for a drain. */
+export function drainPassFailing(result: DrainResult): boolean {
+  return result.claimFailed || result.failed > 0;
 }
 
 type RowOutcome = 'ran' | 'recovered' | 'failed';
@@ -159,26 +171,59 @@ async function runRow(input: {
   return isFirstAttempt ? 'ran' : 'recovered';
 }
 
-/** Claim due rows and run each concurrently. Never throws. */
-export async function drainWork(opts: DrainOptions = {}): Promise<DrainResult> {
-  const owner = opts.owner ?? DEFAULT_OWNER;
-  const limit = opts.limit ?? 10;
-  const leaseMs = opts.leaseMs ?? 60_000;
-  const heartbeatMs = opts.heartbeatMs ?? leaseMs / 3;
-  const clock = opts.now ?? (() => new Date());
+interface DrainSettings {
+  owner: string;
+  limit: number;
+  leaseMs: number;
+  heartbeatMs: number | false;
+  clock: () => Date;
+  teamId: string | undefined;
+}
 
-  let rows: WorkRow[];
+function drainSettings(opts: DrainOptions): DrainSettings {
+  const leaseMs = opts.leaseMs ?? 60_000;
+  return {
+    owner: opts.owner ?? DEFAULT_OWNER,
+    limit: opts.limit ?? 10,
+    leaseMs,
+    heartbeatMs: opts.heartbeatMs ?? leaseMs / 3,
+    clock: opts.now ?? (() => new Date()),
+    teamId: opts.teamId,
+  };
+}
+
+/** Undefined when the claim threw: the caller reports it rather than reading it as idle. */
+async function claimRows(settings: DrainSettings, limit: number): Promise<WorkRow[] | undefined> {
+  const { owner, leaseMs, clock, teamId } = settings;
   try {
-    rows = await claimDueWork({ owner, limit, leaseMs, now: clock() });
+    return await claimDueWork({
+      owner,
+      limit,
+      leaseMs,
+      now: clock(),
+      ...(teamId !== undefined ? { teamId } : {}),
+    });
   } catch (error) {
     logger.warn('[work] claim failed', { owner, error });
-    return emptyResult();
+    return undefined;
   }
+}
 
-  const outcomes = await Promise.all(
-    rows.map((row) => runRow({ row, owner, leaseMs, heartbeatMs, clock })),
-  );
+function executeRow(row: WorkRow, settings: DrainSettings): Promise<RowOutcome> {
+  const { owner, leaseMs, heartbeatMs, clock } = settings;
+  return runRow({ row, owner, leaseMs, heartbeatMs, clock });
+}
+
+/** Claim due rows and run each concurrently, resolving once all of them finish. Never throws. */
+export async function drainWork(opts: DrainOptions = {}): Promise<DrainResult> {
+  const settings = drainSettings(opts);
   const result = emptyResult();
+  const rows = await claimRows(settings, settings.limit);
+  if (rows === undefined) {
+    result.claimFailed = true;
+    return result;
+  }
+  const outcomes = await Promise.all(rows.map((row) => executeRow(row, settings)));
   result.claimed = rows.length;
   for (const outcome of outcomes) result[outcome] += 1;
   return result;
@@ -194,7 +239,7 @@ export async function drainUntilIdle(
   for (let pass = 0; pass < maxPasses; pass++) {
     const result = await drainWork({ ...drainOpts, limit });
     total = addResults(total, result);
-    if (result.claimed < limit) break;
+    if (result.claimFailed || result.claimed < limit) break;
   }
   return total;
 }
@@ -202,6 +247,10 @@ export async function drainUntilIdle(
 export interface WorkNotifier {
   notify(): void;
 }
+
+// The always-on loop of this process, when one runs: a notify asks it for an
+// extra pass instead of starting a second, awaiting drain beside it.
+let activeLoop: { kick(): void } | undefined;
 
 function createInProcessNotifier(): WorkNotifier {
   let scheduled = false;
@@ -223,6 +272,10 @@ function createInProcessNotifier(): WorkNotifier {
 
   return {
     notify() {
+      if (activeLoop) {
+        activeLoop.kick();
+        return;
+      }
       if (running) {
         notifiedWhileRunning = true;
         return;
@@ -241,7 +294,8 @@ function createInProcessNotifier(): WorkNotifier {
   };
 }
 
-/** Default: coalesces notifies within a tick and runs drainUntilIdle in-process, fire-and-forget. */
+/** Default: kicks this process's drain loop when one runs; otherwise coalesces
+ *  notifies within a tick and runs drainUntilIdle in-process, fire-and-forget. */
 export const inProcessNotifier: WorkNotifier = createInProcessNotifier();
 
 let notifier: WorkNotifier = inProcessNotifier;
@@ -256,24 +310,165 @@ export function notifyWork(): void {
   notifier.notify();
 }
 
-/** The always-on driver: calls drainUntilIdle every `everyMs` (default 1000). Returns a stop(). */
-export function startDrainLoop(
-  opts: DrainOptions & { everyMs?: number; onPass?: (result: DrainResult) => void } = {},
-): () => void {
-  const { everyMs = 1_000, onPass, ...drainOpts } = opts;
-  let stopped = false;
+export interface DrainLoopOptions extends DrainOptions {
+  /** Pause between passes (default 1000). */
+  everyMs?: number;
+  /** Each pass's claim, plus the outcomes of rows that finished since the previous pass. */
+  onPass?: (result: DrainResult) => void;
+  /** Run before each pass until it succeeds once — the periodic rows, which a
+   *  transient failure at boot would otherwise leave missing until a restart. */
+  ensure?: () => Promise<void>;
+  /** How long stop() waits for running handlers (default 10 s). */
+  stopGraceMs?: number;
+}
+
+/** Stops ticking, releases rows claimed but not started, and resolves once the
+ *  running handlers finish or the grace elapses (their leases then lapse). */
+export type StopDrainLoop = () => Promise<void>;
+
+/**
+ * The always-on driver. Rows run in a pool of at most `limit`: each pass claims
+ * only the free slots and starts those rows without waiting for them, so one
+ * hours-long segment holds one slot, not the whole loop.
+ */
+export function startDrainLoop(opts: DrainLoopOptions = {}): StopDrainLoop {
+  const { everyMs = 1_000, onPass, ensure, stopGraceMs = 10_000, ...drainOpts } = opts;
+  const settings = drainSettings(drainOpts);
+  const inFlight = new Set<Promise<void>>();
+  let settled = emptyResult();
+  let ensured = ensure === undefined;
+  let stopping = false;
+  let stopped: Promise<void> | undefined;
+  let passing: Promise<void> | undefined;
+  let passAgain = false;
+  // The last pass filled every free slot, so more rows may be due than it took.
+  let backlog = false;
   let timer: NodeJS.Timeout | undefined;
 
-  // Chained timeouts, not setInterval: a slow pass must not overlap the next.
-  const tick = async (): Promise<void> => {
-    const result = await drainUntilIdle(drainOpts);
-    onPass?.(result);
-    if (!stopped) timer = setTimeout(() => void tick(), everyMs);
+  const schedule = (ms: number): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => void runPass(), ms);
   };
-  timer = setTimeout(() => void tick(), everyMs);
+
+  const kick = (): void => {
+    if (stopping) return;
+    if (passing) {
+      passAgain = true;
+      return;
+    }
+    schedule(0);
+  };
+
+  const start = (row: WorkRow): void => {
+    const execution: Promise<void> = executeRow(row, settings)
+      .then(
+        (outcome) => {
+          settled[outcome] += 1;
+        },
+        () => {
+          settled.failed += 1;
+        },
+      )
+      .finally(() => {
+        inFlight.delete(execution);
+        if (backlog) kick();
+      });
+    inFlight.add(execution);
+  };
+
+  const releaseUnstarted = async (rows: WorkRow[]): Promise<void> => {
+    for (const row of rows) {
+      if (!row.leaseToken) continue;
+      try {
+        await releaseWork({ id: row.id, leaseToken: row.leaseToken, claimedUpdatedAt: row.updatedAt });
+      } catch (error) {
+        logger.warn('[work] release at stop failed; the lease will lapse instead', {
+          kind: row.kind,
+          key: row.key,
+          error,
+        });
+      }
+    }
+  };
+
+  const pass = async (): Promise<void> => {
+    if (!ensured && ensure) {
+      try {
+        await ensure();
+        ensured = true;
+      } catch (error) {
+        logger.warn('[work] ensuring the periodic rows failed; retrying next pass', { error });
+      }
+    }
+    const result = settled;
+    settled = emptyResult();
+    const room = settings.limit - inFlight.size;
+    backlog = room <= 0;
+    if (room > 0) {
+      const rows = await claimRows(settings, room);
+      if (rows === undefined) {
+        result.claimFailed = true;
+      } else {
+        result.claimed = rows.length;
+        backlog = rows.length === room;
+        if (stopping) await releaseUnstarted(rows);
+        else for (const row of rows) start(row);
+      }
+    }
+    onPass?.(result);
+  };
+
+  const runPass = async (): Promise<void> => {
+    timer = undefined;
+    passing = pass().catch((error: unknown) => {
+      logger.warn('[work] drain pass failed', { error });
+    });
+    await passing;
+    passing = undefined;
+    if (stopping) return;
+    const again = passAgain;
+    passAgain = false;
+    schedule(again ? 0 : everyMs);
+  };
+
+  const handle = { kick };
+  activeLoop = handle;
+  schedule(everyMs);
+
+  const stop = async (): Promise<void> => {
+    stopping = true;
+    clearTimeout(timer);
+    if (activeLoop === handle) activeLoop = undefined;
+    // A pass mid-claim releases what it claims instead of starting it.
+    await passing;
+    let graceTimer: NodeJS.Timeout | undefined;
+    const grace = new Promise<void>((resolve) => {
+      graceTimer = setTimeout(resolve, stopGraceMs);
+    });
+    await Promise.race([Promise.allSettled([...inFlight]), grace]);
+    clearTimeout(graceTimer);
+    if (inFlight.size > 0) {
+      logger.warn('[work] drain stopped with handlers still running; their leases will lapse', {
+        running: inFlight.size,
+      });
+    }
+  };
 
   return () => {
-    stopped = true;
-    clearTimeout(timer);
+    stopped ??= stop();
+    return stopped;
   };
+}
+
+// External mode's worker pulse: the drain worker claims it at boot and each
+// HTTP tick feeds it, so a scheduler that stops calling shows as a stale tick.
+let externalPassRecorder: ((result: DrainResult) => void) | undefined;
+
+export function setExternalDrainPassRecorder(record: ((result: DrainResult) => void) | undefined): void {
+  externalPassRecorder = record;
+}
+
+/** What the HTTP tick calls after each drain, exactly as the loop's onPass. */
+export function recordExternalDrainPass(result: DrainResult): void {
+  externalPassRecorder?.(result);
 }

@@ -89,14 +89,17 @@ export async function ensurePeriodicWork(input: {
 
 /** Claim up to `limit` due rows (due_at <= now AND (lease_until IS NULL OR lease_until < now))
  *  with FOR UPDATE SKIP LOCKED, setting lease_owner/lease_until/lease_token and attempts+1.
- *  `now` drives only the due_at filter; leases live on the database clock. */
+ *  `now` drives only the due_at filter; leases live on the database clock. `teamId`
+ *  narrows the claim to one tenant's rows. */
 export async function claimDueWork(input: {
   owner: string;
   limit: number;
   leaseMs: number;
   now?: Date;
+  teamId?: string;
 }): Promise<WorkRow[]> {
   const now = input.now ?? new Date();
+  const ofTeam = input.teamId === undefined ? sql`` : sql`AND team_id = ${input.teamId}::uuid`;
   // One statement so two drainers cannot race: SKIP LOCKED hands each a disjoint
   // set. MATERIALIZED fixes the locked selection before the update; as an inlined
   // IN-subquery the planner may re-evaluate it and claim more than `limit`.
@@ -105,6 +108,7 @@ export async function claimDueWork(input: {
       SELECT id FROM automations.work
       WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < now())
         AND kind = ANY(${[...WORK_KINDS]}::text[])
+        ${ofTeam}
       ORDER BY due_at
       LIMIT ${input.limit}
       FOR UPDATE SKIP LOCKED

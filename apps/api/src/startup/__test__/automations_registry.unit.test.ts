@@ -1,5 +1,10 @@
 import { ensurePeriodicWork } from '../../services/work/store';
-import { registerWorkHandler, startDrainLoop } from '../../services/work/drain';
+import {
+  recordExternalDrainPass,
+  registerWorkHandler,
+  setExternalDrainPassRecorder,
+  startDrainLoop,
+} from '../../services/work/drain';
 import { WORK_KINDS } from '../../services/work/kinds';
 import { runNamedWorker, workerTick } from '../../lib/worker';
 import { registerAutomationsWork } from '../../services/work/register';
@@ -8,7 +13,7 @@ import { automationsWorkers } from '../automations';
 jest.mock('../../services/work/drain', () => ({
   ...jest.requireActual('../../services/work/drain'),
   registerWorkHandler: jest.fn(),
-  startDrainLoop: jest.fn(() => () => {}),
+  startDrainLoop: jest.fn(() => async () => {}),
 }));
 jest.mock('../../services/work/store', () => ({
   ...jest.requireActual('../../services/work/store'),
@@ -26,20 +31,36 @@ const PERIODIC_KINDS = [
   'timer_sweep',
   'exposed_file_sweep',
   'airtable_webhook_refresh',
+  'run_orphan_sweep',
 ] as const;
+
+const PASS = { claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false };
 
 const originalMode = process.env.AUTOMATIONS_DRAIN_MODE;
 
 afterEach(() => {
   jest.clearAllMocks();
+  setExternalDrainPassRecorder(undefined);
   if (originalMode === undefined) delete process.env.AUTOMATIONS_DRAIN_MODE;
   else process.env.AUTOMATIONS_DRAIN_MODE = originalMode;
 });
 
 describe('the automations registry', () => {
-  it('runs one drain worker, outside any advisory lock', () => {
+  it('runs one drain worker, under the unit lock until cross-process write locks land', () => {
     expect(automationsWorkers.workers.map((each) => each.id)).toEqual(['automations.drain']);
-    expect(automationsWorkers.lock).toBe(false);
+    expect(automationsWorkers.lock).toBe(true);
+  });
+
+  it('hands the registry the loop stop, so shutdown can wind the drain down', () => {
+    delete process.env.AUTOMATIONS_DRAIN_MODE;
+    const stop = automationsWorkers.workers[0].start();
+    expect(stop).toBe(startLoop.mock.results[0]?.value);
+  });
+
+  it('passes the periodic-row ensure to the loop, which retries it', () => {
+    delete process.env.AUTOMATIONS_DRAIN_MODE;
+    automationsWorkers.workers[0].start();
+    expect(startLoop).toHaveBeenCalledWith(expect.objectContaining({ ensure: expect.any(Function) }));
   });
 
   it('starts the drain loop once when no drain mode is set', () => {
@@ -63,11 +84,31 @@ describe('the automations registry', () => {
     const onPass = startLoop.mock.calls[0]?.[0]?.onPass;
     if (!onPass) throw new Error('the drain loop was started without a pass hook');
 
-    onPass({ claimed: 2, ran: 2, recovered: 0, failed: 0 });
+    onPass({ ...PASS, claimed: 2, ran: 2 });
     expect(workerTick(drain.id)?.lastTickAt).toBeInstanceOf(Date);
     expect(workerTick(drain.id)?.failing).toBe(false);
 
-    onPass({ claimed: 1, ran: 0, recovered: 0, failed: 1 });
+    onPass({ ...PASS, claimed: 1, failed: 1 });
+    expect(workerTick(drain.id)?.failing).toBe(true);
+
+    onPass(PASS);
+    expect(workerTick(drain.id)?.failing).toBe(false);
+
+    onPass({ ...PASS, claimFailed: true });
+    expect(workerTick(drain.id)?.failing).toBe(true);
+  });
+
+  it('in external mode, each HTTP tick publishes the same pulse a loop pass would', () => {
+    process.env.AUTOMATIONS_DRAIN_MODE = 'external';
+    const [drain] = automationsWorkers.workers;
+    runNamedWorker(drain.id, drain.start);
+    expect(workerTick(drain.id)).toEqual({ lastTickAt: null, failing: false });
+
+    recordExternalDrainPass({ ...PASS, claimed: 1, ran: 1 });
+    expect(workerTick(drain.id)?.lastTickAt).toBeInstanceOf(Date);
+    expect(workerTick(drain.id)?.failing).toBe(false);
+
+    recordExternalDrainPass({ ...PASS, claimFailed: true });
     expect(workerTick(drain.id)?.failing).toBe(true);
   });
 
@@ -106,6 +147,7 @@ describe('registerAutomationsWork', () => {
       timer_sweep: 30_000,
       exposed_file_sweep: 5 * 60_000,
       airtable_webhook_refresh: 60 * 60_000,
+      run_orphan_sweep: 30_000,
     });
   });
 });
