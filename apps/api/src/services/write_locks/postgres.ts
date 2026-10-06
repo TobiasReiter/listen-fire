@@ -46,6 +46,18 @@ class PostgresSession implements LockSession {
     }
   }
 
+  async unlock(key: string): Promise<void> {
+    const client = await this.client?.catch(() => undefined);
+    if (!client) return;
+    try {
+      await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [key]);
+    } catch (err) {
+      // The effect it guarded is done; failing it now would undo nothing. A
+      // lock this left behind goes when the segment's session ends.
+      logger.warn('[write_locks] unlock failed; the lock stays until the segment ends', { err });
+    }
+  }
+
   async unlockAll(): Promise<void> {
     const pending = this.client;
     this.client = undefined;

@@ -38,9 +38,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 
-import { MovementEngineError } from './errors';
-import { withRunSpendLedger } from '../../lib/run_spend';
 import type { WriteLockHolder, WriteLocks } from '../write_locks/write_locks';
+
+import { withRunSpendLedger } from '../../lib/run_spend';
+import { MovementEngineError } from './errors';
 
 /** The systems that count against a ceiling. One entry per system that has its
  *  own env var below; a system not listed here is simply not capped. */

@@ -592,7 +592,9 @@ describe('the cross-run locks beneath the lock table', () => {
         calls.push([...names]);
         events.push(`acquire ${names.join(',')}`);
       },
-      async release() {},
+      async release(names) {
+        events.push(`release ${(names ?? ['everything']).join(',')}`);
+      },
     };
   }
 
@@ -632,7 +634,70 @@ describe('the cross-run locks beneath the lock table', () => {
       holder.events.push('effect');
     });
     expect(holder.calls).toEqual([[recordLock(system, 'r1').name, typeLockName].sort()]);
-    expect(holder.events).toEqual([expect.stringMatching(/^acquire /), 'effect']);
+    const names = [recordLock(system, 'r1').name, typeLockName].sort();
+    expect(holder.events).toEqual([`acquire ${names.join(',')}`, 'effect', `release ${names.join(',')}`]);
+  });
+
+  it('gives back exactly what it took when the effect throws', async () => {
+    const holder = recordingHolder();
+    const locks = new EffectLocks({ holder });
+    await expect(
+      locks.withLocks([recordLock(system, 'r1')], async () => {
+        throw new Error('the write failed');
+      }),
+    ).rejects.toThrow('the write failed');
+    expect(holder.events).toEqual([
+      `acquire ${recordLock(system, 'r1').name}`,
+      `release ${recordLock(system, 'r1').name}`,
+    ]);
+  });
+
+  it('a nested flow gives back only what it took itself, before the outer flow gives back its own', async () => {
+    const holder = recordingHolder();
+    const locks = new EffectLocks({ holder });
+    await locks.withLocks(companyIdentity, () =>
+      locks.withLocks([...companyIdentity, recordLock(system, 'r1')], async () => undefined),
+    );
+    expect(holder.events).toEqual([
+      `acquire ${typeLockName}`,
+      `acquire ${recordLock(system, 'r1').name}`,
+      `release ${recordLock(system, 'r1').name}`,
+      `release ${typeLockName}`,
+    ]);
+  });
+
+  it('two flows sharing the type lock each take and give back their own count; another run waits for both', async () => {
+    const table = new InMemoryWriteLocks();
+    const holder = table.holder(TEAM_ID);
+    const acquire = jest.spyOn(holder, 'acquire');
+    const release = jest.spyOn(holder, 'release');
+    const locks = new EffectLocks({ holder });
+    const identity = (domain: string) =>
+      identityLocks({
+        system,
+        recordType: 'companies',
+        constraints: { any: [{ all: [{ field: 'domain' }] }] },
+        resolveRecord: { domain },
+        fields: { domain },
+      });
+    let releaseSecond: () => void = () => {};
+    const secondRunning = new Promise<void>((resolve) => (releaseSecond = resolve));
+    const first = locks.withLocks(identity('acme.com'), async () => sleep(5));
+    const second = locks.withLocks(identity('globex.com'), () => secondRunning);
+    await first;
+
+    const otherRun = table.holder(TEAM_ID);
+    let otherGot = false;
+    const otherAcquire = otherRun.acquire([typeLockName]).then(() => (otherGot = true));
+    await sleep(20);
+    expect(otherGot).toBe(false);
+
+    releaseSecond();
+    await second;
+    await otherAcquire;
+    expect(acquire.mock.calls).toEqual([[[typeLockName]], [[typeLockName]]]);
+    expect(release.mock.calls).toEqual([[[typeLockName]], [[typeLockName]]]);
+    await otherRun.release();
   });
 
   it('a flow asking again for names it holds does not take them again', async () => {
@@ -664,6 +729,10 @@ describe('the cross-run locks beneath the lock table', () => {
       });
     await Promise.all([flow('one'), flow('two')]);
     const acquire = `acquire ${recordLock(system, 'r1').name}`;
-    expect(holder.events).toEqual([acquire, 'start one', 'end one', acquire, 'start two', 'end two']);
+    const release = `release ${recordLock(system, 'r1').name}`;
+    expect(holder.events).toEqual([
+      acquire, 'start one', 'end one', release,
+      acquire, 'start two', 'end two', release,
+    ]);
   });
 });

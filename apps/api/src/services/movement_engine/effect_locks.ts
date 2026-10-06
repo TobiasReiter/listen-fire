@@ -31,7 +31,8 @@
 // is, and an identity write only its record type, exclusively. Postgres
 // advisory locks have no notion of "shared within a group", and one lock per
 // key value would be one more lock per write for no gain once the type is
-// held. The segment holds them until it ends.
+// held. Each is let go with the effect's own locks; the segment's end lets go
+// of anything left.
 //
 // Over-locking only costs waiting; under-locking costs a duplicate. So every
 // key here is at least as coarse as any system's own matching: the system is
@@ -146,6 +147,7 @@ export class EffectLocks {
     });
     if (wanted.length === 0) return effect();
     const taken: Gate[] = [];
+    let crossRunHeld: string[] = [];
     try {
       for (const request of wanted) {
         let gate = this.gates.get(request.name);
@@ -159,16 +161,23 @@ export class EffectLocks {
       // After the run's own gates, so the run's flows queue among themselves
       // first and only one of them at a time waits on another run.
       const crossRun = crossRunNames(wanted);
-      if (crossRun.length > 0) await this.holder.acquire(crossRun);
+      if (crossRun.length > 0) {
+        await this.holder.acquire(crossRun);
+        crossRunHeld = crossRun;
+      }
       const holding = new Map(held);
       for (const request of wanted) holding.set(request.name, request.mode);
       return await this.held.run(holding, effect);
     } finally {
-      for (let index = taken.length - 1; index >= 0; index--) {
-        const gate = taken[index]!;
-        gate.release();
-        const name = wanted[index]!.name;
-        if (gate.idle && this.gates.get(name) === gate) this.gates.delete(name);
+      try {
+        if (crossRunHeld.length > 0) await this.holder.release(crossRunHeld);
+      } finally {
+        for (let index = taken.length - 1; index >= 0; index--) {
+          const gate = taken[index]!;
+          gate.release();
+          const name = wanted[index]!.name;
+          if (gate.idle && this.gates.get(name) === gate) this.gates.delete(name);
+        }
       }
     }
   }

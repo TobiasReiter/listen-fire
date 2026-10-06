@@ -151,4 +151,41 @@ describe('InMemoryWriteLocks', () => {
     await c.acquire(['x']);
     await c.release();
   });
+
+  it('gives back named locks one acquire at a time, and lets one go at a count of zero', async () => {
+    const locks = new InMemoryWriteLocks();
+    const a = locks.holder('t');
+    await Promise.all([a.acquire(['x', 'y']), a.acquire(['x'])]);
+
+    const b = locks.holder('t');
+    const bY = tracked(b.acquire(['y']));
+    const bX = tracked(b.acquire(['x']));
+    await a.release(['x', 'y']);
+    await settle();
+    // y's only acquire is given back; x still has one.
+    expect(bY.settled()).toBe(true);
+    expect(bX.settled()).toBe(false);
+
+    await a.release(['x']);
+    await settle();
+    expect(bX.settled()).toBe(true);
+    await a.release();
+    await b.release();
+  });
+
+  it('a failing acquire gives back what that call took', async () => {
+    const locks = new InMemoryWriteLocks({ timeoutMs: 50 });
+    const a = locks.holder('t');
+    await a.acquire(['x']);
+
+    const b = locks.holder('t');
+    await expect(b.acquire(['a', 'x'])).rejects.toMatchObject({
+      message: expect.stringContaining('write lock timeout: x'),
+    });
+    const c = locks.holder('t');
+    const cAcquire = tracked(c.acquire(['a']));
+    await settle();
+    expect(cAcquire.settled()).toBe(true);
+    await Promise.all([a.release(), b.release(), c.release()]);
+  });
 });

@@ -10,22 +10,30 @@ export const DEFAULT_WRITE_LOCK_TIMEOUT_MS = 60_000;
 
 export interface WriteLockHolder {
   /**
-   * Acquire all names exclusively, one at a time in sorted order; reentrant
-   * within the holder. The timeout (`timeoutMs`, default 60_000) applies PER
-   * NAME: rejects MOVENG_RUNTIME 'write lock timeout: <name>'. A cross-holder
-   * deadlock or a lost session rejects loudly too ('write lock deadlock:
-   * <name>', 'write lock session lost: <name>'), never hangs.
+   * Acquire all names exclusively, one at a time in sorted order. Within the
+   * holder a name is counted, not queued: a second acquire of a name the
+   * holder holds (or is waiting for) shares it, and the lock is let go when
+   * every acquire of it has been released. The timeout (`timeoutMs`, default
+   * 60_000) applies PER NAME: rejects MOVENG_RUNTIME 'write lock timeout:
+   * <name>'. A cross-holder deadlock or a lost session rejects loudly too
+   * ('write lock deadlock: <name>', 'write lock session lost: <name>'), never
+   * hangs.
    *
-   * Names taken before a failing one stay held until `release()`, so callers
-   * release in `finally`. Sorting orders the names of ONE call only: two
-   * holders that acquire overlapping sets across several calls can still
-   * deadlock.
+   * All or nothing: a failing acquire gives back what that call took, so a
+   * caller releases only after an acquire that resolved. Sorting orders the
+   * names of ONE call only: two holders that acquire overlapping sets across
+   * several calls can still deadlock.
    */
   acquire(names: readonly string[]): Promise<void>;
-  /** Release everything and drop the underlying session. Idempotent. Waits for
-   *  any acquire still in flight on this holder, so a lock granted after the
-   *  release began is released too rather than leaked. */
-  release(): Promise<void>;
+  /**
+   * With `names`: give back one count of each, as one earlier `acquire(names)`
+   * took them, in reverse order; a name whose count reaches zero is unlocked.
+   *
+   * Without: release everything and drop the underlying session. Idempotent.
+   * Waits for any acquire still in flight on this holder, so a lock granted
+   * after the release began is released too rather than leaked.
+   */
+  release(names?: readonly string[]): Promise<void>;
 }
 
 export interface WriteLocks {
@@ -56,16 +64,24 @@ export function writeLockSessionLost(name?: string): MovementEngineError {
  *  to drop every lock it took. */
 export interface LockSession {
   lock(key: string, name: string): Promise<void>;
+  unlock(key: string): Promise<void>;
   unlockAll(): Promise<void>;
   /** Throws when the locks taken so far may no longer be held. */
   assertIntact(): void;
+}
+
+/** One name the holder holds or waits for, and how many acquires share it. */
+interface Holding {
+  count: number;
+  ready: Promise<void>;
+  granted: boolean;
 }
 
 export class ScopedHolder implements WriteLockHolder {
   // Pending as well as granted, so two concurrent acquires of one name within
   // the holder share a single wait instead of the second queueing behind the
   // first (which would deadlock the in-memory gate).
-  private readonly taken = new Map<string, Promise<void>>();
+  private readonly holdings = new Map<string, Holding>();
   private readonly inFlight = new Set<Promise<void>>();
 
   constructor(
@@ -83,37 +99,67 @@ export class ScopedHolder implements WriteLockHolder {
 
   private async acquireSorted(names: readonly string[]): Promise<void> {
     // Without this a re-acquire of a name taken before the session dropped
-    // would be skipped as reentrant, and the write would run unlocked.
+    // would share the stale holding, and the write would run unlocked.
     this.session.assertIntact();
-    // A total order on names means two holders wanting overlapping sets can
-    // never each hold what the other waits for.
-    for (const name of [...new Set(names)].sort()) {
-      const key = lockKey(this.scope, name);
-      const existing = this.taken.get(key);
-      if (existing) {
-        await existing;
-        continue;
+    const counted: string[] = [];
+    try {
+      // A total order on names means two holders wanting overlapping sets can
+      // never each hold what the other waits for.
+      for (const name of sortedNames(names)) {
+        const key = lockKey(this.scope, name);
+        let holding = this.holdings.get(key);
+        if (holding === undefined) {
+          const ready = this.session.lock(key, name);
+          const fresh: Holding = { count: 0, ready, granted: false };
+          ready.then(
+            () => (fresh.granted = true),
+            () => undefined,
+          );
+          holding = fresh;
+          this.holdings.set(key, holding);
+        }
+        holding.count += 1;
+        counted.push(name);
+        await holding.ready;
       }
-      const taking = this.session.lock(key, name);
-      this.taken.set(key, taking);
-      taking.catch(() => {
-        if (this.taken.get(key) === taking) this.taken.delete(key);
-      });
-      await taking;
+    } catch (err) {
+      await this.giveBack(counted);
+      throw err;
     }
   }
 
-  async release(): Promise<void> {
+  async release(names?: readonly string[]): Promise<void> {
+    if (names !== undefined) {
+      await this.giveBack(sortedNames(names));
+      return;
+    }
     await Promise.allSettled([...this.inFlight]);
-    this.taken.clear();
+    this.holdings.clear();
     await this.session.unlockAll();
   }
+
+  private async giveBack(names: readonly string[]): Promise<void> {
+    for (const name of [...names].reverse()) {
+      const key = lockKey(this.scope, name);
+      const holding = this.holdings.get(key);
+      // Gone already: a whole release ran in between.
+      if (holding === undefined) continue;
+      holding.count -= 1;
+      if (holding.count > 0) continue;
+      this.holdings.delete(key);
+      if (holding.granted) await this.session.unlock(key);
+    }
+  }
+}
+
+function sortedNames(names: readonly string[]): string[] {
+  return [...new Set(names)].sort();
 }
 
 type Gates = Map<string, Promise<void>>;
 
 class InMemorySession implements LockSession {
-  private readonly opens: Array<() => void> = [];
+  private readonly opens = new Map<string, () => void>();
 
   constructor(
     private readonly gates: Gates,
@@ -129,13 +175,14 @@ class InMemorySession implements LockSession {
     void tail.then(() => {
       if (this.gates.get(key) === tail) this.gates.delete(key);
     });
-    this.opens.push(open);
+    this.opens.set(key, open);
 
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         // Opening our own gate keeps the chain moving: whoever queued behind
         // us still waits for `prior`, then passes straight through.
         open();
+        this.opens.delete(key);
         reject(writeLockTimeout(name));
       }, this.timeoutMs);
       void prior.then(() => {
@@ -145,8 +192,14 @@ class InMemorySession implements LockSession {
     });
   }
 
+  async unlock(key: string): Promise<void> {
+    this.opens.get(key)?.();
+    this.opens.delete(key);
+  }
+
   async unlockAll(): Promise<void> {
-    for (const open of this.opens.splice(0)) open();
+    for (const open of this.opens.values()) open();
+    this.opens.clear();
   }
 
   assertIntact(): void {}

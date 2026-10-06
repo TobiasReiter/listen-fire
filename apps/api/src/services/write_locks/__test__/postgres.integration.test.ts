@@ -210,4 +210,37 @@ describe('PostgresWriteLocks', () => {
     const c = holderOf(locks, scope);
     await c.acquire(['record attio 1']);
   });
+
+  it('counts two acquires of one name on one session and unlocks only at the last release', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const scope = randomUUID();
+    const a = holderOf(locks, scope);
+    const b = holderOf(locks, scope);
+
+    await Promise.all([a.acquire(['identity attio companies']), a.acquire(['identity attio companies'])]);
+    const pid = await backendPidOf(a);
+    expect(await advisoryLockCount(pid)).toBe(1);
+
+    const bAcquire = b.acquire(['identity attio companies']);
+    const bState = tracked(bAcquire);
+    await a.release(['identity attio companies']);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await advisoryLockCount(pid)).toBe(1);
+    expect(bState.settled()).toBe(false);
+
+    await a.release(['identity attio companies']);
+    expect(await advisoryLockCount(pid)).toBe(0);
+    await bAcquire;
+  });
+
+  it('releasing named locks keeps the others and the session', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const a = holderOf(locks, randomUUID());
+
+    await a.acquire(['record attio 1', 'record attio 2', 'record attio 3']);
+    const pid = await backendPidOf(a);
+    await a.release(['record attio 1', 'record attio 3']);
+    expect(await advisoryLockCount(pid)).toBe(1);
+    expect(await backendPidOf(a)).toBe(pid);
+  });
 });
