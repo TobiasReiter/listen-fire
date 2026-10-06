@@ -17,6 +17,7 @@ import type { default as MovementTable } from './Movement';
 import type { default as MovementIssueTable } from './MovementIssue';
 import type { default as PhoneNumberTable } from './PhoneNumber';
 import type { default as TeamSettingsTable } from './TeamSettings';
+import type { default as WorkTable } from './Work';
 import type { default as CallbackTable } from './Callback';
 import type { default as TriggerRunTable } from './TriggerRun';
 import type { default as TriggerTable } from './Trigger';
@@ -64,6 +65,8 @@ export default interface AutomationsSchema {
   phone_number: PhoneNumberTable;
 
   team_settings: TeamSettingsTable;
+
+  work: WorkTable;
 
   callback: CallbackTable;
 

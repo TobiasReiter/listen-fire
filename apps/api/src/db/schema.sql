@@ -3931,6 +3931,27 @@ ALTER TABLE ONLY automations.parked_run
 CREATE INDEX parked_run_run_id_idx ON automations.parked_run USING btree (run_id);
 CREATE INDEX parked_run_timer_wake_idx ON automations.parked_run (wake_at) WHERE park_reason = 'timer' AND status = 'parked';
 
+-- Deferred automations work. One row per unit of work; deleted on completion
+-- (or rescheduled when interval_ms is set). The lease is what makes claiming
+-- safe across many drainers; a row whose lease has lapsed is re-claimable and
+-- its handler's recover path runs instead of run.
+CREATE TABLE automations.work (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_id uuid,
+    kind text NOT NULL,
+    key text NOT NULL UNIQUE,
+    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    due_at timestamptz NOT NULL DEFAULT now(),
+    interval_ms integer,
+    attempts integer NOT NULL DEFAULT 0,
+    lease_owner text,
+    lease_until timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX work_due_idx ON automations.work (due_at);
+CREATE INDEX work_team_idx ON automations.work (team_id) WHERE team_id IS NOT NULL;
+
 -- join_pending — the per-frame PENDING-COUNT (§5.4): for each parallel / fan-out
 -- JOIN frame with ≥1 parked descendant, the number of its child branches still
 -- unresolved. "A frame is parked iff pending > 0." Resolving a child is the

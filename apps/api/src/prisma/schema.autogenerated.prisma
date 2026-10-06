@@ -648,6 +648,25 @@ model AutomationsWebhookSubscription {
   @@schema("automations")
 }
 
+model Work {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId     String?   @map("team_id") @db.Uuid
+  kind       String
+  key        String    @unique
+  payload    Json      @default("{}")
+  dueAt      DateTime  @default(now()) @map("due_at") @db.Timestamptz(6)
+  intervalMs Int?      @map("interval_ms")
+  attempts   Int       @default(0)
+  leaseOwner String?   @map("lease_owner")
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([dueAt], map: "work_due_idx")
+  @@map("work")
+  @@schema("automations")
+}
+
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model ApiKey {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
