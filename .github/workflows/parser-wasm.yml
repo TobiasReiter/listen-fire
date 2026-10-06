@@ -1,0 +1,40 @@
+name: parser-wasm
+# Rebuilds the committed parser artifact and fails if its bytes differ: the
+# repo ships movement_parser.wasm so the pnpm dev loop needs no Rust, and this
+# proves the shipped bytes are the crate's.
+on:
+  pull_request:
+    paths: &parser-paths
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/build-parser-wasm.sh"
+      - "packages/movement-lang/wasm/movement_parser.wasm"
+      - ".github/workflows/parser-wasm.yml"
+  push:
+    branches:
+      - main
+    paths: *parser-paths
+
+jobs:
+  rebuild-matches-committed:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      # rustup reads rust-toolchain.toml and installs the pinned compiler and
+      # the wasm target on first use.
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Rebuild and compare
+        run: |
+          committed=$(sha256sum packages/movement-lang/wasm/movement_parser.wasm | cut -d' ' -f1)
+          ./scripts/build-parser-wasm.sh
+          rebuilt=$(sha256sum packages/movement-lang/wasm/movement_parser.wasm | cut -d' ' -f1)
+          echo "committed $committed"
+          echo "rebuilt   $rebuilt"
+          if [ "$committed" != "$rebuilt" ]; then
+            echo "::error::movement_parser.wasm is not what the crate builds; run scripts/build-parser-wasm.sh and commit the result"
+            exit 1
+          fi

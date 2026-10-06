@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["crates/movement-parser"]
+
+# The committed WASM artifact is built with this profile; the CI check
+# rebuilds it and compares bytes, so changing it means rebuilding and
+# committing the artifact in the same change.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
