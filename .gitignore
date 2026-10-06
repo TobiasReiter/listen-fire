@@ -68,6 +68,10 @@ apps/chrome-extension/dist/
 # build (and on demand: `pnpm --filter story-view bundle`), never pinned.
 apps/api/public/story/
 
+# The parser artifact, copied from packages/movement-lang/wasm by
+# apps/web/next.config.ts on every `next dev` / `next build`.
+apps/web/public/movement_parser.wasm
+
 # Fake-channels dev-loop store (recreated by seedDefaults on boot)
 apps/fake-channels/test-harness-data/fake-channels.db
 

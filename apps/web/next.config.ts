@@ -1,7 +1,17 @@
 import type { NextConfig } from 'next';
 import { withSentryConfig } from '@sentry/nextjs';
+import fs from 'fs';
 import path from 'path';
 import { apiProxyRewrites } from './src/lib/api-proxy';
+
+// The browser fetches the movement parser from public/ (src/lib/parser-provider.tsx).
+// Copied here, where `next dev` and `next build` both pass, rather than by a
+// webpack asset rule: the loader is CommonJS shared with the api, so it cannot
+// name the file through `new URL(…, import.meta.url)`.
+fs.copyFileSync(
+  require.resolve('movement-lang/wasm/movement_parser.wasm'),
+  path.join(__dirname, 'public', 'movement_parser.wasm'),
+);
 
 // The SERVER-side rewrite target, read at run time: one prebuilt image runs
 // against any API. `NEXT_PUBLIC_API_URL` stays the escape hatch for a split
