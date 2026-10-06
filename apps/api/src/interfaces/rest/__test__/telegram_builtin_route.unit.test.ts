@@ -21,6 +21,7 @@ import type { AddressInfo } from 'node:net';
 const handleSharedBotInbound = jest.fn();
 const drainUntilIdle = jest.fn();
 const notifyWork = jest.fn();
+const awaitHarnessWorkSettled = jest.fn();
 
 jest.mock('../../../services/work/drain', () => ({
   drainUntilIdle: (input: unknown) => drainUntilIdle(input),
@@ -29,6 +30,10 @@ jest.mock('../../../services/work/drain', () => ({
 
 jest.mock('../../../services/webhook_sync/telegram_builtin', () => ({
   handleSharedBotInbound: (raw: unknown) => handleSharedBotInbound(raw),
+}));
+
+jest.mock('../../../services/work/harness', () => ({
+  awaitHarnessWorkSettled: (teamIds: string[]) => awaitHarnessWorkSettled(teamIds),
 }));
 
 jest.mock('../../../services/logger', () => ({
@@ -67,6 +72,7 @@ beforeEach(() => {
   handleSharedBotInbound.mockReset();
   drainUntilIdle.mockReset().mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0 });
   notifyWork.mockReset();
+  awaitHarnessWorkSettled.mockReset().mockResolvedValue(undefined);
   // No secret configured + the explicit unsigned opt-in → the door is open, so
   // the tests below are about the ack boundary rather than the gate (the gate
   // has its own suite in services/webhook_sync/__test__/telegram-shared-bot).
@@ -132,6 +138,7 @@ describe('POST /builtin — test-harness deliveries stay synchronous', () => {
       enqueueDeferred: async () => {
         order.push('enqueue');
         return {
+          teamIds: ['team-A', 'team-B'],
           readOutcome: async () => {
             order.push('read');
             return { ok: true, classification: 'message', routedTeamIds: ['team-B'] };
@@ -144,9 +151,14 @@ describe('POST /builtin — test-harness deliveries stay synchronous', () => {
       return { claimed: 1, ran: 1, recovered: 0, failed: 0 };
     });
 
+    awaitHarnessWorkSettled.mockImplementation(async () => {
+      order.push('settle');
+    });
+
     const res = await post(UPDATE);
 
-    expect(order).toEqual(['enqueue', 'drain', 'read']);
+    expect(order).toEqual(['enqueue', 'drain', 'settle', 'read']);
+    expect(awaitHarnessWorkSettled).toHaveBeenCalledWith(['team-A', 'team-B']);
     expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door' });
     expect(notifyWork).not.toHaveBeenCalled();
     expect(res.status).toBe(200);

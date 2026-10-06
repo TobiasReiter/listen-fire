@@ -28,6 +28,10 @@ import {
 } from './event_store';
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import { SECOND } from '../../../constants';
+import { isOrphanedRunningRun } from '../runs/trigger_run';
+import { settleUnresumableRun } from '../../interaction/run_failure';
 
 /** One trigger's durable receipt for one inbound event — the handoff between
  *  the capture half (pre-ack) and the dispatch half (post-ack), carried as the
@@ -234,7 +238,11 @@ export async function dispatchCapturedTriggerEvent(input: {
 const capturedTriggerEventSchema = z.object({
   triggerId: z.custom<TriggerId>((value) => typeof value === 'string'),
   teamId: z.custom<TeamId>((value) => typeof value === 'string'),
-  triggerEvent: triggerEventSchema,
+  // A source's own timestamp may carry an offset; the receipt is replayed as
+  // received, so the row must accept whatever capture accepted.
+  triggerEvent: triggerEventSchema.extend({
+    occurredAt: z.string().datetime({ offset: true }).optional(),
+  }),
   storedEventId: z.string().optional(),
   duplicate: z.boolean(),
 });
@@ -252,20 +260,6 @@ function parseCapturedTriggerEvent(payload: unknown): CapturedTriggerEvent {
   };
 }
 
-/** One work row per receipt that still needs a run. Keyed on the receipt, so a
- *  re-enqueue of the same receipt collapses onto the row already waiting. */
-export async function enqueueCapturedEvents(captured: CapturedTriggerEvent[]): Promise<void> {
-  for (const receipt of captured) {
-    if (receipt.duplicate) continue;
-    await enqueueWork({
-      kind: 'dispatch_event',
-      key: `dispatch_event:${receipt.storedEventId ?? randomUUID()}`,
-      teamId: receipt.teamId,
-      payload: receipt,
-    });
-  }
-}
-
 async function receiptStatus(storedEventId: string): Promise<string | undefined> {
   const row = await getAutomationsQb(['trigger_event'])
     .selectFrom('trigger_event')
@@ -275,27 +269,85 @@ async function receiptStatus(storedEventId: string): Promise<string | undefined>
   return row?.status;
 }
 
+/** One work row per receipt that still needs a run. Keyed on the receipt, so a
+ *  re-enqueue of the same receipt collapses onto the row already waiting. A
+ *  redelivery of a receipt that never ran (still `received`) queues it again:
+ *  its row may have been lost after the receipt landed. */
+export async function enqueueCapturedEvents(captured: CapturedTriggerEvent[]): Promise<void> {
+  for (const receipt of captured) {
+    if (receipt.duplicate) {
+      if (receipt.storedEventId === undefined) continue;
+      if ((await receiptStatus(receipt.storedEventId)) !== 'received') continue;
+    }
+    await enqueueWork({
+      kind: 'dispatch_event',
+      key: `dispatch_event:${receipt.storedEventId ?? randomUUID()}`,
+      teamId: receipt.teamId,
+      // The row runs the stored receipt, which is not itself a redelivery.
+      payload: { ...receipt, duplicate: false },
+    });
+  }
+}
+
+// A segment beats every 5s (the recorder's live-trace tick); a minute of
+// silence is a dead process, not a slow one. Same rule as timer_resume.ts.
+const ORPHAN_AFTER = 60 * SECOND;
+
+const UNFINISHED_SEGMENT = 'segment did not complete: lease lapsed or the previous attempt failed';
+
+/** The latest run started from this receipt (a replay starts another). */
+async function runForReceipt(
+  storedEventId: string,
+): Promise<{ id: TriggerRunId; status: string } | undefined> {
+  return getAutomationsQb(['trigger_run'])
+    .selectFrom('trigger_run')
+    .where('trigger_event_id', '=', storedEventId as TriggerEventId)
+    .orderBy('started_at', 'desc')
+    .select(['id', 'status'])
+    .executeTakeFirst();
+}
+
 /** Runs one captured receipt. A dispatch failure is recorded on the receipt,
  *  not thrown, so the row completes rather than re-running a failed movement. */
 export const dispatchEventHandler: WorkHandler = {
   async run(payload) {
-    await dispatchCapturedTriggerEvent({ captured: parseCapturedTriggerEvent(payload) });
-  },
-
-  // A re-claim after a lapsed lease or a throw. A receipt already marked
-  // dispatched has its run; dispatching again would run the movement twice.
-  // trigger_run records no link back to its receipt, so a run cut off before
-  // the receipt was marked cannot be told apart from one that never started:
-  // that case dispatches again.
-  async recover(payload, ctx) {
     const captured = parseCapturedTriggerEvent(payload);
+    // A row re-armed by a redelivery while its first run was going runs again
+    // once that run settles; by then the receipt says it already ran.
     if (
       captured.storedEventId !== undefined &&
-      (await receiptStatus(captured.storedEventId)) === 'dispatched'
+      (await receiptStatus(captured.storedEventId)) !== 'received'
     ) {
       return;
     }
-    await dispatchEventHandler.run(payload, ctx);
+    await dispatchCapturedTriggerEvent({ captured });
+  },
+
+  // A re-claim after a lapsed lease or a throw. The first attempt may have
+  // started a run: an orphaned one fails with its receipt, a live one is left
+  // to finish where it runs, and a settled or parked one means the dispatch
+  // happened and only the receipt's mark was lost.
+  async recover(payload, ctx) {
+    const captured = parseCapturedTriggerEvent(payload);
+    const { storedEventId } = captured;
+    if (storedEventId === undefined) {
+      await dispatchEventHandler.run(payload, ctx);
+      return;
+    }
+    if ((await receiptStatus(storedEventId)) === 'dispatched') return;
+    const run = await runForReceipt(storedEventId);
+    if (run === undefined) {
+      await dispatchEventHandler.run(payload, ctx);
+      return;
+    }
+    if (run.status === 'running') {
+      if (await isOrphanedRunningRun(run.id, { now: ctx.now, staleAfterMs: ORPHAN_AFTER })) {
+        await settleUnresumableRun({ runId: run.id, reason: UNFINISHED_SEGMENT });
+        await markTriggerEventFailed(storedEventId, UNFINISHED_SEGMENT);
+      }
+      return;
+    }
+    await markTriggerEventDispatched(storedEventId);
   },
 };
 

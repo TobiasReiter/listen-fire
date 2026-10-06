@@ -30,6 +30,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import type { WebhookSubscriptionId } from '../../../generated/kysely/automations/WebhookSubscription';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
@@ -246,13 +247,50 @@ async function runsFor(triggerId: TriggerId) {
   return getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('trigger_id', '=', triggerId)
-    .select(['id', 'status'])
+    .select(['id', 'status', 'failure_reason', 'trigger_event_id'])
     .execute();
 }
+
+/** Capture one delivery and return its receipt id and its row's payload, undrained. */
+async function capturedUndrained(teamId: TeamId): Promise<{ receiptId: string; payload: unknown }> {
+  const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+  await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
+  const [receipt] = await receipts(teamId);
+  const [row] = await workRows(teamId, 'dispatch_event');
+  return { receiptId: receipt.id, payload: row.payload };
+}
+
+/** What a first attempt that died mid-run leaves: a running row naming the receipt. */
+async function seedRunningRun(input: {
+  teamId: TeamId;
+  triggerId: TriggerId;
+  receiptId: string;
+  status: string;
+  lastHeartbeatAt: Date;
+}): Promise<TriggerRunId> {
+  const runId = randomUUID() as TriggerRunId;
+  await getAutomationsQb(['trigger_run'])
+    .insertInto('trigger_run')
+    .values({
+      id: runId,
+      team_id: input.teamId,
+      trigger_id: input.triggerId,
+      trigger_type: 'webhook',
+      status: input.status,
+      started_at: input.lastHeartbeatAt,
+      last_heartbeat_at: input.lastHeartbeatAt,
+      trigger_event_id: input.receiptId as TriggerEventId,
+    })
+    .execute();
+  return runId;
+}
+
+const RECOVER_CTX = () => ({ ...testWorkContext(), attempts: 2 });
 
 describe('inbound webhook deliveries run through the work table (real DB)', () => {
   let teamId: TeamId;
   let slackEvents: DiscriminableEvent[];
+  let attioEvents: DiscriminableEvent[];
 
   beforeAll(() => {
     resetWorkHandlersForTests();
@@ -284,8 +322,9 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       gaps: [],
     });
     slackEvents = [];
+    attioEvents = [ATTIO_EVENT];
     mockedResolve.mockImplementation(async ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'attio') return makeFakeAdapter('attio', () => [ATTIO_EVENT]);
+      if (adapterType === 'attio') return makeFakeAdapter('attio', () => attioEvents);
       if (adapterType === 'slack') return makeFakeAdapter('slack', () => slackEvents);
       throw new Error(`test: no fake for '${adapterType}'`);
     });
@@ -314,7 +353,48 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     await drainUntilIdle({ owner: 'test' });
 
     expect((await receipts(teamId))[0].status).toBe('dispatched');
+    const runs = await runsFor(triggerId);
+    expect(runs).toHaveLength(1);
+    // The run names the receipt it came from.
+    expect(runs[0].trigger_event_id).toBe(receipt.id);
+    expect(await workRows(teamId, 'dispatch_event')).toHaveLength(0);
+  });
+
+  it('a source timestamp with an offset still runs', async () => {
+    const triggerId = await seedMovementTrigger(teamId);
+    const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+    attioEvents = [{ ...ATTIO_EVENT, occurredAt: '2026-10-06T12:00:00+02:00' }];
+
+    const result = await handleInboundWebhook(attioDelivery(subscriptionId));
+    await result.enqueueDeferred!();
+    const drained = await drainUntilIdle({ owner: 'test' });
+
+    expect(drained.failed).toBe(0);
+    expect((await receipts(teamId))[0].status).toBe('dispatched');
     expect(await runsFor(triggerId)).toHaveLength(1);
+  });
+
+  it('a redelivery of a receipt that never ran queues its lost row again', async () => {
+    const triggerId = await seedMovementTrigger(teamId);
+    const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+    attioEvents = [{ ...ATTIO_EVENT, idempotencyKey: 'delivery-1' }];
+
+    await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
+    const [receipt] = await receipts(teamId);
+    // The row is lost after the receipt landed.
+    await getAutomationsQb(['work']).deleteFrom('work').where('team_id', '=', teamId).execute();
+
+    await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
+
+    expect(await receipts(teamId)).toHaveLength(1);
+    const rows = await workRows(teamId, 'dispatch_event');
+    expect(rows.map((r) => r.key)).toEqual([`dispatch_event:${receipt.id}`]);
+    await drainUntilIdle({ owner: 'test' });
+    expect((await receipts(teamId))[0].status).toBe('dispatched');
+    expect(await runsFor(triggerId)).toHaveLength(1);
+
+    // Once it ran, a further redelivery queues nothing.
+    await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
     expect(await workRows(teamId, 'dispatch_event')).toHaveLength(0);
   });
 
@@ -387,5 +467,63 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
 
     expect(mockedDispatch).not.toHaveBeenCalled();
     expect(await runsFor(triggerId)).toHaveLength(1);
+  });
+
+  describe('dispatchEventHandler.recover finds the run its first attempt started', () => {
+    it('no run yet: dispatches', async () => {
+      const triggerId = await seedMovementTrigger(teamId);
+      const { receiptId, payload } = await capturedUndrained(teamId);
+
+      await dispatchEventHandler.recover!(payload, RECOVER_CTX());
+
+      expect(mockedDispatch).toHaveBeenCalledTimes(1);
+      expect((await receipts(teamId))[0].status).toBe('dispatched');
+      const runs = await runsFor(triggerId);
+      expect(runs).toHaveLength(1);
+      expect(runs[0].trigger_event_id).toBe(receiptId);
+    });
+
+    it('an orphaned running run: fails the run and the receipt, without dispatching', async () => {
+      const triggerId = await seedMovementTrigger(teamId);
+      const { receiptId, payload } = await capturedUndrained(teamId);
+      const runId = await seedRunningRun({
+        teamId,
+        triggerId,
+        receiptId,
+        status: 'running',
+        lastHeartbeatAt: new Date(Date.now() - 10 * 60_000),
+      });
+
+      await dispatchEventHandler.recover!(payload, RECOVER_CTX());
+
+      expect(mockedDispatch).not.toHaveBeenCalled();
+      const [run] = await runsFor(triggerId);
+      expect(run).toMatchObject({ id: runId, status: 'failed' });
+      expect(run.failure_reason).toContain('segment did not complete');
+      expect((await receipts(teamId))[0].status).toBe('failed');
+    });
+
+    it('a live running run: leaves it to finish, without dispatching', async () => {
+      const triggerId = await seedMovementTrigger(teamId);
+      const { receiptId, payload } = await capturedUndrained(teamId);
+      await seedRunningRun({ teamId, triggerId, receiptId, status: 'running', lastHeartbeatAt: new Date() });
+
+      await dispatchEventHandler.recover!(payload, RECOVER_CTX());
+
+      expect(mockedDispatch).not.toHaveBeenCalled();
+      expect(await runsFor(triggerId)).toEqual([expect.objectContaining({ status: 'running' })]);
+      expect((await receipts(teamId))[0].status).toBe('received');
+    });
+
+    it('a parked or settled run: marks the receipt dispatched, without dispatching', async () => {
+      const triggerId = await seedMovementTrigger(teamId);
+      const { receiptId, payload } = await capturedUndrained(teamId);
+      await seedRunningRun({ teamId, triggerId, receiptId, status: 'parked', lastHeartbeatAt: new Date() });
+
+      await dispatchEventHandler.recover!(payload, RECOVER_CTX());
+
+      expect(mockedDispatch).not.toHaveBeenCalled();
+      expect((await receipts(teamId))[0].status).toBe('dispatched');
+    });
   });
 });

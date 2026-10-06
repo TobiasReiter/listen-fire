@@ -33,6 +33,7 @@ import OpsSeverity from '../../../generated/kysely/public/OpsSeverity';
 import { OpsDetailLevel } from '../../../lib/ops/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerEvent } from '../triggers/types';
 
 export type TriggerRunTriggerType =
@@ -64,6 +65,9 @@ export interface TriggerRunFiring {
    * mints a new id, as before.
    */
   existingRunId?: TriggerRunId;
+  /** The stored inbound receipt this firing was dispatched from, when there
+   *  was one — how a re-claimed dispatch finds the run it already started. */
+  triggerEventId?: TriggerEventId;
 }
 
 type StepStatus = 'success' | 'partial' | 'failed';
@@ -258,6 +262,7 @@ export class TriggerRunRecorder {
           dry_run: this.firing.dryRun ?? false,
           started_at: this.startedAt,
           last_heartbeat_at: new Date(),
+          trigger_event_id: this.firing.triggerEventId ?? null,
         })
         .onConflict((oc) => oc.column('id').doNothing())
         .execute();
@@ -722,6 +727,7 @@ export class TriggerRunRecorder {
             completed_at: terminal.completedAt,
             failed_at: terminal.failedAt,
             failure_reason: terminal.failureReason,
+            trigger_event_id: this.firing.triggerEventId ?? null,
           })
           .onConflict((oc) =>
             oc.column('id').doUpdateSet({

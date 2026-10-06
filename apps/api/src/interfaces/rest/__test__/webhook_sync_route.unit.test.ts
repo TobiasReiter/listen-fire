@@ -16,6 +16,7 @@ import type { AddressInfo } from 'node:net';
 const handleInboundWebhook = jest.fn();
 const drainUntilIdle = jest.fn();
 const notifyWork = jest.fn();
+const awaitHarnessWorkSettled = jest.fn();
 
 jest.mock('../../../services/webhook_sync/handler', () => ({
   handleInboundWebhook: (input: unknown) => handleInboundWebhook(input),
@@ -24,6 +25,10 @@ jest.mock('../../../services/webhook_sync/handler', () => ({
 jest.mock('../../../services/work/drain', () => ({
   drainUntilIdle: (input: unknown) => drainUntilIdle(input),
   notifyWork: () => notifyWork(),
+}));
+
+jest.mock('../../../services/work/harness', () => ({
+  awaitHarnessWorkSettled: (teamIds: string[]) => awaitHarnessWorkSettled(teamIds),
 }));
 
 jest.mock('../../../services/logger', () => ({
@@ -112,6 +117,7 @@ describe('POST /:provider/:subscriptionId — test-harness deliveries', () => {
       enqueueDeferred: async () => {
         order.push('enqueue');
         return {
+          teamIds: ['team-1'],
           readOutcome: async () => {
             order.push('read');
             return {
@@ -126,10 +132,15 @@ describe('POST /:provider/:subscriptionId — test-harness deliveries', () => {
       order.push('drain');
       return { claimed: 1, ran: 1, recovered: 0, failed: 0 };
     });
+    // Rows another drainer claimed are waited out too.
+    awaitHarnessWorkSettled.mockImplementation(async () => {
+      order.push('settle');
+    });
 
     const res = await post('/attio/sub-1', { any: 'payload' });
 
-    expect(order).toEqual(['enqueue', 'drain', 'read']);
+    expect(order).toEqual(['enqueue', 'drain', 'settle', 'read']);
+    expect(awaitHarnessWorkSettled).toHaveBeenCalledWith(['team-1']);
     expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door' });
     expect(notifyWork).not.toHaveBeenCalled();
     expect(res.status).toBe(200);

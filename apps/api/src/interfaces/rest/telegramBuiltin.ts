@@ -30,6 +30,7 @@ import {
 } from '../../services/webhook_sync/telegram_builtin';
 import { logger } from '../../services/logger';
 import { drainUntilIdle, notifyWork } from '../../services/work/drain';
+import { awaitHarnessWorkSettled } from '../../services/work/harness';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
 
 const telegramBuiltinRouter: ReturnType<typeof Router> = Router();
@@ -152,6 +153,7 @@ telegramBuiltinRouter.post('/builtin', async (req: Request, res: Response) => {
     if (delivery.enqueueDeferred && delivery.awaitDeferred) {
       const enqueued = await delivery.enqueueDeferred();
       await drainUntilIdle({ owner: 'door' });
+      await awaitHarnessWorkSettled(enqueued.teamIds);
       res.status(200).json(await enqueued.readOutcome());
       return;
     }

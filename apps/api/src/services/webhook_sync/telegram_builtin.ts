@@ -121,6 +121,8 @@ export interface SharedBotDelivery {
 
 /** What `enqueueDeferred` queued; `readOutcome` once the rows have drained. */
 export interface EnqueuedSharedBotDelivery {
+  /** The teams whose rows were queued — what a waiting door waits on. */
+  teamIds: string[];
   readOutcome(): Promise<SharedBotResult>;
 }
 
@@ -317,7 +319,10 @@ export async function handleSharedBotInbound(raw: unknown): Promise<SharedBotDel
         });
       }
     }
-    return { readOutcome: () => readSharedBotOutcome(enqueued) };
+    return {
+      teamIds: enqueued.map(({ teamId }) => teamId),
+      readOutcome: () => readSharedBotOutcome(enqueued),
+    };
   };
 
   return {

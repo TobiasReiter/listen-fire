@@ -62,6 +62,8 @@ interface DeferredOutcome {
 
 /** What `enqueueDeferred` queued, readable once the rows have drained. */
 interface EnqueuedDelivery {
+  /** The teams whose rows were queued — what a waiting door waits on. */
+  teamIds: string[];
   readOutcome(): Promise<DeferredOutcome>;
 }
 
@@ -254,7 +256,10 @@ async function handleInboundWebhook(options: {
         enqueueErrors.push({ event: entry.event, error: message });
       }
     }
-    return { readOutcome: () => readDeliveryOutcome({ enqueued, enqueueErrors }) };
+    return {
+      teamIds: [sub.team_id],
+      readOutcome: () => readDeliveryOutcome({ enqueued, enqueueErrors }),
+    };
   };
 
   return {

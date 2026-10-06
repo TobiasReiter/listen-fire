@@ -4,6 +4,7 @@ import type { Request, Response } from 'express';
 import { handleInboundWebhook } from '../../services/webhook_sync/handler';
 import { logger } from '../../services/logger';
 import { drainUntilIdle, notifyWork } from '../../services/work/drain';
+import { awaitHarnessWorkSettled } from '../../services/work/harness';
 
 const webhookSyncRouter: ReturnType<typeof Router> = Router();
 
@@ -82,6 +83,7 @@ webhookSyncRouter.post(
       if (result.enqueueDeferred && result.awaitDeferred) {
         const enqueued = await result.enqueueDeferred();
         await drainUntilIdle({ owner: 'door' });
+        await awaitHarnessWorkSettled(enqueued.teamIds);
         const deferred = await enqueued.readOutcome();
         res.status(200).json({
           ok: true,

@@ -565,19 +565,20 @@ model Trigger {
 }
 
 model TriggerEvent {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  teamId          String    @map("team_id") @db.Uuid
-  triggerId       String    @map("trigger_id")
-  adapterType     String    @map("adapter_type")
-  triggerType     String    @map("trigger_type")
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId          String       @map("team_id") @db.Uuid
+  triggerId       String       @map("trigger_id")
+  adapterType     String       @map("adapter_type")
+  triggerType     String       @map("trigger_type")
   payload         Json
-  status          String    @default("received")
-  dispatchedAt    DateTime? @map("dispatched_at") @db.Timestamptz(3)
-  failureReason   String?   @map("failure_reason")
-  droppedReason   String?   @map("dropped_reason")
-  externalEventId String?   @map("external_event_id")
-  occurredAt      DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(3)
-  createdAt       DateTime  @default(now()) @map("created_at")
+  status          String       @default("received")
+  dispatchedAt    DateTime?    @map("dispatched_at") @db.Timestamptz(3)
+  failureReason   String?      @map("failure_reason")
+  droppedReason   String?      @map("dropped_reason")
+  externalEventId String?      @map("external_event_id")
+  occurredAt      DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  createdAt       DateTime     @default(now()) @map("created_at")
+  triggerRuns     TriggerRun[]
 
   @@index([createdAt])
   @@index([teamId])
@@ -612,15 +613,18 @@ model TriggerRun {
   limitPause                  Json?              @map("limit_pause")
   costCapBaselineMicrodollars BigInt             @default(0) @map("cost_cap_baseline_microdollars")
   lastHeartbeatAt             DateTime?          @map("last_heartbeat_at") @db.Timestamptz(6)
+  triggerEventId              String?            @map("trigger_event_id") @db.Uuid
   adapterAwaits               AdapterAwait[]
   callbacks                   Callback[]
   joinBranchExports           JoinBranchExport[]
   joinPendings                JoinPending[]
   parkedRuns                  ParkedRun[]
   movementVersion             MovementVersion?   @relation(fields: [movementVersionId], references: [id])
+  triggerEvent                TriggerEvent?      @relation(fields: [triggerEventId], references: [id], onUpdate: NoAction)
 
   @@index([createdAt])
   @@index([teamId])
+  @@index([triggerEventId])
   @@index([triggerId])
   @@map("trigger_run")
   @@schema("automations")

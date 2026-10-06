@@ -14,6 +14,7 @@ import {
   listWorkByKind,
   releaseWork,
   removeWork,
+  awaitTeamWorkSettled,
 } from '../store';
 
 // Due times live in 2001 so only rows this file backdates are due: the shared
@@ -470,5 +471,48 @@ describe('work store', () => {
       .execute();
     expect(raw?.team_id).toBe(teamId);
     expect(raw?.payload).toEqual({});
+  });
+});
+
+describe('awaitTeamWorkSettled', () => {
+  const FUTURE = new Date(Date.now() + 60 * 60 * 1000);
+  let teamId: string;
+
+  beforeEach(() => {
+    teamId = randomUUID();
+  });
+
+  afterEach(async () => {
+    await getAutomationsQb(['work']).deleteFrom('work').where('team_id', '=', teamId).execute();
+  });
+
+  it('is settled at once when the team has no rows', async () => {
+    expect(await awaitTeamWorkSettled({ teamId, timeoutMs: 1_000 })).toBe(true);
+  });
+
+  it('ignores a row that is not yet due', async () => {
+    await enqueueWork({ kind: 'resume_timer', key: freshKey('resume_timer'), teamId, dueAt: FUTURE });
+    expect(await awaitTeamWorkSettled({ teamId, timeoutMs: 1_000 })).toBe(true);
+  });
+
+  it('times out while a row is due', async () => {
+    await enqueueWork({ kind: 'resume_timer', key: freshKey('resume_timer'), teamId, dueAt: at(0) });
+    expect(await awaitTeamWorkSettled({ teamId, timeoutMs: 150, pollMs: 20 })).toBe(false);
+  });
+
+  it('waits out a leased row, and settles once it completes', async () => {
+    const key = freshKey('resume_timer');
+    await enqueueWork({ kind: 'resume_timer', key, teamId, dueAt: FUTURE });
+    // Another drainer holds it: leased, with its next due time ahead.
+    await getAutomationsQb(['work'])
+      .updateTable('work')
+      .set({ lease_owner: 'elsewhere', lease_until: FUTURE, lease_token: randomUUID() })
+      .where('key', '=', key)
+      .execute();
+    expect(await awaitTeamWorkSettled({ teamId, timeoutMs: 150, pollMs: 20 })).toBe(false);
+
+    const waiting = awaitTeamWorkSettled({ teamId, timeoutMs: 5_000, pollMs: 20 });
+    await removeWork({ key });
+    expect(await waiting).toBe(true);
   });
 });

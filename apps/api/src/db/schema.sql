@@ -3756,7 +3756,11 @@ CREATE TABLE automations.trigger_run (
     ops_run_id uuid,
     -- Stamped while a segment executes (at start, then every live-trace tick).
     -- A `running` run whose stamp has gone stale has no live process behind it.
-    last_heartbeat_at timestamptz
+    last_heartbeat_at timestamptz,
+    -- The stored inbound receipt this run was dispatched from, when there was
+    -- one. Lets a re-claimed dispatch find the run its first attempt started.
+    -- FK declared after automations.trigger_event below.
+    trigger_event_id uuid
 );
 
 ALTER TABLE ONLY automations.trigger_run
@@ -4101,6 +4105,11 @@ CREATE INDEX trigger_event_created_at_idx ON automations.trigger_event USING btr
 -- 3s) is a no-op insert rather than a duplicate run. Partial: NULL delivery ids
 -- (sources without a stable per-delivery handle) are never deduped.
 CREATE UNIQUE INDEX trigger_event_delivery_idempotency_idx ON automations.trigger_event USING btree (trigger_id, external_event_id) WHERE external_event_id IS NOT NULL;
+
+-- A run's receipt. SET NULL: pruning a receipt must not take its run's history.
+ALTER TABLE ONLY automations.trigger_run
+    ADD CONSTRAINT trigger_run_trigger_event_id_fkey FOREIGN KEY (trigger_event_id) REFERENCES automations.trigger_event(id) ON DELETE SET NULL;
+CREATE INDEX trigger_run_trigger_event_id_idx ON automations.trigger_run USING btree (trigger_event_id);
 
 -- ## Exposed File
 -- Short-lived public exposure of a file's bytes for adapters whose target needs

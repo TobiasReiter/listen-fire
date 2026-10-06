@@ -195,3 +195,26 @@ export async function listWorkByKind(kind: WorkKind): Promise<WorkRow[]> {
     .execute();
   return rows.map(toWorkRow);
 }
+
+/** Wait until none of the team's rows is due or leased (by the database clock),
+ *  polling every `pollMs`. True once settled, false if `timeoutMs` passes first.
+ *  For a door that must answer only after its rows ran, whichever drainer
+ *  claimed them. */
+export async function awaitTeamWorkSettled(input: {
+  teamId: string;
+  timeoutMs: number;
+  pollMs?: number;
+}): Promise<boolean> {
+  const pollMs = input.pollMs ?? 50;
+  const deadline = Date.now() + input.timeoutMs;
+  for (;;) {
+    const { rows } = await sql<{ id: string }>`
+      SELECT id FROM automations.work
+      WHERE team_id = ${input.teamId}::uuid
+        AND (due_at <= now() OR lease_until > now())
+      LIMIT 1`.execute(getAutomationsQb(['work']));
+    if (rows.length === 0) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}

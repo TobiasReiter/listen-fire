@@ -11,6 +11,7 @@ import { handleError } from '../../../lib/errors';
 import { logger } from '../../logger';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import { resolveAdapter } from '../adapters/resolve';
 import type { EvaluationResult } from '../engine/types';
 import {
@@ -309,6 +310,9 @@ export async function dispatchTriggerByIdEvent(
       recordingTriggerType,
       dryRun,
       ...(input.existingRunId !== undefined ? { existingRunId: input.existingRunId } : {}),
+      ...(input.storedEventId !== undefined
+        ? { triggerEventId: input.storedEventId as TriggerEventId }
+        : {}),
     });
     if (firing.result) {
       // Feed the writes this firing applied into the team's external-write

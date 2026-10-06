@@ -40,6 +40,7 @@ import { failRunAndCancelRequests } from '../../interaction/run_failure';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import type { ParkedScopeState } from '../../movement_engine/serialize';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import { TriggerRunRecorder, type TriggerRunTriggerType } from '../runs/trigger_run';
 import type { TriggerEvent } from '../triggers/types';
 import { movementCatalogForTeam } from './catalog';
@@ -213,6 +214,8 @@ type MovementFiringInput = {
    *  caller minted the id so it could return it before this firing started).
    *  Absent ⇒ the recorder mints its own id, as before. */
   existingRunId?: TriggerRunId;
+  /** The stored inbound receipt this firing came from, recorded on the run. */
+  triggerEventId?: TriggerEventId;
 };
 
 /** A fresh firing of a listener's movement. */
@@ -236,6 +239,7 @@ async function runMovementFiringInContext(
     // yet versioned (saved before versioning, or never cleanly saved since).
     movementVersionId: input.movementRow.currentVersionId,
     ...(input.existingRunId !== undefined ? { existingRunId: input.existingRunId } : {}),
+    ...(input.triggerEventId !== undefined ? { triggerEventId: input.triggerEventId } : {}),
   });
   await recorder.startOpsRun();
   const movementName = input.firedMovementName ?? firedMovementNameFromTriggerName(input.triggerName);
