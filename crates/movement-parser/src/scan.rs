@@ -1,7 +1,54 @@
 //! Character scans the statement layer and the expression grammar share
-//! (packages/movement-lang/parser/scan.ts).
+//! (packages/movement-lang/parser/scan.ts) — the one definition of what a
+//! NAME is: a bare identifier, or a backtick-quoted name when the exposed
+//! name carries spaces or punctuation.
 
-use crate::util::utf16::{to_string, trim};
+use crate::util::utf16::{is_ident_char, is_ident_start, to_string, trim};
+
+/// A bare identifier at `pos`: the name and the index just past it.
+pub fn scan_ident(src: &[u16], pos: usize) -> Option<(String, usize)> {
+    let end = ident_end(src, pos)?;
+    Some((to_string(&src[pos..end]), end))
+}
+
+/// Where the bare identifier at `pos` ends, without copying it out.
+pub fn ident_end(src: &[u16], pos: usize) -> Option<usize> {
+    if !is_ident_start(*src.get(pos)?) {
+        return None;
+    }
+    let mut end = pos + 1;
+    while end < src.len() && is_ident_char(src[end]) {
+        end += 1;
+    }
+    Some(end)
+}
+
+/// A backtick-quoted name at `pos` (the opening backtick): the interior and
+/// the index of the CLOSING backtick. A quoted name is single-line; `None`
+/// when it is unterminated before a newline or the end.
+pub fn scan_backtick_name(src: &[u16], pos: usize) -> Option<(String, usize)> {
+    if src.get(pos) != Some(&(b'`' as u16)) {
+        return None;
+    }
+    let mut end = pos + 1;
+    while end < src.len() && src[end] != b'`' as u16 && src[end] != b'\n' as u16 {
+        end += 1;
+    }
+    if end >= src.len() || src[end] == b'\n' as u16 {
+        return None;
+    }
+    Some((to_string(&src[pos + 1..end]), end))
+}
+
+/// A NAME at `pos`, bare or quoted: the name (backticks stripped) and the
+/// index just past the whole token.
+pub fn scan_name(src: &[u16], pos: usize) -> Option<(String, usize)> {
+    if src.get(pos) == Some(&(b'`' as u16)) {
+        let (name, close) = scan_backtick_name(src, pos)?;
+        return Some((name, close + 1));
+    }
+    scan_ident(src, pos)
+}
 
 /// `IF(cond, a, b)` — IF called like a spreadsheet function. A parenthesised
 /// condition (`IF (a OR b) THEN …`) is the ordinary form; only a top-level

@@ -1,0 +1,924 @@
+//! The statement-layer AST, mirroring packages/movement-lang/parser/ast.ts
+//! field for field and `kind` for `kind`. Serialised through
+//! `to_sorted_json`, so declaration order is irrelevant; absent optionals are
+//! omitted, never null, because the TypeScript side tests them with
+//! `=== undefined` (and `declared?: undefined` tells the two extraction node
+//! forms apart).
+//!
+//! A struct that is a member of a union AND appears on its own elsewhere
+//! (`CallStatement`, `ShapeDeclaration`, the other statements) carries its
+//! own `kind` tag, because the TypeScript object is the same one in both
+//! places; the unions over such structs are then untagged.
+//!
+//! Every `Loc` is 1-based, its column counted in UTF-16 units.
+
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Loc {
+    pub line: usize,
+    pub col: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Span {
+    pub start: Loc,
+    pub end: Loc,
+}
+
+/// A value-expression position, captured verbatim. `eager` asks the
+/// serialiser to mark it so the eager export can find every slot afterwards
+/// (a `DurationLiteral` has the same two fields and must not be mistaken
+/// for one).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExprSlot {
+    pub raw: String,
+    pub span: Span,
+    #[serde(rename = "__slot", skip_serializing_if = "std::ops::Not::not")]
+    pub eager: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeRef {
+    pub graph: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hops_raw: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum PathRoot {
+    Name { name: String },
+    Expression { expr: ExprSlot },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathHead {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathRoot>,
+    pub hops_raw: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Program {
+    pub statements: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum Statement {
+    Import(ImportStatement),
+    Assign(AssignStatement),
+    Shape(ShapeDeclaration),
+    Type(TypeDeclaration),
+    Movement(MovementDeclaration),
+    Listen(ListenDeclaration),
+    Write(WriteStatement),
+    Match(MatchStatement),
+    Call(CallStatement),
+    Block(BlockStatement),
+    Link(LinkStatement),
+    Unlink(UnlinkStatement),
+    Delete(DeleteStatement),
+    Refresh(RefreshStatement),
+    If(IfStatement),
+    Await(AwaitStatement),
+    Combinator(CombinatorStatement),
+    Collection(CollectionStatement),
+    Return(ReturnStatement),
+    Error(ErrorStatement),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "return")]
+pub struct ReturnStatement {
+    pub value: RValue,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ImportSource {
+    Builtin { namespace: String },
+    File { path: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ImportedName {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "import")]
+pub struct ImportStatement {
+    pub names: Vec<ImportedName>,
+    pub source: ImportSource,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "assign")]
+pub struct AssignStatement {
+    pub name: String,
+    pub value: RValue,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RValue {
+    Construct { construct: ConstructionCall },
+    Call { call: CallStatement },
+    Write { write: WriteExpression },
+    Match { r#match: MatchExpression },
+    Link { link: LinkExpression },
+    Extract { extract: ExtractExpression },
+    ExtractCall {
+        #[serde(rename = "extractCall")]
+        extract_call: ExtractCallExpression,
+    },
+    Block { block: TraversalBlock },
+    Await { r#await: AwaitExpression },
+    Combinator { combinator: CombinatorExpression },
+    Collection { collection: CollectionOpExpression },
+    Members { members: MembersExpression },
+    InlineBlock {
+        #[serde(rename = "inlineBlock")]
+        inline_block: InlineBlockExpression,
+    },
+    Callback { callback: CallbackExpression },
+    Closure { closure: ClosureExpression },
+    Node { node: NodeLiteral },
+    Lazy { lazy: LazyTraversal },
+    Expr { expr: ExprSlot },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LazyTraversal {
+    pub head: PathHead,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<NodeLiteral>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ConstructionCall {
+    pub callee: String,
+    pub args: Vec<NamedArg>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedArg {
+    pub name: String,
+    pub value: ExprSlot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_type: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum WriteTarget {
+    Linked {
+        path: PathHead,
+        #[serde(rename = "explicitType", skip_serializing_if = "Option::is_none")]
+        explicit_type: Option<String>,
+        span: Span,
+    },
+    Tuple {
+        paths: Vec<PathHead>,
+        #[serde(rename = "explicitType", skip_serializing_if = "Option::is_none")]
+        explicit_type: Option<String>,
+        span: Span,
+    },
+    Position {
+        alias: String,
+        span: Span,
+    },
+}
+
+impl WriteTarget {
+    pub fn span(&self) -> Span {
+        match self {
+            WriteTarget::Linked { span, .. } | WriteTarget::Tuple { span, .. } | WriteTarget::Position { span, .. } => {
+                *span
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteExpression {
+    pub target: WriteTarget,
+    pub unique_by: Vec<UniqueClause>,
+    pub fields: Vec<FieldEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spreads: Option<Vec<WriteSpread>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind: Option<BindClause>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BindClause {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "write")]
+pub struct WriteStatement {
+    pub write: WriteExpression,
+    pub span: Span,
+}
+
+/// A `WriteTarget` that is not a position — `match`'s, and a link body's.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchExpression {
+    pub target: WriteTarget,
+    pub unique_by: Vec<UniqueClause>,
+    pub fields: Vec<FieldEntry>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "match")]
+pub struct MatchStatement {
+    pub r#match: MatchExpression,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum FieldWriteMode {
+    #[serde(rename = "fill")]
+    Fill,
+    #[serde(rename = "append")]
+    Append,
+    #[serde(rename = "append-missing")]
+    AppendMissing,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FieldEntry {
+    pub name: String,
+    pub value: ExprSlot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantics: Option<FieldWriteMode>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WriteSpread {
+    pub source: String,
+    /// Only ever `fill`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantics: Option<FieldWriteMode>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UniqueClause {
+    pub predicate: ExprSlot,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NodeLiteral {
+    pub entries: Vec<NodeEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<GraphForm>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spreads: Option<Vec<MapSpread>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GraphForm {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<NamedSpan>,
+}
+
+/// `{ name, span }` — a name and where it was written.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NamedSpan {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EdgeSequencing {
+    Arrival,
+    Document,
+    Chronological,
+}
+
+impl EdgeSequencing {
+    pub fn word(self) -> &'static str {
+        match self {
+            EdgeSequencing::Arrival => "arrival",
+            EdgeSequencing::Document => "document",
+            EdgeSequencing::Chronological => "chronological",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum NodeEntry {
+    Value {
+        name: String,
+        value: ExprSlot,
+        span: Span,
+    },
+    Nodes {
+        name: String,
+        nodes: Vec<NodeLiteral>,
+        span: Span,
+    },
+    Declared {
+        name: String,
+        #[serde(rename = "type")]
+        type_: TypeRef,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sequenced: Option<EdgeSequencing>,
+        span: Span,
+    },
+    Traversal {
+        name: String,
+        head: PathHead,
+        lazy: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mapping: Option<NodeLiteral>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MapSpread {
+    pub source: String,
+    pub after: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TraversalBlock {
+    pub head: PathHead,
+    pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "block")]
+pub struct BlockStatement {
+    pub block: TraversalBlock,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum LinkTarget {
+    Handle {
+        name: String,
+    },
+    Match {
+        r#match: MatchExpression,
+        #[serde(rename = "impliedIdentity")]
+        implied_identity: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LinkExpression {
+    pub from: String,
+    pub edge: String,
+    pub to: LinkTarget,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "link")]
+pub struct LinkStatement {
+    pub link: LinkExpression,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "unlink")]
+pub struct UnlinkStatement {
+    pub from: String,
+    pub edge: String,
+    pub to: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "delete")]
+pub struct DeleteStatement {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "refresh", rename_all = "camelCase")]
+pub struct RefreshStatement {
+    pub name: String,
+    pub name_span: Span,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IfArm {
+    pub condition: ExprSlot,
+    pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ElseArm {
+    pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "if", rename_all = "camelCase")]
+pub struct IfStatement {
+    pub arms: Vec<IfArm>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub else_arm: Option<ElseArm>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DurationLiteral {
+    pub raw: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AwaitExpression {
+    pub source: AwaitSource,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum AwaitSource {
+    Traversal {
+        head: PathHead,
+        span: Span,
+    },
+    First {
+        head: PathHead,
+        span: Span,
+    },
+    Combinator {
+        combinator: CombinatorExpression,
+        span: Span,
+    },
+    Sleep {
+        duration: DurationLiteral,
+        span: Span,
+    },
+    Until {
+        condition: UntilCondition,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        every: Option<DurationLiteral>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum UntilCondition {
+    Closure { closure: ClosureExpression },
+    Expr { expr: ExprSlot },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "await")]
+pub struct AwaitStatement {
+    pub r#await: AwaitExpression,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CombinatorKind {
+    Race,
+    Parallel,
+}
+
+impl CombinatorKind {
+    pub fn word(self) -> &'static str {
+        match self {
+            CombinatorKind::Race => "race",
+            CombinatorKind::Parallel => "parallel",
+        }
+    }
+}
+
+/// `kind` here is data (which combinator), not a union tag.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CombinatorExpression {
+    pub kind: CombinatorKind,
+    pub arms: CombinatorArms,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum CombinatorArms {
+    Literal { arms: Vec<ArmExpression>, span: Span },
+    Dynamic { expr: ExprSlot, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ArmExpression {
+    Closure { closure: ClosureExpression, span: Span },
+    Ref { name: String, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CollectionOpExpression {
+    pub op: CollectionOp,
+    pub source: ExprSlot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub init: Option<ExprSlot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<ExprSlot>,
+    pub r#fn: ArmExpression,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CollectionOp {
+    Map,
+    Filter,
+    Reduce,
+    Groupby,
+    Keyby,
+}
+
+impl CollectionOp {
+    /// The surface spelling of each op. Uppercase, like every other function
+    /// the language ships.
+    pub fn from_spelling(word: &str) -> Option<Self> {
+        match word {
+            "MAP" => Some(CollectionOp::Map),
+            "FILTER" => Some(CollectionOp::Filter),
+            "REDUCE" => Some(CollectionOp::Reduce),
+            "GROUPBY" => Some(CollectionOp::Groupby),
+            "KEYBY" => Some(CollectionOp::Keyby),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembersExpression {
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub span: Span,
+    pub type_span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "combinator")]
+pub struct CombinatorStatement {
+    pub combinator: CombinatorExpression,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "collection")]
+pub struct CollectionStatement {
+    pub collection: CollectionOpExpression,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClosureExpression {
+    pub params: Vec<MovementParam>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub return_type: Option<ParamTypeRef>,
+    pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineBlockExpression {
+    pub body: Vec<Statement>,
+    pub binding: String,
+    pub binding_span: Span,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallbackExpression {
+    pub subject: CallbackSubject,
+    pub config: Vec<NamedArg>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_span: Option<Span>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum CallbackSubject {
+    Inline {
+        closure: ClosureExpression,
+        span: Span,
+    },
+    Named {
+        movement: String,
+        args: Vec<CallArg>,
+        #[serde(rename = "nameSpan")]
+        name_span: Span,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "error")]
+pub struct ErrorStatement {
+    pub message: ExprSlot,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum CallArg {
+    Expr {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        expr: ExprSlot,
+    },
+    Write {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        write: WriteExpression,
+    },
+    Node {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        node: NodeLiteral,
+    },
+    Call {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        call: CallStatement,
+    },
+    Closure {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        closure: ClosureExpression,
+        span: Span,
+    },
+    Type {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(rename = "type")]
+        type_: String,
+        span: Span,
+    },
+}
+
+impl CallArg {
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            CallArg::Expr { name, .. }
+            | CallArg::Write { name, .. }
+            | CallArg::Node { name, .. }
+            | CallArg::Call { name, .. }
+            | CallArg::Closure { name, .. }
+            | CallArg::Type { name, .. } => name.as_deref(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "call")]
+pub struct CallStatement {
+    pub callee: String,
+    pub args: Vec<CallArg>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expression: Option<ExprSlot>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "shape")]
+pub struct ShapeDeclaration {
+    pub name: String,
+    pub root: ShapeNode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extends: Option<NamedSpan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exported: Option<bool>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ShapeField {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<ExprSlot>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ShapeNode {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<ExprSlot>,
+    pub fields: Vec<ShapeField>,
+    pub children: Vec<ShapeNode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequenced: Option<EdgeSequencing>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "type")]
+pub struct TypeDeclaration {
+    pub name: String,
+    pub options: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MovementParam {
+    pub name: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_: Option<ParamTypeRef>,
+    pub span: Span,
+}
+
+/// A written value type: TypeScript's `ValueTypeMember`, which `ValueTypeRef`
+/// (the `list` and `record` arms) is a part of.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ValueType {
+    Name { name: String, span: Span },
+    List { of: Box<ValueType>, span: Span },
+    Record { keys: Vec<ValueTypeKey>, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ValueTypeKey {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: ValueType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optional: Option<bool>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ParamTypeRef {
+    Name(TypeRef),
+    Value(ValueType),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "movement", rename_all = "camelCase")]
+pub struct MovementDeclaration {
+    pub name: String,
+    pub params: Vec<MovementParam>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub return_type: Option<ParamTypeRef>,
+    pub body: Vec<Statement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exported: Option<bool>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename = "listen")]
+pub struct ListenDeclaration {
+    pub instance: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub construct: Option<ConstructionCall>,
+    pub config: Vec<NamedArg>,
+    pub movement: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExtractExpression {
+    pub from: Vec<ExprSlot>,
+    pub stages: Vec<ExtractStage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExtractStage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub through: Option<Vec<PluginCall>>,
+    pub fields: Vec<ExtractField>,
+    pub children: Vec<ExtractNode>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExtractField {
+    pub name: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    pub description: ExprSlot,
+    pub span: Span,
+}
+
+/// Told apart by `declared`: absent on the inline form.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ExtractNode {
+    Inline(InlineExtractNode),
+    Declared(DeclaredExtractNode),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InlineExtractNode {
+    pub name: String,
+    pub description: ExprSlot,
+    pub stages: Vec<ExtractStage>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DeclaredExtractNode {
+    pub name: String,
+    pub declared: DeclaredType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<ExprSlot>,
+    pub stages: Vec<ExtractStage>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DeclaredType {
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtractCallFinds {
+    Each,
+    One,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExtractCallExpression {
+    pub finds: ExtractCallFinds,
+    pub content: ExprSlot,
+    pub shape: ExtractCallShape,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<ExprSlot>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ExtractCallShape {
+    Named { name: String, span: Span },
+    Inline { declaration: ShapeDeclaration, span: Span },
+    Computed { expr: ExprSlot, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PluginCall {
+    pub plugin: String,
+    pub args: Vec<NamedArg>,
+    pub span: Span,
+}

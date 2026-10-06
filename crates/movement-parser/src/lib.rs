@@ -3,11 +3,13 @@
 //! across the WASM boundary.
 
 pub mod abi;
+pub mod ast;
 pub mod expr;
 pub mod lexer;
 pub mod scan;
 pub mod tree;
 pub mod util;
+pub mod version;
 
 use serde::Serialize;
 use serde_json::{Value, json};
