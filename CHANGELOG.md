@@ -8,6 +8,8 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 <!-- add merged PRs here -->
 
+## [v0.10.1] - 2026-10-06
+
 ### Fixed
 
 - On a Gemini route, a call that asked for no thinking no longer thinks on Flash models. Small plugin calls that took minutes now take seconds. On Pro models, which cannot stop thinking, a call that turns thinking off now thinks at the lowest level.
@@ -463,7 +465,8 @@ Language versions arrive. Every automation is pinned to the language version it 
 - The running version shows at `/healthz/workers` and under Settings, About.
 - Self-hosting guides for compose, Render, AWS and a GCP VM, and an upgrade runbook.
 
-[Unreleased]: https://github.com/listen-fire/listen-fire/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/listen-fire/listen-fire/compare/v0.10.1...HEAD
+[v0.10.1]: https://github.com/listen-fire/listen-fire/compare/v0.10.0...v0.10.1
 [v0.10.0]: https://github.com/listen-fire/listen-fire/compare/v0.9.1...v0.10.0
 [v0.9.1]: https://github.com/listen-fire/listen-fire/compare/v0.9.0...v0.9.1
 [v0.9.0]: https://github.com/listen-fire/listen-fire/compare/v0.8.5...v0.9.0
