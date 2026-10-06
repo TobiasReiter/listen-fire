@@ -27,7 +27,9 @@
 // decided by whoever has a scope.
 
 import { translateStringEscape, unrecognisedCharacterMessage } from '@listen-fire/shared/expression/formula';
-import { BridgeError } from '../../expression/error';
+import { ExpressionSyntaxError } from '../../expression/error';
+import { PARSER } from '../parser_choice';
+import { rustParseExpression } from '../rust_parser';
 import { callStyleIfMessage } from '../scan';
 import type {
   At,
@@ -45,15 +47,7 @@ import type {
   TypeExpr,
 } from './tree';
 
-export class ExpressionSyntaxError extends BridgeError {
-  constructor(
-    message: string,
-    public readonly offset: number,
-  ) {
-    super(message, offset);
-    this.name = 'ExpressionSyntaxError';
-  }
-}
+export { ExpressionSyntaxError } from '../../expression/error';
 
 /** The formula grammar's reserved words, matched case-insensitively. */
 const KEYWORDS = new Set([
@@ -95,6 +89,7 @@ const IDENT_CHAR = /[A-Za-z0-9_]/;
 
 /** Parse one expression slot. Throws `ExpressionSyntaxError`. */
 export function parseExpression(source: string): MExpr {
+  if (PARSER === 'rust') return rustParseExpression(source);
   const parser = new ExpressionParser(source, 0, source.length);
   return parser.parseWhole();
 }

@@ -2,6 +2,7 @@ export * from './never';
 export * from './parser/ast';
 export * from './parser/scan';
 export * from './parser/parse';
+export { initParser, isParserReady } from './wasm/loader';
 export * from './parser/duration';
 export * from './expression/bridge';
 export * from './expression/stdlib';

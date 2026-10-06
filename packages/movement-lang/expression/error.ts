@@ -16,3 +16,16 @@ export class BridgeError extends Error {
     if (code !== undefined) this.code = code;
   }
 }
+
+/** The expression grammar's refusal: where in the text, and why. Defined
+ *  beside BridgeError so the parser's WASM wrappers can build one without
+ *  importing the grammar that re-exports it (parser/expression/parse_expression.ts). */
+export class ExpressionSyntaxError extends BridgeError {
+  constructor(
+    message: string,
+    public readonly offset: number,
+  ) {
+    super(message, offset);
+    this.name = 'ExpressionSyntaxError';
+  }
+}

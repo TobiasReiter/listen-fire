@@ -87,6 +87,8 @@ import { spellName } from './ast';
 import type { EdgeSequencing } from '@listen-fire/shared/expression/types';
 import { callStyleIfMessage, scanBacktickName, scanIdent, scanName } from './scan';
 import { KEYWORDS } from '@listen-fire/shared/expression/formula';
+import { PARSER } from './parser_choice';
+import { rustParseNestedCall, rustParseProgram, type StatementParse } from './rust_parser';
 
 /** The two spellings of a movement declaration — `function` is a pure parser
  *  alias, so this is a surface fact only; the AST keeps one node kind. */
@@ -144,7 +146,9 @@ export interface ParseOptions {
 }
 
 export function parseProgram(source: string, options?: ParseOptions): Program {
-  return new Parser(source, options?.languageVersion ?? CURRENT_LANGUAGE_VERSION).parseProgram();
+  const languageVersion = options?.languageVersion ?? CURRENT_LANGUAGE_VERSION;
+  if (PARSER === 'ts') return new Parser(source, languageVersion).parseProgram();
+  return refusedAsError(rustParseProgram(source, languageVersion));
 }
 
 /**
@@ -161,7 +165,15 @@ export function parseNestedCall(
   at: { start: number; end: number },
   languageVersion: LanguageVersion,
 ): RValue {
-  return new Parser(slot.raw.slice(0, at.end), languageVersion, slot.span.start).parseNestedCallValue(at.start);
+  if (PARSER === 'ts') {
+    return new Parser(slot.raw.slice(0, at.end), languageVersion, slot.span.start).parseNestedCallValue(at.start);
+  }
+  return refusedAsError(rustParseNestedCall(slot, at, languageVersion));
+}
+
+function refusedAsError<T>(parse: StatementParse<T>): T {
+  if (parse.ok) return parse.value;
+  throw new MovementParseError(parse.refusal.message, parse.refusal.loc);
 }
 
 /**

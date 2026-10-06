@@ -7,7 +7,7 @@
 //
 // Off until the Rust grammars land: MOVEMENT_PARSER_DIFFERENTIAL=1 turns it on.
 import { CURRENT_LANGUAGE_VERSION } from '../../language_version';
-import { __callJsonForTests } from '../../wasm/loader';
+import { callParser } from '../../wasm/loader';
 import { canonical, SLOTS } from '../expression/__test__/lowering_fixture';
 import { ExpressionSyntaxError, parseExpression } from '../expression/parse_expression';
 import { MovementParseError, parseProgram, type ParseOptions } from '../parse';
@@ -74,7 +74,7 @@ const RUST = {
 
 /** The Rust side, in the form its TypeScript counterpart above reports. */
 function rust(fn: keyof typeof RUST, input: { source: string; version: number }): Outcome {
-  const { ok, json } = __callJsonForTests(fn, input.source, [input.version]);
+  const { ok, json } = callParser(fn, input.source, [input.version]);
   if (ok) return { ok: RUST[fn].tree(json) };
   const error = isRecord(json) ? json.error : undefined;
   return { error: isRecord(error) ? RUST[fn].error(error) : json };

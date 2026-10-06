@@ -24,6 +24,7 @@ import {
 import { ExpressionSyntaxError, parseExpression } from '../parser/expression/parse_expression';
 import type { MExpr } from '../parser/expression/tree';
 import { BridgeError } from './error';
+import { slotTrees } from './slot_trees';
 
 export { BridgeError } from './error';
 export { POSITION_SENTINEL, type MovementCondition } from '../parser/expression/lower';
@@ -41,9 +42,8 @@ export function parseMovementCondition(raw: string): MovementCondition {
 // A slot's tree is kept beside the slot object rather than on it: the slot is
 // the statement layer's verbatim capture, and slots are also built from text
 // by the checker, the story and tests. Each is parsed once however many
-// readers (the engine reads one slot up to four ways per evaluation) ask.
-
-const slotTrees = new WeakMap<ExprSlot, MExpr | ExpressionSyntaxError>();
+// readers (the engine reads one slot up to four ways per evaluation) ask; a
+// slot from `parseProgram` arrives with its tree already cached (./slot_trees.ts).
 
 function treeOf(slot: ExprSlot): MExpr {
   let tree = slotTrees.get(slot);

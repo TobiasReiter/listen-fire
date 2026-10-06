@@ -88,9 +88,10 @@ export function callJson(fn: ParserFunction, input: string | Uint8Array, extra: 
  * `callJson` with the status the export returned: whether the JSON is the
  * tree or `{error: …}`, without guessing from its shape.
  *
- * @internal Test seam for the differential test.
+ * @internal Used by the parser wrappers (parser/rust_parser.ts) and the
+ * differential test.
  */
-export function __callJsonForTests(
+export function callParser(
   fn: ParserFunction,
   input: string | Uint8Array,
   extra: number[],
