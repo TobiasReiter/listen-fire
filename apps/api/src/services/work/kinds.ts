@@ -7,7 +7,7 @@ export const WORK_KINDS = [
   'cron_reconcile', // periodic, payload {}
   'poll_reconcile', // periodic, payload {}
   'await_resume_sweep', // periodic, payload {}  (temporary until protocol v2)
-  'settle_cancelled_timers', // periodic, payload {}
+  'timer_sweep', // periodic, payload {}
   'exposed_file_sweep', // periodic, payload {}
   'airtable_webhook_refresh', // periodic, payload {}
 ] as const;

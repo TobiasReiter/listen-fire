@@ -17,6 +17,7 @@ jest.mock('kysely', () => ({
  *  which is what makes the append-vs-replace question testable at all. */
 let rowSteps: unknown[] | null = null;
 const insertedRows: Array<Record<string, unknown>> = [];
+const updatedRows: Array<Record<string, unknown>> = [];
 
 function mockChainable(): object {
   const handler: ProxyHandler<object> = {
@@ -29,6 +30,7 @@ function mockChainable(): object {
       if (prop === 'then') return undefined;
       if (prop === 'set') {
         return (row: Record<string, unknown>) => {
+          updatedRows.push(row);
           if (row.steps !== undefined) rowSteps = JSON.parse(String(row.steps));
           return mockChainable();
         };
@@ -127,6 +129,27 @@ function inspectableTrace(): unknown[] {
 beforeEach(() => {
   rowSteps = null;
   insertedRows.length = 0;
+  updatedRows.length = 0;
+});
+
+describe('a running run beats while it works', () => {
+  it('stamps the heartbeat at start, on a publishing tick, and on a tick with nothing new', async () => {
+    const recorder = makeRecorder();
+    await recorder.ensureStarted();
+    expect(insertedRows[0]?.last_heartbeat_at).toBeInstanceOf(Date);
+
+    const trace: MovementTraceEntry[] = [];
+    recorder.beginLiveTrace(trace);
+    trace.push(gate(true));
+    await recorder['flushLiveTrace']();
+    expect(updatedRows.at(-1)?.last_heartbeat_at).toBeInstanceOf(Date);
+    expect(updatedRows.at(-1)?.steps).toBeDefined();
+
+    updatedRows.length = 0;
+    await recorder['flushLiveTrace']();
+    expect(updatedRows).toEqual([{ last_heartbeat_at: expect.any(Date) }]);
+    recorder.endLiveTrace();
+  });
 });
 
 describe('a running run publishes what it has done so far', () => {

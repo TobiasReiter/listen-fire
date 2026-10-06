@@ -32,7 +32,8 @@ import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
-import { registerTimerWork, timerWorkKey } from '../timer_resume';
+import { registerTimerWork, settleCancelledTimersHandler, timerWorkKey } from '../timer_resume';
+import { testWorkContext } from '../../../test/harness/work';
 import { makeRecorderParkSink } from '../park_sink';
 import { drainUntilIdle, drainWork, resetWorkHandlersForTests } from '../../work/drain';
 
@@ -291,6 +292,33 @@ async function lapseLease(runId: TriggerRunId): Promise<void> {
     .execute();
 }
 
+async function markRunning(runId: TriggerRunId, lastHeartbeatAt: Date): Promise<void> {
+  await getAutomationsQb(['trigger_run'])
+    .updateTable('trigger_run')
+    .set({ status: 'running', last_heartbeat_at: lastHeartbeatAt })
+    .where('id', '=', runId)
+    .execute();
+}
+
+async function parkedRows(runId: TriggerRunId): Promise<number> {
+  const rows = await getAutomationsQb(['parked_run'])
+    .selectFrom('parked_run')
+    .where('run_id', '=', runId)
+    .select('id')
+    .execute();
+  return rows.length;
+}
+
+async function wakeAtOf(runId: TriggerRunId): Promise<number> {
+  const row = await getAutomationsQb(['parked_run'])
+    .selectFrom('parked_run')
+    .where('run_id', '=', runId)
+    .where('park_reason', '=', 'timer')
+    .select('wake_at')
+    .executeTakeFirstOrThrow();
+  return new Date(row.wake_at ?? 0).getTime();
+}
+
 /** Only what makeRecorderParkSink reads; the run row already exists from the dispatch. */
 function recorderFor(input: { runId: TriggerRunId; teamId: TeamId }): TriggerRunRecorder {
   return {
@@ -412,23 +440,88 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     expect(await workRows(runId)).toHaveLength(0);
   });
 
-  it('a lapsed lease on a run left running fails the run instead of resuming it', async () => {
+  it('a lapsed lease on a run left running with a stale heartbeat fails the run', async () => {
     const { triggerId } = await seedMovementWithTrigger(teamId);
     await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
     const { runId } = await parkedRun(teamId);
 
-    await getAutomationsQb(['trigger_run'])
-      .updateTable('trigger_run')
-      .set({ status: 'running' })
-      .where('id', '=', runId)
-      .execute();
+    await markRunning(runId, new Date(Date.now() - 2 * 60_000));
     await lapseLease(runId);
     const result = await drainWork({ owner: 't' });
 
     expect(result.recovered).toBe(1);
-    expect(await runRow(runId)).toEqual({ status: 'failed', failure_reason: 'work lease lapsed mid-segment' });
+    expect(await runRow(runId)).toEqual({
+      status: 'failed',
+      failure_reason: 'segment did not complete: lease lapsed or the previous attempt failed',
+    });
     expect(slackCreates).toHaveLength(0);
+    expect(await parkedRows(runId)).toBe(0);
     expect(await workRows(runId)).toHaveLength(0);
+  });
+
+  it('a lapsed lease on a run running with a fresh heartbeat leaves the run alone', async () => {
+    const { triggerId } = await seedMovementWithTrigger(teamId);
+    await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
+    const { runId } = await parkedRun(teamId);
+    const wakeAt = await wakeAtOf(runId);
+
+    await markRunning(runId, new Date());
+    await lapseLease(runId);
+    const result = await drainWork({ owner: 't' });
+
+    // The leaf is not due, so the fall-through to run only re-arms it.
+    expect(result.recovered).toBe(1);
+    expect((await runRow(runId)).status).toBe('running');
+    expect(await parkedRows(runId)).toBe(1);
+    const rows = await workRows(runId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].lease_until).toBeNull();
+    expect(Math.abs(new Date(rows[0].due_at).getTime() - wakeAt)).toBeLessThan(1000);
+  });
+
+  it('the timer sweep re-arms a timer park that has no work row, idempotently', async () => {
+    const { triggerId } = await seedMovementWithTrigger(teamId);
+    await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
+    const { runId } = await parkedRun(teamId);
+    const wakeAt = await wakeAtOf(runId);
+
+    // A park from before work rows existed.
+    await getAutomationsQb(['work']).deleteFrom('work').where('key', '=', timerWorkKey(runId)).execute();
+    await settleCancelledTimersHandler.run({}, testWorkContext());
+
+    const first = await workRows(runId);
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ kind: 'resume_timer', team_id: teamId, payload: { runId }, lease_until: null });
+    expect(Math.abs(new Date(first[0].due_at).getTime() - wakeAt)).toBeLessThan(1000);
+
+    await settleCancelledTimersHandler.run({}, testWorkContext());
+    const second = await workRows(runId);
+    expect(second).toHaveLength(1);
+    expect(second[0].id).toBe(first[0].id);
+    expect(second[0].due_at).toEqual(first[0].due_at);
+    expect(second[0].lease_until).toBeNull();
+  });
+
+  it('the timer sweep leaves a leased row alone', async () => {
+    const { triggerId } = await seedMovementWithTrigger(teamId);
+    await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
+    const { runId } = await parkedRun(teamId);
+
+    const held = {
+      due_at: new Date(Date.now() + 5 * HOUR),
+      lease_owner: 'busy-drainer',
+      lease_until: new Date(Date.now() + 60_000),
+      lease_token: randomUUID(),
+      attempts: 1,
+    };
+    await getAutomationsQb(['work']).updateTable('work').set(held).where('key', '=', timerWorkKey(runId)).execute();
+    const before = (await workRows(runId))[0];
+
+    await settleCancelledTimersHandler.run({}, testWorkContext());
+
+    const after = await workRows(runId);
+    expect(after).toHaveLength(1);
+    expect(after[0]).toEqual(before);
   });
 
   it('a lapsed lease on a run still parked resumes it normally', async () => {

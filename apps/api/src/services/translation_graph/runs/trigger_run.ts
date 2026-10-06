@@ -257,6 +257,7 @@ export class TriggerRunRecorder {
           ops_run_id: this.opsRunId,
           dry_run: this.firing.dryRun ?? false,
           started_at: this.startedAt,
+          last_heartbeat_at: new Date(),
         })
         .onConflict((oc) => oc.column('id').doNothing())
         .execute();
@@ -545,7 +546,13 @@ export class TriggerRunRecorder {
 
   private async flushLiveTrace(): Promise<void> {
     const trace = this.liveTrace;
-    if (this.finished || !trace || trace.length === this.flushedLiveTrace) return;
+    if (this.finished || !trace) return;
+    // A run silent inside one long call is still alive; the heartbeat must not
+    // depend on the trace having moved.
+    if (trace.length === this.flushedLiveTrace) {
+      await this.stampHeartbeat();
+      return;
+    }
     // Snapshot the length now: the run keeps appending while this write is in
     // flight, and the cursor must match what actually went to the row.
     const length = trace.length;
@@ -578,7 +585,10 @@ export class TriggerRunRecorder {
           if (!existing) return;
           await trx
             .updateTable('trigger_run')
-            .set({ steps: jsonb([...committedSteps(existing.steps), provisional]) })
+            .set({
+              steps: jsonb([...committedSteps(existing.steps), provisional]),
+              last_heartbeat_at: new Date(),
+            })
             .where('id', '=', this.id)
             .execute();
           this.flushedLiveTrace = length;
@@ -586,6 +596,21 @@ export class TriggerRunRecorder {
     } catch (writeErr) {
       // A dropped live snapshot costs visibility for one tick, never the run.
       logger.error('[trigger_run] failed to publish the live trace', {
+        runId: this.id,
+        error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+      });
+    }
+  }
+
+  private async stampHeartbeat(): Promise<void> {
+    try {
+      await getAutomationsQb(['trigger_run'])
+        .updateTable('trigger_run')
+        .set({ last_heartbeat_at: new Date() })
+        .where('id', '=', this.id)
+        .execute();
+    } catch (writeErr) {
+      logger.error('[trigger_run] failed to stamp the heartbeat', {
         runId: this.id,
         error: writeErr instanceof Error ? writeErr.message : String(writeErr),
       });
@@ -912,6 +937,25 @@ function movementStepDiagnostics(result: MovementRunResult): Record<string, unkn
 
 /** What a run spent before now, off its row's summed diagnostics. A row
  *  written before `costMicrodollars` was recorded has only the dollar sum. */
+/**
+ * Whether a `running` run has no live segment behind it: its heartbeat (or, if
+ * it never beat, its start) is older than `staleAfterMs`. A live segment beats
+ * every live-trace tick, so a fresh stamp means some process still owns the run.
+ */
+export async function isOrphanedRunningRun(
+  runId: TriggerRunId,
+  opts: { now: Date; staleAfterMs: number },
+): Promise<boolean> {
+  const row = await getAutomationsQb(['trigger_run'])
+    .selectFrom('trigger_run')
+    .where('id', '=', runId)
+    .select(['status', 'started_at', 'last_heartbeat_at'])
+    .executeTakeFirst();
+  if (row?.status !== 'running') return false;
+  const lastSign = new Date(row.last_heartbeat_at ?? row.started_at);
+  return lastSign.getTime() < opts.now.getTime() - opts.staleAfterMs;
+}
+
 export function runSpentMicrodollars(diagnostics: unknown): number {
   const counters = persistedDiagnostics(diagnostics);
   const exact = counters.costMicrodollars;

@@ -26,15 +26,17 @@
 // not-yet-due sibling leaf (fan-out sleep) stays parked and holds the join —
 // verified separately (§9), not broken here.
 
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { SECOND } from '../../constants';
 import { getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
 import { settleCancelledRun, settleUnresumableRun } from '../interaction/run_failure';
+import { isOrphanedRunningRun } from '../translation_graph/runs/trigger_run';
 import type { WorkHandler } from '../work/kinds';
 import { registerWorkHandler } from '../work/drain';
-import { armTimerWake } from './timer_wake';
+import { armTimerWake, timerWorkKey } from './timer_wake';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { ParkedScopeState } from './serialize';
@@ -55,12 +57,18 @@ interface TimerParkedRunRow {
   teamId: TeamId;
 }
 
-const resumeTimerPayloadSchema = z.object({ runId: z.string().uuid() });
+// A segment beats every 5s (the recorder's live-trace tick); a minute of
+// silence is a dead process, not a slow one.
+const ORPHAN_AFTER = 60 * SECOND;
+
+const resumeTimerPayloadSchema = z.object({
+  runId: z.custom<TriggerRunId>((value) => z.uuid().safeParse(value).success),
+});
 
 /** Wakes one run's due timer leaves, then re-arms the run's row for its next leaf. */
 export const resumeTimerHandler: WorkHandler = {
   async run(payload, ctx) {
-    const { runId } = parseResumeTimerPayload(payload);
+    const { runId } = resumeTimerPayloadSchema.parse(payload);
     const run = await getAutomationsQb(['trigger_run'])
       .selectFrom('trigger_run')
       .where('id', '=', runId)
@@ -79,38 +87,35 @@ export const resumeTimerHandler: WorkHandler = {
   },
 
   // Any re-claim lands here: a lapsed lease, or a retry after a throw. Only a run
-  // left `running` was cut off mid-segment; nothing can finish that segment, so it
-  // fails. A lease lost before the segment began left the run parked: run again.
+  // left `running` with no heartbeat was cut off mid-segment; nothing can finish
+  // that segment, so it fails. A live heartbeat is a sibling segment still
+  // executing elsewhere, and a parked run lost nothing: both run again.
   async recover(payload, ctx) {
-    const { runId } = parseResumeTimerPayload(payload);
-    const run = await getAutomationsQb(['trigger_run'])
-      .selectFrom('trigger_run')
-      .where('id', '=', runId)
-      .select('status')
-      .executeTakeFirst();
-    if (run?.status === 'running') {
-      await settleUnresumableRun({ runId, reason: 'work lease lapsed mid-segment' });
+    const { runId } = resumeTimerPayloadSchema.parse(payload);
+    if (await isOrphanedRunningRun(runId, { now: ctx.now, staleAfterMs: ORPHAN_AFTER })) {
+      await settleUnresumableRun({
+        runId,
+        reason: 'segment did not complete: lease lapsed or the previous attempt failed',
+      });
       return;
     }
     await resumeTimerHandler.run(payload, ctx);
   },
 };
 
-/** The cancel-race closure, on its own periodic row: settles stamped timer parks. */
+/** The periodic `timer_sweep`: the cancel-race closure, then re-arms any timer
+ *  park that has no work row (parked before work rows existed, or whose enqueue
+ *  failed after its parked_run was written). */
 export const settleCancelledTimersHandler: WorkHandler = {
   async run() {
     await settleStampedTimerParkedRuns();
+    await armUnarmedTimerParks();
   },
 };
 
 export function registerTimerWork(): void {
   registerWorkHandler('resume_timer', resumeTimerHandler);
-  registerWorkHandler('settle_cancelled_timers', settleCancelledTimersHandler);
-}
-
-function parseResumeTimerPayload(payload: unknown): { runId: TriggerRunId } {
-  const { runId } = resumeTimerPayloadSchema.parse(payload);
-  return { runId: runId as TriggerRunId };
+  registerWorkHandler('timer_sweep', settleCancelledTimersHandler);
 }
 
 // Several leaves share the run's row and only the earliest was due; the rest
@@ -136,6 +141,36 @@ async function rearmForNextLeaf(input: {
     teamId: input.teamId,
     wakeAt: wakeAt <= input.now ? retryAt : wakeAt,
   });
+}
+
+// One enqueue per parked run is enough: an unleased row keeps the earlier of its
+// own and this due time. A leased row is skipped: its handler re-arms it from the
+// leaves it leaves behind, and an enqueue now would replace that with a stale time.
+async function armUnarmedTimerParks(): Promise<void> {
+  const leased = await getAutomationsQb(['work'])
+    .selectFrom('work')
+    .where('kind', '=', 'resume_timer')
+    .where('lease_until', '>', sql<Date>`now()`)
+    .select('key')
+    .execute();
+  const leasedKeys = new Set(leased.map((row) => row.key));
+  const runs = await getAutomationsQb(['trigger_run', 'parked_run'])
+    .selectFrom('trigger_run')
+    .innerJoin('parked_run', 'parked_run.run_id', 'trigger_run.id')
+    .where('parked_run.park_reason', '=', 'timer')
+    .where('parked_run.status', '=', 'parked')
+    .where('trigger_run.cancel_requested_at', 'is', null)
+    .groupBy(['trigger_run.id', 'trigger_run.team_id'])
+    .select((eb) => [
+      'trigger_run.id as runId',
+      'trigger_run.team_id as teamId',
+      eb.fn.min('parked_run.wake_at').as('wakeAt'),
+    ])
+    .execute();
+  for (const run of runs) {
+    if (!run.wakeAt || leasedKeys.has(timerWorkKey(run.runId))) continue;
+    await armTimerWake({ runId: run.runId, teamId: run.teamId, wakeAt: new Date(run.wakeAt) });
+  }
 }
 
 /**
