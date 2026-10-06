@@ -3753,7 +3753,10 @@ CREATE TABLE automations.trigger_run (
     -- reads spend SINCE this point: resuming a run paused at its cap resets its usage.
     cost_cap_baseline_microdollars bigint NOT NULL DEFAULT 0,
     created_at timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    ops_run_id uuid
+    ops_run_id uuid,
+    -- Stamped while a segment executes (at start, then every live-trace tick).
+    -- A `running` run whose stamp has gone stale has no live process behind it.
+    last_heartbeat_at timestamptz
 );
 
 ALTER TABLE ONLY automations.trigger_run

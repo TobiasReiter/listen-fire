@@ -611,6 +611,7 @@ model TriggerRun {
   opsRunId                    String?            @map("ops_run_id") @db.Uuid
   limitPause                  Json?              @map("limit_pause")
   costCapBaselineMicrodollars BigInt             @default(0) @map("cost_cap_baseline_microdollars")
+  lastHeartbeatAt             DateTime?          @map("last_heartbeat_at") @db.Timestamptz(6)
   adapterAwaits               AdapterAwait[]
   callbacks                   Callback[]
   joinBranchExports           JoinBranchExport[]

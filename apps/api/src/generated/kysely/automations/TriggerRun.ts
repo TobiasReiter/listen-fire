@@ -56,6 +56,8 @@ export default interface TriggerRunTable {
   limit_pause: ColumnType<unknown | null, unknown | null, unknown | null>;
 
   cost_cap_baseline_microdollars: ColumnType<string, string | undefined, string>;
+
+  last_heartbeat_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 export type TriggerRun = Selectable<TriggerRunTable>;
