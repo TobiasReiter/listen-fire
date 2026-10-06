@@ -4280,7 +4280,9 @@
 {"source":"  movement main() {\n  found = extract from [x] {\n    node entry: <Entry> { name: \"n\" }\n  }\n}","version":3,"error":{"message":"'entry' takes its fields from <Entry> — change a field in a following 'through […] { … }' stage, or write the node inline ('node entry: \"…\" { … }') instead of naming a declaration (line 3, col 25)","loc":{"line":3,"col":25}}}
 {"source":"# declarations/deals\n\nnode Deal {\n  name:   <text>\n  amount: <number>\n  node participants {\n    name: <text>\n  }\n}","version":3,"ast_sha256":"7125bd4a5360264ec04bd8024e2a2bd2e178b35e7db14df8876ea2b4f31726d7"}
 {"source":"# lib/file-routines\n\nimport { dropbox } from adapters\nimport { team_drive } from credentials\n\nnode Files {\n  name: <text>\n  data: <file>\n}\n\nmovement files_to_dropbox(f: <Files>) {\n  drive = dropbox(credentials: team_drive)\n  write drive-[:file]-> {\n    name: f.`name`\n    data: f.`data`\n  }\n}","version":3,"ast_sha256":"03e82c9144752bf0448e581bac36c7fa9b7bd3c96fef85b003fc6b584ba376ce"}
+{"source":"# 🎉 a comment with an emoji\nx = 1 # 🚀 trailing\ny = \"東京 ☕\"","version":3,"ast_sha256":"6cf5fd0196ac7580ffdb3f85ca06519831b7a7d3bc366a763833c35f47b62004"}
 {"source":"MAP = 3\ny = MAP + 1","version":3,"ast_sha256":"d96ef24952bf4550f6864a784a90b4da3ec0f0c9b4be64d8a2cfa08ea60ae3d0"}
+{"source":"`Société Générale` = 1\n`naïve` = `Société Générale`","version":3,"ast_sha256":"94298066064a5bc05925016cecae16929c0dae4d93263ab55489293de34cfe34"}
 {"source":"`ask`","version":3,"error":{"message":"Unexpected end of file after 'ask' — expected '=' (binding), '(' (a call), or '-[…]->' (a traversal) (line 1, col 6)","loc":{"line":1,"col":6}}}
 {"source":"`ask`()","version":3,"ast_sha256":"641ebbe9165406d1d2fe5d8b4786e9380235aebbe62b9564193d31ffbb90522b"}
 {"source":"`my deal` = write crm-[:company]-> { name: \"Acme\" }\nwrite `my deal` { name: \"Acme 2\" }\nrefresh `my deal`\ndelete `my deal`\nx = {\n  `my deal` = 1\n}.`my deal`","version":3,"ast_sha256":"45a286cbccc999fd2f7199d76b247e043c9eef4f18ee6002741ca2f8b39e2d8f"}
@@ -4317,11 +4319,13 @@
 {"source":"d = extract from [x] {\n  node e: <Entry | null>\n}","version":3,"error":{"message":"'<Entry | null>' is written only on an extraction field's annotation (`name: <text | null> \"…\"`) or a declared node's field (`name: <text | null>`) — nowhere else does a type take '| null' (line 2, col 18)","loc":{"line":2,"col":18}}}
 {"source":"d = extract from [x] {\n  stage: <crm-[:companies]->.funding_stage> \"the round's stage\"\n}","version":3,"ast_sha256":"80a72026fd20b01bab488ff801107d0e9aae1e8a40012a827968b0384e531ec3"}
 {"source":"d = extract from [x] {\n  stage: crm. \"the stage\"\n}","version":3,"error":{"message":"Expected a path segment after 'crm.', found ' ' (line 2, col 14)","loc":{"line":2,"col":14}}}
+{"source":"d = node { `Résumé`: \"🧾 new\", count: 3 }","version":3,"ast_sha256":"ec04e60638c05ddf4bfa918e72e23215bcf809c4e1127e1957145f9a6b1c4b8b"}
 {"source":"d = node { title: \"x\"\n","version":3,"error":{"message":"Expected '}' to close the node literal (line 1, col 10)","loc":{"line":1,"col":10}}}
 {"source":"d = write Deal-[:round]-> { name: \"Series A\", amount: 5000000 }\nwrite d-[:participants]-> { name: \"Acme Ventures\" }","version":3,"ast_sha256":"1accc5c3ac59af7beeeb6e2cfcbad49ccacfbe882d0b44771c6ff596b5b707f5"}
 {"source":"deal = match (company-[:investments]->, investor-[:investments]->) { unique by (company, investor) }","version":3,"ast_sha256":"7ffc83dec9e28a55fc78b3b8f74871d96900faed7745e70c688f24e46d12c6e7"}
 {"source":"deals = extract from [msg.`text`, msg-[:files]->.`data`] through [scrub_sensitive] {\n  node company: \"each company seeking investment in this message\" {\n    name: \"the company's name\"\n    urls: \"URLs in the message associated with this company\"\n  } through [vc_url_retrieval(urls: urls)] {\n    name:    \"the company's name\"\n    website: \"the company's official website\"\n\n    node round: \"the funding round this company is raising\" {\n      stage:  \"the round's stage, e.g. Seed, Series A\"\n      amount: \"the amount being raised\"\n      node investor: \"each investor participating in this round\" {\n        name: \"investor name\"\n        lead: \"whether this investor is leading the round\"\n      }\n    }\n  }\n}","version":3,"ast_sha256":"14153225fcc0553e0b78f81e3b7ffc34c43a7300c3b4b86813eca063d7762513"}
 {"source":"delete","version":3,"error":{"message":"Expected the handle to delete — a bound name after 'delete', found end of file (line 1, col 7)","loc":{"line":1,"col":7}}}
+{"source":"delete `🌍` extra","version":3,"error":{"message":"Unexpected 'extra' — expected the end of the statement (line 1, col 13)","loc":{"line":1,"col":13}}}
 {"source":"delete stale","version":3,"ast_sha256":"e75c5f6deb72956676beeb55f0fb0a1d273df18289e2f3a4964f2540cf40881e"}
 {"source":"drive = dropbox(credentials: team_drive)\n\nmsg-[file:_resources WHERE `contentType` == \"application/pdf\"]-> {\n  write drive-[:file]-> {\n    name: file.`filename`\n    data: file.`data`\n  }\n}","version":3,"ast_sha256":"eba6913bf87aec664109f4eaab39a856c214d62a46165c5bba6caa2044ad9b56"}
 {"source":"edge champion -[:led]-> part","version":3,"error":{"message":"'edge' is not a statement — connect two records with 'link a -[:e]-> b'. In a node declaration, nest the node instead: the nesting IS the edge (line 1, col 1)","loc":{"line":1,"col":1}}}
@@ -4337,11 +4341,13 @@
 {"source":"export node Files {\n  name: <text>\n}\n\nexport movement helper(f: <Files>) {\n  x = f.`name`\n}\n\nmovement private_one(f: <Files>) {\n  y = f.`name`\n}","version":3,"ast_sha256":"cda0ed7f6aa3b0626be08c307bd1be0a1c414c55b1244b4ee4ae286bf90854c8"}
 {"source":"export x = 1","version":3,"error":{"message":"'export' marks a declaration as offered to other files — write `export movement <name>(…) { … }` or `export node <name> { … }` (line 1, col 1)","loc":{"line":1,"col":1}}}
 {"source":"extract from [x] { name: \"y\" }","version":3,"error":{"message":"An 'extract' must be bound to a name — write `name = extract from […] { … }` (line 1, col 1)","loc":{"line":1,"col":1}}}
+{"source":"found = extract from [m.body] {\n  `société`: \"the company 🏢\"\n  node `personne`: \"each person 👤\" { nom: \"their name\" }\n}","version":3,"ast_sha256":"6f8165fc80a8d3405ea71f4c7b95d244b454d648bf9e19f703caa6dd5d9c72e2"}
 {"source":"function (d: <s-[:m]->>) { }","version":3,"error":{"message":"Expected a name after 'function', found '(' (line 1, col 10)","loc":{"line":1,"col":10}}}
 {"source":"function a(d: <s-[:m]->>) { write d-[:reply]-> { text: \"1\" } }\nmovement b(d: <s-[:m]->>) { write d-[:reply]-> { text: \"2\" } }\nlisten to s {} fire a","version":3,"ast_sha256":"aae53a95854e5da9fcd66f746fa1e0e850069bc74b164263fe7e5e4c0df366f8"}
 {"source":"function intake(d: <s-[:m]->>) {\n  write d-[:reply]-> { text: \"x\" }\n}","version":3,"ast_sha256":"770937e70ea37451dc8449e44c5f732b1c1b9339df0d6af862ee6057a73aa0d3"}
 {"source":"g = granola()\nmovement m(x: <g-[:invocation]->>) {}\nlisten as \"Alice's meetings\" to g {} fire m","version":3,"ast_sha256":"c2e0bdeb2a3ef8dfce76f555ee0dadf21f90ab1e4694091d5c6175d7c646bb27"}
 {"source":"g = granola()\nmovement m(x: <g-[:invocation]->>) {}\nlisten to g {} fire m","version":3,"ast_sha256":"2efb939bf2cf0c9c90c5191b8ca804551401204b52beb444962645833a34f30f"}
+{"source":"go = manual()\nlisten as \"Équipe 🚀\" to go {} fire f\nmovement f(g: <go-[:invocation]->>) {\n  ERROR(\"échec 💥\")\n}","version":3,"ast_sha256":"47ede6df4f203a3f5de575c3bd8c32a6ece6dee503aa04f312a138b1ec8bc9ce"}
 {"source":"if a == 1 {\n  write kg-[:a]-> { x: 1 }\n} else {\n  write kg-[:b]-> { x: 2 }\n}","version":3,"ast_sha256":"4d8ac91dec192350cbf5613afd199957c857f555310f1a437d902d17218c6781"}
 {"source":"import { AThing } from \"lib/a\"","version":3,"ast_sha256":"1489b7367cf130ae508c6ee85bc4f47abcf0b403e670857b78be10ec897a5b81"}
 {"source":"import { AThing } from \"lib/a\"\nexport movement b_thing(x: <AThing>) {\n  y = x.`name`\n}","version":3,"ast_sha256":"6ed334e12ac85e2b551dbd5e145c3b3c63a8350e1997a0da53e04b86143d1a22"}
@@ -6787,6 +6793,7 @@
 {"source":"listen to manual() {} fire backfill","version":3,"ast_sha256":"50156ca8bdc4b656dcf99611a6824851571006e65af4937a93e518e97cae47bd"}
 {"source":"listen to nowhere { type: \"Deal\" } fire intake","version":3,"ast_sha256":"3781994e2e5210682ce31ad1cb749c2a062f7609db70ff5a70c2d93cf85b2a69"}
 {"source":"m(x: a ?: b)","version":3,"error":{"message":"`?:` is the set-if-empty write-field marker (`Field ?: value`), only valid inside a write body — for a value fallback use `COALESCE(a, b)`; to branch, use an `if` block (line 1, col 8)","loc":{"line":1,"col":8}}}
+{"source":"m-[a:Attachments WHERE a.name == \"📎 doc\"]-> {\n  x = a.size\n}","version":3,"ast_sha256":"8c1796843aba1900f3974ae2806c663acbc149843dc2fc2e9d32cc3c44cb52ee"}
 {"source":"match = 1\nx = match","version":3,"ast_sha256":"d7aa669ae0246b53b7706b959e8e6bdcef1b472041d8808ca5ffd4eaf5a3a845"}
 {"source":"match a { unique by (`name`), name: \"x\" }","version":3,"error":{"message":"'a' is already a record — a match FINDS one, from where records are: a hop ('match a-[:Edge]-> { … }') or an instance's collection ('match crm-[:companies]-> { … }') (line 1, col 7)","loc":{"line":1,"col":7}}}
 {"source":"match crm-[:companies]-> { unique by (`domain`), domain: \"acme.com\" }","version":3,"ast_sha256":"41e034c94acfe92a4de86898029f9b792c9c54dde2e439514b039b9e75a97307"}
@@ -6802,6 +6809,7 @@
 {"source":"movement m() { write crm-[:X]-> { a: \"b\" } }","version":3,"ast_sha256":"93e3b60717508281473758a90d38d31578364e0d8f1b2f8c778c0c5e0d2a3f00"}
 {"source":"movement m() { write kg-[:X]-> { a: \"b\" } }","version":3,"ast_sha256":"cce9b2840f625b113218c2236be8f6a1db69f80eeaf0848805205f214049a719"}
 {"source":"movement m(`my param`: <text>) {\n  send(`my param`: 1)\n}","version":3,"ast_sha256":"e90102ad10eaad11e01a1e065a31d2d738a881070824dcef23ffd171028ead56"}
+{"source":"movement m(c: <crm-[:companies]->>) {\n  write c-[:`Contacts 👥`]-> { `Prénom`: \"Zoë 🌸\", city: \"Zürich\" }\n}","version":3,"ast_sha256":"ec6404b835a575b87ec91b97e2df372316e3090a505d8c1904249e6d668f8672"}
 {"source":"movement m(cfg: <{\n  mode: text\n  owner?: text\n}>) {\n}","version":3,"ast_sha256":"b328cd8229eda831bd8f1ee0040bbb670ddd14fd9d521e8aa30778f3bd1c173c"}
 {"source":"movement m(cfg: <{ mode: <text> }>) {\n}","version":3,"error":{"message":"Inside a type's angle brackets the members are bare type names — write 'cfg: <{ key: text }>', not '<{ key: <text> }>' (line 1, col 26)","loc":{"line":1,"col":26}}}
 {"source":"movement m(cfg: <{ mode: text, mode: text }>) {\n}","version":3,"error":{"message":"The key 'mode' is written twice in the record type of 'cfg' (line 1, col 32)","loc":{"line":1,"col":32}}}
@@ -7059,6 +7067,7 @@
 {"source":"shape Deal {\n  name: <text>\n}","version":3,"error":{"message":"'shape' is not a statement — a declaration IS the record it describes, so declare it as a node: `node <name> { title: <text>  node <edge name> { … } }`, and type a parameter against it with `<name>` (line 1, col 1)","loc":{"line":1,"col":1}}}
 {"source":"t = MEMBERS(<Thesis | null>)","version":3,"error":{"message":"'<Thesis | null>' is written only on an extraction field's annotation (`name: <text | null> \"…\"`) or a declared node's field (`name: <text | null>`) — nowhere else does a type take '| null' (line 1, col 21)","loc":{"line":1,"col":21}}}
 {"source":"type Amount = <number>","version":3,"error":{"message":"'Amount' is a refinement of text, so each of its values is written as text: `type Amount = <\"A\" | \"B\">`. To type a field as a number or a date, annotate it with that type directly (`<number>`, `<date>`). (line 1, col 16)","loc":{"line":1,"col":16}}}
+{"source":"type Mood = <\"😀\" | 5>","version":3,"error":{"message":"'Mood' is a refinement of text, so each of its values is written as text: `type Mood = <\"A\" | \"B\">`. To type a field as a number or a date, annotate it with that type directly (`<number>`, `<date>`). (line 1, col 21)","loc":{"line":1,"col":21}}}
 {"source":"type Only = <\"A\">","version":3,"ast_sha256":"9a08d9c310460f5213469c7f591baa576b1253a7bc5586fcbd88557cc3fabea8"}
 {"source":"type Thesis = <\n  \"A\"\n  | \"B\"\n>","version":3,"ast_sha256":"77d48db48e95b1dcc31949bb729c6a1f1a6e0722bf4782133b48bbeee171ebce"}
 {"source":"type Thesis = <\"A\" | \"B\"","version":3,"error":{"message":"Expected '>' to close 'Thesis's values, found end of file (line 1, col 25)","loc":{"line":1,"col":25}}}
@@ -7084,9 +7093,12 @@
 {"source":"write fr-[:related]->company { name: \"x\" }","version":3,"error":{"message":"Types are written in angle brackets — wrap the type in angle brackets: <company> (line 1, col 22)","loc":{"line":1,"col":22}}}
 {"source":"x = \"abc","version":3,"error":{"message":"Unterminated string — expected a closing '\"' (line 1, col 5)","loc":{"line":1,"col":5}}}
 {"source":"x = \"unique\"\n","version":3,"ast_sha256":"313dfc09ec8d44ea9ac4997aec266c9f357df7cd0b8b73e7c4be84656c5ee9e8"}
+{"source":"x = \"🌍 hello\"\ny = 1","version":3,"ast_sha256":"b981235f811db62173ffd7fb0cb106ab62c4d08250e0a6b4f3a90eb147b5e5d2"}
+{"source":"x = \"🌍\"\r\ny = 2\r\n","version":3,"ast_sha256":"9c51ec30c30fe21093195ae17841ecb9900b055336e75c5188c0ef11d98c4e3f"}
 {"source":"x = (1 + 2","version":3,"error":{"message":"Unbalanced '(' — no matching ')' before end of file (line 1, col 5)","loc":{"line":1,"col":5}}}
 {"source":"x = (1 + 2]","version":3,"error":{"message":"Expected ')' to close the '(' opened at line 1, col 5 — found ']' (line 1, col 11)","loc":{"line":1,"col":11}}}
 {"source":"x = -back_days","version":3,"ast_sha256":"50133ed448ef68d228b1d419213a48a34bde55aed7d0292b45125204af81140e"}
+{"source":"x = 1\ny = \"🌍 never closed","version":3,"error":{"message":"Unterminated string — expected a closing '\"' (line 2, col 5)","loc":{"line":2,"col":5}}}
 {"source":"x = _resources\nwrite crm-[:note]-> { body: x }","version":3,"ast_sha256":"96b0d38bf2729c5c1ed6d658884cd7039127e9c80b55db6d8de2fe3cd41dd931"}
 {"source":"x = `some name`","version":3,"ast_sha256":"4ab19e2a83abb3e59f5be661e17f4fc48c3e4f12adbe224ebe579bb03c7e7735"}
 {"source":"x = a ?: b","version":3,"error":{"message":"`?:` is the set-if-empty write-field marker (`Field ?: value`), only valid inside a write body — for a value fallback use `COALESCE(a, b)`; to branch, use an `if` block (line 1, col 7)","loc":{"line":1,"col":7}}}
