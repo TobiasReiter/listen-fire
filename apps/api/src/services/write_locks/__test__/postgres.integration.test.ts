@@ -137,4 +137,77 @@ describe('PostgresWriteLocks', () => {
     await a.acquire(['record attio 1']);
     await b.acquire(['record attio 1']);
   });
+
+  it('rejects the waiting acquire as a lost session when its backend is terminated mid-wait', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const scope = randomUUID();
+    const a = holderOf(locks, scope);
+    const b = holderOf(locks, scope);
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+
+    await a.acquire(['record attio 1']);
+    await b.acquire(['record attio 0']);
+    const pid = await backendPidOf(b);
+    const waiting = b.acquire(['record attio 1']);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await observer.query('SELECT pg_terminate_backend($1)', [pid]);
+
+    await expect(waiting).rejects.toMatchObject({
+      code: 'MOVENG_RUNTIME',
+      message: expect.stringContaining('write lock session lost: record attio 1'),
+    });
+    await b.release();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('fails one side of a cross-holder deadlock loudly instead of hanging', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const scope = randomUUID();
+    const a = holderOf(locks, scope);
+    const b = holderOf(locks, scope);
+
+    await a.acquire(['record attio 1']);
+    await b.acquire(['record attio 2']);
+    // The loser keeps what it took before the deadlock until it releases,
+    // which is what lets the winner through.
+    const releasingOnFailure = (holder: PostgresWriteLockHolder, name: string) =>
+      holder.acquire([name]).catch(async (err: unknown) => {
+        await holder.release();
+        throw err;
+      });
+    const results = await Promise.allSettled([
+      releasingOnFailure(a, 'record attio 2'),
+      releasingOnFailure(b, 'record attio 1'),
+    ]);
+    const rejected = results.filter((result) => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({
+      reason: {
+        code: 'MOVENG_RUNTIME',
+        message: expect.stringContaining('write lock deadlock: record attio'),
+      },
+    });
+  });
+
+  it('release waits for an acquire still in flight on the same holder', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const scope = randomUUID();
+    const a = holderOf(locks, scope);
+    const b = holderOf(locks, scope);
+
+    await a.acquire(['record attio 1']);
+    const bAcquire = tracked(b.acquire(['record attio 1']));
+    const bRelease = tracked(b.release());
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(bAcquire.settled()).toBe(false);
+    expect(bRelease.settled()).toBe(false);
+
+    await a.release();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(bAcquire.settled()).toBe(true);
+    expect(bRelease.settled()).toBe(true);
+
+    const c = holderOf(locks, scope);
+    await c.acquire(['record attio 1']);
+  });
 });

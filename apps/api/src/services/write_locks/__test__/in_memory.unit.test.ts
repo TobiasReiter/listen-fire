@@ -129,4 +129,26 @@ describe('InMemoryWriteLocks', () => {
     await b.release();
     await c.release();
   });
+
+  it('release waits for an acquire still in flight, then frees what it granted', async () => {
+    const locks = new InMemoryWriteLocks();
+    const a = locks.holder('t');
+    await a.acquire(['x']);
+
+    const b = locks.holder('t');
+    const bAcquire = tracked(b.acquire(['x']));
+    const bRelease = tracked(b.release());
+    await settle();
+    expect(bAcquire.settled()).toBe(false);
+    expect(bRelease.settled()).toBe(false);
+
+    await a.release();
+    await settle();
+    expect(bAcquire.settled()).toBe(true);
+    expect(bRelease.settled()).toBe(true);
+
+    const c = locks.holder('t');
+    await c.acquire(['x']);
+    await c.release();
+  });
 });

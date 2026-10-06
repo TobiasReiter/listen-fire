@@ -13,12 +13,16 @@ import {
   type LockSession,
   ScopedHolder,
   type WriteLocks,
+  writeLockDeadlock,
   writeLockSessionLost,
   writeLockTimeout,
 } from './write_locks';
 
 // Postgres `lock_not_available`: what `lock_timeout` raises.
 const LOCK_NOT_AVAILABLE = '55P03';
+const DEADLOCK_DETECTED = '40P01';
+// `admin_shutdown`: the backend was terminated while the query ran.
+const ADMIN_SHUTDOWN = '57P01';
 
 type PostgresOptions = { connectionString: string; timeoutMs: number };
 
@@ -33,8 +37,10 @@ class PostgresSession implements LockSession {
     try {
       await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [key]);
     } catch (err) {
-      if (err instanceof DatabaseError && err.code === LOCK_NOT_AVAILABLE) {
-        throw writeLockTimeout(name);
+      if (err instanceof DatabaseError) {
+        if (err.code === LOCK_NOT_AVAILABLE) throw writeLockTimeout(name);
+        if (err.code === DEADLOCK_DETECTED) throw writeLockDeadlock(name);
+        if (err.code === ADMIN_SHUTDOWN) throw writeLockSessionLost(name);
       }
       throw err;
     }
@@ -43,10 +49,11 @@ class PostgresSession implements LockSession {
   async unlockAll(): Promise<void> {
     const pending = this.client;
     this.client = undefined;
-    this.lost = false;
-    if (!pending) return;
-    const client = await pending.catch(() => undefined);
-    if (!client) return;
+    const client = await pending?.catch(() => undefined);
+    if (!client) {
+      this.lost = false;
+      return;
+    }
     try {
       await client.query('SELECT pg_advisory_unlock_all()');
     } catch (err) {
@@ -55,6 +62,8 @@ class PostgresSession implements LockSession {
       logger.warn('[write_locks] unlock failed; ending the session instead', { err });
     } finally {
       await client.end().catch(() => undefined);
+      // Only now: an acquire racing the unlock must still see the session as lost.
+      this.lost = false;
     }
   }
 
@@ -78,7 +87,9 @@ class PostgresSession implements LockSession {
   }
 
   private async open(): Promise<Client> {
-    const client = new Client({ connectionString: this.opts.connectionString });
+    // A segment can hold its locks for minutes; keepalive lets a dead peer
+    // (or a NAT dropping an idle connection) surface as a lost session.
+    const client = new Client({ connectionString: this.opts.connectionString, keepAlive: true });
     // An unhandled 'error' on a pg Client crashes the process. A dropped
     // session took its locks with it, so the holder refuses further acquires.
     client.on('error', (err) => {

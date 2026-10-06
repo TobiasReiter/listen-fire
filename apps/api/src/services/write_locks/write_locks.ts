@@ -9,10 +9,22 @@ import { MovementEngineError } from '../movement_engine/errors';
 export const DEFAULT_WRITE_LOCK_TIMEOUT_MS = 60_000;
 
 export interface WriteLockHolder {
-  /** Acquire all names (sorted) exclusively; reentrant within the holder; rejects with
-   *  MOVENG_RUNTIME 'write lock timeout: <name>' after `timeoutMs` (default 60_000). */
+  /**
+   * Acquire all names exclusively, one at a time in sorted order; reentrant
+   * within the holder. The timeout (`timeoutMs`, default 60_000) applies PER
+   * NAME: rejects MOVENG_RUNTIME 'write lock timeout: <name>'. A cross-holder
+   * deadlock or a lost session rejects loudly too ('write lock deadlock:
+   * <name>', 'write lock session lost: <name>'), never hangs.
+   *
+   * Names taken before a failing one stay held until `release()`, so callers
+   * release in `finally`. Sorting orders the names of ONE call only: two
+   * holders that acquire overlapping sets across several calls can still
+   * deadlock.
+   */
   acquire(names: readonly string[]): Promise<void>;
-  /** Release everything and drop the underlying session. Idempotent. */
+  /** Release everything and drop the underlying session. Idempotent. Waits for
+   *  any acquire still in flight on this holder, so a lock granted after the
+   *  release began is released too rather than leaked. */
   release(): Promise<void>;
 }
 
@@ -29,8 +41,15 @@ export function writeLockTimeout(name: string): MovementEngineError {
   return new MovementEngineError('MOVENG_RUNTIME', `write lock timeout: ${name}`, { name });
 }
 
-export function writeLockSessionLost(): MovementEngineError {
-  return new MovementEngineError('MOVENG_RUNTIME', 'write lock session lost');
+export function writeLockDeadlock(name: string): MovementEngineError {
+  return new MovementEngineError('MOVENG_RUNTIME', `write lock deadlock: ${name}`, { name });
+}
+
+/** `name` is the lock being waited for when the session dropped, when there is one. */
+export function writeLockSessionLost(name?: string): MovementEngineError {
+  return name === undefined
+    ? new MovementEngineError('MOVENG_RUNTIME', 'write lock session lost')
+    : new MovementEngineError('MOVENG_RUNTIME', `write lock session lost: ${name}`, { name });
 }
 
 /** What a backend provides to a holder: one exclusive lock per key, and a way
@@ -47,13 +66,22 @@ export class ScopedHolder implements WriteLockHolder {
   // the holder share a single wait instead of the second queueing behind the
   // first (which would deadlock the in-memory gate).
   private readonly taken = new Map<string, Promise<void>>();
+  private readonly inFlight = new Set<Promise<void>>();
 
   constructor(
     private readonly scope: string,
     protected readonly session: LockSession,
   ) {}
 
-  async acquire(names: readonly string[]): Promise<void> {
+  acquire(names: readonly string[]): Promise<void> {
+    const acquiring = this.acquireSorted(names);
+    this.inFlight.add(acquiring);
+    const forget = () => this.inFlight.delete(acquiring);
+    acquiring.then(forget, forget);
+    return acquiring;
+  }
+
+  private async acquireSorted(names: readonly string[]): Promise<void> {
     // Without this a re-acquire of a name taken before the session dropped
     // would be skipped as reentrant, and the write would run unlocked.
     this.session.assertIntact();
@@ -76,6 +104,7 @@ export class ScopedHolder implements WriteLockHolder {
   }
 
   async release(): Promise<void> {
+    await Promise.allSettled([...this.inFlight]);
     this.taken.clear();
     await this.session.unlockAll();
   }
