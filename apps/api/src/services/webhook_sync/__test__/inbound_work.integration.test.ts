@@ -18,9 +18,15 @@ jest.mock('../../translation_graph/movement/execute', () => {
   const actual = jest.requireActual('../../translation_graph/movement/execute');
   return { ...actual, resumeMovementFiring: jest.fn() };
 });
-jest.mock('../linked_object_refresh', () => {
-  const actual = jest.requireActual('../linked_object_refresh');
-  return { ...actual, refreshLinkedObjects: jest.fn(async () => undefined) };
+// The cache's live provider read and its bridge lookup: what the refresh row
+// does is under test, not Attio.
+jest.mock('../linked_object_cache', () => {
+  const actual = jest.requireActual('../linked_object_cache');
+  return {
+    ...actual,
+    refreshLinkedObjects: jest.fn(async () => undefined),
+    hasBridgedLinkedObjects: jest.fn(async () => true),
+  };
 });
 jest.mock('../../translation_graph/triggers/router', () => {
   const actual = jest.requireActual('../../translation_graph/triggers/router');
@@ -53,7 +59,9 @@ import { dispatchEventHandler, registerDispatchWork } from '../../translation_gr
 import { registerAwaitWork } from '../../movement_engine/await_resume';
 import { drainUntilIdle, inProcessNotifier, resetWorkHandlersForTests, setWorkNotifier } from '../../work/drain';
 import { handleInboundWebhook } from '../handler';
-import { refreshLinkedObjects } from '../linked_object_refresh';
+import { refreshLinkedObjects } from '../linked_object_cache';
+import { linkedObjectRefreshHandler, registerLinkedObjectWork } from '../linked_object_refresh';
+import { logger } from '../../logger';
 import { runHarnessDelivery } from '../../work/harness';
 
 const mockedCatalog = movementCatalogForTeam as jest.Mock;
@@ -168,7 +176,7 @@ async function seedMovementTrigger(teamId: TeamId): Promise<TriggerId> {
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: 'Sleep then notify', source: SLEEP_THEN_NOTIFY } as any)
+    .values({ id: movementId, team_id: teamId, name: `Sleep then notify ${movementId.slice(0, 8)}`, source: SLEEP_THEN_NOTIFY } as any)
     .execute();
   await mintMovementVersionIfChanged({
     teamId,
@@ -305,6 +313,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     resetWorkHandlersForTests();
     registerDispatchWork();
     registerAwaitWork();
+    registerLinkedObjectWork();
     // The door's notify would drain in-process; the test drains explicitly.
     setWorkNotifier({ notify() {} });
   });
@@ -383,28 +392,72 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     expect(await runsFor(triggerId)).toHaveLength(1);
   });
 
-  it('a failed linked-object refresh leaves the row queued; a later drain dispatches', async () => {
+  it('a bridged record with NO matching trigger still gets a refresh row, and draining refreshes', async () => {
+    const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+    attioEvents = [{ ...ATTIO_EVENT, externalId: 'co-1', recordType: 'companies' }];
+
+    await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
+
+    expect(await workRows(teamId, 'dispatch_event')).toHaveLength(0);
+    const refreshes = await workRows(teamId, 'linked_object_refresh');
+    expect(refreshes).toHaveLength(1);
+    expect(refreshes[0].payload).toEqual({
+      teamId,
+      provider: 'ATTIO',
+      credentialsId: expect.any(String),
+      externalId: 'co-1',
+      recordType: 'companies',
+    });
+    expect(mockedRefresh).not.toHaveBeenCalled();
+
+    await drainUntilIdle({ owner: 'test' });
+
+    expect(mockedRefresh).toHaveBeenCalledWith(refreshes[0].payload);
+    expect(await workRows(teamId, 'linked_object_refresh')).toHaveLength(0);
+  });
+
+  it('three matching triggers make three dispatch rows and ONE refresh row; dispatch never refreshes', async () => {
+    const triggerIds = [
+      await seedMovementTrigger(teamId),
+      await seedMovementTrigger(teamId),
+      await seedMovementTrigger(teamId),
+    ];
+    const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+    attioEvents = [{ ...ATTIO_EVENT, externalId: 'co-1', recordType: 'companies' }];
+
+    await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
+
+    expect(await workRows(teamId, 'dispatch_event')).toHaveLength(3);
+    const [refreshRow] = await workRows(teamId, 'linked_object_refresh');
+    expect(await workRows(teamId, 'linked_object_refresh')).toHaveLength(1);
+
+    // The dispatch rows alone: the refresh row is held by "another drainer".
+    await getAutomationsQb(['work'])
+      .updateTable('work')
+      .set({ lease_owner: 'elsewhere', lease_until: new Date(Date.now() + 60_000), lease_token: randomUUID() })
+      .where('id', '=', refreshRow.id)
+      .execute();
+    await drainUntilIdle({ owner: 'test' });
+
+    expect(mockedRefresh).not.toHaveBeenCalled();
+    for (const triggerId of triggerIds) expect(await runsFor(triggerId)).toHaveLength(1);
+  });
+
+  it('a failed refresh retries on its own row; the dispatch does not wait for it', async () => {
     const triggerId = await seedMovementTrigger(teamId);
     const subscriptionId = await seedSubscription(teamId, 'ATTIO');
     attioEvents = [{ ...ATTIO_EVENT, externalId: 'co-1', recordType: 'companies' }];
     mockedRefresh.mockRejectedValueOnce(new Error('attio is down'));
 
-    const result = await handleInboundWebhook(attioDelivery(subscriptionId));
-    await result.enqueueDeferred!();
-
-    // The refresh is not in the request: the row is there whatever it will do.
-    const [row] = await workRows(teamId, 'dispatch_event');
-    expect(row.payload).toMatchObject({
-      linkedObjectRefresh: { provider: 'ATTIO', externalId: 'co-1', recordType: 'companies' },
-    });
-    expect(mockedRefresh).not.toHaveBeenCalled();
+    await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
 
     const first = await drainUntilIdle({ owner: 'test' });
     expect(first.failed).toBe(1);
-    expect((await receipts(teamId))[0].status).toBe('received');
-    expect(await runsFor(triggerId)).toHaveLength(0);
+    expect((await receipts(teamId))[0].status).toBe('dispatched');
+    expect(await runsFor(triggerId)).toHaveLength(1);
+    expect(await workRows(teamId, 'linked_object_refresh')).toHaveLength(1);
 
-    // Past its backoff, the retry refreshes and dispatches.
+    // Past its backoff, the retry refreshes.
     await getAutomationsQb(['work'])
       .updateTable('work')
       .set({ due_at: new Date(Date.now() - 1_000) })
@@ -413,8 +466,29 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     await drainUntilIdle({ owner: 'test' });
 
     expect(mockedRefresh).toHaveBeenCalledTimes(2);
-    expect((await receipts(teamId))[0].status).toBe('dispatched');
-    expect(await runsFor(triggerId)).toHaveLength(1);
+    expect(await workRows(teamId, 'linked_object_refresh')).toHaveLength(0);
+  });
+
+  it('the refresh gives up at its tenth attempt: no throw, one warning', async () => {
+    const warn = jest.spyOn(logger, 'warn');
+    mockedRefresh.mockRejectedValue(new Error('attio is down'));
+    const refresh = { teamId, provider: 'ATTIO', credentialsId: 'cred-1', externalId: 'co-1' };
+
+    await expect(
+      linkedObjectRefreshHandler.run(refresh, { ...testWorkContext(), attempts: 9 }),
+    ).rejects.toThrow('attio is down');
+    expect(warn).not.toHaveBeenCalled();
+
+    await expect(
+      linkedObjectRefreshHandler.run(refresh, { ...testWorkContext(), attempts: 10 }),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      '[LinkedObjectRefresh] giving up on the refresh',
+      expect.objectContaining({ attempts: 10, error: 'attio is down' }),
+    );
+    warn.mockRestore();
+    mockedRefresh.mockReset().mockResolvedValue(undefined);
   });
 
   it('the harness sequence reports a receipt whose rows did not settle in time', async () => {

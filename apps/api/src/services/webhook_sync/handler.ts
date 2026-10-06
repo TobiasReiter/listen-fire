@@ -29,7 +29,11 @@ import {
 import { enqueueAwaitWake } from '../movement_engine/await_resume';
 import { notifyWork } from '../work/drain';
 import type { HarnessDelivery, SettleReport } from '../work/harness';
-import type { LinkedObjectRefresh } from './linked_object_refresh';
+import {
+  enqueueLinkedObjectRefresh,
+  hasBridgedLinkedObjects,
+  type LinkedObjectRefresh,
+} from './linked_object_refresh';
 import { hasAdapter, resolveAdapterSlug } from '../translation_graph/adapters/registry';
 import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { isTestHarnessTeam } from '../../lib/recording';
@@ -67,8 +71,8 @@ interface HandleResult {
   eventsProcessed: number;
   error?: string;
   /**
-   * Phase 2: a work row per await wake and per receipt — nothing else, so
-   * nothing live sits between a receipt and its row. The door awaits it BEFORE
+   * Phase 2: a work row per await wake, per linked_object refresh and per
+   * receipt — nothing else, so nothing live sits between a receipt and its row. The door awaits it BEFORE
    * acking, since a receipt without a row would never run; the rows themselves
    * (the linked-object refresh included) run off the request. Absent when the
    * delivery carried nothing to run. Never rejects for a per-event failure
@@ -333,9 +337,9 @@ async function captureInboundEvent(input: {
 }
 
 /**
- * Phase 2 for ONE event: queue a wake for any watch-point the event satisfies
- * and a run per stored receipt. A receipt's run carries the linked_object
- * refresh the event owes, so it lands ahead of the movement without a live
+ * Phase 2 for ONE event: queue a wake for any watch-point the event satisfies,
+ * a linked_object refresh when a KG node is bridged to the record it names, and
+ * a run per stored receipt. The rows are independent; none makes a live
  * provider read inside the request.
  */
 async function enqueueCapturedInboundEvent(input: {
@@ -355,22 +359,22 @@ async function enqueueCapturedInboundEvent(input: {
     });
   }
 
-  const { externalId, recordType } = captured.event;
-  const linkedObjectRefresh: LinkedObjectRefresh | undefined =
-    externalId === undefined
-      ? undefined
-      : {
-          teamId: subscription.team_id as TeamId,
-          provider: subscription.provider,
-          credentialsId: subscription.credentials_id,
-          externalId,
-          ...(recordType !== undefined ? { recordType } : {}),
-        };
-  await enqueueCapturedEvents(
-    linkedObjectRefresh === undefined
-      ? captured.receipts
-      : captured.receipts.map((receipt) => ({ ...receipt, linkedObjectRefresh })),
-  );
+  // The cache refresh is its own row, owed whether or not any trigger matched.
+  const { externalId, recordType, idempotencyKey } = captured.event;
+  if (externalId !== undefined) {
+    const refresh: LinkedObjectRefresh = {
+      teamId: subscription.team_id as TeamId,
+      provider: subscription.provider,
+      credentialsId: subscription.credentials_id,
+      externalId,
+      ...(recordType !== undefined ? { recordType } : {}),
+    };
+    if (await hasBridgedLinkedObjects(refresh)) {
+      await enqueueLinkedObjectRefresh({ refresh, eventKey: idempotencyKey ?? externalId });
+    }
+  }
+
+  await enqueueCapturedEvents(captured.receipts);
 }
 
 /**

@@ -32,11 +32,6 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import { isOrphanedRunningRun, ORPHAN_AFTER } from '../runs/trigger_run';
 import { settleUnresumableRun } from '../../interaction/run_failure';
 import type { SettleReport } from '../../work/harness';
-import {
-  linkedObjectRefreshSchema,
-  refreshLinkedObjects,
-  type LinkedObjectRefresh,
-} from '../../webhook_sync/linked_object_refresh';
 
 /** One trigger's durable receipt for one inbound event — the handoff between
  *  the capture half (pre-ack) and the dispatch half (post-ack), carried as the
@@ -51,9 +46,6 @@ export interface CapturedTriggerEvent {
   storedEventId?: TriggerEventId;
   /** A redelivery whose receipt already exists — dispatch MUST be skipped. */
   duplicate: boolean;
-  /** The linked_object cache refresh the delivery owes, run ahead of the
-   *  movement. Set by the webhook door for events that name a source record. */
-  linkedObjectRefresh?: LinkedObjectRefresh;
 }
 
 export interface DiscriminableEventInput {
@@ -255,7 +247,6 @@ const capturedTriggerEventSchema = z.object({
     .custom<TriggerEventId>((value) => z.uuid().safeParse(value).success)
     .optional(),
   duplicate: z.boolean(),
-  linkedObjectRefresh: linkedObjectRefreshSchema.optional(),
 });
 
 function parseCapturedTriggerEvent(payload: unknown): CapturedTriggerEvent {
@@ -268,9 +259,6 @@ function parseCapturedTriggerEvent(payload: unknown): CapturedTriggerEvent {
     triggerEvent: parsed.triggerEvent as TriggerEvent,
     ...(parsed.storedEventId !== undefined ? { storedEventId: parsed.storedEventId } : {}),
     duplicate: parsed.duplicate,
-    ...(parsed.linkedObjectRefresh !== undefined
-      ? { linkedObjectRefresh: parsed.linkedObjectRefresh }
-      : {}),
   };
 }
 
@@ -317,10 +305,8 @@ async function runForReceipt(
     .executeTakeFirst();
 }
 
-/** Runs one captured receipt: the linked_object refresh it owes, then the
- *  movement. A refresh failure throws, so the row retries with backoff. A
- *  dispatch failure is recorded on the receipt, not thrown, so the row
- *  completes rather than re-running a failed movement. */
+/** Runs one captured receipt. A dispatch failure is recorded on the receipt,
+ *  not thrown, so the row completes rather than re-running a failed movement. */
 export const dispatchEventHandler: WorkHandler = {
   async run(payload) {
     const captured = parseCapturedTriggerEvent(payload);
@@ -331,9 +317,6 @@ export const dispatchEventHandler: WorkHandler = {
       (await receiptStatus(captured.storedEventId)) !== 'received'
     ) {
       return;
-    }
-    if (captured.linkedObjectRefresh !== undefined) {
-      await refreshLinkedObjects(captured.linkedObjectRefresh);
     }
     await dispatchCapturedTriggerEvent({ captured });
   },

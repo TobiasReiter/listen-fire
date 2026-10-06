@@ -941,17 +941,15 @@ function movementStepDiagnostics(result: MovementRunResult): Record<string, unkn
   };
 }
 
-/** What a run spent before now, off its row's summed diagnostics. A row
- *  written before `costMicrodollars` was recorded has only the dollar sum. */
+/** A segment beats every 5s (the recorder's live-trace tick); a minute of
+ *  silence is a dead process, not a slow one. */
+export const ORPHAN_AFTER = 60 * SECOND;
+
 /**
  * Whether a `running` run has no live segment behind it: its heartbeat (or, if
  * it never beat, its start) is older than `staleAfterMs`. A live segment beats
  * every live-trace tick, so a fresh stamp means some process still owns the run.
  */
-/** A segment beats every 5s (the recorder's live-trace tick); a minute of
- *  silence is a dead process, not a slow one. */
-export const ORPHAN_AFTER = 60 * SECOND;
-
 export async function isOrphanedRunningRun(
   runId: TriggerRunId,
   opts: { now: Date; staleAfterMs: number },
@@ -966,6 +964,8 @@ export async function isOrphanedRunningRun(
   return lastSign.getTime() < opts.now.getTime() - opts.staleAfterMs;
 }
 
+/** What a run spent before now, off its row's summed diagnostics. A row
+ *  written before `costMicrodollars` was recorded has only the dollar sum. */
 export function runSpentMicrodollars(diagnostics: unknown): number {
   const counters = persistedDiagnostics(diagnostics);
   const exact = counters.costMicrodollars;

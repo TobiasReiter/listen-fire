@@ -4,6 +4,7 @@ export const WORK_KINDS = [
   'fire_cron', // payload: { triggerId: string }
   'poll_source', // payload: { triggerId: string }
   'wake_await', // payload: { adapterType: string; correlationKey: string }
+  'linked_object_refresh', // payload: LinkedObjectRefresh (webhook_sync/linked_object_refresh.ts)
   'cron_reconcile', // periodic, payload {}
   'poll_reconcile', // periodic, payload {}
   'await_resume_sweep', // periodic, payload {}  (temporary until protocol v2)

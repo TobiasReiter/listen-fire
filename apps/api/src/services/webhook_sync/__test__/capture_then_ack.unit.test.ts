@@ -5,7 +5,7 @@
 //
 //   phase 1 (handleInboundWebhook): signature → preprocessInbound → trigger
 //                      matching → receipt store → pull-cursor advance
-//   phase 2 (enqueueDeferred): linked-object refresh → wake_await rows →
+//   phase 2 (enqueueDeferred): wake_await rows → linked_object_refresh rows →
 //                      dispatch_event rows
 //
 // with the two properties that make it safe: the cursor only advances over
@@ -19,6 +19,7 @@ interface Harness {
   captureDiscriminableEvent: jest.Mock;
   enqueueCapturedEvents: jest.Mock;
   readReceiptGroupOutcomes: jest.Mock;
+  enqueueLinkedObjectRefresh: jest.Mock;
   enqueueAwaitWake: jest.Mock;
   notifyWork: jest.Mock;
   findTriggersByKind: jest.Mock;
@@ -99,6 +100,8 @@ async function loadHandler(options: {
   onEnqueue?: jest.Mock;
   /** Receipt id → failure reason, as the drained receipts would read back. */
   failedReceipts?: Record<string, string>;
+  /** Whether a KG node is bridged to the event's record (default true). */
+  bridged?: boolean;
   /** Whether the raw delivery reads as a Telegram button tap the answer door
    *  owns (the branch that short-circuits the raw→events seam). */
   askCallback?: boolean;
@@ -189,6 +192,10 @@ async function loadHandler(options: {
     enqueueAwaitWake: jest.fn(async () => undefined),
   }));
   jest.doMock('../../work/drain', () => ({ notifyWork: jest.fn() }));
+  jest.doMock('../linked_object_refresh', () => ({
+    hasBridgedLinkedObjects: jest.fn(async () => options.bridged !== false),
+    enqueueLinkedObjectRefresh: jest.fn(async () => undefined),
+  }));
   jest.doMock('../../translation_graph/triggers/dispatch_event', () => ({
     captureDiscriminableEvent: jest.fn(async (input: { event: DiscriminableEvent }) => ({
       triggerId: 'trig-1',
@@ -213,6 +220,9 @@ async function loadHandler(options: {
     enqueueAwaitWake: jest.Mock;
   };
   const drainMod = jest.requireMock('../../work/drain') as { notifyWork: jest.Mock };
+  const refreshMod = jest.requireMock('../linked_object_refresh') as {
+    enqueueLinkedObjectRefresh: jest.Mock;
+  };
   const tgTable = jest.requireMock('../../translation_graph/storage/tg_table') as {
     findTriggersByKind: jest.Mock;
   };
@@ -230,6 +240,7 @@ async function loadHandler(options: {
     readReceiptGroupOutcomes: dispatchMod.readReceiptGroupOutcomes,
     enqueueAwaitWake: awaitMod.enqueueAwaitWake,
     notifyWork: drainMod.notifyWork,
+    enqueueLinkedObjectRefresh: refreshMod.enqueueLinkedObjectRefresh,
     findTriggersByKind: tgTable.findTriggersByKind,
     preprocessInbound,
     handleTelegramCallbackQuery: callbackDoor.handleTelegramCallbackQuery,
@@ -325,28 +336,39 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     expect(outcome.perEventErrors).toEqual([{ event: EVENT_A, error: 'enqueue exploded' }]);
   });
 
-  it('an event naming a source record carries its linked-object refresh on each receipt', async () => {
-    // The refresh is a live provider read: it runs in the row, not the request.
-    const onEnqueue = jest.fn(async () => undefined);
+  it('queues a linked-object refresh for a bridged record even when NO trigger matched', async () => {
+    // The refresh is a live provider read: its own row, owed to every event
+    // naming a bridged record, independent of the event's dispatch rows.
     const h = await loadHandler({
       events: [{ payload: { n: 1 }, externalId: 'rec-1', recordType: 'companies' } as DiscriminableEvent],
-      onEnqueue,
+      triggers: [],
     });
 
     await (await deliver(h)).enqueueDeferred!();
 
-    expect(onEnqueue).toHaveBeenCalledWith([
-      expect.objectContaining({
-        storedEventId: 'evt-1',
-        linkedObjectRefresh: {
-          teamId: 'team-1',
-          provider: 'ATTIO',
-          credentialsId: 'cred-1',
-          externalId: 'rec-1',
-          recordType: 'companies',
-        },
-      }),
-    ]);
+    expect(h.enqueueLinkedObjectRefresh).toHaveBeenCalledTimes(1);
+    expect(h.enqueueLinkedObjectRefresh).toHaveBeenCalledWith({
+      refresh: {
+        teamId: 'team-1',
+        provider: 'ATTIO',
+        credentialsId: 'cred-1',
+        externalId: 'rec-1',
+        recordType: 'companies',
+      },
+      eventKey: 'rec-1',
+    });
+    expect(h.enqueueCapturedEvents).toHaveBeenCalledWith([]);
+  });
+
+  it('queues no refresh when no KG node is bridged to the record', async () => {
+    const h = await loadHandler({
+      events: [{ payload: { n: 1 }, externalId: 'rec-1' } as DiscriminableEvent],
+      bridged: false,
+    });
+
+    await (await deliver(h)).enqueueDeferred!();
+
+    expect(h.enqueueLinkedObjectRefresh).not.toHaveBeenCalled();
   });
 
   it('queues a Slack thread wake even when NO trigger matched the delivery', async () => {
