@@ -361,6 +361,27 @@ describe('work store', () => {
     expect(rows.map((r) => r.exact)).toEqual([true, true]);
   });
 
+  it('concurrent claims each honour their limit and take disjoint rows', async () => {
+    // An earlier clock than T0 so no other test's rows are due in these claims.
+    const t = (ms: number) => new Date(Date.UTC(1990, 0, 1) + ms);
+    for (let round = 0; round < 10; round++) {
+      const roundKeys = Array.from({ length: 20 }, () => freshKey('resume_timer'));
+      for (const key of roundKeys) await enqueueWork({ kind: 'resume_timer', key, dueAt: t(0) });
+
+      const claim = (owner: string) =>
+        claimDueWork({ owner, limit: 10, leaseMs: LEASE_MS, now: t(1_000) });
+      const [a, b] = await Promise.all([claim('drainer-a'), claim('drainer-b')]);
+
+      expect(a).toHaveLength(10);
+      expect(b).toHaveLength(10);
+      const ids = new Set([...a, ...b].map((r) => r.id));
+      expect(ids.size).toBe(20);
+      expect([...a, ...b].every((r) => roundKeys.includes(r.key))).toBe(true);
+
+      for (const key of keys.splice(0)) await removeWork({ key });
+    }
+  });
+
   it('claimDueWork never claims a row of unknown kind and still claims the rest', async () => {
     const bogus = freshKey('bogus');
     const known = freshKey('resume_timer');

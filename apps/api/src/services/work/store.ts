@@ -97,11 +97,11 @@ export async function claimDueWork(input: {
   now?: Date;
 }): Promise<WorkRow[]> {
   const now = input.now ?? new Date();
-  // One statement so two drainers cannot race: SKIP LOCKED hands each a disjoint set.
+  // One statement so two drainers cannot race: SKIP LOCKED hands each a disjoint
+  // set. MATERIALIZED fixes the locked selection before the update; as an inlined
+  // IN-subquery the planner may re-evaluate it and claim more than `limit`.
   const { rows } = await sql<Work>`
-    UPDATE automations.work w
-    SET lease_owner = ${input.owner}, lease_until = ${leaseFromNow(input.leaseMs)}, lease_token = gen_random_uuid(), attempts = attempts + 1, updated_at = ${nextVersion('w')}
-    WHERE w.id IN (
+    WITH c AS MATERIALIZED (
       SELECT id FROM automations.work
       WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < now())
         AND kind = ANY(${[...WORK_KINDS]}::text[])
@@ -109,7 +109,11 @@ export async function claimDueWork(input: {
       LIMIT ${input.limit}
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING *`.execute(getAutomationsQb(['work']));
+    UPDATE automations.work w
+    SET lease_owner = ${input.owner}, lease_until = ${leaseFromNow(input.leaseMs)}, lease_token = gen_random_uuid(), attempts = attempts + 1, updated_at = ${nextVersion('w')}
+    FROM c
+    WHERE w.id = c.id
+    RETURNING w.*`.execute(getAutomationsQb(['work']));
   return rows.map(toWorkRow);
 }
 
