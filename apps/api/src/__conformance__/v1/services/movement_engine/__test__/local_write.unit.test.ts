@@ -90,6 +90,7 @@ jest.mock('../../../lib/prompts/execute', () => ({
 
 import { execute } from '../../../lib/prompts/execute';
 import { runMovement } from '../run';
+import { arbitrateEntityCandidates } from '../../translation_graph/engine/entity_match';
 
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { containerAssociation, type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
@@ -229,6 +230,8 @@ function runWith(
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      // The host's judge, over the mocked prompt.
+      llm: { arbitrateEntities: arbitrateEntityCandidates },
       adapters: {
         credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
