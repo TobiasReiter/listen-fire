@@ -1,6 +1,7 @@
 import { ensurePeriodicWork } from '../../services/work/store';
 import { registerWorkHandler, startDrainLoop } from '../../services/work/drain';
 import { WORK_KINDS } from '../../services/work/kinds';
+import { runNamedWorker, workerTick } from '../../lib/worker';
 import { registerAutomationsWork } from '../../services/work/register';
 import { automationsWorkers } from '../automations';
 
@@ -51,6 +52,23 @@ describe('the automations registry', () => {
     process.env.AUTOMATIONS_DRAIN_MODE = 'loop';
     automationsWorkers.workers[0].start();
     expect(startLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes a tick through the worker helper after each drain pass', () => {
+    delete process.env.AUTOMATIONS_DRAIN_MODE;
+    const [drain] = automationsWorkers.workers;
+    runNamedWorker(drain.id, drain.start);
+    expect(workerTick(drain.id)).toEqual({ lastTickAt: null, failing: false });
+
+    const onPass = startLoop.mock.calls[0]?.[0]?.onPass;
+    if (!onPass) throw new Error('the drain loop was started without a pass hook');
+
+    onPass({ claimed: 2, ran: 2, recovered: 0, failed: 0 });
+    expect(workerTick(drain.id)?.lastTickAt).toBeInstanceOf(Date);
+    expect(workerTick(drain.id)?.failing).toBe(false);
+
+    onPass({ claimed: 1, ran: 0, recovered: 0, failed: 1 });
+    expect(workerTick(drain.id)?.failing).toBe(true);
   });
 
   it('starts no loop in external mode — something outside the process ticks it', () => {

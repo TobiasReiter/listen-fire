@@ -257,14 +257,17 @@ export function notifyWork(): void {
 }
 
 /** The always-on driver: calls drainUntilIdle every `everyMs` (default 1000). Returns a stop(). */
-export function startDrainLoop(opts: DrainOptions & { everyMs?: number } = {}): () => void {
-  const { everyMs = 1_000, ...drainOpts } = opts;
+export function startDrainLoop(
+  opts: DrainOptions & { everyMs?: number; onPass?: (result: DrainResult) => void } = {},
+): () => void {
+  const { everyMs = 1_000, onPass, ...drainOpts } = opts;
   let stopped = false;
   let timer: NodeJS.Timeout | undefined;
 
   // Chained timeouts, not setInterval: a slow pass must not overlap the next.
   const tick = async (): Promise<void> => {
-    await drainUntilIdle(drainOpts);
+    const result = await drainUntilIdle(drainOpts);
+    onPass?.(result);
     if (!stopped) timer = setTimeout(() => void tick(), everyMs);
   };
   timer = setTimeout(() => void tick(), everyMs);

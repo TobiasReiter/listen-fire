@@ -57,6 +57,20 @@ function claimTick(): WorkerTick | undefined {
   return tick;
 }
 
+/**
+ * For a loop not built on `worker()`: claim the tick of the worker being
+ * started, the same way `worker()` does, and hand back what records a pass.
+ * Undefined outside `runNamedWorker`, exactly like `worker()`'s own tick.
+ */
+function claimLoopTick(): ((pass: { failing: boolean }) => void) | undefined {
+  const tick = claimTick();
+  if (!tick) return undefined;
+  return ({ failing }) => {
+    tick.lastTickAt = new Date();
+    tick.failing = failing;
+  };
+}
+
 /** This process's pulse for `id`, or undefined when it never started the loop. */
 function workerTick(id: string): Readonly<WorkerTick> | undefined {
   return ticks.get(id);
@@ -119,4 +133,4 @@ function worker(fn: () => Promise<unknown> | unknown, pollInterval: number = 30 
   return () => timeout.interrupt();
 }
 
-export { worker, runNamedWorker, workerTick, type WorkerTick };
+export { worker, runNamedWorker, claimLoopTick, workerTick, type WorkerTick };

@@ -8,6 +8,7 @@
 // exists any more).
 
 import { neverAsAny } from '../lib/utils/types';
+import { claimLoopTick } from '../lib/worker';
 import { startDrainLoop } from '../services/work/drain';
 import { registerAutomationsWork } from '../services/work/register';
 import type { WorkerRegistry } from './registry';
@@ -30,9 +31,12 @@ function drainMode(env: Env): DrainMode {
 function startDrain(env: Env): void {
   const mode = drainMode(env);
   switch (mode) {
-    case 'loop':
-      startDrainLoop();
+    case 'loop': {
+      const recordPass = claimLoopTick();
+      // A pass never throws; a row whose handler failed is what "failing" means here.
+      startDrainLoop({ onPass: (result) => recordPass?.({ failing: result.failed > 0 }) });
       return;
+    }
     case 'external':
       return;
     default:
