@@ -17,9 +17,9 @@ export class BridgeError extends Error {
   }
 }
 
-/** The expression grammar's refusal: where in the text, and why. Defined
- *  beside BridgeError so the parser's WASM wrappers can build one without
- *  importing the grammar that re-exports it (parser/expression/parse_expression.ts). */
+/** The expression grammar's refusal: where in the text, and why. Built by
+ *  the parser's WASM wrapper (parser/rust_parser.ts); the expression entry
+ *  point (parser/expression/parse_expression.ts) re-exports it. */
 export class ExpressionSyntaxError extends BridgeError {
   constructor(
     message: string,

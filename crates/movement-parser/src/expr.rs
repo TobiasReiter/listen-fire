@@ -1,7 +1,7 @@
 //! One expression grammar for the movement language — a precedence-climbing
-//! parser that builds the tree in `tree`. A port of packages/movement-lang/
-//! parser/expression/parse_expression.ts; the TypeScript is the reference for
-//! every message and offset, and is followed read for read.
+//! parser that builds the tree in `tree`. Ported read for read from the
+//! TypeScript grammar it replaced; its every message and offset is pinned
+//! (movement-lang parser/expression/__test__/trees_regression.unit.test.ts).
 //!
 //! Precedence and associativity, loosest first:
 //!

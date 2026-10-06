@@ -1,7 +1,7 @@
-//! The statement grammar — a port of the `Parser` class in
-//! packages/movement-lang/parser/parse.ts. The TypeScript is the reference
-//! for every message, offset and backtrack, and is followed read for read:
-//! each TypeScript method has one function here, in the same order of tests.
+//! The statement grammar. Ported read for read from the TypeScript grammar it
+//! replaced; every message, offset and backtrack that grammar had is pinned by
+//! the programs corpus (tests/programs.rs), and the comments below that say
+//! "as the TypeScript …" name a behaviour kept for that reason.
 //!
 //! Hand-rolled, line-oriented recursive descent. Statements and `field: expr`
 //! entries are newline-terminated; termination is suspended inside

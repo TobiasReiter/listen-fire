@@ -1,7 +1,7 @@
 //! Parses every expression text in packages/movement-lang/parser/expression/
-//! __test__/__fixtures__/expression_slots.json and asserts none panics. Tree
-//! parity is the TypeScript differential's job
-//! (parser/__test__/rust_differential.unit.test.ts).
+//! __test__/__fixtures__/expression_slots.json and asserts none panics. The
+//! trees themselves are pinned in expression_trees.json, beside it
+//! (parser/expression/__test__/trees_regression.unit.test.ts).
 //!
 //!   cargo test -p movement-parser --test expression_slots -- --ignored --nocapture
 

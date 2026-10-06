@@ -1,8 +1,8 @@
 // The parser entry points' Rust side: each call goes through the WASM module
 // (wasm/loader.ts) and its JSON comes back as the TypeScript AST types. The
 // error envelope is validated here; the tree itself is trusted as the Rust
-// parser's own output, whose shape the differential and the pinned corpora
-// prove equal to the TypeScript parser's (parser/__test__/rust_differential).
+// parser's own output, whose shape the pinned corpora hold
+// (parser/__test__/programs_regression, parser/expression/__test__/trees_regression).
 
 import { ExpressionSyntaxError } from '../expression/error';
 import { CURRENT_LANGUAGE_VERSION } from '../language_version';
@@ -47,8 +47,8 @@ export function rustParseNestedCall(
   return { ok: true, value: json };
 }
 
-/** Throws `ExpressionSyntaxError`, as the TypeScript grammar does. The
- *  expression grammar reads no version; the export takes one for symmetry. */
+/** Throws `ExpressionSyntaxError`. The expression grammar reads no version;
+ *  the export takes one for symmetry. */
 export function rustParseExpression(source: string): MExpr {
   const { ok, json } = callParser('parse_expression', source, [CURRENT_LANGUAGE_VERSION]);
   if (!ok) throw expressionError(json, 'parse_expression');

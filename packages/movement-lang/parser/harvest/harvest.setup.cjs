@@ -14,7 +14,7 @@ const PARSE = path.join(PACKAGE, 'parser/parse.ts');
 const LANGUAGE_VERSION = path.join(PACKAGE, 'language_version.ts');
 
 const testFile = path.relative(PACKAGE, expect.getState().testPath || '');
-const REPLAYS = ['programs_regression', 'rust_differential'].map((name) => path.join('parser', '__test__', name));
+const REPLAY = path.join('parser', '__test__', 'programs_regression');
 const records = [];
 
 // Must stay identical to `canonical` in expression/__test__/lowering_fixture.ts:
@@ -59,9 +59,9 @@ jest.mock(PARSE, () => {
 });
 
 afterAll(() => {
-  // These replay the harvest's own output (the differential through both
-  // parsers); feeding them back in would pin the fixture to itself.
-  if (REPLAYS.some((prefix) => testFile.startsWith(prefix))) return;
+  // The regression replays the harvest's own output; feeding it back in would
+  // pin the fixture to itself.
+  if (testFile.startsWith(REPLAY)) return;
   if (!OUT || records.length === 0) return;
   fs.appendFileSync(OUT, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 });

@@ -1,6 +1,6 @@
-//! The movement-language parser. Grammars produce the same JSON shapes the
-//! TypeScript parser's `ast.ts` and `tree.ts` describe; `abi` carries them
-//! across the WASM boundary.
+//! The movement-language parser. Grammars produce the JSON shapes
+//! packages/movement-lang/parser/ast.ts and expression/tree.ts describe;
+//! `abi` carries them across the WASM boundary.
 
 pub mod abi;
 pub mod ast;
@@ -19,7 +19,7 @@ use serde_json::Value;
 /// object the TypeScript wrappers rewrap into their error classes.
 pub type Parsed = Result<Value, Value>;
 
-/// The `Program` exactly as the TypeScript parser builds it: each slot is
+/// The `Program` exactly as parser/ast.ts types it: each slot is
 /// `{raw, span}` and nothing more, so its canonical hash is the pinned one.
 pub fn parse_program(source: &str, version: u32) -> Parsed {
     let program = stmt::parse_program(source, version, false).map_err(|e| to_value(&e))?;

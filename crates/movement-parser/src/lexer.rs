@@ -3,8 +3,8 @@
 //! looks back). Hops, types and closures are read by character in the
 //! parser, so the lexer also carries the character scans they share.
 //!
-//! A port of the lexing half of packages/movement-lang/parser/expression/
-//! parse_expression.ts. Offsets are UTF-16 indexes (see util::utf16).
+//! Ported from the lexing half of the TypeScript expression grammar it
+//! replaced. Offsets are UTF-16 indexes (see util::utf16).
 
 use serde::Serialize;
 
