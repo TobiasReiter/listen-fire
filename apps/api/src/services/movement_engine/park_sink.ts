@@ -25,6 +25,7 @@ import {
 import { isAncestorOrSelf, parseAddress } from './address';
 import { dropAwaitCorrelation } from '../translation_graph/adapters/await_correlation';
 import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
+import { armTimerWake } from './timer_wake';
 
 /**
  * Build the firing's park sink, backed by its `TriggerRunRecorder` (the run
@@ -64,6 +65,8 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
           }),
         )
         .execute();
+      // The parked_run row stays the truth; the work row only says when to look.
+      await armTimerWake({ runId, teamId: recorder.teamId, wakeAt: input.wakeAt });
       await recorder.markParked();
       await settleIfCancelledDuringPark(runId);
     },

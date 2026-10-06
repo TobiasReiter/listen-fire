@@ -5,7 +5,7 @@
 // fan-out/parallel join reconstructs the FULL cross-branch aggregate from the
 // durable export store (§12).
 //
-// Driven by the TIMER driver (`sleep` parks; `resumeTimerParkedRuns` wakes) — the
+// Driven by the TIMER driver (`sleep` parks; `resumeTimerHandler` wakes) — the
 // same real-DB harness as `timer_resume_fanout.integration.test.ts` (mocked
 // catalog introspection + adapter I/O only; dispatch, park, recorder, join,
 // resume all real). The two basic gap-inversion tests live in the sibling files;
@@ -53,7 +53,8 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { Catalog, InstanceSchema, LanguageVersion, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { resumeTimerParkedRuns } from '../timer_resume';
+import { resumeTimerHandler } from '../timer_resume';
+import { testWorkContext } from '../../../test/harness/work';
 
 const mockedCatalog = movementCatalogForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -546,7 +547,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     const early = parks.slice(0, FANOUT_N - 1).map((p) => p.address);
     const late = parks[FANOUT_N - 1].address;
     await backdate(runId, early);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // N-1 per-branch writes landed; NO trailing #done yet; join decremented to 1.
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N - 1);
@@ -556,7 +557,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
 
     // PASS 2 — wake the last leaf; the closing pass runs the trailing write ONCE.
     await backdate(runId, [late]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N);
     const done = slackCreates.filter((c) => c.channel === '#done');
@@ -586,7 +587,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     expect((await joinRows(runId))[0].pending).toBe(2);
 
     await backdate(runId, parks.map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // Each arm ran its own write …
     expect(slackCreates.filter((c) => c.channel === '#a')).toHaveLength(1);
@@ -618,7 +619,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     const runId = parks[0].runId;
 
     await backdate(runId, parks.map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // Every iteration's per-contact write landed …
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N);
@@ -644,14 +645,14 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
 
     // PASS 1 — N-1 iterations: partial, no reconstruction, no trailing read.
     await backdate(runId, parks.slice(0, FANOUT_N - 1).map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates.filter((c) => c.channel === '#done')).toHaveLength(0);
     expect((await joinRows(runId))[0].pending).toBe(1);
     expect(await runStatus(runId)).toBe('parked');
 
     // PASS 2 — last iteration closes → the aggregate is complete over all N.
     await backdate(runId, [parks[FANOUT_N - 1].address]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates.filter((c) => c.channel === '#done')).toEqual([
       { channel: '#done', text: `count=${FANOUT_N}` },
     ]);
@@ -678,7 +679,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     expect(jr.map((r) => r.pending).sort()).toEqual([2, FANOUT_N].sort());
 
     await backdate(runId, parks.map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N);
     expect(slackCreates.filter((c) => c.channel === '#other')).toHaveLength(1);
@@ -715,7 +716,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     // WAKE 1 — the in-if write lands, the continuation's trailing sleep re-parks
     // at a NEW address, the run stays parked, no #done.
     await backdate(runId, [firstAddress]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toEqual([
       { channel: '#alerts', text: 'in-if' },
@@ -728,7 +729,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
 
     // WAKE 2 — the trailing sleep is due; the final write lands, run succeeds.
     await backdate(runId, [parks[0].address]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     expect(slackCreates.filter((c) => c.channel === '#done')).toEqual([
       { channel: '#done', text: 'final' },
@@ -755,7 +756,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     // WAKE 1 — all N fan-out leaves wake; the closer folds the join and its
     // continuation (the trailing sleep) re-parks. No #done; run stays parked.
     await backdate(runId, parks.map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N);
     expect(slackCreates.filter((c) => c.channel === '#done')).toHaveLength(0);
@@ -773,7 +774,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
 
     // WAKE 2 — the trailing sleep completes the run once.
     await backdate(runId, [reparks[0].address]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates.filter((c) => c.channel === '#done')).toEqual([
       { channel: '#done', text: 'DONE' },
     ]);
@@ -802,7 +803,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     // Drive the fan-out closed: all N wake, the closer folds and re-parks at the
     // trailing sleep. The closed inner join + all N branch-export rows survive.
     await backdate(runId, parks.map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N);
     const jrBefore = await joinRows(runId);
     expect(jrBefore).toHaveLength(1);
@@ -830,7 +831,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
       } as any)
       .execute();
 
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // The re-scanned closer re-ran its leaf block (the #alerts write) — DEDUPED,
     // so still exactly N (not N+1). The trailing #done is still absent (its own
@@ -860,7 +861,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
         state: nonCloserPark.state as any,
       } as any)
       .execute();
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N);
     expect(slackCreates.filter((c) => c.channel === '#done')).toHaveLength(0);
     expect((await joinRows(runId))[0].pending).toBe(0);
@@ -872,7 +873,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
       (p) => p.address !== closerPark.address && p.address !== nonCloserPark.address,
     )!;
     await backdate(runId, [tailPark.address]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates.filter((c) => c.channel === '#done')).toEqual([
       { channel: '#done', text: 'DONE' },
     ]);
@@ -907,7 +908,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     // successful firing — its parked_run leaf is deleted by the driver.
     const nonCloser = parks[0];
     await backdate(runId, [nonCloser.address]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(1);
     expect(slackCreates.filter((c) => c.channel === '#done')).toHaveLength(0);
     expect((await joinRows(runId))[0].pending).toBe(FANOUT_N - 1);
@@ -931,7 +932,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
       } as any)
       .execute();
 
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // The re-scanned non-closer re-ran its own write (deduped, still 1) but the
     // join was NOT re-decremented (pending STILL FANOUT_N-1, NOT closed early) and
@@ -948,7 +949,7 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
     // runs the trailing continuation EXACTLY ONCE.
     const remaining = parks.slice(1).map((p) => p.address);
     await backdate(runId, remaining);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     expect(slackCreates.filter((c) => c.channel === '#alerts')).toHaveLength(FANOUT_N);
     expect(slackCreates.filter((c) => c.channel === '#done')).toEqual([

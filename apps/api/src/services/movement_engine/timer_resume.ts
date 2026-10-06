@@ -7,8 +7,9 @@
 //
 // A `sleep` parks the branch AT the sleep statement via `commitTimerPark`
 // (`park_reason='timer'`, an absolute `wake_at`, no `interaction_request`, no
-// answer, `state.bindingName = null`). This worker scans every 30s for timer
-// parks whose `wake_at` has passed and drives each due leaf forward.
+// answer, `state.bindingName = null`) and arms the run's `resume_timer` work
+// row (timer_wake.ts) for that `wake_at`; the drain hands the row to
+// `resumeTimerHandler`, which drives each due leaf of that run forward.
 //
 // Resume mode (the one thing that differs from cost-resume): a slept leaf's
 // statement is DONE — the sleep already happened — so resume must step PAST it,
@@ -19,18 +20,21 @@
 // statement AFTER the sleep. Using `reenter=true` would re-run the sleep and
 // re-park forever — so we omit it.
 //
-// Single-instance (startup.ts runs every worker under the app advisory lock) and
-// idempotent: a crash mid-drain leaves the timer-parked rows for the next scan to
+// One run is handled by one claim of its work row at a time (the lease), and
+// idempotent: a crash mid-drain leaves the timer-parked rows for the re-claim to
 // re-process; a completed leaf's `parked_run` is deleted, so it's skipped. A
 // not-yet-due sibling leaf (fan-out sleep) stays parked and holds the join —
 // verified separately (§9), not broken here.
 
+import { z } from 'zod';
 import { SECOND } from '../../constants';
-import { getQb, getAutomationsQb } from '../../lib/kysely';
+import { getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
-import { worker } from '../../lib/worker';
 import { logger } from '../logger';
-import { settleCancelledRun } from '../interaction/run_failure';
+import { settleCancelledRun, settleUnresumableRun } from '../interaction/run_failure';
+import type { WorkHandler } from '../work/kinds';
+import { registerWorkHandler } from '../work/drain';
+import { armTimerWake } from './timer_wake';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { ParkedScopeState } from './serialize';
@@ -40,69 +44,107 @@ import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
 import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
 
-const SCAN_INTERVAL = 30 * SECOND;
+export { timerWorkKey } from './timer_wake';
+
+// A leaf still due after its run was handled could not be resumed (its trigger
+// or pinned version is gone); retry it at the old scan's cadence, not every drain.
+const UNRESUMED_RETRY = 30 * SECOND;
 
 interface TimerParkedRunRow {
   runId: TriggerRunId;
   teamId: TeamId;
 }
 
-/**
- * One scan: every run that holds at least one DUE timer-parked leaf
- * (`wake_at <= now`) is resumed once (its due leaves drained). Contained per-run.
- */
-export async function resumeTimerParkedRuns(): Promise<void> {
-  // Cancel-vs-park-resume race closure (runs-cancel task 3): settle any
-  // timer-parked run that was stamped `cancel_requested_at` — by an operator's
-  // abortRun, or by the park sink's own tail check having crashed before it
-  // could settle — BEFORE loading the resumable set, which itself excludes
-  // stamped runs. Best-effort per run; a settle failure must not block
-  // draining the rest of the scan.
-  await settleStampedTimerParkedRuns();
-  const now = new Date();
-  const runs = await loadResumableTimerParkedRuns(now);
-  for (const run of runs) {
-    try {
-      await resumeTimerParkedRun(run, now);
-    } catch (err) {
-      logger.error('[TimerResume] run resume failed', {
-        runId: run.runId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+const resumeTimerPayloadSchema = z.object({ runId: z.string().uuid() });
+
+/** Wakes one run's due timer leaves, then re-arms the run's row for its next leaf. */
+export const resumeTimerHandler: WorkHandler = {
+  async run(payload, ctx) {
+    const { runId } = parseResumeTimerPayload(payload);
+    const run = await getAutomationsQb(['trigger_run'])
+      .selectFrom('trigger_run')
+      .where('id', '=', runId)
+      .select(['team_id', 'cancel_requested_at'])
+      .executeTakeFirst();
+    if (!run) return;
+    if (run.cancel_requested_at !== null) {
+      await settleCancelledRun(runId);
+      return;
     }
-  }
+    // `trigger_run.team_id` is an opaque tenant uuid (D3 dropped the FK, and
+    // with it the brand); naming it as core's team id is the boundary conversion.
+    const teamId = run.team_id as TeamId;
+    await resumeTimerParkedRun({ runId, teamId }, ctx.now);
+    await rearmForNextLeaf({ runId, teamId, now: ctx.now });
+  },
+
+  // Any re-claim lands here: a lapsed lease, or a retry after a throw. Only a run
+  // left `running` was cut off mid-segment; nothing can finish that segment, so it
+  // fails. A lease lost before the segment began left the run parked: run again.
+  async recover(payload, ctx) {
+    const { runId } = parseResumeTimerPayload(payload);
+    const run = await getAutomationsQb(['trigger_run'])
+      .selectFrom('trigger_run')
+      .where('id', '=', runId)
+      .select('status')
+      .executeTakeFirst();
+    if (run?.status === 'running') {
+      await settleUnresumableRun({ runId, reason: 'work lease lapsed mid-segment' });
+      return;
+    }
+    await resumeTimerHandler.run(payload, ctx);
+  },
+};
+
+/** The cancel-race closure, on its own periodic row: settles stamped timer parks. */
+export const settleCancelledTimersHandler: WorkHandler = {
+  async run() {
+    await settleStampedTimerParkedRuns();
+  },
+};
+
+export function registerTimerWork(): void {
+  registerWorkHandler('resume_timer', resumeTimerHandler);
+  registerWorkHandler('settle_cancelled_timers', settleCancelledTimersHandler);
 }
 
-/**
- * The resumable set: a `trigger_run` with at least one `parked_run` whose
- * `park_reason='timer'`, `status='parked'`, and `wake_at <= now` (the wake
- * instant has passed). Distinct by run.
- */
-async function loadResumableTimerParkedRuns(now: Date): Promise<TimerParkedRunRow[]> {
-  const rows = await getAutomationsQb(['trigger_run', 'parked_run'])
-    .selectFrom('trigger_run')
-    .innerJoin('parked_run', 'parked_run.run_id', 'trigger_run.id')
-    .where('parked_run.park_reason', '=', 'timer')
-    .where('parked_run.status', '=', 'parked')
-    .where('parked_run.wake_at', '<=', now)
-    .where('trigger_run.cancel_requested_at', 'is', null)
-    .select(['trigger_run.id as run_id', 'trigger_run.team_id as team_id'])
-    .distinct()
-    .execute();
-  // `trigger_run.team_id` is an opaque tenant uuid (D3 dropped the FK, and
-  // with it the brand); naming it as core's team id is the boundary conversion.
-  return rows.map((r) => ({ runId: r.run_id, teamId: r.team_id as TeamId }));
+function parseResumeTimerPayload(payload: unknown): { runId: TriggerRunId } {
+  const { runId } = resumeTimerPayloadSchema.parse(payload);
+  return { runId: runId as TriggerRunId };
+}
+
+// Several leaves share the run's row and only the earliest was due; the rest
+// still need a wake. The row may be leased by this very claim, which enqueueWork
+// honours by keeping it alive at the new time.
+async function rearmForNextLeaf(input: {
+  runId: TriggerRunId;
+  teamId: TeamId;
+  now: Date;
+}): Promise<void> {
+  const next = await getAutomationsQb(['parked_run'])
+    .selectFrom('parked_run')
+    .where('run_id', '=', input.runId)
+    .where('park_reason', '=', 'timer')
+    .where('status', '=', 'parked')
+    .select((eb) => eb.fn.min('wake_at').as('wake_at'))
+    .executeTakeFirst();
+  if (!next?.wake_at) return;
+  const wakeAt = new Date(next.wake_at);
+  const retryAt = new Date(input.now.getTime() + UNRESUMED_RETRY);
+  await armTimerWake({
+    runId: input.runId,
+    teamId: input.teamId,
+    wakeAt: wakeAt <= input.now ? retryAt : wakeAt,
+  });
 }
 
 /**
  * The stamped-but-still-parked set: every distinct run holding a live timer
- * park that also carries a `cancel_requested_at` stamp — runs
- * `loadResumableTimerParkedRuns` would otherwise have selected (once due), had
- * the stamp not excluded them. Settling here (rather than silently skipping)
- * is the race closure: without it a cancelled-but-still-parked run would sit
- * forever, since nothing else drains timer parks.
+ * park that also carries a `cancel_requested_at` stamp. Settling here (rather
+ * than waiting for the run's wake) is the race closure: a timer may be hours
+ * away, and a cancelled run must not sit parked until then.
  */
-async function settleStampedTimerParkedRuns(): Promise<void> {
+export async function settleStampedTimerParkedRuns(): Promise<void> {
   const rows = await getAutomationsQb(['trigger_run', 'parked_run'])
     .selectFrom('trigger_run')
     .innerJoin('parked_run', 'parked_run.run_id', 'trigger_run.id')
@@ -131,9 +173,9 @@ async function settleStampedTimerParkedRuns(): Promise<void> {
  * (no re-park, no error) the leaf's enclosing join decrements; the run finalises
  * `success` only when the last branch closes (linear = no join = finalise on
  * complete). A not-yet-due sibling leaf is left parked (its `wake_at` window
- * bounds the query), holding the join until its own scan.
+ * bounds the query), holding the join until its own wake.
  */
-async function resumeTimerParkedRun(run: TimerParkedRunRow, now: Date): Promise<void> {
+export async function resumeTimerParkedRun(run: TimerParkedRunRow, now: Date): Promise<void> {
   const { runId, teamId } = run;
   const triggerRun = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
@@ -167,8 +209,8 @@ async function resumeTimerParkedRun(run: TimerParkedRunRow, now: Date): Promise<
 
   const event = triggerEventSchema.parse(triggerRun.trigger_payload) as TriggerEvent;
 
-  // Each DUE timer leaf, drained in turn (serialised under the single-instance
-  // scanner — the atomic join decrement is the only shared state).
+  // Each DUE timer leaf, drained in turn (serialised under the run's work lease —
+  // the atomic join decrement is the only shared state).
   const leaves = await getAutomationsQb(['parked_run'])
     .selectFrom('parked_run')
     .where('run_id', '=', runId)
@@ -287,10 +329,10 @@ async function settleBranchComplete(
 /**
  * After re-entering an `await until(…)` leaf, did its condition stay UNMET so it
  * re-parked in place? The re-park upserts the same (run_id, address) row with a
- * FRESH `wake_at = now + every` (always in the future relative to this scan's
+ * FRESH `wake_at = now + every` (always in the future relative to this wake's
  * `now`, since the cadence floor is 1m). A future `wake_at` at the same address
  * therefore means "re-armed" — leave it; a past/unchanged one means the until
- * was met and moved on (delete it). Single-instance scanner, so no torn read.
+ * was met and moved on (delete it). One claim per run, so no torn read.
  */
 async function untilReArmed(
   runId: TriggerRunId,
@@ -334,6 +376,3 @@ async function settleFailure(runId: TriggerRunId): Promise<void> {
   await clearJoins(runId);
 }
 
-export function startTimerResumeWorker(): void {
-  worker(resumeTimerParkedRuns, SCAN_INTERVAL);
-}

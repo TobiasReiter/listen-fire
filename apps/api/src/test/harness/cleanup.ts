@@ -78,6 +78,8 @@ const TABLES_TEAM_SCOPED: readonly (readonly [
   // test writes, so they are named here rather than left to a cascade.
   ['automations', 'callback'],
   ['automations', 'trigger_run'],
+  // Work rows carry the team only as a tag (no FK), so nothing else reaps them.
+  ['automations', 'work'],
   // Remote-adapter installs (the credentials_id FK is SET NULL in-schema).
   ['automations', 'remote_adapter'],
   ['automations', 'external_service_credentials'],

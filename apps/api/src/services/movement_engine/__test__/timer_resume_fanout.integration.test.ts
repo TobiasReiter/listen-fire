@@ -53,7 +53,8 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { Catalog, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { resumeTimerParkedRuns } from '../timer_resume';
+import { resumeTimerHandler } from '../timer_resume';
+import { testWorkContext } from '../../../test/harness/work';
 
 const mockedCatalog = movementCatalogForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -416,14 +417,14 @@ describe('timer_resume — fan-out sleep, multi-park-per-run under a join (real 
     expect(await joinPending(runId)).toBe(FANOUT_N);
     expect(await runStatus(runId)).toBe('parked');
 
-    // Not yet due → a scan is a no-op.
-    await resumeTimerParkedRuns();
+    // Not yet due → a wake is a no-op.
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates).toHaveLength(0);
     expect(await runStatus(runId)).toBe('parked');
 
     // Backdate ALL N leaves → all due. One wake pass drains them in turn.
     await backdate(runId, parks.map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // Every branch stepped PAST its sleep and ran its write — N writes, one per contact.
     expect(slackCreates).toHaveLength(FANOUT_N);
@@ -451,7 +452,7 @@ describe('timer_resume — fan-out sleep, multi-park-per-run under a join (real 
     const early = parks.slice(0, FANOUT_N - 1).map((p) => p.address);
     const late = parks[FANOUT_N - 1].address;
     await backdate(runId, early);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // N-1 writes landed; the join decremented to exactly 1 (NOT zero).
     expect(slackCreates).toHaveLength(FANOUT_N - 1);
@@ -463,7 +464,7 @@ describe('timer_resume — fan-out sleep, multi-park-per-run under a join (real 
 
     // PASS 2 — the last leaf becomes due; the pass that drains it completes the run.
     await backdate(runId, [late]);
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     expect(slackCreates).toHaveLength(FANOUT_N);
     expect(new Set(slackCreates.map((c) => c.text))).toEqual(new Set(CONTACT_NAMES));
@@ -500,7 +501,7 @@ describe('timer_resume — fan-out sleep, multi-park-per-run under a join (real 
 
     // Wake all N leaves in one pass.
     await backdate(runId, parks.map((p) => p.address));
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // Each leaf ran its OWN write (the N per-contact `#alerts` messages) …
     const alerts = slackCreates.filter((c) => c.channel === '#alerts');

@@ -2,7 +2,7 @@
 // linear movement that `sleep`s then writes is dispatched for real — it PARKS at
 // the sleep (a real `park_reason='timer'` `parked_run` + pinned movement_version
 // + `trigger_run.trigger_payload`). We backdate `wake_at` into the past, run one
-// `resumeTimerParkedRuns()` pass, and prove the driver: picks the due leaf up,
+// `resumeTimerHandler.run` pass, and prove the driver: picks the due leaf up,
 // steps PAST the sleep (binding nothing — `state.bindingName` is null), runs the
 // remainder of the branch (the write lands), and settles the run `success`
 // (single linear branch, no join). The `parked_run` row is swept.
@@ -39,7 +39,8 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { Catalog, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { resumeTimerParkedRuns } from '../timer_resume';
+import { resumeTimerHandler } from '../timer_resume';
+import { testWorkContext } from '../../../test/harness/work';
 
 const mockedCatalog = movementCatalogForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -343,8 +344,8 @@ describe('timer_resume — the wake driver (real DB)', () => {
       .executeTakeFirstOrThrow();
     expect(runBefore.status).toBe('parked');
 
-    // Not yet due → a scan is a no-op (wake_at is ~now+1s).
-    await resumeTimerParkedRuns();
+    // Not yet due → a wake is a no-op (wake_at is ~now+1s).
+    await resumeTimerHandler.run({ runId }, testWorkContext());
     expect(slackCreates).toHaveLength(0);
 
     // Backdate wake_at into the past → the leaf is now due.
@@ -356,7 +357,7 @@ describe('timer_resume — the wake driver (real DB)', () => {
       .execute();
 
     // One wake pass.
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // The branch stepped PAST the sleep and ran the write (bound nothing).
     expect(slackCreates).toEqual([{ channel: '#alerts', text: 'awake after sleep' }]);
@@ -414,7 +415,7 @@ describe('timer_resume — the wake driver (real DB)', () => {
       .where('run_id', '=', runId)
       .where('address', '=', parked.address)
       .execute();
-    await resumeTimerParkedRuns();
+    await resumeTimerHandler.run({ runId }, testWorkContext());
 
     // The `if` arm ran forward past the sleep → the `#alerts` write landed …
     const alerts = slackCreates.filter((c) => c.channel === '#alerts');
