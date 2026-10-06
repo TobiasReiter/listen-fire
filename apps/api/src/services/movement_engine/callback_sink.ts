@@ -27,6 +27,8 @@ import type { CallbackSink } from './host';
  *  run-death / race-loss cleanup for free. */
 export const CALLBACK_AWAIT_TYPE = 'callback';
 
+// Re-exported only for the conformance corpora; live code imports it from
+// `host.ts`.
 export type { CallbackSink };
 
 /**

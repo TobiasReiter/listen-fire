@@ -30,6 +30,7 @@ import { loadTriggerById } from '../storage/tg_table';
 import { movementCatalogForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';
 import { inMemoryRawTextStore } from './raw_text_store';
+import { InMemoryWriteLocks } from '../../write_locks/write_locks';
 import { getMovementRow } from './store';
 
 /** A source field the synthetic payload should be keyed by — pulled from the
@@ -169,11 +170,14 @@ export async function runMovementTestRun(
       event,
       teamId: input.teamId,
       catalog: teamCatalog.catalog,
-      // A test run leaves nothing durable behind, its file text included.
+      // A test run leaves nothing durable behind, its file text included, and
+      // captures its writes rather than making them, so it takes no cross-run
+      // lock a live firing could wait on.
       host: productionEngineHost({
         teamId: input.teamId,
         catalog: teamCatalog,
         rawText: inMemoryRawTextStore(),
+        locks: new InMemoryWriteLocks(),
       }),
       dryRun: true,
       writeSink: (w) => writes.push(w),

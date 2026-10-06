@@ -43,6 +43,10 @@ describe('runMovementTestRun substrate', () => {
     expect(src).toMatch(/rawText: inMemoryRawTextStore\(\)/);
   });
 
+  it('takes in-memory write locks (a captured write must not contend with live firings)', () => {
+    expect(src).toMatch(/locks: new InMemoryWriteLocks\(\)/);
+  });
+
   it('never reaches the retired TG engine', () => {
     expect(src).not.toMatch(/evaluateTranslationGraph/);
     expect(src).not.toMatch(/from '.*\/engine'/);

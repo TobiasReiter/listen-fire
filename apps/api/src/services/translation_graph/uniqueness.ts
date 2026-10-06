@@ -112,3 +112,23 @@ export function candidateIsAllExact(
 export function constraintsHaveFuzzyEntry(constraints: UniquenessConstraints): boolean {
   return constraints.any.some((branch) => branch.all.some((entry) => entry.fuzzy === true));
 }
+
+/**
+ * The part of identity arbitration the rules decide with no model: no
+ * candidates is no match (create); exactly one all-exact candidate wins; a sole
+ * candidate of constraints with no fuzzy entry wins. Undefined ⇒ only a judge
+ * can say (`arbitrateEntityCandidates`).
+ */
+export function arbitrateWithoutJudge(input: {
+  asserted: Record<string, unknown>;
+  candidates: ReadonlyArray<{ data: Record<string, unknown> }>;
+  constraints: UniquenessConstraints;
+}): number | null | undefined {
+  if (input.candidates.length === 0) return null;
+  const exactIdxs = input.candidates
+    .map((c, i) => (candidateIsAllExact(input.constraints, input.asserted, c.data) ? i : -1))
+    .filter((i) => i >= 0);
+  if (exactIdxs.length === 1) return exactIdxs[0];
+  if (input.candidates.length === 1 && !constraintsHaveFuzzyEntry(input.constraints)) return 0;
+  return undefined;
+}

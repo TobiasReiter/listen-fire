@@ -9,7 +9,8 @@
 // No store, no router: these are pure, and they are the part two doors must
 // agree on.
 
-import type { CallbackParamSpec, CallbackRecord } from '../callback_store';
+import type { CallbackRecord } from '../callback_store';
+import type { CallbackParamSpec } from '../callback_types';
 
 import {
   bindSuppliedValue,

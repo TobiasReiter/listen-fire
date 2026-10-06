@@ -18,8 +18,8 @@ import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { CallbackSink } from '../callback_sink';
-import type { CallbackCall } from '../callback_store';
+import type { CallbackSink } from '../host';
+import type { CallbackCall } from '../callback_types';
 import type { ParkedScopeState } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';

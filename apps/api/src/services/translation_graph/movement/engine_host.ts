@@ -10,7 +10,6 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { LlmUsageContext } from '../../../lib/llm_usage';
-import { getDatabaseUrl } from '../../../prisma';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
 import type { MovementTraceEntry } from '../../movement_engine/expression';
 import type { MovementTransformInvoker } from '../../movement_engine/extraction';
@@ -30,6 +29,7 @@ import { resolveActingUser } from '../adapters/acting_user/resolve';
 import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
 import { resolveAdapter } from '../adapters/resolve';
 import type { LlmClient } from '../engine/batched_extraction';
+import { arbitrateEntityCandidates } from '../engine/entity_match';
 import type { TriggerRunRecorder } from '../runs/trigger_run';
 import { makeFileTextResolver } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
@@ -56,6 +56,9 @@ export function productionEngineHost(input: {
   trace?: MovementTraceEntry[];
   /** Where file text is stored. Absent ⇒ the team's `raw_text` table. */
   rawText?: RawTextStore;
+  /** The cross-run write locks. Absent ⇒ the process's Postgres advisory
+   *  locks. */
+  locks?: WriteLocks;
 }): EngineHost {
   const cancel = input.cancel ?? NEVER_CANCELLED;
   const usage = usageScope({ teamId: input.teamId, triggerRunId: input.triggerRunId, cancel });
@@ -76,6 +79,8 @@ export function productionEngineHost(input: {
       client: billedLlmClient(makeAnthropicLlmClient({ cancel }), usage),
       extractCall: billedExtractCallClient(makeAnthropicExtractCallClient({ cancel }), usage),
       transforms: billedTransforms(registryTransformInvoker, usage),
+      // The judge is a model call like any other.
+      arbitrateEntities: (arbitration) => usage(() => arbitrateEntityCandidates(arbitration)),
     },
     park: {
       ...(input.parksInto !== undefined
@@ -96,7 +101,7 @@ export function productionEngineHost(input: {
       ),
     },
     lookup: { resolveActingUser: resolveTeamActingUser },
-    locks: processWriteLocks(),
+    locks: input.locks ?? processWriteLocks(),
     ...(input.trace !== undefined ? { trace: input.trace } : {}),
   };
 }
@@ -150,13 +155,21 @@ let postgresWriteLocks: WriteLocks | undefined;
 
 function processWriteLocks(): WriteLocks {
   if (postgresWriteLocks === undefined) {
-    const connectionString = getDatabaseUrl(false).url;
-    if (connectionString === undefined) {
-      throw new Error('cross-run write locks need DATABASE_URL, which is not set');
-    }
-    postgresWriteLocks = new PostgresWriteLocks({ connectionString });
+    postgresWriteLocks = new PostgresWriteLocks({ connectionString: lockDatabaseUrl() });
   }
   return postgresWriteLocks;
+}
+
+/** The database every other connection of this process uses (the variables
+ *  `lib/pg.ts` and `lib/kysely.ts` read). The bare URL: `?schema=` is a Prisma
+ *  parameter, and advisory locks are per database, not per schema. */
+function lockDatabaseUrl(): string {
+  const name = process.env.NODE_ENV === 'test' ? 'DATABASE_URL_TEST' : 'DATABASE_URL';
+  const url = process.env[name];
+  if (url === undefined || url === '') {
+    throw new Error(`cross-run write locks need ${name}, which is not set`);
+  }
+  return url;
 }
 
 // ── Acting-user resolution ──────────────────────────────────────────────────

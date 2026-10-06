@@ -81,7 +81,7 @@ jest.mock('../../../lib/anthropic', () => ({
 
 import { runMovement, resumeMovement } from '../run';
 import type { ParkSink } from '../run';
-import type { CallbackSink } from '../callback_sink';
+import type { CallbackSink } from '../host';
 import type { ParkedScopeState } from '../serialize';
 
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';

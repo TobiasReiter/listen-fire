@@ -56,6 +56,8 @@ export function callbackUrl(id: string): string {
 
 import type { CallbackCall, CallbackParamSpec } from './callback_types';
 
+// Re-exported only for the conformance corpora, which import these from here;
+// live code imports them from `callback_types.ts`.
 export {
   CALLBACK_PARAM_TYPES,
   isCallbackParamType,

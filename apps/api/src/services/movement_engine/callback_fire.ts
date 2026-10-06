@@ -22,13 +22,8 @@ import { fireCallbackFiring } from '../translation_graph/movement/execute';
 import { loadCorrelatedParks } from '../translation_graph/adapters/await_correlation';
 import { drainRunAwaits, runResumeSlot } from './await_resume';
 import { CALLBACK_AWAIT_TYPE } from './callback_sink';
-import {
-  claimCallbackFire,
-  coerceCallbackValues,
-  getCallback,
-  type CallbackParamSpec,
-  type CallbackRecord,
-} from './callback_store';
+import { claimCallbackFire, coerceCallbackValues, getCallback, type CallbackRecord } from './callback_store';
+import type { CallbackParamSpec } from './callback_types';
 
 /** What the caller acks with. Every non-`recorded` outcome is a REFUSAL the door
  *  reports as such — never a silent no-op. */

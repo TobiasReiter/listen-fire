@@ -11,10 +11,9 @@
 //   - the dry-run wrapper (`engine/dry_run_adapter.ts`) — CapturedWrite
 //     output is the same currency as M4b/M5 dry runs;
 //   - the entity-resolution split: the adapter returns a candidate
-//     shortlist, the shared arbitration module
-//     (`engine/entity_match.ts:arbitrateEntityCandidates`, extracted
-//     from `applyActionPlan` for exactly this reuse) decides
-//     create-vs-update;
+//     shortlist; the rules (`uniqueness.ts:arbitrateWithoutJudge`) or, when
+//     they cannot decide, the host's judge (`host.llm.arbitrateEntities`)
+//     decides create-vs-update;
 //   - the trigger seed: the event position mirrors the TG engine's
 //     `seedRootSourcePosition` webhook branch, so source-property reads
 //     hit the adapter with an identical position.
@@ -216,7 +215,6 @@ import {
   type DryRunRehearsal,
   type DryRunWriteSink,
 } from '../translation_graph/engine/dry_run_adapter';
-import { arbitrateEntityCandidates } from '../translation_graph/engine/entity_match';
 import { applicableRequiredFields } from '../translation_graph/required_fields';
 import type { MutationContext } from '../translation_graph/mutation_context';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
@@ -232,7 +230,12 @@ import {
   type TransformOutputKind,
   transformOutputUnder,
 } from '../translation_graph/types';
-import { isBlankIdentityValue, mergeUniqueness, type UniquenessConstraints } from '../translation_graph/uniqueness';
+import {
+  arbitrateWithoutJudge,
+  isBlankIdentityValue,
+  mergeUniqueness,
+  type UniquenessConstraints,
+} from '../translation_graph/uniqueness';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import {
   matchesResourceFilter,
@@ -8337,15 +8340,25 @@ class Interpreter {
           })
         : predicateNarrowed;
     let judgeUnavailable: string | undefined;
-    const chosen = await arbitrateEntityCandidates({
+    // The rules settle most searches; only a real judgement costs the host a
+    // model call.
+    const decided = arbitrateWithoutJudge({
       asserted: input.asserted,
       candidates,
-      recordType: input.recordType,
       constraints: input.constraints,
-      onJudgeUnavailable: (message) => {
-        judgeUnavailable = message;
-      },
     });
+    const chosen =
+      decided !== undefined
+        ? decided
+        : await this.input.host.llm.arbitrateEntities({
+            asserted: input.asserted,
+            candidates,
+            recordType: input.recordType,
+            constraints: input.constraints,
+            onJudgeUnavailable: (message) => {
+              judgeUnavailable = message;
+            },
+          });
     // The index is into the list the arbiter saw — the narrowed one.
     return {
       matched: chosen !== null ? candidates[chosen] : undefined,

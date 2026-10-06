@@ -11,7 +11,8 @@
 
 import { Router, type Request, type Response } from 'express';
 
-import { getCallback, type CallbackParamSpec, type CallbackRecord } from '../../services/movement_engine/callback_store';
+import { getCallback, type CallbackRecord } from '../../services/movement_engine/callback_store';
+import type { CallbackParamSpec } from '../../services/movement_engine/callback_types';
 import { fireCallback, type CallbackFireOutcome } from '../../services/movement_engine/callback_fire';
 
 export const callbacksRouter: ReturnType<typeof Router> = Router();

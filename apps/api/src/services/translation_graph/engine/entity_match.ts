@@ -25,7 +25,7 @@ import { isRunCostCapExceeded } from '../../../lib/run_spend';
 import { neverAsAny } from '../../../lib/utils/types';
 import { logger } from '../../logger';
 import type { ExternalRecordRef } from '../adapter';
-import { candidateIsAllExact, constraintsHaveFuzzyEntry, type UniquenessConstraints } from '../uniqueness';
+import { arbitrateWithoutJudge, type UniquenessConstraints } from '../uniqueness';
 import { aiExpressionSettings, claudeModelId } from '../../movement_engine/ai_tiers';
 
 // The judge runs on the SAME model `AI()`'s "careful" tier names — reused
@@ -392,14 +392,8 @@ export async function arbitrateEntityCandidates(input: {
   constraints: UniquenessConstraints;
   onJudgeUnavailable?: (message: string) => void;
 }): Promise<number | null> {
-  if (input.candidates.length === 0) return null;
-  const exactIdxs = input.candidates
-    .map((c, i) => (candidateIsAllExact(input.constraints, input.asserted, c.data) ? i : -1))
-    .filter((i) => i >= 0);
-  if (exactIdxs.length === 1) return exactIdxs[0];
-  if (input.candidates.length === 1 && !constraintsHaveFuzzyEntry(input.constraints)) {
-    return 0;
-  }
+  const decided = arbitrateWithoutJudge(input);
+  if (decided !== undefined) return decided;
   return judgeEntityMatch({
     asserted: input.asserted,
     candidates: input.candidates,

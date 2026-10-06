@@ -12,6 +12,7 @@ import type { ResolveFile } from 'movement-lang';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ActingUser, ActorCandidate, Adapter, FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
+import type { arbitrateEntityCandidates } from '../translation_graph/engine/entity_match';
 import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import type { CallbackCall, CallbackParamSpec } from './callback_types';
 import type { MovementTraceEntry } from './expression';
@@ -31,6 +32,11 @@ export type ResolveAdapter = (input: {
   constructionArgs?: Record<string, string>;
   role: 'source' | 'target';
 }) => Adapter | Promise<Adapter>;
+
+/** Which candidate an identity search's write IS: the index into
+ *  `candidates`, or null to create. Asked only when the rules alone cannot
+ *  decide (`arbitrateWithoutJudge`), so it is the judge's model call. */
+export type ArbitrateEntities = typeof arbitrateEntityCandidates;
 
 /** Source `FileRef` → extracted TEXT (the knowledge-pipeline parity path). */
 export type ResolveFileText = (ref: FileRef) => Promise<FileTextResolution>;
@@ -133,6 +139,8 @@ export interface EngineHost {
     extractCall: ExtractCallLlmClient;
     /** `through` stages and plugin calls. */
     transforms: MovementTransformInvoker;
+    /** Identity arbitration among a write's search candidates. */
+    arbitrateEntities: ArbitrateEntities;
   };
   park: {
     /**
@@ -242,6 +250,11 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
           throw notProvided('llm.transforms');
         },
       },
+      arbitrateEntities:
+        llm.arbitrateEntities ??
+        (async () => {
+          throw notProvided('llm.arbitrateEntities');
+        }),
     },
     park: {
       ...(park.sink !== undefined ? { sink: park.sink } : {}),
