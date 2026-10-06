@@ -25,7 +25,11 @@ async function acquireAdvisoryLock(scope: number, id: number) {
 
   return {
     release: async () => {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [scope, id]);
+      try {
+        await client.query('SELECT pg_advisory_unlock($1, $2)', [scope, id]);
+      } finally {
+        await client.end();
+      }
     },
   };
 }
@@ -46,13 +50,18 @@ async function tryAdvisoryLock(scope: number, id: number | string | bigint) {
     return {
       acquired: true,
       release: async () => {
-        await client.query('SELECT pg_advisory_unlock($1, $2)', [scope, id]);
+        try {
+          await client.query('SELECT pg_advisory_unlock($1, $2)', [scope, id]);
+        } finally {
+          await client.end();
+        }
       },
     };
   } else {
+    await client.end();
     return {
-      acquired: true,
-      release: () => undefined,
+      acquired: false,
+      release: async () => undefined,
     };
   }
 }
