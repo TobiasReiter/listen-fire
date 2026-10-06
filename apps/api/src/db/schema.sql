@@ -3946,6 +3946,7 @@ CREATE TABLE automations.work (
     attempts integer NOT NULL DEFAULT 0,
     lease_owner text,
     lease_until timestamptz,
+    lease_token uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );

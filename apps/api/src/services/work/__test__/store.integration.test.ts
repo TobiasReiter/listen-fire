@@ -82,7 +82,23 @@ async function expectLeaseFor(key: string, leaseMs: number, during: () => Promis
 }
 
 function claimOf(row: WorkRow) {
-  return { id: row.id, owner: row.leaseOwner ?? '', claimedAttempts: row.attempts };
+  if (!row.leaseToken) throw new Error('expected a claimed row');
+  return { id: row.id, leaseToken: row.leaseToken };
+}
+
+async function expectStaleClaimIsInert(input: { key: string; stale: WorkRow; live: WorkRow }) {
+  const { key, stale, live } = input;
+  expect(await heartbeatWork({ ...claimOf(stale), leaseMs: 1 })).toBe(false);
+  await releaseWork(claimOf(stale));
+  await completeWork({ ...claimOf(stale), claimedUpdatedAt: stale.updatedAt, now: at(2_000) });
+
+  expect(await rowByKey(key)).toMatchObject({
+    leaseOwner: live.leaseOwner,
+    leaseUntil: live.leaseUntil,
+    leaseToken: live.leaseToken,
+    attempts: live.attempts,
+    dueAt: live.dueAt,
+  });
 }
 
 afterEach(async () => {
@@ -140,6 +156,7 @@ describe('work store', () => {
       payload: { runId: 'b' },
       leaseOwner: null,
       leaseUntil: null,
+      leaseToken: null,
       attempts: 0,
     });
   });
@@ -191,21 +208,27 @@ describe('work store', () => {
     const stale = await claimOne({ owner: 'drainer-1' });
     await expireLease(key);
     const live = await claimOne({ owner: 'drainer-1' });
-    expect(live.attempts).toBe(2);
+    expect(live.leaseToken).not.toBe(stale.leaseToken);
 
-    expect(await heartbeatWork({ ...claimOf(stale), leaseMs: 1 })).toBe(false);
-    await releaseWork(claimOf(stale));
-    await completeWork({ ...claimOf(stale), claimedUpdatedAt: stale.updatedAt, now: at(2_000) });
-
-    expect(await rowByKey(key)).toMatchObject({
-      leaseOwner: 'drainer-1',
-      leaseUntil: live.leaseUntil,
-      attempts: 2,
-      dueAt: at(0),
-    });
+    await expectStaleClaimIsInert({ key, stale, live });
   });
 
-  it('heartbeatWork extends the holder lease and refuses a non-holder', async () => {
+  it('the first claim stays inert after the row is re-armed and re-claimed twice over', async () => {
+    const key = freshKey('resume_timer');
+    await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
+    const first = await claimOne({ owner: 'drainer-1' });
+    await expireLease(key);
+    const second = await claimOne({ owner: 'drainer-1' });
+    await enqueueWork({ kind: 'resume_timer', key, dueAt: at(500) });
+    await completeWork({ ...claimOf(second), claimedUpdatedAt: second.updatedAt, now: at(900) });
+    const third = await claimOne({ owner: 'drainer-1' });
+    // attempts has wrapped back to the first claim's value; only the token tells them apart.
+    expect(third.attempts).toBe(first.attempts);
+
+    await expectStaleClaimIsInert({ key, stale: first, live: third });
+  });
+
+  it('heartbeatWork extends the holder lease and refuses another token', async () => {
     const key = freshKey('resume_timer');
     await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
     const claimed = await claimOne({ owner: 'drainer-1' });
@@ -215,7 +238,7 @@ describe('work store', () => {
     });
     const extended = (await rowByKey(key))?.leaseUntil;
 
-    expect(await heartbeatWork({ ...claimOf(claimed), owner: 'drainer-2', leaseMs: 1 })).toBe(
+    expect(await heartbeatWork({ id: claimed.id, leaseToken: randomUUID(), leaseMs: 1 })).toBe(
       false,
     );
     expect((await rowByKey(key))?.leaseUntil).toEqual(extended);
@@ -290,7 +313,12 @@ describe('work store', () => {
 
     await releaseWork(claimOf(claimed));
 
-    expect(await rowByKey(key)).toMatchObject({ dueAt: at(0), leaseOwner: null, leaseUntil: null });
+    expect(await rowByKey(key)).toMatchObject({
+      dueAt: at(0),
+      leaseOwner: null,
+      leaseUntil: null,
+      leaseToken: null,
+    });
   });
 
   it('ensurePeriodicWork is idempotent and keeps an existing due_at', async () => {

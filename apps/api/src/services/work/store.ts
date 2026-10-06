@@ -19,6 +19,7 @@ function toWorkRow(row: Work): WorkRow {
     attempts: row.attempts,
     leaseOwner: row.lease_owner,
     leaseUntil: row.lease_until,
+    leaseToken: row.lease_token,
     updatedAt: row.updated_at,
   };
 }
@@ -87,7 +88,7 @@ export async function ensurePeriodicWork(input: {
 }
 
 /** Claim up to `limit` due rows (due_at <= now AND (lease_until IS NULL OR lease_until < now))
- *  with FOR UPDATE SKIP LOCKED, setting lease_owner/lease_until and attempts+1.
+ *  with FOR UPDATE SKIP LOCKED, setting lease_owner/lease_until/lease_token and attempts+1.
  *  `now` drives only the due_at filter; leases live on the database clock. */
 export async function claimDueWork(input: {
   owner: string;
@@ -99,7 +100,7 @@ export async function claimDueWork(input: {
   // One statement so two drainers cannot race: SKIP LOCKED hands each a disjoint set.
   const { rows } = await sql<Work>`
     UPDATE automations.work w
-    SET lease_owner = ${input.owner}, lease_until = ${leaseFromNow(input.leaseMs)}, attempts = attempts + 1, updated_at = ${nextVersion('w')}
+    SET lease_owner = ${input.owner}, lease_until = ${leaseFromNow(input.leaseMs)}, lease_token = gen_random_uuid(), attempts = attempts + 1, updated_at = ${nextVersion('w')}
     WHERE w.id IN (
       SELECT id FROM automations.work
       WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < now())
@@ -112,21 +113,18 @@ export async function claimDueWork(input: {
   return rows.map(toWorkRow);
 }
 
-// A claim is identified by owner AND attempts: one drain loop is one owner, so
-// after a lapse the same owner may re-claim its own row, and the stale handler's
-// calls must not touch the new claim.
-function heldBy(input: { id: string; owner: string; claimedAttempts: number }) {
-  return sql`id = ${input.id} AND lease_owner = ${input.owner} AND attempts = ${input.claimedAttempts}`;
+// A claim is identified by its token, not its owner: one drain loop is one owner,
+// so after a lapse the same owner may re-claim its own row, and the stale
+// handler's calls must not touch the new claim.
+function heldBy(input: { id: string; leaseToken: string }) {
+  return sql`id = ${input.id} AND lease_token = ${input.leaseToken}::uuid`;
 }
 
-/** Extend lease_until for a row this owner holds. No-op (returns false) if the lease was lost.
- *  `now` is unused: the lease is written from the database clock. */
+/** Extend lease_until for a row this claim holds. No-op (returns false) if the lease was lost. */
 export async function heartbeatWork(input: {
   id: string;
-  owner: string;
-  claimedAttempts: number;
+  leaseToken: string;
   leaseMs: number;
-  now?: Date;
 }): Promise<boolean> {
   const { rows } = await sql<{ id: string }>`
     UPDATE automations.work
@@ -141,8 +139,7 @@ export async function heartbeatWork(input: {
  *  A periodic row (interval_ms set) clears its lease and is due at now + interval. */
 export async function completeWork(input: {
   id: string;
-  owner: string;
-  claimedAttempts: number;
+  leaseToken: string;
   claimedUpdatedAt: Date;
   now?: Date;
 }): Promise<void> {
@@ -156,21 +153,17 @@ export async function completeWork(input: {
   // row is new work, and a periodic row's next tick is too.
   await sql`
     UPDATE automations.work
-    SET lease_owner = NULL, lease_until = NULL, attempts = 0,
+    SET lease_owner = NULL, lease_until = NULL, lease_token = NULL, attempts = 0,
         due_at = CASE WHEN interval_ms IS NULL THEN due_at
                       ELSE ${now}::timestamptz + interval_ms * interval '1 millisecond' END
     WHERE ${heldBy(input)}`.execute(qb);
 }
 
 /** Clear the lease without rescheduling (handler threw and wants a retry at due_at). */
-export async function releaseWork(input: {
-  id: string;
-  owner: string;
-  claimedAttempts: number;
-}): Promise<void> {
+export async function releaseWork(input: { id: string; leaseToken: string }): Promise<void> {
   await sql`
     UPDATE automations.work
-    SET lease_owner = NULL, lease_until = NULL
+    SET lease_owner = NULL, lease_until = NULL, lease_token = NULL
     WHERE ${heldBy(input)}`.execute(getAutomationsQb(['work']));
 }
 

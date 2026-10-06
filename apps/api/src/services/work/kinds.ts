@@ -31,6 +31,7 @@ export interface WorkRow {
   attempts: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
+  leaseToken: string | null;
   updatedAt: Date;
 }
 

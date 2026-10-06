@@ -661,6 +661,7 @@ model Work {
   leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  leaseToken String?   @map("lease_token") @db.Uuid
 
   @@index([dueAt], map: "work_due_idx")
   @@map("work")
