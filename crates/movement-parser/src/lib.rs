@@ -3,7 +3,10 @@
 //! across the WASM boundary.
 
 pub mod abi;
+pub mod expr;
 pub mod lexer;
+pub mod scan;
+pub mod tree;
 pub mod util;
 
 use serde::Serialize;
@@ -17,8 +20,10 @@ pub fn parse_program(_source: &str, _version: u32) -> Parsed {
     Err(not_implemented())
 }
 
-pub fn parse_expression(_source: &str, _version: u32) -> Parsed {
-    Err(not_implemented())
+/// The expression grammar reads no version: one grammar serves them all.
+pub fn parse_expression(source: &str, _version: u32) -> Parsed {
+    let tree = expr::parse_expression(source).map_err(|e| to_value(&e))?;
+    Ok(to_value(&tree))
 }
 
 pub struct NestedCall {
@@ -31,6 +36,10 @@ pub struct NestedCall {
 
 pub fn parse_nested_call(_raw: &str, _call: &NestedCall) -> Parsed {
     Err(not_implemented())
+}
+
+fn to_value<T: Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).expect("parser output is always representable as JSON")
 }
 
 fn not_implemented() -> Value {

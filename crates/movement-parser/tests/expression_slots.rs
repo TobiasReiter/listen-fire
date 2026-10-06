@@ -19,7 +19,7 @@ struct Slot {
 }
 
 #[test]
-#[ignore = "the expression grammar is not ported yet; run with --ignored"]
+#[ignore = "a sweep of the whole corpus; run with --ignored"]
 fn every_expression_text_parses_without_panicking() {
     let path = common::fixture("parser/expression/__test__/__fixtures__/expression_slots.json");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));

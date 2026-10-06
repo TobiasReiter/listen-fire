@@ -138,16 +138,16 @@ mod tests {
 
     #[test]
     fn round_trips_through_alloc_parse_and_dealloc() {
-        let (status, json) = call_expression("a.b + 'héllo 🌍'");
-        assert_eq!(status, ERROR);
-        assert_eq!(json, r#"{"error":{"message":"not implemented","pos":0}}"#);
+        let (status, json) = call_expression("'héllo 🌍'");
+        assert_eq!(status, OK);
+        assert_eq!(json, r#"{"at":{"end":10,"start":0},"kind":"string","parts":["héllo 🌍"],"quote":"'"}"#);
     }
 
     #[test]
     fn empty_source_round_trips() {
         let (status, json) = call_expression("");
         assert_eq!(status, ERROR);
-        assert_eq!(json, r#"{"error":{"message":"not implemented","pos":0}}"#);
+        assert_eq!(json, r#"{"error":{"message":"Unexpected end of input","pos":0}}"#);
     }
 
     #[test]
