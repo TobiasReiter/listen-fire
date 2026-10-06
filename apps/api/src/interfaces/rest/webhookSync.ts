@@ -3,6 +3,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { handleInboundWebhook } from '../../services/webhook_sync/handler';
 import { logger } from '../../services/logger';
+import { drainUntilIdle, notifyWork } from '../../services/work/drain';
 
 const webhookSyncRouter: ReturnType<typeof Router> = Router();
 
@@ -69,17 +70,19 @@ webhookSyncRouter.post(
         return;
       }
 
-      // Capture-then-ack. The handler has durably receipted everything that
-      // arrived; the movement dispatch runs off the request cycle so a provider
-      // that times out its delivery (Slack's 3s, Attio's retry budget) doesn't
-      // see a slow run as a failed delivery and redeliver it. Nothing depends on
-      // a provider retry — the receipt is the durability story, and a receipt is
-      // replayable — so a deferred failure never turns the 200 into an error.
+      // Capture, queue, then ack. The handler has durably receipted everything
+      // that arrived; queueing a work row per receipt is a cheap insert that has
+      // to land before the 200, since a receipt without a row would never run.
+      // The movements run off the request cycle, so a provider that times out
+      // its delivery (Slack's 3s, Attio's retry budget) doesn't see a slow run
+      // as a failed delivery and redeliver it.
       //
       // A test-harness subscription is the exception: the dev-loop inject CLI
-      // reads dispatch errors out of this response, so it waits for the run.
-      if (result.runDeferred && result.awaitDeferred) {
-        const deferred = await result.runDeferred();
+      // reads dispatch errors out of this response, so it drains the rows first.
+      if (result.enqueueDeferred && result.awaitDeferred) {
+        const enqueued = await result.enqueueDeferred();
+        await drainUntilIdle({ owner: 'door' });
+        const deferred = await enqueued.readOutcome();
         res.status(200).json({
           ok: true,
           eventsProcessed: deferred.eventsProcessed,
@@ -90,16 +93,9 @@ webhookSyncRouter.post(
         return;
       }
 
+      if (result.enqueueDeferred) await result.enqueueDeferred();
       res.status(200).json({ ok: true, eventsProcessed: result.eventsProcessed });
-
-      const runDeferred = result.runDeferred;
-      if (runDeferred) {
-        setImmediate(() => {
-          void runDeferred().catch((err) => {
-            logger.error('[webhook-sync] deferred dispatch failed:', err);
-          });
-        });
-      }
+      notifyWork();
     } catch (err) {
       logger.error('Webhook sync endpoint error:', err);
       res.status(500).json({ error: 'internal' });

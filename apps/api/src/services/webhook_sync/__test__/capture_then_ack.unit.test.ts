@@ -1,10 +1,12 @@
 // The webhook_sync door is capture-then-ack: everything up to the durable
-// receipt runs inside the request, and the movement dispatch runs after the
-// 200. These pin the split at the handler seam —
+// receipt runs inside the request, the door queues a work row per receipt and
+// await wake before its 200, and the movement runs when the row drains. These
+// pin the split at the handler seam —
 //
-//   phase 1 (pre-ack): signature → preprocessInbound → trigger matching →
-//                      receipt store → pull-cursor advance
-//   phase 2 (post-ack): linked-object refresh → await resolution → dispatch
+//   phase 1 (handleInboundWebhook): signature → preprocessInbound → trigger
+//                      matching → receipt store → pull-cursor advance
+//   phase 2 (enqueueDeferred): linked-object refresh → wake_await rows →
+//                      dispatch_event rows
 //
 // with the two properties that make it safe: the cursor only advances over
 // RECEIPTED events, and a phase-2 failure is per-event data, never a rejected
@@ -15,8 +17,10 @@ import type { DiscriminableEvent } from '../../translation_graph/adapter';
 interface Harness {
   handleInboundWebhook: typeof import('../handler').handleInboundWebhook;
   captureDiscriminableEvent: jest.Mock;
-  dispatchCapturedTriggerEvent: jest.Mock;
-  resumeAwaitsForCorrelation: jest.Mock;
+  enqueueCapturedEvents: jest.Mock;
+  loadFailedReceipts: jest.Mock;
+  enqueueAwaitWake: jest.Mock;
+  notifyWork: jest.Mock;
   findTriggersByKind: jest.Mock;
   preprocessInbound: jest.Mock;
   handleTelegramCallbackQuery: jest.Mock;
@@ -73,7 +77,9 @@ async function loadHandler(options: {
   harnessTeam?: boolean;
   checkpoint?: unknown;
   triggers?: unknown[];
-  onDispatch?: jest.Mock;
+  onEnqueue?: jest.Mock;
+  /** Receipt id → failure reason, as the drained receipts would read back. */
+  failedReceipts?: Record<string, string>;
   /** Whether the raw delivery reads as a Telegram button tap the answer door
    *  owns (the branch that short-circuits the raw→events seam). */
   askCallback?: boolean;
@@ -161,27 +167,31 @@ async function loadHandler(options: {
     ),
   }));
   jest.doMock('../../movement_engine/await_resume', () => ({
-    resumeAwaitsForCorrelation: jest.fn(async () => undefined),
+    enqueueAwaitWake: jest.fn(async () => undefined),
   }));
+  jest.doMock('../../work/drain', () => ({ notifyWork: jest.fn() }));
   jest.doMock('../../translation_graph/triggers/dispatch_event', () => ({
     captureDiscriminableEvent: jest.fn(async (input: { event: DiscriminableEvent }) => ({
       triggerId: 'trig-1',
       teamId: 'team-1',
       triggerEvent: { payload: input.event.payload },
-      storedEventId: 'evt-1',
+      storedEventId: `evt-${(input.event.payload as { n?: number }).n ?? 0}`,
       duplicate: false,
     })),
-    dispatchCapturedTriggerEvent: options.onDispatch ?? jest.fn(async () => undefined),
+    enqueueCapturedEvents: options.onEnqueue ?? jest.fn(async () => undefined),
+    loadFailedReceipts: jest.fn(async () => new Map(Object.entries(options.failedReceipts ?? {}))),
   }));
 
   const { handleInboundWebhook } = await import('../handler');
   const dispatchMod = jest.requireMock('../../translation_graph/triggers/dispatch_event') as {
     captureDiscriminableEvent: jest.Mock;
-    dispatchCapturedTriggerEvent: jest.Mock;
+    enqueueCapturedEvents: jest.Mock;
+    loadFailedReceipts: jest.Mock;
   };
   const awaitMod = jest.requireMock('../../movement_engine/await_resume') as {
-    resumeAwaitsForCorrelation: jest.Mock;
+    enqueueAwaitWake: jest.Mock;
   };
+  const drainMod = jest.requireMock('../../work/drain') as { notifyWork: jest.Mock };
   const tgTable = jest.requireMock('../../translation_graph/storage/tg_table') as {
     findTriggersByKind: jest.Mock;
   };
@@ -195,8 +205,10 @@ async function loadHandler(options: {
   return {
     handleInboundWebhook,
     captureDiscriminableEvent: dispatchMod.captureDiscriminableEvent,
-    dispatchCapturedTriggerEvent: dispatchMod.dispatchCapturedTriggerEvent,
-    resumeAwaitsForCorrelation: awaitMod.resumeAwaitsForCorrelation,
+    enqueueCapturedEvents: dispatchMod.enqueueCapturedEvents,
+    loadFailedReceipts: dispatchMod.loadFailedReceipts,
+    enqueueAwaitWake: awaitMod.enqueueAwaitWake,
+    notifyWork: drainMod.notifyWork,
     findTriggersByKind: tgTable.findTriggersByKind,
     preprocessInbound,
     handleTelegramCallbackQuery: callbackDoor.handleTelegramCallbackQuery,
@@ -218,7 +230,7 @@ const EVENT_A: DiscriminableEvent = { payload: { n: 1 } } as DiscriminableEvent;
 const EVENT_B: DiscriminableEvent = { payload: { n: 2 } } as DiscriminableEvent;
 
 describe('handleInboundWebhook — phase 1 ends at the receipt', () => {
-  it('stores a receipt per event and dispatches NOTHING before the ack', async () => {
+  it('stores a receipt per event and queues NOTHING until the door asks', async () => {
     const h = await loadHandler({ events: [EVENT_A, EVENT_B] });
 
     const result = await deliver(h);
@@ -227,9 +239,9 @@ describe('handleInboundWebhook — phase 1 ends at the receipt', () => {
     // `eventsProcessed` now means CAPTURED — what the ack is answering for.
     expect(result.eventsProcessed).toBe(2);
     expect(h.captureDiscriminableEvent).toHaveBeenCalledTimes(2);
-    expect(h.dispatchCapturedTriggerEvent).not.toHaveBeenCalled();
-    expect(h.resumeAwaitsForCorrelation).not.toHaveBeenCalled();
-    expect(typeof result.runDeferred).toBe('function');
+    expect(h.enqueueCapturedEvents).not.toHaveBeenCalled();
+    expect(h.enqueueAwaitWake).not.toHaveBeenCalled();
+    expect(typeof result.enqueueDeferred).toBe('function');
   });
 
   it('advances the pull cursor pre-ack — the invariant is receipted, not dispatched', async () => {
@@ -239,7 +251,7 @@ describe('handleInboundWebhook — phase 1 ends at the receipt', () => {
 
     expect(h.qbSetCalls).toHaveLength(1);
     expect(h.qbSetCalls[0]).toHaveProperty('inbound_checkpoint');
-    expect(h.dispatchCapturedTriggerEvent).not.toHaveBeenCalled();
+    expect(h.enqueueCapturedEvents).not.toHaveBeenCalled();
   });
 
   it('an empty delivery is a bare ack with nothing deferred', async () => {
@@ -256,42 +268,43 @@ describe('handleInboundWebhook — phase 1 ends at the receipt', () => {
   });
 });
 
-describe('handleInboundWebhook — phase 2 runs after the ack', () => {
-  it('dispatches each captured receipt, in delivery order', async () => {
+describe('handleInboundWebhook — phase 2 queues the work', () => {
+  it('queues each event\'s receipts, in delivery order', async () => {
     const seen: unknown[] = [];
-    const onDispatch = jest.fn(async (input: { captured: { triggerEvent: unknown } }) => {
-      seen.push(input.captured.triggerEvent);
+    const onEnqueue = jest.fn(async (receipts: { triggerEvent: unknown }[]) => {
+      seen.push(...receipts.map((r) => r.triggerEvent));
     });
-    const h = await loadHandler({ events: [EVENT_A, EVENT_B], onDispatch });
+    const h = await loadHandler({ events: [EVENT_A, EVENT_B], onEnqueue });
 
     const result = await deliver(h);
-    const outcome = await result.runDeferred!();
+    const outcome = await (await result.enqueueDeferred!()).readOutcome();
 
     expect(outcome.eventsProcessed).toBe(2);
     expect(outcome.perEventErrors).toEqual([]);
     expect(seen).toEqual([{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+    // The door pokes the drain, after its ack.
+    expect(h.notifyWork).not.toHaveBeenCalled();
   });
 
-  it('one event failing does not stop the next — the failure is per-event data', async () => {
+  it('one event failing to queue does not stop the next — the failure is per-event data', async () => {
     let call = 0;
-    const onDispatch = jest.fn(async () => {
+    const onEnqueue = jest.fn(async () => {
       call += 1;
-      if (call === 1) throw new Error('engine exploded');
+      if (call === 1) throw new Error('enqueue exploded');
     });
-    const h = await loadHandler({ events: [EVENT_A, EVENT_B], onDispatch });
+    const h = await loadHandler({ events: [EVENT_A, EVENT_B], onEnqueue });
 
     const result = await deliver(h);
-    const outcome = await result.runDeferred!();
+    const outcome = await (await result.enqueueDeferred!()).readOutcome();
 
-    expect(onDispatch).toHaveBeenCalledTimes(2);
+    expect(onEnqueue).toHaveBeenCalledTimes(2);
     expect(outcome.eventsProcessed).toBe(1);
-    expect(outcome.perEventErrors).toEqual([{ event: EVENT_A, error: 'engine exploded' }]);
+    expect(outcome.perEventErrors).toEqual([{ event: EVENT_A, error: 'enqueue exploded' }]);
   });
 
-  it('resolves Slack thread awaits even when NO trigger matched the delivery', async () => {
+  it('queues a Slack thread wake even when NO trigger matched the delivery', async () => {
     // Consent-by-silence: a reply must wake its `await …-[:Replies]->` park
-    // whether or not any movement listens for Slack messages. Deferring it is
-    // safe (idempotent + a 5s poll backstop); skipping it is not.
+    // whether or not any movement listens for Slack messages.
     const h = await loadHandler({
       events: [{ payload: { channel: 'C1', thread_ts: '111.1' } } as DiscriminableEvent],
       provider: 'SLACK',
@@ -300,52 +313,34 @@ describe('handleInboundWebhook — phase 2 runs after the ack', () => {
     });
 
     const result = await deliver(h, 'SLACK');
-    expect(h.resumeAwaitsForCorrelation).not.toHaveBeenCalled();
+    expect(h.enqueueAwaitWake).not.toHaveBeenCalled();
 
-    await result.runDeferred!();
+    await result.enqueueDeferred!();
 
-    expect(h.resumeAwaitsForCorrelation).toHaveBeenCalledWith({
+    expect(h.enqueueAwaitWake).toHaveBeenCalledWith({
       adapterType: 'slack',
       teamId: 'team-1',
       correlationKey: 'C1:111.1',
     });
-    expect(h.dispatchCapturedTriggerEvent).not.toHaveBeenCalled();
+    expect(h.enqueueCapturedEvents).toHaveBeenCalledWith([]);
   });
 });
 
 describe('handleInboundWebhook — test-harness subscriptions stay synchronous', () => {
-  it('asks the route to wait and surfaces dispatch errors to the caller', async () => {
-    const onDispatch = jest.fn(async () => {
-      throw new Error('movement blew up');
+  it('asks the route to wait, and the drained outcome reports each failed receipt', async () => {
+    const h = await loadHandler({
+      events: [EVENT_A, EVENT_B],
+      harnessTeam: true,
+      failedReceipts: { 'evt-1': 'movement blew up' },
     });
-    const h = await loadHandler({ events: [EVENT_A], harnessTeam: true, onDispatch });
 
     const result = await deliver(h);
     expect(result.awaitDeferred).toBe(true);
 
-    const outcome = await result.runDeferred!();
-    expect(outcome.eventsProcessed).toBe(0);
+    const outcome = await (await result.enqueueDeferred!()).readOutcome();
+    expect(h.loadFailedReceipts).toHaveBeenCalledWith(['evt-1', 'evt-2']);
+    expect(outcome.eventsProcessed).toBe(1);
     expect(outcome.perEventErrors).toEqual([{ event: EVENT_A, error: 'movement blew up' }]);
-  });
-
-  it('passes surfaceErrors into the dispatch half so the engine error propagates', async () => {
-    const h = await loadHandler({ events: [EVENT_A], harnessTeam: true });
-
-    await (await deliver(h)).runDeferred!();
-
-    expect(h.dispatchCapturedTriggerEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ surfaceErrors: true }),
-    );
-  });
-
-  it('a production delivery leaves surfaceErrors off', async () => {
-    const h = await loadHandler({ events: [EVENT_A] });
-
-    await (await deliver(h)).runDeferred!();
-
-    expect(h.dispatchCapturedTriggerEvent).toHaveBeenCalledWith(
-      expect.not.objectContaining({ surfaceErrors: expect.anything() }),
-    );
   });
 });
 

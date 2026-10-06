@@ -1,12 +1,12 @@
 // The webhook_sync door's REST contract after the capture-then-ack split.
 // Drives the real router over an in-process HTTP server (same idiom as
-// connect_handshake.unit.test.ts) with the handler mocked, so what's under
-// test is the route's own decisions:
+// connect_handshake.unit.test.ts) with the handler and the work drain mocked,
+// so what's under test is the route's own decisions:
 //
 //   • the Slack url_verification handshake still short-circuits FIRST,
-//   • a production delivery is acked BEFORE the deferred half runs,
-//   • a deferred failure never turns that 200 into an error,
-//   • a test-harness delivery waits and reports dispatch errors inline,
+//   • a production delivery queues its work rows BEFORE the ack, and pokes the
+//     drain after it,
+//   • a test-harness delivery drains its rows and reports dispatch errors inline,
 //   • phase-1 refusals keep their status codes (404/400/401).
 
 import express, { type Router } from 'express';
@@ -14,9 +14,16 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 const handleInboundWebhook = jest.fn();
+const drainUntilIdle = jest.fn();
+const notifyWork = jest.fn();
 
 jest.mock('../../../services/webhook_sync/handler', () => ({
   handleInboundWebhook: (input: unknown) => handleInboundWebhook(input),
+}));
+
+jest.mock('../../../services/work/drain', () => ({
+  drainUntilIdle: (input: unknown) => drainUntilIdle(input),
+  notifyWork: () => notifyWork(),
 }));
 
 jest.mock('../../../services/logger', () => ({
@@ -42,6 +49,11 @@ afterAll((done) => {
   server.close(() => done());
 });
 
+beforeEach(() => {
+  jest.clearAllMocks();
+  drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0 });
+});
+
 async function post(path: string, body: unknown) {
   const res = await fetch(`${baseUrl}/api/public/webhook-sync${path}`, {
     method: 'POST',
@@ -51,70 +63,37 @@ async function post(path: string, body: unknown) {
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
-/** Resolves the first time `resolve` is handed out. */
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
+function outcome(eventsProcessed: number, perEventErrors: unknown[] = []) {
+  return { readOutcome: async () => ({ eventsProcessed, perEventErrors }) };
 }
 
 describe('POST /:provider/:subscriptionId — production deliveries', () => {
-  it('acks before the deferred half finishes, then runs it', async () => {
-    const gate = deferred();
-    let deferredStarted = false;
-    let deferredFinished = false;
+  it('queues the work rows before acking, then pokes the drain', async () => {
+    const order: string[] = [];
     handleInboundWebhook.mockResolvedValue({
       ok: true,
       eventsProcessed: 3,
-      runDeferred: async () => {
-        deferredStarted = true;
-        await gate.promise;
-        deferredFinished = true;
-        return { eventsProcessed: 3, perEventErrors: [] };
+      enqueueDeferred: async () => {
+        order.push('enqueue');
+        return outcome(3);
       },
     });
+    notifyWork.mockImplementation(() => order.push('notify'));
 
     const res = await post('/attio/sub-1', { any: 'payload' });
 
-    // The 200 landed while the dispatch is still parked — that IS the change.
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, eventsProcessed: 3 });
-    expect(deferredFinished).toBe(false);
-
-    gate.resolve();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(deferredStarted).toBe(true);
-    expect(deferredFinished).toBe(true);
-  });
-
-  it('a rejected deferred half still leaves the delivery a 200', async () => {
-    // Nothing depends on a provider retry — the receipt is the durability
-    // story — so a post-ack explosion must not be reported as a bad delivery.
-    handleInboundWebhook.mockResolvedValue({
-      ok: true,
-      eventsProcessed: 1,
-      runDeferred: async () => {
-        throw new Error('dispatch exploded');
-      },
-    });
-
-    const res = await post('/attio/sub-1', { any: 'payload' });
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, eventsProcessed: 1 });
+    expect(order).toEqual(['enqueue', 'notify']);
+    // The rows run off the request; the door never drains for a production sender.
+    expect(drainUntilIdle).not.toHaveBeenCalled();
   });
 
   it('never leaks per-event errors to a production sender', async () => {
     handleInboundWebhook.mockResolvedValue({
       ok: true,
       eventsProcessed: 1,
-      runDeferred: async () => ({
-        eventsProcessed: 0,
-        perEventErrors: [{ event: {}, error: 'boom' }],
-      }),
+      enqueueDeferred: async () => outcome(0, [{ event: {}, error: 'boom' }]),
     });
 
     const res = await post('/attio/sub-1', { any: 'payload' });
@@ -124,24 +103,35 @@ describe('POST /:provider/:subscriptionId — production deliveries', () => {
 });
 
 describe('POST /:provider/:subscriptionId — test-harness deliveries', () => {
-  it('waits for the dispatch and reports its errors inline (the dev-loop contract)', async () => {
-    let acked = false;
+  it('drains the rows before acking and reports dispatch errors inline (the dev-loop contract)', async () => {
+    const order: string[] = [];
     handleInboundWebhook.mockResolvedValue({
       ok: true,
       eventsProcessed: 2,
       awaitDeferred: true,
-      runDeferred: async () => {
-        expect(acked).toBe(false);
+      enqueueDeferred: async () => {
+        order.push('enqueue');
         return {
-          eventsProcessed: 1,
-          perEventErrors: [{ event: { payload: {} }, error: 'movement blew up' }],
+          readOutcome: async () => {
+            order.push('read');
+            return {
+              eventsProcessed: 1,
+              perEventErrors: [{ event: { payload: {} }, error: 'movement blew up' }],
+            };
+          },
         };
       },
     });
+    drainUntilIdle.mockImplementation(async () => {
+      order.push('drain');
+      return { claimed: 1, ran: 1, recovered: 0, failed: 0 };
+    });
 
     const res = await post('/attio/sub-1', { any: 'payload' });
-    acked = true;
 
+    expect(order).toEqual(['enqueue', 'drain', 'read']);
+    expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door' });
+    expect(notifyWork).not.toHaveBeenCalled();
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       ok: true,
@@ -156,7 +146,7 @@ describe('POST /:provider/:subscriptionId — test-harness deliveries', () => {
       ok: true,
       eventsProcessed: 1,
       awaitDeferred: true,
-      runDeferred: async () => ({ eventsProcessed: 1, perEventErrors: [] }),
+      enqueueDeferred: async () => outcome(1),
     });
 
     expect((await post('/attio/sub-1', {})).body).toEqual({ ok: true, eventsProcessed: 1 });

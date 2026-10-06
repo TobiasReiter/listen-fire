@@ -1,7 +1,8 @@
 // Shared built-in Telegram bot routing — the capstone. Drives
 // `handleSharedBotInbound` through its four branches against in-memory models
 // of the collaborators it owns (the `telegram_identity` reverse lookup, the
-// per-team capture primitive, the dispatch half), plus a mocked handshake +
+// per-team capture primitive, the work rows the dispatch half queues), plus a
+// mocked handshake +
 // built-in send:
 //
 //   • /start <token>     → binds via `bindTelegramFromStart`, replies through
@@ -18,9 +19,10 @@
 // that own a binding for the sender.
 //
 // The door is also capture-then-ack: routing + receipts settle inside the
-// request, the movement runs in the returned `runDeferred`. That split is
-// pinned below (nothing dispatches before it's called; a per-team dispatch
-// failure is data, not a rejection; a harness team asks the route to wait).
+// request, the returned `enqueueDeferred` queues a work row per receipt, and the
+// movement runs when the row drains. That split is pinned below (nothing is
+// queued before it's called; a per-team dispatch failure is data read back off
+// the receipt, not a rejection; a harness team asks the route to wait).
 
 import type { WebhookEvent } from '../providers';
 
@@ -89,20 +91,20 @@ jest.mock('../handler', () => ({
   }),
 }));
 
-// ── the DISPATCH half (phase 2) — record each invocation ─────────────────────
-const dispatchCalls: Array<{ teamId: string; triggerId: string; surfaceErrors?: boolean }> = [];
+// ── the DISPATCH half (phase 2) — record each queued row; a team named in
+//    `dispatchShouldThrowForTeam` reads back as a failed receipt once drained ──
+const dispatchCalls: Array<{ teamId: string; triggerId: string }> = [];
 let dispatchShouldThrowForTeam: string | null = null;
 
 jest.mock('../../translation_graph/triggers/dispatch_event', () => ({
-  dispatchCapturedTriggerEvent: jest.fn(async (input: any) => {
-    dispatchCalls.push({
-      teamId: input.captured.teamId,
-      triggerId: input.captured.triggerId,
-      surfaceErrors: input.surfaceErrors,
-    });
-    if (dispatchShouldThrowForTeam === input.captured.teamId) {
-      throw new Error(`boom for ${input.captured.teamId}`);
+  enqueueCapturedEvents: jest.fn(async (receipts: any[]) => {
+    for (const receipt of receipts) {
+      dispatchCalls.push({ teamId: receipt.teamId, triggerId: receipt.triggerId });
     }
+  }),
+  loadFailedReceipts: jest.fn(async (ids: string[]) => {
+    const failing = `evt-${dispatchShouldThrowForTeam}`;
+    return new Map(ids.filter((id) => id === failing).map((id) => [id, `boom for ${dispatchShouldThrowForTeam}`]));
   }),
 }));
 
@@ -195,11 +197,14 @@ afterAll(() => {
   testHarnessConfig.teamId = ORIGINAL_HARNESS_TEAM;
 });
 
-/** Drive a delivery through BOTH halves — the pre-split behaviour, for the
- *  assertions that are about routing rather than about the ack boundary. */
+/** Drive a delivery through BOTH halves and read the drained outcome — the
+ *  pre-split behaviour, for the assertions that are about routing rather than
+ *  about the ack boundary. */
 async function deliverFully(raw: unknown) {
   const delivery = await handleSharedBotInbound(raw);
-  return delivery.runDeferred ? delivery.runDeferred() : delivery.result;
+  return delivery.enqueueDeferred
+    ? (await delivery.enqueueDeferred()).readOutcome()
+    : delivery.result;
 }
 
 describe('shared-bot classification', () => {
@@ -253,7 +258,7 @@ describe('/start handshake branch', () => {
     expect(sentReplies[0].text).toContain('Linked');
     // A handshake is NOT a movement message — and it is WHOLLY pre-ack: the bind
     // outcome IS the response body, so there is nothing to defer.
-    expect(delivery.runDeferred).toBeUndefined();
+    expect(delivery.enqueueDeferred).toBeUndefined();
     expect(captureCalls).toHaveLength(0);
     expect(dispatchCalls).toHaveLength(0);
   });
@@ -268,7 +273,7 @@ describe('/start handshake branch', () => {
       bind: { ok: false, reason: 'token_expired' },
     });
     expect(sentReplies[0].text).toContain('expired');
-    expect(delivery.runDeferred).toBeUndefined();
+    expect(delivery.enqueueDeferred).toBeUndefined();
     expect(dispatchCalls).toHaveLength(0);
   });
 });
@@ -316,14 +321,16 @@ describe('linked-message routing (route-all)', () => {
     const delivery = await handleSharedBotInbound(privateMessage());
 
     expect(delivery.result.routedTeamIds).toEqual(['team-B']);
-    expect(await delivery.runDeferred!()).toMatchObject({ routedTeamIds: ['team-B'] });
+    expect(await (await delivery.enqueueDeferred!()).readOutcome()).toMatchObject({
+      routedTeamIds: ['team-B'],
+    });
     expect(dispatchCalls.map((c) => c.teamId)).toEqual(['team-B']);
   });
 });
 
 // ── capture-then-ack: where the split sits ───────────────────────────────────
 describe('capture-then-ack split', () => {
-  it('receipts are captured pre-ack and NOTHING dispatches until the deferred half', async () => {
+  it('receipts are captured pre-ack and NOTHING is queued until the deferred half', async () => {
     identities.push({ team_id: 'team-A', telegram_user_id: TG_USER });
 
     const delivery = await handleSharedBotInbound(privateMessage());
@@ -335,22 +342,20 @@ describe('capture-then-ack split', () => {
       routedTeamIds: ['team-A'],
     });
     expect(captureCalls).toHaveLength(1);
-    // …but no movement has run.
+    // …but no row is queued yet.
     expect(dispatchCalls).toHaveLength(0);
 
-    await delivery.runDeferred!();
-    expect(dispatchCalls).toEqual([
-      { teamId: 'team-A', triggerId: 'trig-team-A', surfaceErrors: undefined },
-    ]);
+    await delivery.enqueueDeferred!();
+    expect(dispatchCalls).toEqual([{ teamId: 'team-A', triggerId: 'trig-team-A' }]);
   });
 
-  it('a deferred dispatch failure resolves as data — it never rejects', async () => {
+  it('a failed dispatch reads back as data — it never rejects', async () => {
     identities.push({ team_id: 'team-A', telegram_user_id: TG_USER });
     dispatchShouldThrowForTeam = 'team-A';
 
     const delivery = await handleSharedBotInbound(privateMessage());
 
-    await expect(delivery.runDeferred!()).resolves.toMatchObject({
+    await expect((await delivery.enqueueDeferred!()).readOutcome()).resolves.toMatchObject({
       ok: true,
       classification: 'message',
       routedTeamIds: [],
@@ -363,15 +368,12 @@ describe('capture-then-ack split', () => {
     expect((await handleSharedBotInbound(privateMessage())).awaitDeferred).toBeUndefined();
   });
 
-  it('a test-harness team waits and dispatches with surfaceErrors (the dev-loop contract)', async () => {
+  it('a test-harness team asks the door to wait (the dev-loop contract)', async () => {
     testHarnessConfig.teamId = 'team-A';
     identities.push({ team_id: 'team-A', telegram_user_id: TG_USER });
 
     const delivery = await handleSharedBotInbound(privateMessage());
     expect(delivery.awaitDeferred).toBe(true);
-
-    await delivery.runDeferred!();
-    expect(dispatchCalls[0].surfaceErrors).toBe(true);
   });
 });
 
@@ -395,7 +397,7 @@ describe('unlinked sender', () => {
     // No identity rows at all → unlinked.
     const delivery = await handleSharedBotInbound(privateMessage({ senderId: '777' }));
     expect(delivery.result).toMatchObject({ ok: true, classification: 'unlinked_ignore' });
-    expect(delivery.runDeferred).toBeUndefined();
+    expect(delivery.enqueueDeferred).toBeUndefined();
     expect(captureCalls).toHaveLength(0);
     expect(dispatchCalls).toHaveLength(0);
     expect(sentReplies).toHaveLength(0);
@@ -434,7 +436,7 @@ describe('button tap branch', () => {
       classification: 'callback_query',
       callback: { handled: true, outcome: 'answered' },
     });
-    expect(delivery.runDeferred).toBeUndefined();
+    expect(delivery.enqueueDeferred).toBeUndefined();
     expect(captureCalls).toHaveLength(0);
     expect(dispatchCalls).toHaveLength(0);
     expect(callbackAcks).toEqual([
@@ -465,7 +467,7 @@ describe('reply-to-bot', () => {
       message: { from: { id: 999 }, chat: { id: 2 }, text: 'thanks', reply_to_message: { from: { is_bot: true } } },
     });
     expect(delivery.result).toMatchObject({ classification: 'reply_to_bot' });
-    expect(delivery.runDeferred).toBeUndefined();
+    expect(delivery.enqueueDeferred).toBeUndefined();
     expect(dispatchCalls).toHaveLength(0);
   });
 });
@@ -509,7 +511,7 @@ describe('webhook secret-token authentication', () => {
     expect(delivery.result).toMatchObject({ classification: 'message', routedTeamIds: ['team-A'] });
     expect(captureCalls).toHaveLength(1);
 
-    await delivery.runDeferred!();
+    await delivery.enqueueDeferred!();
     expect(dispatchCalls).toHaveLength(1);
   });
 

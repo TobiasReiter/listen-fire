@@ -15,11 +15,14 @@
 // crash mid-drain leaves the `adapter_await` rows for the next pass to
 // re-process (idempotent — a resolved leaf has no parked_run left).
 
-import { SECOND } from '../../constants';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { getQb, getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
-import { worker } from '../../lib/worker';
 import { logger } from '../logger';
+import type { WorkHandler } from '../work/kinds';
+import { registerWorkHandler } from '../work/drain';
+import { enqueueWork } from '../work/store';
 import { settleCancelledRun } from '../interaction/run_failure';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { ParkedScopeState } from './serialize';
@@ -38,8 +41,6 @@ import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
 import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
-
-const SCAN_INTERVAL = 5 * SECOND;
 
 // Single-flight per run (F18/F21): concurrent scans/nudges for the SAME run
 // coalesce — one drain runs, gathering ALL of that run's currently-resolvable
@@ -347,8 +348,42 @@ async function settleFailure(runId: TriggerRunId): Promise<void> {
   await clearJoins(runId);
 }
 
-export function startAwaitResumeWorker(): void {
-  worker(resumeAwaitedRuns, SCAN_INTERVAL);
+const wakeAwaitPayloadSchema = z.object({
+  adapterType: z.string(),
+  teamId: z.custom<TeamId>((value) => typeof value === 'string'),
+  correlationKey: z.string(),
+});
+
+type AwaitWake = z.infer<typeof wakeAwaitPayloadSchema>;
+
+/** Queue the event-driven wake for one adapter identity. Never deduped: a second
+ *  signal on the same identity while the first wake is running must still drive
+ *  the parks the first pass already looked past. */
+export async function enqueueAwaitWake(wake: AwaitWake): Promise<void> {
+  await enqueueWork({
+    kind: 'wake_await',
+    key: `wake_await:${randomUUID()}`,
+    teamId: wake.teamId,
+    payload: wake,
+  });
+}
+
+export const wakeAwaitHandler: WorkHandler = {
+  async run(payload) {
+    await resumeAwaitsForCorrelation(wakeAwaitPayloadSchema.parse(payload));
+  },
+};
+
+/** The periodic backstop: settled asks, and callbacks whose wake was lost. */
+export const awaitResumeSweepHandler: WorkHandler = {
+  async run() {
+    await resumeAwaitedRuns();
+  },
+};
+
+export function registerAwaitWork(): void {
+  registerWorkHandler('wake_await', wakeAwaitHandler);
+  registerWorkHandler('await_resume_sweep', awaitResumeSweepHandler);
 }
 
 /** Latency hint: an ask just settled, so kick a resume pass next tick rather than

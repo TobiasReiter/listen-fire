@@ -7,12 +7,18 @@
 // store a durable receipt, and dispatch to the movement engine. This module is
 // that common tail, so the two front doors stay the only difference between the
 // webhook and poll inbound paths.
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { getAutomationsQb } from '../../../lib/kysely';
 import { logger } from '../../logger';
+import type { WorkHandler } from '../../work/kinds';
+import { registerWorkHandler } from '../../work/drain';
+import { enqueueWork } from '../../work/store';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { DiscriminableEvent, EventType } from '../adapter';
 import type { TriggerType } from '../mutation_context';
-import type { TriggerEvent } from './types';
+import { triggerEventSchema, type TriggerEvent } from './types';
 import { discriminateEvent } from '../engine/inbound/discriminate';
 import { dispatchTriggerByIdEvent } from './router';
 import {
@@ -21,10 +27,11 @@ import {
   markTriggerEventFailed,
 } from './event_store';
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
-import { isTestHarnessTeam } from '../../../lib/recording';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 
 /** One trigger's durable receipt for one inbound event — the handoff between
- *  the capture half (pre-ack) and the dispatch half (post-ack). */
+ *  the capture half (pre-ack) and the dispatch half (post-ack), carried as the
+ *  `dispatch_event` work payload, so it stays plain JSON. */
 export interface CapturedTriggerEvent {
   triggerId: TriggerId;
   teamId: TeamId;
@@ -68,9 +75,10 @@ export interface DiscriminableEventInput {
  *
  * Capture-then-dispatch back to back. A front door that acks its sender before
  * running the movement (the webhook_sync door) calls the two halves separately
- * instead — `captureDiscriminableEvent` pre-ack, `dispatchCapturedTriggerEvent`
- * after — so the receipt is durable before the 200 and nothing but the receipt
- * write sits inside the request.
+ * instead — `captureDiscriminableEvent` and `enqueueCapturedEvents` pre-ack, the
+ * `dispatch_event` work row running `dispatchCapturedTriggerEvent` after — so the
+ * receipt and its row are durable before the 200 and no movement runs inside
+ * the request.
  */
 export async function dispatchDiscriminableEvent(
   input: DiscriminableEventInput,
@@ -221,4 +229,89 @@ export async function dispatchCapturedTriggerEvent(input: {
     logger.error('[InboundDispatch] dispatch failed', { triggerId, error: message });
     if (input.surfaceErrors) throw err;
   }
+}
+
+const capturedTriggerEventSchema = z.object({
+  triggerId: z.custom<TriggerId>((value) => typeof value === 'string'),
+  teamId: z.custom<TeamId>((value) => typeof value === 'string'),
+  triggerEvent: triggerEventSchema,
+  storedEventId: z.string().optional(),
+  duplicate: z.boolean(),
+});
+
+function parseCapturedTriggerEvent(payload: unknown): CapturedTriggerEvent {
+  const parsed = capturedTriggerEventSchema.parse(payload);
+  return {
+    triggerId: parsed.triggerId,
+    teamId: parsed.teamId,
+    // The schema's `recordId` is a plain string; every reader of a stored
+    // TriggerEvent names it as the branded node id the same way.
+    triggerEvent: parsed.triggerEvent as TriggerEvent,
+    ...(parsed.storedEventId !== undefined ? { storedEventId: parsed.storedEventId } : {}),
+    duplicate: parsed.duplicate,
+  };
+}
+
+/** One work row per receipt that still needs a run. Keyed on the receipt, so a
+ *  re-enqueue of the same receipt collapses onto the row already waiting. */
+export async function enqueueCapturedEvents(captured: CapturedTriggerEvent[]): Promise<void> {
+  for (const receipt of captured) {
+    if (receipt.duplicate) continue;
+    await enqueueWork({
+      kind: 'dispatch_event',
+      key: `dispatch_event:${receipt.storedEventId ?? randomUUID()}`,
+      teamId: receipt.teamId,
+      payload: receipt,
+    });
+  }
+}
+
+async function receiptStatus(storedEventId: string): Promise<string | undefined> {
+  const row = await getAutomationsQb(['trigger_event'])
+    .selectFrom('trigger_event')
+    .where('id', '=', storedEventId as TriggerEventId)
+    .select('status')
+    .executeTakeFirst();
+  return row?.status;
+}
+
+/** Runs one captured receipt. A dispatch failure is recorded on the receipt,
+ *  not thrown, so the row completes rather than re-running a failed movement. */
+export const dispatchEventHandler: WorkHandler = {
+  async run(payload) {
+    await dispatchCapturedTriggerEvent({ captured: parseCapturedTriggerEvent(payload) });
+  },
+
+  // A re-claim after a lapsed lease or a throw. A receipt already marked
+  // dispatched has its run; dispatching again would run the movement twice.
+  // trigger_run records no link back to its receipt, so a run cut off before
+  // the receipt was marked cannot be told apart from one that never started:
+  // that case dispatches again.
+  async recover(payload, ctx) {
+    const captured = parseCapturedTriggerEvent(payload);
+    if (
+      captured.storedEventId !== undefined &&
+      (await receiptStatus(captured.storedEventId)) === 'dispatched'
+    ) {
+      return;
+    }
+    await dispatchEventHandler.run(payload, ctx);
+  },
+};
+
+export function registerDispatchWork(): void {
+  registerWorkHandler('dispatch_event', dispatchEventHandler);
+}
+
+/** The failure reason of each receipt that settled `failed`, by receipt id. For
+ *  the test-harness doors, which drain before acking and report what failed. */
+export async function loadFailedReceipts(storedEventIds: string[]): Promise<Map<string, string>> {
+  if (storedEventIds.length === 0) return new Map();
+  const rows = await getAutomationsQb(['trigger_event'])
+    .selectFrom('trigger_event')
+    .where('id', 'in', storedEventIds.map((id) => id as TriggerEventId))
+    .where('status', '=', 'failed')
+    .select(['id', 'failure_reason'])
+    .execute();
+  return new Map(rows.map((row) => [row.id, row.failure_reason ?? 'dispatch failed']));
 }

@@ -29,6 +29,7 @@ import {
   type SharedBotDelivery,
 } from '../../services/webhook_sync/telegram_builtin';
 import { logger } from '../../services/logger';
+import { drainUntilIdle, notifyWork } from '../../services/work/drain';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
 
 const telegramBuiltinRouter: ReturnType<typeof Router> = Router();
@@ -120,11 +121,11 @@ export async function authenticateAndHandle(args: {
 // a retry-storm) — the JSON payload carries the classification + routing outcome
 // for the dev loop.
 //
-// Capture-then-ack. Authentication, identity routing, the `/start` handshake and
-// the durable receipts all finish inside the request; the movement dispatch runs
-// after the 200 so a slow run can't hold Telegram's delivery open long enough to
-// earn a redelivery. The receipt is the durability story (and is replayable), so
-// a deferred failure is logged, never surfaced — the answer was already 200.
+// Capture, queue, then ack. Authentication, identity routing, the `/start`
+// handshake, the durable receipts and their work rows all finish inside the
+// request; the movements run when the rows drain, after the 200, so a slow run
+// can't hold Telegram's delivery open long enough to earn a redelivery. A run's
+// failure lands on its receipt, never in the answer — that was already 200.
 //
 // Telegram also permits answering a webhook with a method call in the response
 // body; this door has never done that (every reply is an explicit Bot API call),
@@ -146,23 +147,19 @@ telegramBuiltinRouter.post('/builtin', async (req: Request, res: Response) => {
   try {
     const delivery = await authenticateAndHandle({ headerSecret, raw });
 
-    // A test-harness delivery acks only after the run, so `pnpm dev:inject
+    // A test-harness delivery drains its rows before acking, so `pnpm dev:inject
     // telegram-builtin` still observes the dispatch synchronously.
-    if (delivery.runDeferred && delivery.awaitDeferred) {
-      res.status(200).json(await delivery.runDeferred());
+    if (delivery.enqueueDeferred && delivery.awaitDeferred) {
+      const enqueued = await delivery.enqueueDeferred();
+      await drainUntilIdle({ owner: 'door' });
+      res.status(200).json(await enqueued.readOutcome());
       return;
     }
 
+    // The rows land before the 200: a receipt without one would never run.
+    if (delivery.enqueueDeferred) await delivery.enqueueDeferred();
     res.status(200).json(delivery.result);
-
-    const runDeferred = delivery.runDeferred;
-    if (runDeferred) {
-      setImmediate(() => {
-        void runDeferred().catch((err) => {
-          logger.error('[telegram/builtin] deferred dispatch failed:', err);
-        });
-      });
-    }
+    notifyWork();
   } catch (err) {
     logger.error('[telegram/builtin] shared-bot inbound failed:', err);
     // Still 200 so Telegram doesn't retry-storm a genuine bug; surface the

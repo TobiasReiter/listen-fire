@@ -133,9 +133,9 @@ describe('R — trigger-first dispatch wiring', () => {
   describe('webhook_sync/handler.ts — trigger-first webhook dispatch', () => {
     // Capture-then-ack (2026-07-30) moved the trigger query + receipt store
     // into `captureProviderTriggerEvents` — the pre-ack half — leaving
-    // `dispatchToProviderTriggers` as the combined call the two INLINE doors
-    // (the Listen-Fire Slack events route, the Telegram shared bot) still use. The
-    // guarantees below are unchanged; they just live one function down.
+    // `dispatchToProviderTriggers` as the combined call the Listen-Fire Slack
+    // events route uses, which queues a work row per receipt. The guarantees
+    // below are unchanged; they just live one function down.
     const src = READ('services/webhook_sync/handler.ts');
 
     it('imports findTriggersByKind', () => {
@@ -151,7 +151,7 @@ describe('R — trigger-first dispatch wiring', () => {
       // …and the inline doors' combined entry still routes through it.
       const fnRange = extractFunction(src, 'dispatchToProviderTriggers');
       expect(fnRange).toMatch(/captureProviderTriggerEvents\(/);
-      expect(fnRange).toMatch(/dispatchCapturedTriggerEvent\(\{/);
+      expect(fnRange).toMatch(/enqueueCapturedEvents\(/);
     });
 
     it('capture scopes triggers by the subscription provider key', () => {

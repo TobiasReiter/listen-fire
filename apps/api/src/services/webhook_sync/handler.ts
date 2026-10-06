@@ -14,7 +14,8 @@ import { findTriggersByKind } from '../translation_graph/storage/tg_table';
 import type { DiscriminableEvent, EventType } from '../translation_graph/adapter';
 import {
   captureDiscriminableEvent,
-  dispatchCapturedTriggerEvent,
+  enqueueCapturedEvents,
+  loadFailedReceipts,
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
 import { channelScopeMatches, eventConfigList } from '../translation_graph/triggers/listen_config';
@@ -29,7 +30,8 @@ import {
   handleWhatsappInteractiveReplies,
   ownsWhatsappInteractiveReply,
 } from './whatsapp_callback_door';
-import { resumeAwaitsForCorrelation } from '../movement_engine/await_resume';
+import { enqueueAwaitWake } from '../movement_engine/await_resume';
+import { notifyWork } from '../work/drain';
 import { hasAdapter, resolveAdapterSlug } from '../translation_graph/adapters/registry';
 import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../lib/recording';
@@ -40,12 +42,12 @@ function jsonb(value: unknown): unknown {
 }
 
 /**
- * Outcome of the deferred (post-ack) half of a delivery.
+ * Outcome of a delivery once its work rows have drained.
  *
  * `eventsProcessed` counts events that cleared BOTH halves — capture and
  * dispatch — which is what the pre-split handler reported. Only a
- * test-harness caller ever sees it (it waits for this half); a production
- * sender was acked long before.
+ * test-harness caller ever sees it (it drains before acking); a production
+ * sender is acked before its rows run.
  */
 interface DeferredOutcome {
   eventsProcessed: number;
@@ -58,23 +60,29 @@ interface DeferredOutcome {
   perEventErrors: { event: DiscriminableEvent; error: string }[];
 }
 
+/** What `enqueueDeferred` queued, readable once the rows have drained. */
+interface EnqueuedDelivery {
+  readOutcome(): Promise<DeferredOutcome>;
+}
+
 interface HandleResult {
   ok: boolean;
   /** Events CAPTURED — durably receipted and ready to dispatch. The sender is
-   *  acked on this count; dispatch outcomes land in `runDeferred`'s result. */
+   *  acked on this count; dispatch outcomes land on the receipts. */
   eventsProcessed: number;
   error?: string;
   /**
-   * Phase 2: the linked-object refresh, await resolution, and movement dispatch
-   * for this delivery — everything that must NOT sit inside the sender's
-   * request. Absent when the delivery carried nothing to run. Never rejects for
-   * a per-event failure (those come back in the outcome); the caller still
-   * guards against an unexpected throw.
+   * Phase 2: the linked-object refresh, then a work row per await wake and per
+   * receipt. The door awaits it BEFORE acking, since a receipt without a row
+   * would never run; the rows themselves run off the request. Absent when the
+   * delivery carried nothing to run. Never rejects for a per-event failure
+   * (those come back in the outcome); the caller still guards against an
+   * unexpected throw.
    */
-  runDeferred?: () => Promise<DeferredOutcome>;
+  enqueueDeferred?: () => Promise<EnqueuedDelivery>;
   /**
-   * Test-harness subscriptions ack only AFTER phase 2, so the dev-loop inject
-   * CLI keeps seeing dispatch errors synchronously in the response.
+   * Test-harness subscriptions drain the rows before acking, so the dev-loop
+   * inject CLI keeps seeing runs settled and dispatch errors in the response.
    */
   awaitDeferred?: boolean;
 }
@@ -231,36 +239,51 @@ async function handleInboundWebhook(options: {
       .execute();
   }
 
-  // Phase 2 — everything the sender must not wait on: the linked-object cache
-  // refresh (a live provider read), await resolution, and the movement
-  // dispatches. Events keep their delivery order and run sequentially, and one
-  // event's failure never stops the next — the pre-split per-event isolation.
-  const runDeferred = async (): Promise<DeferredOutcome> => {
-    const perEventErrors = [...captureErrors];
-    let processed = 0;
+  // Phase 2 — queue the work. Events keep their delivery order, and one event's
+  // failure never stops the next — the pre-split per-event isolation.
+  const enqueueDeferred = async (): Promise<EnqueuedDelivery> => {
+    const enqueueErrors = [...captureErrors];
+    const enqueued: CapturedInboundEvent[] = [];
     for (const entry of captured) {
       try {
-        await dispatchCapturedInboundEvent({
-          captured: entry,
-          subscription: sub,
-          surfaceErrors: isHarnessTeam,
-        });
-        processed++;
+        await enqueueCapturedInboundEvent({ captured: entry, subscription: sub });
+        enqueued.push(entry);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error(`Webhook event processing failed:`, { event: entry.event, err });
-        perEventErrors.push({ event: entry.event, error: message });
+        enqueueErrors.push({ event: entry.event, error: message });
       }
     }
-    return { eventsProcessed: processed, perEventErrors };
+    return { readOutcome: () => readDeliveryOutcome({ enqueued, enqueueErrors }) };
   };
 
   return {
     ok: true,
     eventsProcessed: captured.length,
-    runDeferred,
+    enqueueDeferred,
     ...(isHarnessTeam ? { awaitDeferred: true } : {}),
   };
+}
+
+/** An event cleared dispatch unless one of its receipts settled `failed`. */
+async function readDeliveryOutcome(input: {
+  enqueued: CapturedInboundEvent[];
+  enqueueErrors: { event: DiscriminableEvent; error: string }[];
+}): Promise<DeferredOutcome> {
+  const receiptIds = input.enqueued.flatMap((entry) =>
+    entry.receipts.flatMap((r) => (r.storedEventId !== undefined ? [r.storedEventId] : [])),
+  );
+  const failed = await loadFailedReceipts(receiptIds);
+  const perEventErrors = [...input.enqueueErrors];
+  let processed = 0;
+  for (const entry of input.enqueued) {
+    const failure = entry.receipts
+      .map((r) => (r.storedEventId !== undefined ? failed.get(r.storedEventId) : undefined))
+      .find((reason) => reason !== undefined);
+    if (failure === undefined) processed++;
+    else perEventErrors.push({ event: entry.event, error: failure });
+  }
+  return { eventsProcessed: processed, perEventErrors };
 }
 
 /** Inbound deliveries only exist for credentialed channels — a
@@ -315,36 +338,30 @@ async function captureInboundEvent(input: {
 
 /**
  * Phase 2 for ONE event, in the order the pre-split inline path ran it:
- * refresh the linked_object cache, resolve any watch-points the event
- * satisfies, then dispatch each stored receipt to the movement engine.
+ * refresh the linked_object cache (the movement reads it, so it lands before
+ * the rows exist), then queue a wake for any watch-point the event satisfies
+ * and a run per stored receipt.
  */
-async function dispatchCapturedInboundEvent(input: {
+async function enqueueCapturedInboundEvent(input: {
   captured: CapturedInboundEvent;
   subscription: { team_id: string; credentials_id: string; provider: string };
-  surfaceErrors: boolean;
 }): Promise<void> {
-  const { captured, subscription, surfaceErrors } = input;
+  const { captured, subscription } = input;
 
   await refreshLinkedObjects(captured.event, subscription);
 
   // Watch-point resolution is INDEPENDENT of trigger dispatch — a thread reply
   // must resolve an `await m-[:Replies]->` even when no movement listens for
-  // Slack messages (consent-by-silence, S18), so it runs whether or not any
-  // receipt was captured. Idempotent, and backstopped by a 5s poll, which is
-  // what makes it safe to run after the ack rather than inside it.
+  // Slack messages (consent-by-silence, S18), so it is queued whether or not
+  // any receipt was captured.
   if (captured.adapterType === SLACK_ADAPTER_TYPE) {
-    await resolveSlackReplyAwaits({
+    await enqueueSlackReplyWake({
       event: captured.event,
       teamId: subscription.team_id as TeamId,
     });
   }
 
-  for (const receipt of captured.receipts) {
-    await dispatchCapturedTriggerEvent({
-      captured: receipt,
-      ...(surfaceErrors ? { surfaceErrors: true } : {}),
-    });
-  }
+  await enqueueCapturedEvents(captured.receipts);
 }
 
 /**
@@ -399,16 +416,16 @@ async function refreshLinkedObjects(
 }
 
 /**
- * Resolve `await m-[:Replies]->` parks for an inbound Slack THREAD REPLY. A reply
- * carries a `thread_ts` (its own thread root) distinct from a top-level message;
- * `channel:thread_ts` is the correlation key the Slack adapter registered its
- * awaits under (see `SlackAdapter.replyCorrelationKey`). The parks awaiting that
- * thread are driven forward; `resolveAwait` re-checks the thread live and binds
- * the reply. Not a thread reply (no `thread_ts`), or no correlated parks ⇒ a
- * no-op — the event flows on to ordinary trigger dispatch. Team-scoped so a reply
- * only wakes its own team's parks.
+ * Queue the wake for `await m-[:Replies]->` parks on an inbound Slack THREAD
+ * REPLY. A reply carries a `thread_ts` (its own thread root) distinct from a
+ * top-level message; `channel:thread_ts` is the correlation key the Slack
+ * adapter registered its awaits under (see `SlackAdapter.replyCorrelationKey`).
+ * The wake drives the parks awaiting that thread forward; `resolveAwait`
+ * re-checks the thread live and binds the reply. Not a thread reply (no
+ * `thread_ts`) ⇒ nothing queued — the event flows on to ordinary trigger
+ * dispatch. Team-scoped so a reply only wakes its own team's parks.
  */
-async function resolveSlackReplyAwaits(input: {
+async function enqueueSlackReplyWake(input: {
   event: DiscriminableEvent;
   teamId: TeamId;
 }): Promise<void> {
@@ -418,7 +435,7 @@ async function resolveSlackReplyAwaits(input: {
   const channel = typeof payload?.channel === 'string' ? payload.channel : undefined;
   const threadTs = typeof payload?.thread_ts === 'string' ? payload.thread_ts : undefined;
   if (!channel || !threadTs) return;
-  await resumeAwaitsForCorrelation({
+  await enqueueAwaitWake({
     adapterType: SLACK_ADAPTER_TYPE,
     teamId: input.teamId,
     correlationKey: `${channel}:${threadTs}`,
@@ -541,25 +558,18 @@ export async function dispatchToProviderTriggers(input: ProviderTriggerDispatch)
   // Watch-point resolution rides the SAME inbound seam as trigger dispatch, but
   // is INDEPENDENT of it — a thread reply must resolve an `await m-[:Replies]->`
   // even when no movement listens for Slack messages (consent-by-silence, S18).
-  // So it runs FIRST, before the trigger query's early returns below. Both
-  // inline Slack doors (the Listen-Fire events route and the shared-bot fan-out)
-  // funnel through here. The BYO webhook_sync door acks before it runs and so
-  // resolves its awaits in its own deferred half instead.
+  // So it is queued FIRST, before the capture's early returns. The Listen-Fire
+  // Slack events route funnels through here, already off its request; the BYO
+  // webhook_sync door queues its wakes in its own deferred half instead.
   if (adapterType === SLACK_ADAPTER_TYPE) {
-    await resolveSlackReplyAwaits({
+    await enqueueSlackReplyWake({
       event,
       teamId: subscription.team_id as TeamId,
     });
   }
 
-  const captured = await captureProviderTriggerEvents(input);
-  const surfaceErrors = isTestHarnessTeam(subscription.team_id);
-  for (const receipt of captured) {
-    await dispatchCapturedTriggerEvent({
-      captured: receipt,
-      ...(surfaceErrors ? { surfaceErrors: true } : {}),
-    });
-  }
+  await enqueueCapturedEvents(await captureProviderTriggerEvents(input));
+  notifyWork();
 }
 
 interface ProviderTriggerDispatch {

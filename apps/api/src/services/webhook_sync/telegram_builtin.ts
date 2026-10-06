@@ -13,7 +13,7 @@
 //      `adapters.telegram_identity` row with that id → the set of `(team_id)`
 //      bindings (a user may be linked in several teams). For each such team,
 //      dispatch the message into that team via the existing per-team trigger
-//      fan-out (`captureProviderTriggerEvents` + `dispatchCapturedTriggerEvent`),
+//      fan-out (`captureProviderTriggerEvents` + `enqueueCapturedEvents`),
 //      run AS that user (the per-team `extractActor` resolves the binding within
 //      its own team → the team-clamped `lookupTeamUserByEmail` → ActingUser).
 //      Route-all across teams.
@@ -21,8 +21,9 @@
 // CAPTURE-THEN-ACK. Telegram redelivers anything it doesn't get a prompt 2xx
 // for, so the movement dispatch must not sit inside the request. The message
 // branch splits around the ack: routing + durable receipts pre-ack (phase 1,
-// here), the movement runs after (phase 2, the returned `runDeferred`, which the
-// route fires post-200). `/start` stays wholly pre-ack — see `handleStart`.
+// here), then a work row per receipt (phase 2, the returned `enqueueDeferred`,
+// which the route awaits before its 200); the movement runs when the row drains.
+// `/start` stays wholly pre-ack — see `handleStart`.
 //
 //   3. An UNLINKED sender (no identity row) that isn't `/start` → ignore
 //      silently (the spam gate). A reply-to-bot → classified but no-op in v1.
@@ -47,7 +48,8 @@ import {
 import type { WebhookEvent } from './providers';
 import { captureProviderTriggerEvents } from './handler';
 import {
-  dispatchCapturedTriggerEvent,
+  enqueueCapturedEvents,
+  loadFailedReceipts,
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
 import { isTestHarnessTeam } from '../../lib/recording';
@@ -97,25 +99,29 @@ export interface SharedBotResult {
  * One shared-bot delivery, split around the ack.
  *
  * `result` is everything settled before any movement runs — the body the door
- * answers Telegram with. `runDeferred` is the movement dispatch, which the door
- * fires after its 200.
+ * answers Telegram with. `enqueueDeferred` queues the movement runs, which the
+ * door awaits before its 200.
  */
 export interface SharedBotDelivery {
   result: SharedBotResult;
   /**
-   * Phase 2: run the movements for every receipt captured in phase 1. Absent
-   * when the delivery carried nothing to run (`/start`, an ignore, an unlinked
-   * sender). Never rejects for a per-team failure — those are logged and shown
-   * as a narrowed `routedTeamIds` — but the caller still guards an unexpected
-   * throw, because a deferred failure must never turn the 200 into an error.
+   * Phase 2: a work row for every receipt captured in phase 1. Absent when the
+   * delivery carried nothing to run (`/start`, an ignore, an unlinked sender).
+   * Never rejects for a per-team failure — those are logged and shown as a
+   * narrowed `routedTeamIds` — but the caller still guards an unexpected throw.
    */
-  runDeferred?: () => Promise<SharedBotResult>;
+  enqueueDeferred?: () => Promise<EnqueuedSharedBotDelivery>;
   /**
-   * Test-harness deliveries ack only AFTER phase 2, so `pnpm dev:inject
+   * Test-harness deliveries drain the rows before acking, so `pnpm dev:inject
    * telegram-builtin` keeps seeing the run happen synchronously (and dispatch
    * errors surfaced) the way it always has.
    */
   awaitDeferred?: boolean;
+}
+
+/** What `enqueueDeferred` queued; `readOutcome` once the rows have drained. */
+export interface EnqueuedSharedBotDelivery {
+  readOutcome(): Promise<SharedBotResult>;
 }
 
 /**
@@ -296,27 +302,22 @@ export async function handleSharedBotInbound(raw: unknown): Promise<SharedBotDel
     }
   }
 
-  // Phase 2 — the movement runs, in the same per-team isolation.
-  const runDeferred = async (): Promise<SharedBotResult> => {
-    const dispatched: string[] = [];
-    for (const { teamId, receipts } of captures) {
+  // Phase 2 — queue the movement runs, in the same per-team isolation.
+  const enqueueDeferred = async (): Promise<EnqueuedSharedBotDelivery> => {
+    const enqueued: typeof captures = [];
+    for (const capture of captures) {
       try {
-        for (const receipt of receipts) {
-          await dispatchCapturedTriggerEvent({
-            captured: receipt,
-            ...(isTestHarnessTeam(teamId) ? { surfaceErrors: true } : {}),
-          });
-        }
-        dispatched.push(teamId);
+        await enqueueCapturedEvents(capture.receipts);
+        enqueued.push(capture);
       } catch (err) {
-        logger.error('[TelegramSharedBot] dispatch failed for team', {
-          teamId,
+        logger.error('[TelegramSharedBot] enqueue failed for team', {
+          teamId: capture.teamId,
           telegramUserId: inbound.telegramUserId,
           error: err instanceof Error ? err.message : String(err),
         });
       }
     }
-    return { ok: true, classification: 'message', routedTeamIds: dispatched };
+    return { readOutcome: () => readSharedBotOutcome(enqueued) };
   };
 
   return {
@@ -325,9 +326,25 @@ export async function handleSharedBotInbound(raw: unknown): Promise<SharedBotDel
       classification: 'message',
       routedTeamIds: captures.map((c) => c.teamId),
     },
-    runDeferred,
+    enqueueDeferred,
     ...(teamIds.some(isTestHarnessTeam) ? { awaitDeferred: true } : {}),
   };
+}
+
+/** A team dispatched cleanly unless one of its receipts settled `failed`. */
+async function readSharedBotOutcome(
+  enqueued: { teamId: string; receipts: CapturedTriggerEvent[] }[],
+): Promise<SharedBotResult> {
+  const receiptIds = enqueued.flatMap(({ receipts }) =>
+    receipts.flatMap((r) => (r.storedEventId !== undefined ? [r.storedEventId] : [])),
+  );
+  const failed = await loadFailedReceipts(receiptIds);
+  const dispatched = enqueued
+    .filter(({ receipts }) =>
+      receipts.every((r) => r.storedEventId === undefined || !failed.has(r.storedEventId)),
+    )
+    .map(({ teamId }) => teamId);
+  return { ok: true, classification: 'message', routedTeamIds: dispatched };
 }
 
 /**
