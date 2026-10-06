@@ -4,7 +4,7 @@ import { isProxiedApiPath, runtimeApiTarget } from '@/lib/api-proxy';
 // `/privacy`, `/terms`, `/dpa` are no longer served here — they live in the
 // standalone marketing app and are redirected there via next.config redirects
 // (which run before middleware), so they don't need to be public paths.
-const PUBLIC_PATHS = ['/login', '/signup', '/join', '/magic', '/api/', '/subscriptions/', '/_next/', '/favicon', '/logo', '/manifest', '/.well-known/', '/oauth/', '/integrations/attio', '/listen-fire-icon-1024.png', '/attio.svg', '/listen-fire-arrows.svg', '/listen-fire-builder.skill'];
+const PUBLIC_PATHS = ['/login', '/signup', '/join', '/magic', '/api/', '/subscriptions/', '/_next/', '/favicon', '/logo', '/manifest', '/.well-known/', '/oauth/', '/integrations/attio', '/listen-fire-icon-1024.png', '/attio.svg', '/listen-fire-arrows.svg', '/listen-fire-builder.skill', '/movement_parser.wasm'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
