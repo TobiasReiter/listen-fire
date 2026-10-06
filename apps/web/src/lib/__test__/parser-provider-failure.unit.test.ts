@@ -78,6 +78,11 @@ function findButton(node: ReactNode): ReactElement<{ onClick: () => void }> | un
 }
 
 describe('the browser parser provider when the parser fails to load', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.dontMock('react');
+  });
+
   it('shows an error with Try again, and a retry that succeeds renders the children', async () => {
     const artifact = fs.readFileSync(path.join(__dirname, '../../../../../packages/movement-lang/wasm/movement_parser.wasm'));
     Reflect.set(globalThis, 'window', globalThis);
@@ -110,8 +115,5 @@ describe('the browser parser provider when the parser fails to load', () => {
     expect(fetched).toHaveBeenCalledTimes(2);
     expect(outcome.lang.isParserReady()).toBe(true);
     expect(recovered).toMatchObject({ props: { children: 'the editor' } });
-
-    jest.restoreAllMocks();
-    jest.dontMock('react');
   });
 });

@@ -72,13 +72,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
+      # Registry downloads only, as above: a target/ cache keyed on the lock
+      # file would outlive the sources it was built from.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: cargo-test-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: cargo-registry-${{ hashFiles('Cargo.lock') }}
       - name: Crate tests
         run: cargo test --locked -p movement-parser
       - uses: pnpm/action-setup@v3
