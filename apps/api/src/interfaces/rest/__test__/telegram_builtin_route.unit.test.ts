@@ -6,8 +6,9 @@
 //   • a production delivery queues its work rows BEFORE the ack, and pokes the
 //     drain after it,
 //   • a test-harness delivery drains its rows and reports the outcome inline,
-//   • the always-200 policy survives everything — auth refusals, a thrown
-//     service, an unparseable body being the one exception (400, unchanged).
+//   • the always-200 policy survives auth refusals and a thrown service; an
+//     unparseable body (400, unchanged) and rows that could not be queued (500,
+//     so Telegram redelivers) are the exceptions.
 //
 // Telegram permits answering a webhook with a Bot API method call in the
 // RESPONSE BODY. This door has never used that (replies are explicit Bot API
@@ -21,7 +22,7 @@ import type { AddressInfo } from 'node:net';
 const handleSharedBotInbound = jest.fn();
 const drainUntilIdle = jest.fn();
 const notifyWork = jest.fn();
-const awaitHarnessWorkSettled = jest.fn();
+const awaitTeamWorkSettled = jest.fn();
 
 jest.mock('../../../services/work/drain', () => ({
   drainUntilIdle: (input: unknown) => drainUntilIdle(input),
@@ -32,8 +33,9 @@ jest.mock('../../../services/webhook_sync/telegram_builtin', () => ({
   handleSharedBotInbound: (raw: unknown) => handleSharedBotInbound(raw),
 }));
 
-jest.mock('../../../services/work/harness', () => ({
-  awaitHarnessWorkSettled: (teamIds: string[]) => awaitHarnessWorkSettled(teamIds),
+// The real harness sequence runs over a mocked drain and settle wait.
+jest.mock('../../../services/work/store', () => ({
+  awaitTeamWorkSettled: (input: unknown) => awaitTeamWorkSettled(input),
 }));
 
 jest.mock('../../../services/logger', () => ({
@@ -72,7 +74,7 @@ beforeEach(() => {
   handleSharedBotInbound.mockReset();
   drainUntilIdle.mockReset().mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0 });
   notifyWork.mockReset();
-  awaitHarnessWorkSettled.mockReset().mockResolvedValue(undefined);
+  awaitTeamWorkSettled.mockReset().mockResolvedValue(true);
   // No secret configured + the explicit unsigned opt-in → the door is open, so
   // the tests below are about the ack boundary rather than the gate (the gate
   // has its own suite in services/webhook_sync/__test__/telegram-shared-bot).
@@ -113,6 +115,21 @@ describe('POST /builtin — production deliveries', () => {
     expect(drainUntilIdle).not.toHaveBeenCalled();
   });
 
+  it('a delivery whose rows could not be queued is a 500, so Telegram redelivers', async () => {
+    handleSharedBotInbound.mockResolvedValue({
+      result: { ok: true, classification: 'message', routedTeamIds: ['team-A'] },
+      enqueueDeferred: async () => {
+        throw new Error('database down');
+      },
+    });
+
+    const res = await post(UPDATE);
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ ok: false, error: 'enqueue_failed' });
+    expect(notifyWork).not.toHaveBeenCalled();
+  });
+
   it('a delivery with nothing to run (a handshake) answers its result directly', async () => {
     handleSharedBotInbound.mockResolvedValue({
       result: { ok: true, classification: 'start', bind: { ok: true, email: 'ada@example.com' } },
@@ -151,14 +168,15 @@ describe('POST /builtin — test-harness deliveries stay synchronous', () => {
       return { claimed: 1, ran: 1, recovered: 0, failed: 0 };
     });
 
-    awaitHarnessWorkSettled.mockImplementation(async () => {
+    awaitTeamWorkSettled.mockImplementation(async () => {
       order.push('settle');
+      return true;
     });
 
     const res = await post(UPDATE);
 
-    expect(order).toEqual(['enqueue', 'drain', 'settle', 'read']);
-    expect(awaitHarnessWorkSettled).toHaveBeenCalledWith(['team-A', 'team-B']);
+    expect(order).toEqual(['enqueue', 'drain', 'settle', 'settle', 'read']);
+    expect(awaitTeamWorkSettled.mock.calls.map(([input]) => input.teamId)).toEqual(['team-A', 'team-B']);
     expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door' });
     expect(notifyWork).not.toHaveBeenCalled();
     expect(res.status).toBe(200);

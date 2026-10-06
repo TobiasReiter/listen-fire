@@ -33,7 +33,7 @@ import { getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
 import { settleCancelledRun, settleUnresumableRun } from '../interaction/run_failure';
-import { isOrphanedRunningRun } from '../translation_graph/runs/trigger_run';
+import { isOrphanedRunningRun, ORPHAN_AFTER } from '../translation_graph/runs/trigger_run';
 import type { WorkHandler } from '../work/kinds';
 import { registerWorkHandler } from '../work/drain';
 import { armTimerWake, timerWorkKey } from './timer_wake';
@@ -56,10 +56,6 @@ interface TimerParkedRunRow {
   runId: TriggerRunId;
   teamId: TeamId;
 }
-
-// A segment beats every 5s (the recorder's live-trace tick); a minute of
-// silence is a dead process, not a slow one.
-const ORPHAN_AFTER = 60 * SECOND;
 
 const resumeTimerPayloadSchema = z.object({
   runId: z.custom<TriggerRunId>((value) => z.uuid().safeParse(value).success),

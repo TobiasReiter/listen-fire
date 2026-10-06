@@ -18,7 +18,7 @@ interface Harness {
   handleInboundWebhook: typeof import('../handler').handleInboundWebhook;
   captureDiscriminableEvent: jest.Mock;
   enqueueCapturedEvents: jest.Mock;
-  loadFailedReceipts: jest.Mock;
+  readReceiptGroupOutcomes: jest.Mock;
   enqueueAwaitWake: jest.Mock;
   notifyWork: jest.Mock;
   findTriggersByKind: jest.Mock;
@@ -68,6 +68,25 @@ function chainableQb(
     executeTakeFirst: jest.fn(async () => rowsByTable[table]),
   });
   return builder;
+}
+
+/** The shared outcome reader, over an in-memory receipt-failure map. */
+function fakeReadReceiptGroupOutcomes(failedById: () => Map<string, string>) {
+  return jest.fn(
+    async (input: { groups: { group: unknown; receipts: { storedEventId?: string }[] }[] }) => {
+      const failedMap = failedById();
+      const cleared: unknown[] = [];
+      const failed: { group: unknown; error: string }[] = [];
+      for (const { group, receipts } of input.groups) {
+        const error = receipts
+          .map((r) => (r.storedEventId !== undefined ? failedMap.get(r.storedEventId) : undefined))
+          .find((e) => e !== undefined);
+        if (error === undefined) cleared.push(group);
+        else failed.push({ group, error });
+      }
+      return { cleared, failed };
+    },
+  );
 }
 
 async function loadHandler(options: {
@@ -179,14 +198,16 @@ async function loadHandler(options: {
       duplicate: false,
     })),
     enqueueCapturedEvents: options.onEnqueue ?? jest.fn(async () => undefined),
-    loadFailedReceipts: jest.fn(async () => new Map(Object.entries(options.failedReceipts ?? {}))),
+    readReceiptGroupOutcomes: fakeReadReceiptGroupOutcomes(
+      () => new Map(Object.entries(options.failedReceipts ?? {})),
+    ),
   }));
 
   const { handleInboundWebhook } = await import('../handler');
   const dispatchMod = jest.requireMock('../../translation_graph/triggers/dispatch_event') as {
     captureDiscriminableEvent: jest.Mock;
     enqueueCapturedEvents: jest.Mock;
-    loadFailedReceipts: jest.Mock;
+    readReceiptGroupOutcomes: jest.Mock;
   };
   const awaitMod = jest.requireMock('../../movement_engine/await_resume') as {
     enqueueAwaitWake: jest.Mock;
@@ -206,7 +227,7 @@ async function loadHandler(options: {
     handleInboundWebhook,
     captureDiscriminableEvent: dispatchMod.captureDiscriminableEvent,
     enqueueCapturedEvents: dispatchMod.enqueueCapturedEvents,
-    loadFailedReceipts: dispatchMod.loadFailedReceipts,
+    readReceiptGroupOutcomes: dispatchMod.readReceiptGroupOutcomes,
     enqueueAwaitWake: awaitMod.enqueueAwaitWake,
     notifyWork: drainMod.notifyWork,
     findTriggersByKind: tgTable.findTriggersByKind,
@@ -225,6 +246,8 @@ function deliver(h: Harness, provider = 'ATTIO') {
     signatureHeader: 'sig',
   });
 }
+
+const SETTLED = { unsettledTeamIds: new Set<string>(), unsettledError: 'not settled within 30s' };
 
 const EVENT_A: DiscriminableEvent = { payload: { n: 1 } } as DiscriminableEvent;
 const EVENT_B: DiscriminableEvent = { payload: { n: 2 } } as DiscriminableEvent;
@@ -277,7 +300,7 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     const h = await loadHandler({ events: [EVENT_A, EVENT_B], onEnqueue });
 
     const result = await deliver(h);
-    const outcome = await (await result.enqueueDeferred!()).readOutcome();
+    const outcome = await (await result.enqueueDeferred!()).readOutcome(SETTLED);
 
     expect(outcome.eventsProcessed).toBe(2);
     expect(outcome.perEventErrors).toEqual([]);
@@ -295,11 +318,35 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     const h = await loadHandler({ events: [EVENT_A, EVENT_B], onEnqueue });
 
     const result = await deliver(h);
-    const outcome = await (await result.enqueueDeferred!()).readOutcome();
+    const outcome = await (await result.enqueueDeferred!()).readOutcome(SETTLED);
 
     expect(onEnqueue).toHaveBeenCalledTimes(2);
     expect(outcome.eventsProcessed).toBe(1);
     expect(outcome.perEventErrors).toEqual([{ event: EVENT_A, error: 'enqueue exploded' }]);
+  });
+
+  it('an event naming a source record carries its linked-object refresh on each receipt', async () => {
+    // The refresh is a live provider read: it runs in the row, not the request.
+    const onEnqueue = jest.fn(async () => undefined);
+    const h = await loadHandler({
+      events: [{ payload: { n: 1 }, externalId: 'rec-1', recordType: 'companies' } as DiscriminableEvent],
+      onEnqueue,
+    });
+
+    await (await deliver(h)).enqueueDeferred!();
+
+    expect(onEnqueue).toHaveBeenCalledWith([
+      expect.objectContaining({
+        storedEventId: 'evt-1',
+        linkedObjectRefresh: {
+          teamId: 'team-1',
+          provider: 'ATTIO',
+          credentialsId: 'cred-1',
+          externalId: 'rec-1',
+          recordType: 'companies',
+        },
+      }),
+    ]);
   });
 
   it('queues a Slack thread wake even when NO trigger matched the delivery', async () => {
@@ -337,8 +384,10 @@ describe('handleInboundWebhook — test-harness subscriptions stay synchronous',
     const result = await deliver(h);
     expect(result.awaitDeferred).toBe(true);
 
-    const outcome = await (await result.enqueueDeferred!()).readOutcome();
-    expect(h.loadFailedReceipts).toHaveBeenCalledWith(['evt-1', 'evt-2']);
+    const outcome = await (await result.enqueueDeferred!()).readOutcome(SETTLED);
+    expect(h.readReceiptGroupOutcomes).toHaveBeenCalledWith(
+      expect.objectContaining({ settle: SETTLED }),
+    );
     expect(outcome.eventsProcessed).toBe(1);
     expect(outcome.perEventErrors).toEqual([{ event: EVENT_A, error: 'movement blew up' }]);
   });

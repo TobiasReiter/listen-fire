@@ -29,9 +29,14 @@ import {
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import { SECOND } from '../../../constants';
-import { isOrphanedRunningRun } from '../runs/trigger_run';
+import { isOrphanedRunningRun, ORPHAN_AFTER } from '../runs/trigger_run';
 import { settleUnresumableRun } from '../../interaction/run_failure';
+import type { SettleReport } from '../../work/harness';
+import {
+  linkedObjectRefreshSchema,
+  refreshLinkedObjects,
+  type LinkedObjectRefresh,
+} from '../../webhook_sync/linked_object_refresh';
 
 /** One trigger's durable receipt for one inbound event — the handoff between
  *  the capture half (pre-ack) and the dispatch half (post-ack), carried as the
@@ -43,9 +48,12 @@ export interface CapturedTriggerEvent {
   /** Absent when the receipt store itself failed — dispatch still runs, just
    *  unreceipted (losing the event entirely would be worse than losing its
    *  audit row). */
-  storedEventId?: string;
+  storedEventId?: TriggerEventId;
   /** A redelivery whose receipt already exists — dispatch MUST be skipped. */
   duplicate: boolean;
+  /** The linked_object cache refresh the delivery owes, run ahead of the
+   *  movement. Set by the webhook door for events that name a source record. */
+  linkedObjectRefresh?: LinkedObjectRefresh;
 }
 
 export interface DiscriminableEventInput {
@@ -243,8 +251,11 @@ const capturedTriggerEventSchema = z.object({
   triggerEvent: triggerEventSchema.extend({
     occurredAt: z.string().datetime({ offset: true }).optional(),
   }),
-  storedEventId: z.string().optional(),
+  storedEventId: z
+    .custom<TriggerEventId>((value) => z.uuid().safeParse(value).success)
+    .optional(),
   duplicate: z.boolean(),
+  linkedObjectRefresh: linkedObjectRefreshSchema.optional(),
 });
 
 function parseCapturedTriggerEvent(payload: unknown): CapturedTriggerEvent {
@@ -257,13 +268,16 @@ function parseCapturedTriggerEvent(payload: unknown): CapturedTriggerEvent {
     triggerEvent: parsed.triggerEvent as TriggerEvent,
     ...(parsed.storedEventId !== undefined ? { storedEventId: parsed.storedEventId } : {}),
     duplicate: parsed.duplicate,
+    ...(parsed.linkedObjectRefresh !== undefined
+      ? { linkedObjectRefresh: parsed.linkedObjectRefresh }
+      : {}),
   };
 }
 
-async function receiptStatus(storedEventId: string): Promise<string | undefined> {
+async function receiptStatus(storedEventId: TriggerEventId): Promise<string | undefined> {
   const row = await getAutomationsQb(['trigger_event'])
     .selectFrom('trigger_event')
-    .where('id', '=', storedEventId as TriggerEventId)
+    .where('id', '=', storedEventId)
     .select('status')
     .executeTakeFirst();
   return row?.status;
@@ -289,26 +303,24 @@ export async function enqueueCapturedEvents(captured: CapturedTriggerEvent[]): P
   }
 }
 
-// A segment beats every 5s (the recorder's live-trace tick); a minute of
-// silence is a dead process, not a slow one. Same rule as timer_resume.ts.
-const ORPHAN_AFTER = 60 * SECOND;
-
 const UNFINISHED_SEGMENT = 'segment did not complete: lease lapsed or the previous attempt failed';
 
 /** The latest run started from this receipt (a replay starts another). */
 async function runForReceipt(
-  storedEventId: string,
+  storedEventId: TriggerEventId,
 ): Promise<{ id: TriggerRunId; status: string } | undefined> {
   return getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
-    .where('trigger_event_id', '=', storedEventId as TriggerEventId)
+    .where('trigger_event_id', '=', storedEventId)
     .orderBy('started_at', 'desc')
     .select(['id', 'status'])
     .executeTakeFirst();
 }
 
-/** Runs one captured receipt. A dispatch failure is recorded on the receipt,
- *  not thrown, so the row completes rather than re-running a failed movement. */
+/** Runs one captured receipt: the linked_object refresh it owes, then the
+ *  movement. A refresh failure throws, so the row retries with backoff. A
+ *  dispatch failure is recorded on the receipt, not thrown, so the row
+ *  completes rather than re-running a failed movement. */
 export const dispatchEventHandler: WorkHandler = {
   async run(payload) {
     const captured = parseCapturedTriggerEvent(payload);
@@ -319,6 +331,9 @@ export const dispatchEventHandler: WorkHandler = {
       (await receiptStatus(captured.storedEventId)) !== 'received'
     ) {
       return;
+    }
+    if (captured.linkedObjectRefresh !== undefined) {
+      await refreshLinkedObjects(captured.linkedObjectRefresh);
     }
     await dispatchCapturedTriggerEvent({ captured });
   },
@@ -334,7 +349,8 @@ export const dispatchEventHandler: WorkHandler = {
       await dispatchEventHandler.run(payload, ctx);
       return;
     }
-    if ((await receiptStatus(storedEventId)) === 'dispatched') return;
+    const status = await receiptStatus(storedEventId);
+    if (status === 'dispatched') return;
     const run = await runForReceipt(storedEventId);
     if (run === undefined) {
       await dispatchEventHandler.run(payload, ctx);
@@ -347,7 +363,8 @@ export const dispatchEventHandler: WorkHandler = {
       }
       return;
     }
-    await markTriggerEventDispatched(storedEventId);
+    // A receipt already settled otherwise (failed, suppressed) keeps its outcome.
+    if (status === 'received') await markTriggerEventDispatched(storedEventId);
   },
 };
 
@@ -355,15 +372,66 @@ export function registerDispatchWork(): void {
   registerWorkHandler('dispatch_event', dispatchEventHandler);
 }
 
-/** The failure reason of each receipt that settled `failed`, by receipt id. For
- *  the test-harness doors, which drain before acking and report what failed. */
-export async function loadFailedReceipts(storedEventIds: string[]): Promise<Map<string, string>> {
+async function loadReceiptStates(
+  storedEventIds: TriggerEventId[],
+): Promise<Map<TriggerEventId, { status: string; failureReason: string | null }>> {
   if (storedEventIds.length === 0) return new Map();
   const rows = await getAutomationsQb(['trigger_event'])
     .selectFrom('trigger_event')
-    .where('id', 'in', storedEventIds.map((id) => id as TriggerEventId))
-    .where('status', '=', 'failed')
-    .select(['id', 'failure_reason'])
+    .where('id', 'in', storedEventIds)
+    .select(['id', 'status', 'failure_reason'])
     .execute();
-  return new Map(rows.map((row) => [row.id, row.failure_reason ?? 'dispatch failed']));
+  return new Map(
+    rows.map((row) => [row.id, { status: row.status, failureReason: row.failure_reason }]),
+  );
+}
+
+/** The failure reason of each receipt that settled `failed`, by receipt id. */
+export async function loadFailedReceipts(
+  storedEventIds: TriggerEventId[],
+): Promise<Map<TriggerEventId, string>> {
+  const states = await loadReceiptStates(storedEventIds);
+  const failed = new Map<TriggerEventId, string>();
+  for (const [id, state] of states) {
+    if (state.status === 'failed') failed.set(id, state.failureReason ?? 'dispatch failed');
+  }
+  return failed;
+}
+
+/** One reported unit of a harness delivery (an event, a team) and its receipts. */
+export interface ReceiptGroup<G> {
+  group: G;
+  receipts: CapturedTriggerEvent[];
+}
+
+/**
+ * The outcome a test-harness door reports once its rows drained: a group
+ * cleared unless one of its receipts settled `failed`, or is still `received`
+ * for a team whose rows did not settle in time.
+ */
+export async function readReceiptGroupOutcomes<G>(input: {
+  groups: ReceiptGroup<G>[];
+  settle: SettleReport;
+}): Promise<{ cleared: G[]; failed: { group: G; error: string }[] }> {
+  const ids = input.groups.flatMap(({ receipts }) =>
+    receipts.flatMap((r) => (r.storedEventId !== undefined ? [r.storedEventId] : [])),
+  );
+  const states = await loadReceiptStates(ids);
+  const errorOf = (receipt: CapturedTriggerEvent): string | undefined => {
+    if (receipt.storedEventId === undefined) return undefined;
+    const state = states.get(receipt.storedEventId);
+    if (state?.status === 'failed') return state.failureReason ?? 'dispatch failed';
+    if (state?.status === 'received' && input.settle.unsettledTeamIds.has(receipt.teamId)) {
+      return input.settle.unsettledError;
+    }
+    return undefined;
+  };
+  const cleared: G[] = [];
+  const failed: { group: G; error: string }[] = [];
+  for (const { group, receipts } of input.groups) {
+    const error = receipts.map(errorOf).find((e) => e !== undefined);
+    if (error === undefined) cleared.push(group);
+    else failed.push({ group, error });
+  }
+  return { cleared, failed };
 }

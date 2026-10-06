@@ -102,9 +102,18 @@ jest.mock('../../translation_graph/triggers/dispatch_event', () => ({
       dispatchCalls.push({ teamId: receipt.teamId, triggerId: receipt.triggerId });
     }
   }),
-  loadFailedReceipts: jest.fn(async (ids: string[]) => {
+  readReceiptGroupOutcomes: jest.fn(async (input: any) => {
     const failing = `evt-${dispatchShouldThrowForTeam}`;
-    return new Map(ids.filter((id) => id === failing).map((id) => [id, `boom for ${dispatchShouldThrowForTeam}`]));
+    const cleared: unknown[] = [];
+    const failed: { group: unknown; error: string }[] = [];
+    for (const { group, receipts } of input.groups) {
+      if (receipts.some((r: any) => r.storedEventId === failing)) {
+        failed.push({ group, error: `boom for ${dispatchShouldThrowForTeam}` });
+      } else {
+        cleared.push(group);
+      }
+    }
+    return { cleared, failed };
   }),
 }));
 
@@ -162,6 +171,7 @@ import {
 import { testHarnessConfig } from '../../../lib/recording';
 
 const TG_USER = '999';
+const SETTLED = { unsettledTeamIds: new Set<string>(), unsettledError: 'not settled within 30s' };
 const ORIGINAL_HARNESS_TEAM = testHarnessConfig.teamId;
 
 function privateMessage(overrides?: { senderId?: string; text?: string }) {
@@ -203,7 +213,7 @@ afterAll(() => {
 async function deliverFully(raw: unknown) {
   const delivery = await handleSharedBotInbound(raw);
   return delivery.enqueueDeferred
-    ? (await delivery.enqueueDeferred()).readOutcome()
+    ? (await delivery.enqueueDeferred()).readOutcome(SETTLED)
     : delivery.result;
 }
 
@@ -321,7 +331,7 @@ describe('linked-message routing (route-all)', () => {
     const delivery = await handleSharedBotInbound(privateMessage());
 
     expect(delivery.result.routedTeamIds).toEqual(['team-B']);
-    expect(await (await delivery.enqueueDeferred!()).readOutcome()).toMatchObject({
+    expect(await (await delivery.enqueueDeferred!()).readOutcome(SETTLED)).toMatchObject({
       routedTeamIds: ['team-B'],
     });
     expect(dispatchCalls.map((c) => c.teamId)).toEqual(['team-B']);
@@ -355,7 +365,7 @@ describe('capture-then-ack split', () => {
 
     const delivery = await handleSharedBotInbound(privateMessage());
 
-    await expect((await delivery.enqueueDeferred!()).readOutcome()).resolves.toMatchObject({
+    await expect((await delivery.enqueueDeferred!()).readOutcome(SETTLED)).resolves.toMatchObject({
       ok: true,
       classification: 'message',
       routedTeamIds: [],

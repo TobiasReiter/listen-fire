@@ -43,7 +43,7 @@ export async function storeTriggerEvent(input: {
   teamId: TeamId;
   triggerId: string;
   event: TriggerEvent;
-}): Promise<{ id: string; duplicate: boolean }> {
+}): Promise<{ id: TriggerEventId; duplicate: boolean }> {
   const externalEventId = input.event.idempotencyKey ?? null;
   const inserted = await getAutomationsQb(['trigger_event'])
     .insertInto('trigger_event')
@@ -64,7 +64,7 @@ export async function storeTriggerEvent(input: {
     .returning('id')
     .executeTakeFirst();
 
-  if (inserted) return { id: inserted.id as unknown as string, duplicate: false };
+  if (inserted) return { id: inserted.id, duplicate: false };
 
   // Conflict: this delivery id was already received for this trigger (only
   // reachable when externalEventId is non-null — the partial index). Return the
@@ -75,7 +75,7 @@ export async function storeTriggerEvent(input: {
     .where('external_event_id', '=', externalEventId)
     .select('id')
     .executeTakeFirstOrThrow();
-  return { id: existing.id as unknown as string, duplicate: true };
+  return { id: existing.id, duplicate: true };
 }
 
 /**
@@ -100,7 +100,7 @@ export async function dispatchStoredTriggerEvent(eventId: string): Promise<void>
       event: row.payload as unknown as TriggerEvent,
       teamId: row.team_id as TeamId,
       // This dispatch IS the stored receipt — let the guard hold-and-release it.
-      storedEventId: eventId,
+      storedEventId: row.id,
     });
     // A dropped event means the router already owns the receipt's outcome —
     // marked 'suppressed' with a reason where applicable, or left held for a

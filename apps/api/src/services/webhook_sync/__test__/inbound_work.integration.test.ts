@@ -18,6 +18,10 @@ jest.mock('../../translation_graph/movement/execute', () => {
   const actual = jest.requireActual('../../translation_graph/movement/execute');
   return { ...actual, resumeMovementFiring: jest.fn() };
 });
+jest.mock('../linked_object_refresh', () => {
+  const actual = jest.requireActual('../linked_object_refresh');
+  return { ...actual, refreshLinkedObjects: jest.fn(async () => undefined) };
+});
 jest.mock('../../translation_graph/triggers/router', () => {
   const actual = jest.requireActual('../../translation_graph/triggers/router');
   return { ...actual, dispatchTriggerByIdEvent: jest.fn(actual.dispatchTriggerByIdEvent) };
@@ -49,11 +53,14 @@ import { dispatchEventHandler, registerDispatchWork } from '../../translation_gr
 import { registerAwaitWork } from '../../movement_engine/await_resume';
 import { drainUntilIdle, inProcessNotifier, resetWorkHandlersForTests, setWorkNotifier } from '../../work/drain';
 import { handleInboundWebhook } from '../handler';
+import { refreshLinkedObjects } from '../linked_object_refresh';
+import { runHarnessDelivery } from '../../work/harness';
 
 const mockedCatalog = movementCatalogForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
 const mockedResume = resumeMovementFiring as jest.Mock;
 const mockedDispatch = dispatchTriggerByIdEvent as jest.Mock;
+const mockedRefresh = refreshLinkedObjects as jest.Mock;
 
 const SECRET = 'inbound-work-secret';
 
@@ -252,7 +259,9 @@ async function runsFor(triggerId: TriggerId) {
 }
 
 /** Capture one delivery and return its receipt id and its row's payload, undrained. */
-async function capturedUndrained(teamId: TeamId): Promise<{ receiptId: string; payload: unknown }> {
+async function capturedUndrained(
+  teamId: TeamId,
+): Promise<{ receiptId: TriggerEventId; payload: unknown }> {
   const subscriptionId = await seedSubscription(teamId, 'ATTIO');
   await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
   const [receipt] = await receipts(teamId);
@@ -264,7 +273,7 @@ async function capturedUndrained(teamId: TeamId): Promise<{ receiptId: string; p
 async function seedRunningRun(input: {
   teamId: TeamId;
   triggerId: TriggerId;
-  receiptId: string;
+  receiptId: TriggerEventId;
   status: string;
   lastHeartbeatAt: Date;
 }): Promise<TriggerRunId> {
@@ -279,7 +288,7 @@ async function seedRunningRun(input: {
       status: input.status,
       started_at: input.lastHeartbeatAt,
       last_heartbeat_at: input.lastHeartbeatAt,
-      trigger_event_id: input.receiptId as TriggerEventId,
+      trigger_event_id: input.receiptId,
     })
     .execute();
   return runId;
@@ -372,6 +381,66 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     expect(drained.failed).toBe(0);
     expect((await receipts(teamId))[0].status).toBe('dispatched');
     expect(await runsFor(triggerId)).toHaveLength(1);
+  });
+
+  it('a failed linked-object refresh leaves the row queued; a later drain dispatches', async () => {
+    const triggerId = await seedMovementTrigger(teamId);
+    const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+    attioEvents = [{ ...ATTIO_EVENT, externalId: 'co-1', recordType: 'companies' }];
+    mockedRefresh.mockRejectedValueOnce(new Error('attio is down'));
+
+    const result = await handleInboundWebhook(attioDelivery(subscriptionId));
+    await result.enqueueDeferred!();
+
+    // The refresh is not in the request: the row is there whatever it will do.
+    const [row] = await workRows(teamId, 'dispatch_event');
+    expect(row.payload).toMatchObject({
+      linkedObjectRefresh: { provider: 'ATTIO', externalId: 'co-1', recordType: 'companies' },
+    });
+    expect(mockedRefresh).not.toHaveBeenCalled();
+
+    const first = await drainUntilIdle({ owner: 'test' });
+    expect(first.failed).toBe(1);
+    expect((await receipts(teamId))[0].status).toBe('received');
+    expect(await runsFor(triggerId)).toHaveLength(0);
+
+    // Past its backoff, the retry refreshes and dispatches.
+    await getAutomationsQb(['work'])
+      .updateTable('work')
+      .set({ due_at: new Date(Date.now() - 1_000) })
+      .where('team_id', '=', teamId)
+      .execute();
+    await drainUntilIdle({ owner: 'test' });
+
+    expect(mockedRefresh).toHaveBeenCalledTimes(2);
+    expect((await receipts(teamId))[0].status).toBe('dispatched');
+    expect(await runsFor(triggerId)).toHaveLength(1);
+  });
+
+  it('the harness sequence reports a receipt whose rows did not settle in time', async () => {
+    await seedMovementTrigger(teamId);
+    const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+    const result = await handleInboundWebhook(attioDelivery(subscriptionId));
+
+    const outcome = await runHarnessDelivery(
+      async () => {
+        const enqueued = await result.enqueueDeferred!();
+        // Another drainer claims the row before the door's own drain gets to it.
+        await getAutomationsQb(['work'])
+          .updateTable('work')
+          .set({ lease_owner: 'elsewhere', lease_until: new Date(Date.now() + 60_000), lease_token: randomUUID() })
+          .where('team_id', '=', teamId)
+          .execute();
+        return enqueued;
+      },
+      { settleTimeoutMs: 0 },
+    );
+
+    expect(outcome.eventsProcessed).toBe(0);
+    expect(outcome.perEventErrors).toEqual([
+      { event: expect.anything(), error: 'not settled within 0s' },
+    ]);
+    expect((await receipts(teamId))[0].status).toBe('received');
   });
 
   it('a redelivery of a receipt that never ran queues its lost row again', async () => {
@@ -513,6 +582,22 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       expect(mockedDispatch).not.toHaveBeenCalled();
       expect(await runsFor(triggerId)).toEqual([expect.objectContaining({ status: 'running' })]);
       expect((await receipts(teamId))[0].status).toBe('received');
+    });
+
+    it('a settled run never overwrites a receipt that already failed', async () => {
+      const triggerId = await seedMovementTrigger(teamId);
+      const { receiptId, payload } = await capturedUndrained(teamId);
+      await seedRunningRun({ teamId, triggerId, receiptId, status: 'failed', lastHeartbeatAt: new Date() });
+      await getAutomationsQb(['trigger_event'])
+        .updateTable('trigger_event')
+        .set({ status: 'failed', failure_reason: 'engine exploded' })
+        .where('id', '=', receiptId)
+        .execute();
+
+      await dispatchEventHandler.recover!(payload, RECOVER_CTX());
+
+      expect(mockedDispatch).not.toHaveBeenCalled();
+      expect((await receipts(teamId))[0].status).toBe('failed');
     });
 
     it('a parked or settled run: marks the receipt dispatched, without dispatching', async () => {

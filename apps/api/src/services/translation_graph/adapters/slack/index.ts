@@ -761,9 +761,9 @@ export class SlackAdapter extends BaseAdapter {
             name: SLACK_MESSAGE_THREAD_EDGE_NAMES.replies,
             writable: true,
             awaitable: true,
-            // An inbound Slack event carries the reply and resumes the run
-            // parked on the thread (`resolveSlackReplyAwaits`) — real push, no
-            // poll behind it.
+            // An inbound Slack event carries the reply and queues the wake for
+            // the run parked on the thread (`enqueueSlackReplyWake`) — real
+            // push, no poll behind it.
             watchable: true,
             resolvesEmpty: false,
             // `conversations.replies` answers oldest-first and the hop only

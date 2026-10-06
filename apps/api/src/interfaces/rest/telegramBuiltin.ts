@@ -29,8 +29,8 @@ import {
   type SharedBotDelivery,
 } from '../../services/webhook_sync/telegram_builtin';
 import { logger } from '../../services/logger';
-import { drainUntilIdle, notifyWork } from '../../services/work/drain';
-import { awaitHarnessWorkSettled } from '../../services/work/harness';
+import { notifyWork } from '../../services/work/drain';
+import { runHarnessDelivery } from '../../services/work/harness';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
 
 const telegramBuiltinRouter: ReturnType<typeof Router> = Router();
@@ -117,10 +117,11 @@ export async function authenticateAndHandle(args: {
 }
 
 // POST /api/public/telegram/builtin
-// The body is the raw Telegram `Update` JSON. Always answers 200 (Telegram
-// retries on non-2xx, and an unlinked/ignored/unauthorized message is not worth
-// a retry-storm) — the JSON payload carries the classification + routing outcome
-// for the dev loop.
+// The body is the raw Telegram `Update` JSON. Answers 200 (Telegram retries on
+// non-2xx, and an unlinked/ignored/unauthorized message is not worth a
+// retry-storm) — the JSON payload carries the classification + routing outcome
+// for the dev loop. The one exception is a delivery whose work rows could not be
+// queued: that answers 500, and the redelivery re-queues the stored receipt.
 //
 // Capture, queue, then ack. Authentication, identity routing, the `/start`
 // handshake, the durable receipts and their work rows all finish inside the
@@ -150,16 +151,22 @@ telegramBuiltinRouter.post('/builtin', async (req: Request, res: Response) => {
 
     // A test-harness delivery drains its rows before acking, so `pnpm dev:inject
     // telegram-builtin` still observes the dispatch synchronously.
-    if (delivery.enqueueDeferred && delivery.awaitDeferred) {
-      const enqueued = await delivery.enqueueDeferred();
-      await drainUntilIdle({ owner: 'door' });
-      await awaitHarnessWorkSettled(enqueued.teamIds);
-      res.status(200).json(await enqueued.readOutcome());
-      return;
+    // The rows land before the 200: a receipt without one would never run. A
+    // failure to queue them is the one non-2xx, so Telegram redelivers.
+    const { enqueueDeferred } = delivery;
+    if (enqueueDeferred) {
+      try {
+        if (delivery.awaitDeferred) {
+          res.status(200).json(await runHarnessDelivery(enqueueDeferred));
+          return;
+        }
+        await enqueueDeferred();
+      } catch (err) {
+        logger.error('[telegram/builtin] queueing the delivery failed:', err);
+        res.status(500).json({ ok: false, error: 'enqueue_failed' });
+        return;
+      }
     }
-
-    // The rows land before the 200: a receipt without one would never run.
-    if (delivery.enqueueDeferred) await delivery.enqueueDeferred();
     res.status(200).json(delivery.result);
     notifyWork();
   } catch (err) {

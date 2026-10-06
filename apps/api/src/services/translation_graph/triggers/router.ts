@@ -69,7 +69,7 @@ export interface TriggerIdDispatchInput {
    *
    * queue-don't-drop
    */
-  storedEventId?: string;
+  storedEventId?: TriggerEventId;
   /**
    * Adopt an EXISTING `trigger_run` id for a movement firing rather than
    * minting a fresh one inside the recorder. The async manual-run path
@@ -310,9 +310,7 @@ export async function dispatchTriggerByIdEvent(
       recordingTriggerType,
       dryRun,
       ...(input.existingRunId !== undefined ? { existingRunId: input.existingRunId } : {}),
-      ...(input.storedEventId !== undefined
-        ? { triggerEventId: input.storedEventId as TriggerEventId }
-        : {}),
+      ...(input.storedEventId !== undefined ? { triggerEventId: input.storedEventId } : {}),
     });
     if (firing.result) {
       // Feed the writes this firing applied into the team's external-write

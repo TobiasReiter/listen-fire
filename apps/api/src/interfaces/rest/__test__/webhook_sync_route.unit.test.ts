@@ -16,7 +16,7 @@ import type { AddressInfo } from 'node:net';
 const handleInboundWebhook = jest.fn();
 const drainUntilIdle = jest.fn();
 const notifyWork = jest.fn();
-const awaitHarnessWorkSettled = jest.fn();
+const awaitTeamWorkSettled = jest.fn();
 
 jest.mock('../../../services/webhook_sync/handler', () => ({
   handleInboundWebhook: (input: unknown) => handleInboundWebhook(input),
@@ -27,8 +27,9 @@ jest.mock('../../../services/work/drain', () => ({
   notifyWork: () => notifyWork(),
 }));
 
-jest.mock('../../../services/work/harness', () => ({
-  awaitHarnessWorkSettled: (teamIds: string[]) => awaitHarnessWorkSettled(teamIds),
+// The real harness sequence runs over a mocked drain and settle wait.
+jest.mock('../../../services/work/store', () => ({
+  awaitTeamWorkSettled: (input: unknown) => awaitTeamWorkSettled(input),
 }));
 
 jest.mock('../../../services/logger', () => ({
@@ -57,6 +58,7 @@ afterAll((done) => {
 beforeEach(() => {
   jest.clearAllMocks();
   drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0 });
+  awaitTeamWorkSettled.mockResolvedValue(true);
 });
 
 async function post(path: string, body: unknown) {
@@ -69,7 +71,7 @@ async function post(path: string, body: unknown) {
 }
 
 function outcome(eventsProcessed: number, perEventErrors: unknown[] = []) {
-  return { readOutcome: async () => ({ eventsProcessed, perEventErrors }) };
+  return { teamIds: ['team-1'], readOutcome: async () => ({ eventsProcessed, perEventErrors }) };
 }
 
 describe('POST /:provider/:subscriptionId — production deliveries', () => {
@@ -133,14 +135,15 @@ describe('POST /:provider/:subscriptionId — test-harness deliveries', () => {
       return { claimed: 1, ran: 1, recovered: 0, failed: 0 };
     });
     // Rows another drainer claimed are waited out too.
-    awaitHarnessWorkSettled.mockImplementation(async () => {
+    awaitTeamWorkSettled.mockImplementation(async () => {
       order.push('settle');
+      return true;
     });
 
     const res = await post('/attio/sub-1', { any: 'payload' });
 
     expect(order).toEqual(['enqueue', 'drain', 'settle', 'read']);
-    expect(awaitHarnessWorkSettled).toHaveBeenCalledWith(['team-1']);
+    expect(awaitTeamWorkSettled).toHaveBeenCalledWith({ teamId: 'team-1', timeoutMs: 30_000 });
     expect(drainUntilIdle).toHaveBeenCalledWith({ owner: 'door' });
     expect(notifyWork).not.toHaveBeenCalled();
     expect(res.status).toBe(200);

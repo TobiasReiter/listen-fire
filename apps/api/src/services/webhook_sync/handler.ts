@@ -1,21 +1,17 @@
 // webhook handler
 // TG dispatch from webhook
 import { sql } from 'kysely';
-import { getAutomationsQb, getKnowledgeQb } from '../../lib/kysely';
+import { getAutomationsQb } from '../../lib/kysely';
 import { getWebhookProvider } from './providers';
 import { logger } from '../logger';
-import { decryptToken } from '../../lib/credentials';
-import { AttioAPIClient, attioCredsParser } from '../../adapters/attio/apiClient';
-import { buildRecordData } from '../knowledge_pipeline/output_v3/adapters/attio';
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
-import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import { findTriggersByKind } from '../translation_graph/storage/tg_table';
 import type { DiscriminableEvent, EventType } from '../translation_graph/adapter';
 import {
   captureDiscriminableEvent,
   enqueueCapturedEvents,
-  loadFailedReceipts,
+  readReceiptGroupOutcomes,
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
 import { channelScopeMatches, eventConfigList } from '../translation_graph/triggers/listen_config';
@@ -32,10 +28,11 @@ import {
 } from './whatsapp_callback_door';
 import { enqueueAwaitWake } from '../movement_engine/await_resume';
 import { notifyWork } from '../work/drain';
+import type { HarnessDelivery, SettleReport } from '../work/harness';
+import type { LinkedObjectRefresh } from './linked_object_refresh';
 import { hasAdapter, resolveAdapterSlug } from '../translation_graph/adapters/registry';
 import { resolveAdapter } from '../translation_graph/adapters/resolve';
-import { injectFakeBaseUrl, isTestHarnessTeam } from '../../lib/recording';
-import { normalizeAdapterType } from '../knowledge_pipeline/output_v3/linked_objects';
+import { isTestHarnessTeam } from '../../lib/recording';
 
 function jsonb(value: unknown): unknown {
   return sql`${JSON.stringify(value)}::jsonb` as unknown;
@@ -61,11 +58,7 @@ interface DeferredOutcome {
 }
 
 /** What `enqueueDeferred` queued, readable once the rows have drained. */
-interface EnqueuedDelivery {
-  /** The teams whose rows were queued — what a waiting door waits on. */
-  teamIds: string[];
-  readOutcome(): Promise<DeferredOutcome>;
-}
+type EnqueuedDelivery = HarnessDelivery<DeferredOutcome>;
 
 interface HandleResult {
   ok: boolean;
@@ -74,9 +67,10 @@ interface HandleResult {
   eventsProcessed: number;
   error?: string;
   /**
-   * Phase 2: the linked-object refresh, then a work row per await wake and per
-   * receipt. The door awaits it BEFORE acking, since a receipt without a row
-   * would never run; the rows themselves run off the request. Absent when the
+   * Phase 2: a work row per await wake and per receipt — nothing else, so
+   * nothing live sits between a receipt and its row. The door awaits it BEFORE
+   * acking, since a receipt without a row would never run; the rows themselves
+   * (the linked-object refresh included) run off the request. Absent when the
    * delivery carried nothing to run. Never rejects for a per-event failure
    * (those come back in the outcome); the caller still guards against an
    * unexpected throw.
@@ -258,7 +252,7 @@ async function handleInboundWebhook(options: {
     }
     return {
       teamIds: [sub.team_id],
-      readOutcome: () => readDeliveryOutcome({ enqueued, enqueueErrors }),
+      readOutcome: (settle) => readDeliveryOutcome({ enqueued, enqueueErrors, settle }),
     };
   };
 
@@ -270,25 +264,22 @@ async function handleInboundWebhook(options: {
   };
 }
 
-/** An event cleared dispatch unless one of its receipts settled `failed`. */
 async function readDeliveryOutcome(input: {
   enqueued: CapturedInboundEvent[];
   enqueueErrors: { event: DiscriminableEvent; error: string }[];
+  settle: SettleReport;
 }): Promise<DeferredOutcome> {
-  const receiptIds = input.enqueued.flatMap((entry) =>
-    entry.receipts.flatMap((r) => (r.storedEventId !== undefined ? [r.storedEventId] : [])),
-  );
-  const failed = await loadFailedReceipts(receiptIds);
-  const perEventErrors = [...input.enqueueErrors];
-  let processed = 0;
-  for (const entry of input.enqueued) {
-    const failure = entry.receipts
-      .map((r) => (r.storedEventId !== undefined ? failed.get(r.storedEventId) : undefined))
-      .find((reason) => reason !== undefined);
-    if (failure === undefined) processed++;
-    else perEventErrors.push({ event: entry.event, error: failure });
-  }
-  return { eventsProcessed: processed, perEventErrors };
+  const { cleared, failed } = await readReceiptGroupOutcomes({
+    groups: input.enqueued.map((entry) => ({ group: entry.event, receipts: entry.receipts })),
+    settle: input.settle,
+  });
+  return {
+    eventsProcessed: cleared.length,
+    perEventErrors: [
+      ...input.enqueueErrors,
+      ...failed.map(({ group, error }) => ({ event: group, error })),
+    ],
+  };
 }
 
 /** Inbound deliveries only exist for credentialed channels — a
@@ -342,18 +333,16 @@ async function captureInboundEvent(input: {
 }
 
 /**
- * Phase 2 for ONE event, in the order the pre-split inline path ran it:
- * refresh the linked_object cache (the movement reads it, so it lands before
- * the rows exist), then queue a wake for any watch-point the event satisfies
- * and a run per stored receipt.
+ * Phase 2 for ONE event: queue a wake for any watch-point the event satisfies
+ * and a run per stored receipt. A receipt's run carries the linked_object
+ * refresh the event owes, so it lands ahead of the movement without a live
+ * provider read inside the request.
  */
 async function enqueueCapturedInboundEvent(input: {
   captured: CapturedInboundEvent;
   subscription: { team_id: string; credentials_id: string; provider: string };
 }): Promise<void> {
   const { captured, subscription } = input;
-
-  await refreshLinkedObjects(captured.event, subscription);
 
   // Watch-point resolution is INDEPENDENT of trigger dispatch — a thread reply
   // must resolve an `await m-[:Replies]->` even when no movement listens for
@@ -366,58 +355,22 @@ async function enqueueCapturedInboundEvent(input: {
     });
   }
 
-  await enqueueCapturedEvents(captured.receipts);
-}
-
-/**
- * Refresh the linked_object cache for any KG node already bridged to this
- * external record. linked_object.adapter_type is stored canonically lowercase
- * (TG-native convention); subscription.provider is the uppercase enum, so
- * normalise before querying. Only events that re-identify a source record
- * (carry an `externalId`) can match a bridge.
- *
- * Independent of dispatch: a structured-input movement runs even when no prior
- * linked_object exists (the movement's write creates the bridge itself).
- */
-async function refreshLinkedObjects(
-  event: DiscriminableEvent,
-  subscription: {
-    team_id: string;
-    credentials_id: string;
-    provider: string;
-  },
-): Promise<void> {
-  const linkedObjects = event.externalId
-    ? await getKnowledgeQb(['linked_object'])
-        .selectFrom('linked_object')
-        .where('linked_object.external_id', '=', event.externalId)
-        .where('linked_object.adapter_type', '=', normalizeAdapterType(subscription.provider))
-        .where('linked_object.team_id', '=', subscription.team_id as TeamId)
-        .select(['linked_object.id', 'linked_object.node_id', 'linked_object.external_object_type'])
-        .execute()
-    : [];
-
-  const recordData = linkedObjects.length
-    ? await fetchRecordFromProvider(event, subscription)
-    : null;
-
-  if (recordData) {
-    for (const lo of linkedObjects) {
-      await getKnowledgeQb(['linked_object'])
-        .updateTable('linked_object')
-        .set({
-          data: recordData.data,
-          external_object_type: recordData.objectTypeName ?? lo.external_object_type,
-          fetched_at: new Date(),
-          updated_at: new Date(),
-        })
-        .where('linked_object.id', '=', lo.id)
-        .execute();
-    }
-    logger.info(
-      `Webhook updated ${linkedObjects.length} linked object(s) for record ${event.externalId}`,
-    );
-  }
+  const { externalId, recordType } = captured.event;
+  const linkedObjectRefresh: LinkedObjectRefresh | undefined =
+    externalId === undefined
+      ? undefined
+      : {
+          teamId: subscription.team_id as TeamId,
+          provider: subscription.provider,
+          credentialsId: subscription.credentials_id,
+          externalId,
+          ...(recordType !== undefined ? { recordType } : {}),
+        };
+  await enqueueCapturedEvents(
+    linkedObjectRefresh === undefined
+      ? captured.receipts
+      : captured.receipts.map((receipt) => ({ ...receipt, linkedObjectRefresh })),
+  );
 }
 
 /**
@@ -661,64 +614,6 @@ export async function captureProviderTriggerEvents(
     if (receipt !== null) captured.push(receipt);
   }
   return captured;
-}
-
-async function fetchRecordFromProvider(
-  event: DiscriminableEvent,
-  subscription: { credentials_id: string; provider: string; team_id: string },
-): Promise<{ data: Record<string, unknown>; objectTypeName?: string } | null> {
-  if (subscription.provider === 'ATTIO') {
-    if (!event.externalId || !event.recordType) return null;
-    return fetchAttioRecord(
-      { recordId: event.externalId, objectId: event.recordType },
-      subscription.credentials_id,
-      subscription.team_id,
-    );
-  }
-
-  logger.warn(`No record fetcher for provider ${subscription.provider}`);
-  return null;
-}
-
-async function fetchAttioRecord(
-  ref: { recordId: string; objectId: string },
-  credentialsId: string,
-  teamId: string,
-): Promise<{ data: Record<string, unknown>; objectTypeName?: string } | null> {
-  const cred = await getAutomationsQb(['external_service_credentials'])
-    .selectFrom('external_service_credentials')
-    .where('external_service_credentials.id', '=', credentialsId as ExternalServiceCredentialsId)
-    .where('external_service_credentials.team_id', '=', teamId as TeamId)
-    .select(['external_service_credentials.id', 'external_service_credentials.credentials'])
-    .executeTakeFirst();
-
-  if (!cred) return null;
-
-  const decrypted = await decryptToken(cred.credentials as Buffer, credentialsId);
-  let parsed = attioCredsParser.parse(JSON.parse(decrypted));
-  if (isTestHarnessTeam(teamId)) {
-    parsed = attioCredsParser.parse(injectFakeBaseUrl(parsed as unknown as Record<string, unknown>, 'ATTIO'));
-  }
-  const client = new AttioAPIClient(parsed);
-
-  const record = await client.getRecord({
-    objectId: ref.objectId,
-    recordId: ref.recordId,
-  });
-
-  const data = buildRecordData(record, ref.objectId);
-
-  // Try to resolve a friendly object type name
-  let objectTypeName: string | undefined;
-  try {
-    const objects = await client.listObjects();
-    const matched = objects.find((o) => o.id === ref.objectId || o.slug === ref.objectId);
-    objectTypeName = matched?.name;
-  } catch {
-    // Non-critical — skip
-  }
-
-  return { data, objectTypeName };
 }
 
 export { handleInboundWebhook };

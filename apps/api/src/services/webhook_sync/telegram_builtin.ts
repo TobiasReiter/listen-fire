@@ -49,10 +49,11 @@ import type { WebhookEvent } from './providers';
 import { captureProviderTriggerEvents } from './handler';
 import {
   enqueueCapturedEvents,
-  loadFailedReceipts,
+  readReceiptGroupOutcomes,
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
 import { isTestHarnessTeam } from '../../lib/recording';
+import type { HarnessDelivery, SettleReport } from '../work/harness';
 import {
   TELEGRAM_ADAPTER_TYPE,
   TelegramAdapter,
@@ -120,11 +121,7 @@ export interface SharedBotDelivery {
 }
 
 /** What `enqueueDeferred` queued; `readOutcome` once the rows have drained. */
-export interface EnqueuedSharedBotDelivery {
-  /** The teams whose rows were queued — what a waiting door waits on. */
-  teamIds: string[];
-  readOutcome(): Promise<SharedBotResult>;
-}
+export type EnqueuedSharedBotDelivery = HarnessDelivery<SharedBotResult>;
 
 /**
  * Resolve the team used purely to construct the built-in client for the
@@ -321,7 +318,7 @@ export async function handleSharedBotInbound(raw: unknown): Promise<SharedBotDel
     }
     return {
       teamIds: enqueued.map(({ teamId }) => teamId),
-      readOutcome: () => readSharedBotOutcome(enqueued),
+      readOutcome: (settle) => readSharedBotOutcome({ enqueued, settle }),
     };
   };
 
@@ -336,20 +333,16 @@ export async function handleSharedBotInbound(raw: unknown): Promise<SharedBotDel
   };
 }
 
-/** A team dispatched cleanly unless one of its receipts settled `failed`. */
-async function readSharedBotOutcome(
-  enqueued: { teamId: string; receipts: CapturedTriggerEvent[] }[],
-): Promise<SharedBotResult> {
-  const receiptIds = enqueued.flatMap(({ receipts }) =>
-    receipts.flatMap((r) => (r.storedEventId !== undefined ? [r.storedEventId] : [])),
-  );
-  const failed = await loadFailedReceipts(receiptIds);
-  const dispatched = enqueued
-    .filter(({ receipts }) =>
-      receipts.every((r) => r.storedEventId === undefined || !failed.has(r.storedEventId)),
-    )
-    .map(({ teamId }) => teamId);
-  return { ok: true, classification: 'message', routedTeamIds: dispatched };
+/** A team dispatched cleanly unless one of its receipts failed or never ran. */
+async function readSharedBotOutcome(input: {
+  enqueued: { teamId: string; receipts: CapturedTriggerEvent[] }[];
+  settle: SettleReport;
+}): Promise<SharedBotResult> {
+  const { cleared } = await readReceiptGroupOutcomes({
+    groups: input.enqueued.map(({ teamId, receipts }) => ({ group: teamId, receipts })),
+    settle: input.settle,
+  });
+  return { ok: true, classification: 'message', routedTeamIds: cleared };
 }
 
 /**

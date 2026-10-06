@@ -3,8 +3,8 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { handleInboundWebhook } from '../../services/webhook_sync/handler';
 import { logger } from '../../services/logger';
-import { drainUntilIdle, notifyWork } from '../../services/work/drain';
-import { awaitHarnessWorkSettled } from '../../services/work/harness';
+import { notifyWork } from '../../services/work/drain';
+import { runHarnessDelivery } from '../../services/work/harness';
 
 const webhookSyncRouter: ReturnType<typeof Router> = Router();
 
@@ -81,10 +81,7 @@ webhookSyncRouter.post(
       // A test-harness subscription is the exception: the dev-loop inject CLI
       // reads dispatch errors out of this response, so it drains the rows first.
       if (result.enqueueDeferred && result.awaitDeferred) {
-        const enqueued = await result.enqueueDeferred();
-        await drainUntilIdle({ owner: 'door' });
-        await awaitHarnessWorkSettled(enqueued.teamIds);
-        const deferred = await enqueued.readOutcome();
+        const deferred = await runHarnessDelivery(result.enqueueDeferred);
         res.status(200).json({
           ok: true,
           eventsProcessed: deferred.eventsProcessed,
