@@ -127,7 +127,7 @@ const EXPRESSION_KIND_LABEL: Partial<Record<Expression['type'], string>> = {
  * parse/check diagnostics own that failure mode.
  *
  * File imports run since E8 (the engine resolves them through
- * `RunMovementInput.resolveFile`); pass the SAME resolver here so the
+ * `EngineHost.files.resolveFile`); pass the SAME resolver here so the
  * imported library files are scanned too — a library body carrying an
  * unsupported construct flags the importing file, suffixed with the
  * library path. Resolution failures stay silent: checkProgram owns those
@@ -239,7 +239,7 @@ class InterpretabilityScan {
   private scanFileStatement(statement: Statement): void {
     switch (statement.kind) {
       case 'import':
-        // File imports run since E8 (resolved via RunMovementInput.
+        // File imports run since E8 (resolved via EngineHost.files.
         // resolveFile); the imported library's own constructs are
         // scanned by listUnsupportedConstructs' link walk.
         return;

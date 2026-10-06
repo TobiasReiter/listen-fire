@@ -12,8 +12,11 @@ import { getKnowledgeQb } from '../../lib/kysely';
 import { currentLlmUsageContext } from '../../lib/llm_usage';
 import { checksum } from '../../lib/utils/hash';
 import type { TeamId } from '../../generated/kysely/core/Team';
+import type { RawTextStore } from './host';
 
-export async function getOrCreateRawTextId(content: string): Promise<string | undefined> {
+export const postgresRawTextStore: RawTextStore = { getOrCreateId: getOrCreateRawTextId };
+
+async function getOrCreateRawTextId(content: string): Promise<string | undefined> {
   const teamId = currentLlmUsageContext()?.data.teamId;
   if (!teamId) return undefined;
   const trimmed = content.trim();

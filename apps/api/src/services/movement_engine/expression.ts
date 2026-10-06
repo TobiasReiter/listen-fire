@@ -129,7 +129,6 @@ import {
   type LeafRead,
 } from '#shared/expression/filter';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import { getAutomationsQb } from '../../lib/kysely';
 import type {
   ActingUser,
   ActorIdentity,
@@ -1284,6 +1283,8 @@ export interface MovementMetaContext {
   /** The per-dispatch bag (the frozen `ctx.meta`) — unknown keys read
    *  from it, null when absent. */
   bag: Record<string, unknown>;
+  /** The host's trigger read for acting-user resolution. */
+  triggerForActingUser: (triggerId: string) => Promise<ActingUserTriggerRow | null>;
   /** `undefined` = not yet resolved; `null` = resolved to "none". */
   actingUserCache: { value?: ActingUser | null };
   actorCache: { value?: ActorIdentity | null };
@@ -2004,7 +2005,10 @@ async function resolveMovementActingUserUncached(
   if (!event || meta.teamId === undefined) return null;
   if (!sourceAdapter?.getActorCandidates) return null;
   try {
-    const triggerRow = await loadTriggerRowForEvent(event);
+    // Null when the event predates trigger-aware dispatch or the row is gone.
+    const triggerRow = event.triggerEntryId
+      ? await meta.triggerForActingUser(event.triggerEntryId)
+      : null;
     return await resolveActingUser({
       teamId: meta.teamId,
       trigger: triggerRow ?? undefined,
@@ -2040,32 +2044,15 @@ async function resolveMovementActor(
 }
 
 /**
- * The trigger row an event dispatched through, so `resolveActingUser`
- * can read `config.overrideActingUserToCreator` and `created_by_user_id`
- * — mirrored from the frozen engine's private `loadTriggerRowForEvent`.
- * Null when the event predates trigger-aware dispatch or the join misses.
+ * The trigger row an event dispatched through, so `resolveActingUser` can read
+ * `config.overrideActingUserToCreator` and `created_by_user_id` — the host's
+ * `lookup.triggerForActingUser` answers it.
  */
-async function loadTriggerRowForEvent(
-  event: TriggerEvent,
-): Promise<{
+export interface ActingUserTriggerRow {
   id: string;
   kind: string;
   config: unknown;
   createdByUserId: string | null;
-} | null> {
-  if (!event.triggerEntryId) return null;
-  const row = await getAutomationsQb(['trigger'])
-    .selectFrom('trigger')
-    .where('id', '=', event.triggerEntryId as never)
-    .select(['id', 'kind', 'config', 'created_by_user_id'])
-    .executeTakeFirst();
-  if (!row) return null;
-  return {
-    id: row.id as unknown as string,
-    kind: row.kind as string,
-    config: row.config,
-    createdByUserId: (row.created_by_user_id as unknown as string) ?? null,
-  };
 }
 
 // ── AI() (the frozen TG engine's `llm` node, on the LlmClient seam) ─────────

@@ -27,14 +27,8 @@ import {
   runFailureCause,
   type CancelGate,
   type MovementRunResult,
-  type ParkSink,
 } from '../../movement_engine/run';
 import type { MovementTraceEntry } from '../../movement_engine/expression';
-import { makeRecorderParkSink } from '../../movement_engine/park_sink';
-import {
-  makeRecorderCallbackSink,
-  type CallbackSink,
-} from '../../movement_engine/callback_sink';
 import { makeDbCancelGate } from '../../movement_engine/cancel_gate';
 import { failRunAndCancelRequests } from '../../interaction/run_failure';
 import { LlmUsageContext } from '../../../lib/llm_usage';
@@ -50,6 +44,7 @@ import { movementSourceHash } from './version_store';
 import { recordMovementFailureIssue, resolveMovementIssues } from './issues';
 import { clearIntrospectionCache } from './instance_cache';
 import { withFiringContext } from './firing_context';
+import { productionEngineHost } from './engine_host';
 
 // ── The shared engine invocation (catalog assembly + runMovement) ───────────
 
@@ -72,16 +67,13 @@ async function interpretMovementFiring(input: {
    *  `started_at`. Every clock read in the run answers from it. */
   firedAt: Date;
   dryRun?: boolean;
-  /** The durable-park sink — present for live firings (an `ask` parks into the
-   *  recorder's run). Absent under dry runs: a test run never parks. */
-  parkSink?: ParkSink;
-  /** The callback seam — minting `callback(…)`, reading its call ledger,
-   *  correlating an `await cb-[:Called]->`. Present for live firings only:
-   *  a dry run mints nothing durable. */
-  callbackSink?: CallbackSink;
+  /** The recorder the run's parks and callbacks persist through — present for
+   *  live firings (an `ask` parks into the recorder's run). Absent under dry
+   *  runs: a test run never parks and mints nothing durable. */
+  parksInto?: TriggerRunRecorder;
   /** The cooperative cancel gate (runs-and-cancel spec §cancel) — stops the run
    *  at the next statement / LLM-call boundary on a user cancel. */
-  cancelGate?: CancelGate;
+  cancelGate: CancelGate;
   /** The array the run appends its decision trace to — supplied so a caller can
    *  publish the trace WHILE the run is going, not only once it settles. */
   trace?: MovementTraceEntry[];
@@ -99,13 +91,14 @@ async function interpretMovementFiring(input: {
     teamId: input.teamId,
     firedAt: input.firedAt,
     catalog: teamCatalog.catalog,
-    resolveCredentialId: teamCatalog.resolveCredentialId,
-    resolveFile: teamCatalog.resolveFile,
+    host: productionEngineHost({
+      teamId: input.teamId,
+      catalog: teamCatalog,
+      ...(input.parksInto !== undefined ? { parksInto: input.parksInto } : {}),
+      cancel: input.cancelGate,
+      ...(input.trace !== undefined ? { trace: input.trace } : {}),
+    }),
     ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
-    ...(input.parkSink !== undefined ? { parkSink: input.parkSink } : {}),
-    ...(input.callbackSink !== undefined ? { callbackSink: input.callbackSink } : {}),
-    ...(input.cancelGate !== undefined ? { cancelGate: input.cancelGate } : {}),
-    ...(input.trace !== undefined ? { trace: input.trace } : {}),
   });
 }
 
@@ -243,13 +236,6 @@ async function runMovementFiringInContext(
   });
   await recorder.startOpsRun();
   const movementName = input.firedMovementName ?? firedMovementNameFromTriggerName(input.triggerName);
-  // A live firing can park at an `ask`; a dry run never does (test runs don't
-  // create durable interactions). The sink writes the park rows + flips the
-  // run to `parked` through this same recorder.
-  const parkSink = input.dryRun ? undefined : makeRecorderParkSink(recorder);
-  const callbackSink = input.dryRun
-    ? undefined
-    : makeRecorderCallbackSink(recorder, input.teamId);
   // The cooperative cancel gate (runs-and-cancel spec §cancel): reads
   // trigger_run.cancel_requested_at (debounced) so a user-requested cancel stops
   // the run at the next statement / LLM-call boundary. Fail-open — a read fault
@@ -275,8 +261,10 @@ async function runMovementFiringInContext(
         event: input.event,
         firedAt: recorder.firedAt,
         ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
-        ...(parkSink !== undefined ? { parkSink } : {}),
-        ...(callbackSink !== undefined ? { callbackSink } : {}),
+        // A live firing can park at an `ask`; a dry run never does (test runs
+        // don't create durable interactions). The park rows are written + the
+        // run flipped to `parked` through this same recorder.
+        ...(input.dryRun ? {} : { parksInto: recorder }),
         cancelGate,
         trace,
       });
@@ -489,9 +477,6 @@ async function resumeMovementFiringInContext(
   // resumed run and the event stays `running` after the user has answered.
   await recorder.adoptOpsRun();
   const movementName = input.firedMovementName ?? firedMovementNameFromTriggerName(input.triggerName);
-  // A resumed run can re-park at a deeper ask — give it a live park sink too.
-  const parkSink = makeRecorderParkSink(recorder);
-  const callbackSink = makeRecorderCallbackSink(recorder, input.teamId);
   // A resumed run is cancellable too — same cooperative gate, keyed to the
   // adopted run id (runs-and-cancel spec §cancel).
   const cancelGate = makeDbCancelGate(recorder.triggerRunId);
@@ -520,12 +505,14 @@ async function resumeMovementFiringInContext(
       // event takes it, then suspends before its next statement.
       limitPaused: recorder.limitPaused,
       catalog: teamCatalog.catalog,
-      resolveCredentialId: teamCatalog.resolveCredentialId,
-      resolveFile: teamCatalog.resolveFile,
+      // A resumed run can re-park at a deeper ask — it gets live parks too.
+      host: productionEngineHost({
+        teamId: input.teamId,
+        catalog: teamCatalog,
+        parksInto: recorder,
+        cancel: cancelGate,
+      }),
       state: input.state,
-      parkSink,
-      callbackSink,
-      cancelGate,
     };
     const resumeFiring = () =>
       input.settleRaceFrameAddress !== undefined
@@ -706,8 +693,6 @@ async function fireCallbackFiringInContext(
   await recorder.adoptOpsRun();
   const movementName =
     input.firedMovementName ?? firedMovementNameFromTriggerName(input.triggerName);
-  const parkSink = makeRecorderParkSink(recorder);
-  const callbackSink = makeRecorderCallbackSink(recorder, input.teamId);
   const cancelGate = makeDbCancelGate(recorder.triggerRunId);
   try {
     const languageVersion = input.pinnedLanguageVersion;
@@ -728,14 +713,15 @@ async function fireCallbackFiringInContext(
         priorSpentMicrodollars: recorder.priorSpentMicrodollars,
         capBaselineMicrodollars: recorder.capBaselineMicrodollars,
         catalog: teamCatalog.catalog,
-        resolveCredentialId: teamCatalog.resolveCredentialId,
-        resolveFile: teamCatalog.resolveFile,
+        host: productionEngineHost({
+          teamId: input.teamId,
+          catalog: teamCatalog,
+          parksInto: recorder,
+          cancel: cancelGate,
+        }),
         state: input.state,
         values: input.values,
         callIndex: input.callIndex,
-        parkSink,
-        callbackSink,
-        cancelGate,
       });
     const result = await new LlmUsageContext({
       teamId: input.teamId as unknown as string,

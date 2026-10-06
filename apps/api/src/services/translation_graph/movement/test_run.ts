@@ -28,6 +28,7 @@ import { resolveAdapter } from '../adapters/resolve';
 import type { TriggerEvent } from '../triggers/types';
 import { loadTriggerById } from '../storage/tg_table';
 import { movementCatalogForTeam } from './catalog';
+import { productionEngineHost } from './engine_host';
 import { getMovementRow } from './store';
 
 /** A source field the synthetic payload should be keyed by — pulled from the
@@ -167,8 +168,7 @@ export async function runMovementTestRun(
       event,
       teamId: input.teamId,
       catalog: teamCatalog.catalog,
-      resolveCredentialId: teamCatalog.resolveCredentialId,
-      resolveFile: teamCatalog.resolveFile,
+      host: productionEngineHost({ teamId: input.teamId, catalog: teamCatalog }),
       dryRun: true,
       writeSink: (w) => writes.push(w),
     });

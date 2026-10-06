@@ -24,6 +24,7 @@ import { AffinityAdapter } from '../../services/translation_graph/adapters/affin
 import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+import { makeTestHost } from '../../services/movement_engine/host';
 
 const HOST = process.env.FAKE_BASE ?? 'http://localhost:6199';
 const TEAM_ID = '00000000-0000-0000-0000-000000000099' as TeamId;
@@ -126,8 +127,12 @@ async function run(label: string, body: string): Promise<void> {
       credentials: { affinity_cred: { adapters: ['affinity'] } },
       instanceSchemas: { affinity: affinitySchema },
     }),
-    resolveCredentialId: () => 'creds-verify',
-    resolveAdapter: ({ adapterType }) => (adapterType === 'affinity' ? affinity : manual),
+    host: makeTestHost({
+      adapters: {
+        credentialId: () => 'creds-verify',
+        resolve: ({ adapterType }) => (adapterType === 'affinity' ? affinity : manual),
+      },
+    }),
     dryRun: true,
   });
 

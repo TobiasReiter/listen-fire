@@ -26,6 +26,7 @@ import { instanceSchemaFromDescriptors } from '../../services/translation_graph/
 import { makeMetaPosition } from '../../services/translation_graph/types';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+import { makeTestHost } from '../../services/movement_engine/host';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6293/affinity';
 const TEAM_ID = '00000000-0000-0000-0000-000000000011' as TeamId;
@@ -120,8 +121,9 @@ async function sweep(
       event,
       teamId: TEAM_ID,
       catalog,
-      resolveAdapter: () => adapter,
-      resolveCredentialId: () => 'creds-verify',
+      host: makeTestHost({
+        adapters: { resolve: () => adapter, credentialId: () => 'creds-verify' },
+      }),
     });
     return { calls: requests.length - mark };
   } catch (err) {

@@ -60,7 +60,7 @@
 // `Adapter.linkRecords` seam (KG: edge-only insert mirroring parentLink;
 // Attio: reference-field set/append) — adapters without the capability
 // are rejected by name. E8 lifts file imports (movement libraries, §H):
-// `RunMovementInput.resolveFile` is the one injection point — resolution
+// the host's `files.resolveFile` is the one injection point — resolution
 // lives in movement-lang (`checkProgramWithLink` validates and returns
 // the link), imported movements execute against their library's OWN file
 // environment (built once per path), imported shapes bind as
@@ -179,7 +179,6 @@ import type {
   PathHead,
   Program,
   ProgramLink,
-  ResolveFile,
   ShapeDeclaration,
   ShapeNode,
   Statement,
@@ -210,13 +209,8 @@ import type {
   WriteResult,
 } from '../translation_graph/adapter';
 import { updateRecordSucceeded } from '../translation_graph/adapter';
-import { resolveAdapter as resolveAdapterDefault } from '../translation_graph/adapters/resolve';
-import {
-  recordBinding,
-  findBoundCounterpart,
-  deleteBinding,
-  type BindingEndpoint,
-} from './record_binding';
+import type { BindingEndpoint } from './record_binding';
+import type { EngineHost, ResolveAdapter } from './host';
 import {
   newDryRunRehearsal,
   wrapAdapterForDryRun,
@@ -292,7 +286,6 @@ import { localEdgeAdapter } from './local_edge_adapter';
 import {
   countShapeNodes,
   ExtractCallRunState,
-  makeAnthropicExtractCallClient,
   runExtractCall,
   type ExtractCallLlmClient,
 } from './extraction_call';
@@ -302,17 +295,14 @@ import { selectModel } from '../translation_graph/engine/batched_extraction/sche
 import {
   buildDeclarationSpec,
   buildExtractSpec,
-  makeAnthropicLlmClient,
   materializeExtract,
   recordExtractedEntities,
-  registryTransformInvoker,
   invokePricedTransform,
   tracedUrl,
   type DeclaredNodeShape,
   type ExtractNodeSpec,
   type ExtractEmission,
   type FileTextResolution,
-  type MovementTransformInvoker,
   type TransformInvocationResult,
 } from './extraction';
 import { RunCancelledSignal } from './cancel_gate';
@@ -320,7 +310,6 @@ import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import { emitOpsEvent } from '../../lib/ops/emit';
 import { OpsEventType, OpsSeverity } from '../../lib/ops/types';
-import { makeFileTextResolver } from './file_text';
 import {
   ROOT_ADDRESS,
   childBranch,
@@ -355,7 +344,7 @@ import type { CallbackSink } from './callback_sink';
 import type { CallbackCall, CallbackParamSpec } from './callback_store';
 import { isCallbackParamType } from './callback_store';
 import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
-import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
+import type { WriteLocks } from '../write_locks/write_locks';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';
 import {
   currentRunSpend,
@@ -387,10 +376,6 @@ export interface RunMovementInput {
   /** The triggering event — the movement parameter's position. */
   event: TriggerEvent;
   teamId: TeamId;
-  // TODO(Task 3): moves into `host.locks`; remove this field then.
-  /** The cross-run write locks each segment takes beneath its effect locks,
-   *  scoped to `teamId`. Absent ⇒ one in-memory table for the whole process. */
-  writeLocks?: WriteLocks;
   /**
    * When this run FIRED — the instant every clock read in it answers from
    * (`@current_date`, `@current_timestamp`, `DATE.TODAY(zone)`). The host
@@ -426,101 +411,13 @@ export interface RunMovementInput {
   limitPaused?: boolean;
   /** The checker's catalog (adapters / credentials / instance schemas). */
   catalog: Catalog;
-  /**
-   * Adapter resolution — the SAME seam `evaluateTranslationGraph` and
-   * provision use. Defaults to the production resolver; simulate / tests
-   * inject fakes per adapterType + role.
-   */
-  resolveAdapter?: (input: {
-    adapterType: string;
-    teamId: TeamId;
-    credentialsId?: string;
-    /** Non-credential construction args (unquoted) — the instance's entry
-     *  position (Sheets' `spreadsheet:`). Position-free adapters ignore it. */
-    constructionArgs?: Record<string, string>;
-    role: 'source' | 'target';
-  }) => Adapter | Promise<Adapter>;
-  /** Imported credential name → `external_service_credentials.id` (the
-   *  team catalog's `resolveCredentialId`). Absent → no credentialsId. */
-  resolveCredentialId?: (credentialName: string) => string | undefined;
+  /** Everything the run reaches outside its program (`host.ts`). */
+  host: EngineHost;
   /** Wrap every target adapter so writes are captured, not performed. */
   dryRun?: boolean;
   /** Receives each would-be write under `dryRun` — same `CapturedWrite`
    *  currency as the TG engine's dry runs. */
   writeSink?: DryRunWriteSink;
-  /**
-   * The extraction module's LLM client — the SAME pluggable interface
-   * the TG batched-extraction pipeline takes. Defaults to the
-   * anthropic-backed production client; tests inject a deterministic
-   * stub.
-   */
-  llm?: LlmClient;
-  /** The extraction CALL's model client (`extract(content, Shape)`), which
-   *  sends its prompt as blocks with cache breakpoints. Defaults to the
-   *  Anthropic-backed client; tests inject a stub. */
-  extractCallLlm?: ExtractCallLlmClient;
-  /** `through` plugin dispatch. Defaults to the TG transform registry;
-   *  tests inject a deterministic stub. */
-  transformInvoker?: MovementTransformInvoker;
-  /**
-   * Source `FileRef` → extracted TEXT (the knowledge-pipeline parity path,
-   * §3a). Defaults to the production resolver (owner-adapter byte fetch →
-   * OCR/text → RawText); tests inject a deterministic stub mocking the
-   * resolve + OCR boundary. */
-  resolveFileText?: (ref: FileRef) => Promise<FileTextResolution>;
-  /**
-   * File-import resolution (movement libraries, §H) — the ONE seam the
-   * engine takes for imports. Resolution itself lives in movement-lang
-   * (`linkImports`, the same structure `checkProgramWithLink` validates):
-   * the engine consumes the already-resolved link — imported movements
-   * execute against their library's own file environment, imported
-   * shapes bind as declarations. Absent → file imports raise
-   * MOVENG_UNSUPPORTED (the pre-library behavior). apps/api passes the
-   * team catalog's storage-backed resolver
-   * (`movementCatalogForTeam(...).resolveFile`).
-   */
-  resolveFile?: ResolveFile;
-  /**
-   * The durable-park sink. The interpreter hands this a park's details — the
-   * lexical address + serialized scope — for a cost / timer / await park; the
-   * sink persists the `parked_run` row and flips the run to `parked`
-   * (§5.2/§5.5). Absent ⇒ a run that reaches a park raises MOVENG_UNSUPPORTED
-   * (no durable substrate — e.g. a dry run / test harness with no recorder).
-   */
-  parkSink?: ParkSink;
-  /**
-   * The callback seam (callback-primitive layer 2): minting a `callback(…)`,
-   * reading its call ledger, and correlating an `await cb-[:Called]->` park.
-   * Absent ⇒ a movement that mints a callback raises MOVENG_UNSUPPORTED (no
-   * durable substrate — a dry run / test harness with no recorder).
-   */
-  callbackSink?: CallbackSink;
-  /**
-   * The cooperative cancel gate (runs-and-cancel spec §cancel). Consulted at each
-   * statement boundary (debounced DB read) and at each LLM-call boundary (sync
-   * cached value): a user-requested cancel throws `RunCancelledSignal`, caught at
-   * the top of `run()`/`resume()` so the run settles `failed` (never mid-write).
-   * Absent ⇒ the run is never cancel-gated.
-   */
-  cancelGate?: CancelGate;
-  /**
-   * Where the ENGINE may suspend a flow of its own accord (`suspendFlow`):
-   * asked before every statement and before every call a statement makes; a
-   * `true` parks that flow just before the statement, to re-run it on resume
-   * (the calls it had already finished are replayed, not made again). This is
-   * the seam a run limit suspends through — the cost cap's check is the
-   * production caller; tests drive it directly. Absent ⇒ the engine never
-   * suspends a run on its own.
-   */
-  suspendWhen?: (point: SuspensionPoint) => boolean;
-  /**
-   * The array the run appends its decision trace to. Supplied by a caller that
-   * wants to READ the trace while the run is still going — the run holds it by
-   * reference, so a flusher watching the same array sees each entry as it
-   * lands. Absent ⇒ the run keeps its own, and the trace is visible only on the
-   * result.
-   */
-  trace?: MovementTraceEntry[];
 }
 
 /** Why a run paused: the limit it met, with what it had spent against it and
@@ -531,7 +428,7 @@ export interface RunLimitPause {
   spentMicrodollars: number;
 }
 
-/** A place the engine may suspend a flow (`RunMovementInput.suspendWhen`):
+/** A place the engine may suspend a flow (`EngineHost.control.suspendWhen`):
  *  just before a statement, or just before the k-th call a statement makes
  *  (`address` ends in that call's `c k` step). Either way the flow parks at the
  *  STATEMENT and re-runs it on resume. */
@@ -774,8 +671,8 @@ export function runFailureCause(error: unknown): unknown {
 export async function runMovement(input: RunMovementInput): Promise<MovementRunResult> {
   // Error severity only: info diagnostics (MOV_LISTEN_MISSING — a
   // dispatchable movement with no listen) never block a run; the engine is
-  // routinely handed library movements to execute directly. With a
-  // resolveFile, the check RESOLVES file imports and the returned link is
+  // routinely handed library movements to execute directly. With the
+  // host's resolveFile, the check RESOLVES file imports and the returned link is
   // the engine's import structure — validation and execution consume one
   // resolution.
   const { program, link } = parseAndCheck(input);
@@ -797,13 +694,9 @@ function runScopeOf(input: RunMovementInput): {
     languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
     priorSpentMicrodollars: input.priorSpentMicrodollars ?? 0,
     capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
-    writeLocks: { locks: input.writeLocks ?? PROCESS_WRITE_LOCKS, teamId: input.teamId },
+    writeLocks: { locks: input.host.locks, teamId: input.teamId },
   };
 }
-
-// Runs in one process exclude each other without a database; a host that
-// spans processes passes its own.
-const PROCESS_WRITE_LOCKS: WriteLocks = new InMemoryWriteLocks();
 
 /**
  * Diagnostics an author may no longer WRITE, but a saved program may still
@@ -842,7 +735,9 @@ function parseAndCheck(input: RunMovementInput): { program: Program; link?: Prog
   }
   const { diagnostics: allDiagnostics, link } = checkProgramWithLink(program, input.catalog, {
     languageVersion,
-    ...(input.resolveFile !== undefined ? { resolveFile: input.resolveFile } : {}),
+    ...(input.host.files.resolveFile !== undefined
+      ? { resolveFile: input.host.files.resolveFile }
+      : {}),
   });
 
   const diagnostics = allDiagnostics.filter(
@@ -2382,7 +2277,7 @@ class Interpreter {
   private readonly targetAdapterCache = new Map<string, Adapter>();
   /** Source-role adapters for graph-rooted traversals (see graphReadFor). */
   private readonly sourceAdapterCache = new Map<string, Adapter>();
-  private readonly resolveAdapterFn: NonNullable<RunMovementInput['resolveAdapter']>;
+  private readonly resolveAdapterFn: ResolveAdapter;
   /** Rebuilt in run() for snapshot seeds, where the event envelope's
    *  adapterType is a placeholder and the source instance is canonical. */
   private mutationContext: MutationContext;
@@ -2441,8 +2336,6 @@ class Interpreter {
   /** The same, per library file — an imported declaration's types need no
    *  library environment built, only its program. */
   private readonly libraryTypes = new Map<string, Map<string, SchemaFieldType>>();
-  private defaultLlm?: LlmClient;
-  private defaultExtractCallLlm?: ExtractCallLlmClient;
   /** What the run's extraction calls share: the content prefixes already sent
    *  (where the cache breakpoints go) and the files already read. */
   private readonly extractCalls = new ExtractCallRunState();
@@ -2487,7 +2380,7 @@ class Interpreter {
     private readonly input: RunMovementInput,
     private readonly link?: ProgramLink,
   ) {
-    this.runTrace = input.trace ?? [];
+    this.runTrace = input.host.trace ?? [];
     this.limitPaused = input.limitPaused === true;
     // A deprecated pin runs, and says so on the run's own record. (An
     // unsupported one never gets this far — parseAndCheck refused it.)
@@ -2496,15 +2389,7 @@ class Interpreter {
       this.trace.push({ kind: 'warning', code: versionWarning.code, message: versionWarning.message });
     }
     this.pinnedNow = input.firedAt ?? new Date();
-    this.resolveAdapterFn =
-      input.resolveAdapter ??
-      (({ adapterType, teamId, credentialsId, constructionArgs }) =>
-        resolveAdapterDefault({
-          adapterType,
-          teamId,
-          credentialsId,
-          ...(constructionArgs !== undefined ? { constructionArgs } : {}),
-        }));
+    this.resolveAdapterFn = input.host.adapters.resolve;
     this.currentImports = link?.imports;
     // The firing that started this run rides along in the provenance of every
     // graph write it makes. `suppress_self` — the 2-way-sync flag — is answered
@@ -2575,7 +2460,7 @@ class Interpreter {
    */
   private async checkCancelBeforeFinishing(): Promise<void> {
     if (this.cancelled || this.parked) return;
-    if (this.input.cancelGate && (await this.input.cancelGate.cancelledNow())) {
+    if (await this.input.host.control.cancel.cancelledNow()) {
       this.cancelled = true;
     }
   }
@@ -2741,7 +2626,7 @@ class Interpreter {
         `settleRace: no race statement at frame '${input.frameAddress}'`,
       );
     }
-    const rows = await this.input.parkSink!.collectBranchExports({ frameAddress: input.frameAddress });
+    const rows = await this.input.host.park.sink!.collectBranchExports({ frameAddress: input.frameAddress });
     const armCount = armCountOf(combinator, rows);
     const receipt = await this.receiptFromExports(rows, armCount, this.rehydrationContext());
     const frameAddr = parseAddress(input.frameAddress);
@@ -2749,7 +2634,7 @@ class Interpreter {
     for (let j = 0; j < armCount; j++) {
       loserSubtrees.push(encodeAddress(childBranch(frameAddr, j)));
     }
-    await this.input.parkSink!.cancelSubtrees({ subtreeAddresses: loserSubtrees });
+    await this.input.host.park.sink!.cancelSubtrees({ subtreeAddresses: loserSubtrees });
     const bound = boundRValueOf(input.statement);
     if (bound !== undefined) input.env.declare(bound.name, receipt);
   }
@@ -3149,7 +3034,7 @@ class Interpreter {
     // (persist / decrement / collect). A resume with no sink is a degenerate
     // test-only mode with no durable join to close — complete only the leaf block,
     // exactly as before the unwind existed. Production resume always has a sink.
-    if (this.input.parkSink === undefined) return STOPPED;
+    if (this.input.host.park.sink === undefined) return STOPPED;
     const continuation = async (): Promise<SpineCompletion> => ({
       done: true,
       outcome: await this.continueAfter(frame.parentStatements, frame.containerIndex, frame.parentEnv, {
@@ -3172,13 +3057,13 @@ class Interpreter {
       // still-parked arms (one signal per park), builds the receipt, and runs
       // the continuation; a non-winner (already claimed) did its writes and
       // stops — the run stays parked on the winner's continuation, if any.
-      await this.input.parkSink.persistBranchExport({
+      await this.input.host.park.sink.persistBranchExport({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         branchIndex: frame.branchIndex,
         exports: this.serializeBranchExport(frame),
       });
-      const { closed } = await this.input.parkSink.decrementJoin({
+      const { closed } = await this.input.host.park.sink.decrementJoin({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         leafAddress,
@@ -3201,13 +3086,13 @@ class Interpreter {
       // Persist THIS branch's export contribution durably, keyed by the join
       // frame + this branch, BEFORE decrementing (§12.1) — so by the time ANY
       // branch observes `closed`, every sibling's export row is committed.
-      await this.input.parkSink.persistBranchExport({
+      await this.input.host.park.sink.persistBranchExport({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         branchIndex: frame.branchIndex,
         exports: this.serializeBranchExport(frame),
       });
-      const { closed } = await this.input.parkSink.decrementJoin({
+      const { closed } = await this.input.host.park.sink.decrementJoin({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         leafAddress,
@@ -3303,7 +3188,7 @@ class Interpreter {
       into.push(...flow.trace);
     }
 
-    const sink = this.input.parkSink;
+    const sink = this.input.host.park.sink;
     if (sink === undefined) return STOPPED;
     const frameAddress = encodeAddress(op.address);
     const branchAddress = encodeAddress(childIter(op.address, frame.boundary.member));
@@ -3334,7 +3219,7 @@ class Interpreter {
     op: ResumedCollectionOp,
     frameAddress: string,
   ): Promise<CollectionRun & { answers: MemberAnswer[] }> {
-    const rows = await this.input.parkSink!.collectBranchExports({ frameAddress });
+    const rows = await this.input.host.park.sink!.collectBranchExports({ frameAddress });
     const ctx = this.rehydrationContext();
     const stateRow = rows.find((row) => row.branchIndex === FRAME_STATE_INDEX);
     if (stateRow === undefined || !isCollectionOpState(stateRow.exports)) {
@@ -3397,7 +3282,7 @@ class Interpreter {
    * would.
    */
   private async mergeJoinBranch(frame: ResumeAncestorFrame): Promise<void> {
-    const rows = await this.input.parkSink!.collectBranchExports({
+    const rows = await this.input.host.park.sink!.collectBranchExports({
       frameAddress: encodeAddress(frame.containerAddress),
     });
     const ctx = this.rehydrationContext();
@@ -3442,7 +3327,7 @@ class Interpreter {
    */
   private async settleRaceWinner(frame: ResumeAncestorFrame, leafAddress: string): Promise<void> {
     const combinator = combinatorOf(frame.container);
-    const kept = await this.input.parkSink!.collectBranchExports({
+    const kept = await this.input.host.park.sink!.collectBranchExports({
       frameAddress: encodeAddress(frame.containerAddress),
     });
     const armCount = combinator !== undefined ? armCountOf(combinator, kept) : 0;
@@ -3453,7 +3338,7 @@ class Interpreter {
       loserSubtrees.push(encodeAddress(childBranch(frame.containerAddress, j)));
     }
     if (loserSubtrees.length > 0) {
-      await this.input.parkSink!.cancelSubtrees({
+      await this.input.host.park.sink!.cancelSubtrees({
         subtreeAddresses: loserSubtrees,
         excludeLeaf: leafAddress,
       });
@@ -4324,7 +4209,7 @@ class Interpreter {
 
   private credentialsIdFor(instance: Extract<Binding, { kind: 'instance' }>): string | undefined {
     if (!instance.credentialName) return undefined;
-    return this.input.resolveCredentialId?.(instance.credentialName);
+    return this.input.host.adapters.credentialId(instance.credentialName);
   }
 
   // ── Statement interpretation (movement body / if arms) ──
@@ -4359,7 +4244,7 @@ class Interpreter {
       // Debounced DB read; latches once true. Caught at the top of
       // run()/resume() (like RunParked), never by the fan-out/parallel park
       // machinery (they re-throw anything but RunParked/ScopeEndedQuietly).
-      if (this.input.cancelGate && (await this.input.cancelGate.cancelled())) {
+      if (await this.input.host.control.cancel.cancelled()) {
         throw new RunCancelledSignal();
       }
       // The statement is the SITE of any call nested in its expressions: such a
@@ -4375,7 +4260,7 @@ class Interpreter {
         // A paused run (a limit met here or in another flow) stops each flow
         // between statements: the one it was running finished, the next waits.
         if (this.limitPaused && this.canSuspend()) await this.suspendFlow();
-        if (this.input.suspendWhen?.({ kind: 'statement', address: encodeAddress(stmtAddress) })) {
+        if (this.input.host.control.suspendWhen?.({ kind: 'statement', address: encodeAddress(stmtAddress) })) {
           await this.suspendFlow();
         }
         try {
@@ -4803,7 +4688,7 @@ class Interpreter {
     parkedMembers: number,
   ): Promise<never> {
     const frameAddress = encodeAddress(run.address);
-    const sink = this.input.parkSink;
+    const sink = this.input.host.park.sink;
     if (sink !== undefined) {
       const state: CollectionOpState = {
         source: serializeBinding({
@@ -5130,7 +5015,7 @@ class Interpreter {
         // Stop listening on every arm still parked at a suspension — one signal
         // per park, and the record behind it stays answerable (F7).
         if (parked.length > 0) {
-          await this.input.parkSink?.cancelSubtrees({
+          await this.input.host.park.sink?.cancelSubtrees({
             subtreeAddresses: parked.map((fork) => encodeAddress(fork.address)),
           });
         }
@@ -5139,7 +5024,7 @@ class Interpreter {
       }
       const frameAddress = encodeAddress(stmtAddress);
       await this.keepArmCount(expr, frameAddress, forks.length);
-      await this.input.parkSink?.recordJoin({ frameAddress, parkedChildren: 1 });
+      await this.input.host.park.sink?.recordJoin({ frameAddress, parkedChildren: 1 });
       throw new RunParked(frameAddress);
     }
 
@@ -5151,14 +5036,14 @@ class Interpreter {
       for (const fork of forks) {
         const value = settled.get(fork.index);
         if (value === undefined) continue;
-        await this.input.parkSink?.persistBranchExport({
+        await this.input.host.park.sink?.persistBranchExport({
           frameAddress,
           branchAddress: encodeAddress(fork.address),
           branchIndex: fork.index,
           exports: { [RETURN_SLOT]: serializeBinding(value) },
         });
       }
-      await this.input.parkSink?.recordJoin({
+      await this.input.host.park.sink?.recordJoin({
         frameAddress,
         parkedChildren: parked.length,
       });
@@ -5172,7 +5057,7 @@ class Interpreter {
   private async keepArmCount(expr: CombinatorExpression, frameAddress: string, arms: number): Promise<void> {
     if (expr.arms.kind !== 'dynamic') return;
     const state: CombinatorFrameState = { arms };
-    await this.input.parkSink?.persistBranchExport({
+    await this.input.host.park.sink?.persistBranchExport({
       frameAddress,
       branchAddress: frameAddress,
       branchIndex: FRAME_STATE_INDEX,
@@ -5366,7 +5251,7 @@ class Interpreter {
       return { site, index, replayed };
     }
     if (
-      this.input.suspendWhen?.({
+      this.input.host.control.suspendWhen?.({
         kind: 'call',
         address: encodeAddress(childCall(site.stmtAddress, index)),
       })
@@ -5425,7 +5310,7 @@ class Interpreter {
       );
     }
     const address = encodeAddress(site.stmtAddress);
-    const commit = this.input.parkSink?.commitSuspension?.bind(this.input.parkSink);
+    const commit = this.input.host.park.sink?.commitSuspension?.bind(this.input.host.park.sink);
     if (commit === undefined) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -5455,7 +5340,7 @@ class Interpreter {
     return (
       !this.firingCallback
       && this.statementSites.getStore() !== undefined
-      && this.input.parkSink?.commitSuspension !== undefined
+      && this.input.host.park.sink?.commitSuspension !== undefined
     );
   }
 
@@ -5471,7 +5356,7 @@ class Interpreter {
     if (!this.limitPaused) {
       // Set before the await, so flows meeting the cap together pause it once.
       this.limitPaused = true;
-      await this.input.parkSink?.commitLimitPause?.({
+      await this.input.host.park.sink?.commitLimitPause?.({
         limit: 'cost',
         capMicrodollars: error.capMicrodollars,
         spentMicrodollars: error.spentMicrodollars,
@@ -5895,7 +5780,7 @@ class Interpreter {
     env: Environment,
     body: BodyContext,
   ): Promise<Binding | undefined> {
-    const invoker = this.input.transformInvoker ?? registryTransformInvoker;
+    const invoker = this.input.host.llm.transforms;
     const declared = invoker.declaredOutput?.(plugin);
     if (declared === undefined) {
       // The checker refuses a plain call to a plugin that declared no output,
@@ -6085,7 +5970,7 @@ class Interpreter {
       logger.info(`slept ${sleep.duration.raw} (fast-forwarded)`);
       return;
     }
-    const parkSink = this.input.parkSink;
+    const parkSink = this.input.host.park.sink;
     const address = encodeAddress(stmtAddress);
     if (!parkSink) {
       throw new MovementEngineError(
@@ -6129,7 +6014,7 @@ class Interpreter {
     env: Environment,
     stmtAddress: Address,
   ): Promise<Binding> {
-    const sink = this.input.callbackSink;
+    const sink = this.input.host.park.callbacks;
     if (!sink) {
       throw unsupported(
         'callback(…)',
@@ -6444,7 +6329,7 @@ class Interpreter {
 
     // Pending: register the correlation on the adapter (its map from the ask id
     // to this park), record the await park, and suspend. Resume re-enters here.
-    const parkSink = this.input.parkSink;
+    const parkSink = this.input.host.park.sink;
     if (!parkSink) {
       throw unsupported(
         'await (a durable park)',
@@ -6502,7 +6387,7 @@ class Interpreter {
         `a callback has one edge, '${CALLBACK_CALLED_EDGE}'`,
       );
     }
-    const sink = this.input.callbackSink;
+    const sink = this.input.host.park.callbacks;
     if (!sink) {
       throw unsupported(
         `await cb-[:${CALLBACK_CALLED_EDGE}]->`,
@@ -6518,7 +6403,7 @@ class Interpreter {
       return;
     }
 
-    const parkSink = this.input.parkSink;
+    const parkSink = this.input.host.park.sink;
     if (!parkSink) {
       throw unsupported(
         `await cb-[:${CALLBACK_CALLED_EDGE}]-> (a durable park)`,
@@ -6652,7 +6537,7 @@ class Interpreter {
       return;
     }
 
-    const parkSink = this.input.parkSink;
+    const parkSink = this.input.host.park.sink;
     const address = encodeAddress(stmtAddress);
     if (!parkSink) {
       throw new MovementEngineError(
@@ -7345,7 +7230,7 @@ class Interpreter {
       spec,
       runtime: {
         llm: this.llmClient(),
-        transformInvoker: this.input.transformInvoker ?? registryTransformInvoker,
+        transformInvoker: this.input.host.llm.transforms,
         evalSlot: (slot) => this.evaluateSlot(slot, { env }),
         resolveFileText: this.fileTextResolver(),
         trace: this.trace,
@@ -7439,9 +7324,7 @@ class Interpreter {
   }
 
   private extractCallClient(): ExtractCallLlmClient {
-    if (this.input.extractCallLlm) return this.input.extractCallLlm;
-    this.defaultExtractCallLlm ??= makeAnthropicExtractCallClient();
-    return this.defaultExtractCallLlm;
+    return this.input.host.llm.extractCall;
   }
 
   private async describeIn(slot: ExprSlot, env: Environment): Promise<string> {
@@ -7458,16 +7341,14 @@ class Interpreter {
   }
 
   private llmClient(): LlmClient {
-    if (this.input.llm) return this.input.llm;
-    this.defaultLlm ??= makeAnthropicLlmClient();
-    return this.defaultLlm;
+    return this.input.host.llm.client;
   }
 
   /** The one file→text seam for the whole run — an `extract from [ … ]` file
    *  source and a `READ(file)` in an expression read a file the same way. */
   private fileTextResolver(): (ref: FileRef) => Promise<FileTextResolution> {
     this.fileTextSeam ??= this.warnWhenBytesUnavailable(
-      this.input.resolveFileText ?? makeFileTextResolver(),
+      this.input.host.files.resolveFileText,
     );
     return this.fileTextSeam;
   }
@@ -7582,14 +7463,14 @@ class Interpreter {
       // What the iterations that finished returned waits at the frame with the
       // parked ones' exports, so the closer's value holds every iteration.
       for (const { index, value } of finished) {
-        await this.input.parkSink?.persistBranchExport({
+        await this.input.host.park.sink?.persistBranchExport({
           frameAddress,
           branchAddress: encodeAddress(childIter(parentAddress, index)),
           branchIndex: index,
           exports: { [RETURN_SLOT]: serializeBinding(value) },
         });
       }
-      await this.input.parkSink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });
+      await this.input.host.park.sink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });
       throw new RunParked(frameAddress);
     }
   }
@@ -7705,7 +7586,7 @@ class Interpreter {
           `a callback has one edge, '${CALLBACK_CALLED_EDGE}'`,
         );
       }
-      const sink = this.input.callbackSink;
+      const sink = this.input.host.park.callbacks;
       if (!sink) {
         throw unsupported(
           `cb-[:${CALLBACK_CALLED_EDGE}]->`,
@@ -8649,7 +8530,7 @@ class Interpreter {
         isRoot: target.parents.length === 0,
       });
       if (created.externalId !== undefined && !this.input.dryRun) {
-        await recordBinding({
+        await this.input.host.park.bindings.record({
           teamId: this.input.teamId,
           from: other,
           to: {
@@ -8667,7 +8548,7 @@ class Interpreter {
     // Find-then-create on the correspondence: held until the binding is
     // recorded, so two flows binding the same counterpart create one record.
     return this.effectLocks.withLocks([bindLock(other, counterpart)], async () => {
-      const bound = await findBoundCounterpart({
+      const bound = await this.input.host.park.bindings.findBoundCounterpart({
         teamId: this.input.teamId,
         endpoint: other,
         counterpart,
@@ -8692,7 +8573,7 @@ class Interpreter {
       // binding (keyed on the counterpart's exact stored components), then
       // create a fresh record + record a fresh binding.
       if (!this.input.dryRun) {
-        await deleteBinding({ teamId: this.input.teamId, from: other, to: bound });
+        await this.input.host.park.bindings.delete({ teamId: this.input.teamId, from: other, to: bound });
       }
       return create();
     });
@@ -11420,6 +11301,7 @@ class Interpreter {
         teamId: this.input.teamId,
         now: this.pinnedNow,
         bag: { trigger: this.input.event, mutationContext: this.mutationContext },
+        triggerForActingUser: (triggerId) => this.input.host.lookup.triggerForActingUser(triggerId),
         actingUserCache: this.actingUserCache,
         actorCache: this.actorCache,
       },

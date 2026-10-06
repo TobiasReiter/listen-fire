@@ -10,8 +10,9 @@
 //     → OCR/text extractor  (the PDF's own text layer first, then
 //                            services.ocr.extractPdf for scanned PDFs;
 //                            getPptxText / getXlsxContent for decks/sheets)
-//     → getOrCreateRawTextId  (checksum dedup + store → stable id; the
-//       Context-free Kysely twin of RawTextService — see raw_text_store.ts)
+//     → the host's raw-text store  (checksum dedup + store → stable id; in
+//       production the Context-free Kysely twin of RawTextService —
+//       raw_text_store.ts)
 //
 // Byte resolution goes through the FileRef's own `retrieve()` (`streamFileRef`):
 // the producing source adapter closed over its credentials when it emitted the
@@ -43,8 +44,8 @@ import { getPptxText } from '../../lib/utils/powerpoint';
 import { logger } from '../logger';
 import type { FileRef, ResolveFileRefResult } from '../translation_graph/adapter';
 import { streamFileRef } from '../translation_graph/engine/files/retrieve';
-import { getOrCreateRawTextId } from './raw_text_store';
 import type { FileTextResolution, FileUnreadable } from './extraction';
+import type { RawTextStore } from './host';
 
 type FileKind = 'pdf' | 'pptx' | 'xlsx' | 'audio';
 
@@ -246,7 +247,9 @@ async function extractTextFromStream(
  * module owns the byte-resolution → text-extraction → store pipeline so it stays
  * injectable for tests. Byte resolution is the FileRef's own `retrieve()`.
  */
-export function makeFileTextResolver(): (ref: FileRef) => Promise<FileTextResolution> {
+export function makeFileTextResolver(
+  rawText: RawTextStore,
+): (ref: FileRef) => Promise<FileTextResolution> {
   return async (ref) => {
     const kind = fileKind(ref);
     if (!kind) {
@@ -288,7 +291,7 @@ export function makeFileTextResolver(): (ref: FileRef) => Promise<FileTextResolu
     if (text !== null && typeof text !== 'string') return text;
     if (!text || text.trim().length === 0) return { unreadable: 'no_text' };
 
-    const rawTextId = await getOrCreateRawTextId(text);
+    const rawTextId = await rawText.getOrCreateId(text);
     return { text, rawTextId };
   };
 }
