@@ -4,6 +4,12 @@ declare function require(id: string): unknown;
 declare const __dirname: string;
 
 const NOT_IMPLEMENTED = { error: { message: 'not implemented', pos: 0 } };
+const ROUND_TRIP = {
+  kind: 'string',
+  quote: "'",
+  parts: ['héllo 🌍'],
+  at: { start: 0, end: 10 },
+};
 
 describe('the parser loader', () => {
   it('is ready as soon as the module loads under Node', () => {
@@ -11,13 +17,17 @@ describe('the parser loader', () => {
   });
 
   it('round-trips source through every parse export', () => {
-    expect(callJson('parse_expression', "a.b + 'héllo 🌍'", [3])).toEqual(NOT_IMPLEMENTED);
+    expect(callJson('parse_expression', "'héllo 🌍'", [3])).toEqual(ROUND_TRIP);
     expect(callJson('parse_program', '', [3])).toEqual(NOT_IMPLEMENTED);
     expect(callJson('parse_nested_call', 'f(x)', [0, 4, 1, 1, 3])).toEqual(NOT_IMPLEMENTED);
   });
 
   it('accepts bytes as input', () => {
-    expect(callJson('parse_expression', new Uint8Array([0x61]), [3])).toEqual(NOT_IMPLEMENTED);
+    expect(callJson('parse_expression', new Uint8Array([0x61]), [3])).toEqual({
+      kind: 'name',
+      name: { text: 'a', quoted: false, at: { start: 0, end: 1 } },
+      at: { start: 0, end: 1 },
+    });
   });
 
   it('initParser with no argument is a no-op once Node has loaded it', async () => {
@@ -36,12 +46,12 @@ describe('the parser loader', () => {
       await initParser(committedArtifact());
     });
 
-    it('throws, then serves the next call from a fresh instance', async () => {
+    it('throws with the panic message, then serves the next call from a fresh instance', async () => {
       await initParser(trappingModule());
       expect(callJson('parse_expression', 'ok', [3])).toEqual({ ok: true });
       const before = parserGeneration();
       expect(() => callJson('parse_expression', 'T', [3])).toThrow(
-        /movement parser crashed in parse_expression: RuntimeError: unreachable/,
+        /^movement parser crashed in parse_expression: RuntimeError: unreachable: panicked at src\/lib\.rs:1:1:\nboom$/,
       );
       expect(callJson('parse_expression', 'ok', [3])).toEqual({ ok: true });
       expect(parserGeneration()).toBe(before + 1);
@@ -59,13 +69,17 @@ function committedArtifact(): Uint8Array {
   return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
-// The loader's ABI in miniature: a bump `alloc`, a no-op `dealloc`, and one
+// The loader's ABI in miniature: a bump `alloc`, a no-op `dealloc`, one
 // function behind all three parse exports that writes `{"ok":true}` to the
-// out slots and returns status 0 — or hits `unreachable` on a leading "T".
+// out slots and returns status 0 — or hits `unreachable` on a leading "T" —
+// and a `last_panic` that points at a recorded panic message.
 function trappingModule(): Uint8Array {
   const I32 = 0x7f;
   const json = [...'{"ok":true}'].map((c) => c.charCodeAt(0));
   const JSON_AT = 16;
+  const panic = [...'panicked at src/lib.rs:1:1:\nboom'].map((c) => c.charCodeAt(0));
+  // Below 64: a one-byte signed LEB128 i32.const.
+  const PANIC_AT = 32;
   const vec = (items: number[][]): number[] => [items.length, ...items.flat()];
   const section = (id: number, body: number[]): number[] => [id, body.length, ...body];
   const name = (text: string): number[] => [text.length, ...[...text].map((c) => c.charCodeAt(0))];
@@ -83,6 +97,7 @@ function trappingModule(): Uint8Array {
     [...name('parse_program'), ...fn(2)],
     [...name('parse_expression'), ...fn(2)],
     [...name('parse_nested_call'), ...fn(2)],
+    [...name('last_panic'), ...fn(3)],
   ]);
   const code = vec([
     // ptr = next; next += len
@@ -94,15 +109,25 @@ function trappingModule(): Uint8Array {
       ...[0x20, 4, 0x41, json.length, 0x36, 2, 0], // *out_len = json.length
       ...[0x41, 0], // status 0
     ]),
+    body([
+      ...[0x20, 0, 0x41, PANIC_AT, 0x36, 2, 0], // *out_ptr = PANIC_AT
+      ...[0x20, 1, 0x41, panic.length, 0x36, 2, 0], // *out_len = panic.length
+    ]),
   ]);
   return new Uint8Array([
     ...[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
     ...section(1, types),
-    ...section(3, vec([[0], [1], [2]])),
+    ...section(3, vec([[0], [1], [2], [1]])),
     ...section(5, vec([[0x00, 1]])),
     ...section(6, vec([[I32, 1, 0x41, 0x80, 0x02, 0x0b]])), // mut next = 256
     ...section(7, exports),
     ...section(10, code),
-    ...section(11, vec([[0, 0x41, JSON_AT, 0x0b, json.length, ...json]])),
+    ...section(
+      11,
+      vec([
+        [0, 0x41, JSON_AT, 0x0b, json.length, ...json],
+        [0, 0x41, PANIC_AT, 0x0b, panic.length, ...panic],
+      ]),
+    ),
   ]);
 }

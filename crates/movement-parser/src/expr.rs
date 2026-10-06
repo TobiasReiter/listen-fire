@@ -453,7 +453,14 @@ impl<'a> ExpressionParser<'a> {
         self.parse_postfix()
     }
 
+    /// Every cycle in the expression grammar passes through here (a call's
+    /// arguments and an index recurse from the postfix loop, not from the
+    /// primary), so this is where the depth is counted.
     fn parse_postfix(&mut self) -> PResult<MExpr> {
+        self.nested(Self::parse_postfix_inner)
+    }
+
+    fn parse_postfix_inner(&mut self) -> PResult<MExpr> {
         let start = self.peek()?.start;
         let mut expr = self.parse_primary()?;
         loop {
@@ -530,10 +537,6 @@ impl<'a> ExpressionParser<'a> {
     // ── Primaries ──
 
     fn parse_primary(&mut self) -> PResult<MExpr> {
-        self.nested(Self::parse_primary_inner)
-    }
-
-    fn parse_primary_inner(&mut self) -> PResult<MExpr> {
         let tok = self.peek()?;
         let at = At { start: tok.start, end: tok.end };
         match &tok.t {
@@ -1735,9 +1738,12 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
-        assert_eq!(run(deep("(", ")", 400)), Ok(()));
+        assert_eq!(run(deep("(", ")", MAX_DEPTH - 1)), Ok(()));
         assert_eq!(run(deep("(", ")", MAX_DEPTH + 1)), Err(TOO_DEEP.to_string()));
         assert_eq!(run(deep("[", "]", 100_000)), Err(TOO_DEEP.to_string()));
+        assert_eq!(run(deep("f(", ")", 100_000)), Err(TOO_DEEP.to_string()));
+        assert_eq!(run(format!("a{}", deep("[", "]", 100_000))), Err(TOO_DEEP.to_string()));
+        assert_eq!(run(deep("a-[:e WHERE ", "]->", 100_000)), Err(TOO_DEEP.to_string()));
         assert_eq!(run(format!("{}a", "NOT ".repeat(100_000))), Err(TOO_DEEP.to_string()));
         assert_eq!(run(format!("{}a", "- ".repeat(100_000))), Err(TOO_DEEP.to_string()));
         assert_eq!(run(deep("\"${", "}\"", 100_000)), Err(TOO_DEEP.to_string()));

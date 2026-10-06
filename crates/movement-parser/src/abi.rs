@@ -8,7 +8,10 @@
 //! exercise the same functions; on wasm32 the two are the same width.
 
 use std::alloc::Layout;
+use std::fmt::Write;
+use std::panic::PanicHookInfo;
 use std::ptr::NonNull;
+use std::sync::{Mutex, Once};
 
 use serde_json::json;
 
@@ -56,6 +59,7 @@ pub unsafe extern "C" fn parse_program(
     out_ptr_ptr: *mut usize,
     out_len_ptr: *mut usize,
 ) -> u32 {
+    install_panic_hook();
     let parsed = unsafe { utf8(src_ptr, src_len) }.and_then(|src| crate::parse_program(src, version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
@@ -70,6 +74,7 @@ pub unsafe extern "C" fn parse_expression(
     out_ptr_ptr: *mut usize,
     out_len_ptr: *mut usize,
 ) -> u32 {
+    install_panic_hook();
     let parsed = unsafe { utf8(src_ptr, src_len) }.and_then(|src| crate::parse_expression(src, version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
@@ -89,9 +94,69 @@ pub unsafe extern "C" fn parse_nested_call(
     out_ptr_ptr: *mut usize,
     out_len_ptr: *mut usize,
 ) -> u32 {
+    install_panic_hook();
     let call = NestedCall { at_start, at_end, origin_line, origin_col, version };
     let parsed = unsafe { utf8(raw_ptr, raw_len) }.and_then(|raw| crate::parse_nested_call(raw, &call));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
+}
+
+/// Room for one panic message. Fixed so that recording a panic allocates
+/// nothing: the panic may have struck inside the allocator.
+const PANIC_CAPACITY: usize = 1024;
+
+struct PanicMessage {
+    bytes: [u8; PANIC_CAPACITY],
+    len: usize,
+}
+
+impl Write for PanicMessage {
+    /// Keeps what fits, cut at a character boundary so the text stays UTF-8.
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let room = PANIC_CAPACITY - self.len;
+        let mut take = s.len().min(room);
+        while !s.is_char_boundary(take) {
+            take -= 1;
+        }
+        self.bytes[self.len..self.len + take].copy_from_slice(&s.as_bytes()[..take]);
+        self.len += take;
+        Ok(())
+    }
+}
+
+static LAST_PANIC: Mutex<PanicMessage> = Mutex::new(PanicMessage { bytes: [0; PANIC_CAPACITY], len: 0 });
+static PANIC_HOOK: Once = Once::new();
+
+/// A panic aborts, which traps the instance and loses the message; the hook
+/// keeps it where `last_panic` can hand it to the loader, which reads it
+/// from the trapped instance before discarding it.
+fn install_panic_hook() {
+    PANIC_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            record_panic(info);
+            previous(info);
+        }));
+    });
+}
+
+fn record_panic(info: &PanicHookInfo<'_>) {
+    let mut message = LAST_PANIC.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    message.len = 0;
+    let _ = write!(message, "{info}");
+}
+
+/// Points the out slots at the last panic's message (empty if none). The
+/// buffer is static: the caller reads it and does not `dealloc` it.
+///
+/// # Safety
+/// The out slots must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn last_panic(out_ptr_ptr: *mut usize, out_len_ptr: *mut usize) {
+    let message = LAST_PANIC.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    unsafe {
+        out_ptr_ptr.write_unaligned(message.bytes.as_ptr() as usize);
+        out_len_ptr.write_unaligned(message.len);
+    }
 }
 
 unsafe fn utf8<'a>(ptr: *const u8, len: u32) -> Result<&'a str, serde_json::Value> {
@@ -148,6 +213,26 @@ mod tests {
         let (status, json) = call_expression("");
         assert_eq!(status, ERROR);
         assert_eq!(json, r#"{"error":{"message":"Unexpected end of input","pos":0}}"#);
+    }
+
+    #[test]
+    fn a_panic_leaves_its_message_for_last_panic() {
+        install_panic_hook();
+        let caught = std::panic::catch_unwind(|| panic!("boom {}", 42));
+        assert!(caught.is_err());
+        let (mut ptr, mut len) = (0usize, 0usize);
+        unsafe { last_panic(&mut ptr, &mut len) };
+        let text = std::str::from_utf8(unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }).unwrap();
+        assert!(text.starts_with("panicked at crates/movement-parser/src/abi.rs:"), "{text}");
+        assert!(text.ends_with("boom 42"), "{text}");
+    }
+
+    #[test]
+    fn a_long_panic_message_is_cut_at_a_character_boundary() {
+        let mut message = PanicMessage { bytes: [0; PANIC_CAPACITY], len: PANIC_CAPACITY - 3 };
+        write!(message, "é🌍").unwrap();
+        assert_eq!(message.len, PANIC_CAPACITY - 1);
+        assert_eq!(&message.bytes[PANIC_CAPACITY - 3..PANIC_CAPACITY - 1], "é".as_bytes());
     }
 
     #[test]

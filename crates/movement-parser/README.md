@@ -37,13 +37,28 @@ toolchain ships with a rebuilt artifact.
 | `parse_program` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `parse_expression` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `parse_nested_call` | `(raw_ptr, raw_len, at_start, at_end, origin_line, origin_col, version, out_ptr_ptr, out_len_ptr) -> status` | |
+| `last_panic` | `(out_ptr_ptr, out_len_ptr)` | the last panic's message, in a static buffer (not freed) |
 
 Status 0 means the output is the tree; 1 means it is `{"error": {…}}`. The
 output is UTF-8 JSON the caller must `dealloc`. Every value is an i32 on
 wasm32.
 
-A panic aborts (`panic = "abort"`), which traps the instance; the loader
-discards a trapped instance and instantiates a fresh one on the next call.
+A panic aborts (`panic = "abort"`), which traps the instance. A panic hook
+records the message first; the loader reads it through `last_panic` from the
+trapped instance, puts it in the error it throws, then discards the instance
+and instantiates a fresh one on the next call.
+
+## Stack and nesting
+
+The grammar is recursive descent, bounded by `MAX_DEPTH` (128, in
+`src/lexer.rs`): a deeper text is the syntax error `expression nesting too
+deep`. Two stacks are at stake in WASM. The engine's own (V8 throws a
+`RangeError` at about 450 levels of parentheses on Node's default stack) and
+the shadow stack in linear memory, which the build script places first
+(`--stack-first`) and sizes at 2 MiB; at the limit the deepest texts use
+512–768 KiB of it. Overflowing the shadow stack is an out-of-bounds trap,
+which hangs Node 22 on macOS rather than throwing, so the limit must stay
+well inside it.
 
 ## JSON output
 

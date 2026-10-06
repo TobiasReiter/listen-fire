@@ -25,9 +25,14 @@ pub fn fail<T>(message: impl Into<String>, pos: usize) -> PResult<T> {
 }
 
 /// How deep the grammar may nest before it refuses the text. The parser is
-/// recursive descent; without a bound a deeply nested text would overflow
-/// the WASM stack and trap instead of reporting an error.
-pub const MAX_DEPTH: usize = 512;
+/// recursive descent, and a WASM build has two stacks to overflow: the
+/// engine's own (V8 throws a RangeError, about 450 levels of parentheses on
+/// Node's default stack) and the shadow stack in linear memory (4–6 KiB a
+/// level; overflowing it under `--stack-first` is an out-of-bounds trap,
+/// which hangs Node 22 on macOS instead of throwing). The bound keeps both
+/// several times clear; real expressions nest a few levels.
+/// scripts/build-parser-wasm.sh sizes the shadow stack.
+pub const MAX_DEPTH: usize = 128;
 
 pub const TOO_DEEP: &str = "expression nesting too deep";
 

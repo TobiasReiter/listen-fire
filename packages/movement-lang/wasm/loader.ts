@@ -36,6 +36,7 @@ interface ParserExports {
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
   call(fn: ParserFunction, args: number[]): number;
+  lastPanic(outPtrPtr: number, outLenPtr: number): void;
 }
 
 interface Loaded {
@@ -102,10 +103,11 @@ function call(fn: ParserFunction, input: string | Uint8Array, extra: number[]): 
   const bytes = typeof input === 'string' ? encoder.encode(input) : input;
   let status: number;
   let json: string;
+  let slots: number | undefined;
   try {
     const inPtr = exports.alloc(bytes.length);
     memoryBytes(exports).set(bytes, inPtr);
-    const slots = exports.alloc(8);
+    slots = exports.alloc(8);
     status = exports.call(fn, [inPtr, bytes.length, ...extra, slots, slots + 4]);
     exports.dealloc(inPtr, bytes.length);
     const view = new DataView(memoryBuffer(exports));
@@ -116,14 +118,32 @@ function call(fn: ParserFunction, input: string | Uint8Array, extra: number[]): 
     exports.dealloc(outPtr, outLen);
   } catch (cause) {
     // A trap (a Rust panic aborts) leaves the instance's heap in an unknown
-    // state, so it is never called again.
+    // state, so it is never called again — except to read the panic's
+    // message, which lives only in its memory.
+    const panic = slots === undefined ? undefined : panicMessage(exports, slots);
     if (loaded) loaded.exports = undefined;
-    throw new Error(`movement parser crashed in ${fn}: ${String(cause)}`, { cause });
+    const detail = panic ? `: ${panic}` : '';
+    throw new Error(`movement parser crashed in ${fn}: ${String(cause)}${detail}`, { cause });
   }
   if (status !== OK && status !== ERROR) {
     throw new Error(`movement parser returned unknown status ${status} from ${fn}`);
   }
   return { ok: status === OK, json: JSON.parse(json) };
+}
+
+/** What the Rust panic hook recorded before the trap, read through the
+ *  out slots the failed call had already allocated. A static buffer, so it
+ *  is not freed. Best effort: the error is thrown either way. */
+function panicMessage(exports: ParserExports, slots: number): string | undefined {
+  try {
+    exports.lastPanic(slots, slots + 4);
+    const view = new DataView(memoryBuffer(exports));
+    const ptr = view.getUint32(slots, true);
+    const len = view.getUint32(slots + 4, true);
+    return len === 0 ? undefined : decoder.decode(memoryBytes(exports).subarray(ptr, ptr + len));
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -171,6 +191,7 @@ function readExports(raw: Record<string, unknown>): ParserExports {
   };
   const alloc = exported('alloc');
   const dealloc = exported('dealloc');
+  const lastPanic = exported('last_panic');
   const parsers: Record<ParserFunction, (...args: number[]) => unknown> = {
     parse_program: exported('parse_program'),
     parse_expression: exported('parse_expression'),
@@ -181,6 +202,7 @@ function readExports(raw: Record<string, unknown>): ParserExports {
     alloc: (len) => number(alloc(len), 'alloc'),
     dealloc: (ptr, len) => void dealloc(ptr, len),
     call: (fn, args) => number(parsers[fn](...args), fn),
+    lastPanic: (outPtrPtr, outLenPtr) => void lastPanic(outPtrPtr, outLenPtr),
   };
 }
 
