@@ -1,10 +1,11 @@
-// The no-drift guarantee: the completion service and the parser recognise a NAME
-// through the SAME shared scanner (`scanName`), so the language's name grammar has
-// exactly one definition and the editor's completion context cannot silently drift
-// from what the parser actually accepts.
+// The no-drift guarantee: the completion service and the checker recognise a NAME
+// through `scanName`, and the parser (the Rust grammar, crates/movement-parser/src/
+// scan.rs) through its own copy. The last block below holds the two to the same
+// answers, so the editor's completion context cannot silently drift from what the
+// parser actually accepts.
 
-import { scanName, unwrapCredentialArg } from '../scan';
-import { parseProgram } from '../parse';
+import { MovementParseError, parseProgram } from '../parse';
+import { scanName, unwrapCredentialArg, type ScannedName } from '../scan';
 
 describe('scanName — the one name grammar', () => {
   it('accepts a bare identifier, reporting the index just past it', () => {
@@ -68,31 +69,55 @@ describe('unwrapCredentialArg', () => {
 });
 
 describe('scanName agrees with the parser for the same names', () => {
-  // For each representative name, the parser reads it as the write-body field key
-  // AND scanName accepts it identically — they are sourced from one definition.
-  const names = ['status', '`Snoozed Until`', '`Funding Round`'];
+  // The Rust scanner cannot be called on its own, so it is driven through
+  // parseProgram: the spelling is a write-body field key at column 5 with its
+  // value straight after the colon. What the parser does there says what its
+  // scanner read:
+  //   - the field parses: the name is the field's, and the value's column
+  //     says where the name ended;
+  //   - "Expected ':' after the field name 'x'": the scanner stopped early,
+  //     at the reported column, having read x;
+  //   - any other refusal at the key's own column: the scanner read no name.
+  const KEY_COL = 5;
 
-  it.each(names)('parser readName and scanName agree on %s', spelling => {
-    const program = parseProgram(`
-movement intake(msg: <inbox-[:message]->>) {
+  function parserScan(spelling: string): ScannedName | null {
+    let program;
+    try {
+      program = parseProgram(`movement intake(msg: <inbox-[:message]->>) {
   write crm-[:company]-> {
-    ${spelling}: "x"
+    ${spelling}:"x"
   }
 }
 `);
-    // What scanName reads from the bare spelling…
-    const scanned = scanName(spelling, 0);
-    expect(scanned).not.toBeNull();
-    const verbatim = spelling.startsWith('`') ? spelling.slice(1, -1) : spelling;
-    expect(scanned!.name).toBe(verbatim);
-    expect(scanned!.end).toBe(spelling.length);
+    } catch (e) {
+      if (!(e instanceof MovementParseError)) throw e;
+      const stopped = /^Expected ':' after the field name '(.*)', found /s.exec(e.message);
+      if (stopped) return { name: stopped[1], end: e.loc.col - KEY_COL };
+      expect(e.loc).toEqual({ line: 3, col: KEY_COL });
+      return null;
+    }
+    const movement = program.statements[0];
+    if (movement?.kind !== 'movement') throw new Error('expected a movement');
+    const write = movement.body[0];
+    if (write?.kind !== 'write') throw new Error('expected a write');
+    const field = write.write.fields[0];
+    // The value starts one past the colon that follows the name.
+    return { name: field.name, end: field.value.span.start.col - KEY_COL - 1 };
+  }
 
-    // …is the verbatim field name the PARSER recorded in the AST.
-    const stmt = program.statements[0];
-    expect(stmt.kind).toBe('movement');
-    const body = (stmt as Extract<typeof stmt, { kind: 'movement' }>).body;
-    const write = body.find(s => s.kind === 'call' || s.kind === 'write') ?? body[0];
-    const fieldNames = JSON.stringify(write).includes(`"${verbatim}"`);
-    expect(fieldNames).toBe(true);
+  const spellings = [
+    'status',
+    '`Snoozed Until`',
+    '`Funding Round`',
+    '`open name',
+    '`crosses\nline`',
+    '1abc',
+    'café',
+    '`Café Ünïcode`',
+    '`🚀 Launch`',
+  ];
+
+  it.each(spellings)('reads %j as scanName does', spelling => {
+    expect(parserScan(spelling)).toEqual(scanName(spelling, 0));
   });
 });

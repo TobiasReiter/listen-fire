@@ -11,6 +11,7 @@
 // Set UPDATE_PROGRAMS_FIXTURE=1 to rewrite the pins from the current parser
 // (after a re-harvest, or a ruling) — then read the diff.
 import { treeOfSlot } from '../../expression/bridge';
+import * as loader from '../../wasm/loader';
 import type { ExprSlot } from '../ast';
 import { canonical, SLOTS } from '../expression/__test__/lowering_fixture';
 import { ExpressionSyntaxError, parseExpression } from '../expression/parse_expression';
@@ -60,24 +61,33 @@ function load(): ProgramRecord[] {
     .map(line => JSON.parse(line) as ProgramRecord);
 }
 
-/** Every `{raw, span}` in a parsed value — each slot, a duration's text too. */
-function slotsIn(value: unknown, found: ExprSlot[] = []): ExprSlot[] {
+/** Every expression slot in a parsed value. A duration's text is `{raw, span}`
+ *  too, but no expression, so the parser hands back no tree for it. */
+function slotsIn(value: unknown, key?: string, found: ExprSlot[] = []): ExprSlot[] {
   if (Array.isArray(value)) {
-    value.forEach(child => slotsIn(child, found));
+    value.forEach(child => slotsIn(child, key, found));
   } else if (isRecord(value)) {
     // The slot object itself: its cached tree is keyed by identity.
-    if (isSlot(value)) found.push(value);
-    else Object.values(value).forEach(child => slotsIn(child, found));
+    if (isSlot(value)) {
+      if (key !== 'duration' && key !== 'every') found.push(value);
+    } else {
+      Object.entries(value).forEach(([k, child]) => slotsIn(child, k, found));
+    }
   }
   return found;
 }
 
-/** Each slot in `value` whose cached tree is not what its text parses to. */
-function staleSlots(value: unknown, where: string): string[] {
+/** Each slot in `value` whose tree was not cached, or is not what its text
+ *  parses to. `parses` watches the parser: reading a cached slot calls it
+ *  not at all. */
+function staleSlots(value: unknown, where: string, parses: jest.SpyInstance): string[] {
   return slotsIn(value).flatMap(slot => {
+    const label = `${where} slot ${JSON.stringify(slot.raw.slice(0, 60))}`;
+    parses.mockClear();
     const cached = outcome(() => treeOfSlot(slot));
+    if (parses.mock.calls.length > 0) return [`${label}: not cached`];
     const fresh = outcome(() => parseExpression(slot.raw));
-    return cached === fresh ? [] : [`${where} slot ${JSON.stringify(slot.raw.slice(0, 60))}: ${cached} | ${fresh}`];
+    return cached === fresh ? [] : [`${label}: ${cached} | ${fresh}`];
   });
 }
 
@@ -113,6 +123,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 describe('programs regression', () => {
+  afterEach(() => jest.restoreAllMocks());
+
   if (process.env.UPDATE_PROGRAMS_FIXTURE) {
     const rows = load().map(r => parseNow(r.source, r.version));
     fs.writeFileSync(FIXTURE, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
@@ -133,6 +145,7 @@ describe('programs regression', () => {
   });
 
   it('caches on every slot of every program the tree its text parses to', () => {
+    const parses = jest.spyOn(loader, 'callParser');
     let slots = 0;
     const stale = load().flatMap(({ source, version }) => {
       let program: unknown;
@@ -143,13 +156,14 @@ describe('programs regression', () => {
         throw e;
       }
       slots += slotsIn(program).length;
-      return staleSlots(program, `v${version} ${JSON.stringify(source.slice(0, 60))}`);
+      return staleSlots(program, `v${version} ${JSON.stringify(source.slice(0, 60))}`, parses);
     });
     expect(slots).toBeGreaterThan(10_000);
     expect(stale).toEqual([]);
   });
 
   it('caches on every slot of every nested call the tree its text parses to', () => {
+    const parses = jest.spyOn(loader, 'callParser');
     let parsed = 0;
     const stale = SLOTS.flatMap(record => {
       // Part-way along a file's third line, as the statement layer captures one.
@@ -170,7 +184,7 @@ describe('programs regression', () => {
             throw e;
           }
           parsed += 1;
-          return staleSlots(value, `v${version} ${JSON.stringify(record.raw.slice(at.start, at.end).slice(0, 60))}`);
+          return staleSlots(value, `v${version} ${JSON.stringify(record.raw.slice(at.start, at.end).slice(0, 60))}`, parses);
         }),
       );
     });
