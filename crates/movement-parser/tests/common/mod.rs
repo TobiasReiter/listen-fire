@@ -30,6 +30,8 @@ fn write_value(out: &mut String, value: &Value) {
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Value::Number(n) => write_number(out, n),
         Value::String(s) => write_string(out, s),
+        // JSON.stringify writes an `undefined` array element as `null`; Rust
+        // has no undefined and writes `null` itself, so the two agree.
         Value::Array(items) => {
             out.push('[');
             for (i, item) in items.iter().enumerate() {

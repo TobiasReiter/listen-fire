@@ -80,6 +80,24 @@ export function isParserReady(): boolean {
  * @internal Used by the parser wrappers; not part of the package surface.
  */
 export function callJson(fn: ParserFunction, input: string | Uint8Array, extra: number[]): unknown {
+  return call(fn, input, extra).json;
+}
+
+/**
+ * `callJson` with the status the export returned: whether the JSON is the
+ * tree or `{error: …}`, without guessing from its shape.
+ *
+ * @internal Test seam for the differential test.
+ */
+export function __callJsonForTests(
+  fn: ParserFunction,
+  input: string | Uint8Array,
+  extra: number[],
+): { ok: boolean; json: unknown } {
+  return call(fn, input, extra);
+}
+
+function call(fn: ParserFunction, input: string | Uint8Array, extra: number[]): { ok: boolean; json: unknown } {
   const exports = currentExports();
   const bytes = typeof input === 'string' ? encoder.encode(input) : input;
   let status: number;
@@ -105,7 +123,7 @@ export function callJson(fn: ParserFunction, input: string | Uint8Array, extra: 
   if (status !== OK && status !== ERROR) {
     throw new Error(`movement parser returned unknown status ${status} from ${fn}`);
   }
-  return JSON.parse(json);
+  return { ok: status === OK, json: JSON.parse(json) };
 }
 
 /**

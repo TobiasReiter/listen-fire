@@ -70,6 +70,8 @@ fn every_pinned_program_parses_as_pinned() {
 }
 
 fn diff(record: &Record) -> Option<String> {
+    // Versions outside the supported ones (99) go through unchanged; the pin
+    // shows TypeScript reads them as the current version, so Rust must too.
     let parsed = movement_parser::parse_program(&record.source, record.version);
     match (&record.expected, parsed) {
         (Expected::Ast { ast_sha256 }, Ok(ast)) => {
@@ -79,11 +81,26 @@ fn diff(record: &Record) -> Option<String> {
         (Expected::Ast { .. }, Err(error)) => Some(format!("error {error}, pinned an ast")),
         (Expected::Error { error: pinned }, Ok(_)) => Some(format!("parsed, pinned error {pinned}")),
         (Expected::Error { error: pinned }, Err(error)) => {
-            // The pin keeps only the message and the point location; anything
-            // else the Rust error carries is not part of the contract here.
-            let got = json!({ "message": error.get("message"), "loc": error.get("loc") });
+            let got = as_pinned_error(&error);
             (&got != pinned).then(|| format!("error {got}, pinned {pinned}"))
         }
+    }
+}
+
+/// The pin is `MovementParseError`'s message and point location. Rust emits
+/// the base message; the TypeScript class appends ` (line N, col M)`, so the
+/// comparison does too. Anything else the Rust error carries is not part of
+/// the contract here.
+fn as_pinned_error(error: &Value) -> Value {
+    let message = error.get("message").and_then(Value::as_str);
+    let line = error.pointer("/loc/line").and_then(Value::as_u64);
+    let col = error.pointer("/loc/col").and_then(Value::as_u64);
+    match (message, line, col) {
+        (Some(message), Some(line), Some(col)) => json!({
+            "message": format!("{message} (line {line}, col {col})"),
+            "loc": { "line": line, "col": col },
+        }),
+        _ => json!({ "message": error.get("message"), "loc": error.get("loc") }),
     }
 }
 
@@ -101,4 +118,11 @@ fn the_hash_is_taken_over_the_canonical_text_typescript_pins() {
     let empty = json!({ "statements": [] });
     let pinned = "00ff6f8f85177c9eea82cc033ba1aea2ec68a8f4e6a4f42fb60aa98ab5fe40de";
     assert_eq!(sha256_hex(&common::canonical(&empty)), pinned);
+}
+
+#[test]
+fn a_rust_error_compares_as_the_movement_parse_error_it_becomes() {
+    let rust = json!({ "message": "boom", "loc": { "line": 2, "col": 3 } });
+    let pinned = json!({ "message": "boom (line 2, col 3)", "loc": { "line": 2, "col": 3 } });
+    assert_eq!(as_pinned_error(&rust), pinned);
 }

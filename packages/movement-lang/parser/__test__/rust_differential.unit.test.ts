@@ -7,7 +7,7 @@
 //
 // Off until the Rust grammars land: MOVEMENT_PARSER_DIFFERENTIAL=1 turns it on.
 import { CURRENT_LANGUAGE_VERSION } from '../../language_version';
-import { callJson } from '../../wasm/loader';
+import { __callJsonForTests } from '../../wasm/loader';
 import { canonical, SLOTS } from '../expression/__test__/lowering_fixture';
 import { ExpressionSyntaxError, parseExpression } from '../expression/parse_expression';
 import { MovementParseError, parseProgram, type ParseOptions } from '../parse';
@@ -46,7 +46,9 @@ function tsExpression(raw: string): Outcome {
 
 function tsProgram(source: string, version: number): Outcome {
   // programs.json pins versions the type does not list (99) exactly as a
-  // caller would pass them; the regression test does the same.
+  // caller would pass them; the regression test does the same. Rust gets the
+  // number unchanged too, and must read it as the current version, as the
+  // pin shows TypeScript does.
   const options: ParseOptions = { languageVersion: version as NonNullable<ParseOptions['languageVersion']> };
   try {
     return { ok: sha256(canonical(parseProgram(source, options))) };
@@ -56,18 +58,37 @@ function tsProgram(source: string, version: number): Outcome {
   }
 }
 
+type RustError = Record<string, unknown>;
+
 const RUST = {
-  parse_expression: { errorFields: ['message', 'pos'], tree: (out: unknown) => canonical(out) },
-  parse_program: { errorFields: ['message', 'loc'], tree: (out: unknown) => sha256(canonical(out)) },
+  parse_expression: {
+    tree: (out: unknown) => canonical(out),
+    // ExpressionSyntaxError adds nothing to the message (expression/error.ts).
+    error: (e: RustError) => ({ message: e.message, pos: e.pos }),
+  },
+  parse_program: {
+    tree: (out: unknown) => sha256(canonical(out)),
+    error: (e: RustError) => programError(e),
+  },
 } as const;
 
 /** The Rust side, in the form its TypeScript counterpart above reports. */
 function rust(fn: keyof typeof RUST, input: { source: string; version: number }): Outcome {
-  const out = callJson(fn, input.source, [input.version]);
-  if (!isRecord(out) || !('error' in out)) return { ok: RUST[fn].tree(out) };
-  const error = out.error;
-  if (!isRecord(error)) return { error };
-  return { error: Object.fromEntries(RUST[fn].errorFields.map(field => [field, error[field]])) };
+  const { ok, json } = __callJsonForTests(fn, input.source, [input.version]);
+  if (ok) return { ok: RUST[fn].tree(json) };
+  const error = isRecord(json) ? json.error : undefined;
+  return { error: isRecord(error) ? RUST[fn].error(error) : json };
+}
+
+/** Rust emits the base message; `MovementParseError` appends the location, so
+ *  the comparison does too. */
+function programError(e: RustError): unknown {
+  const loc = e.loc;
+  if (!isRecord(loc)) return { message: e.message, loc };
+  return {
+    message: `${String(e.message)} (line ${String(loc.line)}, col ${String(loc.col)})`,
+    loc: { line: loc.line, col: loc.col },
+  };
 }
 
 function sha256(text: string): string {
@@ -111,6 +132,14 @@ function loadPrograms(): ProgramRecord[] {
     });
 }
 
+describe('the differential comparison', () => {
+  it('reads a Rust program error as the MovementParseError it becomes', () => {
+    const ts = { error: { message: 'boom (line 2, col 3)', loc: { line: 2, col: 3 } } };
+    const rs = { error: RUST.parse_program.error({ message: 'boom', loc: { line: 2, col: 3 } }) };
+    expect(differs(ts, rs)).toBeUndefined();
+  });
+});
+
 if (!ENABLED) {
   console.warn('rust differential skipped; set MOVEMENT_PARSER_DIFFERENTIAL=1');
 }
@@ -121,7 +150,10 @@ if (!ENABLED) {
     const drifted = SLOTS.flatMap(({ raw }) => {
       // The TypeScript expression grammar reads no version, so the Rust one
       // must give the same tree under any.
-      const why = differs(tsExpression(raw), rust('parse_expression', { source: raw, version: CURRENT_LANGUAGE_VERSION }));
+      const why = differs(
+        tsExpression(raw),
+        rust('parse_expression', { source: raw, version: CURRENT_LANGUAGE_VERSION }),
+      );
       return why === undefined ? [] : [`${JSON.stringify(raw.slice(0, 80))}: ${why}`];
     });
     report('expression_slots.json', SLOTS.length, drifted);
