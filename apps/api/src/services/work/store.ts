@@ -3,7 +3,7 @@ import { sql } from 'kysely';
 import type { Work } from '../../generated/kysely/automations/Work';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { isWorkKind, type WorkKind, type WorkRow } from './kinds';
+import { isWorkKind, WORK_KINDS, type WorkKind, type WorkRow } from './kinds';
 
 function toWorkRow(row: Work): WorkRow {
   if (!isWorkKind(row.kind))
@@ -19,11 +19,20 @@ function toWorkRow(row: Work): WorkRow {
     attempts: row.attempts,
     leaseOwner: row.lease_owner,
     leaseUntil: row.lease_until,
+    updatedAt: row.updated_at,
   };
 }
 
 function jsonb(value: unknown) {
   return sql`${JSON.stringify(value ?? {})}::jsonb`;
+}
+
+// updated_at is the row's version: completeWork deletes only if it is unchanged
+// since claim. JS Dates carry milliseconds, so the version is millisecond-exact
+// and strictly increases even when two writes land in the same millisecond.
+function nextVersion(table: 'w' | 'work') {
+  const current = sql.ref(`${table}.updated_at`);
+  return sql`GREATEST(date_trunc('milliseconds', clock_timestamp()), date_trunc('milliseconds', ${current}) + interval '1 millisecond')`;
 }
 
 export interface EnqueueWorkInput {
@@ -34,18 +43,20 @@ export interface EnqueueWorkInput {
   dueAt?: Date;
 }
 
-/** Upsert by key. A row currently leased is left alone (its handler is running);
- *  an unleased row takes the NEW due_at and payload (a re-armed timer moves forward). */
+/** Upsert by key. Against a row whose lease is live (by the database clock) the
+ *  NEW due_at and payload win: a re-arm during the run, which completeWork then
+ *  honours. Against an unleased row the EARLIEST due_at wins with the new payload
+ *  (several leaves of one run share a key). */
 export async function enqueueWork(input: EnqueueWorkInput): Promise<void> {
   const dueAt = input.dueAt ?? new Date();
-  // "Leased" is lease_owner, not lease_until vs a clock: a lapsed lease is still
-  // owned until re-claimed, and its recover path must see the payload it ran with.
   await sql`
     INSERT INTO automations.work (kind, key, team_id, payload, due_at)
     VALUES (${input.kind}, ${input.key}, ${input.teamId ?? null}, ${jsonb(input.payload)}, ${dueAt})
     ON CONFLICT (key) DO UPDATE
-      SET due_at = EXCLUDED.due_at, payload = EXCLUDED.payload, team_id = EXCLUDED.team_id, updated_at = now()
-      WHERE work.lease_owner IS NULL`.execute(getAutomationsQb(['work']));
+      SET due_at = CASE WHEN work.lease_until > now() THEN EXCLUDED.due_at ELSE LEAST(work.due_at, EXCLUDED.due_at) END,
+          payload = EXCLUDED.payload,
+          team_id = EXCLUDED.team_id,
+          updated_at = ${nextVersion('work')}`.execute(getAutomationsQb(['work']));
 }
 
 /** Upsert a self-rescheduling row (interval_ms set). Idempotent; call at boot. */
@@ -80,10 +91,11 @@ export async function claimDueWork(input: {
   // One statement so two drainers cannot race: SKIP LOCKED hands each a disjoint set.
   const { rows } = await sql<Work>`
     UPDATE automations.work w
-    SET lease_owner = ${input.owner}, lease_until = ${leaseUntil}, attempts = attempts + 1, updated_at = now()
+    SET lease_owner = ${input.owner}, lease_until = ${leaseUntil}, attempts = attempts + 1, updated_at = ${nextVersion('w')}
     WHERE w.id IN (
       SELECT id FROM automations.work
       WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < ${now})
+        AND kind = ANY(${[...WORK_KINDS]}::text[])
       ORDER BY due_at
       LIMIT ${input.limit}
       FOR UPDATE SKIP LOCKED
@@ -103,38 +115,42 @@ export async function heartbeatWork(input: {
   const leaseUntil = new Date(now.getTime() + input.leaseMs);
   const { rows } = await sql<{ id: string }>`
     UPDATE automations.work
-    SET lease_until = ${leaseUntil}, updated_at = now()
+    SET lease_until = ${leaseUntil}
     WHERE id = ${input.id} AND lease_owner = ${input.owner}
     RETURNING id`.execute(getAutomationsQb(['work']));
   return rows.length > 0;
 }
 
-/** Delete the row, or if interval_ms is set, clear the lease and set due_at = now + interval. */
+/** A one-shot row is deleted, unless it was re-armed since claim (updated_at moved
+ *  past `claimedUpdatedAt`): then its lease clears and it runs again at its due_at.
+ *  A periodic row (interval_ms set) clears its lease and is due at now + interval. */
 export async function completeWork(input: {
   id: string;
   owner: string;
+  claimedUpdatedAt: Date;
   now?: Date;
 }): Promise<void> {
   const now = input.now ?? new Date();
   const qb = getAutomationsQb(['work']);
   await sql`
     DELETE FROM automations.work
-    WHERE id = ${input.id} AND lease_owner = ${input.owner} AND interval_ms IS NULL`.execute(qb);
-  // attempts resets so the next tick of a periodic row is a first run, not a recover.
+    WHERE id = ${input.id} AND lease_owner = ${input.owner} AND interval_ms IS NULL
+      AND updated_at = ${input.claimedUpdatedAt}`.execute(qb);
+  // attempts resets so the next claim is a first run, not a recover: the re-armed
+  // row is new work, and a periodic row's next tick is too.
   await sql`
     UPDATE automations.work
     SET lease_owner = NULL, lease_until = NULL, attempts = 0,
-        due_at = ${now}::timestamptz + interval_ms * interval '1 millisecond', updated_at = now()
-    WHERE id = ${input.id} AND lease_owner = ${input.owner} AND interval_ms IS NOT NULL`.execute(
-    qb,
-  );
+        due_at = CASE WHEN interval_ms IS NULL THEN due_at
+                      ELSE ${now}::timestamptz + interval_ms * interval '1 millisecond' END
+    WHERE id = ${input.id} AND lease_owner = ${input.owner}`.execute(qb);
 }
 
 /** Clear the lease without rescheduling (handler threw and wants a retry at due_at). */
 export async function releaseWork(input: { id: string; owner: string }): Promise<void> {
   await sql`
     UPDATE automations.work
-    SET lease_owner = NULL, lease_until = NULL, updated_at = now()
+    SET lease_owner = NULL, lease_until = NULL
     WHERE id = ${input.id} AND lease_owner = ${input.owner}`.execute(getAutomationsQb(['work']));
 }
 

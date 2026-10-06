@@ -1,33 +1,23 @@
-export type WorkKind =
-  | 'dispatch_event' // payload: CapturedTriggerEvent (triggers/dispatch_event.ts)
-  | 'resume_timer' // payload: { runId: string }
-  | 'fire_cron' // payload: { triggerId: string }
-  | 'poll_source' // payload: { triggerId: string }
-  | 'wake_await' // payload: { adapterType: string; correlationKey: string }
-  | 'cron_reconcile' // periodic, payload {}
-  | 'poll_reconcile' // periodic, payload {}
-  | 'await_resume_sweep' // periodic, payload {}  (temporary until protocol v2)
-  | 'settle_cancelled_timers' // periodic, payload {}
-  | 'exposed_file_sweep' // periodic, payload {}
-  | 'airtable_webhook_refresh'; // periodic, payload {}
+export const WORK_KINDS = [
+  'dispatch_event', // payload: CapturedTriggerEvent (triggers/dispatch_event.ts)
+  'resume_timer', // payload: { runId: string }
+  'fire_cron', // payload: { triggerId: string }
+  'poll_source', // payload: { triggerId: string }
+  'wake_await', // payload: { adapterType: string; correlationKey: string }
+  'cron_reconcile', // periodic, payload {}
+  'poll_reconcile', // periodic, payload {}
+  'await_resume_sweep', // periodic, payload {}  (temporary until protocol v2)
+  'settle_cancelled_timers', // periodic, payload {}
+  'exposed_file_sweep', // periodic, payload {}
+  'airtable_webhook_refresh', // periodic, payload {}
+] as const;
 
-// A Record over the union makes the compiler reject a kind added above but not here.
-const WORK_KINDS: Record<WorkKind, true> = {
-  dispatch_event: true,
-  resume_timer: true,
-  fire_cron: true,
-  poll_source: true,
-  wake_await: true,
-  cron_reconcile: true,
-  poll_reconcile: true,
-  await_resume_sweep: true,
-  settle_cancelled_timers: true,
-  exposed_file_sweep: true,
-  airtable_webhook_refresh: true,
-};
+export type WorkKind = (typeof WORK_KINDS)[number];
+
+const KNOWN_KINDS: ReadonlySet<string> = new Set(WORK_KINDS);
 
 export function isWorkKind(value: string): value is WorkKind {
-  return Object.hasOwn(WORK_KINDS, value);
+  return KNOWN_KINDS.has(value);
 }
 
 export interface WorkRow {
@@ -41,6 +31,7 @@ export interface WorkRow {
   attempts: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
+  updatedAt: Date;
 }
 
 export interface WorkContext {
