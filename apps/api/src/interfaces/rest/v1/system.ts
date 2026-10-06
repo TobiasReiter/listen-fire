@@ -11,6 +11,8 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import { drainUntilIdle } from '../../../services/work/drain';
+import { mounts } from '../../../products';
 import { requireScope } from './require_scope';
 
 const SYSTEM_SCOPE = 'system';
@@ -225,6 +227,24 @@ const sendMessageHandler: RequestHandler = async (req, res) => {
   }
 };
 
+const drainBodySchema = z
+  .object({
+    limit: z.number().int().positive().optional(),
+    maxPasses: z.number().int().positive().optional(),
+  })
+  .strict();
+
+/** The tick a scheduler calls when `AUTOMATIONS_DRAIN_MODE=external`. Each call
+ *  drains until idle (bounded by `maxPasses`) and reports what it did. */
+const drainAutomationsHandler: RequestHandler = async (req, res) => {
+  const body = drainBodySchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ error: 'invalid_body', issues: body.error.issues });
+  }
+  const result = await drainUntilIdle({ owner: `http:${randomUUID()}`, ...body.data });
+  return res.status(200).json(result);
+};
+
 const systemRouter: ReturnType<typeof Router> = Router();
 
 systemRouter.use(requireScope(SYSTEM_SCOPE));
@@ -233,5 +253,8 @@ systemRouter.get('/tg-runs', route(listTgRunsHandler));
 systemRouter.get('/tg-runs/:id', route(getTgRunHandler));
 systemRouter.post('/conversations', route(startConversationHandler));
 systemRouter.post('/conversations/:id/messages', route(sendMessageHandler));
+// `system` is mounted on every installation, so the route gates itself the way
+// index.ts gates the automations routers: absent, not refused, without the unit.
+if (mounts('automations')) systemRouter.post('/automations/drain', route(drainAutomationsHandler));
 
 export { systemRouter };
