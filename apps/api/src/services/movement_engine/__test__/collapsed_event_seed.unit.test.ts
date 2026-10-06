@@ -90,12 +90,6 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
   resolveActingUser: jest.fn(async () => null),
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import type { Catalog, InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
@@ -104,6 +98,7 @@ import type { Adapter, ParentLink, RuntimeCapabilities } from '../../translation
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000011' as TeamId;
 const MESSAGE = 'Slack Message';
@@ -254,11 +249,15 @@ async function run(event: TriggerEvent) {
     event,
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: () => 'cred-1',
-    resolveAdapter: ({ adapterType }) => {
-      if (adapterType === 'slack') return chat.adapter;
-      throw new Error(`test: no fake for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        credentialId: () => 'cred-1',
+        resolve: ({ adapterType }) => {
+          if (adapterType === 'slack') return chat.adapter;
+          throw new Error(`test: no fake for '${adapterType}'`);
+        },
+      },
+    }),
   });
   return { result, creates: chat.creates };
 }

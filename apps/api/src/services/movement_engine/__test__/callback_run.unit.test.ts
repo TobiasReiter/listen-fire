@@ -26,6 +26,7 @@ import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { runMovement, fireCallbackBody, type ParkSink } from '../run';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
 const KG = 'kg';
@@ -172,9 +173,13 @@ function movementRun(args: {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: args.kg.adapter }),
-    callbackSink: args.callbacks.sink,
-    ...(args.parks !== undefined ? { parkSink: args.parks.sink } : {}),
+    host: makeTestHost({
+      adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: args.kg.adapter }) },
+      park: {
+        callbacks: args.callbacks.sink,
+        ...(args.parks !== undefined ? { sink: args.parks.sink } : {}),
+      },
+    }),
     dryRun: false,
   });
 }
@@ -284,7 +289,9 @@ listen to runs {} fire m
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }),
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
+        }),
         dryRun: false,
       }),
     ).rejects.toThrow(/callback/i);
@@ -411,9 +418,10 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }),
-      callbackSink: callbacks.sink,
-      parkSink: parks.sink,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
+        park: { callbacks: callbacks.sink, sink: parks.sink },
+      }),
       // The stored state, JSON round-tripped exactly as the DB would.
       state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
       values,
@@ -460,9 +468,10 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }),
-      callbackSink: callbacks.sink,
-      parkSink: parks.sink,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
+        park: { callbacks: callbacks.sink, sink: parks.sink },
+      }),
       state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
       values: {},
       callIndex: 0,
@@ -492,9 +501,10 @@ listen to runs {} fire m
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }),
-        callbackSink: callbacks.sink,
-        parkSink: parks.sink,
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
+          park: { callbacks: callbacks.sink, sink: parks.sink },
+        }),
         state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
         values: {},
         callIndex: 0,
@@ -626,8 +636,12 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog: askCatalog,
-      resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter, [ASK]: ask.adapter }),
-      callbackSink: callbacks.sink,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter, [ASK]: ask.adapter }),
+        },
+        park: { callbacks: callbacks.sink },
+      }),
       dryRun: false,
     });
     expect(minted.parked).toBeFalsy();
@@ -640,12 +654,16 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog: askCatalog,
-      resolveAdapter: makeResolver({
-        manual: manualAdapter,
-        [KG]: makeKgFake().adapter,
-        [ASK]: fireAsk.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            manual: manualAdapter,
+            [KG]: makeKgFake().adapter,
+            [ASK]: fireAsk.adapter,
+          }),
+        },
+        park: { callbacks: callbacks.sink },
       }),
-      callbackSink: callbacks.sink,
       state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
       values: {},
       callIndex: 0,

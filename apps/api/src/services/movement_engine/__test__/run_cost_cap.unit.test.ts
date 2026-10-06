@@ -74,12 +74,6 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runFailureCause, runMovement, MovementRunFailed } from '../run';
 import type { MovementTransformInvoker } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
@@ -92,6 +86,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -216,10 +211,14 @@ async function run(
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-      adapterType === 'email' ? email.adapter : attio.adapter,
-    transformInvoker: invoker,
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email.adapter : attio.adapter,
+      },
+      llm: { transforms: invoker },
+    }),
     ...options,
   });
   return { result, attio };

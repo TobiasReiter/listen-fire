@@ -77,12 +77,6 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runMovement } from '../run';
 import type { MovementTransformInvoker, TransformInvocationResult } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
@@ -97,6 +91,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
 
@@ -208,13 +203,17 @@ function run(source: string, invoker: MovementTransformInvoker, adapters: {
     event: webhookEvent({ subject: 'Acme', text: 'https://acme.example' }),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      const found = adapterType === 'email' ? adapters.email : adapters.attio;
-      if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);
-      return found;
-    },
-    transformInvoker: invoker,
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          const found = adapterType === 'email' ? adapters.email : adapters.attio;
+          if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);
+          return found;
+        },
+      },
+      llm: { transforms: invoker },
+    }),
   });
 }
 

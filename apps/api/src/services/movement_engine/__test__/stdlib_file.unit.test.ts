@@ -89,12 +89,6 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
   resolveActingUser: jest.fn(async () => null),
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 // The PDF boundary: file_render's REAL code runs (escaping, page
 // driving, FileRef minting); only Chromium is stubbed. `page.pdf`
 // returns bytes derived from the html `setContent` received, so the
@@ -129,6 +123,7 @@ import { makeStablePosition, positionData } from '../../translation_graph/types'
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { Readable } from 'node:stream';
 import { services } from '../../../adapters/registry';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
@@ -301,10 +296,14 @@ async function runDigest(artifactType: 'pdf' | 'text') {
     event: EVENT,
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      slack: slackWithFiles(),
-      affinity: makeFakeAdapter('affinity').adapter,
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: makeResolver({
+          slack: slackWithFiles(),
+          affinity: makeFakeAdapter('affinity').adapter,
+        }),
+      },
     }),
     dryRun: true,
     writeSink: (w) => captured.push(w),
@@ -420,10 +419,14 @@ describe('unknown stdlib members fail checking with the family inventory', () =>
         event: EVENT,
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          slack: slackWithFiles(),
-          affinity: makeFakeAdapter('affinity').adapter,
+        host: makeTestHost({
+          adapters: {
+            credentialId: (name) => CREDENTIAL_IDS[name],
+            resolve: makeResolver({
+              slack: slackWithFiles(),
+              affinity: makeFakeAdapter('affinity').adapter,
+            }),
+          },
         }),
         dryRun: true,
       }),
@@ -462,8 +465,12 @@ describe('DATE.TODAY / DATETIME.AT through runMovement', () => {
       teamId: TEAM_ID,
       catalog,
       firedAt,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ slack: slackWithFiles(), affinity: affinity.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ slack: slackWithFiles(), affinity: affinity.adapter }),
+        },
+      }),
     });
     return affinity.creates[0].fields;
   }

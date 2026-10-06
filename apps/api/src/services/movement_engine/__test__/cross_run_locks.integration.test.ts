@@ -72,12 +72,6 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { randomUUID } from 'node:crypto';
 
 import { Client } from 'pg';
@@ -100,6 +94,7 @@ import { positionData } from '../../translation_graph/types';
 import { InMemoryWriteLocks, type WriteLocks } from '../../write_locks/write_locks';
 import { PostgresWriteLocks, type PostgresWriteLockHolder } from '../../write_locks/postgres';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { makeTestHost } from '../host';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -257,12 +252,16 @@ function runsAgainst(writeLocks: WriteLocks, whileWaiting: () => Promise<void> =
       movementName,
       event: webhookEvent(subject),
       teamId,
-      writeLocks,
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
+          resolve: ({ adapterType }: { adapterType: string }) =>
+            adapterType === 'email' ? email : crm.adapter,
+        },
+        llm: { transforms: slowFetch(whileWaiting) },
+        locks: writeLocks,
+      }),
       catalog,
-      resolveCredentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-      resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-        adapterType === 'email' ? email : crm.adapter,
-      transformInvoker: slowFetch(whileWaiting),
     });
   return { crm, runOnce };
 }

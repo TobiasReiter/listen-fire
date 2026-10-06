@@ -71,12 +71,6 @@ jest.mock('../../knowledge_pipeline/facts', () => ({
   extractFactsForResource: jest.fn(async () => []),
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 // The ONE judge — mocked at the LLM seam, so the real arbitration (the
 // short-circuits, the exactness rule) still runs and only the decision is
 // injected.
@@ -100,6 +94,7 @@ import {
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
 const mockExecute = execute as jest.MockedFunction<typeof execute>;
@@ -205,12 +200,16 @@ function run(body: string[], attio: Adapter) {
     event,
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return email;
-      if (adapterType === 'attio') return attio;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return email;
+          if (adapterType === 'attio') return attio;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
   });
 }
 

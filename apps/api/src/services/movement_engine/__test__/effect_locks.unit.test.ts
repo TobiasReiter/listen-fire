@@ -78,12 +78,6 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runMovement } from '../run';
 import type { MovementTransformInvoker } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
@@ -111,6 +105,7 @@ import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { InstanceSchema } from 'movement-lang';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
 
@@ -313,10 +308,14 @@ async function run(
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-      adapterType === 'email' ? email : crm.adapter,
-    transformInvoker: delayedFetch,
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email : crm.adapter,
+      },
+      llm: { transforms: delayedFetch },
+    }),
   });
   return { result, crm };
 }

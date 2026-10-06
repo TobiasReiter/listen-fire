@@ -88,12 +88,6 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
   resolveActingUser: jest.fn(async () => null),
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import { MovementEngineError } from '../expression';
@@ -113,6 +107,7 @@ import {
 } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 const COMPANY_NODE_ID = '00000000-0000-0000-0000-00000000c001' as NodeId;
@@ -285,12 +280,16 @@ describe('kg-seeded movements (mutation listen) — runMovement', () => {
       event: mutationEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: () => 'cred-attio-1',
-      resolveAdapter: ({ adapterType }) => {
-        if (adapterType === 'kg') return kg;
-        if (adapterType === 'attio') return target.adapter;
-        throw new Error(`test: no fake for '${adapterType}'`);
-      },
+      host: makeTestHost({
+        adapters: {
+          credentialId: () => 'cred-attio-1',
+          resolve: ({ adapterType }) => {
+            if (adapterType === 'kg') return kg;
+            if (adapterType === 'attio') return target.adapter;
+            throw new Error(`test: no fake for '${adapterType}'`);
+          },
+        },
+      }),
     });
 
     expect(result.movementName).toBe('on_company_change');
@@ -349,12 +348,16 @@ describe('kg-seeded movements (mutation listen) — runMovement', () => {
       event: mutationEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: () => 'cred-attio-1',
-      resolveAdapter: ({ adapterType }) => {
-        if (adapterType === 'kg') return kg;
-        if (adapterType === 'attio') return target.adapter;
-        throw new Error(`test: no fake for '${adapterType}'`);
-      },
+      host: makeTestHost({
+        adapters: {
+          credentialId: () => 'cred-attio-1',
+          resolve: ({ adapterType }) => {
+            if (adapterType === 'kg') return kg;
+            if (adapterType === 'attio') return target.adapter;
+            throw new Error(`test: no fake for '${adapterType}'`);
+          },
+        },
+      }),
     });
 
     expect(result.writes).toHaveLength(1);
@@ -371,9 +374,13 @@ describe('kg-seeded movements (mutation listen) — runMovement', () => {
         event: mutationEvent({ recordId: undefined }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: () => 'cred-attio-1',
-        resolveAdapter: ({ adapterType }) =>
-          adapterType === 'kg' ? kg : target.adapter,
+        host: makeTestHost({
+          adapters: {
+            credentialId: () => 'cred-attio-1',
+            resolve: ({ adapterType }) =>
+              adapterType === 'kg' ? kg : target.adapter,
+          },
+        }),
       }),
     ).rejects.toThrow(MovementEngineError);
   });

@@ -35,6 +35,7 @@ import {
   type ParkSink,
   type SuspensionPoint,
 } from '../run';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000077' as TeamId;
 const KG = 'kg';
@@ -210,20 +211,31 @@ interface Harness {
   callbacks?: ReturnType<typeof makeCallbackSink>;
 }
 
-function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>) {
+function runInput(
+  h: Harness,
+  kg: ReturnType<typeof makeKgFake>,
+  suspendWhen?: (point: SuspensionPoint) => boolean,
+) {
   return {
     source: h.source,
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
     movementName: 'recap',
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return kg.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
-    parkSink: h.parks.sink,
-    ...(h.callbacks !== undefined ? { callbackSink: h.callbacks.sink } : {}),
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+      park: {
+        sink: h.parks.sink,
+        ...(h.callbacks !== undefined ? { callbacks: h.callbacks.sink } : {}),
+      },
+      ...(suspendWhen !== undefined ? { control: { suspendWhen } } : {}),
+    }),
     dryRun: false,
   };
 }
@@ -233,13 +245,12 @@ async function start(h: Harness, suspendAt: string[] = []) {
   const kg = makeKgFake();
   const pending = new Set(suspendAt);
   const points: SuspensionPoint[] = [];
-  const result = await runMovement({
-    ...runInput(h, kg),
-    suspendWhen: (point) => {
+  const result = await runMovement(
+    runInput(h, kg, (point) => {
       points.push(point);
       return pending.delete(point.address);
-    },
-  });
+    }),
+  );
   return { result, kg, points };
 }
 

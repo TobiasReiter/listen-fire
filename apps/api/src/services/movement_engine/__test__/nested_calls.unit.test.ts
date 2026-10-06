@@ -13,6 +13,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000047' as TeamId;
 const KG = 'kg';
@@ -112,11 +113,15 @@ listen to runs {} fire recap
     teamId: TEAM_ID,
     catalog,
     movementName: 'recap',
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return kg.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     dryRun: false,
     ...(options.languageVersion !== undefined ? { languageVersion: options.languageVersion } : {}),
   });
@@ -242,8 +247,12 @@ listen to runs {} fire recap
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-          adapterType === 'manual' ? manualAdapter : kg.adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: ({ adapterType }: { adapterType: string }) =>
+              adapterType === 'manual' ? manualAdapter : kg.adapter,
+          },
+        }),
         dryRun: false,
         languageVersion: 2,
       }),
@@ -265,8 +274,12 @@ listen to runs {} fire RECAP
       teamId: TEAM_ID,
       catalog,
       movementName: 'RECAP',
-      resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-        adapterType === 'manual' ? manualAdapter : kg.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: ({ adapterType }: { adapterType: string }) =>
+            adapterType === 'manual' ? manualAdapter : kg.adapter,
+        },
+      }),
       dryRun: false,
     });
     expect(bodies(kg.creates)).toEqual(['ran']);
@@ -335,8 +348,12 @@ listen to runs {} fire recap
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-          adapterType === 'manual' ? manualAdapter : kg.adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: ({ adapterType }: { adapterType: string }) =>
+              adapterType === 'manual' ? manualAdapter : kg.adapter,
+          },
+        }),
         dryRun: false,
         languageVersion: 2,
       }),

@@ -14,9 +14,7 @@ jest.mock('../../translation_graph/engine/files/retrieve', () => ({
 }));
 
 const getOrCreateRawTextIdMock = jest.fn();
-jest.mock('../raw_text_store', () => ({
-  getOrCreateRawTextId: (...args: unknown[]) => getOrCreateRawTextIdMock(...args),
-}));
+const rawText = { getOrCreateId: (content: string) => getOrCreateRawTextIdMock(content) };
 
 jest.mock('../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -77,7 +75,7 @@ describe('audio classification → transcription → raw text', () => {
     ['.opus extension only', { contentType: '', name: 'note.opus' }],
     ['.webm extension only', { contentType: '', name: 'rec.webm' }],
   ])('transcribes when classified by %s', async (_label, over) => {
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await resolve(audioRef(over));
     expect(transcribeMock).toHaveBeenCalledWith('whisper-1', {
       audio: expect.any(Buffer),
@@ -90,7 +88,7 @@ describe('audio classification → transcription → raw text', () => {
   });
 
   it('hands the resolved bytes to the transcriber', async () => {
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     await resolve(audioRef());
     const [, { audio }] = transcribeMock.mock.calls[0];
     expect(String(audio)).toBe('fake-audio-bytes');
@@ -98,7 +96,7 @@ describe('audio classification → transcription → raw text', () => {
 
   it('reports an empty transcript as unreadable rather than as nothing at all', async () => {
     transcribeMock.mockResolvedValue({ text: '   ' });
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await new LlmUsageContext({ teamId: 'team-1' }).runAsync(async () =>
       resolve(audioRef()),
     );
@@ -110,7 +108,7 @@ describe('audio classification → transcription → raw text', () => {
 describe('the size guard — no silent truncation', () => {
   it('skips (loudly) when the declared size exceeds the cap', async () => {
     streamFileRefMock.mockResolvedValue({ stream: Readable.from([Buffer.from('bytes')]) });
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await resolve(audioRef({ size: 25 * 1024 * 1024 }));
     expect(result).toMatchObject({ unreadable: 'extraction_failed' });
     expect(transcribeMock).not.toHaveBeenCalled();
@@ -125,7 +123,7 @@ describe('the size guard — no silent truncation', () => {
     streamFileRefMock.mockResolvedValue({
       stream: Readable.from([Buffer.from('way-more-than-eight-bytes')]),
     });
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await resolve(audioRef({ size: undefined }));
     expect(result).toMatchObject({ unreadable: 'extraction_failed' });
     expect(transcribeMock).not.toHaveBeenCalled();
@@ -170,7 +168,7 @@ describe('a born-digital PDF is read from its own text layer — no OCR service'
     extractTextMock.mockResolvedValue({ totalPages: 1, text: PROSE.join('\n') });
     getOrCreateRawTextIdMock.mockResolvedValue('rt-layer');
 
-    const result = await makeFileTextResolver()(pdfRef());
+    const result = await makeFileTextResolver(rawText)(pdfRef());
 
     // The parser was handed the PDF's own bytes …
     const handed = extractTextMock.mock.calls[0][0] as Uint8Array;
@@ -189,7 +187,7 @@ describe('a born-digital PDF is read from its own text layer — no OCR service'
     ocrMock.mockResolvedValue('OCR read the scan.');
     getOrCreateRawTextIdMock.mockResolvedValue('rt-ocr');
 
-    const result = await makeFileTextResolver()(pdfRef());
+    const result = await makeFileTextResolver(rawText)(pdfRef());
 
     expect(ocrMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ text: 'OCR read the scan.', rawTextId: 'rt-ocr' });
@@ -201,7 +199,7 @@ describe('a born-digital PDF is read from its own text layer — no OCR service'
     ocrMock.mockResolvedValue('OCR read it anyway.');
     getOrCreateRawTextIdMock.mockResolvedValue('rt-ocr-2');
 
-    const result = await makeFileTextResolver()(pdfRef());
+    const result = await makeFileTextResolver(rawText)(pdfRef());
 
     expect(ocrMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ text: 'OCR read it anyway.', rawTextId: 'rt-ocr-2' });
@@ -212,7 +210,7 @@ describe('a born-digital PDF is read from its own text layer — no OCR service'
     extractTextMock.mockResolvedValue({ totalPages: 1, text: '1' });
     ocrMock.mockRejectedValue(new Error('OCR is not configured, so text cannot be extracted.'));
 
-    const result = await makeFileTextResolver()(pdfRef());
+    const result = await makeFileTextResolver(rawText)(pdfRef());
 
     expect(result).toEqual({
       unreadable: 'extraction_failed',
@@ -227,7 +225,7 @@ describe('the existing kinds are untouched', () => {
     extractTextMock.mockResolvedValue({ totalPages: 1, text: '' });
     streamFileRefMock.mockResolvedValue({ stream: Readable.from([Buffer.from('%PDF')]), size: 4 });
     getOrCreateRawTextIdMock.mockResolvedValue('rt-pdf');
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await resolve({
       __brand: 'FileRef',
       name: 'deck.pdf',
@@ -243,7 +241,7 @@ describe('the existing kinds are untouched', () => {
     ocrMock.mockRejectedValue(new Error('OCR is not configured, so text cannot be extracted.'));
     extractTextMock.mockResolvedValue({ totalPages: 1, text: '' });
     streamFileRefMock.mockResolvedValue({ stream: Readable.from([Buffer.from('%PDF')]), size: 4 });
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await resolve({
       __brand: 'FileRef',
       name: 'deck.pdf',
@@ -262,7 +260,7 @@ describe('the existing kinds are untouched', () => {
 
   it('reports unreachable bytes as their own reason', async () => {
     streamFileRefMock.mockRejectedValue(new Error('file not found (404)'));
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await resolve({
       __brand: 'FileRef',
       name: 'deck.pdf',
@@ -273,7 +271,7 @@ describe('the existing kinds are untouched', () => {
   });
 
   it('an unknown binary type is skipped — and says which type it was', async () => {
-    const resolve = makeFileTextResolver();
+    const resolve = makeFileTextResolver(rawText);
     const result = await resolve({
       __brand: 'FileRef',
       name: 'archive.zip',

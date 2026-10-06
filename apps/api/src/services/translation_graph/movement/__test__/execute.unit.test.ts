@@ -40,10 +40,12 @@ jest.mock('../../runs/trigger_run', () => ({
   })),
 }));
 
-// Resume-only seams: the park sink and the run-failure settle both hit the DB.
-jest.mock('../../../movement_engine/park_sink', () => ({
-  makeRecorderParkSink: jest.fn(() => ({})),
+// The production engine host wires the DB, the adapter registry and the model
+// clients; the engine is stubbed below, so the host it is handed is inert.
+jest.mock('../engine_host', () => ({
+  productionEngineHost: jest.fn(() => ({})),
 }));
+// The run-failure settle hits the DB.
 jest.mock('../../../interaction/run_failure', () => ({
   failRunAndCancelRequests: jest.fn(async () => undefined),
 }));

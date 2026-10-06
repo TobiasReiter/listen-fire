@@ -109,6 +109,7 @@ import { containerAssociation } from '../../adapter';
 import type { TriggerEvent } from '../../triggers/types';
 import { makeUnstablePosition, positionData } from '../../types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+import { makeTestHost } from '../../../movement_engine/host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
 
@@ -342,9 +343,13 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveFile,
-      resolveAdapter: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+        },
+        files: { resolveFile },
+      }),
     });
 
     // One dropbox create per resource — the callee constructed ITS OWN
@@ -378,9 +383,13 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveFile,
-      resolveAdapter: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+        },
+        files: { resolveFile },
+      }),
     });
     expect(dropbox.creates).toHaveLength(1);
   });
@@ -426,11 +435,17 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveFile: resolverOverSources(
-        new Map([['lib/shaping', `${FILES_LIB}\n\n${LIB}`]]),
-      ),
-      resolveAdapter: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+        },
+        files: {
+          resolveFile: resolverOverSources(
+            new Map([['lib/shaping', `${FILES_LIB}\n\n${LIB}`]]),
+          ),
+        },
+      }),
     });
 
     expect(dropbox.creates).toEqual([
@@ -447,7 +462,9 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
         event: webhookEvent('email', { subject: 'x' }),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: makeResolver({ email: email.adapter }),
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({ email: email.adapter }) },
+        }),
       }),
     ).rejects.toThrow(MovementEngineError);
     await expect(
@@ -457,7 +474,9 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
         event: webhookEvent('email', { subject: 'x' }),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: makeResolver({ email: email.adapter }),
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({ email: email.adapter }) },
+        }),
       }),
     ).rejects.toThrow(/file import|resolver|MOV_IMPORT/i);
   });

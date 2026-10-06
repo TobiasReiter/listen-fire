@@ -87,12 +87,6 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runFailureCause, runMovement } from '../run';
 
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
@@ -108,6 +102,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 /**
  * The error a rejected run really died of. A failure raised once the
@@ -282,8 +277,12 @@ describe('§G — _resources block → call with a synthesised node arg → drop
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+        },
+      }),
     });
 
     // One dropbox create per resource, fields read off the in-memory
@@ -373,8 +372,12 @@ describe('pass-through arguments and nested calls', () => {
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: email.adapter, attio: attio.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: email.adapter, attio: attio.adapter }),
+        },
+      }),
     });
 
     expect(attio.creates).toEqual([{ recordType: 'company', fields: { name: 'Acme Corp' } }]);
@@ -448,8 +451,12 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
       event: webhookEvent('email', { subject: 'Acme Corp', text: 'warm intro' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: email.adapter, attio: attio.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: email.adapter, attio: attio.adapter }),
+        },
+      }),
     });
 
     expect(attio.creates).toEqual([
@@ -468,8 +475,12 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
       event: webhookEvent('email', { subject: 'Acme Corp', text: 'warm intro' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: email.adapter, attio: attio.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: email.adapter, attio: attio.adapter }),
+        },
+      }),
     });
 
     // Exactly what the in-order call produces: c is still the company,
@@ -487,10 +498,14 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
         event: webhookEvent('email', { subject: 'Acme Corp' }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
+        host: makeTestHost({
+          adapters: {
+            credentialId: (name) => CREDENTIAL_IDS[name],
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+            }),
+          },
         }),
       }),
     ).rejects.toThrow(/MOVENG_RUNTIME.*'persist_pair' takes 2 parameters/);
@@ -528,10 +543,14 @@ describe('lexical scoping — the callee sees file scope, not the caller', () =>
         event: webhookEvent('email', { subject: 'Acme Corp' }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
+        host: makeTestHost({
+          adapters: {
+            credentialId: (name) => CREDENTIAL_IDS[name],
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+            }),
+          },
         }),
       });
     expect(await rejectionCause(promise)).toBeInstanceOf(MovementEngineError);
@@ -571,10 +590,14 @@ describe('lexical scoping — the callee sees file scope, not the caller', () =>
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+          }),
+        },
       }),
     });
 
@@ -604,10 +627,14 @@ describe('guards', () => {
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
       }),
     });
     expect(await rejectionCause(promise)).toBeInstanceOf(MovementEngineError);
@@ -700,8 +727,12 @@ describe('positional calls and value parameters', () => {
       event: webhookEvent('email', { subject: 'Acme Corp', text: 'warm intro' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+        },
+      }),
     });
     return attio.creates;
   }
@@ -809,8 +840,12 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+        },
+      }),
       // NB: no `dryRun` — the run is live; only the instance is dry.
       writeSink: (w) => captured.push(w),
     });
@@ -833,8 +868,12 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+        },
+      }),
     });
 
     expect(attio.creates).toEqual([{ recordType: 'company', fields: { name: 'Acme Corp' } }]);
@@ -847,10 +886,14 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
       }),
       writeSink: () => {},
     });
@@ -862,10 +905,14 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
       }),
     });
     expect(liveResult.writes[0].committed).toBe(true);

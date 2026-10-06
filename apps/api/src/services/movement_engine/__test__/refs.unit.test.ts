@@ -90,12 +90,6 @@ jest.mock('../../../lib/anthropic', () => ({
   })),
   MAX_CHAT_CONTINUATIONS: 5,
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import type { Catalog } from 'movement-lang';
 import { runMovement } from '../run';
 import { MovementEngineError } from '../expression';
@@ -121,6 +115,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import { instanceSchemaFromDescriptors } from '../../translation_graph/movement/schema_projection';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 const KG_ADAPTER_TYPE = 'kg';
@@ -601,11 +596,15 @@ describe('the engine passes natural names; the adapter translates internally', (
       event,
       teamId: TEAM_ID,
       catalog: teamLikeCatalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolveAdapter({
-        email: email.adapter,
-        attio: attio.adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          credentialId: (name) => CREDENTIAL_IDS[name],
+          resolve: makeResolveAdapter({
+            email: email.adapter,
+            attio: attio.adapter,
+            slack: slack.adapter,
+          }),
+        },
       }),
     });
 
@@ -692,9 +691,13 @@ describe('kg targets cross the boundary as natural ontology names', () => {
       event,
       teamId: TEAM_ID,
       catalog: teamLikeCatalog,
-      resolveAdapter: makeResolveAdapter({
-        email: email.adapter,
-        [KG_ADAPTER_TYPE]: kg.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolveAdapter({
+            email: email.adapter,
+            [KG_ADAPTER_TYPE]: kg.adapter,
+          }),
+        },
       }),
     });
 
@@ -783,9 +786,13 @@ describe('drift throws loudly (Decision #4)', () => {
               ? undefined
               : schemasBySlug[adapter as keyof typeof schemasBySlug],
         },
-        resolveAdapter: makeResolveAdapter({
-          email: email.adapter,
-          [KG_ADAPTER_TYPE]: kg.adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolveAdapter({
+              email: email.adapter,
+              [KG_ADAPTER_TYPE]: kg.adapter,
+            }),
+          },
         }),
       }),
     ).rejects.toThrow(/known type|drift/i);

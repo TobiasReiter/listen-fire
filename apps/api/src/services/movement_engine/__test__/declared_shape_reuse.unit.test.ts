@@ -89,12 +89,6 @@ jest.mock('../../document', () => ({
   },
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { mockCatalog, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import type {
@@ -111,6 +105,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
@@ -325,9 +320,13 @@ async function run(
     event: webhookEvent('email', { subject: 'Deals', text: 'Acme (Ada) is raising a Seed.' }),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+    host: makeTestHost({
+      adapters: {
+        resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+      },
+      llm: { client: llm.client },
+    }),
     ...(movementName !== undefined ? { movementName } : {}),
-    llm: llm.client,
     dryRun: true,
     writeSink: (w) => writes.push(w),
   });
@@ -497,12 +496,18 @@ describe('an IMPORTED declaration', () => {
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
       catalog,
-      resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
+        llm: { client: llm.client },
+        files: {
+          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
+        },
       }),
-      llm: llm.client,
       dryRun: true,
     });
     expect(llm.calls[0].system).toContain("the name, route by the library's lens");
@@ -528,12 +533,18 @@ describe('an IMPORTED declaration', () => {
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
       catalog,
-      resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
+        llm: { client: llm.client },
+        files: {
+          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
+        },
       }),
-      llm: llm.client,
       dryRun: true,
     });
     return llm.calls[0].system;
@@ -591,12 +602,16 @@ describe('an IMPORTED declaration', () => {
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
       catalog,
-      resolveFile: (path) => (path === 'lib/triage' ? { source: library } : undefined),
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
+        llm: { client: llm.client },
+        files: { resolveFile: (path) => (path === 'lib/triage' ? { source: library } : undefined) },
       }),
-      llm: llm.client,
       dryRun: true,
     });
     expect(llm.calls[0].system).toContain('`overall` (enum: Keep | Drop)');
@@ -659,12 +674,16 @@ describe('a spread of a declared structure, or of a record built in memory', () 
       event: webhookEvent('email', { subject: 'Acme', text: '' }),
       teamId: TEAM_ID,
       catalog,
-      resolveFile: (path) => (path === 'lib/deals' ? { source: library } : undefined),
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
+        llm: { client: queuedMovementLlm([]).client },
+        files: { resolveFile: (path) => (path === 'lib/deals' ? { source: library } : undefined) },
       }),
-      llm: queuedMovementLlm([]).client,
       dryRun: true,
       writeSink: (w) => writes.push(w),
     });
@@ -816,12 +835,18 @@ describe('`node X extends Y` as an extraction shape', () => {
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
       catalog,
-      resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
+        llm: { client: llm.client },
+        files: {
+          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
+        },
       }),
-      llm: llm.client,
       dryRun: true,
     });
     return llm.calls[0].system;

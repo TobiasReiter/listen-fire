@@ -28,6 +28,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000054' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -265,12 +266,16 @@ function harness(source: string) {
     event: emailEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-      adapterType === 'email' ? email.adapter : crm.adapter,
-    transformInvoker: pricedInvoker,
-    resolveFileText,
-    parkSink: parks.sink,
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email.adapter : crm.adapter,
+      },
+      llm: { transforms: pricedInvoker },
+      park: { sink: parks.sink },
+      files: { resolveFileText },
+    }),
     dryRun: false,
   });
   const record = (result: MovementRunResult): MovementRunResult => {

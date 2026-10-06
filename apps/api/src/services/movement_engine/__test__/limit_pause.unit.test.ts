@@ -34,6 +34,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000053' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -214,11 +215,15 @@ function harness(source: string, options: { parkSink?: boolean } = {}) {
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-      adapterType === 'email' ? email.adapter : attio.adapter,
-    transformInvoker: plugin.invoker,
-    ...(options.parkSink === false ? {} : { parkSink: parks.sink }),
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email.adapter : attio.adapter,
+      },
+      llm: { transforms: plugin.invoker },
+      park: { ...(options.parkSink === false ? {} : { sink: parks.sink }) },
+    }),
     dryRun: false,
   });
   const record = (result: MovementRunResult): MovementRunResult => {

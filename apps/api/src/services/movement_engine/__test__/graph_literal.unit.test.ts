@@ -77,12 +77,6 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runMovement, resumeMovement } from '../run';
 import type { ParkSink } from '../run';
 import type { CallbackSink } from '../callback_sink';
@@ -100,6 +94,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeFakeParkSink, makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000020' as TeamId;
 
@@ -300,14 +295,20 @@ function run(source: string, payload: Record<string, unknown>, adapters: RunAdap
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      email: adapters.email,
-      ...(adapters.attio ? { attio: adapters.attio } : {}),
-      ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: makeResolver({
+          email: adapters.email,
+          ...(adapters.attio ? { attio: adapters.attio } : {}),
+          ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+        }),
+      },
+      park: {
+        ...(adapters.callbacks ? { callbacks: adapters.callbacks.sink } : {}),
+        ...(adapters.parkSink ? { sink: adapters.parkSink } : {}),
+      },
     }),
-    ...(adapters.callbacks ? { callbackSink: adapters.callbacks.sink } : {}),
-    ...(adapters.parkSink ? { parkSink: adapters.parkSink } : {}),
   });
 }
 
@@ -324,29 +325,20 @@ function resume(
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      email: adapters.email,
-      ...(adapters.attio ? { attio: adapters.attio } : {}),
-      ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: makeResolver({
+          email: adapters.email,
+          ...(adapters.attio ? { attio: adapters.attio } : {}),
+          ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+        }),
+      },
     }),
     state,
   });
 }
 
-function makeFakeParkSink(): {
-  sink: ParkSink;
-  timerParks: Array<{ address: string; state: ParkedScopeState }>;
-} {
-  const timerParks: Array<{ address: string; state: ParkedScopeState }> = [];
-  const sink = {
-    async commitTimerPark(input: { address: string; state: ParkedScopeState }) {
-      timerParks.push({ address: input.address, state: input.state });
-    },
-    async recordJoin() {},
-  } as unknown as ParkSink;
-  return { sink, timerParks };
-}
 
 
 // ── Graph literals ───────────────────────────────────────────────────────────
