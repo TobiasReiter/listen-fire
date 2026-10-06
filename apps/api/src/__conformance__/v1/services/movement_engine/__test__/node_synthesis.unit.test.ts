@@ -102,6 +102,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000020' as TeamId;
 
@@ -276,14 +277,20 @@ function run(source: string, payload: Record<string, unknown>, adapters: RunAdap
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      email: adapters.email,
-      ...(adapters.attio ? { attio: adapters.attio } : {}),
-      ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: makeResolver({
+          email: adapters.email,
+          ...(adapters.attio ? { attio: adapters.attio } : {}),
+          ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+        }),
+      },
+      park: {
+        ...(adapters.callbacks ? { callbacks: adapters.callbacks.sink } : {}),
+        ...(adapters.parkSink ? { sink: adapters.parkSink } : {}),
+      },
     }),
-    ...(adapters.callbacks ? { callbackSink: adapters.callbacks.sink } : {}),
-    ...(adapters.parkSink ? { parkSink: adapters.parkSink } : {}),
   });
 }
 
@@ -300,11 +307,15 @@ function resume(
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      email: adapters.email,
-      ...(adapters.attio ? { attio: adapters.attio } : {}),
-      ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: makeResolver({
+          email: adapters.email,
+          ...(adapters.attio ? { attio: adapters.attio } : {}),
+          ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+        }),
+      },
     }),
     state,
   });

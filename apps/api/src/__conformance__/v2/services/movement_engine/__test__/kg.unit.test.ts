@@ -127,6 +127,7 @@ import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 /**
  * The error a rejected run really died of. A failure raised once the
@@ -557,8 +558,12 @@ async function runGoldenThroughMovementEngine(input: {
     event: goldenEvent(),
     teamId: TEAM_ID,
     catalog: makeCatalog(),
-    resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: input.kg.adapter }),
-    llm: llm.client,
+    host: makeTestHost({
+      adapters: {
+        resolve: makeResolver({ email: makeFakeSource('email'), [KG]: input.kg.adapter }),
+      },
+      llm: { client: llm.client },
+    }),
     ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
     ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });
@@ -834,7 +839,9 @@ describe('plain write — no implicit correspondence (bind-only model, 3b)', () 
       event: discriminatedEvent(),
       teamId: TEAM_ID,
       catalog: makeCatalog(),
-      resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }),
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }) },
+      }),
     });
     // The implicit bridge is gone: no bridgeToExternal on the create.
     expect(kg.creates).toEqual([
@@ -859,7 +866,9 @@ describe('plain write — no implicit correspondence (bind-only model, 3b)', () 
         event: discriminatedEvent(),
         teamId: TEAM_ID,
         catalog: makeCatalog(),
-        resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }),
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }) },
+        }),
       });
     await run();
     await run();
@@ -898,7 +907,9 @@ describe('linked-write type inference', () => {
       event: webhookEvent('email', { subject: 'Acme' }),
       teamId: TEAM_ID,
       catalog: makeCatalog(options),
-      resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }),
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }) },
+      }),
     });
     return { kg, promise };
   }
@@ -972,7 +983,11 @@ describe('standalone edge statements — kg linkRecords', () => {
       event: webhookEvent('email', { subject: 'Acme', text: 'Alice Capital' }),
       teamId: TEAM_ID,
       catalog: makeCatalog(),
-      resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: input.kg.adapter }),
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ email: makeFakeSource('email'), [KG]: input.kg.adapter }),
+        },
+      }),
     });
   }
 
@@ -1022,7 +1037,9 @@ describe('standalone edge statements — kg linkRecords', () => {
       event: webhookEvent('email', { subject: 'Acme', text: 'Alice Capital' }),
       teamId: TEAM_ID,
       catalog: makeCatalog(),
-      resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }),
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }) },
+      }),
     });
     expect(await rejectionCause(promise)).toBeInstanceOf(MovementEngineError);
     await expect(promise).rejects.toThrow(
@@ -1063,7 +1080,9 @@ describe('tuple-path multi-parent writes — kg', () => {
       event: webhookEvent('email', payload),
       teamId: TEAM_ID,
       catalog: makeCatalog(),
-      resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }),
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }) },
+      }),
     });
   }
 
@@ -1125,7 +1144,9 @@ describe('tuple-path multi-parent writes — kg', () => {
       event: webhookEvent('email', { subject: 'Acme', text: 'Alice Capital' }),
       teamId: TEAM_ID,
       catalog: makeCatalog(),
-      resolveAdapter: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }),
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: makeFakeSource('email'), [KG]: kg.adapter }) },
+      }),
     });
     expect(await rejectionCause(promise)).toBeInstanceOf(MovementEngineError);
     await expect(promise).rejects.toThrow(/MOVENG_CHECK/);

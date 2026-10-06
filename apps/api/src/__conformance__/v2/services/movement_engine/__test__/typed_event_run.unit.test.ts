@@ -106,6 +106,7 @@ import type { Adapter, RuntimeCapabilities } from '../../translation_graph/adapt
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 const COMPANIES_OBJECT_ID = 'obj-companies';
@@ -375,12 +376,16 @@ async function runProgram(input: { source: string; movementName: string; event: 
     event: input.event,
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: () => 'cred-1',
-    resolveAdapter: ({ adapterType }) => {
-      if (adapterType === 'attio') return source;
-      if (adapterType === 'slack') return target.adapter;
-      throw new Error(`test: no fake for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        credentialId: () => 'cred-1',
+        resolve: ({ adapterType }) => {
+          if (adapterType === 'attio') return source;
+          if (adapterType === 'slack') return target.adapter;
+          throw new Error(`test: no fake for '${adapterType}'`);
+        },
+      },
+    }),
   });
   return { result, creates: target.creates };
 }

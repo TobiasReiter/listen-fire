@@ -27,6 +27,7 @@ import {
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
 const KG = 'kg';
@@ -139,7 +140,9 @@ async function run(source: string, kg: ReturnType<typeof makeKgFake>) {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }),
+    host: makeTestHost({
+      adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
+    }),
     dryRun: false,
   });
 }

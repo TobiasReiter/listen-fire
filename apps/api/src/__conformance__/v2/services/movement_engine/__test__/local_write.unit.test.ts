@@ -96,6 +96,7 @@ import { containerAssociation, type Adapter, type RuntimeCapabilities } from '..
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
 const mockExecute = execute as jest.MockedFunction<typeof execute>;
@@ -227,12 +228,16 @@ function runWith(
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return adapters.email;
-      if (adapterType === 'attio') return adapters.attio;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return adapters.email;
+          if (adapterType === 'attio') return adapters.attio;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
   });
 }
 

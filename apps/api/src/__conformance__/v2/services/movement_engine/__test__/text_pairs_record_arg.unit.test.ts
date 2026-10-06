@@ -84,6 +84,7 @@ import { containerAssociation, type Adapter, type RuntimeCapabilities } from '..
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
 
@@ -200,13 +201,17 @@ async function run(body: string[]): Promise<unknown[]> {
     event: webhookEvent({ text: 'Acme raised a seed.' }),
     teamId: TEAM_ID,
     catalog,
-    llm,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return email.adapter;
-      if (adapterType === 'attio') return attio.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return email.adapter;
+          if (adapterType === 'attio') return attio.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+      llm: { client: llm },
+    }),
   });
   return attio.creates.map((w) => w.fields.name);
 }

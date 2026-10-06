@@ -25,6 +25,7 @@ import {
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
 const KG = 'kg';
@@ -139,11 +140,15 @@ listen to runs {} fire recap
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return kg.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     dryRun: false,
   });
   return kg.creates;

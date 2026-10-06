@@ -97,6 +97,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
 
@@ -208,13 +209,17 @@ function run(source: string, invoker: MovementTransformInvoker, adapters: {
     event: webhookEvent({ subject: 'Acme', text: 'https://acme.example' }),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      const found = adapterType === 'email' ? adapters.email : adapters.attio;
-      if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);
-      return found;
-    },
-    transformInvoker: invoker,
+    host: makeTestHost({
+      adapters: {
+        credentialId: (name) => CREDENTIAL_IDS[name],
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          const found = adapterType === 'email' ? adapters.email : adapters.attio;
+          if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);
+          return found;
+        },
+      },
+      llm: { transforms: invoker },
+    }),
   });
 }
 

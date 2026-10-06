@@ -142,6 +142,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MutationContext } from '../../translation_graph/mutation_context';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
@@ -546,12 +547,16 @@ describe('stage-0 extraction through runMovement', () => {
       event,
       teamId: TEAM_ID,
       catalog: parityCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
       dryRun: true,
       writeSink: (w) => movementWrites.push(w),
     });
@@ -605,12 +610,16 @@ describe('stage-0 extraction through runMovement', () => {
       event,
       teamId: TEAM_ID,
       catalog: parityCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
       dryRun: true,
       writeSink: () => {},
     });
@@ -642,12 +651,16 @@ describe('stage-0 extraction through runMovement', () => {
       event,
       teamId: TEAM_ID,
       catalog: parityCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
       dryRun: true,
       writeSink: () => {},
     });
@@ -736,13 +749,16 @@ describe('the extraction tier', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
       dryRun: true,
       writeSink: () => {},
     });
@@ -840,13 +856,16 @@ describe('through-staged extraction', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: slack.adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
     });
 
     // ── Phase plan: exactly two calls, fenced at the author's `through`.
@@ -921,13 +940,16 @@ describe('through-staged extraction', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
     });
 
     expect(attio.creates).toEqual([
@@ -975,13 +997,16 @@ describe('through auto-content (vc_url_retrieval)', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
       dryRun: true,
     });
     expect(invocations).toHaveLength(1);
@@ -1055,13 +1080,16 @@ describe('a per-entity retrieval stage', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
       dryRun: true,
     });
 
@@ -1121,18 +1149,24 @@ describe('a per-entity retrieval stage', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
-      }),
-      llm: llm.client,
-      transformInvoker: {
-        async invoke(input) {
-          invocations.push({ plugin: input.plugin, config: input.config });
-          return {};
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
         },
-      },
+        llm: {
+          client: llm.client,
+          transforms: {
+            async invoke(input) {
+              invocations.push({ plugin: input.plugin, config: input.config });
+              return {};
+            },
+          },
+        },
+      }),
       dryRun: true,
     });
 
@@ -1178,15 +1212,18 @@ describe('a per-entity retrieval stage', () => {
         event,
         teamId: TEAM_ID,
         catalog: movementCatalog,
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+          llm: { client: llm.client, transforms: transformInvoker },
+          control: { cancel: cancelGate },
         }),
-        llm: llm.client,
-        transformInvoker,
         dryRun: true,
-        cancelGate,
       }),
     );
 
@@ -1242,15 +1279,18 @@ describe('a per-entity retrieval stage', () => {
         event: webhookEvent('email', { text: 'Acme (acme.com) is fundraising.' }),
         teamId: TEAM_ID,
         catalog: movementCatalog,
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+          llm: { client: llm.client, transforms: transformInvoker },
+          control: { cancel: cancelGate },
         }),
-        llm: llm.client,
-        transformInvoker,
         dryRun: true,
-        cancelGate,
       }),
     );
 
@@ -1283,27 +1323,33 @@ describe('a per-entity retrieval stage', () => {
         event,
         teamId: TEAM_ID,
         catalog: movementCatalog,
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+          llm: {
+            client: {
+              async call(input: LlmCallInput): Promise<LlmCallResult> {
+                const reply = await llm.client.call(input);
+                // Cancelled during the first (stage-0) call, so the per-company
+                // continuation calls are the next boundary.
+                cancelGate.stamp();
+                return reply;
+              },
+            },
+            transforms: {
+              async invoke() {
+                return {};
+              },
+            },
+          },
+          control: { cancel: cancelGate },
         }),
-        llm: {
-          async call(input: LlmCallInput): Promise<LlmCallResult> {
-            const reply = await llm.client.call(input);
-            // Cancelled during the first (stage-0) call, so the per-company
-            // continuation calls are the next boundary.
-            cancelGate.stamp();
-            return reply;
-          },
-        },
-        transformInvoker: {
-          async invoke() {
-            return {};
-          },
-        },
         dryRun: true,
-        cancelGate,
       }),
     );
 
@@ -1373,13 +1419,16 @@ describe('a stage whose plugins contributed nothing', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: { invoke } },
       }),
-      llm: llm.client,
-      transformInvoker: { invoke },
     });
     return {
       calls: llm.calls,
@@ -1571,12 +1620,16 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
       event: webhookEvent('email', { text: 'Acme raising Series A' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
 
     // The borrowed enum (resolved live from crm.company.stage) reaches
@@ -1606,12 +1659,16 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
       event: webhookEvent('email', { text: 'Acme raising Series A' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     // No options in the guide, no enum validation: only explicit
     // annotations constrain — the checker SUGGESTS the annotation instead.
@@ -1658,12 +1715,16 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
       event: webhookEvent('email', { text: 'Acme raising a bridge' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
 
     expect(llm.calls).toHaveLength(1);
@@ -1688,12 +1749,16 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
       event: webhookEvent('email', { text: 'Acme raising Series A' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     expect(llm.calls).toHaveLength(1);
     expect(attio.creates).toEqual([
@@ -1747,12 +1812,16 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
       event: webhookEvent('email', { text: 'Acme, a biotech company' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     expect(llm.calls).toHaveLength(1);
     // Exactly the three valid options survive, in order: `Fintech` is dropped,
@@ -1805,12 +1874,16 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
       event: webhookEvent('email', { text: 'Acme, EMEA' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     // Distinct from the closed-enum phrasing (`enum: A | B`) — the model must
     // learn a novel value is legal here, not just the listed ones.
@@ -1828,12 +1901,16 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
       event: webhookEvent('email', { text: 'Acme, LATAM' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     expect(attio.creates).toEqual([
       { recordType: 'company', fields: { name: 'Acme', region: 'LATAM' } },
@@ -1853,12 +1930,16 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
       event: webhookEvent('email', { text: 'Acme, emea' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     expect(attio.creates).toEqual([
       { recordType: 'company', fields: { name: 'Acme', region: 'EMEA' } },
@@ -1894,12 +1975,16 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
       event: webhookEvent('email', { text: 'Acme, pre-seed' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     // The field contract holds (closed enums still coerce-to-null)...
     expect(attio.creates).toEqual([
@@ -1949,12 +2034,16 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
       event: webhookEvent('email', { text: 'Acme' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     expect(attio.creates).toEqual([
       {
@@ -2002,12 +2091,16 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
       event: webhookEvent('email', { text: 'Acme, a biotech company' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     expect(attio.creates).toEqual([
       { recordType: 'company', fields: { name: 'Acme', categories: 'Biotechnology' } },
@@ -2063,12 +2156,16 @@ describe("a bound block's returned handles aggregate and read", () => {
       event: webhookEvent('email', { text: 'Acme and Globex' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: slack.adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
 
     expect(attio.creates.map((c) => c.fields.name)).toEqual(['Acme', 'Globex']);
@@ -2126,12 +2223,16 @@ describe('per-position isolation — each iteration binds its own handles', () =
       event: webhookEvent('email', { text: 'Acme and Globex' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: slack.adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
 
     // Program order WITHIN each iteration, iterations in emission order.
@@ -2194,12 +2295,16 @@ describe('linked writes inside blocks — per-iteration parent links', () => {
       event: webhookEvent('email', { text: 'Acme and Globex' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
 
     // The note's type is inferred from company's `notes` edge; each
@@ -2251,12 +2356,16 @@ describe('EXISTS over extract edges — emission children as the traversal seam'
       event: webhookEvent('email', { text: 'who knows' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: slack.adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     return slack.creates.map((c) => c.fields);
   }
@@ -2420,10 +2529,14 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       event: webhookEvent('email', { subject: 'Pitch', text: 'see attached', deck: 'ref' }),
       teamId: TEAM_ID,
       catalog: carryFileSchema().catalog,
-      resolveAdapter: makeResolver({ email: emailWithFile, attio: attio.adapter }),
-      llm: llm.client,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: emailWithFile, attio: attio.adapter }) },
+        llm: { client: llm.client },
+        files: {
+          resolveFileText: async () => ({ text: 'Acme — Seed round pitch.', rawTextId: 'rt-pitch' }),
+        },
+      }),
       // Inject the OCR/text seam so the file becomes extractable text.
-      resolveFileText: async () => ({ text: 'Acme — Seed round pitch.', rawTextId: 'rt-pitch' }),
     });
 
     // Two attio creates: the plain company write, and the `_resources` carry write.
@@ -2478,11 +2591,13 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       event: webhookEvent('email', { subject: 'Acme', text: 'Acme is raising a round.', deck: 'ref' }),
       teamId: TEAM_ID,
       catalog: carryFileSchema().catalog,
-      resolveAdapter: makeResolver({ email: emailWithFile, attio: attio.adapter }),
-      llm: llm.client,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: emailWithFile, attio: attio.adapter }) },
+        llm: { client: llm.client },
+        files: { resolveFileText: async () => ({ unreadable: 'no_text' as const }) },
+      }),
       // OCR yields nothing — the production resolver answers `no_text` for an
       // empty file (e.g. a scanned image with nothing in it).
-      resolveFileText: async () => ({ unreadable: 'no_text' as const }),
     });
 
     expect(attio.creates).toHaveLength(2);
@@ -2540,9 +2655,11 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       event: webhookEvent('email', { subject: 'Acme', text: 'Acme is raising a round.', deck: 'ref' }),
       teamId: TEAM_ID,
       catalog: carryFileSchema().catalog,
-      resolveAdapter: makeResolver({ email: emailWithFile, attio: attio.adapter }),
-      llm: llm.client,
-      resolveFileText: async () => ({ unreadable: 'no_text' as const }),
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: emailWithFile, attio: attio.adapter }) },
+        llm: { client: llm.client },
+        files: { resolveFileText: async () => ({ unreadable: 'no_text' as const }) },
+      }),
     });
 
     // Exactly two creates: the plain write + ONE carry write for the FILE
@@ -2587,9 +2704,11 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       event: webhookEvent('email', { subject: 'Acme', text: 'Acme is raising a round.', deck: 'ref' }),
       teamId: TEAM_ID,
       catalog: carryFileSchema().catalog,
-      resolveAdapter: makeResolver({ email: emailWithFile, attio: attio.adapter }),
-      llm: llm.client,
-      resolveFileText: async () => ({ unreadable: 'no_text' as const }),
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ email: emailWithFile, attio: attio.adapter }) },
+        llm: { client: llm.client },
+        files: { resolveFileText: async () => ({ unreadable: 'no_text' as const }) },
+      }),
     });
 
     expect(attio.creates).toHaveLength(2);
@@ -2775,13 +2894,16 @@ describe('ancestor context threading to a nested-node plugin', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
       dryRun: true,
     });
 
@@ -2843,13 +2965,16 @@ describe('independent extraction work runs at once', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
       dryRun: true,
     });
 
@@ -2893,13 +3018,16 @@ describe('independent extraction work runs at once', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
       dryRun: true,
     });
 
@@ -2944,13 +3072,16 @@ describe('independent extraction work runs at once', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
     });
 
     expect(peak).toBe(STAGE_FAN_OUT);
@@ -2990,13 +3121,16 @@ describe('independent extraction work runs at once', () => {
       event: webhookEvent('email', { text: 'Ada works at Acme. Grace works at Initech.' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
       }),
-      llm: llm.client,
-      transformInvoker,
       dryRun: true,
     });
 
@@ -3293,12 +3427,16 @@ describe('an empty extraction resolves to absent, not an empty string', () => {
       event: webhookEvent('email', { text: 'who knows' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: slack.adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     return slack.creates.map((c) => c.fields);
   }
@@ -3343,12 +3481,16 @@ describe('an empty extraction resolves to absent, not an empty string', () => {
       event: webhookEvent('email', { text: 'who knows' }),
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     expect(runResult.trace.find((e) => e.kind === 'extraction')).toMatchObject({
       empty: { company: 1 },
@@ -3413,18 +3555,24 @@ describe('an all-null record is dropped rather than emitted', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
-      }),
-      llm: llm.client,
-      transformInvoker: {
-        async invoke(input) {
-          plugins.push({ plugin: input.plugin, config: input.config });
-          return { text: 'a page about that company' };
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
         },
-      },
+        llm: {
+          client: llm.client,
+          transforms: {
+            async invoke(input) {
+              plugins.push({ plugin: input.plugin, config: input.config });
+              return { text: 'a page about that company' };
+            },
+          },
+        },
+      }),
     });
     return { calls: llm.calls, writes: attio.creates.map((c) => c.fields), plugins, trace: result.trace };
   }
@@ -3521,12 +3669,16 @@ describe('a response that never answers the question is an error, not an empty e
         event,
         teamId: TEAM_ID,
         catalog: movementCatalog,
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+          llm: { client: llm.client },
         }),
-        llm: llm.client,
       }),
     ).rejects.toThrow();
 
@@ -3543,12 +3695,16 @@ describe('a response that never answers the question is an error, not an empty e
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: slack.adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
 
     expect(slack.creates).toEqual([]);
@@ -3613,17 +3769,23 @@ describe('an extraction call describes itself on the run', () => {
         event,
         teamId: TEAM_ID,
         catalog: movementCatalog,
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
-        }),
-        llm: llm.client,
-        transformInvoker: {
-          async invoke() {
-            return { text: 'p'.repeat(options?.fetchedChars ?? 24) };
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
           },
-        },
+          llm: {
+            client: llm.client,
+            transforms: {
+              async invoke() {
+                return { text: 'p'.repeat(options?.fetchedChars ?? 24) };
+              },
+            },
+          },
+        }),
       });
     // A real firing establishes the run context around everything it calls;
     // only inside one can a log line name the run it belongs to.
@@ -3783,13 +3945,17 @@ describe('an extraction call describes itself on the run', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: queuedMovementLlm([{}, {}]).client },
       }),
       // A reply of `{}` twice: the model never answered the question.
-      llm: queuedMovementLlm([{}, {}]).client,
     }).then(
       () => {
         throw new Error('test: the run should have failed');
@@ -3832,12 +3998,16 @@ describe('an extraction call describes itself on the run', () => {
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: queuedMovementLlm([reply, reply]).client },
       }),
-      llm: queuedMovementLlm([reply, reply]).client,
     }).then(
       () => {
         throw new Error('test: the run should have failed');
@@ -3868,16 +4038,22 @@ describe('an extraction call describes itself on the run', () => {
         event,
         teamId: TEAM_ID,
         catalog: movementCatalog,
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
-        }),
-        llm: {
-          call: async () => {
-            throw new Error('the model hit the output ceiling');
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
           },
-        },
+          llm: {
+            client: {
+              call: async () => {
+                throw new Error('the model hit the output ceiling');
+              },
+            },
+          },
+        }),
       }),
     ).rejects.toThrow('the model hit the output ceiling');
   });
@@ -4057,12 +4233,16 @@ describe('a node list answered inside an evidence envelope is unwrapped, not dis
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: slack.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: slack.adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
     return {
       calls: llm.calls,
@@ -4192,12 +4372,16 @@ describe('an entity answered entirely under keys nothing declared is a shape err
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     }).then(
       () => {
         throw new Error('test: the run should have failed');
@@ -4255,12 +4439,16 @@ describe('an entity answered entirely under keys nothing declared is a shape err
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client },
       }),
-      llm: llm.client,
     });
 
     expect(llm.calls).toHaveLength(1);
@@ -4647,17 +4835,23 @@ describe('a per-entity refinement that is never answered keeps the entity, not t
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
-      }),
-      llm: llm.client,
-      transformInvoker: {
-        async invoke() {
-          return { text: 'Fetched gondor.fi: a page about that company.' };
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
         },
-      },
+        llm: {
+          client: llm.client,
+          transforms: {
+            async invoke() {
+              return { text: 'Fetched gondor.fi: a page about that company.' };
+            },
+          },
+        },
+      }),
     });
     return { calls: llm.calls, writes: attio.creates.map((c) => c.fields), trace: result.trace };
   }
@@ -4744,17 +4938,23 @@ describe('a per-entity refinement that is never answered keeps the entity, not t
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
-      }),
-      llm: llm.client,
-      transformInvoker: {
-        async invoke() {
-          return { text: 'a page about that company' };
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
         },
-      },
+        llm: {
+          client: llm.client,
+          transforms: {
+            async invoke() {
+              return { text: 'a page about that company' };
+            },
+          },
+        },
+      }),
     }).then(
       () => {
         throw new Error('test: the run should have failed');
@@ -4814,17 +5014,23 @@ describe('an extract description interpolates in the firing environment', () => 
       event,
       teamId: TEAM_ID,
       catalog: movementCatalog,
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
-      }),
-      llm: llm.client,
-      transformInvoker: {
-        async invoke() {
-          return { text: 'a page about that company' };
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
         },
-      },
+        llm: {
+          client: llm.client,
+          transforms: {
+            async invoke() {
+              return { text: 'a page about that company' };
+            },
+          },
+        },
+      }),
       dryRun: true,
       writeSink: (w) => writes.push(w),
     });

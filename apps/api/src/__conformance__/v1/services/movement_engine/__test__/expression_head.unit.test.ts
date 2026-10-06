@@ -105,6 +105,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000030' as TeamId;
 
@@ -273,11 +274,15 @@ function run(
     event: webhookEvent({ subject: 'Deals', text: opts.text ?? '' }),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({
-      email: makeFakeAdapter('email').adapter,
-      attio: opts.attio,
+    host: makeTestHost({
+      adapters: {
+        resolve: makeResolver({
+          email: makeFakeAdapter('email').adapter,
+          attio: opts.attio,
+        }),
+      },
+      llm: { ...(opts.llm ? { client: opts.llm } : {}) },
     }),
-    ...(opts.llm ? { llm: opts.llm } : {}),
   });
 }
 
