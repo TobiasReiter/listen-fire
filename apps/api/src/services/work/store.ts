@@ -23,6 +23,12 @@ function toWorkRow(row: Work): WorkRow {
   };
 }
 
+// Leases are compared with the database clock (enqueueWork's "is it leased?"),
+// so they are written with it too; one clock decides.
+function leaseFromNow(leaseMs: number) {
+  return sql`now() + ${leaseMs}::integer * interval '1 millisecond'`;
+}
+
 function jsonb(value: unknown) {
   return sql`${JSON.stringify(value ?? {})}::jsonb`;
 }
@@ -30,6 +36,8 @@ function jsonb(value: unknown) {
 // updated_at is the row's version: completeWork deletes only if it is unchanged
 // since claim. JS Dates carry milliseconds, so the version is millisecond-exact
 // and strictly increases even when two writes land in the same millisecond.
+const FIRST_VERSION = sql`date_trunc('milliseconds', clock_timestamp())`;
+
 function nextVersion(table: 'w' | 'work') {
   const current = sql.ref(`${table}.updated_at`);
   return sql`GREATEST(date_trunc('milliseconds', clock_timestamp()), date_trunc('milliseconds', ${current}) + interval '1 millisecond')`;
@@ -50,12 +58,12 @@ export interface EnqueueWorkInput {
 export async function enqueueWork(input: EnqueueWorkInput): Promise<void> {
   const dueAt = input.dueAt ?? new Date();
   await sql`
-    INSERT INTO automations.work (kind, key, team_id, payload, due_at)
-    VALUES (${input.kind}, ${input.key}, ${input.teamId ?? null}, ${jsonb(input.payload)}, ${dueAt})
+    INSERT INTO automations.work (kind, key, team_id, payload, due_at, updated_at)
+    VALUES (${input.kind}, ${input.key}, ${input.teamId ?? null}, ${jsonb(input.payload)}, ${dueAt}, ${FIRST_VERSION})
     ON CONFLICT (key) DO UPDATE
       SET due_at = CASE WHEN work.lease_until > now() THEN EXCLUDED.due_at ELSE LEAST(work.due_at, EXCLUDED.due_at) END,
           payload = EXCLUDED.payload,
-          team_id = EXCLUDED.team_id,
+          team_id = COALESCE(EXCLUDED.team_id, work.team_id),
           updated_at = ${nextVersion('work')}`.execute(getAutomationsQb(['work']));
 }
 
@@ -69,17 +77,18 @@ export async function ensurePeriodicWork(input: {
   const dueAt = input.dueAt ?? new Date();
   // A redeploy may change the interval; it must not push back a due_at already set.
   await sql`
-    INSERT INTO automations.work (kind, key, interval_ms, due_at)
-    VALUES (${input.kind}, ${input.key}, ${input.intervalMs}, ${dueAt})
+    INSERT INTO automations.work (kind, key, interval_ms, due_at, updated_at)
+    VALUES (${input.kind}, ${input.key}, ${input.intervalMs}, ${dueAt}, ${FIRST_VERSION})
     ON CONFLICT (key) DO UPDATE
-      SET interval_ms = EXCLUDED.interval_ms, updated_at = now()
+      SET interval_ms = EXCLUDED.interval_ms, updated_at = ${nextVersion('work')}
       WHERE work.interval_ms IS DISTINCT FROM EXCLUDED.interval_ms`.execute(
     getAutomationsQb(['work']),
   );
 }
 
 /** Claim up to `limit` due rows (due_at <= now AND (lease_until IS NULL OR lease_until < now))
- *  with FOR UPDATE SKIP LOCKED, setting lease_owner/lease_until and attempts+1. */
+ *  with FOR UPDATE SKIP LOCKED, setting lease_owner/lease_until and attempts+1.
+ *  `now` drives only the due_at filter; leases live on the database clock. */
 export async function claimDueWork(input: {
   owner: string;
   limit: number;
@@ -87,14 +96,13 @@ export async function claimDueWork(input: {
   now?: Date;
 }): Promise<WorkRow[]> {
   const now = input.now ?? new Date();
-  const leaseUntil = new Date(now.getTime() + input.leaseMs);
   // One statement so two drainers cannot race: SKIP LOCKED hands each a disjoint set.
   const { rows } = await sql<Work>`
     UPDATE automations.work w
-    SET lease_owner = ${input.owner}, lease_until = ${leaseUntil}, attempts = attempts + 1, updated_at = ${nextVersion('w')}
+    SET lease_owner = ${input.owner}, lease_until = ${leaseFromNow(input.leaseMs)}, attempts = attempts + 1, updated_at = ${nextVersion('w')}
     WHERE w.id IN (
       SELECT id FROM automations.work
-      WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < ${now})
+      WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < now())
         AND kind = ANY(${[...WORK_KINDS]}::text[])
       ORDER BY due_at
       LIMIT ${input.limit}
@@ -104,19 +112,26 @@ export async function claimDueWork(input: {
   return rows.map(toWorkRow);
 }
 
-/** Extend lease_until for a row this owner holds. No-op (returns false) if the lease was lost. */
+// A claim is identified by owner AND attempts: one drain loop is one owner, so
+// after a lapse the same owner may re-claim its own row, and the stale handler's
+// calls must not touch the new claim.
+function heldBy(input: { id: string; owner: string; claimedAttempts: number }) {
+  return sql`id = ${input.id} AND lease_owner = ${input.owner} AND attempts = ${input.claimedAttempts}`;
+}
+
+/** Extend lease_until for a row this owner holds. No-op (returns false) if the lease was lost.
+ *  `now` is unused: the lease is written from the database clock. */
 export async function heartbeatWork(input: {
   id: string;
   owner: string;
+  claimedAttempts: number;
   leaseMs: number;
   now?: Date;
 }): Promise<boolean> {
-  const now = input.now ?? new Date();
-  const leaseUntil = new Date(now.getTime() + input.leaseMs);
   const { rows } = await sql<{ id: string }>`
     UPDATE automations.work
-    SET lease_until = ${leaseUntil}
-    WHERE id = ${input.id} AND lease_owner = ${input.owner}
+    SET lease_until = ${leaseFromNow(input.leaseMs)}
+    WHERE ${heldBy(input)}
     RETURNING id`.execute(getAutomationsQb(['work']));
   return rows.length > 0;
 }
@@ -127,6 +142,7 @@ export async function heartbeatWork(input: {
 export async function completeWork(input: {
   id: string;
   owner: string;
+  claimedAttempts: number;
   claimedUpdatedAt: Date;
   now?: Date;
 }): Promise<void> {
@@ -134,7 +150,7 @@ export async function completeWork(input: {
   const qb = getAutomationsQb(['work']);
   await sql`
     DELETE FROM automations.work
-    WHERE id = ${input.id} AND lease_owner = ${input.owner} AND interval_ms IS NULL
+    WHERE ${heldBy(input)} AND interval_ms IS NULL
       AND updated_at = ${input.claimedUpdatedAt}`.execute(qb);
   // attempts resets so the next claim is a first run, not a recover: the re-armed
   // row is new work, and a periodic row's next tick is too.
@@ -143,15 +159,19 @@ export async function completeWork(input: {
     SET lease_owner = NULL, lease_until = NULL, attempts = 0,
         due_at = CASE WHEN interval_ms IS NULL THEN due_at
                       ELSE ${now}::timestamptz + interval_ms * interval '1 millisecond' END
-    WHERE id = ${input.id} AND lease_owner = ${input.owner}`.execute(qb);
+    WHERE ${heldBy(input)}`.execute(qb);
 }
 
 /** Clear the lease without rescheduling (handler threw and wants a retry at due_at). */
-export async function releaseWork(input: { id: string; owner: string }): Promise<void> {
+export async function releaseWork(input: {
+  id: string;
+  owner: string;
+  claimedAttempts: number;
+}): Promise<void> {
   await sql`
     UPDATE automations.work
     SET lease_owner = NULL, lease_until = NULL
-    WHERE id = ${input.id} AND lease_owner = ${input.owner}`.execute(getAutomationsQb(['work']));
+    WHERE ${heldBy(input)}`.execute(getAutomationsQb(['work']));
 }
 
 /** Delete by key (reconcile removes rows for triggers that went away). */
