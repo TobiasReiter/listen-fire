@@ -74,6 +74,15 @@ describe('the parser entry points on the Rust grammar', () => {
     calls.mockRestore();
   });
 
+  it('refuses a slot that carries a parse but not its own raw text and span', () => {
+    const half = { tree: { kind: 'literal', value: 1, at: { start: 0, end: 1 } } };
+    const calls = jest
+      .spyOn(loader, 'callParser')
+      .mockReturnValue({ ok: true, json: { statements: [{ kind: 'assign', name: 'x', value: { kind: 'expr', expr: half } }] } });
+    expect(() => parse.parseProgram('x = 1')).toThrow(/^the movement parser returned a malformed slot: /);
+    calls.mockRestore();
+  });
+
   it('refuses a program with a MovementParseError carrying its location', () => {
     const thrown = (() => {
       try {

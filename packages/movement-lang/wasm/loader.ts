@@ -23,6 +23,7 @@ declare const fetch: (url: string) => Promise<{
   arrayBuffer(): Promise<ArrayBuffer>;
 }>;
 declare const process: { versions?: { node?: string }; getBuiltinModule?(id: string): unknown } | undefined;
+declare const window: unknown;
 declare const __dirname: string;
 
 interface WasmModule {
@@ -52,6 +53,18 @@ const ERROR = 1;
 let loaded: Loaded | undefined;
 let loadFailure: unknown;
 let generation = 0;
+
+/**
+ * Thrown by a parse that runs before the parser has loaded: in a browser,
+ * until `await initParser(…)` resolves; in Node, when the artifact could not
+ * be read at startup (`cause` says why).
+ */
+export class MovementParserNotReady extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super('the movement parser is not ready: await initParser() before parsing', options);
+    this.name = 'MovementParserNotReady';
+  }
+}
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -158,7 +171,7 @@ export function parserGeneration(): number {
 
 function currentExports(): ParserExports {
   if (!loaded) {
-    throw new Error('movement parser is not ready: await initParser() before parsing', { cause: loadFailure });
+    throw new MovementParserNotReady(loadFailure === undefined ? undefined : { cause: loadFailure });
   }
   loaded.exports ??= instantiate(loaded.module);
   return loaded.exports;
@@ -231,8 +244,10 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+// The window check too: a bundler's browser `process` shim may carry
+// `versions`, and a browser must never take the disk path.
 function isNode(): boolean {
-  return typeof process !== 'undefined' && typeof process.versions?.node === 'string';
+  return typeof window === 'undefined' && typeof process !== 'undefined' && typeof process.versions?.node === 'string';
 }
 
 function loadFromDisk(): void {

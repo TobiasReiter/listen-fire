@@ -2,6 +2,7 @@ import { callJson, initParser, isParserReady, parserGeneration } from '../loader
 
 declare function require(id: string): unknown;
 declare const __dirname: string;
+declare const process: { getBuiltinModule?: unknown };
 
 const ROUND_TRIP = {
   kind: 'string',
@@ -50,6 +51,48 @@ describe('the parser loader', () => {
     const before = parserGeneration();
     await initParser();
     expect(parserGeneration()).toBe(before);
+  });
+
+  describe('before it has loaded', () => {
+    // A runtime with no disk path stands in for a browser: the module loads,
+    // the parser does not, and nothing parses until initParser is given bytes.
+    function loadWithoutDisk(): typeof import('../loader') {
+      const original = process.getBuiltinModule;
+      process.getBuiltinModule = undefined;
+      try {
+        let loader: typeof import('../loader') | undefined;
+        jest.isolateModules(() => {
+          loader = require('../loader') as typeof import('../loader');
+        });
+        if (loader === undefined) throw new Error('isolateModules did not run');
+        return loader;
+      } finally {
+        process.getBuiltinModule = original;
+      }
+    }
+
+    it('throws MovementParserNotReady, telling the caller to await initParser()', async () => {
+      const loader = loadWithoutDisk();
+      expect(loader.isParserReady()).toBe(false);
+      const thrown = (() => {
+        try {
+          loader.callJson('parse_program', '', [3]);
+        } catch (e) {
+          return e;
+        }
+        throw new Error('expected MovementParserNotReady');
+      })();
+      expect(thrown).toBeInstanceOf(loader.MovementParserNotReady);
+      expect(thrown).toMatchObject({
+        name: 'MovementParserNotReady',
+        message: 'the movement parser is not ready: await initParser() before parsing',
+        cause: expect.objectContaining({ message: expect.stringContaining('getBuiltinModule') }),
+      });
+
+      await loader.initParser(committedArtifact());
+      expect(loader.isParserReady()).toBe(true);
+      expect(loader.callJson('parse_program', '', [3])).toEqual({ statements: [] });
+    });
   });
 
   describe('after a trap', () => {

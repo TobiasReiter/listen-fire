@@ -78,11 +78,13 @@ function absorbSlotTrees(value: unknown): void {
   }
 }
 
-/** A slot carrying its eager parse, as a bare slot with the parse cached. */
+/** A slot carrying its eager parse, as a bare slot with the parse cached.
+ *  No other parser AST record has a `tree` or `error` key, so one that does
+ *  but lacks a slot's `raw`/`span` is a broken slot, not some other node. */
 function parsedSlot(record: unknown): ExprSlot | undefined {
   if (!isRecord(record) || (!('tree' in record) && !('error' in record))) return undefined;
   const { raw, span, tree, error } = record;
-  if (typeof raw !== 'string' || !isSpan(span)) return undefined;
+  if (typeof raw !== 'string' || !isSpan(span)) throw malformed('slot', record);
   const slot: ExprSlot = { raw, span };
   if (tree !== undefined) {
     if (!isTree(tree)) throw malformed('a slot tree', tree);
