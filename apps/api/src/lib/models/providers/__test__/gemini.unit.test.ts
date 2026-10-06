@@ -399,9 +399,45 @@ describe('request: Anthropic in, Gemini out', () => {
     expect(request.config?.thinkingConfig).toEqual({ thinkingBudget: 4096, includeThoughts: false });
   });
 
-  it('disabled thinking sends no thinking config, as absent thinking does', async () => {
-    const request = await requestFor({ ...BASE, thinking: { type: 'disabled' }, messages: [{ role: 'user', content: 'hi' }] });
-    expect(request.config?.thinkingConfig).toBeUndefined();
+  describe('a call that asked for no thinking', () => {
+    const FLASH = { model: 'gemini-3.8-flash', max_tokens: 1024 } as const;
+    const hi = [{ role: 'user' as const, content: 'hi' }];
+
+    it('on Flash with thinking absent, turns thinking off', async () => {
+      const request = await requestFor({ ...FLASH, messages: hi });
+      expect(request.config?.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    });
+
+    it('on Flash with thinking disabled, turns thinking off', async () => {
+      const request = await requestFor({ ...FLASH, thinking: { type: 'disabled' }, messages: hi });
+      expect(request.config?.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    });
+
+    it('on Flash with an effort, thinks at that effort’s level', async () => {
+      const request = await requestFor({ ...FLASH, output_config: { effort: 'low' }, messages: hi });
+      expect(request.config?.thinkingConfig).toEqual({ thinkingLevel: ThinkingLevel.LOW });
+    });
+
+    it('on Pro with thinking disabled, thinks at the lowest level Pro accepts', async () => {
+      const request = await requestFor({ ...BASE, thinking: { type: 'disabled' }, messages: hi });
+      expect(request.config?.thinkingConfig).toEqual({ thinkingLevel: ThinkingLevel.LOW });
+    });
+
+    it('on Pro with thinking absent, leaves Pro at its own default', async () => {
+      const request = await requestFor({ ...BASE, messages: hi });
+      expect(request.config?.thinkingConfig).toBeUndefined();
+    });
+  });
+
+  it('adaptive thinking at high effort on Flash is thinking level high, not off', async () => {
+    const request = await requestFor({
+      model: 'gemini-3.8-flash',
+      max_tokens: 1024,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(request.config?.thinkingConfig).toEqual({ thinkingLevel: ThinkingLevel.HIGH, includeThoughts: true });
   });
 
   it('max_tokens, temperature and stop_sequences carry over', async () => {

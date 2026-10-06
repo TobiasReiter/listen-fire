@@ -171,7 +171,7 @@ export function toGeminiRequest(params: Anthropic.MessageCreateParamsNonStreamin
     config.tools = [{ functionDeclarations: params.tools.map(functionDeclarationFor) }];
   }
   if (params.tool_choice) config.toolConfig = toolConfigFor(params.tool_choice);
-  const thinkingConfig = thinkingConfigFor(params.thinking, params.output_config);
+  const thinkingConfig = thinkingConfigFor(params.model, params.thinking, params.output_config);
   if (thinkingConfig) config.thinkingConfig = thinkingConfig;
   if (params.temperature !== undefined) config.temperature = params.temperature;
   if (params.stop_sequences && params.stop_sequences.length > 0) {
@@ -230,9 +230,10 @@ function toolConfigFor(choice: Anthropic.ToolChoice): ToolConfig {
 
 /**
  * Anthropic's two thinking dialects onto Gemini's two knobs, chosen by the
- * REQUEST's dialect rather than by parsing the wire model's name: the wrapper
- * already picks adaptive or budgeted thinking per model family, and a map line
- * is what decides that family's Gemini counterpart.
+ * REQUEST's dialect: the wrapper already picks adaptive or budgeted thinking
+ * per model family, and a map line is what decides that family's Gemini
+ * counterpart. Only "no thinking" also depends on the wire model, because only
+ * there do the Gemini families differ in what they accept.
  *
  * - adaptive + effort → `thinkingLevel`. Gemini's levels are LOW, MEDIUM, HIGH
  *   (MINIMAL has no Anthropic counterpart); `xhigh` and `max` have nowhere
@@ -241,15 +242,22 @@ function toolConfigFor(choice: Anthropic.ToolChoice): ToolConfig {
  *   tokens and both count them inside the output ceiling.
  * - effort without any thinking config → `thinkingLevel` too, since on
  *   Anthropic effort governs spend whether or not thinking is on.
- * - disabled or absent → nothing, which on Anthropic are the same request.
- *   Gemini then thinks at its own default; the Pro models cannot be told not
- *   to, so a "none" we sent would be refused rather than honoured.
+ * - disabled or absent, no effort → no thinking, as far as the model allows:
+ *   - Flash: `thinkingBudget: 0`, the SDK's documented off switch. Left unset,
+ *     Flash thinks at its own default, which turned a 500-token planning call
+ *     into minutes. A Flash generation that refuses 0 fails the call loudly.
+ *   - Pro, thinking `disabled`: `thinkingLevel: LOW`. Pro cannot be told not to
+ *     think (a budget of 0 is refused), so the closest honest answer to an
+ *     explicit "no thinking" is the least it will do.
+ *   - Pro, thinking absent: nothing, so Pro thinks at its own default; the
+ *     request stated no preference.
  *
  * `includeThoughts` follows whether thinking was asked for and not hidden, so
  * a thought summary comes back as a thinking block exactly when a Claude reply
  * would have carried one.
  */
 function thinkingConfigFor(
+  wireModel: string,
   thinking: Anthropic.ThinkingConfigParam | undefined,
   outputConfig: Anthropic.OutputConfig | undefined,
 ): ThinkingConfig | undefined {
@@ -258,7 +266,9 @@ function thinkingConfigFor(
   }
   const effort = outputConfig?.effort ?? undefined;
   if (thinking === undefined || thinking.type === 'disabled') {
-    return effort ? { thinkingLevel: thinkingLevelFor(effort) } : undefined;
+    if (effort) return { thinkingLevel: thinkingLevelFor(effort) };
+    if (canDisableThinking(wireModel)) return { thinkingBudget: 0 };
+    return thinking?.type === 'disabled' ? { thinkingLevel: ThinkingLevel.LOW } : undefined;
   }
   const includeThoughts = thinking.display !== 'omitted';
   switch (thinking.type) {
@@ -270,6 +280,13 @@ function thinkingConfigFor(
     default:
       return neverAsAny(thinking);
   }
+}
+
+/** The Flash models accept a thinking budget of 0; the Pro models do not.
+ *  Gemini models are not in the registry (a map line names them as free text),
+ *  so the wire name is the only thing that says which family answers. */
+function canDisableThinking(wireModel: string): boolean {
+  return /flash/i.test(wireModel);
 }
 
 function thinkingLevelFor(effort: NonNullable<Anthropic.OutputConfig['effort']>): ThinkingLevel {
