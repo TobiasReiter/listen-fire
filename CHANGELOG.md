@@ -6,6 +6,10 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 ## [Unreleased]
 
+### Changed
+
+- Automations background work (cron, polls, timer resumes, inbound dispatch, await wakes, housekeeping) now runs from the `automations.work` table through one `drain` worker. Deployments may run it as an in-process loop (default) or tick it externally (`AUTOMATIONS_DRAIN_MODE=external` + `POST /api/v1/system/automations/drain`). The automations unit no longer needs a single instance. The boot-time orphan sweep is replaced by lease expiry.
+
 <!-- add merged PRs here -->
 
 ## [v0.10.1] - 2026-10-06

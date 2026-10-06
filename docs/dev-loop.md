@@ -1007,6 +1007,10 @@ read resolves the field by the position's typeId (the seam fix). No
 `'Title' is not a known field of 'granola:note'` in `.dev-loop/loop.log` is the
 proof the fix holds on the real path.
 
+### Ticking the automations drain by hand
+
+Automations' background work (cron, polls, timer resumes, inbound dispatch, await wakes) is rows in `automations.work`, run by one drain worker. By default the API drains on an in-process timer. Set `AUTOMATIONS_DRAIN_MODE=external` and nothing drains until a caller hits `POST /api/v1/system/automations/drain` (optional JSON body `{"limit": 10, "maxPasses": 20}`; the answer is `{claimed, ran, recovered, failed}`). The route needs a key holding the `system` scope (or `*`) and answers 404 when the `automations` unit is not mounted. To tick the agent stack: `curl -X POST -H "Authorization: Bearer $KEY" -H 'content-type: application/json' -d '{}' http://localhost:3500/api/v1/system/automations/drain`. The dev loop does not currently mint or print a system-scope key, so `$KEY` is whatever credential the stack's principal accepts (the static principal's `LISTEN_FIRE_API_KEY` carries every scope unless `LISTEN_FIRE_SCOPES` narrows it); this has not been exercised against the agent stack.
+
 ## Patterns to know
 
 - The dev-loop team id is fixed (`TEST_HARNESS_TEAM_ID` in `apps/api/.env`).
