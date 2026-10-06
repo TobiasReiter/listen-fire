@@ -57,11 +57,16 @@ let generation = 0;
 /**
  * Thrown by a parse that runs before the parser has loaded: in a browser,
  * until `await initParser(…)` resolves; in Node, when the artifact could not
- * be read at startup (`cause` says why).
+ * be read as this module loaded (the `cause`).
  */
 export class MovementParserNotReady extends Error {
-  constructor(options?: { cause?: unknown }) {
-    super('the movement parser is not ready: await initParser() before parsing', options);
+  constructor(loadFailure?: unknown) {
+    super(
+      loadFailure === undefined
+        ? 'the movement parser is not ready: await initParser() before parsing'
+        : `the movement parser did not load: ${loadFailure instanceof Error ? loadFailure.message : String(loadFailure)}`,
+      loadFailure === undefined ? undefined : { cause: loadFailure },
+    );
     this.name = 'MovementParserNotReady';
   }
 }
@@ -84,6 +89,12 @@ export async function initParser(bytesOrUrl?: Uint8Array | string): Promise<void
 
 export function isParserReady(): boolean {
   return loaded !== undefined;
+}
+
+/** For a Node process's boot: throws `MovementParserNotReady`, saying why
+ *  the load failed, unless the parser loaded with this module. */
+export function assertParserReady(): void {
+  if (!loaded) throw new MovementParserNotReady(loadFailure);
 }
 
 /**
@@ -171,7 +182,7 @@ export function parserGeneration(): number {
 
 function currentExports(): ParserExports {
   if (!loaded) {
-    throw new MovementParserNotReady(loadFailure === undefined ? undefined : { cause: loadFailure });
+    throw new MovementParserNotReady(loadFailure);
   }
   loaded.exports ??= instantiate(loaded.module);
   return loaded.exports;

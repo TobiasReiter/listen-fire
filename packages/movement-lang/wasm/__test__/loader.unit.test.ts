@@ -1,4 +1,4 @@
-import { callJson, initParser, isParserReady, parserGeneration } from '../loader';
+import { assertParserReady, callJson, initParser, isParserReady, parserGeneration } from '../loader';
 
 declare function require(id: string): unknown;
 declare const __dirname: string;
@@ -54,11 +54,13 @@ describe('the parser loader', () => {
   });
 
   describe('before it has loaded', () => {
-    // A runtime with no disk path stands in for a browser: the module loads,
-    // the parser does not, and nothing parses until initParser is given bytes.
-    function loadWithoutDisk(): typeof import('../loader') {
+    // A registry of its own, loaded with a stand-in for one of the two ways
+    // the parser starts out unloaded: a browser (a `window`, so Node's disk
+    // path is never tried) or a Node that cannot read the artifact.
+    function loadWithout(missing: 'node' | 'disk'): typeof import('../loader') {
       const original = process.getBuiltinModule;
-      process.getBuiltinModule = undefined;
+      if (missing === 'node') Reflect.set(globalThis, 'window', globalThis);
+      else process.getBuiltinModule = undefined;
       try {
         let loader: typeof import('../loader') | undefined;
         jest.isolateModules(() => {
@@ -67,31 +69,48 @@ describe('the parser loader', () => {
         if (loader === undefined) throw new Error('isolateModules did not run');
         return loader;
       } finally {
+        Reflect.deleteProperty(globalThis, 'window');
         process.getBuiltinModule = original;
       }
     }
 
-    it('throws MovementParserNotReady, telling the caller to await initParser()', async () => {
-      const loader = loadWithoutDisk();
+    function thrownBy(run: () => unknown): unknown {
+      try {
+        run();
+      } catch (e) {
+        return e;
+      }
+      throw new Error('expected a throw');
+    }
+
+    it('in a browser, throws MovementParserNotReady telling the caller to await initParser(), until it does', async () => {
+      const loader = loadWithout('node');
       expect(loader.isParserReady()).toBe(false);
-      const thrown = (() => {
-        try {
-          loader.callJson('parse_program', '', [3]);
-        } catch (e) {
-          return e;
-        }
-        throw new Error('expected MovementParserNotReady');
-      })();
+      const thrown = thrownBy(() => loader.callJson('parse_program', '', [3]));
       expect(thrown).toBeInstanceOf(loader.MovementParserNotReady);
       expect(thrown).toMatchObject({
         name: 'MovementParserNotReady',
         message: 'the movement parser is not ready: await initParser() before parsing',
-        cause: expect.objectContaining({ message: expect.stringContaining('getBuiltinModule') }),
       });
 
       await loader.initParser(committedArtifact());
       expect(loader.isParserReady()).toBe(true);
       expect(loader.callJson('parse_program', '', [3])).toEqual({ statements: [] });
+    });
+
+    it('in a Node that could not read the artifact, says why, at boot and at every parse', () => {
+      const loader = loadWithout('disk');
+      const atBoot = thrownBy(() => loader.assertParserReady());
+      expect(atBoot).toBeInstanceOf(loader.MovementParserNotReady);
+      expect(atBoot).toMatchObject({
+        message: expect.stringMatching(/^the movement parser did not load: .*getBuiltinModule/),
+        cause: expect.any(Error),
+      });
+      expect(String(thrownBy(() => loader.callJson('parse_program', '', [3])))).toBe(String(atBoot));
+    });
+
+    it('passes the boot check once loaded', () => {
+      expect(() => assertParserReady()).not.toThrow();
     });
   });
 

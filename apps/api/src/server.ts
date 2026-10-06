@@ -40,6 +40,7 @@ import { assertJevConfigured } from './lib/jev/client';
 import { assertRunCostCapConfigured } from './lib/run_spend';
 import { assertExtractionTiersConfigured } from './services/movement_engine/ai_tiers';
 import { assertMaxCallDepthConfigured } from './services/movement_engine/call_depth';
+import { assertParserReady } from 'movement-lang';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';
 import { rootHandler } from './lib/middleware/root_handler';
 import { HEALTH_CHECK_ENDPOINT, WORKERS_HEALTH_ENDPOINT } from './constants';
@@ -103,6 +104,12 @@ assertRunCostCapConfigured();
 // A call depth limit set to something that is not a positive whole number is
 // a deployment that believes its recursions are bounded when they are not.
 assertMaxCallDepthConfigured();
+
+// Node loads the movement parser from the .wasm beside movement-lang's
+// loader as that module loads, and records rather than throws a failure. A
+// build that left the artifact behind (tsc does not copy it) would otherwise
+// boot and then fail every validate and run at its first parse.
+assertParserReady();
 
 // A blocked event loop is the one failure this process cannot narrate: the
 // health check goes unanswered, the logs stop mid-sentence, and the platform
