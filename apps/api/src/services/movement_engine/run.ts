@@ -354,7 +354,8 @@ import {
 import type { CallbackSink } from './callback_sink';
 import type { CallbackCall, CallbackParamSpec } from './callback_store';
 import { isCallbackParamType } from './callback_store';
-import { isAdapterCallCeilingExceeded, withRunCallLedger } from './run_scope';
+import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
+import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';
 import {
   currentRunSpend,
@@ -386,6 +387,10 @@ export interface RunMovementInput {
   /** The triggering event — the movement parameter's position. */
   event: TriggerEvent;
   teamId: TeamId;
+  // TODO(Task 3): moves into `host.locks`; remove this field then.
+  /** The cross-run write locks each segment takes beneath its effect locks,
+   *  scoped to `teamId`. Absent ⇒ one in-memory table for the whole process. */
+  writeLocks?: WriteLocks;
   /**
    * When this run FIRED — the instant every clock read in it answers from
    * (`@current_date`, `@current_timestamp`, `DATE.TODAY(zone)`). The host
@@ -786,13 +791,19 @@ function runScopeOf(input: RunMovementInput): {
   languageVersion: LanguageVersion;
   priorSpentMicrodollars: number;
   capBaselineMicrodollars: number;
+  writeLocks: { locks: WriteLocks; teamId: string };
 } {
   return {
     languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
     priorSpentMicrodollars: input.priorSpentMicrodollars ?? 0,
     capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
+    writeLocks: { locks: input.writeLocks ?? PROCESS_WRITE_LOCKS, teamId: input.teamId },
   };
 }
+
+// Runs in one process exclude each other without a database; a host that
+// spans processes passes its own.
+const PROCESS_WRITE_LOCKS: WriteLocks = new InMemoryWriteLocks();
 
 /**
  * Diagnostics an author may no longer WRITE, but a saved program may still
@@ -2409,7 +2420,7 @@ class Interpreter {
   private readonly boundaries = new AsyncLocalStorage<readonly LiveBoundary[]>();
   /** What keeps concurrent flows' effects on the world from racing — see
    *  `effect_locks.ts`. */
-  private readonly effectLocks = new EffectLocks();
+  private readonly effectLocks = new EffectLocks({ holder: segmentWriteLockHolder() });
   /** The run is PAUSED at a limit: every flow suspends at its next statement
    *  boundary, and no collection op starts another member. Set by the first
    *  flow to meet the cost cap (`suspendAtLimit`), or from the start when an

@@ -87,7 +87,16 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
 import { runMovement } from '../run';
 import type { MovementTransformInvoker } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
-import { EffectLocks, foldKeyValue, identityLocks } from '../effect_locks';
+import {
+  EffectLocks,
+  bindLock,
+  crossRunNames,
+  edgeLock,
+  foldKeyValue,
+  identityLocks,
+  recordLock,
+} from '../effect_locks';
+import { InMemoryWriteLocks, type WriteLockHolder } from '../../write_locks/write_locks';
 
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import {
@@ -490,9 +499,10 @@ describe('the arms of parallel and race are isolated as members are', () => {
 
 describe('the lock table', () => {
   const exclusive = { kind: 'exclusive' } as const;
+  const inMemoryHolder = () => new InMemoryWriteLocks().holder(TEAM_ID);
 
   it('two effects wanting the same locks in opposite orders both finish', async () => {
-    const locks = new EffectLocks();
+    const locks = new EffectLocks({ holder: inMemoryHolder() });
     const done: string[] = [];
     await Promise.all([
       locks.withLocks(
@@ -514,7 +524,7 @@ describe('the lock table', () => {
   });
 
   it('an effect asking again for a lock it holds does not wait on itself', async () => {
-    const locks = new EffectLocks();
+    const locks = new EffectLocks({ holder: inMemoryHolder() });
     const answer = await locks.withLocks([{ name: 'k', mode: exclusive }], () =>
       locks.withLocks([{ name: 'k', mode: exclusive }], async () => 'inner'),
     );
@@ -522,7 +532,7 @@ describe('the lock table', () => {
   });
 
   it('one group shares a lock; another group, and an exclusive holder, wait — first come, first served', async () => {
-    const locks = new EffectLocks();
+    const locks = new EffectLocks({ holder: inMemoryHolder() });
     const events: string[] = [];
     const hold = (label: string, mode: { kind: 'exclusive' } | { kind: 'shared'; group: string }, ms: number) =>
       locks.withLocks([{ name: 't', mode }], async () => {
@@ -558,5 +568,102 @@ describe('the lock table', () => {
       fields: { tags: ['a'] },
     });
     expect(locks).toEqual([{ name: expect.stringMatching(/^identity /), mode: { kind: 'exclusive' } }]);
+  });
+});
+
+describe('the cross-run locks beneath the lock table', () => {
+  const system = { adapterType: 'attio' };
+  const companyIdentity = identityLocks({
+    system,
+    recordType: 'companies',
+    constraints: { any: [{ all: [{ field: 'domain' }] }] },
+    resolveRecord: { domain: 'acme.com' },
+    fields: { domain: 'acme.com' },
+  });
+  const typeLockName = companyIdentity[0]!.name;
+
+  function recordingHolder(): WriteLockHolder & { calls: string[][]; events: string[] } {
+    const calls: string[][] = [];
+    const events: string[] = [];
+    return {
+      calls,
+      events,
+      async acquire(names) {
+        calls.push([...names]);
+        events.push(`acquire ${names.join(',')}`);
+      },
+      async release() {},
+    };
+  }
+
+  it.each([
+    ['a record lock as is', [recordLock(system, 'r1')], [recordLock(system, 'r1').name]],
+    [
+      'an edge lock as is',
+      [edgeLock({ system, from: { recordType: 'people', externalId: 'p' }, edgeName: 'works_at', to: { recordType: 'companies', externalId: 'c' } })],
+      [edgeLock({ system, from: { recordType: 'people', externalId: 'p' }, edgeName: 'works_at', to: { recordType: 'companies', externalId: 'c' } }).name],
+    ],
+    ['a bind lock as is', [bindLock({ id: 'o' }, { type: 't' })], [bindLock({ id: 'o' }, { type: 't' }).name]],
+    ['an identity write: its record type only, not its keys', companyIdentity, [typeLockName]],
+    [
+      'a fuzzy identity write: its record type',
+      identityLocks({
+        system,
+        recordType: 'companies',
+        constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] },
+        resolveRecord: { name: 'Acme' },
+        fields: { name: 'Acme' },
+      }),
+      [typeLockName],
+    ],
+    [
+      'several requests: sorted, one per name',
+      [recordLock(system, 'r2'), ...companyIdentity, recordLock(system, 'r1'), recordLock(system, 'r2')],
+      [recordLock(system, 'r1').name, recordLock(system, 'r2').name, typeLockName].sort(),
+    ],
+  ])('%s', (_label, requests, expected) => {
+    expect(crossRunNames(requests)).toEqual(expected);
+  });
+
+  it("takes a flow's cross-run names once, after the run's own gate and before the effect", async () => {
+    const holder = recordingHolder();
+    const locks = new EffectLocks({ holder });
+    await locks.withLocks([recordLock(system, 'r1'), ...companyIdentity, recordLock(system, 'r1')], async () => {
+      holder.events.push('effect');
+    });
+    expect(holder.calls).toEqual([[recordLock(system, 'r1').name, typeLockName].sort()]);
+    expect(holder.events).toEqual([expect.stringMatching(/^acquire /), 'effect']);
+  });
+
+  it('a flow asking again for names it holds does not take them again', async () => {
+    const holder = recordingHolder();
+    const locks = new EffectLocks({ holder });
+    await locks.withLocks(companyIdentity, () =>
+      locks.withLocks([...companyIdentity, recordLock(system, 'r1')], async () => undefined),
+    );
+    expect(holder.calls).toEqual([[typeLockName], [recordLock(system, 'r1').name]]);
+  });
+
+  it('a flow whose locks are all its own takes nothing across runs', async () => {
+    const holder = recordingHolder();
+    const locks = new EffectLocks({ holder });
+    await locks.withLocks(companyIdentity, () =>
+      locks.withLocks(companyIdentity, async () => undefined),
+    );
+    expect(holder.calls).toEqual([[typeLockName]]);
+  });
+
+  it("a second flow waiting on the run's own gate does not wait across runs until it is let through", async () => {
+    const holder = recordingHolder();
+    const locks = new EffectLocks({ holder });
+    const flow = (label: string) =>
+      locks.withLocks([recordLock(system, 'r1')], async () => {
+        holder.events.push(`start ${label}`);
+        await sleep(5);
+        holder.events.push(`end ${label}`);
+      });
+    await Promise.all([flow('one'), flow('two')]);
+    const acquire = `acquire ${recordLock(system, 'r1').name}`;
+    expect(holder.events).toEqual([acquire, 'start one', 'end one', acquire, 'start two', 'end two']);
   });
 });

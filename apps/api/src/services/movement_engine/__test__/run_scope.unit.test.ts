@@ -13,8 +13,10 @@ import {
   countAdapterCall,
   currentRunCallCount,
   isAdapterCallCeilingExceeded,
+  segmentWriteLockHolder,
   withRunCallLedger,
 } from '../run_scope';
+import { InMemoryWriteLocks } from '../../write_locks/write_locks';
 
 const ENV_VAR = 'AFFINITY_MAX_CALLS_PER_RUN';
 
@@ -122,6 +124,33 @@ describe('the per-run Affinity call ceiling', () => {
         expect(isAdapterCallCeilingExceeded(err)).toBe(true);
         expect(err).toBeInstanceOf(AdapterCallCeilingExceeded);
       }
+    });
+  });
+});
+
+describe("the segment's cross-run write locks", () => {
+  it('a segment holds one holder for its team and releases it when it ends, even by throwing', async () => {
+    const locks = new InMemoryWriteLocks({ timeoutMs: 100 });
+    const writeLocks = { locks, teamId: 'team-1' };
+    await expect(
+      withRunCallLedger(
+        async () => {
+          await segmentWriteLockHolder().acquire(['record attio 1']);
+          throw new Error('the segment failed');
+        },
+        { writeLocks },
+      ),
+    ).rejects.toThrow('the segment failed');
+
+    await withRunCallLedger(() => segmentWriteLockHolder().acquire(['record attio 1']), {
+      writeLocks,
+    });
+  });
+
+  it('there is no holder outside a segment opened with write locks', async () => {
+    expect(() => segmentWriteLockHolder()).toThrow(/outside a segment holding write locks/);
+    await withRunCallLedger(async () => {
+      expect(() => segmentWriteLockHolder()).toThrow(/outside a segment holding write locks/);
     });
   });
 });

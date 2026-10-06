@@ -38,7 +38,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 
+import { MovementEngineError } from './errors';
 import { withRunSpendLedger } from '../../lib/run_spend';
+import type { WriteLockHolder, WriteLocks } from '../write_locks/write_locks';
 
 /** The systems that count against a ceiling. One entry per system that has its
  *  own env var below; a system not listed here is simply not capped. */
@@ -163,6 +165,9 @@ interface RunScope {
    *  plugin or adapter the engine calls into can honour the pin without the
    *  engine threading it through every seam. */
   readonly languageVersion: LanguageVersion;
+  /** The cross-run write locks this segment's effects take, held until the
+   *  segment ends (`effect_locks.ts`). Absent outside a run. */
+  readonly writeLockHolder: WriteLockHolder | undefined;
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<RunScope>();
@@ -171,27 +176,50 @@ const asyncLocalStorage = new AsyncLocalStorage<RunScope>();
  *  and under the run's spend account — seeded with `priorSpentMicrodollars`,
  *  what the run's earlier segments spent (none for a fresh run), counting
  *  toward the cap from `capBaselineMicrodollars` (the spend at the run's last
- *  resume from a limit pause). */
+ *  resume from a limit pause). With `writeLocks`, the segment holds one
+ *  cross-run lock holder scoped to the team, released when the segment ends
+ *  however it ends. */
 export function withRunCallLedger<T>(
   fn: () => Promise<T>,
   options?: {
     languageVersion?: LanguageVersion;
     priorSpentMicrodollars?: number;
     capBaselineMicrodollars?: number;
+    writeLocks?: { locks: WriteLocks; teamId: string };
   },
 ): Promise<T> {
+  const writeLockHolder = options?.writeLocks?.locks.holder(options.writeLocks.teamId);
   return asyncLocalStorage.run(
     {
       ledger: new RunCallLedger(),
       memo: new RunReadMemo(),
       languageVersion: options?.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+      writeLockHolder,
     },
-    () =>
-      withRunSpendLedger(fn, {
-        priorMicrodollars: options?.priorSpentMicrodollars ?? 0,
-        capBaselineMicrodollars: options?.capBaselineMicrodollars ?? 0,
-      }),
+    async () => {
+      try {
+        return await withRunSpendLedger(fn, {
+          priorMicrodollars: options?.priorSpentMicrodollars ?? 0,
+          capBaselineMicrodollars: options?.capBaselineMicrodollars ?? 0,
+        });
+      } finally {
+        await writeLockHolder?.release();
+      }
+    },
   );
+}
+
+/** The current segment's cross-run lock holder. The interpreter runs only
+ *  inside a segment opened with write locks; anything else is an engine bug. */
+export function segmentWriteLockHolder(): WriteLockHolder {
+  const holder = asyncLocalStorage.getStore()?.writeLockHolder;
+  if (holder === undefined) {
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      'the interpreter ran outside a segment holding write locks',
+    );
+  }
+  return holder;
 }
 
 /**

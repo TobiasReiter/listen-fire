@@ -24,6 +24,15 @@
 //   - a CREATE with no identity at all, and a MATCH, hold nothing: a record
 //     nobody searches for cannot be found twice, and a match only reads.
 //
+// Beneath the run's own locks sit the CROSS-RUN locks (`write_locks/`): two
+// runs, perhaps in two processes, are as dangerous to each other as two flows
+// of one run. Once this run's flows have let an effect through, its segment's
+// holder takes the same names, but coarser: a record, an edge, a binding as
+// is, and an identity write only its record type, exclusively. Postgres
+// advisory locks have no notion of "shared within a group", and one lock per
+// key value would be one more lock per write for no gain once the type is
+// held. The segment holds them until it ends.
+//
 // Over-locking only costs waiting; under-locking costs a duplicate. So every
 // key here is at least as coarse as any system's own matching: the system is
 // the adapter TYPE (two connections to one workspace are one system), and a
@@ -31,6 +40,8 @@
 // before it is compared.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+
+import type { WriteLockHolder } from '../write_locks/write_locks';
 
 import { MovementEngineError } from './errors';
 import { isBlankIdentityValue, type UniquenessConstraints } from '../translation_graph/uniqueness';
@@ -42,6 +53,9 @@ export type LockMode = { kind: 'exclusive' } | { kind: 'shared'; group: string }
 export interface LockRequest {
   name: string;
   mode: LockMode;
+  /** Taken by this run only, never across runs: an identity write's per-key
+   *  locks, which the cross-run record-type lock already covers. */
+  inRunOnly?: true;
 }
 
 const EXCLUSIVE: LockMode = { kind: 'exclusive' };
@@ -111,6 +125,11 @@ export class EffectLocks {
   private readonly gates = new Map<string, Gate>();
   /** The locks the running flow holds, by name. */
   private readonly held = new AsyncLocalStorage<ReadonlyMap<string, LockMode>>();
+  private readonly holder: WriteLockHolder;
+
+  constructor(deps: { holder: WriteLockHolder }) {
+    this.holder = deps.holder;
+  }
 
   async withLocks<T>(requests: readonly LockRequest[], effect: () => Promise<T>): Promise<T> {
     const held = this.held.getStore() ?? new Map<string, LockMode>();
@@ -137,6 +156,10 @@ export class EffectLocks {
         await gate.acquire(request.mode);
         taken.push(gate);
       }
+      // After the run's own gates, so the run's flows queue among themselves
+      // first and only one of them at a time waits on another run.
+      const crossRun = crossRunNames(wanted);
+      if (crossRun.length > 0) await this.holder.acquire(crossRun);
       const holding = new Map(held);
       for (const request of wanted) holding.set(request.name, request.mode);
       return await this.held.run(holding, effect);
@@ -151,17 +174,30 @@ export class EffectLocks {
   }
 }
 
+/** The names the segment's cross-run holder takes for `requests`: one per
+ *  name, sorted. */
+export function crossRunNames(requests: readonly LockRequest[]): string[] {
+  const names = new Set<string>();
+  for (const request of requests) if (request.inRunOnly !== true) names.add(request.name);
+  return [...names].sort();
+}
+
 /** One request per name, in name order; two asks for one name in different
- *  modes become one exclusive ask. */
+ *  modes become one exclusive ask, and a name any ask takes across runs is
+ *  taken across runs. */
 function canonicalRequests(requests: readonly LockRequest[]): LockRequest[] {
-  const byName = new Map<string, LockMode>();
-  for (const { name, mode } of requests) {
-    const already = byName.get(name);
-    byName.set(name, already === undefined || compatible(already, mode) ? mode : EXCLUSIVE);
+  const byName = new Map<string, LockRequest>();
+  for (const request of requests) {
+    const already = byName.get(request.name);
+    if (already === undefined) {
+      byName.set(request.name, request);
+      continue;
+    }
+    const mode = compatible(already.mode, request.mode) ? request.mode : EXCLUSIVE;
+    const inRunOnly = already.inRunOnly === true && request.inRunOnly === true;
+    byName.set(request.name, { name: request.name, mode, ...(inRunOnly ? { inRunOnly } : {}) });
   }
-  return [...byName.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([name, mode]) => ({ name, mode }));
+  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 // ── The locks each kind of effect takes ──
@@ -243,6 +279,7 @@ export function identityLocks(input: {
       keys.push({
         name: `key ${part(input.system.adapterType)} ${part(input.recordType)} ${signature} ${stableJson(combination)}`,
         mode: EXCLUSIVE,
+        inRunOnly: true,
       });
     }
   }
