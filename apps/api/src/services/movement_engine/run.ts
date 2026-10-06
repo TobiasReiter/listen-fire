@@ -209,8 +209,7 @@ import type {
   WriteResult,
 } from '../translation_graph/adapter';
 import { updateRecordSucceeded } from '../translation_graph/adapter';
-import type { BindingEndpoint } from './record_binding';
-import type { EngineHost, ResolveAdapter } from './host';
+import type { BindingEndpoint, EngineHost, ResolveAdapter } from './host';
 import {
   newDryRunRehearsal,
   wrapAdapterForDryRun,
@@ -305,7 +304,7 @@ import {
   type FileTextResolution,
   type TransformInvocationResult,
 } from './extraction';
-import { RunCancelledSignal } from './cancel_gate';
+import { RunCancelledSignal } from './errors';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import { emitOpsEvent } from '../../lib/ops/emit';
@@ -413,6 +412,9 @@ export interface RunMovementInput {
   catalog: Catalog;
   /** Everything the run reaches outside its program (`host.ts`). */
   host: EngineHost;
+  /** The run this is (the host's trigger-run id), named on the engine's log
+   *  lines. Absent ⇒ the lines carry none (a test run, a script). */
+  runId?: string;
   /** Wrap every target adapter so writes are captured, not performed. */
   dryRun?: boolean;
   /** Receives each would-be write under `dryRun` — same `CapturedWrite`
@@ -553,9 +555,7 @@ export interface CancelGate {
   reason(): string | null;
 }
 
-// The cancel signal lives beside the gate that raises it (cancel_gate.ts) so
-// both the interpreter and the extraction seam import it cycle-free;
-// re-exported here for the engine's public surface, alongside `CancelGate`.
+// Re-exported for the engine's public surface, alongside `CancelGate`.
 export { RunCancelledSignal };
 
 /**
@@ -689,12 +689,16 @@ function runScopeOf(input: RunMovementInput): {
   priorSpentMicrodollars: number;
   capBaselineMicrodollars: number;
   writeLocks: { locks: WriteLocks; teamId: string };
+  cancel: CancelGate;
+  runId?: string;
 } {
   return {
     languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
     priorSpentMicrodollars: input.priorSpentMicrodollars ?? 0,
     capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
     writeLocks: { locks: input.host.locks, teamId: input.teamId },
+    cancel: input.host.control.cancel,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
   };
 }
 
@@ -3821,7 +3825,7 @@ class Interpreter {
           if (!this.currentImports) {
             throw unsupported(
               `the file import "${statement.source.path}"`,
-              'this run has no file resolver — pass resolveFile to runMovement',
+              'this run has no file resolver — its host provides no `files.resolveFile`',
             );
           }
           await this.declareFileImports(statement.names, statement.source.path, env);
@@ -5619,7 +5623,7 @@ class Interpreter {
       if (callee?.kind === 'opaque') {
         throw unsupported(
           `calling the import '${statement.callee}'`,
-          'this run has no file resolver — pass resolveFile to runMovement (or declare the movement in this file)',
+          'this run has no file resolver — its host provides no `files.resolveFile` (or declare the movement in this file)',
         );
       }
       throw new MovementEngineError(
@@ -11301,7 +11305,7 @@ class Interpreter {
         teamId: this.input.teamId,
         now: this.pinnedNow,
         bag: { trigger: this.input.event, mutationContext: this.mutationContext },
-        triggerForActingUser: (triggerId) => this.input.host.lookup.triggerForActingUser(triggerId),
+        resolveActingUser: (input) => this.input.host.lookup.resolveActingUser(input),
         actingUserCache: this.actingUserCache,
         actorCache: this.actorCache,
       },

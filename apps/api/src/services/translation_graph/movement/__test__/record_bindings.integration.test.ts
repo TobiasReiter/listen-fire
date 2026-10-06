@@ -16,14 +16,14 @@
 // end-to-end complement.
 
 import { randomUUID } from 'node:crypto';
-import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 import {
   recordBinding,
   findBoundCounterpart,
   deleteBinding,
-  type BindingEndpoint,
-} from '../record_binding';
+} from '../record_bindings';
+import type { BindingEndpoint } from '../../../movement_engine/host';
 
 let teamId: TeamId;
 

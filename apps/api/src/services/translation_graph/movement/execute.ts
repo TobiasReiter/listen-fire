@@ -67,6 +67,9 @@ async function interpretMovementFiring(input: {
    *  `started_at`. Every clock read in the run answers from it. */
   firedAt: Date;
   dryRun?: boolean;
+  /** The trigger run this firing is — its model calls are billed to it, and
+   *  the engine's log lines name it. */
+  triggerRunId: TriggerRunId;
   /** The recorder the run's parks and callbacks persist through — present for
    *  live firings (an `ask` parks into the recorder's run). Absent under dry
    *  runs: a test run never parks and mints nothing durable. */
@@ -91,9 +94,11 @@ async function interpretMovementFiring(input: {
     teamId: input.teamId,
     firedAt: input.firedAt,
     catalog: teamCatalog.catalog,
+    runId: input.triggerRunId,
     host: productionEngineHost({
       teamId: input.teamId,
       catalog: teamCatalog,
+      triggerRunId: input.triggerRunId,
       ...(input.parksInto !== undefined ? { parksInto: input.parksInto } : {}),
       cancel: input.cancelGate,
       ...(input.trace !== undefined ? { trace: input.trace } : {}),
@@ -260,6 +265,7 @@ async function runMovementFiringInContext(
         ...(movementName !== undefined ? { movementName } : {}),
         event: input.event,
         firedAt: recorder.firedAt,
+        triggerRunId: recorder.triggerRunId,
         ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
         // A live firing can park at an `ask`; a dry run never does (test runs
         // don't create durable interactions). The park rows are written + the
@@ -268,6 +274,9 @@ async function runMovementFiringInContext(
         cancelGate,
         trace,
       });
+    // The host bills its own model and plugin calls; this context is for what
+    // it does not reach through those — the catalog assembly and any model
+    // call an adapter makes itself.
     const result = await new LlmUsageContext({
       teamId: input.teamId as unknown as string,
       triggerRunId: recorder.triggerRunId as unknown as string,
@@ -505,10 +514,12 @@ async function resumeMovementFiringInContext(
       // event takes it, then suspends before its next statement.
       limitPaused: recorder.limitPaused,
       catalog: teamCatalog.catalog,
+      runId: input.runId,
       // A resumed run can re-park at a deeper ask — it gets live parks too.
       host: productionEngineHost({
         teamId: input.teamId,
         catalog: teamCatalog,
+        triggerRunId: input.runId,
         parksInto: recorder,
         cancel: cancelGate,
       }),
@@ -713,9 +724,11 @@ async function fireCallbackFiringInContext(
         priorSpentMicrodollars: recorder.priorSpentMicrodollars,
         capBaselineMicrodollars: recorder.capBaselineMicrodollars,
         catalog: teamCatalog.catalog,
+        runId: input.runId,
         host: productionEngineHost({
           teamId: input.teamId,
           catalog: teamCatalog,
+          triggerRunId: input.runId,
           parksInto: recorder,
           cancel: cancelGate,
         }),

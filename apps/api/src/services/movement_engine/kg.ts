@@ -18,7 +18,8 @@
 // RETIRED: correspondence is no longer an implicit KG bridge the engine
 // asserts on every write. It is now a generic, engine-owned, symmetric
 // BINDING declared in the language (`write … bind other`) and stored by
-// `record_binding.ts` — the adapter is correspondence-agnostic. The KG
+// the host (`translation_graph/movement/record_bindings.ts`) — the adapter is
+// correspondence-agnostic. The KG
 // adapter keeps `getPriorMatch` / `recordLink` and `linked_object` solely for
 // the frozen TG engine (a parity harness), which still rides them; the live
 // movement engine touches neither (explicit-linking, 3b).

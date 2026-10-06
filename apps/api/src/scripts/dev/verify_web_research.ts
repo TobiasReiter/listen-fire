@@ -27,12 +27,9 @@ import '../../services/translation_graph/engine/transforms/register-bundled';
 
 import { parseProgram } from 'movement-lang';
 import { runInContext } from '../../services/context/utils';
-import {
-  buildExtractSpec,
-  materializeExtract,
-  registryTransformInvoker,
-  makeAnthropicLlmClient,
-} from '../../services/movement_engine/extraction';
+import { buildExtractSpec, materializeExtract } from '../../services/movement_engine/extraction';
+import { makeAnthropicLlmClient } from '../../services/translation_graph/movement/llm_clients';
+import { registryTransformInvoker } from '../../services/translation_graph/movement/transform_invoker';
 import { getTransform } from '../../services/translation_graph/engine/transforms';
 import { makeStablePosition } from '../../services/translation_graph/types';
 import { WebSearchService } from '../../services/web_search';

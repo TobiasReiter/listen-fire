@@ -137,8 +137,8 @@ import type {
   Resource,
 } from '../translation_graph/adapter';
 import { isFileRef } from '../translation_graph/engine/files/retrieve';
-import { resolveActingUser } from '../translation_graph/adapters/acting_user/resolve';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
+import type { EngineHost } from './host';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import {
   isStablePosition,
@@ -445,8 +445,8 @@ export type Binding =
       /** The non-credential construction args (the Airtable base, the Slack
        *  workspace, …) — what distinguishes two instances of the same adapter
        *  on the same credential. Feeds the binding store's instance key
-       *  (record_binding.ts `encodeInstanceKey`). Empty for adapters with no
-       *  construction config. */
+       *  (`encodeInstanceKey`, translation_graph/movement/record_bindings.ts).
+       *  Empty for adapters with no construction config. */
       constructionConfig?: Record<string, string>;
       schema?: InstanceSchema;
     }
@@ -1283,8 +1283,8 @@ export interface MovementMetaContext {
   /** The per-dispatch bag (the frozen `ctx.meta`) — unknown keys read
    *  from it, null when absent. */
   bag: Record<string, unknown>;
-  /** The host's trigger read for acting-user resolution. */
-  triggerForActingUser: (triggerId: string) => Promise<ActingUserTriggerRow | null>;
+  /** The host's acting-user resolution (`EngineHost.lookup`). */
+  resolveActingUser: EngineHost['lookup']['resolveActingUser'];
   /** `undefined` = not yet resolved; `null` = resolved to "none". */
   actingUserCache: { value?: ActingUser | null };
   actorCache: { value?: ActorIdentity | null };
@@ -1918,7 +1918,7 @@ function slotValue(binding: Binding): unknown {
  *      resolved here at evaluation time, no context needed;
  *   2. Acting-user keys (`user_email`, `user_name`, `user_id`) — actor
  *      candidates parsed by the SOURCE adapter (`getActorCandidates`),
- *      arbitrated by Listen-Fire's `resolveActingUser` (creator-override →
+ *      arbitrated by the host's `lookup.resolveActingUser` (creator-override →
  *      originator/non-service → relay/service → creator-fallback → null);
  *   3. Raw actor keys (`actor_email`, `actor_name`, `actor_id`) — the
  *      source adapter's pure-parse `extractActor`, auth-independent;
@@ -2005,13 +2005,9 @@ async function resolveMovementActingUserUncached(
   if (!event || meta.teamId === undefined) return null;
   if (!sourceAdapter?.getActorCandidates) return null;
   try {
-    // Null when the event predates trigger-aware dispatch or the row is gone.
-    const triggerRow = event.triggerEntryId
-      ? await meta.triggerForActingUser(event.triggerEntryId)
-      : null;
-    return await resolveActingUser({
+    return await meta.resolveActingUser({
       teamId: meta.teamId,
-      trigger: triggerRow ?? undefined,
+      ...(event.triggerEntryId ? { triggerId: event.triggerEntryId } : {}),
       getCandidates: () => sourceAdapter.getActorCandidates!({ event }),
     });
   } catch {
@@ -2041,18 +2037,6 @@ async function resolveMovementActor(
   }
   meta.actorCache.value = resolved;
   return resolved;
-}
-
-/**
- * The trigger row an event dispatched through, so `resolveActingUser` can read
- * `config.overrideActingUserToCreator` and `created_by_user_id` — the host's
- * `lookup.triggerForActingUser` answers it.
- */
-export interface ActingUserTriggerRow {
-  id: string;
-  kind: string;
-  config: unknown;
-  createdByUserId: string | null;
 }
 
 // ── AI() (the frozen TG engine's `llm` node, on the LlmClient seam) ─────────
@@ -2205,9 +2189,10 @@ async function evaluateFileFunction(
 
 /**
  * `READ(<file>)` — a file's text, or absent. The seam is the extraction's
- * (`./file_text.ts`): resolve the FileRef's own bytes, run the text extractor
- * (a PDF's text layer, OCR, a deck, a sheet, a transcript), and dedup-store
- * the result so the text has a stable id.
+ * (the host's `files.resolveFileText`; in production
+ * `translation_graph/movement/file_text.ts`): resolve the FileRef's own bytes,
+ * run the text extractor (a PDF's text layer, OCR, a deck, a sheet, a
+ * transcript), and dedup-store the result so the text has a stable id.
  *
  * Absence in this language carries no reason, so neither does this one: an
  * unreadable file yields `absent` and the reason goes on the run's trace. The

@@ -36,16 +36,17 @@
 
 import { Readable } from 'node:stream';
 
-import { services } from '../../adapters/registry';
-import { MB } from '../../constants';
-import { transcribe } from '../../lib/models/transcription';
-import { getXlsxContent } from '../../lib/utils/excel';
-import { getPptxText } from '../../lib/utils/powerpoint';
-import { logger } from '../logger';
-import type { FileRef, ResolveFileRefResult } from '../translation_graph/adapter';
-import { streamFileRef } from '../translation_graph/engine/files/retrieve';
-import type { FileTextResolution, FileUnreadable } from './extraction';
-import type { RawTextStore } from './host';
+import { services } from '../../../adapters/registry';
+import { MB } from '../../../constants';
+import { transcribe } from '../../../lib/models/transcription';
+import { getXlsxContent } from '../../../lib/utils/excel';
+import { getPptxText } from '../../../lib/utils/powerpoint';
+import { logger } from '../../logger';
+import type { FileUnreadable } from '../../movement_engine/extraction';
+import type { ResolveFileText } from '../../movement_engine/host';
+import type { FileRef, ResolveFileRefResult } from '../adapter';
+import { streamFileRef } from '../engine/files/retrieve';
+import type { RawTextStore } from './raw_text_store';
 
 type FileKind = 'pdf' | 'pptx' | 'xlsx' | 'audio';
 
@@ -243,13 +244,11 @@ async function extractTextFromStream(
 }
 
 /**
- * The production `resolveFileText` seam handed to the extraction runtime. This
- * module owns the byte-resolution → text-extraction → store pipeline so it stays
- * injectable for tests. Byte resolution is the FileRef's own `retrieve()`.
+ * The production `files.resolveFileText` the host hands the engine: byte
+ * resolution (the FileRef's own `retrieve()`) → text extraction → the raw-text
+ * store, which is a parameter so tests need no database.
  */
-export function makeFileTextResolver(
-  rawText: RawTextStore,
-): (ref: FileRef) => Promise<FileTextResolution> {
+export function makeFileTextResolver(rawText: RawTextStore): ResolveFileText {
   return async (ref) => {
     const kind = fileKind(ref);
     if (!kind) {

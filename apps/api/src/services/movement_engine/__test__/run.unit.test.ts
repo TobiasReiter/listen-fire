@@ -123,28 +123,6 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-// Acting-user arbitration (`@user_*` meta keys). The REAL chain walks
-// team-user tables; this mock keeps the seam honest — it still consumes
-// the adapter-parsed candidates the engine passes through
-// `getCandidates`, so the test proves the source-adapter wiring.
-jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
-  resolveActingUser: jest.fn(
-    async (input: {
-      getCandidates: () => Promise<
-        Array<{ identity: { email?: string; identifier: string; name?: string } }>
-      >;
-    }) => {
-      const first = (await input.getCandidates())[0];
-      if (!first) return null;
-      return {
-        id: 'user-1',
-        email: first.identity.email ?? first.identity.identifier,
-        name: first.identity.name ?? null,
-      };
-    },
-  ),
-}));
-
 import type { InstanceSchema } from 'movement-lang';
 import { mockCatalog, parseMovementExpression } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
@@ -178,7 +156,7 @@ import type { LlmClient } from '../../translation_graph/engine/batched_extractio
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost, type EngineHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
@@ -1683,6 +1661,16 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
     return fake;
   }
 
+  // Acting-user arbitration is the host's. The REAL chain walks team-user
+  // tables; this one still consumes the adapter-parsed candidates the engine
+  // passes through `getCandidates`, so the test proves the source-adapter
+  // wiring.
+  const candidateDrivenActingUser: EngineHost['lookup']['resolveActingUser'] = async ({ getCandidates }) => {
+    const first = (await getCandidates())[0];
+    if (!first) return null;
+    return { id: 'user-1', email: first.identity.email ?? first.identity.identifier, name: first.identity.name ?? null };
+  };
+
   it('resolves time, actor, and acting-user keys through the same sources as the frozen engine', async () => {
     const slack = actorAwareSlack();
     const attio = makeFakeAdapter('attio');
@@ -1696,14 +1684,15 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
           credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
         },
+        lookup: { resolveActingUser: candidateDrivenActingUser },
       }),
     });
 
     expect(attio.creates).toHaveLength(1);
     const fields = attio.creates[0].fields;
     expect(fields.name).toBe('U123');
-    // @user_* — candidates parsed by the source adapter, arbitrated by
-    // resolveActingUser (mocked at the module seam, candidate-driven).
+    // @user_* — candidates parsed by the source adapter, arbitrated by the
+    // host's acting-user lookup.
     expect(fields.domains).toBe('amy@acme.dev');
     // @actor_* — the source adapter's pure-parse extractActor;
     // @current_date — the universal time key, no context needed.

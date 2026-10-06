@@ -35,3 +35,20 @@ export class MovementEngineError extends Error {
     this.name = 'MovementEngineError';
   }
 }
+
+/**
+ * Thrown when the user requested cancellation (runs-and-cancel spec §cancel) —
+ * at a statement boundary (the interpreter's cancel gate) or a boundary inside
+ * a statement (an LLM call, a plugin invocation). Caught at the top of
+ * `run()`/`resume()` (like `RunParked`), NEVER by the fan-out/parallel park
+ * machinery (which special-cases only `RunParked`/`ScopeEndedQuietly`, so this
+ * propagates). Here rather than beside a gate so the interpreter, the
+ * extraction and a host's model client all raise the same signal without a
+ * cycle. Re-exported from `run.ts` for the engine's public surface.
+ */
+export class RunCancelledSignal extends Error {
+  constructor() {
+    super('run cancelled by user request');
+    this.name = 'RunCancelledSignal';
+  }
+}

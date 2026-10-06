@@ -24,8 +24,8 @@ jest.mock('../../translation_graph/adapters/resolve', () => {
 });
 
 const mockFetched: string[] = [];
-jest.mock('../extraction', () => {
-  const actual = jest.requireActual('../extraction');
+jest.mock('../../translation_graph/movement/transform_invoker', () => {
+  const actual = jest.requireActual('../../translation_graph/movement/transform_invoker');
   const runSpend = jest.requireActual('../../../lib/run_spend');
   return {
     ...actual,

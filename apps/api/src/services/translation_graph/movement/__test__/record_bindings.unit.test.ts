@@ -77,7 +77,7 @@ function makeDeleteBuilder() {
   return builder;
 }
 
-jest.mock('../../../lib/kysely', () => ({
+jest.mock('../../../../lib/kysely', () => ({
   getAutomationsQb: jest.fn(() => ({
     insertInto: (table: string) => makeInsertBuilder(table),
     selectFrom: () => makeSelectBuilder(),
@@ -91,9 +91,9 @@ import {
   recordBinding,
   findBoundCounterpart,
   deleteBinding,
-  type BindingEndpoint,
-} from '../record_binding';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+} from '../record_bindings';
+import type { BindingEndpoint } from '../../../movement_engine/host';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 const TEAM = 'team-1' as TeamId;
 

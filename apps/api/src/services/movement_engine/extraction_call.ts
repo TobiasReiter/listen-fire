@@ -14,8 +14,10 @@
 // This is a SECOND engine path beside the keyword's (`extraction.ts`), and the
 // keyword's is untouched by it. What the two share is single-call machinery
 // only — the declaration's spec builder, the field validators, the file-text
-// seam and its bound, the output budget and the truncation rule. The PROMPT is
-// this file's own, laid out for the prompt cache:
+// seam and its bound — and both reach the model through the host's clients,
+// which own the output budget and the truncation rule
+// (`translation_graph/movement/llm_clients.ts`). The PROMPT is this file's own,
+// laid out for the prompt cache:
 //
 //   1. one system prompt, identical for every call — no shape in it;
 //   2. each content item as its own user block, in the author's order;
@@ -33,28 +35,19 @@ import { createHash } from 'node:crypto';
 import type { ExtractCallFinds } from 'movement-lang';
 import { z } from 'zod';
 
-import { anthropicChatDetailed, MAX_CHAT_CONTINUATIONS } from '../../lib/anthropic';
 import { neverAsAny } from '../../lib/utils/types';
-import { parseJsonReply } from '../../lib/prompts/execute';
 import type { LlmCallResult } from '../translation_graph/engine/batched_extraction';
 import type { FileRef } from '../translation_graph/adapter';
 import { isFileRef } from '../translation_graph/engine/files/retrieve';
-import { claudeModelId, type Effort, type ExtractionCallSettings, type TierModel } from './ai_tiers';
+import type { Effort, ExtractionCallSettings, TierModel } from './ai_tiers';
 import {
   absentIfBlank,
   boundFileText,
   CoercionTracker,
   describeGuideType,
   described,
-  describeTruncation,
-  EXTRACTION_MAX_CONTINUATIONS,
-  EXTRACTION_MAX_TOKENS,
-  extractionMaxTokens,
-  extractionOutputBudgetEnabled,
-  logTruncatedExtraction,
   recordExtractedEntities,
   replyDigest,
-  throwIfCancelled,
   TRACE_REPLY_DIGESTS,
   zodForFieldType,
   type ExtractFieldSpec,
@@ -72,6 +65,7 @@ import {
   type MovementTraceEntry,
 } from './expression';
 import { fromOrigin, NO_PROVENANCE, type ExtractSiteRef, type Provenance, type ProvenanceOrigin } from './provenance';
+import { throwIfCancelled } from './run_scope';
 
 // ── The model seam ──────────────────────────────────────────────────────────
 
@@ -108,48 +102,6 @@ export interface ExtractCallLlmResult extends LlmCallResult {
  *  undivided user message, and this layout is blocks. Tests inject a stub. */
 export interface ExtractCallLlmClient {
   call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult>;
-}
-
-/** The production client: the same Anthropic seam, budget and truncation rule
- *  as the keyword's client, with the user turn sent as blocks. The system
- *  block carries the one breakpoint the seam always gives it; the content
- *  carries at most two (`ExtractCallPrefixes`), so a request never asks for
- *  more than the four the API allows. */
-export function makeAnthropicExtractCallClient(): ExtractCallLlmClient {
-  return {
-    async call(input) {
-      await throwIfCancelled();
-      const joined = input.blocks.map((block) => block.text).join('\n\n');
-      const budgetOn = extractionOutputBudgetEnabled();
-      const maxTokens =
-        input.maxTokens ?? (budgetOn ? extractionMaxTokens({ system: input.system, userMessage: joined }) : EXTRACTION_MAX_TOKENS);
-      const reply = await anthropicChatDetailed({
-        system: input.system,
-        userMessage: input.blocks.map((block) => ({
-          text: block.text,
-          ...(block.cacheBreakpoint ? { cacheControl: 'ephemeral' as const } : {}),
-        })),
-        model: claudeModelId(input.model),
-        maxTokens,
-        maxContinuations: budgetOn ? EXTRACTION_MAX_CONTINUATIONS : MAX_CHAT_CONTINUATIONS,
-        ...(input.effort ? { effort: input.effort } : {}),
-        label: input.label,
-      });
-      if (reply.truncated) {
-        logTruncatedExtraction({ label: input.label, userMessage: joined }, reply);
-        throw new Error(
-          `Extraction '${input.label}' produced no complete answer: ${describeTruncation(reply, maxTokens)} (EXTRACTION_OUTPUT_BUDGET ${budgetOn ? 'on' : 'off'}).`,
-        );
-      }
-      return {
-        parsedJson: parseJsonReply(reply.text, { label: input.label, prompt: joined }),
-        rawText: reply.text,
-        ...(reply.steppedDown ? { effortSteppedDown: reply.steppedDown } : {}),
-        ...(reply.continuations > 0 ? { continuations: reply.continuations } : {}),
-        usage: reply.usage,
-      };
-    },
-  };
 }
 
 // ── The run's memory: prefixes sent, files read ─────────────────────────────

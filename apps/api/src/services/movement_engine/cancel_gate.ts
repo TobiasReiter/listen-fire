@@ -12,23 +12,6 @@ import { getAutomationsQb, getQb } from '../../lib/kysely';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { CancelGate } from './run';
 
-/**
- * Thrown when the user requested cancellation (runs-and-cancel spec §cancel) —
- * at a statement boundary (the interpreter's cancel gate) or an LLM-call
- * boundary (the `LlmClient` seam). Caught at the top of `run()`/`resume()` (like
- * `RunParked`), NEVER by the fan-out/parallel park machinery (which special-case
- * only `RunParked`/`ScopeEndedQuietly`, so this propagates). It lives beside the
- * gate that raises it, and both `run.ts` and `extraction.ts` import it from here
- * so neither takes on a run↔extraction cycle. Re-exported from `run.ts` for the
- * engine's public surface.
- */
-class RunCancelledSignal extends Error {
-  constructor() {
-    super('run cancelled by user request');
-    this.name = 'RunCancelledSignal';
-  }
-}
-
 const POLL_MS = 3_000;
 
 export function makeDbCancelGate(runId: TriggerRunId): CancelGate {
@@ -70,4 +53,3 @@ export function makeDbCancelGate(runId: TriggerRunId): CancelGate {
   };
 }
 
-export { RunCancelledSignal };

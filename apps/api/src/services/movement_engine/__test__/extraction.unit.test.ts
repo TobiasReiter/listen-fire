@@ -115,7 +115,6 @@ import {
   type Span,
 } from 'movement-lang';
 import { anthropicChatDetailed } from '../../../lib/anthropic';
-import { LlmUsageContext } from '../../../lib/llm_usage';
 import { MovementRunFailed, runFailureCause, runMovement } from '../run';
 import { MovementEngineError, type MovementTraceEntry } from '../expression';
 import { logger } from '../../logger';
@@ -123,11 +122,11 @@ import {
   ROOT_EXTRACT_DESCRIPTION,
   STAGE_FAN_OUT,
   buildExtractSpec,
-  makeAnthropicLlmClient,
   materializeExtract,
-  registryTransformInvoker,
   type MovementTransformInvoker,
 } from '../extraction';
+import { makeAnthropicLlmClient } from '../../translation_graph/movement/llm_clients';
+import { registryTransformInvoker } from '../../translation_graph/movement/transform_invoker';
 import { NO_PROVENANCE } from '../provenance';
 import {
   getTransform,
@@ -181,16 +180,6 @@ function makeTestCancelGate() {
       return stamped ? 'Cancelled by an operator' : null;
     },
   };
-}
-
-/** Wire a gate the way a real firing does: onto the interpreter (statement
- *  boundaries) AND onto the ambient LlmUsageContext, which is where the
- *  extraction's own in-statement boundaries read it from. */
-function runCancellable<T>(
-  cancelGate: ReturnType<typeof makeTestCancelGate>,
-  fn: () => Promise<T>,
-): Promise<T> {
-  return new LlmUsageContext({ teamId: TEAM_ID as unknown as string, cancelGate }).runAsync(fn);
 }
 
 // ── Fake adapters (per run.unit.test.ts patterns) ───────────────────────────
@@ -1218,26 +1207,24 @@ describe('a per-entity retrieval stage', () => {
       },
     };
 
-    const result = await runCancellable(cancelGate, () =>
-      runMovement({
-        source: PER_ENTITY_FETCH_MOVEMENT,
-        event,
-        teamId: TEAM_ID,
-        catalog: movementCatalog,
-        host: makeTestHost({
-          adapters: {
-            resolve: makeResolver({
-              email: makeFakeAdapter('email').adapter,
-              attio: makeFakeAdapter('attio').adapter,
-              slack: makeFakeAdapter('slack').adapter,
-            }),
-          },
-          llm: { client: llm.client, transforms: transformInvoker },
-          control: { cancel: cancelGate },
-        }),
-        dryRun: true,
+    const result = await runMovement({
+      source: PER_ENTITY_FETCH_MOVEMENT,
+      event,
+      teamId: TEAM_ID,
+      catalog: movementCatalog,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
+        control: { cancel: cancelGate },
       }),
-    );
+      dryRun: true,
+    });
 
     expect(result.cancelled).toBe(true);
     // Only what the fan had already put in flight ever ran — the companies
@@ -1285,26 +1272,24 @@ describe('a per-entity retrieval stage', () => {
       },
     };
 
-    const result = await runCancellable(cancelGate, () =>
-      runMovement({
-        source,
-        event: webhookEvent('email', { text: 'Acme (acme.com) is fundraising.' }),
-        teamId: TEAM_ID,
-        catalog: movementCatalog,
-        host: makeTestHost({
-          adapters: {
-            resolve: makeResolver({
-              email: makeFakeAdapter('email').adapter,
-              attio: makeFakeAdapter('attio').adapter,
-              slack: makeFakeAdapter('slack').adapter,
-            }),
-          },
-          llm: { client: llm.client, transforms: transformInvoker },
-          control: { cancel: cancelGate },
-        }),
-        dryRun: true,
+    const result = await runMovement({
+      source,
+      event: webhookEvent('email', { text: 'Acme (acme.com) is fundraising.' }),
+      teamId: TEAM_ID,
+      catalog: movementCatalog,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: { client: llm.client, transforms: transformInvoker },
+        control: { cancel: cancelGate },
       }),
-    );
+      dryRun: true,
+    });
 
     expect(result.cancelled).toBe(true);
     expect(invocations).toBeLessThanOrEqual(STAGE_FAN_OUT);
@@ -1329,41 +1314,39 @@ describe('a per-entity retrieval stage', () => {
       { 'x:company#3': [{ summary: wrap('Breeds horses') }] },
     ]);
 
-    const result = await runCancellable(cancelGate, () =>
-      runMovement({
-        source: PER_ENTITY_FETCH_MOVEMENT,
-        event,
-        teamId: TEAM_ID,
-        catalog: movementCatalog,
-        host: makeTestHost({
-          adapters: {
-            resolve: makeResolver({
-              email: makeFakeAdapter('email').adapter,
-              attio: makeFakeAdapter('attio').adapter,
-              slack: makeFakeAdapter('slack').adapter,
-            }),
-          },
-          llm: {
-            client: {
-              async call(input: LlmCallInput): Promise<LlmCallResult> {
-                const reply = await llm.client.call(input);
-                // Cancelled during the first (stage-0) call, so the per-company
-                // continuation calls are the next boundary.
-                cancelGate.stamp();
-                return reply;
-              },
-            },
-            transforms: {
-              async invoke() {
-                return {};
-              },
+    const result = await runMovement({
+      source: PER_ENTITY_FETCH_MOVEMENT,
+      event,
+      teamId: TEAM_ID,
+      catalog: movementCatalog,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        llm: {
+          client: {
+            async call(input: LlmCallInput): Promise<LlmCallResult> {
+              const reply = await llm.client.call(input);
+              // Cancelled during the first (stage-0) call, so the per-company
+              // continuation calls are the next boundary.
+              cancelGate.stamp();
+              return reply;
             },
           },
-          control: { cancel: cancelGate },
-        }),
-        dryRun: true,
+          transforms: {
+            async invoke() {
+              return {};
+            },
+          },
+        },
+        control: { cancel: cancelGate },
       }),
-    );
+      dryRun: true,
+    });
 
     expect(result.cancelled).toBe(true);
     expect(llm.calls).toHaveLength(1);
@@ -3980,6 +3963,8 @@ describe('an extraction call describes itself on the run', () => {
         event,
         teamId: TEAM_ID,
         catalog: movementCatalog,
+        // A real firing names its run; only then can a log line carry it.
+        ...(options?.runId !== undefined ? { runId: options.runId } : {}),
         host: makeTestHost({
           adapters: {
             resolve: makeResolver({
@@ -3998,14 +3983,7 @@ describe('an extraction call describes itself on the run', () => {
           },
         }),
       });
-    // A real firing establishes the run context around everything it calls;
-    // only inside one can a log line name the run it belongs to.
-    const result = options?.runId
-      ? await new LlmUsageContext({
-          teamId: TEAM_ID as unknown as string,
-          triggerRunId: options.runId,
-        }).runAsync(fire)
-      : await fire();
+    const result = await fire();
     return { calls: llm.calls, trace: result.trace };
   }
 

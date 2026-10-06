@@ -4,19 +4,19 @@
 // itself (the other kinds are covered one level up in extraction-file tests).
 
 const transcribeMock = jest.fn();
-jest.mock('../../../lib/models/transcription', () => ({
+jest.mock('../../../../lib/models/transcription', () => ({
   transcribe: (...args: unknown[]) => transcribeMock(...args),
 }));
 
 const streamFileRefMock = jest.fn();
-jest.mock('../../translation_graph/engine/files/retrieve', () => ({
+jest.mock('../../engine/files/retrieve', () => ({
   streamFileRef: (...args: unknown[]) => streamFileRefMock(...args),
 }));
 
 const getOrCreateRawTextIdMock = jest.fn();
 const rawText = { getOrCreateId: (content: string) => getOrCreateRawTextIdMock(content) };
 
-jest.mock('../../logger', () => ({
+jest.mock('../../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -34,10 +34,10 @@ import { Readable } from 'node:stream';
 import { jsPDF } from 'jspdf';
 
 import { makeFileTextResolver } from '../file_text';
-import { services } from '../../../adapters/registry';
-import { LlmUsageContext } from '../../../lib/llm_usage';
-import { logger } from '../../logger';
-import type { FileRef } from '../../translation_graph/adapter';
+import { services } from '../../../../adapters/registry';
+import { LlmUsageContext } from '../../../../lib/llm_usage';
+import { logger } from '../../../logger';
+import type { FileRef } from '../../adapter';
 
 const ocrMock = jest.fn();
 

@@ -41,7 +41,8 @@ import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 import type { WriteLockHolder, WriteLocks } from '../write_locks/write_locks';
 
 import { withRunSpendLedger } from '../../lib/run_spend';
-import { MovementEngineError } from './errors';
+import { MovementEngineError, RunCancelledSignal } from './errors';
+import type { CancelGate } from './run';
 
 /** The systems that count against a ceiling. One entry per system that has its
  *  own env var below; a system not listed here is simply not capped. */
@@ -170,6 +171,12 @@ interface RunScope {
    *  each held for its effect (`effect_locks.ts`); the holder's session lives
    *  for the segment. Absent outside a run. */
   readonly writeLockHolder: WriteLockHolder | undefined;
+  /** The run's cancel gate, for the boundaries inside a statement (an LLM
+   *  call, a plugin invocation) that no statement-level check can reach.
+   *  Absent outside a run. */
+  readonly cancel: CancelGate | undefined;
+  /** The run this segment belongs to, named on the engine's log lines. */
+  readonly runId: string | undefined;
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<RunScope>();
@@ -188,6 +195,8 @@ export function withRunCallLedger<T>(
     priorSpentMicrodollars?: number;
     capBaselineMicrodollars?: number;
     writeLocks?: { locks: WriteLocks; teamId: string };
+    cancel?: CancelGate;
+    runId?: string;
   },
 ): Promise<T> {
   const writeLockHolder = options?.writeLocks?.locks.holder(options.writeLocks.teamId);
@@ -197,6 +206,8 @@ export function withRunCallLedger<T>(
       memo: new RunReadMemo(),
       languageVersion: options?.languageVersion ?? CURRENT_LANGUAGE_VERSION,
       writeLockHolder,
+      cancel: options?.cancel,
+      runId: options?.runId,
     },
     async () => {
       try {
@@ -222,6 +233,41 @@ export function segmentWriteLockHolder(): WriteLockHolder {
     );
   }
   return holder;
+}
+
+/**
+ * The cancel check every boundary INSIDE a statement makes (runs-and-cancel
+ * spec §cancel). The interpreter's own check runs between statements, which is
+ * no use to an extraction: one `extract` is one statement, and all of its work
+ * — an LLM call per region, a plugin invocation per entity per stage, and a
+ * fetch inside that plugin that may take minutes — happens before the next
+ * statement boundary is ever reached. An extraction that is the movement's last
+ * (or only) statement has no next boundary at all, so without this a cancel is
+ * never honoured and the run settles `success` as if nothing had been asked.
+ *
+ * The read is a real one, not a cached last-known value: a cached value could
+ * only repeat what the statement boundary already knew, and the point is that
+ * the operator pressed Stop after it ran. The gate debounces to one read every
+ * few seconds across every boundary of the run, so checking this often costs
+ * nothing. Outside a run there is nothing to cancel.
+ *
+ * Refusing preemption is fine at a boundary this coarse: a fetch already in
+ * flight runs to its own timeout, and the cancel lands before the NEXT one.
+ */
+export async function throwIfCancelled(): Promise<void> {
+  const cancel = asyncLocalStorage.getStore()?.cancel;
+  if (cancel && (await cancel.cancelled())) throw new RunCancelledSignal();
+}
+
+/**
+ * The run a log line belongs to, as structured log fields — spread into the
+ * engine's `logger.*` calls. A line with no run on it cannot answer "what was
+ * THIS run waiting on?". Outside a run, or for a run with no id (a test run),
+ * the bag is empty.
+ */
+export function runLogFields(): { runId?: string } {
+  const runId = asyncLocalStorage.getStore()?.runId;
+  return runId !== undefined ? { runId } : {};
 }
 
 /**

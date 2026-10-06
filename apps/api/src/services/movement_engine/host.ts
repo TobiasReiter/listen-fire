@@ -10,14 +10,13 @@
 import type { ResolveFile } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { Adapter, FileRef } from '../translation_graph/adapter';
+import type { ActingUser, ActorCandidate, Adapter, FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import type { CallbackSink } from './callback_sink';
-import type { ActingUserTriggerRow, MovementTraceEntry } from './expression';
+import type { MovementTraceEntry } from './expression';
 import type { FileTextResolution, MovementTransformInvoker } from './extraction';
 import type { ExtractCallLlmClient } from './extraction_call';
-import type { BindingEndpoint, EncodedEndpoint } from './record_binding';
 import type { CancelGate, ParkSink, SuspensionPoint } from './run';
 
 /** Adapter resolution — the SAME seam `evaluateTranslationGraph` and provision
@@ -34,6 +33,41 @@ export type ResolveAdapter = (input: {
 
 /** Source `FileRef` → extracted TEXT (the knowledge-pipeline parity path). */
 export type ResolveFileText = (ref: FileRef) => Promise<FileTextResolution>;
+
+/**
+ * One fully-qualified record position — a binding endpoint. NOT (system,
+ * recordId): the same record id in a different Airtable base is a different
+ * record, so the endpoint carries the instance's identity too. Construction
+ * config is the raw, un-normalized args the engine already holds; the store
+ * canonicalizes it.
+ */
+export interface BindingEndpoint {
+  /** Adapter slug (any casing — the store normalizes it). */
+  adapterType: string;
+  /** The credential's stable identity, when the instance has one. Absent for
+   *  construction-free intrinsics (manual, cron) and the KG. */
+  credentialId?: string;
+  /** The instance's construction config (the Airtable base, the Slack
+   *  workspace, …) — the args the movement's construction call carried; the
+   *  credential arg is carried separately via `credentialId`. Omit / `{}` when
+   *  none. */
+  constructionConfig?: Record<string, unknown>;
+  /** The STABLE INTERNAL type id (already resolved natural→internal), so a
+   *  type rename never orphans a binding. */
+  typeId: string;
+  /** The stable external record id (KG node id when this endpoint is the KG). */
+  recordId: string;
+}
+
+/** An endpoint as the store keeps it: the instance canonicalized into one
+ *  key. A counterpart comes back in this form, and the engine can hand it
+ *  back (to delete a stale binding) without reversing the key. */
+export interface EncodedEndpoint {
+  adapterType: string;
+  instanceKey: string;
+  typeId: string;
+  recordId: string;
+}
 
 /** The symmetric correspondence store a `write … bind other { … }` keeps:
  *  "this record IS the counterpart of that one". */
@@ -53,16 +87,14 @@ export interface RecordBindings {
   }): Promise<void>;
 }
 
-/** Extracted text, stored once per distinct content: the stable id a file's
- *  text is cited by. Undefined when there is nowhere to store it. */
-export interface RawTextStore {
-  getOrCreateId(content: string): Promise<string | undefined>;
-}
-
-/** A stored document, as much of it as a file value needs. */
-export interface StoredDocument {
-  objectUri: string;
-  description: string;
+export interface ResolveActingUserInput {
+  teamId: TeamId;
+  /** The trigger the event dispatched through; absent when the event predates
+   *  trigger-aware dispatch. */
+  triggerId?: string;
+  /** The source adapter's parse of the event's actors — called only when the
+   *  trigger does not already decide the user. */
+  getCandidates: () => Promise<ActorCandidate[]>;
 }
 
 export interface EngineHost {
@@ -112,13 +144,15 @@ export interface EngineHost {
      *  import raises MOVENG_UNSUPPORTED. */
     resolveFile?: ResolveFile;
     resolveFileText: ResolveFileText;
-    rawText: RawTextStore;
-    documents: { getById(id: string): Promise<StoredDocument | null> };
   };
   lookup: {
-    /** The trigger row an event dispatched through, for acting-user
-     *  resolution. Null when there is no such trigger. */
-    triggerForActingUser(triggerId: string): Promise<ActingUserTriggerRow | null>;
+    /**
+     * The team user an event acts as (`@user_*`): the source adapter parses
+     * the event's actor candidates, the host maps them to a team user through
+     * the trigger the event dispatched through (its creator override and
+     * creator fallback). Null when no user matches.
+     */
+    resolveActingUser(input: ResolveActingUserInput): Promise<ActingUser | null>;
   };
   /** The cross-run write locks each segment takes beneath its effect locks. */
   locks: WriteLocks;
@@ -154,11 +188,11 @@ function notProvided(piece: string): Error {
 }
 
 /**
- * A host for tests: every piece the test does not supply is in memory or
- * throws naming itself when the run reaches it. No default reaches a network
- * or a database. Parks, callbacks and file imports stay absent unless
- * supplied, which the engine refuses loudly as it does for any host without
- * them (`makeFakeParkSink` is an in-memory park sink).
+ * A host for tests: every piece the test does not supply is in memory, finds
+ * nothing, or throws naming itself when the run reaches it. No default
+ * reaches a network or a database. Parks, callbacks and file imports stay
+ * absent unless supplied, which the engine refuses loudly as it does for any
+ * host without them (`makeFakeParkSink` is an in-memory park sink).
  */
 export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
   const { adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {} } = overrides;
@@ -214,33 +248,12 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
         (async () => {
           throw notProvided('files.resolveFileText');
         }),
-      rawText: files.rawText ?? inMemoryRawTextStore(),
-      documents: files.documents ?? {
-        getById: async () => {
-          throw notProvided('files.documents');
-        },
-      },
     },
     lookup: {
-      triggerForActingUser: lookup.triggerForActingUser ?? (async () => null),
+      resolveActingUser: lookup.resolveActingUser ?? (async () => null),
     },
     locks: overrides.locks ?? new InMemoryWriteLocks(),
     trace: overrides.trace ?? [],
-  };
-}
-
-function inMemoryRawTextStore(): RawTextStore {
-  const ids = new Map<string, string>();
-  return {
-    async getOrCreateId(content) {
-      const trimmed = content.trim();
-      let id = ids.get(trimmed);
-      if (id === undefined) {
-        id = `raw-text-${ids.size + 1}`;
-        ids.set(trimmed, id);
-      }
-      return id;
-    },
   };
 }
 

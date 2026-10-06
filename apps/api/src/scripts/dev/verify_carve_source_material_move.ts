@@ -19,7 +19,7 @@ import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
 import ResourceType from '../../generated/kysely/knowledge/ResourceType';
 import { ApiKeyService } from '../../services/api_key';
-import { postgresRawTextStore } from '../../services/movement_engine/raw_text_store';
+import { postgresRawTextStore } from '../../services/translation_graph/movement/raw_text_store';
 import { summarizeNodes } from '../../lib/knowledge/store';
 import { openKnowledgeStore } from '../../lib/knowledge/store/write';
 import { getNodeDetail } from '../../lib/knowledge/knowledge_query';
@@ -43,11 +43,11 @@ async function main(): Promise<void> {
   console.log('phase 5.4 — source material in `knowledge`\n');
 
   await runInSystemContext(async () =>
-    // The raw-text store is Context-free by design — it reads its team off
-    // the ambient LLM-usage context a movement firing establishes, so the probe
-    // establishes the same one rather than reaching past the module.
+    // The ambient LLM-usage context a movement firing establishes, so every
+    // call below sees the team a firing's would.
     new LlmUsageContext({ teamId: TEAM }).runAsync(async () => {
     const store = openKnowledgeStore();
+    const rawText = postgresRawTextStore(TEAM);
 
     // 1. Every table answers from `knowledge`, and from nowhere else.
     const placement = await getKnowledgeQb(['resource'])
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
 
     // 2. The movement engine's file-text path writes `knowledge.raw_text`.
     const CONTENT = `phase 5.4 source body ${randomUUID()}`;
-    const rawTextId = (await postgresRawTextStore.getOrCreateId(CONTENT)) as string;
+    const rawTextId = (await rawText.getOrCreateId(CONTENT)) as string;
     const rawRow = await getKnowledgeQb(['raw_text'])
       .selectFrom('raw_text')
       .where('id', '=', rawTextId as never)
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     check('the engine raw-text store lands in `knowledge.raw_text`', rawRow?.content === CONTENT, rawRow?.content);
 
     // Idempotent by (team, checksum), unchanged by the move.
-    const again = await postgresRawTextStore.getOrCreateId(CONTENT);
+    const again = await rawText.getOrCreateId(CONTENT);
     check('raw-text dedup by (team, checksum) still collapses', again === rawTextId, { rawTextId, again });
 
     // 3. A resource carrying that body, the shape the KG adapter writes.

@@ -58,9 +58,9 @@ import { anthropicChatDetailed } from '../../lib/anthropic';
 import type { ChatModelName } from '../../lib/models/registry';
 import { parseJsonReply } from '../../lib/prompts/execute';
 import { logger } from '../../services/logger';
+import { makeAnthropicLlmClient } from '../../services/translation_graph/movement/llm_clients';
 import {
   buildExtractSpec,
-  makeAnthropicLlmClient,
   materializeExtract,
   type ExtractEmission,
   type ExtractNodeSpec,

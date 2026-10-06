@@ -1,28 +1,41 @@
 // The production `EngineHost`: the world a movement run reaches, wired to the
-// real systems — the adapter registry, Anthropic, the trigger-run recorder's
-// durable parks, Postgres record bindings and raw text, the document store.
+// real systems — the adapter registry, Anthropic and the plugin registry, the
+// trigger-run recorder's durable parks, Postgres record bindings, raw text and
+// cross-run write locks, and Listen-Fire's acting-user resolution.
 
 import type { ResolveFile } from 'movement-lang';
 
+import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { getAutomationsQb } from '../../../lib/kysely';
-import { DocumentService } from '../../document';
+import { LlmUsageContext } from '../../../lib/llm_usage';
+import { getDatabaseUrl } from '../../../prisma';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
-import type { ActingUserTriggerRow, MovementTraceEntry } from '../../movement_engine/expression';
-import { makeAnthropicLlmClient, registryTransformInvoker } from '../../movement_engine/extraction';
-import { makeAnthropicExtractCallClient } from '../../movement_engine/extraction_call';
-import { makeFileTextResolver } from '../../movement_engine/file_text';
-import { NEVER_CANCELLED, type EngineHost } from '../../movement_engine/host';
+import type { MovementTraceEntry } from '../../movement_engine/expression';
+import type { MovementTransformInvoker } from '../../movement_engine/extraction';
+import type { ExtractCallLlmClient } from '../../movement_engine/extraction_call';
+import {
+  NEVER_CANCELLED,
+  type EngineHost,
+  type ResolveActingUserInput,
+  type ResolveFileText,
+} from '../../movement_engine/host';
 import { makeRecorderParkSink } from '../../movement_engine/park_sink';
-import { postgresRawTextStore } from '../../movement_engine/raw_text_store';
-import { postgresRecordBindings } from '../../movement_engine/record_binding';
 import type { CancelGate } from '../../movement_engine/run';
-import { InMemoryWriteLocks } from '../../write_locks/write_locks';
+import { PostgresWriteLocks } from '../../write_locks/postgres';
+import type { WriteLocks } from '../../write_locks/write_locks';
+import type { ActingUser } from '../adapter';
+import { resolveActingUser } from '../adapters/acting_user/resolve';
+import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
 import { resolveAdapter } from '../adapters/resolve';
+import type { LlmClient } from '../engine/batched_extraction';
 import type { TriggerRunRecorder } from '../runs/trigger_run';
-
-// Runs in one process exclude each other without a database.
-const PROCESS_WRITE_LOCKS = new InMemoryWriteLocks();
+import { makeFileTextResolver } from './file_text';
+import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
+import { postgresRawTextStore } from './raw_text_store';
+import { postgresRecordBindings } from './record_bindings';
+import { registryTransformInvoker } from './transform_invoker';
 
 export function productionEngineHost(input: {
   teamId: TeamId;
@@ -31,6 +44,10 @@ export function productionEngineHost(input: {
     resolveCredentialId: (credentialName: string) => string | undefined;
     resolveFile: ResolveFile;
   };
+  /** The run the host's model, plugin and file-text calls are billed to. Absent
+   *  ⇒ they run under whatever llm-usage context the caller holds (a test run:
+   *  none, so nothing is billed to the team). */
+  triggerRunId?: TriggerRunId;
   /** The run whose parks and callbacks persist through this recorder. Absent ⇒
    *  no durable substrate: a dry run never parks or mints a callback. */
   parksInto?: TriggerRunRecorder;
@@ -38,6 +55,8 @@ export function productionEngineHost(input: {
   cancel?: CancelGate;
   trace?: MovementTraceEntry[];
 }): EngineHost {
+  const cancel = input.cancel ?? NEVER_CANCELLED;
+  const usage = usageScope({ teamId: input.teamId, triggerRunId: input.triggerRunId, cancel });
   return {
     adapters: {
       // Production resolution is per (type, credential, construction args); the
@@ -52,9 +71,9 @@ export function productionEngineHost(input: {
       credentialId: input.catalog.resolveCredentialId,
     },
     llm: {
-      client: makeAnthropicLlmClient(),
-      extractCall: makeAnthropicExtractCallClient(),
-      transforms: registryTransformInvoker,
+      client: billedLlmClient(makeAnthropicLlmClient({ cancel }), usage),
+      extractCall: billedExtractCallClient(makeAnthropicExtractCallClient({ cancel }), usage),
+      transforms: billedTransforms(registryTransformInvoker, usage),
     },
     park: {
       ...(input.parksInto !== undefined
@@ -65,30 +84,97 @@ export function productionEngineHost(input: {
         : {}),
       bindings: postgresRecordBindings,
     },
-    control: { cancel: input.cancel ?? NEVER_CANCELLED },
+    control: { cancel },
     files: {
       resolveFile: input.catalog.resolveFile,
-      resolveFileText: makeFileTextResolver(postgresRawTextStore),
-      rawText: postgresRawTextStore,
-      documents: { getById: (id) => DocumentService.getById(id) },
+      // OCR and transcription are model calls of their own.
+      resolveFileText: billedFileText(makeFileTextResolver(postgresRawTextStore(input.teamId)), usage),
     },
-    lookup: { triggerForActingUser },
-    locks: PROCESS_WRITE_LOCKS,
+    lookup: { resolveActingUser: resolveTeamActingUser },
+    locks: processWriteLocks(),
     ...(input.trace !== undefined ? { trace: input.trace } : {}),
   };
 }
 
-async function triggerForActingUser(triggerId: string): Promise<ActingUserTriggerRow | null> {
+// ── Billing: the llm-usage context, set around each call ───────────────────
+//
+// Every model call below the host records its usage against the ambient
+// `LlmUsageContext`. The host sets it explicitly around each of its own calls
+// rather than relying on the caller having set it around the whole run, so the
+// engine never depends on that ambient state: what a call is billed to is the
+// host's decision, made where the call leaves for the world.
+
+type UsageScope = <T>(call: () => Promise<T>) => Promise<T>;
+
+function usageScope(input: {
+  teamId: TeamId;
+  triggerRunId: TriggerRunId | undefined;
+  cancel: CancelGate;
+}): UsageScope {
+  const { triggerRunId } = input;
+  if (triggerRunId === undefined) return (call) => call();
+  return (call) =>
+    new LlmUsageContext({ teamId: input.teamId, triggerRunId, cancelGate: input.cancel }).runAsync(call);
+}
+
+function billedLlmClient(client: LlmClient, usage: UsageScope): LlmClient {
+  return { call: (input) => usage(() => client.call(input)) };
+}
+
+function billedExtractCallClient(client: ExtractCallLlmClient, usage: UsageScope): ExtractCallLlmClient {
+  return { call: (input) => usage(() => client.call(input)) };
+}
+
+function billedTransforms(invoker: MovementTransformInvoker, usage: UsageScope): MovementTransformInvoker {
+  return {
+    invoke: (input) => usage(() => invoker.invoke(input)),
+    ...(invoker.declaredOutput !== undefined ? { declaredOutput: invoker.declaredOutput } : {}),
+    ...(invoker.isPriced !== undefined ? { isPriced: invoker.isPriced } : {}),
+  };
+}
+
+function billedFileText(resolve: ResolveFileText, usage: UsageScope): ResolveFileText {
+  return (ref) => usage(() => resolve(ref));
+}
+
+// ── Cross-run write locks ───────────────────────────────────────────────────
+
+// One table per process: each segment's holder opens its own connection, so a
+// shared instance costs nothing and keeps one lock timeout for every run.
+let postgresWriteLocks: WriteLocks | undefined;
+
+function processWriteLocks(): WriteLocks {
+  if (postgresWriteLocks === undefined) {
+    const connectionString = getDatabaseUrl(false).url;
+    if (connectionString === undefined) {
+      throw new Error('cross-run write locks need DATABASE_URL, which is not set');
+    }
+    postgresWriteLocks = new PostgresWriteLocks({ connectionString });
+  }
+  return postgresWriteLocks;
+}
+
+// ── Acting-user resolution ──────────────────────────────────────────────────
+
+/** The trigger the event dispatched through decides first (its creator
+ *  override and creator fallback); then the source adapter's candidates. A
+ *  trigger that is gone reads as none. */
+async function resolveTeamActingUser(input: ResolveActingUserInput): Promise<ActingUser | null> {
+  const trigger = input.triggerId !== undefined ? await loadActingUserTrigger(input.triggerId) : undefined;
+  return resolveActingUser({
+    teamId: input.teamId,
+    ...(trigger !== undefined ? { trigger } : {}),
+    getCandidates: input.getCandidates,
+  });
+}
+
+async function loadActingUserTrigger(triggerId: string): Promise<ActingUserTriggerContext | undefined> {
   const row = await getAutomationsQb(['trigger'])
     .selectFrom('trigger')
-    .where('id', '=', triggerId as never)
+    // The event carries the trigger's id as a plain string.
+    .where('id', '=', triggerId as TriggerId)
     .select(['id', 'kind', 'config', 'created_by_user_id'])
     .executeTakeFirst();
-  if (!row) return null;
-  return {
-    id: row.id as unknown as string,
-    kind: row.kind as string,
-    config: row.config,
-    createdByUserId: (row.created_by_user_id as unknown as string) ?? null,
-  };
+  if (!row) return undefined;
+  return { id: row.id, kind: row.kind, config: row.config, createdByUserId: row.created_by_user_id };
 }

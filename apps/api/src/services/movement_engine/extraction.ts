@@ -64,39 +64,24 @@ import type {
   ShapeNode,
 } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
-import { anthropicChatDetailed, MAX_CHAT_CONTINUATIONS, type ChatReply } from '../../lib/anthropic';
-import { currentLlmUsageContext, runFields } from '../../lib/llm_usage';
 import {
   assertRunBudget,
   costEnvelopeMicrodollars,
-  isRunCostCapExceeded,
   reportRunCost,
   type CostEnvelope,
 } from '../../lib/run_spend';
-import { RunCancelledSignal } from './cancel_gate';
-import { currentLanguageVersion } from './run_scope';
-import { parseJsonReply } from '../../lib/prompts/execute';
+import { currentLanguageVersion, runLogFields, throwIfCancelled } from './run_scope';
 import { matchOption } from '../../lib/utils/string';
-import type {
-  LlmCallInput,
-  LlmCallResult,
-  LlmClient,
-} from '../translation_graph/engine/batched_extraction';
+import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction';
 import { selectModel } from '../translation_graph/engine/batched_extraction/schema_synthesis';
-import { claudeModelId, extractionCallSettings, type ExtractionCallSettings, type TierModel } from './ai_tiers';
+import { extractionCallSettings, type ExtractionCallSettings, type TierModel } from './ai_tiers';
 import { getTransform } from '../translation_graph/engine/transforms/registry';
-import type {
-  TransformImpl,
-  TransformInput,
-  TransformOutput,
-} from '../translation_graph/engine/transforms/registry';
+import type { TransformImpl } from '../translation_graph/engine/transforms/registry';
 import { logger } from '../logger';
-import { makeEphemeralPosition, type TransformOutputShape } from '../translation_graph/types';
+import type { TransformOutputShape } from '../translation_graph/types';
 import type { FileRef, Resource } from '../translation_graph/adapter';
 import { isFileRef } from '../translation_graph/engine/files/retrieve';
 import { stampResourceId } from '../translation_graph/engine/files/resources';
-import { documentStoreFileRef } from '../translation_graph/engine/files/document_store';
-import { DocumentService } from '../document';
 import {
   isFileUnreadable,
   MovementEngineError,
@@ -458,7 +443,7 @@ export interface TransformInvocationResult {
 /** A plugin by either spelling: movement identifiers can't carry dashes, so a
  *  program writes `vc_url_retrieval` for a transform registered as
  *  `vc-url-retrieval`. */
-function transformFor(plugin: string): TransformImpl | undefined {
+export function transformFor(plugin: string): TransformImpl | undefined {
   return getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
 }
 
@@ -513,88 +498,6 @@ export async function invokePricedTransform(
   return result;
 }
 
-/**
- * Default invoker — the TG transform registry, dispatched the same way
- * the TG engine's enrichment cycle dispatches transforms
- * (`kind: 'context-dependent'`, structural `properties` projected into
- * the context data block). Movement identifiers can't carry dashes, so
- * the underscore spelling resolves too (`vc_url_retrieval`).
- */
-export const registryTransformInvoker: MovementTransformInvoker = {
-  declaredOutput(plugin): TransformOutputShape | undefined {
-    return transformFor(plugin)?.signature.output;
-  },
-  isPriced(plugin): boolean {
-    return transformFor(plugin)?.priced === true;
-  },
-  async invoke({ plugin, config, extractedContext }): Promise<TransformInvocationResult> {
-    const impl = transformFor(plugin);
-    if (!impl) {
-      logger.warn('[movement:transform] no such plugin — skipping', { plugin, ...runFields() });
-      return {};
-    }
-
-    const sourceNode = makeEphemeralPosition({
-      data: {},
-      originRef: {
-        kind: 'transform',
-        transformName: plugin,
-        emissionIndex: 0,
-        nodeId: 'movement-through-synthetic',
-      },
-    });
-
-    // Dispatch the timing variant the plugin declares. A pre-extraction
-    // plugin (dataDependency 'none', e.g. vc_url_retrieval) enriches the
-    // source and rejects a context-dependent input; an extracted-context
-    // plugin (e.g. linkedin_enrichment) reads the entity's fields so far.
-    const input: TransformInput =
-      impl.signature.dataDependency === 'none'
-        ? { kind: 'pre-extraction', sourceNode, config }
-        : { kind: 'context-dependent', sourceNode, config, extractedContext };
-
-    let result: TransformOutput;
-    try {
-      result = await impl.run(input);
-    } catch (error) {
-      // Out of money is not "no enrichment": the run stops, as it would at a
-      // model call made outside a plugin.
-      if (isRunCostCapExceeded(error)) throw error;
-      logger.warn('[movement:transform] plugin threw — no enrichment', {
-        plugin,
-        error,
-        ...runFields(),
-      });
-      return {};
-    }
-
-    // Two ways a plugin's output reaches the following extraction: a
-    // pre-extraction plugin carries the content it fetched on its edge
-    // emissions' `text` (feeds the extractor as fresh source), and an
-    // extracted-context plugin adds `properties` the next stage can read.
-    const data: Record<string, unknown> = { ...(result.properties ?? {}) };
-    const fetchedText = collectEmissionText(result.edges);
-    const records = await emissionRecords(result.edges, plugin);
-
-    const out: TransformInvocationResult = {};
-    if (fetchedText) out.text = fetchedText;
-    if (Object.keys(data).length > 0) out.data = data;
-    if (records.length > 0) out.records = records;
-    if (result.outcome) out.outcome = result.outcome;
-    if (result.cost !== undefined) out.cost = result.cost;
-
-    logger.info('[movement:transform] ran', {
-      plugin,
-      addedFields: Object.keys(data),
-      fetchedChars: fetchedText?.length ?? 0,
-      ...(result.outcome ? { outcome: result.outcome } : {}),
-      ...runFields(),
-    });
-
-    return out;
-  },
-};
-
 /** Ancestor fields handed to a nested node's plugin, nested under the
  *  ancestor node's name so a consumer can tell them apart from the node's
  *  own fields *structurally* — a company's fields arrive under `company`,
@@ -607,81 +510,6 @@ function namespaceContext(
 ): Record<string, unknown> {
   if (Object.keys(context).length === 0) return {};
   return { [nodeName.replace(/\W+/g, '_')]: { ...context } };
-}
-
-/** Pull the fetched text off a pre-extraction plugin's edge emissions
- *  (vc_url_retrieval's `vcUrl` records carry each fetched page's content
- *  on `text`) so it can feed the extraction that follows. */
-function collectEmissionText(edges: TransformOutput['edges']): string | undefined {
-  if (!edges) return undefined;
-  const chunks: string[] = [];
-  for (const emissions of Object.values(edges)) {
-    for (const emission of Array.isArray(emissions) ? emissions : [emissions]) {
-      const text = (emission.data as { text?: unknown } | null)?.text;
-      if (typeof text === 'string' && text.trim()) chunks.push(text);
-    }
-  }
-  return chunks.length > 0 ? chunks.join('\n\n') : undefined;
-}
-
-/**
- * A pre-extraction plugin's edge emissions as records, one per emission, in the
- * order emitted. A fetch that stored a document emits the document's id on
- * `file` — a storage detail no author can do anything with — so it is swapped
- * here for the file value itself, the same document-store file a `FILE()`
- * render produces. One lookup per invocation, however many documents it
- * stored.
- *
- * A document that can no longer be found drops the `file` and keeps the rest:
- * the page's text still reached the extraction, and the record says what it
- * can.
- */
-async function emissionRecords(
-  edges: TransformOutput['edges'],
-  plugin: string,
-): Promise<Array<Record<string, unknown>>> {
-  if (!edges) return [];
-  const emitted: Array<Record<string, unknown>> = [];
-  for (const emissions of Object.values(edges)) {
-    for (const emission of Array.isArray(emissions) ? emissions : [emissions]) {
-      if (emission.data !== null && typeof emission.data === 'object') {
-        emitted.push({ ...(emission.data as Record<string, unknown>) });
-      }
-    }
-  }
-  const documentIds = [
-    ...new Set(emitted.flatMap((r) => (typeof r.file === 'string' ? [r.file] : []))),
-  ];
-  const files = await storedDocumentFiles(documentIds, plugin);
-  return emitted.map((record) => {
-    const { file, ...rest } = record;
-    const ref = typeof file === 'string' ? files.get(file) : undefined;
-    return ref !== undefined ? { ...rest, file: ref } : rest;
-  });
-}
-
-/** Stored documents by id, as file values. The loads go through the document
- *  service's batching loader, so several ids are one query. */
-async function storedDocumentFiles(ids: string[], plugin: string): Promise<Map<string, FileRef>> {
-  const files = new Map<string, FileRef>();
-  if (ids.length === 0) return files;
-  const loaded = await Promise.allSettled(ids.map((id) => DocumentService.getById(id)));
-  loaded.forEach((result, i) => {
-    if (result.status === 'fulfilled') {
-      files.set(
-        ids[i],
-        documentStoreFileRef({ objectUri: result.value.objectUri, name: result.value.description }),
-      );
-    } else {
-      logger.warn('[movement:transform] stored document not found — its file is dropped', {
-        plugin,
-        documentId: ids[i],
-        error: result.reason,
-        ...runFields(),
-      });
-    }
-  });
-  return files;
 }
 
 /**
@@ -718,73 +546,6 @@ function pluginFileResources(result: TransformInvocationResult): Resource[] {
     );
   }
   return resources;
-}
-
-// ── The output ceiling ──────────────────────────────────────────────────────
-//
-// This is a LOOP GUARD, for a model that loops. It is off by default: Sonnet 5
-// is not expected to loop, so by default an extraction gets a flat ceiling
-// (streaming in the wrapper is what makes a ceiling this high safe against
-// HTTP timeouts) and the chat wrapper's own continuation default — the same
-// trust any other caller gets.
-//
-// It exists because a model CAN loop: a 2.6k-token input once generated 53.7k
-// output tokens over 7½ minutes, because nothing in the request tied the size
-// of the answer to the size of the question — a flat 64k ceiling paired with
-// the chat wrapper's five continuations put the real ceiling at 384k output
-// tokens for any extraction, however small. `EXTRACTION_OUTPUT_BUDGET=1` (or
-// `true`) switches a model that DOES loop onto the tighter leash below: a
-// reply is not free-form, it restates part of its OWN INPUT as records of
-// fields with evidence quotes that are literal substrings of that input, so
-// the budget below sizes the ceiling proportional to the input instead of a
-// flat number, and caps continuations at one past it.
-
-/** Output tokens allowed per token of input. A reply that restates its input as
- *  fields plus short quotes lands well under 1×; 4× is room for a densely
- *  nested tree, not room for a runaway. Only spent when the guard is on. */
-const EXTRACTION_OUTPUT_RATIO = 4;
-/** Floor — a tiny input can still ask for a real answer. Only spent when the
- *  guard is on. */
-const EXTRACTION_MIN_TOKENS = 8000;
-/** Hard ceiling regardless of input size — and the DEFAULT flat ceiling when
- *  the guard is off. Streaming in the wrapper is what makes a ceiling this
- *  high safe against HTTP timeouts. */
-export const EXTRACTION_MAX_TOKENS = 32000;
-/** Rough tokens-per-character for English prose. Only ever used to size a
- *  budget or estimate one after the fact, so being off by a third costs
- *  nothing. */
-const CHARS_PER_TOKEN = 4;
-
-/**
- * How much room THIS extraction's reply gets, from the size of what it was
- * asked about. Only consulted when the guard ({@link extractionOutputBudgetEnabled})
- * is on — do not delete this on the assumption the flat ceiling replaced it.
- */
-export function extractionMaxTokens(input: { system: string; userMessage: string }): number {
-  const inputTokens = (input.system.length + input.userMessage.length) / CHARS_PER_TOKEN;
-  const proportional = Math.ceil(inputTokens * EXTRACTION_OUTPUT_RATIO);
-  return Math.min(EXTRACTION_MAX_TOKENS, Math.max(EXTRACTION_MIN_TOKENS, proportional));
-}
-
-/**
- * Continuations allowed after a `max_tokens` stop, once the guard is on. The
- * wrapper's generic five exist for open-ended prose; for an extraction, a
- * reply that has already spent its whole input-proportional budget and wants
- * more is far likelier to be looping than to be mid-answer. One continuation
- * covers a genuine near-miss; past that the truncation raises and
- * `callWithRetry` gets its one clean retry.
- */
-export const EXTRACTION_MAX_CONTINUATIONS = 1;
-
-/**
- * Opt-in switch for the loop guard above. Read directly off `process.env`
- * (the `LOOP_GUARD_*` idiom, not the prod-required `getEnvVar`) because this
- * is an ops calibration knob, not a required deployment setting — unset must
- * fall back to trusting the model, in every environment including production.
- */
-export function extractionOutputBudgetEnabled(): boolean {
-  const raw = process.env.EXTRACTION_OUTPUT_BUDGET;
-  return raw === '1' || raw === 'true';
 }
 
 /** What the trace sample reads off an extracted tree: the keyword's emissions
@@ -1072,143 +833,6 @@ async function mapConcurrent<T, R>(
   return results;
 }
 
-/**
- * The cancel check every boundary INSIDE a statement makes (runs-and-cancel
- * spec §cancel). The interpreter's own check runs between statements, which is
- * no use to an extraction: one `extract` is one statement, and all of its work
- * — an LLM call per region, a plugin invocation per entity per stage, and a
- * fetch inside that plugin that may take minutes — happens before the next
- * statement boundary is ever reached. An extraction that is the movement's last
- * (or only) statement has no next boundary at all, so without this a cancel is
- * never honoured and the run settles `success` as if nothing had been asked.
- *
- * The read is a real one, not a cached last-known value. A cached value could
- * only ever repeat what the statement boundary already knew, and the whole
- * problem here is that the statement boundary ran before the operator pressed
- * Stop. The gate debounces to one DB read every few seconds across every
- * boundary of the run, so checking this often costs nothing, and it is fail-open
- * like the gate itself.
- *
- * Refusing preemption is fine at a boundary this coarse: a fetch already in
- * flight runs to its own timeout, and the cancel lands before the NEXT one.
- */
-export async function throwIfCancelled(): Promise<void> {
-  const cancelGate = currentLlmUsageContext()?.data.cancelGate;
-  if (cancelGate && (await cancelGate.cancelled())) throw new RunCancelledSignal();
-}
-
-/** How much of a truncated reply's tail is kept in the diagnostic log —
- *  enough to see what the model was mid-writing when the ceiling landed. */
-const TRUNCATED_TAIL_CHARS = 400;
-
-/** Best-effort count of what a partial reply managed to answer, for reading
- *  loop-vs-long apart after the fact: a reply near its floor with dozens of
- *  entities already written is a long document; one with none, however large,
- *  is a model that never got past the first field. Counts array entries per
- *  site key (the extraction schema's shape), or the key itself when a site
- *  answered with a single object rather than a list — never throws, since a
- *  truncated body is exactly the case a strict count would fail on. */
-function countPartialEntities(parsed: unknown): number {
-  if (Array.isArray(parsed)) return parsed.length;
-  if (!parsed || typeof parsed !== 'object') return 0;
-  return Object.values(parsed).reduce<number>(
-    (total, value) =>
-      total + (Array.isArray(value) ? value.length : value && typeof value === 'object' ? 1 : 0),
-    0,
-  );
-}
-
-/** Diagnostics for a truncated extraction call, logged before the run fails on
- *  it — the only record of the partial reply, since a failed call never
- *  reaches `TraceSink` (this seam sits below it; `LlmClient.call` has no trace
- *  to write into, unlike the schema-rejection path in `failedCall`, which logs
- *  a slice of the reply onto the run's own trace instead). */
-export function logTruncatedExtraction(input: { label: string; userMessage: string }, reply: { text: string }): void {
-  const partial = parseJsonReply(reply.text, { label: input.label, prompt: input.userMessage });
-  logger.warn('[extraction] truncated', {
-    label: input.label,
-    // ChatReply carries the call's boundary facts but no usage figures, so
-    // this is the same chars/4 estimate `extractionMaxTokens` sizes a budget
-    // with — good enough to tell "a little over budget" from "wildly over".
-    estimatedOutputTokens: Math.round(reply.text.length / CHARS_PER_TOKEN),
-    entitiesParsed: countPartialEntities(partial),
-    tail: reply.text.slice(-TRUNCATED_TAIL_CHARS),
-  });
-}
-
-/**
- * Why the reply is a fragment, in the terms the next reader needs. Two
- * different failures end a call at the ceiling and they want opposite fixes:
- * an answer too long to finish, or an answer never started because the
- * THINKING spent the whole ceiling first (adaptive models pay for both out of
- * one budget). Both name the continuations actually attempted — the ceiling
- * the wrapper was allowed says nothing about what this call did, and quoting
- * it sent the incident's readers looking for a long answer that was never
- * written.
- */
-export function describeTruncation(reply: ChatReply, ceiling: number): string {
-  const spent = `${reply.continuations} continuation${reply.continuations === 1 ? '' : 's'}`;
-  if (reply.thinkingOnly) {
-    return `the model spent the whole ${ceiling}-token output ceiling thinking${reply.effort ? ` at effort ${reply.effort}` : ''} and produced no text, after ${spent}`;
-  }
-  return `the model hit the ${ceiling}-token output ceiling and was still truncated after ${spent}`;
-}
-
-/** Anthropic-backed default client — the same wiring as the TG
- *  production batcher's. */
-export function makeAnthropicLlmClient(): LlmClient {
-  return {
-    async call(input: LlmCallInput) {
-      // The in-batch CANCEL gate (runs-and-cancel spec §cancel): both extraction
-      // and AI() funnel through here, so a user-requested cancel stops a runaway
-      // WITHIN a single statement at the next call boundary. It reaches this
-      // seam off the LlmUsageContext.
-      await throwIfCancelled();
-      const model = claudeModelId(input.model);
-      // The caller's own ceiling wins where it named one (the most expensive
-      // tier does). Otherwise: the guard on ⇒ one sized from what the call was
-      // asked about, capped at one continuation; guard off (the default) ⇒ the
-      // flat ceiling and the wrapper's own continuation default — trusting the
-      // model like any other caller.
-      const budgetOn = extractionOutputBudgetEnabled();
-      const maxTokens = input.maxTokens ?? (budgetOn ? extractionMaxTokens(input) : EXTRACTION_MAX_TOKENS);
-      const maxContinuations = budgetOn ? EXTRACTION_MAX_CONTINUATIONS : MAX_CHAT_CONTINUATIONS;
-      const reply = await anthropicChatDetailed({
-        system: input.system,
-        userMessage: input.userMessage,
-        model,
-        maxTokens,
-        ...(budgetOn ? { maxContinuations } : {}),
-        // The caller's depth, verbatim — including its silence. Defaulting one
-        // here would make every call an extraction: the output ceiling is what
-        // bounds a runaway, and it applies below whatever the caller asked for.
-        ...(input.effort ? { effort: input.effort } : {}),
-        label: input.label,
-      });
-      // A truncated body still parses: `parseJsonReply` repairs and trims to the
-      // last closing bracket, and the extraction schema is all-optional, so the
-      // damage lands as silently-nulled fields instead of a failure. Fail loudly
-      // — `callWithRetry` retries once, and a failed run beats invented nulls.
-      if (reply.truncated) {
-        logTruncatedExtraction(input, reply);
-        throw new Error(
-          `Extraction '${input.label}' produced no complete answer: ${describeTruncation(reply, maxTokens)} (EXTRACTION_OUTPUT_BUDGET ${budgetOn ? 'on' : 'off'}).`,
-        );
-      }
-      return {
-        parsedJson: parseJsonReply(reply.text, { label: input.label, prompt: input.userMessage }),
-        // Kept so an anomaly can be shown as the model actually wrote it,
-        // before `parseJsonReply` repaired anything. Held in memory for the
-        // life of one call; only a misbehaving call ever persists a (capped)
-        // slice of it.
-        rawText: reply.text,
-        ...(reply.steppedDown ? { effortSteppedDown: reply.steppedDown } : {}),
-        ...(reply.continuations > 0 ? { continuations: reply.continuations } : {}),
-      };
-    },
-  };
-}
-
 // The `resolveFileText` seam's own vocabulary lives beside the trace shape it
 // feeds (./expression.ts) — `READ(file)` reads files through the same seam, so
 // neither caller owns the types. Re-exported here because this module is where
@@ -1285,7 +909,7 @@ export function boundFileText(text: string, ref: FileRef): BoundedFileText {
     name: ref.name,
     chars: ceiling,
     of: text.length,
-    ...runFields(),
+    ...runLogFields(),
   });
   return {
     content: `${text.slice(0, ceiling)}\n[… truncated: first ${ceiling} of ${text.length} characters]`,
@@ -1812,7 +1436,7 @@ class Materializer {
         node: shape.node,
         inputChars: shape.inputChars,
         continuations,
-        ...runFields(),
+        ...runLogFields(),
       },
     );
   }
@@ -1868,7 +1492,7 @@ class Materializer {
           site: region.siteId,
           stage: region.stageIndex,
           droppedEnrichments: kept.map((e) => e.plugin),
-          ...runFields(),
+          ...runLogFields(),
         },
       );
       return cause;
@@ -2102,7 +1726,7 @@ class Materializer {
     logger.info('[movement:extract] stage has no enrichment for this entity — skipping the call', {
       node,
       plugins: pipeline.map((p) => p.plugin),
-      ...runFields(),
+      ...runLogFields(),
     });
     trace.push({
       kind: 'extraction',
@@ -2195,7 +1819,7 @@ class Materializer {
         plugin: plugin.plugin,
         param: param.name,
         written: plugin.args.some((a) => a.name === param.name),
-        ...runFields(),
+        ...runLogFields(),
       });
       trace.push({
         kind: 'plugin',

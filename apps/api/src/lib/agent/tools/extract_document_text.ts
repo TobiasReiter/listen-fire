@@ -5,7 +5,7 @@ import { DocumentWithContentOutput, EmptyOutput, Tool } from './types';
 import { getPptxText } from '../../utils/powerpoint';
 import { getXlsxContent } from '../../utils/excel';
 import { services } from '../../../adapters/registry';
-import { extractPdfText } from '../../../services/movement_engine/file_text';
+import { extractPdfText } from '../../../services/translation_graph/movement/file_text';
 
 type ExtractDocumentTextParams = {
   documentId: string;

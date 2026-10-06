@@ -47,7 +47,7 @@ import { instanceSchemaFromDescriptors } from '../../services/translation_graph/
 import type { WriteRecord } from '../../services/movement_engine/expression';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
-import { makeTestHost } from '../../services/movement_engine/host';
+import { probeEngineHost } from './lib/probe_host';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6377/affinity';
 const TEAM_ID = '00000000-0000-0000-0000-000000000011' as TeamId;
@@ -224,7 +224,8 @@ async function run(
     event,
     teamId: TEAM_ID,
     catalog,
-    host: makeTestHost({
+    host: probeEngineHost({
+      teamId: TEAM_ID,
       adapters: { resolve: () => adapter, credentialId: () => 'creds-verify' },
     }),
   });

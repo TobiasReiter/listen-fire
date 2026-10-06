@@ -1101,7 +1101,7 @@ export interface Adapter {
 
   // (§8 correspondence — `getPriorMatch` / `recordLink` — retired with the TG
   // engine. Correspondence is now the engine-owned, symmetric `bind` store
-  // (`movement_engine/record_binding.ts`), declared in the language via
+  // (`translation_graph/movement/record_bindings.ts`), declared in the language via
   // `write … bind other`; the adapter is correspondence-agnostic. See
   // plans/2026-06-14-explicit-linking/3b_explicit_link_model.md and
   // plans/2026-06-14-kill-tg.)
