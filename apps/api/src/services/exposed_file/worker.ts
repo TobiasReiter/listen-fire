@@ -1,7 +1,7 @@
 // Cleanup poller for `exposed_file` — the short-lived S3-backed file exposures
 // minted by `exposeFile` (translation_graph/engine/files/expose.ts). Once a row
 // is past its `expires_at`, the bytes should go: we delete the S3 object and the
-// row. A plain interval DB poll, mirroring `poll_source/worker.ts`.
+// row. A periodic work row (`exposed_file_sweep`) on the automations drain.
 //
 // S3 delete failures leave the row in place so the next sweep retries (the
 // presign route already refuses an expired row, so the bytes are unreachable in
@@ -10,10 +10,11 @@
 import { sql } from 'kysely';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
-import { worker } from '../../lib/worker';
 import { MINUTE } from '../../constants';
 import { logger } from '../logger';
 import { services } from '../../adapters/registry';
+import type { WorkHandler } from '../work/kinds';
+import { registerWorkHandler } from '../work/drain';
 
 const SWEEP_INTERVAL = 5 * MINUTE;
 const SWEEP_BATCH = 100;
@@ -42,8 +43,14 @@ async function sweepExpiredFiles(): Promise<void> {
   }
 }
 
-function startExposedFilePoller(): void {
-  worker(sweepExpiredFiles, SWEEP_INTERVAL);
+const exposedFileSweepHandler: WorkHandler = {
+  async run() {
+    await sweepExpiredFiles();
+  },
+};
+
+function registerExposedFileWork(): void {
+  registerWorkHandler('exposed_file_sweep', exposedFileSweepHandler);
 }
 
-export { startExposedFilePoller, sweepExpiredFiles };
+export { SWEEP_INTERVAL as EXPOSED_FILE_SWEEP_INTERVAL, registerExposedFileWork, sweepExpiredFiles };

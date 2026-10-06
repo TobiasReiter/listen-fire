@@ -1,35 +1,50 @@
-// Automations' background workers: everything that makes a movement run
-// without a request — the clock, the pollers, the subscription upkeep, and the
-// two ways a parked run wakes up.
+// Automations' background work: everything that makes a movement run without
+// a request — the clock, the pollers, the subscription upkeep, and the two
+// ways a parked run wakes up — is a row in one work table, run by one drain.
 //
-// None of these keeps a persisted pulse: each one claims its own rows and
-// leaves the evidence in them, so there was never a heartbeat to read. What
-// says they are alive is the in-process tick the loop primitive publishes —
-// which is the whole of what the workers surface reports for them.
+// The drain takes no advisory lock: rows are claimed with SKIP LOCKED leases,
+// so every instance may drain at once, and a lease that lapses with a dead
+// process is how its work is recovered (which is why no boot-time orphan sweep
+// exists any more).
 
-import { startMovementCronScheduler } from '../services/movement_scheduler/worker';
-import { startExposedFilePoller } from '../services/exposed_file/worker';
-import { startPollSourcePoller } from '../services/poll_source/worker';
-import { startAirtableWebhookRefresh } from '../services/airtable_webhook_refresh/worker';
-import { startAwaitResumeWorker } from '../services/movement_engine/await_resume';
-import { startTimerResumeWorker } from '../services/movement_engine/timer_resume';
-import { wireRestartOrphanSweep } from '../services/movement_engine/restart_sweep';
+import { neverAsAny } from '../lib/utils/types';
+import { startDrainLoop } from '../services/work/drain';
+import { registerAutomationsWork } from '../services/work/register';
 import type { WorkerRegistry } from './registry';
+
+type Env = Record<string, string | undefined>;
+
+const DRAIN_MODE_VAR = 'AUTOMATIONS_DRAIN_MODE';
+
+/** `loop`: this process drains on a timer. `external`: something outside the
+ *  process (a scheduled HTTP tick) drives each pass. */
+type DrainMode = 'loop' | 'external';
+
+function drainMode(env: Env): DrainMode {
+  const raw = env[DRAIN_MODE_VAR]?.trim();
+  if (raw === undefined || raw === '' || raw === 'loop') return 'loop';
+  if (raw === 'external') return 'external';
+  throw new Error(`${DRAIN_MODE_VAR} must be "loop" or "external", not "${raw}".`);
+}
+
+function startDrain(env: Env): void {
+  const mode = drainMode(env);
+  switch (mode) {
+    case 'loop':
+      startDrainLoop();
+      return;
+    case 'external':
+      return;
+    default:
+      neverAsAny(mode);
+  }
+}
 
 const automationsWorkers: WorkerRegistry = {
   unit: 'automations',
-  workers: [
-    { id: 'automations.cron_scheduler', start: startMovementCronScheduler },
-    { id: 'automations.exposed_file_sweep', start: startExposedFilePoller },
-    { id: 'automations.poll_source', start: startPollSourcePoller },
-    { id: 'automations.airtable_webhook_refresh', start: startAirtableWebhookRefresh },
-    { id: 'automations.await_resume', start: startAwaitResumeWorker },
-    { id: 'automations.timer_resume', start: startTimerResumeWorker },
-  ],
-  // A run left `running` by a process death has nothing left to settle it —
-  // the firing that owned it is gone. Taking the lock is the moment this
-  // process knows the previous one has let go.
-  wire: wireRestartOrphanSweep,
+  workers: [{ id: 'automations.drain', start: () => startDrain(process.env) }],
+  wire: registerAutomationsWork,
+  lock: false,
 };
 
-export { automationsWorkers };
+export { DRAIN_MODE_VAR, automationsWorkers };

@@ -9,15 +9,16 @@
 // window was extended". This worker refreshes any Airtable subscription whose
 // window is older than REFRESH_AFTER, well before the 7-day cliff.
 //
-// A plain `lib/worker` interval loop, sibling of the cron scheduler and the
-// poll-source poller. Failures are contained per row — one bad credential never
-// starves the rest. Process safety: startup.ts runs it under the application
-// advisory lock, so exactly one scanner runs cluster-wide.
+// A periodic work row (`airtable_webhook_refresh`) on the automations drain;
+// the row's lease is what keeps a second instance from scanning at the same
+// time. Failures are contained per row — one bad credential never starves the
+// rest.
 
 import { HOUR } from '../../constants';
 import { getAutomationsQb } from '../../lib/kysely';
-import { worker } from '../../lib/worker';
 import { logger } from '../logger';
+import type { WorkHandler } from '../work/kinds';
+import { registerWorkHandler } from '../work/drain';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
 import { MOVEMENT_LISTEN_PROVISIONER } from '../translation_graph/movement/listen_subscriptions';
@@ -27,7 +28,7 @@ import { createAirtableAdapter } from '../translation_graph/adapters/airtable';
  *  kind; see webhook_sync/providers/index.ts). */
 const AIRTABLE_PROVIDER_KEY = 'AIRTABLE';
 
-const SCAN_INTERVAL = HOUR;
+export const AIRTABLE_WEBHOOK_SCAN_INTERVAL = HOUR;
 /** Refresh once a webhook's window is older than this — 1 day of headroom
  *  before Airtable's 7-day expiry. */
 const REFRESH_AFTER = 6 * 24 * HOUR;
@@ -110,6 +111,12 @@ export async function refreshDueAirtableWebhooks(now = new Date()): Promise<void
   }
 }
 
-export function startAirtableWebhookRefresh(): void {
-  worker(refreshDueAirtableWebhooks, SCAN_INTERVAL);
+const airtableWebhookRefreshHandler: WorkHandler = {
+  async run(_payload, ctx) {
+    await refreshDueAirtableWebhooks(ctx.now);
+  },
+};
+
+export function registerAirtableWebhookRefreshWork(): void {
+  registerWorkHandler('airtable_webhook_refresh', airtableWebhookRefreshHandler);
 }
