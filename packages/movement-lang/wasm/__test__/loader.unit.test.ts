@@ -3,7 +3,6 @@ import { callJson, initParser, isParserReady, parserGeneration } from '../loader
 declare function require(id: string): unknown;
 declare const __dirname: string;
 
-const NOT_IMPLEMENTED = { error: { message: 'not implemented', pos: 0 } };
 const ROUND_TRIP = {
   kind: 'string',
   quote: "'",
@@ -36,7 +35,7 @@ describe('the parser loader', () => {
         },
       ],
     });
-    expect(callJson('parse_nested_call', 'f(x)', [0, 4, 1, 1, 3])).toEqual(NOT_IMPLEMENTED);
+    expect(callJson('parse_nested_call', 'f(x)', [0, 4, 1, 1, 3])).toMatchObject({ kind: 'call', call: { callee: 'f' } });
   });
 
   it('accepts bytes as input', () => {

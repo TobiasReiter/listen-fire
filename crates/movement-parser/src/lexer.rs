@@ -34,7 +34,7 @@ pub fn fail<T>(message: impl Into<String>, pos: usize) -> PResult<T> {
 /// scripts/build-parser-wasm.sh sizes the shadow stack.
 pub const MAX_DEPTH: usize = 128;
 
-pub const TOO_DEEP: &str = "expression nesting too deep";
+pub const TOO_DEEP: &str = "nesting too deep";
 
 /// The formula grammar's reserved words, matched case-insensitively
 /// (shared/expression/formula.ts `KEYWORDS`).

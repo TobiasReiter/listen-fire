@@ -13,7 +13,7 @@ pub mod util;
 pub mod version;
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// What a grammar entry point hands back: the parsed tree, or the error
 /// object the TypeScript wrappers rewrap into their error classes.
@@ -77,16 +77,24 @@ pub struct NestedCall {
     pub version: u32,
 }
 
-pub fn parse_nested_call(_raw: &str, _call: &NestedCall) -> Parsed {
-    Err(not_implemented())
+/// `parseNestedCall`: the call at `at_start..at_end` of a slot's `raw` read
+/// by the statement grammar as the right-hand side of a binding. The text
+/// ends where the call does; `origin` is where `raw` starts in the file, so
+/// the spans are the file's. Its slots carry their parse, as the eager
+/// program's do. Offsets are UTF-16 units, as the TypeScript caller has them.
+pub fn parse_nested_call(raw: &str, call: &NestedCall) -> Parsed {
+    let head = util::utf16::Utf16::new(raw).text(0, call.at_end as usize);
+    let origin = ast::Loc { line: call.origin_line as usize, col: call.origin_col as usize };
+    let value = stmt::Parser::new(&head, call.version, origin, true)
+        .parse_nested_call_value(call.at_start as usize)
+        .map_err(|e| to_value(&e))?;
+    let mut value = to_value(&value);
+    attach_slot_trees(&mut value);
+    Ok(value)
 }
 
 fn to_value<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("parser output is always representable as JSON")
-}
-
-fn not_implemented() -> Value {
-    json!({ "message": "not implemented", "pos": 0 })
 }
 
 /// Serialises with every object's keys sorted, recursively. Going through
@@ -101,6 +109,7 @@ pub fn to_sorted_json<T: Serialize>(value: &T) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn eager_slots_carry_their_parse_and_nothing_else_does() {
@@ -115,6 +124,56 @@ mod tests {
         let refused = program.pointer("/statements/1/value/expr").unwrap();
         assert!(refused.get("error").and_then(|e| e.get("message")).is_some() && refused.get("tree").is_none());
         assert_eq!(program.pointer("/statements/2/value/expr/tree/kind"), Some(&json!("name")));
+    }
+
+    #[test]
+    fn a_nested_call_reads_to_its_end_with_the_file_s_spans() {
+        // The call starts on the slot's first line, so its columns are offset
+        // by the origin's; the closure's statement is on a later line, so
+        // its columns are its own.
+        let raw = "1 + f(x, () => {\n  y = 🌍x\n}) + 2";
+        let end = raw.encode_utf16().count() - 4;
+        let call = NestedCall { at_start: 4, at_end: end as u32, origin_line: 3, origin_col: 5, version: 3 };
+        let value = parse_nested_call(raw, &call).unwrap();
+        assert_eq!(value.pointer("/call/callee"), Some(&json!("f")));
+        assert_eq!(value.pointer("/call/span"), Some(&json!({
+            "start": { "line": 3, "col": 9 }, "end": { "line": 5, "col": 3 },
+        })));
+        // UTF-16 columns: the emoji is two.
+        assert_eq!(value.pointer("/call/args/1/closure/body/0/value/expr/span"), Some(&json!({
+            "start": { "line": 4, "col": 7 }, "end": { "line": 4, "col": 10 },
+        })));
+        // Its slots carry their parse, as the eager program's do.
+        assert_eq!(value.pointer("/call/args/0/expr/tree/kind"), Some(&json!("name")));
+        assert_eq!(
+            value.pointer("/call/args/1/closure/body/0/value/expr/error/message"),
+            Some(&json!("Unrecognised character '🌍'")),
+        );
+    }
+
+    #[test]
+    fn a_nested_call_that_does_not_end_at_its_extent_is_refused() {
+        let call = NestedCall { at_start: 0, at_end: 6, origin_line: 2, origin_col: 3, version: 3 };
+        let error = parse_nested_call("f(x) y", &call).unwrap_err();
+        assert_eq!(error, json!({
+            "message": "Expected the call to end here, found 'y'",
+            "loc": { "line": 2, "col": 8 },
+        }));
+    }
+
+    #[test]
+    fn the_depth_limit_names_no_grammar() {
+        // It guards statements as well as expressions. A debug build's frames
+        // need more than a test thread's default stack to reach the limit
+        // (and on macOS an overflow there hangs rather than aborting).
+        let source = format!("{}x = 1{}", "if a {\n".repeat(200), "\n}".repeat(200));
+        let error = std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn(move || parse_program(&source, 3).unwrap_err())
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(error.get("message"), Some(&json!("nesting too deep")));
     }
 
     #[test]
