@@ -173,11 +173,13 @@ describe('drainWork', () => {
     expect(release).toHaveBeenCalledWith({
       id: 'id-a',
       leaseToken: 'token-a',
+      claimedUpdatedAt: UPDATED_AT,
       dueAt: new Date(clock.getTime() + 4_000),
     });
     expect(release).toHaveBeenCalledWith({
       id: 'id-b',
       leaseToken: 'token-b',
+      claimedUpdatedAt: UPDATED_AT,
       dueAt: new Date(clock.getTime() + 300_000),
     });
   });
@@ -191,6 +193,7 @@ describe('drainWork', () => {
     expect(release).toHaveBeenCalledWith({
       id: 'id-a',
       leaseToken: 'token-a',
+      claimedUpdatedAt: UPDATED_AT,
       dueAt: new Date(clock.getTime() + 1_000),
     });
   });

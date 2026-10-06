@@ -68,9 +68,10 @@ async function releaseWithBackoff(input: {
   clock: () => Date;
 }): Promise<void> {
   const { row, leaseToken, clock } = input;
+  const claimedUpdatedAt = row.updatedAt;
   const dueAt = new Date(clock().getTime() + backoffMs(row.attempts));
   try {
-    await releaseWork({ id: row.id, leaseToken, dueAt });
+    await releaseWork({ id: row.id, leaseToken, claimedUpdatedAt, dueAt });
   } catch (error) {
     logger.warn('[work] release failed; the lease will lapse instead', {
       kind: row.kind,

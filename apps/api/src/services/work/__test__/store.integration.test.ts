@@ -89,7 +89,7 @@ function claimOf(row: WorkRow) {
 async function expectStaleClaimIsInert(input: { key: string; stale: WorkRow; live: WorkRow }) {
   const { key, stale, live } = input;
   expect(await heartbeatWork({ ...claimOf(stale), leaseMs: 1 })).toBe(false);
-  await releaseWork(claimOf(stale));
+  await releaseWork({ ...claimOf(stale), claimedUpdatedAt: stale.updatedAt });
   await completeWork({ ...claimOf(stale), claimedUpdatedAt: stale.updatedAt, now: at(2_000) });
 
   expect(await rowByKey(key)).toMatchObject({
@@ -311,7 +311,7 @@ describe('work store', () => {
     await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
     const claimed = await claimOne({ owner: 'drainer-1' });
 
-    await releaseWork(claimOf(claimed));
+    await releaseWork({ ...claimOf(claimed), claimedUpdatedAt: claimed.updatedAt });
 
     expect(await rowByKey(key)).toMatchObject({
       dueAt: at(0),
@@ -326,7 +326,11 @@ describe('work store', () => {
     await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
     const claimed = await claimOne({ owner: 'drainer-1' });
 
-    await releaseWork({ ...claimOf(claimed), dueAt: at(4_000) });
+    await releaseWork({
+      ...claimOf(claimed),
+      claimedUpdatedAt: claimed.updatedAt,
+      dueAt: at(4_000),
+    });
 
     expect(await rowByKey(key)).toMatchObject({
       dueAt: at(4_000),
@@ -337,12 +341,38 @@ describe('work store', () => {
     });
   });
 
+  it('a re-arm during a failing run wins over the release dueAt and the lease still clears', async () => {
+    const key = freshKey('resume_timer');
+    await enqueueWork({ kind: 'resume_timer', key, payload: { runId: 'a' }, dueAt: at(0) });
+    const claimed = await claimOne({ owner: 'drainer-1' });
+
+    await enqueueWork({ kind: 'resume_timer', key, payload: { runId: 'b' }, dueAt: at(500) });
+    await releaseWork({
+      ...claimOf(claimed),
+      claimedUpdatedAt: claimed.updatedAt,
+      dueAt: at(60_000),
+    });
+
+    expect(await rowByKey(key)).toMatchObject({
+      dueAt: at(500),
+      payload: { runId: 'b' },
+      leaseOwner: null,
+      leaseUntil: null,
+      leaseToken: null,
+    });
+  });
+
   it('releaseWork with dueAt under a stale token leaves the row alone', async () => {
     const key = freshKey('resume_timer');
     await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
     const claimed = await claimOne({ owner: 'drainer-1' });
 
-    await releaseWork({ id: claimed.id, leaseToken: randomUUID(), dueAt: at(4_000) });
+    await releaseWork({
+      id: claimed.id,
+      leaseToken: randomUUID(),
+      claimedUpdatedAt: claimed.updatedAt,
+      dueAt: at(4_000),
+    });
 
     expect(await rowByKey(key)).toMatchObject({ dueAt: at(0), leaseToken: claimed.leaseToken });
   });

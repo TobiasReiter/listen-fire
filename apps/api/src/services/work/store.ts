@@ -164,17 +164,20 @@ export async function completeWork(input: {
 }
 
 /** Clear the lease so the row retries: at `dueAt` when given (backoff), else at its due_at.
- *  Not a re-arm, so updated_at is left alone. */
+ *  A re-arm since claim (updated_at moved past `claimedUpdatedAt`) wins over `dueAt`, as it
+ *  does in completeWork. Not a re-arm itself, so updated_at is left alone. */
 export async function releaseWork(input: {
   id: string;
   leaseToken: string;
+  claimedUpdatedAt: Date;
   dueAt?: Date;
 }): Promise<void> {
   const dueAt = input.dueAt ?? null;
   await sql`
     UPDATE automations.work
     SET lease_owner = NULL, lease_until = NULL, lease_token = NULL,
-        due_at = COALESCE(${dueAt}::timestamptz, due_at)
+        due_at = CASE WHEN updated_at = ${input.claimedUpdatedAt}
+                      THEN COALESCE(${dueAt}::timestamptz, due_at) ELSE due_at END
     WHERE ${heldBy(input)}`.execute(getAutomationsQb(['work']));
 }
 
