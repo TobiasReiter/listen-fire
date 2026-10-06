@@ -8,6 +8,10 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 <!-- add merged PRs here -->
 
+### Fixed
+
+- On a Gemini route, a call that asked for no thinking no longer thinks on Flash models. Small plugin calls that took minutes now take seconds. On Pro models, which cannot stop thinking, a call that turns thinking off now thinks at the lowest level.
+
 ## [v0.10.0] - 2026-10-06
 
 > These changes are a broad effort to make the language more consistent and behave more predictably. With a tighter mental model, we get a handbook that's faster to grok and correct automations written faster - @Henry
