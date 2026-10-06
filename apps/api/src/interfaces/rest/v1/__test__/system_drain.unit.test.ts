@@ -13,6 +13,8 @@ jest.mock('../../../../services/work/drain', () => ({
   drainUntilIdle: (opts: unknown) => drainUntilIdle(opts),
   recordExternalDrainPass: (result: unknown) => recordExternalDrainPass(result),
 }));
+const holdsUnitLock = jest.fn((_unit: string) => true);
+jest.mock('../../../../startup/registry', () => ({ holdsUnitLock: (unit: string) => holdsUnitLock(unit) }));
 jest.mock('../../../../services/context', () => ({ currentContext: jest.fn() }));
 jest.mock('../../../../services/system_debug', () => ({ listTgRuns: jest.fn(), getTgRun: jest.fn() }));
 jest.mock('../../../../lib/knowledge/orchestrator', () => ({ runConversationTurn: jest.fn() }));
@@ -47,6 +49,7 @@ afterAll((done) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  holdsUnitLock.mockReturnValue(true);
   scopes = ['system'];
 });
 
@@ -92,6 +95,18 @@ describe('POST /system/automations/drain', () => {
   it('rejects a malformed body without draining', async () => {
     const res = await tick({ limit: 0 });
     expect(res.status).toBe(400);
+    expect(drainUntilIdle).not.toHaveBeenCalled();
+    expect(recordExternalDrainPass).not.toHaveBeenCalled();
+  });
+
+  it('answers 503 without draining on an instance that does not hold the automations lock', async () => {
+    holdsUnitLock.mockReturnValue(false);
+
+    const res = await tick({});
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'not_lock_holder' });
+    expect(holdsUnitLock).toHaveBeenCalledWith('automations');
     expect(drainUntilIdle).not.toHaveBeenCalled();
     expect(recordExternalDrainPass).not.toHaveBeenCalled();
   });

@@ -80,28 +80,44 @@ interface WorkerRegistry {
 const shutdowns: Array<() => Promise<void>> = [];
 let signalsWired = false;
 
+// The units whose advisory lock this process holds right now. Work that must
+// run on exactly one instance (automations' external drain tick) asks here.
+const heldLocks = new Set<Unit>();
+
+/** Whether this process holds the unit's background lock. */
+function holdsUnitLock(unit: Unit): boolean {
+  return heldLocks.has(unit);
+}
+
+/** Stop every unit's workers, then release its lock. What SIGINT/SIGTERM run. */
+async function shutdownBackground(): Promise<void> {
+  await Promise.all(shutdowns.map((each) => each()));
+}
+
 function onShutdown(shutdown: () => Promise<void>) {
   shutdowns.push(shutdown);
   if (signalsWired) return;
   signalsWired = true;
 
-  const shutdownAll = () => {
-    for (const each of shutdowns) void each();
-  };
+  const shutdownAll = () => void shutdownBackground();
   process.on('SIGINT', shutdownAll);
   process.on('SIGTERM', shutdownAll);
 }
 
 /** The unit's workers stop first, so none is still running when the lock frees. */
 function shutdownUnit(input: { unit: Unit; stops: WorkerStop[]; release?: () => Promise<void> }) {
-  return async () => {
+  let done: Promise<void> | undefined;
+  const shutdown = async () => {
     await Promise.all(
       input.stops.map((stop) =>
         stop().catch((error: unknown) => console.error(`[shutdown] ${input.unit}: a worker failed to stop`, error)),
       ),
     );
-    await input.release?.();
+    if (!input.release) return;
+    heldLocks.delete(input.unit);
+    await input.release();
   };
+  return () => (done ??= shutdown());
 }
 
 /**
@@ -121,6 +137,7 @@ function runRegistry(registry: WorkerRegistry): void {
         ADVISORY_LOCK_SCOPES.LISTEN_FIRE_API_APPLICATION,
         BACKGROUND_LOCK_IDS[unit],
       ));
+      heldLocks.add(unit);
     }
 
     const stops: WorkerStop[] = [];
@@ -141,5 +158,7 @@ export {
   type RegisteredWorker,
   type WorkerStop,
   type WorkerRegistry,
+  holdsUnitLock,
   runRegistry,
+  shutdownBackground,
 };

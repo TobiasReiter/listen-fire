@@ -247,14 +247,13 @@ describe('registerWorkHandler', () => {
 });
 
 describe('notifyWork', () => {
-  it('coalesces synchronous notifies into one drain', async () => {
-    notifyWork();
+  it('drains nothing in a process with no loop running', async () => {
     notifyWork();
     notifyWork();
 
     for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
 
-    expect(claim).toHaveBeenCalledTimes(1);
+    expect(claim).not.toHaveBeenCalled();
   });
 
   it('goes to the injected notifier', () => {

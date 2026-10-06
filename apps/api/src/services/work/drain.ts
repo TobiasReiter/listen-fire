@@ -248,55 +248,17 @@ export interface WorkNotifier {
   notify(): void;
 }
 
-// The always-on loop of this process, when one runs: a notify asks it for an
-// extra pass instead of starting a second, awaiting drain beside it.
+// The always-on loop of this process, when one runs. A door's notify only asks
+// it for an extra pass: a process without a loop (external mode, or one still
+// waiting for the automations lock) must not drain, or the lock guards nothing.
 let activeLoop: { kick(): void } | undefined;
 
-function createInProcessNotifier(): WorkNotifier {
-  let scheduled = false;
-  let running = false;
-  // A notify during a drain may enqueue rows that pass already missed.
-  let notifiedWhileRunning = false;
-
-  const drain = async (): Promise<void> => {
-    running = true;
-    try {
-      do {
-        notifiedWhileRunning = false;
-        await drainUntilIdle();
-      } while (notifiedWhileRunning);
-    } finally {
-      running = false;
-    }
-  };
-
-  return {
-    notify() {
-      if (activeLoop) {
-        activeLoop.kick();
-        return;
-      }
-      if (running) {
-        notifiedWhileRunning = true;
-        return;
-      }
-      if (scheduled) return;
-      scheduled = true;
-      queueMicrotask(() => {
-        scheduled = false;
-        if (running) {
-          notifiedWhileRunning = true;
-          return;
-        }
-        void drain();
-      });
-    },
-  };
-}
-
-/** Default: kicks this process's drain loop when one runs; otherwise coalesces
- *  notifies within a tick and runs drainUntilIdle in-process, fire-and-forget. */
-export const inProcessNotifier: WorkNotifier = createInProcessNotifier();
+/** Default: kicks this process's drain loop when one runs; otherwise nothing. */
+export const inProcessNotifier: WorkNotifier = {
+  notify() {
+    activeLoop?.kick();
+  },
+};
 
 let notifier: WorkNotifier = inProcessNotifier;
 
