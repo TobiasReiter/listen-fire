@@ -106,6 +106,7 @@ afterAll(() => {
   // The regression's own tests replay the fixture through the bridge; their
   // calls are the harvest's output, not corpus.
   if (testFile.startsWith(path.join('parser', 'expression'))) return;
+  if (testFile.startsWith(path.join('parser', '__test__', 'rust_differential'))) return;
   if (!OUT || records.length === 0) return;
   fs.appendFileSync(OUT, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 });
