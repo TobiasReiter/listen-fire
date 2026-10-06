@@ -92,7 +92,7 @@ import {
   findBoundCounterpart,
   deleteBinding,
   type BindingEndpoint,
-} from '../record_binding';
+} from '../../translation_graph/movement/record_bindings';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 const TEAM = 'team-1' as TeamId;

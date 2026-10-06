@@ -1704,6 +1704,10 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
           credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
         },
+        lookup: {
+          resolveActingUser: jest.requireMock('../../translation_graph/adapters/acting_user/resolve')
+            .resolveActingUser,
+        },
       }),
     });
 

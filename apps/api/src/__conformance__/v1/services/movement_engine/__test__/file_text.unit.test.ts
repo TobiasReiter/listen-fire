@@ -33,7 +33,7 @@ import { Readable } from 'node:stream';
 
 import { jsPDF } from 'jspdf';
 
-import { makeFileTextResolver } from '../file_text';
+import { makeFileTextResolver } from '../../translation_graph/movement/file_text';
 import { services } from '../../../adapters/registry';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { logger } from '../../logger';

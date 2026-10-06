@@ -129,11 +129,11 @@ import {
   ROOT_EXTRACT_DESCRIPTION,
   STAGE_FAN_OUT,
   buildExtractSpec,
-  makeAnthropicLlmClient,
   materializeExtract,
-  registryTransformInvoker,
   type MovementTransformInvoker,
 } from '../extraction';
+import { makeAnthropicLlmClient } from '../../translation_graph/movement/llm_clients';
+import { registryTransformInvoker } from '../../translation_graph/movement/transform_invoker';
 import { NO_PROVENANCE } from '../provenance';
 import {
   getTransform,
@@ -3986,6 +3986,8 @@ describe('an extraction call describes itself on the run', () => {
         event,
         teamId: TEAM_ID,
         catalog: movementCatalog,
+        // A real firing names its run; only then can a log line carry it.
+        ...(options?.runId !== undefined ? { runId: options.runId } : {}),
         host: makeTestHost({
           adapters: {
             resolve: makeResolver({
@@ -4004,14 +4006,7 @@ describe('an extraction call describes itself on the run', () => {
           },
         }),
       });
-    // A real firing establishes the run context around everything it calls;
-    // only inside one can a log line name the run it belongs to.
-    const result = options?.runId
-      ? await new LlmUsageContext({
-          teamId: TEAM_ID as unknown as string,
-          triggerRunId: options.runId,
-        }).runAsync(fire)
-      : await fire();
+    const result = await fire();
     return { calls: llm.calls, trace: result.trace };
   }
 
