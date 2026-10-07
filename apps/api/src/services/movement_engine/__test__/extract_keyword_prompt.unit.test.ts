@@ -93,7 +93,7 @@ import type { Adapter, FileRef } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { Priced } from '../host';
+import type { Priced, Scoped } from '../host';
 import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
@@ -211,10 +211,10 @@ function event(): TriggerEvent {
 async function promptsOf(lines: string[]): Promise<LlmCallInput[]> {
   const calls: LlmCallInput[] = [];
   const llm = {
-    async call(input: Priced<LlmCallInput>): Promise<LlmCallResult> {
-      // What the model is sent: the run's budget rides the host call, not the
-      // prompt.
-      const { budget: _budget, ...prompt } = input;
+    async call(input: Priced<Scoped<LlmCallInput>>): Promise<LlmCallResult> {
+      // What the model is sent: the run's budget and its segment ride the
+      // host call, not the prompt.
+      const { budget: _budget, segmentId: _segmentId, ...prompt } = input;
       calls.push(prompt);
       const key = /`(x:[^`]+)`/.exec(input.system)?.[1] ?? 'missing';
       return { parsedJson: { [key]: [] } };

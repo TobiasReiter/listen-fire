@@ -4137,7 +4137,7 @@ function makeFakeParkSink(_opts: { created?: boolean } = {}): {
       awaitParks.push({ address: input.address, state: input.state });
     },
     async recordJoin(input) {
-      joins.push(input);
+      joins.push({ frameAddress: input.frameAddress, parkedChildren: input.parkedChildren });
       // Seed the in-memory join state for decrementJoin.
       joinState.set(input.frameAddress, {
         pending: input.parkedChildren,

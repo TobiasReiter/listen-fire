@@ -893,6 +893,8 @@ describe('through-staged extraction', () => {
         extractedContext: { name: 'Acme', urls: 'acme.com' },
         // The run has no cap, so the plugin may spend without limit.
         budget: { remainingMicrodollars: null },
+        // The host call names the segment it is made in.
+        segmentId: expect.any(String),
       },
     ]);
 

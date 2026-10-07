@@ -25,17 +25,27 @@
 // from a limit pause. The cap itself is run input (`costCapMicrodollars`),
 // read by the run host, never by the engine.
 
-import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, type FileArtifactType, type LanguageVersion } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { FileRef } from '../translation_graph/adapter';
+import type { ActingUser, FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import type { ArbitrationAnswer, EntityArbitration } from '../translation_graph/engine/entity_match';
 import type { CrossRunLocks } from './effect_locks';
 import type { FileTextResolution, MovementTraceEntry } from './expression';
 import type { ExtractCallLlmClient } from './extraction_call';
-import type { BudgetRefusal, EngineHost, PricedAnswer } from './host';
-import type { CancelGate } from './run';
+import type {
+  AdapterResolution,
+  AwaitWakeRequest,
+  BudgetRefusal,
+  CallbackSink,
+  EngineHost,
+  PricedAnswer,
+  RecordBindings,
+  ResolveActingUserInput,
+  ResolvedAdapter,
+} from './host';
+import type { CancelGate, ParkSink } from './run';
 
 import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs } from './extraction';
 import { getErrorMessage } from '../../lib/utils/error';
@@ -64,9 +74,12 @@ export interface RunFacts {
 /** One segment's engine state. */
 export interface RunContext extends RunFacts {
   readonly teamId: TeamId;
-  /** The host segment this one opened (`host.segment.open`): every adapter
-   *  host call names it. */
+  /** The host segment this one opened (`host.segment.open`): every host call
+   *  names it. */
   readonly segmentId: string;
+  /** The host as this segment calls it: every family bound to the segment, so
+   *  no call site names it, or can name another. */
+  readonly host: SegmentHost;
   /** The cross-run write locks this segment's effects take, each held for
    *  its effect (`effect_locks.ts`): the host's `locks`, named by this
    *  segment. The lock session is the host's, and closes with the segment. */
@@ -234,31 +247,107 @@ export interface PricedCalls {
 export function pricedCalls(
   host: EngineHost,
   run: {
+    /** The segment every call is made in. */
+    segmentId: string;
     ledger: RunLedger;
     /** The run's catalog snapshot's plugins: which of them are priced. */
     plugins: PluginSpecs;
   },
 ): PricedCalls {
   const { llm, files } = host;
-  const { ledger, plugins } = run;
+  const { segmentId, ledger, plugins } = run;
   return {
-    client: { call: (input) => charged(ledger, (budget) => llm.client.call({ ...input, budget })) },
+    client: { call: (input) => charged(ledger, (budget) => llm.client.call({ ...input, segmentId, budget })) },
     extractCall: {
-      call: (input) => charged(ledger, (budget) => llm.extractCall.call({ ...input, budget })),
+      call: (input) => charged(ledger, (budget) => llm.extractCall.call({ ...input, segmentId, budget })),
     },
     transforms: {
       // A priced plugin is refused before it starts once the run has spent
       // its cap; anything it or the models it calls spend comes back as cost.
       invoke: async (input) => {
         if (pluginSpecNamed(plugins, input.plugin)?.priced === true) ledger.check();
-        return charged(ledger, (budget) => llm.transforms.invoke({ ...input, budget }));
+        return charged(ledger, (budget) => llm.transforms.invoke({ ...input, segmentId, budget }));
       },
     },
     arbitrateEntities: async (input) => {
-      const { index, judgeUnavailable } = await charged(ledger, (budget) => llm.arbitrateEntities({ ...input, budget }));
+      const { index, judgeUnavailable } = await charged(ledger, (budget) =>
+        llm.arbitrateEntities({ ...input, segmentId, budget }),
+      );
       return { index, ...(judgeUnavailable !== undefined ? { judgeUnavailable } : {}) };
     },
-    resolveFileText: (input) => charged(ledger, (budget) => files.resolveFileText({ ...input, budget })),
+    resolveFileText: (input) => charged(ledger, (budget) => files.resolveFileText({ ...input, segmentId, budget })),
+  };
+}
+
+// ── The host, bound to a segment ────────────────────────────────────────────
+
+/** The host's unpriced families as one segment calls them: each request
+ *  carries the segment's id, added here and nowhere else. (The priced
+ *  families are `PricedCalls`; adapter calls name the segment through their
+ *  stand-in, `host_adapter.ts`.) */
+export interface SegmentHost {
+  adapters: { resolve(input: AdapterResolution): Promise<ResolvedAdapter> };
+  park: {
+    sink?: ParkSink;
+    wake(request: AwaitWakeRequest): Promise<void>;
+    callbacks?: CallbackSink;
+    bindings: RecordBindings;
+  };
+  control: { cancel: CancelGate };
+  files: { render(input: { content: string; type: FileArtifactType }): Promise<FileRef> };
+  lookup: { resolveActingUser(input: ResolveActingUserInput): Promise<ActingUser | null> };
+}
+
+function bindSegment(host: EngineHost, segmentId: string): SegmentHost {
+  const { sink, callbacks, bindings } = host.park;
+  const cancel = host.control.cancel;
+  return {
+    adapters: { resolve: (input) => host.adapters.resolve({ ...input, segmentId }) },
+    park: {
+      ...(sink !== undefined ? { sink: bindParkSink(sink, segmentId) } : {}),
+      wake: (request) => host.park.wake({ ...request, segmentId }),
+      ...(callbacks !== undefined
+        ? {
+            callbacks: {
+              mint: (input) => callbacks.mint({ ...input, segmentId }),
+              calls: (input) => callbacks.calls({ ...input, segmentId }),
+            },
+          }
+        : {}),
+      bindings: {
+        record: (input) => bindings.record({ ...input, segmentId }),
+        findBoundCounterpart: (input) => bindings.findBoundCounterpart({ ...input, segmentId }),
+        delete: (input) => bindings.delete({ ...input, segmentId }),
+      },
+    },
+    control: {
+      cancel: {
+        cancelled: () => cancel.cancelled({ segmentId }),
+        cancelledNow: () => cancel.cancelledNow({ segmentId }),
+      },
+    },
+    files: { render: (input) => host.files.render({ ...input, segmentId }) },
+    lookup: { resolveActingUser: (input) => host.lookup.resolveActingUser({ ...input, segmentId }) },
+  };
+}
+
+function bindParkSink(sink: NonNullable<EngineHost['park']['sink']>, segmentId: string): ParkSink {
+  const { commitSuspension, commitLimitPause } = sink;
+  return {
+    recordJoin: (input) => sink.recordJoin({ ...input, segmentId }),
+    commitTimerPark: (input) => sink.commitTimerPark({ ...input, segmentId }),
+    commitAwaitPark: (input) => sink.commitAwaitPark({ ...input, segmentId }),
+    decrementJoin: (input) => sink.decrementJoin({ ...input, segmentId }),
+    persistBranchExport: (input) => sink.persistBranchExport({ ...input, segmentId }),
+    collectBranchExports: (input) => sink.collectBranchExports({ ...input, segmentId }),
+    cancelSubtrees: (input) => sink.cancelSubtrees({ ...input, segmentId }),
+    // Optional within the family: a sink without them cannot suspend.
+    ...(commitSuspension !== undefined
+      ? { commitSuspension: (input) => commitSuspension.call(sink, { ...input, segmentId }) }
+      : {}),
+    ...(commitLimitPause !== undefined
+      ? { commitLimitPause: (pause) => commitLimitPause.call(sink, { ...pause, segmentId }) }
+      : {}),
   };
 }
 
@@ -280,15 +369,17 @@ export async function openRunContext(input: {
     languageVersion,
     ...(runId !== undefined ? { runId } : {}),
   });
+  const bound = bindSegment(host, segmentId);
   return {
     teamId,
     languageVersion,
-    cancel: host.control.cancel,
+    cancel: bound.control.cancel,
     ...(runId !== undefined ? { runId } : {}),
     segmentId,
+    host: bound,
     locks: {
       acquire: async (names) => (await host.locks.acquire({ segmentId, names })).token,
-      release: (token) => host.locks.release({ token }),
+      release: (token) => host.locks.release({ segmentId, token }),
     },
     ledger: new RunLedger(input.spend),
     trace: { entries: [], published: 0 },

@@ -6,7 +6,7 @@
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { AwaitResolution } from '../../translation_graph/awaitable';
 import type { ParkSink } from '../run';
-import type { AwaitWakeRequest } from '../host';
+import type { QueuedWake } from '../host_kit';
 import { makeFakeParkSink } from '../test_host';
 import { logger } from '../../logger';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
@@ -20,10 +20,10 @@ type AwaitPark = Parameters<ParkSink['commitAwaitPark']>[0];
 function recording(): {
   sink: ParkSink;
   parks: AwaitPark[];
-  wakes: AwaitWakeRequest[];
+  wakes: QueuedWake[];
 } {
   const parks: AwaitPark[] = [];
-  const wakes: AwaitWakeRequest[] = [];
+  const wakes: QueuedWake[] = [];
   const { sink } = makeFakeParkSink();
   return {
     sink: {

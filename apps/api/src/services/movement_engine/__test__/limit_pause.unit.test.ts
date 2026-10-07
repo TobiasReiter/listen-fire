@@ -183,8 +183,8 @@ function makeParkSink(moments: Milestones) {
     async commitSuspension(input) {
       keep('suspension', input.address, input.state);
     },
-    async commitLimitPause(pause) {
-      pauses.push(pause);
+    async commitLimitPause({ limit, capMicrodollars, spentMicrodollars }) {
+      pauses.push({ limit, capMicrodollars, spentMicrodollars });
       moments.mark('paused');
     },
     async decrementJoin(input) {

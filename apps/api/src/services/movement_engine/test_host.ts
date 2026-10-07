@@ -6,12 +6,19 @@ import type { CatalogSnapshot, FileArtifactType } from 'movement-lang';
 import type { ActingUser } from '../translation_graph/adapter';
 import type { DryRunWriteSink } from '../translation_graph/engine/dry_run_adapter';
 import type { MovementTraceEntry } from './expression';
-import type { AwaitWakeRequest, EngineHost, RenderFile } from './host';
+import type { EngineHost, RenderFile } from './host';
 import type { ParkSink } from './run';
 
 import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
 import { InMemoryWriteLocks, segmentWriteLocks, type WriteLocks } from '../write_locks/write_locks';
-import { appendingInto, closeSegmentWith, NEVER_CANCELLED, type ActingUserLookup } from './host_kit';
+import {
+  appendingInto,
+  closeSegmentWith,
+  NEVER_CANCELLED,
+  SegmentDirectory,
+  type ActingUserLookup,
+  type QueuedWake,
+} from './host_kit';
 
 /** What a test supplies: any piece of any group, the rest defaulted. */
 export interface TestHostOverrides {
@@ -33,8 +40,9 @@ export interface TestHostOverrides {
   locks?: WriteLocks;
   /** Where the run's trace is appended as it goes. */
   trace?: MovementTraceEntry[];
-  /** Where the default `park.wake` records each wake the engine asks for. */
-  wakes?: AwaitWakeRequest[];
+  /** Where the default `park.wake` records each wake the engine asks for, as
+   *  a host queues it (for the segment's team). */
+  wakes?: QueuedWake[];
   /** Receives each write a rehearsed (`dryRun`) instance captured. */
   writeSink?: DryRunWriteSink;
 }
@@ -56,8 +64,10 @@ function notProvided(piece: string): Error {
 export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
   const { segment = {}, adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {}, wakes = [] } =
     overrides;
-  let segments = 0;
+  let opened = 0;
+  const segments = new SegmentDirectory();
   const table = adapterTable({
+    segments,
     resolveLive:
       adapters.resolve ??
       (() => {
@@ -68,16 +78,18 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     ...(overrides.writeSink !== undefined ? { writeSink: overrides.writeSink } : {}),
   });
   const locks = segmentWriteLocks(overrides.locks ?? new InMemoryWriteLocks());
-  const open = segment.open ?? (async () => ({ segmentId: `test-segment-${++segments}` }));
+  const open = segment.open ?? (async () => ({ segmentId: `test-segment-${++opened}` }));
   const close = segment.close ?? (async () => ({}));
+  const teamOf = (segmentId: string) => segments.facts(segmentId).teamId;
   return {
     segment: {
       open: async (input) => {
-        const opened = await open(input);
-        locks.opened(opened.segmentId, input.teamId);
-        return opened;
+        const answer = await open(input);
+        segments.opened(answer.segmentId, input);
+        locks.opened(answer.segmentId, input.teamId);
+        return answer;
       },
-      close: async (input) => closeSegmentWith(input, { table, locks, close }),
+      close: async (input) => closeSegmentWith(input, { segments, table, locks, close }),
     },
     adapters: { resolve: (input) => table.resolve(input), call: (input) => table.call(input) },
     llm: {
@@ -107,8 +119,8 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
       ...(park.callbacks !== undefined ? { callbacks: park.callbacks } : {}),
       wake:
         park.wake ??
-        (async (request) => {
-          wakes.push(request);
+        (async ({ segmentId, adapterType, correlationKey }) => {
+          wakes.push({ adapterType, teamId: teamOf(segmentId), correlationKey });
         }),
       bindings: park.bindings ?? {
         record: async () => {
@@ -134,11 +146,11 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
       render: files.render ?? renderIntoNowhere(),
     },
     lookup: {
-      resolveActingUser: async ({ teamId, triggerId, segmentId, instance, event }) => {
+      resolveActingUser: async ({ triggerId, segmentId, instance, event }) => {
         const resolve = lookup.resolveActingUser;
         if (resolve === undefined) return null;
         return resolve({
-          teamId,
+          teamId: teamOf(segmentId),
           ...(triggerId !== undefined ? { triggerId } : {}),
           getCandidates: () =>
             table.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),

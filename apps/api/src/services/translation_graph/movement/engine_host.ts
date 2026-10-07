@@ -31,7 +31,13 @@ import { isBudgetExhausted, type Budget, type CostLine } from '../../../lib/run_
 import { withSpendMeter } from '../../../lib/run_spend';
 import { enqueueAwaitWake } from '../../movement_engine/await_wake';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
-import { appendingInto, closeSegmentWith, NEVER_CANCELLED, type ActingUserLookup } from '../../movement_engine/host_kit';
+import {
+  appendingInto,
+  closeSegmentWith,
+  NEVER_CANCELLED,
+  SegmentDirectory,
+  type ActingUserLookup,
+} from '../../movement_engine/host_kit';
 import { makeRecorderParkSink } from '../../movement_engine/park_sink';
 import { notifyWork } from '../../work/drain';
 import { PostgresWriteLocks } from '../../write_locks/postgres';
@@ -50,7 +56,7 @@ import { renderFileArtifact } from './file_render';
 import { makeFileTextResolver, type FileTextReader } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
 import { postgresRawTextStore, type RawTextStore } from './raw_text_store';
-import { postgresRecordBindings } from './record_bindings';
+import { deleteBinding, findBoundCounterpart, recordBinding } from './record_bindings';
 import { registryTransformInvoker, type TransformInvoker } from './transform_invoker';
 
 export function productionEngineHost(input: {
@@ -80,10 +86,14 @@ export function productionEngineHost(input: {
 }): EngineHost {
   const cancel = input.cancel ?? NEVER_CANCELLED;
   const usage = usageScope({ teamId: input.teamId, triggerRunId: input.triggerRunId, cancel });
+  // Every call names its segment; the team it is for is the segment's.
+  const segments = new SegmentDirectory();
+  const teamOf = (segmentId: string): TeamId => segments.facts(segmentId).teamId;
   // The live instances, per segment. Production resolution is per (type,
   // credential, construction args); the role is a test seam. Each call runs
   // inside the segment it was resolved for.
   const adapters = adapterTable({
+    segments,
     resolveLive:
       input.resolveLive ??
       (({ adapterType, teamId, credentialsId, constructionArgs }) =>
@@ -102,10 +112,12 @@ export function productionEngineHost(input: {
     segment: {
       open: async (opening) => {
         const opened = await hostSegments.open(opening);
+        segments.opened(opened.segmentId, opening);
         locks.opened(opened.segmentId, opening.teamId);
         return opened;
       },
-      close: (closing) => closeSegmentWith(closing, { table: adapters, locks, close: hostSegments.close }),
+      close: (closing) =>
+        closeSegmentWith(closing, { segments, table: adapters, locks, close: hostSegments.close }),
     },
     adapters: { resolve: (resolution) => adapters.resolve(resolution), call: (call) => adapters.call(call) },
     llm: {
@@ -123,11 +135,20 @@ export function productionEngineHost(input: {
           }
         : {}),
       // A `wake_await` work row, so the wake outlives this process.
-      wake: async (request) => {
-        await enqueueAwaitWake(request);
+      wake: async ({ segmentId, adapterType, correlationKey }) => {
+        await enqueueAwaitWake({ adapterType, teamId: teamOf(segmentId), correlationKey });
         notifyWork();
       },
-      bindings: postgresRecordBindings,
+      bindings: {
+        record: ({ segmentId, from, to }) => recordBinding({ teamId: teamOf(segmentId), from, to }),
+        findBoundCounterpart: ({ segmentId, endpoint, counterpart }) =>
+          findBoundCounterpart({
+            teamId: teamOf(segmentId),
+            endpoint,
+            ...(counterpart !== undefined ? { counterpart } : {}),
+          }),
+        delete: ({ segmentId, from, to }) => deleteBinding({ teamId: teamOf(segmentId), from, to }),
+      },
     },
     control: { cancel },
     files: {
@@ -141,9 +162,9 @@ export function productionEngineHost(input: {
     lookup: {
       // The source instance's parse of the event's actors, asked of it inside
       // its segment, only when the trigger does not already decide the user.
-      resolveActingUser: ({ teamId, triggerId, segmentId, instance, event }) =>
+      resolveActingUser: ({ triggerId, segmentId, instance, event }) =>
         resolveTeamActingUser({
-          teamId,
+          teamId: teamOf(segmentId),
           ...(triggerId !== undefined ? { triggerId } : {}),
           getCandidates: () => adapters.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
         }),

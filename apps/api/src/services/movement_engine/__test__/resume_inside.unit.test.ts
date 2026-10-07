@@ -132,7 +132,7 @@ function makeParkSink() {
   };
   const sink: ParkSink = {
     async recordJoin(input) {
-      recorded.push(input);
+      recorded.push({ frameAddress: input.frameAddress, parkedChildren: input.parkedChildren });
       const existing = joins.get(input.frameAddress);
       joins.set(input.frameAddress, {
         pending: input.parkedChildren,
@@ -195,7 +195,7 @@ function makeCallbackSink() {
       const id = `cb_${++n}`;
       return { id, url: `https://api.test/api/cb/${id}` };
     },
-    async calls(callbackId) {
+    async calls({ callbackId }) {
       return ledger[callbackId] ?? [];
     },
   };

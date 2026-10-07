@@ -138,7 +138,7 @@ import type {
 } from '../translation_graph/adapter';
 import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
-import type { EngineHost, RenderFile } from './host';
+import type { SegmentHost } from './run_context';
 import { hostInstanceOf } from './host_adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import {
@@ -927,7 +927,7 @@ export interface MovementExprContext {
    * stores the artifact and answers its descriptor. Wired by the interpreter;
    * absent in ad-hoc evaluations, where FILE() fails loud.
    */
-  renderFile?: RenderFile;
+  renderFile?: SegmentHost['files']['render'];
   /**
    * The `READ(file)` seam — resolves a `FileRef` to its extracted text (the
    * same one the extraction's file sources go through, so a file read either
@@ -1283,8 +1283,9 @@ export interface MovementMetaContext {
   /** The per-dispatch bag (the frozen `ctx.meta`) — unknown keys read
    *  from it, null when absent. */
   bag: Record<string, unknown>;
-  /** The host's acting-user resolution (`EngineHost.lookup`). */
-  resolveActingUser: EngineHost['lookup']['resolveActingUser'];
+  /** The host's acting-user resolution (`EngineHost.lookup`), in the run's
+   *  segment. */
+  resolveActingUser: SegmentHost['lookup']['resolveActingUser'];
   /** `undefined` = not yet resolved; `null` = resolved to "none". */
   actingUserCache: { value?: ActingUser | null };
   actorCache: { value?: ActorIdentity | null };
@@ -2016,9 +2017,8 @@ async function resolveMovementActingUserUncached(
   }
   try {
     return await meta.resolveActingUser({
-      teamId: meta.teamId,
       ...(event.triggerEntryId ? { triggerId: event.triggerEntryId } : {}),
-      ...source,
+      instance: source.instance,
       event,
     });
   } catch {

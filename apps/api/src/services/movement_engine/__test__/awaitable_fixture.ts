@@ -8,7 +8,8 @@ import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation
 import type { AwaitResolution } from '../../translation_graph/awaitable';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { AwaitWakeRequest, EngineHost } from '../host';
+import type { AwaitWakeRequest, EngineHost, Scoped } from '../host';
+import type { QueuedWake } from '../host_kit';
 
 import { containerAssociation } from '../../translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
@@ -124,8 +125,8 @@ export function runAwaiting(input: {
   adapter: Adapter;
   parkSink: ParkSink;
   /** The host's wake; absent ⇒ the test host's, which records into `wakes`. */
-  wake?: (request: AwaitWakeRequest) => Promise<void>;
-  wakes?: AwaitWakeRequest[];
+  wake?: (request: Scoped<AwaitWakeRequest>) => Promise<void>;
+  wakes?: QueuedWake[];
   /** Wrap the test host before the run is handed it (the seam guard's JSON
    *  round trip). */
   wrapHost?: (host: EngineHost) => EngineHost;

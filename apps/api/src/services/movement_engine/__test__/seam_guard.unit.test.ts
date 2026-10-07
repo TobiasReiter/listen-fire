@@ -43,10 +43,12 @@ import {
   HOST_FAMILIES,
   hostMethodPaths,
   type AwaitWakeRequest,
+  type Scoped,
   type EngineHost,
   type RenderFile,
   type ResolveFileText,
 } from '../host';
+import type { QueuedWake } from '../host_kit';
 import {
   MovementRunFailed,
   resumeMovement,
@@ -341,7 +343,7 @@ describe('the engine/host seam carries data', () => {
       source: awaitingSource(),
       adapter: awaiting.adapter,
       parkSink: recording,
-      wake: async (request: AwaitWakeRequest) => {
+      wake: async (request: Scoped<AwaitWakeRequest>) => {
         calls.push(request);
       },
     });
@@ -431,10 +433,12 @@ describe('the engine/host seam carries data', () => {
       'segment.close',
     ]);
     expect(made[0]?.input).toEqual({ teamId, languageVersion: CURRENT_LANGUAGE_VERSION });
-    expect(made[1]?.input).toEqual({ content: 'the digest', type: 'text' });
+    // Every call names the segment the run opened.
+    expect(made[1]?.input).toEqual({ segmentId: 'seg-1', content: 'the digest', type: 'text' });
     // A priced call: the run's budget in (no cap here), what it spent out —
     // and the run charged it.
     expect(made[2]?.input).toEqual({
+      segmentId: 'seg-1',
       file: made[1]?.output,
       budget: { remainingMicrodollars: null },
     });
@@ -671,17 +675,26 @@ describe('the engine/host seam carries data', () => {
       'trace.append',
     ]);
     const lookup = calls.find((c) => c.call === 'lookup.resolveActingUser');
+    // The lookup names its segment and the source instance; the team is the
+    // segment's, so it is not repeated.
     expect(lookup?.input).toMatchObject({
-      teamId,
       segmentId: expect.any(String),
       instance: expect.any(String),
     });
+    expect(lookup?.input).not.toHaveProperty('teamId');
     expect(calls.find((c) => c.call === 'park.callbacks.mint')?.input).toMatchObject({
+      segmentId: expect.any(String),
       expiresAt: expect.any(String),
     });
     expect(calls.find((c) => c.call === 'park.sink.commitTimerPark')?.input).toMatchObject({
+      segmentId: expect.any(String),
       wakeAt: expect.any(String),
     });
+    // Every call of the segment names the one segment it opened.
+    const segmentIds = new Set(
+      calls.map((c) => (typeof c.input === 'object' && c.input !== null ? Reflect.get(c.input, 'segmentId') : undefined)),
+    );
+    expect([...segmentIds]).toEqual([expect.any(String)]);
     // What the host was handed of the trace is the run's whole trace.
     expect(appended).toEqual(result.trace);
     expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
@@ -870,8 +883,8 @@ function joiningParkSink() {
     async commitSuspension(input) {
       keep('suspension', input.address, input.state);
     },
-    async commitLimitPause(pause) {
-      pauses.push(pause);
+    async commitLimitPause({ limit, capMicrodollars, spentMicrodollars }) {
+      pauses.push({ limit, capMicrodollars, spentMicrodollars });
     },
     async decrementJoin(input) {
       const frame = joins.get(input.frameAddress);
@@ -989,6 +1002,7 @@ describe('the round trip', () => {
       );
       await expect(
         host.files.resolveFileText({
+          segmentId: 'seg-1',
           file: { __brand: 'FileRef', name: 'x', source: { store: 'document', objectUri: 'u' } },
           budget: { remainingMicrodollars: null },
         }),
@@ -999,7 +1013,7 @@ describe('the round trip', () => {
     // The request is checked too, and a method that answers without a promise
     // could not cross a wire.
     const host = roundTripHost(makeTestHost());
-    expect(() => host.locks.release({ token: new Date() as never })).toThrow(
+    expect(() => host.locks.release({ segmentId: 'seg-1', token: new Date() as never })).toThrow(
       'locks.release: request[0].token is an instance of Date',
     );
     const sync = roundTripHost({
@@ -1036,14 +1050,14 @@ describe('the round trip', () => {
       ...makeTestHost(),
       locks: { ...makeTestHost().locks, release: async () => ({ released: true }) as never },
     });
-    await expect(chatty.locks.release({ token: 't' })).rejects.toThrow(
+    await expect(chatty.locks.release({ segmentId: 'seg-1', token: 't' })).rejects.toThrow(
       'locks.release: answer is a value from a void method',
     );
     const quiet = roundTripHost({
       ...makeTestHost(),
       locks: { ...makeTestHost().locks, release: async () => {} },
     });
-    await expect(quiet.locks.release({ token: 't' })).resolves.toBeUndefined();
+    await expect(quiet.locks.release({ segmentId: 'seg-1', token: 't' })).resolves.toBeUndefined();
   });
 
   it('wraps every method of every family, which are the manifest’s', () => {
@@ -1247,7 +1261,7 @@ describe('every family crosses as JSON', () => {
 
   familyRun('an await: the awaitable checked, parked, re-checked and woken', async () => {
     const { sink } = joiningParkSink();
-    const wakes: AwaitWakeRequest[] = [];
+    const wakes: QueuedWake[] = [];
     const result = await runAwaiting({
       teamId: ROUND_TRIP_TEAM,
       source: awaitingSource(),

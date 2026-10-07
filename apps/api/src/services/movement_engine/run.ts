@@ -2464,7 +2464,11 @@ class Interpreter {
   ) {
     this.catalog = prepared.catalog;
     this.context = prepared.context;
-    this.priced = pricedCalls(input.host, { ledger: prepared.context.ledger, plugins: input.catalog.plugins });
+    this.priced = pricedCalls(input.host, {
+      segmentId: prepared.context.segmentId,
+      ledger: prepared.context.ledger,
+      plugins: input.catalog.plugins,
+    });
     this.effectLocks = new EffectLocks({ crossRun: prepared.context.locks });
     this.runTrace = prepared.context.trace.entries;
     this.limitPaused = input.limitPaused === true;
@@ -2481,7 +2485,7 @@ class Interpreter {
     // engine holds a stand-in that calls it through the host.
     this.resolveAdapterFn = async (resolution) => {
       const { segmentId } = prepared.context;
-      const resolved = await input.host.adapters.resolve({ ...resolution, segmentId });
+      const resolved = await prepared.context.host.adapters.resolve(resolution);
       const known = this.hostAdapters.get(resolved.instance);
       if (known !== undefined) return known;
       const adapter = hostAdapter({ host: input.host, segmentId, resolved });
@@ -2558,7 +2562,7 @@ class Interpreter {
    */
   private async checkCancelBeforeFinishing(): Promise<void> {
     if (this.cancelled || this.parked) return;
-    if (await this.input.host.control.cancel.cancelledNow()) {
+    if (await this.context.host.control.cancel.cancelledNow()) {
       this.cancelled = true;
     }
   }
@@ -2724,7 +2728,7 @@ class Interpreter {
         `settleRace: no race statement at frame '${input.frameAddress}'`,
       );
     }
-    const rows = await this.input.host.park.sink!.collectBranchExports({ frameAddress: input.frameAddress });
+    const rows = await this.context.host.park.sink!.collectBranchExports({ frameAddress: input.frameAddress });
     const armCount = armCountOf(combinator, rows);
     const receipt = await this.receiptFromExports(rows, armCount, this.rehydrationContext());
     const frameAddr = parseAddress(input.frameAddress);
@@ -2732,7 +2736,7 @@ class Interpreter {
     for (let j = 0; j < armCount; j++) {
       loserSubtrees.push(encodeAddress(childBranch(frameAddr, j)));
     }
-    await this.input.host.park.sink!.cancelSubtrees({ subtreeAddresses: loserSubtrees });
+    await this.context.host.park.sink!.cancelSubtrees({ subtreeAddresses: loserSubtrees });
     const bound = boundRValueOf(input.statement);
     if (bound !== undefined) input.env.declare(bound.name, receipt);
   }
@@ -3132,7 +3136,7 @@ class Interpreter {
     // (persist / decrement / collect). A resume with no sink is a degenerate
     // test-only mode with no durable join to close — complete only the leaf block,
     // exactly as before the unwind existed. Production resume always has a sink.
-    if (this.input.host.park.sink === undefined) return STOPPED;
+    if (this.context.host.park.sink === undefined) return STOPPED;
     const continuation = async (): Promise<SpineCompletion> => ({
       done: true,
       outcome: await this.continueAfter(frame.parentStatements, frame.containerIndex, frame.parentEnv, {
@@ -3155,13 +3159,13 @@ class Interpreter {
       // still-parked arms (one signal per park), builds the receipt, and runs
       // the continuation; a non-winner (already claimed) did its writes and
       // stops — the run stays parked on the winner's continuation, if any.
-      await this.input.host.park.sink.persistBranchExport({
+      await this.context.host.park.sink.persistBranchExport({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         branchIndex: frame.branchIndex,
         exports: this.serializeBranchExport(frame),
       });
-      const { closed } = await this.input.host.park.sink.decrementJoin({
+      const { closed } = await this.context.host.park.sink.decrementJoin({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         leafAddress,
@@ -3184,13 +3188,13 @@ class Interpreter {
       // Persist THIS branch's export contribution durably, keyed by the join
       // frame + this branch, BEFORE decrementing (§12.1) — so by the time ANY
       // branch observes `closed`, every sibling's export row is committed.
-      await this.input.host.park.sink.persistBranchExport({
+      await this.context.host.park.sink.persistBranchExport({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         branchIndex: frame.branchIndex,
         exports: this.serializeBranchExport(frame),
       });
-      const { closed } = await this.input.host.park.sink.decrementJoin({
+      const { closed } = await this.context.host.park.sink.decrementJoin({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         leafAddress,
@@ -3286,7 +3290,7 @@ class Interpreter {
       into.push(...flow.trace);
     }
 
-    const sink = this.input.host.park.sink;
+    const sink = this.context.host.park.sink;
     if (sink === undefined) return STOPPED;
     const frameAddress = encodeAddress(op.address);
     const branchAddress = encodeAddress(childIter(op.address, frame.boundary.member));
@@ -3317,7 +3321,7 @@ class Interpreter {
     op: ResumedCollectionOp,
     frameAddress: string,
   ): Promise<CollectionRun & { answers: MemberAnswer[] }> {
-    const rows = await this.input.host.park.sink!.collectBranchExports({ frameAddress });
+    const rows = await this.context.host.park.sink!.collectBranchExports({ frameAddress });
     const ctx = this.rehydrationContext();
     const stateRow = rows.find((row) => row.branchIndex === FRAME_STATE_INDEX);
     if (stateRow === undefined || !isCollectionOpState(stateRow.exports)) {
@@ -3380,7 +3384,7 @@ class Interpreter {
    * would.
    */
   private async mergeJoinBranch(frame: ResumeAncestorFrame): Promise<void> {
-    const rows = await this.input.host.park.sink!.collectBranchExports({
+    const rows = await this.context.host.park.sink!.collectBranchExports({
       frameAddress: encodeAddress(frame.containerAddress),
     });
     const ctx = this.rehydrationContext();
@@ -3425,7 +3429,7 @@ class Interpreter {
    */
   private async settleRaceWinner(frame: ResumeAncestorFrame, leafAddress: string): Promise<void> {
     const combinator = combinatorOf(frame.container);
-    const kept = await this.input.host.park.sink!.collectBranchExports({
+    const kept = await this.context.host.park.sink!.collectBranchExports({
       frameAddress: encodeAddress(frame.containerAddress),
     });
     const armCount = combinator !== undefined ? armCountOf(combinator, kept) : 0;
@@ -3436,7 +3440,7 @@ class Interpreter {
       loserSubtrees.push(encodeAddress(childBranch(frame.containerAddress, j)));
     }
     if (loserSubtrees.length > 0) {
-      await this.input.host.park.sink!.cancelSubtrees({
+      await this.context.host.park.sink!.cancelSubtrees({
         subtreeAddresses: loserSubtrees,
         excludeLeaf: leafAddress,
       });
@@ -3772,8 +3776,7 @@ class Interpreter {
     if (sourceBinding?.kind === 'instance') {
       const sourceAdapter = await this.resolveAdapterFn({
         adapterType: sourceBinding.adapterSlug,
-        teamId: this.input.teamId,
-        credentialsId: this.credentialsIdFor(sourceBinding),
+                credentialsId: this.credentialsIdFor(sourceBinding),
         role: 'source',
       });
       // The program reads the source by NATURAL names; the wrapper
@@ -4222,8 +4225,7 @@ class Interpreter {
     if (!adapter) {
       const inner = await this.resolveAdapterFn({
         adapterType: binding.adapterSlug,
-        teamId: this.input.teamId,
-        credentialsId,
+                credentialsId,
         ...(Object.keys(constructionArgs).length ? { constructionArgs } : {}),
         role: 'source',
       });
@@ -4311,7 +4313,7 @@ class Interpreter {
       // Debounced DB read; latches once true. Caught at the top of
       // run()/resume() (like RunParked), never by the fan-out/parallel park
       // machinery (they re-throw anything but RunParked/ScopeEndedQuietly).
-      if (await this.input.host.control.cancel.cancelled()) {
+      if (await this.context.host.control.cancel.cancelled()) {
         throw new RunCancelledSignal();
       }
       // The statement is the SITE of any call nested in its expressions: such a
@@ -4756,7 +4758,7 @@ class Interpreter {
     parkedMembers: number,
   ): Promise<never> {
     const frameAddress = encodeAddress(run.address);
-    const sink = this.input.host.park.sink;
+    const sink = this.context.host.park.sink;
     if (sink !== undefined) {
       const state: CollectionOpState = {
         source: serializeBinding({
@@ -5083,7 +5085,7 @@ class Interpreter {
         // Stop listening on every arm still parked at a suspension — one signal
         // per park, and the record behind it stays answerable (F7).
         if (parked.length > 0) {
-          await this.input.host.park.sink?.cancelSubtrees({
+          await this.context.host.park.sink?.cancelSubtrees({
             subtreeAddresses: parked.map((fork) => encodeAddress(fork.address)),
           });
         }
@@ -5092,7 +5094,7 @@ class Interpreter {
       }
       const frameAddress = encodeAddress(stmtAddress);
       await this.keepArmCount(expr, frameAddress, forks.length);
-      await this.input.host.park.sink?.recordJoin({ frameAddress, parkedChildren: 1 });
+      await this.context.host.park.sink?.recordJoin({ frameAddress, parkedChildren: 1 });
       throw new RunParked(frameAddress);
     }
 
@@ -5104,14 +5106,14 @@ class Interpreter {
       for (const fork of forks) {
         const value = settled.get(fork.index);
         if (value === undefined) continue;
-        await this.input.host.park.sink?.persistBranchExport({
+        await this.context.host.park.sink?.persistBranchExport({
           frameAddress,
           branchAddress: encodeAddress(fork.address),
           branchIndex: fork.index,
           exports: { [RETURN_SLOT]: serializeBinding(value) },
         });
       }
-      await this.input.host.park.sink?.recordJoin({
+      await this.context.host.park.sink?.recordJoin({
         frameAddress,
         parkedChildren: parked.length,
       });
@@ -5125,7 +5127,7 @@ class Interpreter {
   private async keepArmCount(expr: CombinatorExpression, frameAddress: string, arms: number): Promise<void> {
     if (expr.arms.kind !== 'dynamic') return;
     const state: CombinatorFrameState = { arms };
-    await this.input.host.park.sink?.persistBranchExport({
+    await this.context.host.park.sink?.persistBranchExport({
       frameAddress,
       branchAddress: frameAddress,
       branchIndex: FRAME_STATE_INDEX,
@@ -5371,7 +5373,7 @@ class Interpreter {
       );
     }
     const address = encodeAddress(site.stmtAddress);
-    const commit = this.input.host.park.sink?.commitSuspension?.bind(this.input.host.park.sink);
+    const commit = this.context.host.park.sink?.commitSuspension?.bind(this.context.host.park.sink);
     if (commit === undefined) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -5401,7 +5403,7 @@ class Interpreter {
     return (
       !this.firingCallback
       && this.statementSites.getStore() !== undefined
-      && this.input.host.park.sink?.commitSuspension !== undefined
+      && this.context.host.park.sink?.commitSuspension !== undefined
     );
   }
 
@@ -5417,7 +5419,7 @@ class Interpreter {
     if (!this.limitPaused) {
       // Set before the await, so flows meeting the cap together pause it once.
       this.limitPaused = true;
-      await this.input.host.park.sink?.commitLimitPause?.({
+      await this.context.host.park.sink?.commitLimitPause?.({
         limit: 'cost',
         capMicrodollars: error.capMicrodollars,
         spentMicrodollars: error.spentMicrodollars,
@@ -6032,7 +6034,7 @@ class Interpreter {
       logger.info(`slept ${sleep.duration.raw} (fast-forwarded)`);
       return;
     }
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     const address = encodeAddress(stmtAddress);
     if (!parkSink) {
       throw new MovementEngineError(
@@ -6076,7 +6078,7 @@ class Interpreter {
     env: Environment,
     stmtAddress: Address,
   ): Promise<Binding> {
-    const sink = this.input.host.park.callbacks;
+    const sink = this.context.host.park.callbacks;
     if (!sink) {
       throw unsupported(
         'callback(…)',
@@ -6321,8 +6323,7 @@ class Interpreter {
       headInstance !== undefined ? constructionArgsOf(headInstance) : {};
     const adapter = await this.resolveAdapterFn({
       adapterType,
-      teamId: this.input.teamId,
-      ...(headCredentialsId !== undefined ? { credentialsId: headCredentialsId } : {}),
+            ...(headCredentialsId !== undefined ? { credentialsId: headCredentialsId } : {}),
       ...(Object.keys(headConstructionArgs).length ? { constructionArgs: headConstructionArgs } : {}),
       role: 'source',
     });
@@ -6404,7 +6405,7 @@ class Interpreter {
     }
     // Pending: record the await park under the adapter's key, and suspend.
     // Resume re-enters here.
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     if (!parkSink) {
       throw unsupported(
         'await (a durable park)',
@@ -6459,7 +6460,7 @@ class Interpreter {
         `a callback has one edge, '${CALLBACK_CALLED_EDGE}'`,
       );
     }
-    const sink = this.input.host.park.callbacks;
+    const sink = this.context.host.park.callbacks;
     if (!sink) {
       throw unsupported(
         `await cb-[:${CALLBACK_CALLED_EDGE}]->`,
@@ -6468,7 +6469,7 @@ class Interpreter {
     }
 
     const firstMatch = async (): Promise<CallbackCall | undefined> =>
-      (await sink.calls(binding.callbackId)).find((call) => this.callbackCallMatches(call, input.hopFilter));
+      (await sink.calls({ callbackId: binding.callbackId })).find((call) => this.callbackCallMatches(call, input.hopFilter));
     const matched = await firstMatch();
     if (matched !== undefined) {
       // The resolved shortcut (S2): a fire already landed — continue inline.
@@ -6476,7 +6477,7 @@ class Interpreter {
       return;
     }
 
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     if (!parkSink) {
       throw unsupported(
         `await cb-[:${CALLBACK_CALLED_EDGE}]-> (a durable park)`,
@@ -6524,23 +6525,25 @@ class Interpreter {
     correlationKey: string;
     resolvesNow: () => Promise<boolean>;
   }): Promise<void> {
-    const wake = { adapterType: input.adapterType, teamId: this.input.teamId, correlationKey: input.correlationKey };
+    const wake = { adapterType: input.adapterType, correlationKey: input.correlationKey };
     let resolved: boolean;
     try {
       resolved = await input.resolvesNow();
     } catch (err) {
       logger.error('[MovementEngine] await re-check after parking failed; the run stays parked without a wake', {
         ...wake,
+        teamId: this.input.teamId,
         error: err instanceof Error ? err.message : String(err),
       });
       return;
     }
     if (!resolved) return;
     try {
-      await this.input.host.park.wake(wake);
+      await this.context.host.park.wake(wake);
     } catch (err) {
       logger.error('[MovementEngine] await wake after parking could not be queued', {
         ...wake,
+        teamId: this.input.teamId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -6657,7 +6660,7 @@ class Interpreter {
       return;
     }
 
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     const address = encodeAddress(stmtAddress);
     if (!parkSink) {
       throw new MovementEngineError(
@@ -6841,8 +6844,7 @@ class Interpreter {
       recordType = binding.handle.recordType;
       adapter = await this.resolveAdapterFn({
         adapterType: binding.handle.adapterType,
-        teamId: this.input.teamId,
-        role: 'source',
+                role: 'source',
       });
       const handle = binding.handle;
       snapshot = { ...(handle.resultData ?? {}), ...handle.writtenValues };
@@ -7584,14 +7586,14 @@ class Interpreter {
       // What the iterations that finished returned waits at the frame with the
       // parked ones' exports, so the closer's value holds every iteration.
       for (const { index, value } of finished) {
-        await this.input.host.park.sink?.persistBranchExport({
+        await this.context.host.park.sink?.persistBranchExport({
           frameAddress,
           branchAddress: encodeAddress(childIter(parentAddress, index)),
           branchIndex: index,
           exports: { [RETURN_SLOT]: serializeBinding(value) },
         });
       }
-      await this.input.host.park.sink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });
+      await this.context.host.park.sink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });
       throw new RunParked(frameAddress);
     }
   }
@@ -7707,14 +7709,14 @@ class Interpreter {
           `a callback has one edge, '${CALLBACK_CALLED_EDGE}'`,
         );
       }
-      const sink = this.input.host.park.callbacks;
+      const sink = this.context.host.park.callbacks;
       if (!sink) {
         throw unsupported(
           `cb-[:${CALLBACK_CALLED_EDGE}]->`,
           'this run has no callback sink — a callback needs the durable trigger-run substrate',
         );
       }
-      const calls = await sink.calls(rootBinding.callbackId);
+      const calls = await sink.calls({ callbackId: rootBinding.callbackId });
       return calls
         .filter((call) => this.callbackCallMatches(call, step.expressionFilter))
         .map((call) => {
@@ -8660,9 +8662,8 @@ class Interpreter {
         isRoot: target.parents.length === 0,
       });
       if (created.externalId !== undefined && !this.input.dryRun) {
-        await this.input.host.park.bindings.record({
-          teamId: this.input.teamId,
-          from: other,
+        await this.context.host.park.bindings.record({
+                    from: other,
           to: {
             adapterType: adapter.adapterType,
             ...targetInstance,
@@ -8678,9 +8679,8 @@ class Interpreter {
     // Find-then-create on the correspondence: held until the binding is
     // recorded, so two flows binding the same counterpart create one record.
     return this.effectLocks.withLocks([bindLock(other, counterpart)], async () => {
-      const bound = await this.input.host.park.bindings.findBoundCounterpart({
-        teamId: this.input.teamId,
-        endpoint: other,
+      const bound = await this.context.host.park.bindings.findBoundCounterpart({
+                endpoint: other,
         counterpart,
       });
       if (bound === null) return create();
@@ -8703,7 +8703,7 @@ class Interpreter {
       // binding (keyed on the counterpart's exact stored components), then
       // create a fresh record + record a fresh binding.
       if (!this.input.dryRun) {
-        await this.input.host.park.bindings.delete({ teamId: this.input.teamId, from: other, to: bound });
+        await this.context.host.park.bindings.delete({ from: other, to: bound });
       }
       return create();
     });
@@ -11378,8 +11378,7 @@ class Interpreter {
     // its sink and remembers the ids it invented, for the whole segment.
     const adapter = await this.resolveAdapterFn({
       adapterType,
-      teamId: this.input.teamId,
-      credentialsId,
+            credentialsId,
       ...(constructionArgs && Object.keys(constructionArgs).length ? { constructionArgs } : {}),
       role: 'target',
       ...(dryRun ? { dryRun: true } : {}),
@@ -11414,7 +11413,7 @@ class Interpreter {
         ),
       llm: this.llmClient(),
       resolveFileText: this.fileTextResolver(),
-      renderFile: (input) => this.input.host.files.render(input),
+      renderFile: (input) => this.context.host.files.render(input),
       trace: this.trace,
       // `@<key>` resolution — the dispatch context the frozen engine's
       // resolveMetaKey reads, with the run-wide actor caches. The bag
@@ -11424,7 +11423,7 @@ class Interpreter {
         teamId: this.input.teamId,
         now: this.pinnedNow,
         bag: { trigger: this.input.event, mutationContext: this.mutationContext },
-        resolveActingUser: (input) => this.input.host.lookup.resolveActingUser(input),
+        resolveActingUser: (input) => this.context.host.lookup.resolveActingUser(input),
         actingUserCache: this.actingUserCache,
         actorCache: this.actorCache,
       },

@@ -164,9 +164,13 @@ describe('the per-segment Affinity call ceiling', () => {
       updateRecord: async (input) => ({ adapterType: 'affinity', externalId: input.externalId, data: {}, association: 'none' }),
       deleteRecord: async () => ({}),
     };
-    const table = adapterTable({ resolveLive: () => counting, ...segmentScopedCalls });
+    const table = adapterTable({
+      resolveLive: () => counting,
+      segments: { facts: () => ({ teamId: TEAM_ID }) },
+      ...segmentScopedCalls,
+    });
     const { segmentId } = await openSegment({ teamId: TEAM_ID, languageVersion: 2 });
-    const { instance } = await table.resolve({ adapterType: 'affinity', teamId: TEAM_ID, role: 'source', segmentId });
+    const { instance } = await table.resolve({ adapterType: 'affinity', role: 'source', segmentId });
     const describe = () => table.call({ segmentId, instance, method: 'describe', args: { typeId: 't' } });
 
     expect(await describe()).toEqual({ result: null });

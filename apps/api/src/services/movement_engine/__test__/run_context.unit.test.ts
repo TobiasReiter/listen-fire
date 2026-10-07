@@ -150,7 +150,7 @@ describe('priced host calls under the run budget', () => {
       },
     });
     const ledger = new RunLedger({ capMicrodollars: 2.5 * DOLLAR });
-    const priced = pricedCalls(host, { ledger, plugins: {} });
+    const priced = pricedCalls(host, { segmentId: 'seg-1', ledger, plugins: {} });
     await priced.client.call({ system: '', userMessage: '', label: 'a', model: 'sonnet' });
     await priced.client.call({ system: '', userMessage: '', label: 'b', model: 'sonnet' });
     expect(budgets).toEqual([{ remainingMicrodollars: 2.5 * DOLLAR }, { remainingMicrodollars: 1.5 * DOLLAR }]);
@@ -168,7 +168,7 @@ describe('priced host calls under the run budget', () => {
       },
     });
     const ledger = new RunLedger({ capMicrodollars: DOLLAR });
-    const priced = pricedCalls(host, { ledger, plugins: {} });
+    const priced = pricedCalls(host, { segmentId: 'seg-1', ledger, plugins: {} });
     const err = await priced
       .resolveFileText({ file: { __brand: 'FileRef', name: 'call.mp3' } })
       .catch((e: unknown) => e);
@@ -191,6 +191,7 @@ describe('priced host calls under the run budget', () => {
     });
     // Whether a plugin is priced is the snapshot's to say.
     const priced = pricedCalls(host, {
+      segmentId: 'seg-1',
       ledger: new RunLedger({ capMicrodollars: DOLLAR, priorMicrodollars: DOLLAR }),
       plugins: { paid: { args: [], priced: true }, free: { args: [], priced: false } },
     });
@@ -206,7 +207,7 @@ describe('priced host calls under the run budget', () => {
       llm: { arbitrateEntities: async () => ({ index: 1, cost: [{ source: 'model:judge', microdollars: 300 }] }) },
     });
     const ledger = new RunLedger({});
-    const answer = await pricedCalls(host, { ledger, plugins: {} }).arbitrateEntities({
+    const answer = await pricedCalls(host, { segmentId: 'seg-1', ledger, plugins: {} }).arbitrateEntities({
       asserted: {},
       candidates: [],
       recordType: 'company',
@@ -219,7 +220,7 @@ describe('priced host calls under the run budget', () => {
     const unavailable = makeTestHost({
       llm: { arbitrateEntities: async () => ({ index: null, judgeUnavailable: 'anthropic 529' }) },
     });
-    const declined = await pricedCalls(unavailable, { ledger, plugins: {} }).arbitrateEntities({
+    const declined = await pricedCalls(unavailable, { segmentId: 'seg-1', ledger, plugins: {} }).arbitrateEntities({
       asserted: {},
       candidates: [],
       recordType: 'company',

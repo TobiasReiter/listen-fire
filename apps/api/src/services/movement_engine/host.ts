@@ -41,6 +41,30 @@ import type { ParkedScopeState } from './serialize';
 /** A priced call's request: the engine's input and the run's remaining budget. */
 export type Priced<Input> = Input & { budget: Budget };
 
+// ── Segments ────────────────────────────────────────────────────────────────
+//
+// Every host call names the segment it is made for (`segment.open` answers
+// the id; one segment per open). The host maps the segment to its run and its
+// team, so no request repeats the team.
+
+/** What every request carries: the segment it is made in. */
+export interface InSegment {
+  segmentId: string;
+}
+
+/** A request, named by its segment. */
+export type Scoped<Input> = Input & InSegment;
+
+/** A family as the host serves it: the engine's own view of it
+ *  (`ParkSink`, `CancelGate`, …), each method's one request naming the
+ *  segment. A method the engine calls with no argument takes the segment
+ *  alone. */
+export type SegmentScoped<Family> = {
+  [Method in keyof Family]: NonNullable<Family[Method]> extends (...args: infer Args) => infer Answer
+    ? (input: Scoped<Args extends [infer Input] ? Input : unknown>) => Answer
+    : never;
+};
+
 /** A priced call's answer and what the call spent, by source. Absent ⇒ it
  *  spent nothing. */
 export type Costed<Output> = Output & { cost?: CostLine[] };
@@ -90,7 +114,6 @@ export type PricedAnswer<Output> = Costed<Output> | BudgetRefusal;
 /** What the engine asks of an adapter instance. */
 export interface AdapterResolution {
   adapterType: string;
-  teamId: TeamId;
   credentialsId?: string;
   /** Non-credential construction args (unquoted) — the instance's entry
    *  position (Sheets' `spreadsheet:`). Position-free adapters ignore it. */
@@ -222,30 +245,31 @@ export interface ResolvedAdapter {
 }
 
 /** Adapter resolution — the SAME seam `evaluateTranslationGraph` and provision
- *  use: one instance per (adapterType, credential, construction args, role,
- *  rehearsal). Every call names the segment it is made for: the instance
- *  answers inside that segment's host scope (what it already read, how many
- *  calls it made). */
+ *  use: one instance per (adapterType, credential, construction args,
+ *  rehearsal) within a segment, so resolving the same thing twice answers the
+ *  same instance id. Every call names the segment it is made for: the
+ *  instance answers inside that segment's host scope (what it already read,
+ *  how many calls it made), for the segment's team. */
 export interface HostAdapters {
-  resolve(input: AdapterResolution & { segmentId: string }): Promise<ResolvedAdapter>;
+  resolve(input: Scoped<AdapterResolution>): Promise<ResolvedAdapter>;
   call<M extends AdapterMethod>(input: AdapterCall<M>): Promise<AdapterCallAnswer<M>>;
 }
 
 /** The extraction keyword's and `AI()`'s model call. */
 export interface HostLlmClient {
-  call(input: Priced<LlmCallInput>): Promise<PricedAnswer<LlmCallResult>>;
+  call(input: Priced<Scoped<LlmCallInput>>): Promise<PricedAnswer<LlmCallResult>>;
 }
 
 /** The extraction CALL's model call (`extract(content, Shape)`). */
 export interface HostExtractCallClient {
-  call(input: Priced<ExtractCallLlmInput>): Promise<PricedAnswer<ExtractCallLlmResult>>;
+  call(input: Priced<Scoped<ExtractCallLlmInput>>): Promise<PricedAnswer<ExtractCallLlmResult>>;
 }
 
 /** `through` stages and plugin calls. What the engine knows of a plugin —
  *  its arguments, its declared output, whether it is priced — is the run's
  *  catalog snapshot's (`plugins`); invoking it is the host's. */
 export interface HostTransformInvoker {
-  invoke(input: Priced<TransformInvokeInput>): Promise<PricedAnswer<TransformInvocationResult>>;
+  invoke(input: Priced<Scoped<TransformInvokeInput>>): Promise<PricedAnswer<TransformInvocationResult>>;
 }
 
 /** Which candidate an identity search's write IS: the index into
@@ -253,12 +277,12 @@ export interface HostTransformInvoker {
  *  not be asked (`judgeUnavailable`, its message). Asked only when the rules
  *  alone cannot decide (`arbitrateWithoutJudge`), so it is the judge's model
  *  call. */
-export type ArbitrateEntities = (input: Priced<EntityArbitration>) => Promise<PricedAnswer<ArbitrationAnswer>>;
+export type ArbitrateEntities = (input: Priced<Scoped<EntityArbitration>>) => Promise<PricedAnswer<ArbitrationAnswer>>;
 
 /** A file's extracted TEXT (the knowledge-pipeline parity path). The host
  *  redeems the descriptor's bytes and runs the extractor (transcription and
  *  OCR are priced); only text, or the reason there is none, comes back. */
-export type ResolveFileText = (input: Priced<{ file: FileRef }>) => Promise<PricedAnswer<FileTextResolution>>;
+export type ResolveFileText = (input: Priced<Scoped<{ file: FileRef }>>) => Promise<PricedAnswer<FileTextResolution>>;
 
 /** What a segment is opened for. */
 export interface SegmentOpening {
@@ -271,7 +295,7 @@ export interface SegmentOpening {
 
 /** `FILE(content, type)`: the host renders the composed string, stores the
  *  artifact, and answers the stored file's descriptor. */
-export type RenderFile = (input: { content: string; type: FileArtifactType }) => Promise<FileRef>;
+export type RenderFile = (input: Scoped<{ content: string; type: FileArtifactType }>) => Promise<FileRef>;
 
 /**
  * One fully-qualified record position — a binding endpoint. NOT (system,
@@ -309,32 +333,28 @@ export interface EncodedEndpoint {
 }
 
 /** The symmetric correspondence store a `write … bind other { … }` keeps:
- *  "this record IS the counterpart of that one". */
+ *  "this record IS the counterpart of that one", in the segment's team. */
 export interface RecordBindings {
-  record(input: { teamId: TeamId; from: BindingEndpoint; to: BindingEndpoint }): Promise<void>;
+  record(input: { from: BindingEndpoint; to: BindingEndpoint }): Promise<void>;
   /** The record bound to `endpoint`, restricted to `counterpart`'s instance and
    *  type when given; the most recently bound when there are several. */
   findBoundCounterpart(input: {
-    teamId: TeamId;
     endpoint: BindingEndpoint;
     counterpart?: Omit<BindingEndpoint, 'recordId'>;
   }): Promise<EncodedEndpoint | null>;
   delete(input: {
-    teamId: TeamId;
     from: BindingEndpoint | EncodedEndpoint;
     to: BindingEndpoint | EncodedEndpoint;
   }): Promise<void>;
 }
 
 export interface ResolveActingUserInput {
-  teamId: TeamId;
   /** The trigger the event dispatched through; absent when the event predates
    *  trigger-aware dispatch. */
   triggerId?: string;
   /** The source instance (as `adapters.resolve` answered it) whose parse of
    *  the event's actors the host asks for — only when the trigger does not
    *  already decide the user. */
-  segmentId: string;
   instance: string;
   event: TriggerEvent;
 }
@@ -355,21 +375,21 @@ export interface CallbackSink {
   }): Promise<{ id: string; url: string }>;
   /** The LIVE call ledger — what `cb-[:Called]->` reads and what a re-entered
    *  `await cb-[:Called]->` re-checks. */
-  calls(callbackId: string): Promise<CallbackCall[]>;
+  calls(input: { callbackId: string }): Promise<CallbackCall[]>;
 }
 
-/** The key an await parked under, as `park.wake` takes it. */
+/** The key an await parked under, as `park.wake` takes it (the team is the
+ *  segment's). */
 export interface AwaitWakeRequest {
   /** The awaitable adapter's type, or the reserved callback identity. */
   adapterType: string;
-  teamId: TeamId;
   correlationKey: string;
 }
 
 /** Cross-run write locks, by segment. A token stands for one acquire. */
 export interface HostLocks {
-  acquire(input: { segmentId: string; names: readonly string[] }): Promise<{ token: string }>;
-  release(input: { token: string }): Promise<void>;
+  acquire(input: Scoped<{ names: readonly string[] }>): Promise<{ token: string }>;
+  release(input: Scoped<{ token: string }>): Promise<void>;
 }
 
 export interface EngineHost {
@@ -405,7 +425,7 @@ export interface EngineHost {
      * the run has no durable substrate (a dry run): a run that reaches a park
      * raises, and a resumed join closes only its own leaf.
      */
-    sink?: ParkSink;
+    sink?: SegmentScoped<ParkSink>;
     /**
      * Queue the wake for one correlation key: "resume whatever is parked on
      * it". The engine calls it after an await park is durable, when its own
@@ -413,16 +433,16 @@ export interface EngineHost {
      * arrived between the first check and the park woke nothing, because a
      * wake for a key with no parked run is a no-op. Plain data in, nothing out.
      */
-    wake(request: AwaitWakeRequest): Promise<void>;
+    wake(request: Scoped<AwaitWakeRequest>): Promise<void>;
     /** Minting `callback(…)`, reading its call ledger, correlating an
      *  `await cb-[:Called]->`. Absent ⇒ a callback raises MOVENG_UNSUPPORTED. */
-    callbacks?: CallbackSink;
-    bindings: RecordBindings;
+    callbacks?: SegmentScoped<CallbackSink>;
+    bindings: SegmentScoped<RecordBindings>;
   };
   control: {
     /** Consulted at each statement and LLM-call boundary; a cancel stops the
      *  run there, never mid-write. */
-    cancel: CancelGate;
+    cancel: SegmentScoped<CancelGate>;
   };
   files: {
     resolveFileText: ResolveFileText;
@@ -435,7 +455,7 @@ export interface EngineHost {
      * the trigger the event dispatched through (its creator override and
      * creator fallback). Null when no user matches.
      */
-    resolveActingUser(input: ResolveActingUserInput): Promise<ActingUser | null>;
+    resolveActingUser(input: Scoped<ResolveActingUserInput>): Promise<ActingUser | null>;
   };
   /** The cross-run write locks each segment's effects take beneath their
    *  own: `acquire({ segmentId, names })` answers a token, `release({ token })`
@@ -450,7 +470,7 @@ export interface EngineHost {
    * Absent ⇒ the result only.
    */
   trace?: {
-    append(input: { segmentId: string; entries: MovementTraceEntry[] }): Promise<void>;
+    append(input: Scoped<{ entries: MovementTraceEntry[] }>): Promise<void>;
   };
 }
 

@@ -4,6 +4,8 @@ The movement engine (`apps/api/src/services/movement_engine/`) runs a program. E
 
 This document is the host contract, frozen as JSON. Every host call is one request and one awaited answer, each plain JSON: no callback, live object, `Date`, stream or shared array crosses, and instants are ISO 8601 strings. An embedder in another language or process serves exactly these shapes.
 
+Every call is made inside a segment. Each `segment.open` opens exactly one segment and answers its id; every other call names that id as `segmentId`. The host maps the segment to the run and the team it was opened for, so no request repeats the team.
+
 Two tests hold the contract to this document (`movement_engine/__test__/seam_guard.unit.test.ts`):
 
 - **The import rules.** An engine file that starts importing host code fails.
@@ -13,6 +15,7 @@ Two tests hold the contract to this document (`movement_engine/__test__/seam_gua
 
 The shapes are TypeScript-ish. These rules apply to every one of them.
 
+- **The segment.** Every request but `segment.open`'s carries `segmentId: string`, the id `segment.open` answered. A method with nothing else to say takes `{ segmentId }` alone. A call the host answers from what the segment is for (its team, its instances: `adapters.*`, `park.wake`, `park.bindings.*`, `lookup`) is refused when the segment is not open, never opened or already closed: `adapters.call` answers an `adapter_error`, the others throw, and the message names the segment. Closing a segment twice is not refused (see `segment.close`).
 - **Optional fields.** `x?: T` means the field may be absent. An absent field and one that is `undefined` are the same; a host never sends `null` for an absent optional field unless the type says `| null`.
 - **`unknown`.** Any JSON value, opaque to the receiver: carried, never interpreted.
 - **Numbers.** Finite. Money is integer microdollars.
@@ -118,7 +121,7 @@ interface ParkedScopeState { version: 1; address: string; bindingName: string | 
 
 ### `segment`
 
-A segment is one entry into the interpreter: a fresh run, a resume, a race settlement, a callback body. The engine opens one at each entry point and closes it however the segment ends (completes, parks, throws). The host's half of a segment holds what the segment's adapter calls have read (a read memo, so a record read three times is one request), how many third-party calls they have made (the call ceiling: `AFFINITY_MAX_CALLS_PER_RUN`, default 2000), the pin they answer under, and the adapter instances and lock session it holds.
+A segment is one entry into the interpreter: a fresh run, a resume, a race settlement, a callback body (see "Entry points"). The engine opens one at each entry point and closes it however the segment ends (completes, parks, throws). The host's half of a segment holds the run and team it is for, what the segment's adapter calls have read (a read memo, so a record read three times is one request), how many third-party calls they have made (an adapter call ceiling supplied by the host), the pin they answer under, and the adapter instances and lock session it holds.
 
 #### `segment.open`
 
@@ -128,6 +131,7 @@ answer:  { segmentId: string }
 ```
 
 - `runId` is absent for a test or a dry run with no run record.
+- One open is one segment: the answer is a fresh id, and every later call of the segment names it. The host answers each of those calls for this `runId` and `teamId`.
 - **Persist:** nothing durable. The segment lives as long as the process serving it.
 - **Retry:** not idempotent; each call opens a fresh segment. A failed open fails the entry before any statement runs.
 
@@ -153,7 +157,6 @@ The engine never holds a live adapter. It resolves an instance to data and an op
 request: {
   segmentId: string;
   adapterType: string;
-  teamId: TeamId;
   credentialsId?: string;
   constructionArgs?: Record<string, string>;   // non-credential construction args, unquoted (Sheets' `spreadsheet:`)
   role: 'source' | 'target';
@@ -174,10 +177,10 @@ answer: {
 }
 ```
 
-- The same live instance answers to the same `instance` id within a segment; its rehearsal (`dryRun`) answers to a different one.
+- An instance is its resolution. Within a segment, resolving the same `adapterType`, `credentialsId`, `constructionArgs` (in any key order) and `dryRun` again answers the same `instance` id, whichever `role` asks. A rehearsal (`dryRun`) is a different instance from the live one. The host constructs the instance for the segment's team.
 - `methods` lists the `adapters.call` methods the instance implements, plus `iterateRelated` when it streams a traversal (the engine walks the stream with `iterateRelatedPage`). An instance may stream, page, both or neither.
 - **Rehearsal.** A `dryRun` instance captures each create, update, delete, link and unlink into the host's write sink instead of making it, and answers with ids it invents; its reads go to the live system. The rehearsal (the sink, the invented ids) belongs to the segment, because a write chained off a rehearsed parent routinely crosses systems.
-- **Throws** when the adapter cannot be constructed (an unknown type, a credential it cannot load).
+- **Throws** when the adapter cannot be constructed (an unknown type, a credential it cannot load), and when the segment is not open.
 - **Persist:** nothing. **Retry:** idempotent within a segment.
 
 #### `adapters.call`
@@ -217,6 +220,7 @@ The extraction keyword's and `AI()`'s model call.
 
 ```ts
 request: Priced<{
+  segmentId: string;
   system: string;
   userMessage: string;
   label: string;          // the call's purpose, for logs and billing
@@ -244,6 +248,7 @@ The extraction call's model call (`extract(content, Shape)`), which sends its pr
 
 ```ts
 request: Priced<{
+  segmentId: string;
   system: string;
   blocks: Array<{ text: string; cacheBreakpoint?: true }>;
   label: string;
@@ -270,6 +275,7 @@ answer: PricedAnswer<{
 
 ```ts
 request: Priced<{
+  segmentId: string;
   plugin: string;                              // as registered (dashes allowed)
   config: Record<string, unknown>;             // the author's named arguments, resolved
   extractedContext: Record<string, unknown>;   // the entity's extracted fields so far
@@ -294,6 +300,7 @@ The judge for identity matches the engine's own rules cannot settle (`unique by`
 
 ```ts
 request: Priced<{
+  segmentId: string;
   asserted: Record<string, unknown>;     // the write's identity fields
   candidates: Array<{ adapterType: string; externalId: string; recordType?: string; url?: string; data: Record<string, unknown> }>;
   recordType: string;
@@ -313,12 +320,12 @@ answer: PricedAnswer<{
 
 Where a parked flow's state goes, to be persisted and woken later. Every method here is the durable substrate's; an embedder without one leaves the whole family out, and a run that reaches a park fails ("needs the durable trigger-run substrate").
 
-`address` is a flow's lexical address (`s0.b1.s0`); a frame's address is a prefix of its children's. `state` is a `ParkedScopeState`.
+`address` is a flow's lexical address (`s0.b1.s0`); a frame's address is a prefix of its children's. `state` is a `ParkedScopeState`. Every request names its segment; the park belongs to the segment's run.
 
 #### `park.sink.recordJoin`
 
 ```ts
-request: { frameAddress: string; parkedChildren: number }
+request: { segmentId: string; frameAddress: string; parkedChildren: number }
 answer:  void
 ```
 
@@ -329,7 +336,7 @@ answer:  void
 #### `park.sink.commitTimerPark`
 
 ```ts
-request: { address: string; state: ParkedScopeState; wakeAt: string }   // wakeAt: ISO 8601
+request: { segmentId: string; address: string; state: ParkedScopeState; wakeAt: string }   // wakeAt: ISO 8601
 answer:  void
 ```
 
@@ -339,7 +346,7 @@ answer:  void
 #### `park.sink.commitAwaitPark`
 
 ```ts
-request: { address: string; state: ParkedScopeState; adapterType: string; correlationKey: string }
+request: { segmentId: string; address: string; state: ParkedScopeState; adapterType: string; correlationKey: string }
 answer:  void
 ```
 
@@ -351,7 +358,7 @@ answer:  void
 #### `park.sink.decrementJoin`
 
 ```ts
-request: { frameAddress: string; branchAddress: string; leafAddress: string }
+request: { segmentId: string; frameAddress: string; branchAddress: string; leafAddress: string }
 answer:  { closed: boolean }
 ```
 
@@ -362,7 +369,7 @@ answer:  { closed: boolean }
 #### `park.sink.persistBranchExport`
 
 ```ts
-request: { frameAddress: string; branchAddress: string; branchIndex: number; exports: unknown }
+request: { segmentId: string; frameAddress: string; branchAddress: string; branchIndex: number; exports: unknown }
 answer:  void
 ```
 
@@ -372,7 +379,7 @@ answer:  void
 #### `park.sink.collectBranchExports`
 
 ```ts
-request: { frameAddress: string }
+request: { segmentId: string; frameAddress: string }
 answer:  Array<{ branchAddress: string; branchIndex: number; exports: unknown }>   // ordered by branchIndex
 ```
 
@@ -381,7 +388,7 @@ answer:  Array<{ branchAddress: string; branchIndex: number; exports: unknown }>
 #### `park.sink.cancelSubtrees`
 
 ```ts
-request: { subtreeAddresses: string[]; excludeLeaf?: string }
+request: { segmentId: string; subtreeAddresses: string[]; excludeLeaf?: string }
 answer:  void
 ```
 
@@ -391,7 +398,7 @@ answer:  void
 #### `park.sink.commitSuspension`
 
 ```ts
-request: { address: string; state: ParkedScopeState }
+request: { segmentId: string; address: string; state: ParkedScopeState }
 answer:  void
 ```
 
@@ -402,7 +409,7 @@ answer:  void
 #### `park.sink.commitLimitPause`
 
 ```ts
-request: { limit: 'cost'; capMicrodollars: number; spentMicrodollars: number }
+request: { segmentId: string; limit: 'cost'; capMicrodollars: number; spentMicrodollars: number }
 answer:  void
 ```
 
@@ -416,11 +423,11 @@ answer:  void
 #### `park.wake`
 
 ```ts
-request: { adapterType: string; teamId: TeamId; correlationKey: string }
+request: { segmentId: string; adapterType: string; correlationKey: string }
 answer:  void
 ```
 
-- "Resume whatever is parked on this key." After an await park is durable, the engine asks the await's question once more itself, its WHERE included. A landing that arrived between the first check and the park woke nothing, because a wake for a key with no parked run does nothing. So when the second check finds the await resolved (or cannot tell), the engine asks for the wake.
+- "Resume whatever is parked on this key", in the segment's team. After an await park is durable, the engine asks the await's question once more itself, its WHERE included. A landing that arrived between the first check and the park woke nothing, because a wake for a key with no parked run does nothing. So when the second check finds the await resolved (or cannot tell), the engine asks for the wake.
 - When the second check cannot answer (the remote is down), the engine logs an error naming the key and leaves the run parked without a wake; the adapter's own at-least-once wake covers later landings. The known gap: a landing whose only wake arrived before the park, on a re-check that then failed.
 - **Persist:** a queued wake that outlives the process (production: a `wake_await` work row).
 - **Retry:** idempotent; a duplicate wake resumes nothing twice. A wake that cannot be queued throws; the engine logs it and the park stands.
@@ -433,6 +440,7 @@ Minting `callback(…)` and reading its call ledger. Separate from `park.sink` o
 
 ```ts
 request: {
+  segmentId: string;
   address: string;
   params: Array<{ name: string; type: 'text' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'file' }>;
   state: ParkedScopeState;      // the captured continuation
@@ -448,16 +456,17 @@ answer: { id: string; url: string }
 #### `park.callbacks.calls`
 
 ```ts
-request: callbackId: string      // the method's one argument is the id itself, not an object
+request: { segmentId: string; callbackId: string }
 answer:  Array<{ at: string; values: Record<string, unknown> }>   // at: ISO 8601, the landing's `At`
 ```
 
 - The live ledger: what `cb-[:Called]->` reads and what a re-entered `await cb-[:Called]->` re-checks.
+- A call is in the answer once its body has started. Production runs a call's body under the run's lease and marks it started first, so a segment holding the lease never sees a call whose body has yet to run.
 - **Persist:** nothing. **Retry:** idempotent.
 
 ### `park.bindings`
 
-The symmetric correspondence store a `write … bind other { … }` keeps: "this record IS the counterpart of that one". The engine skips every binding write on a dry run.
+The symmetric correspondence store a `write … bind other { … }` keeps: "this record IS the counterpart of that one", in the segment's team. The engine skips every binding write on a dry run.
 
 ```ts
 interface BindingEndpoint {
@@ -473,7 +482,7 @@ interface EncodedEndpoint { adapterType: string; instanceKey: string; typeId: st
 #### `park.bindings.record`
 
 ```ts
-request: { teamId: TeamId; from: BindingEndpoint; to: BindingEndpoint }
+request: { segmentId: string; from: BindingEndpoint; to: BindingEndpoint }
 answer:  void
 ```
 
@@ -482,7 +491,7 @@ answer:  void
 #### `park.bindings.findBoundCounterpart`
 
 ```ts
-request: { teamId: TeamId; endpoint: BindingEndpoint; counterpart?: Omit<BindingEndpoint, 'recordId'> }
+request: { segmentId: string; endpoint: BindingEndpoint; counterpart?: Omit<BindingEndpoint, 'recordId'> }
 answer:  EncodedEndpoint | null
 ```
 
@@ -491,7 +500,7 @@ answer:  EncodedEndpoint | null
 #### `park.bindings.delete`
 
 ```ts
-request: { teamId: TeamId; from: BindingEndpoint | EncodedEndpoint; to: BindingEndpoint | EncodedEndpoint }
+request: { segmentId: string; from: BindingEndpoint | EncodedEndpoint; to: BindingEndpoint | EncodedEndpoint }
 answer:  void
 ```
 
@@ -504,7 +513,7 @@ The cooperative cancel gate. A user's cancel stops the run at the next statement
 #### `control.cancel.cancelled`
 
 ```ts
-request: (no argument)
+request: { segmentId: string }
 answer:  boolean
 ```
 
@@ -513,7 +522,7 @@ answer:  boolean
 #### `control.cancel.cancelledNow`
 
 ```ts
-request: (no argument)
+request: { segmentId: string }
 answer:  boolean
 ```
 
@@ -527,7 +536,7 @@ A file crosses as its descriptor (`FileRef`), never its bytes. The engine carrie
 #### `files.resolveFileText`
 
 ```ts
-request: Priced<{ file: FileRef }>
+request: Priced<{ segmentId: string; file: FileRef }>
 answer:  PricedAnswer<
   | { text: string; rawTextId?: string }
   | { unreadable: 'unsupported_type' | 'bytes_unavailable' | 'extraction_failed' | 'no_text'; detail?: string }
@@ -541,7 +550,7 @@ answer:  PricedAnswer<
 #### `files.render`
 
 ```ts
-request: { content: string; type: 'pdf' | 'text' }
+request: { segmentId: string; content: string; type: 'pdf' | 'text' }
 answer:  FileRef            // a document-store descriptor
 ```
 
@@ -554,16 +563,15 @@ answer:  FileRef            // a document-store descriptor
 
 ```ts
 request: {
-  teamId: TeamId;
-  triggerId?: string;      // the trigger the event dispatched through; absent for events that predate trigger-aware dispatch
   segmentId: string;
+  triggerId?: string;      // the trigger the event dispatched through; absent for events that predate trigger-aware dispatch
   instance: string;        // the source instance, as adapters.resolve answered it
   event: TriggerEvent;
 }
 answer: { id: string; email: string; name?: string | null } | null
 ```
 
-- The team user an event acts as (`@user_*`). The host maps the event's actor to a team user through the trigger (its creator override and creator fallback), asking the source instance for the event's actor candidates itself (`getActorCandidates`, inside the segment) only when the trigger does not already decide the user. `null`: no user matches.
+- The team user an event acts as (`@user_*`), in the segment's team. The host maps the event's actor to a team user through the trigger (its creator override and creator fallback), asking the source instance for the event's actor candidates itself (`getActorCandidates`, inside the segment) only when the trigger does not already decide the user. `null`: no user matches.
 - The engine asks only through a source the host resolved; an adapter the engine implements itself has no instance to ask, and the engine refuses (`MOVENG_UNSUPPORTED`) rather than answer null.
 - A throw is forgiven: the engine reads `@user_*` as absent.
 - **Persist:** nothing. **Retry:** idempotent; the engine caches the answer for the run.
@@ -586,7 +594,7 @@ answer:  { token: string }
 #### `locks.release`
 
 ```ts
-request: { token: string }
+request: { segmentId: string; token: string }
 answer:  void
 ```
 
@@ -631,7 +639,7 @@ The engine keeps two writes from colliding at two levels.
 - **Production:** `productionEngineHost` (`translation_graph/movement/engine_host.ts`). It wires each family to Postgres, the adapter registry and the model providers. Given a run id, it bills each model call to the run. The run host reads the cost cap (`MOVEMENT_MAX_RUN_COST_USD`) once as each segment starts and passes it as `costCapMicrodollars`. Firings, resumes and callbacks build their snapshot with `runCatalogSnapshotForTeam`, which returns the snapshot and, beside it, the credential ids the run is given as `credentialIds`. A test run hands the host its write sink (`writeSink`).
 - **Tests:** `makeTestHost(overrides)` (`movement_engine/test_host.ts`, host side). A test supplies only the pieces its program reaches; no default touches a network or a database. `makeFakeParkSink()` records parks in memory. A piece left out does one of three things:
   - **Throws, naming itself, when the run reaches it:** resolving an adapter (a test supplies its live fakes as `adapters.resolve`; they sit in the same table the production host keeps, and the engine reaches them through `adapters.call`), every `llm.*` method, `park.bindings`, `files.resolveFileText`.
-  - **Defaults quietly:** `segment.open` answers a fresh id and `segment.close` answers nothing spent, with no memo or ceiling behind them; `files.render` answers a document-store descriptor whose store key holds nothing; `park.wake` records each request into `overrides.wakes`; a rehearsed write goes to `overrides.writeSink`, or nowhere; `lookup.resolveActingUser` answers `null` (a test's lookup is handed `getCandidates`, a call into its live source adapter); `control.cancel` never cancels; the trace goes only to the result unless the test hands an array (`overrides.trace`); `locks` are a fresh `InMemoryWriteLocks`, one lock session per segment.
+  - **Defaults quietly:** `segment.open` answers a fresh id and `segment.close` answers nothing spent, with no memo or ceiling behind them; `files.render` answers a document-store descriptor whose store key holds nothing; `park.wake` records each wake into `overrides.wakes` as a host would queue it (`{ adapterType, teamId, correlationKey }`, with the segment's team); a rehearsed write goes to `overrides.writeSink`, or nowhere; `lookup.resolveActingUser` answers `null` (a test's lookup is handed `getCandidates`, a call into its live source adapter); `control.cancel` never cancels; the trace goes only to the result unless the test hands an array (`overrides.trace`); `locks` are a fresh `InMemoryWriteLocks`, one lock session per segment.
   - **Is absent, so the run takes its no-substrate path:** `park.sink`, `park.callbacks`.
 - **Another embedder** supplies its own object of the same shape, serving the JSON above.
 
@@ -658,6 +666,13 @@ Nothing on the request/answer path. Three things stay outside it, by design:
 - **`lookup`:** `resolveActingUser` names the source instance and the event; the host asks the source for candidates itself.
 - **`locks`:** `acquire({ segmentId, names })` answers `{ token }`; `release({ token })`. No lock holder crosses.
 - **`trace`:** new. `append({ segmentId, entries })` as the run goes.
+
+## Changes in chunk 4A
+
+- **Every call names its segment.** `segmentId` joins every request of `park.sink`, `park.callbacks`, `park.wake`, `park.bindings`, `control.cancel`, `files`, `llm` and `locks.release`; `adapters`, `lookup`, `locks.acquire` and `trace` already carried it. `control.cancel.cancelled` and `cancelledNow` take `{ segmentId }`; `park.callbacks.calls` takes `{ segmentId, callbackId }` in place of the bare id.
+- **The team is the segment's.** `teamId` is gone from `adapters.resolve`, `park.wake`, `park.bindings.*` and `lookup.resolveActingUser`; the host answers each for the team `segment.open` named.
+- **An instance is its resolution.** `adapters.resolve` answers the same `instance` for the same (`adapterType`, `credentialsId`, `constructionArgs`, `dryRun`) within a segment, and refuses a segment that is not open.
+- **A call lands when its body starts.** `park.callbacks.calls` answers only the calls whose body has started.
 
 ## Recorded debts
 

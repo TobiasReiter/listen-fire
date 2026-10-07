@@ -897,6 +897,7 @@ describe('through-staged extraction', () => {
         config: { urls: 'acme.com' },
         extractedContext: { name: 'Acme', urls: 'acme.com' },
         budget: { remainingMicrodollars: null },
+        segmentId: expect.any(String),
       },
     ]);
 

@@ -93,15 +93,15 @@ describe('productionEngineHost — adapter instances', () => {
     const live = liveAdapter([]);
     const host = productionEngineHost({ teamId: TEAM_ID, resolveLive: () => live });
     const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2 });
-    const resolved = await host.adapters.resolve({ adapterType: 'attio', teamId: TEAM_ID, role: 'target', segmentId });
+    const resolved = await host.adapters.resolve({ adapterType: 'attio', role: 'target', segmentId });
     expect(resolved).toMatchObject({
       adapterType: 'attio',
       capabilities: { traversal: { incoming: true, edgeProperties: false }, resources: false },
     });
     expect(resolved.methods).toEqual(expect.arrayContaining(['describe', 'readRecord', 'createRecord']));
     expect(resolved.methods).not.toContain('linkRecords');
-    // The same live instance answers to the same id.
-    const again = await host.adapters.resolve({ adapterType: 'attio', teamId: TEAM_ID, role: 'target', segmentId });
+    // The same resolution answers to the same id, whichever role asks.
+    const again = await host.adapters.resolve({ adapterType: 'attio', role: 'source', segmentId });
     expect(again.instance).toBe(resolved.instance);
 
     const call = { segmentId, instance: resolved.instance };
@@ -136,10 +136,9 @@ describe('productionEngineHost — adapter instances', () => {
       writeSink: (write) => captured.push(write),
     });
     const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2 });
-    const live = await host.adapters.resolve({ adapterType: 'attio', teamId: TEAM_ID, role: 'target', segmentId });
+    const live = await host.adapters.resolve({ adapterType: 'attio', role: 'target', segmentId });
     const rehearsed = await host.adapters.resolve({
       adapterType: 'attio',
-      teamId: TEAM_ID,
       role: 'target',
       segmentId,
       dryRun: true,
@@ -156,6 +155,49 @@ describe('productionEngineHost — adapter instances', () => {
     expect(captured).toEqual([{ kind: 'create', adapterType: 'attio', recordType: 'companies', fields: { name: 'Acme' } }]);
     await host.segment.close({ segmentId });
   });
+
+  it('keys an instance by its resolution, for the segment’s team, and refuses a segment that is not open', async () => {
+    const asked: Array<{ teamId: string; credentialsId?: string }> = [];
+    // A fresh live object every time it is asked, as a registry without a cache would hand out.
+    const host = productionEngineHost({
+      teamId: TEAM_ID,
+      resolveLive: ({ teamId, credentialsId }) => {
+        asked.push({ teamId, ...(credentialsId !== undefined ? { credentialsId } : {}) });
+        return liveAdapter([]);
+      },
+    });
+    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2 });
+    const first = await host.adapters.resolve({
+      adapterType: 'attio',
+      credentialsId: 'cred-a',
+      constructionArgs: { workspace: 'w', region: 'eu' },
+      role: 'target',
+      segmentId,
+    });
+    const same = await host.adapters.resolve({
+      adapterType: 'attio',
+      credentialsId: 'cred-a',
+      constructionArgs: { region: 'eu', workspace: 'w' },
+      role: 'source',
+      segmentId,
+    });
+    const other = await host.adapters.resolve({ adapterType: 'attio', credentialsId: 'cred-b', role: 'target', segmentId });
+    expect(same.instance).toBe(first.instance);
+    expect(other.instance).not.toBe(first.instance);
+    // Constructed once per resolution, for the team the segment was opened for.
+    expect(asked).toEqual([
+      { teamId: TEAM_ID, credentialsId: 'cred-a' },
+      { teamId: TEAM_ID, credentialsId: 'cred-b' },
+    ]);
+
+    await host.segment.close({ segmentId });
+    await expect(host.adapters.resolve({ adapterType: 'attio', role: 'target', segmentId })).rejects.toThrow(
+      `no open segment '${segmentId}'`,
+    );
+    await expect(
+      host.adapters.resolve({ adapterType: 'attio', role: 'target', segmentId: 'never-opened' }),
+    ).rejects.toThrow("no open segment 'never-opened'");
+  });
 });
 
 // A priced call refused past its budget answers the refusal as data, with what
@@ -165,6 +207,7 @@ describe('productionEngineHost — priced calls past the budget', () => {
     fileTextSpends = true;
     const host = productionEngineHost({ teamId: TEAM_ID });
     const answer = await host.files.resolveFileText({
+      segmentId: 'seg-1',
       file: { __brand: 'FileRef', name: 'call.mp3' },
       budget: { remainingMicrodollars: 500 },
     });

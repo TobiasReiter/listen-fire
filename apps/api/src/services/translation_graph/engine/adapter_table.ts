@@ -14,7 +14,9 @@
 // routinely crosses systems, so the memory of what is real cannot be one
 // adapter's.
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { Adapter } from '../adapter';
+import type { SegmentFacts } from '../../movement_engine/host_kit';
 
 import {
   ADAPTER_METHODS,
@@ -30,8 +32,11 @@ import {
 } from '../../movement_engine/host';
 import { newDryRunRehearsal, wrapAdapterForDryRun, type DryRunRehearsal, type DryRunWriteSink } from './dry_run_adapter';
 
-/** Where a table's live instances come from. */
-export type LiveAdapterResolver = (input: AdapterResolution & { segmentId: string }) => Adapter | Promise<Adapter>;
+/** Where a table's live instances come from: the resolution, for the
+ *  segment's team. */
+export type LiveAdapterResolver = (
+  input: AdapterResolution & { segmentId: string; teamId: TeamId },
+) => Adapter | Promise<Adapter>;
 
 /** Each method, as a call into a live instance. A method the instance lacks
  *  is refused by name. */
@@ -121,11 +126,21 @@ function describeInstance(instance: string, adapter: Adapter): ResolvedAdapter {
   };
 }
 
+/** What makes two resolutions the same instance: the system, the credential,
+ *  the construction args (in any order) and whether it is rehearsed. The role
+ *  is not part of it: a source and a target of the same instance are one
+ *  instance. */
+function resolutionKey(resolution: AdapterResolution, dryRun: boolean): string {
+  const args = Object.entries(resolution.constructionArgs ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify([resolution.adapterType, resolution.credentialsId ?? null, args, dryRun]);
+}
+
 class SegmentInstances {
   private readonly byId = new Map<string, Adapter>();
-  /** One id per live instance, and one per its rehearsal: the engine compares
-   *  what it resolved, so the same instance must answer to the same id. */
-  private readonly ids = new WeakMap<Adapter, { live?: string; rehearsed?: string }>();
+  /** One id per resolution: the engine compares what it resolved, so
+   *  resolving the same thing twice must answer the same id. The promise is
+   *  kept, so two resolutions at once construct one instance. */
+  private readonly ids = new Map<string, Promise<string>>();
   private next = 0;
   private rehearsalState?: DryRunRehearsal;
 
@@ -138,16 +153,29 @@ class SegmentInstances {
     return (this.rehearsalState ??= newDryRunRehearsal(this.writeSink));
   }
 
-  register(live: Adapter, dryRun: boolean): ResolvedAdapter {
-    const known = this.ids.get(live) ?? {};
-    const slot = dryRun ? 'rehearsed' : 'live';
-    let id = known[slot];
-    if (id === undefined) {
-      id = `${this.segmentId}:${++this.next}`;
-      this.byId.set(id, dryRun ? wrapAdapterForDryRun(live, this.rehearsal) : live);
-      this.ids.set(live, { ...known, [slot]: id });
+  async resolve(
+    input: { resolution: AdapterResolution; dryRun: boolean },
+    live: () => Adapter | Promise<Adapter>,
+  ): Promise<ResolvedAdapter> {
+    const key = resolutionKey(input.resolution, input.dryRun);
+    let pending = this.ids.get(key);
+    if (pending === undefined) {
+      pending = this.register(input.dryRun, live);
+      this.ids.set(key, pending);
+      // A failed resolution is not an instance: the next one tries again.
+      pending.catch(() => {
+        if (this.ids.get(key) === pending) this.ids.delete(key);
+      });
     }
+    const id = await pending;
     return describeInstance(id, this.instance(id));
+  }
+
+  private async register(dryRun: boolean, live: () => Adapter | Promise<Adapter>): Promise<string> {
+    const adapter = await live();
+    const id = `${this.segmentId}:${++this.next}`;
+    this.byId.set(id, dryRun ? wrapAdapterForDryRun(adapter, this.rehearsal) : adapter);
+    return id;
   }
 
   instance(id: string): Adapter {
@@ -206,6 +234,9 @@ export interface AdapterTable extends HostAdapters {
 
 export function adapterTable(options: {
   resolveLive: LiveAdapterResolver;
+  /** The host's open segments: what each is for, and a refusal for one that
+   *  is not open. */
+  segments: { facts(segmentId: string): SegmentFacts };
   /** Run one call into an instance inside its segment's host scope. Absent ⇒
    *  the call runs as it is. */
   around?: <T>(segmentId: string, call: () => Promise<T>) => Promise<T>;
@@ -215,22 +246,22 @@ export function adapterTable(options: {
   /** Receives each write a rehearsed instance captured. */
   writeSink?: DryRunWriteSink;
 }): AdapterTable {
-  const segments = new Map<string, SegmentInstances>();
+  const instances = new Map<string, SegmentInstances>();
   const around = options.around ?? (<T>(_segmentId: string, call: () => Promise<T>) => call());
   const classify = options.classify ?? adapterErrorOf;
 
   const segmentNamed = (segmentId: string): SegmentInstances => {
-    let segment = segments.get(segmentId);
+    let segment = instances.get(segmentId);
     if (segment === undefined) {
       segment = new SegmentInstances(segmentId, options.writeSink);
-      segments.set(segmentId, segment);
+      instances.set(segmentId, segment);
     }
     return segment;
   };
 
   const call = async <M extends AdapterMethod>(input: AdapterCall<M>): Promise<AdapterCallAnswer<M>> => {
     try {
-      const segment = segments.get(input.segmentId);
+      const segment = instances.get(input.segmentId);
       if (segment === undefined) {
         throw new Error(`no open segment '${input.segmentId}': nothing was resolved for it, or it has closed`);
       }
@@ -245,9 +276,12 @@ export function adapterTable(options: {
 
   return {
     async resolve(input) {
-      const { dryRun, ...resolution } = input;
-      const live = await options.resolveLive(resolution);
-      return segmentNamed(input.segmentId).register(live, dryRun === true);
+      const { segmentId, dryRun, ...resolution } = input;
+      // A segment that is not open resolves nothing: refused, naming it.
+      const { teamId } = options.segments.facts(segmentId);
+      return segmentNamed(segmentId).resolve({ resolution, dryRun: dryRun === true }, () =>
+        options.resolveLive({ ...resolution, segmentId, teamId }),
+      );
     },
     call,
     async answer(input) {
@@ -256,7 +290,7 @@ export function adapterTable(options: {
       return answered.result;
     },
     closeSegment(segmentId) {
-      segments.delete(segmentId);
+      instances.delete(segmentId);
     },
   };
 }

@@ -89,7 +89,7 @@ export function makeRecorderCallbackSink(
       return { id: record.id, url: callbackUrl(record.id) };
     },
 
-    calls(callbackId) {
+    calls({ callbackId }) {
       return readCallbackCalls(callbackId);
     },
 

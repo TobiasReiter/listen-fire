@@ -119,7 +119,7 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
       mints.push({ id, ...input });
       return { id, url: `https://api.test/api/cb/${id}` };
     },
-    async calls(callbackId) {
+    async calls({ callbackId }) {
       return ledger[callbackId] ?? [];
     },
   };

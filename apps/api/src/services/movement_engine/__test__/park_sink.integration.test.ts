@@ -188,7 +188,7 @@ describe('commitAwaitPark', () => {
       adapter: awaiting.adapter,
       parkSink: makeRecorderParkSink(makeStubRecorder({ teamId, runId })),
       // The production host's wake: a `wake_await` work row.
-      wake: (request) => enqueueAwaitWake(request),
+      wake: ({ adapterType, correlationKey }) => enqueueAwaitWake({ adapterType, teamId, correlationKey }),
     });
 
     expect(result.parked).toBe(true);
