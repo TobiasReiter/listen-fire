@@ -402,7 +402,7 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
       .where('address', '=', address)
       .select('state')
       .executeTakeFirstOrThrow();
-    await sink.commitTimerPark({ address, state: parked.state, wakeAt: laterWake });
+    await sink.commitTimerPark({ address, state: parked.state, wakeAt: laterWake.toISOString() });
 
     // An unleased row keeps the earlier time: one row serves every leaf of the run.
     let rows = await workRows(runId);

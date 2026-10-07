@@ -4,11 +4,11 @@
 // registry's, each call answering inside the segment it was resolved for.
 
 import type { CatalogSnapshot } from 'movement-lang';
-
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { EngineHost } from '../../../services/movement_engine/host';
 import type { LiveAdapterResolver } from '../../../services/translation_graph/engine/adapter_table';
 import type { DryRunWriteSink } from '../../../services/translation_graph/engine/dry_run_adapter';
+
 import { productionEngineHost } from '../../../services/translation_graph/movement/engine_host';
 
 export function probeEngineHost(input: {

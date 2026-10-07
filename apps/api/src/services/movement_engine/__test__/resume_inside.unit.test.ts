@@ -3,7 +3,7 @@
 // expression, and a `parallel` / `race` arm (literal or built at run time).
 //
 // Two kinds of park drive it:
-//   · an ENGINE suspension (`suspendWhen` → `suspendFlow`): the flow parks just
+//   · an ENGINE suspension (`suspendAt` → `suspendFlow`): the flow parks just
 //     before a statement — or just before one of the calls a statement makes —
 //     and resume re-runs that statement, replaying the calls it had finished;
 //   · an AUTHORED wait (`await sleep(…)`, `await FIRST(cb-[:Called]->)`),
@@ -33,7 +33,6 @@ import {
   runMovement,
   type MovementRunResult,
   type ParkSink,
-  type SuspensionPoint,
 } from '../run';
 import { makeTestHost } from '../host';
 
@@ -209,11 +208,7 @@ interface Harness {
   callbacks?: ReturnType<typeof makeCallbackSink>;
 }
 
-function runInput(
-  h: Harness,
-  kg: ReturnType<typeof makeKgFake>,
-  suspendWhen?: (point: SuspensionPoint) => boolean,
-) {
+function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>, suspendAt?: string[]) {
   return {
     source: h.source,
     event: manualEvent(),
@@ -232,8 +227,8 @@ function runInput(
         sink: h.parks.sink,
         ...(h.callbacks !== undefined ? { callbacks: h.callbacks.sink } : {}),
       },
-      ...(suspendWhen !== undefined ? { control: { suspendWhen } } : {}),
     }),
+    ...(suspendAt !== undefined ? { suspendAt } : {}),
     dryRun: false,
   };
 }
@@ -241,15 +236,8 @@ function runInput(
 /** Run until it parks, suspending (once each) at the given points. */
 async function start(h: Harness, suspendAt: string[] = []) {
   const kg = makeKgFake();
-  const pending = new Set(suspendAt);
-  const points: SuspensionPoint[] = [];
-  const result = await runMovement(
-    runInput(h, kg, (point) => {
-      points.push(point);
-      return pending.delete(point.address);
-    }),
-  );
-  return { result, kg, points };
+  const result = await runMovement(runInput(h, kg, suspendAt));
+  return { result, kg };
 }
 
 /** Resume the leaf parked at `address` — re-entering it, as an await / a

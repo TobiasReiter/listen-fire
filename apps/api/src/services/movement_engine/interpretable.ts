@@ -126,8 +126,8 @@ const EXPRESSION_KIND_LABEL: Partial<Record<Expression['type'], string>> = {
  * and the save may go live. A program that doesn't parse returns [] —
  * parse/check diagnostics own that failure mode.
  *
- * File imports run since E8 (the engine resolves them through
- * `EngineHost.files.resolveFile`); pass the SAME resolver here so the
+ * File imports run since E8 (the engine resolves them from the run's catalog
+ * snapshot's `files`); pass a resolver over the SAME files here so the
  * imported library files are scanned too — a library body carrying an
  * unsupported construct flags the importing file, suffixed with the
  * library path. Resolution failures stay silent: checkProgram owns those

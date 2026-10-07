@@ -14,6 +14,8 @@
 // routinely crosses systems, so the memory of what is real cannot be one
 // adapter's.
 
+import type { Adapter } from '../adapter';
+
 import {
   ADAPTER_METHODS,
   type AdapterCall,
@@ -25,7 +27,6 @@ import {
   type HostCallError,
   type ResolvedAdapter,
 } from '../../movement_engine/host';
-import type { Adapter } from '../adapter';
 import { newDryRunRehearsal, wrapAdapterForDryRun, type DryRunRehearsal, type DryRunWriteSink } from './dry_run_adapter';
 
 /** Where a table's live instances come from. */
@@ -166,9 +167,9 @@ function asAdapterError(error: unknown): HostCallError {
 }
 
 export interface AdapterTable extends HostAdapters {
-  /** The live instance behind an id — for the host's own families (the
-   *  acting-user lookup calls the source adapter itself). */
-  live(input: { segmentId: string; instance: string }): Adapter;
+  /** A call the host makes itself (the acting-user lookup asks the source
+   *  instance for the event's actors): its result, or its failure thrown. */
+  answer<M extends AdapterMethod>(input: AdapterCall<M>): Promise<AdapterCallMap[M]['result']>;
   /** Forget a segment's instances once the segment has closed. */
   closeSegment(segmentId: string): void;
 }
@@ -197,30 +198,32 @@ export function adapterTable(options: {
     return segment;
   };
 
+  const call = async <M extends AdapterMethod>(input: AdapterCall<M>): Promise<AdapterCallAnswer<M>> => {
+    try {
+      const segment = segments.get(input.segmentId);
+      if (segment === undefined) {
+        throw new Error(`no open segment '${input.segmentId}': nothing was resolved for it, or it has closed`);
+      }
+      const adapter = segment.instance(input.instance);
+      const dispatch = DISPATCH[input.method];
+      const result = await around(input.segmentId, () => dispatch(adapter, input.args));
+      return { result };
+    } catch (error) {
+      return { error: classify(error) };
+    }
+  };
+
   return {
     async resolve(input) {
       const { dryRun, ...resolution } = input;
       const live = await options.resolveLive(resolution);
       return segmentNamed(input.segmentId).register(live, dryRun === true);
     },
-    async call<M extends AdapterMethod>(input: AdapterCall<M>): Promise<AdapterCallAnswer<M>> {
-      try {
-        const segment = segments.get(input.segmentId);
-        if (segment === undefined) {
-          throw new Error(`no open segment '${input.segmentId}': nothing was resolved for it, or it has closed`);
-        }
-        const adapter = segment.instance(input.instance);
-        const dispatch = DISPATCH[input.method];
-        const result = await around(input.segmentId, () => dispatch(adapter, input.args));
-        return { result };
-      } catch (error) {
-        return { error: classify(error) };
-      }
-    },
-    live({ segmentId, instance }) {
-      const segment = segments.get(segmentId);
-      if (segment === undefined) throw new Error(`no open segment '${segmentId}'`);
-      return segment.instance(instance);
+    call,
+    async answer(input) {
+      const answered = await call(input);
+      if ('error' in answered) throw new Error(answered.error.message);
+      return answered.result;
     },
     closeSegment(segmentId) {
       segments.delete(segmentId);

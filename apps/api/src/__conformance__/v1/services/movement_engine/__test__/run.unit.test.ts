@@ -1791,7 +1791,7 @@ describe('the run clock is pinned to the firing instant', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      ...(firedAt !== undefined ? { firedAt } : {}),
+      ...(firedAt !== undefined ? { firedAt: firedAt.toISOString() } : {}),
       credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
@@ -4186,7 +4186,7 @@ describe('sleep — durable timer park', () => {
     expect(timerParks[0].address).toBe('s0');
 
     // wake_at is now + 30s, bounded by the wall-clock window of the call.
-    const wakeMs = timerParks[0].wakeAt.getTime();
+    const wakeMs = new Date(timerParks[0].wakeAt).getTime();
     expect(wakeMs).toBeGreaterThanOrEqual(before + 30_000);
     expect(wakeMs).toBeLessThanOrEqual(after + 30_000);
 

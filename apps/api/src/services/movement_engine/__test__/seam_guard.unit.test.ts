@@ -467,4 +467,126 @@ describe('the engine/host seam carries data', () => {
     );
     expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
   });
+
+  // The rest of the host's families, as one run uses them: the acting-user
+  // lookup names the source instance and the event (the host asks the source
+  // itself), a callback and a timer carry their instants as ISO strings, the
+  // write's cross-run locks go by token, and the trace is appended as data.
+  it('the lookup, callbacks, timers, locks and trace pass plain data only', async () => {
+    const teamId = '00000000-0000-0000-0000-000000000045' as TeamId;
+    const calls: Array<{ call: string; input: unknown; output: unknown }> = [];
+    const record = async <T>(call: string, input: unknown, answer: Promise<T>): Promise<T> => {
+      const output = await answer;
+      calls.push({ call, input, output: output ?? null });
+      return output;
+    };
+    const manual = createManualAdapter({ teamId });
+    const kg: Adapter = {
+      adapterType: 'kg',
+      supportedTriggers: ['webhook'],
+      runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+      listEntryPoints: async () => [],
+      describe: async () => null,
+      resolveEntity: async () => ({ candidates: [] }),
+      getFieldValue: async () => null,
+      getRelated: async () => [],
+      createRecord: async () => ({ adapterType: 'kg', externalId: 'note-1', data: {} }),
+      updateRecord: async (input) => ({ adapterType: 'kg', externalId: input.externalId, data: {}, association: 'none' }),
+      deleteRecord: async () => ({}),
+    };
+    const parks = makeFakeParkSink();
+    const appended: unknown[] = [];
+    const inner = makeTestHost({
+      adapters: { resolve: ({ adapterType }) => (adapterType === 'kg' ? kg : manual) },
+      park: {
+        sink: parks.sink,
+        callbacks: { mint: async () => ({ id: 'cb_1', url: 'https://api.test/api/cb/cb_1' }), calls: async () => [] },
+      },
+      lookup: { resolveActingUser: async () => ({ id: 'user-1', email: 'amy@acme.dev', name: 'Amy' }) },
+      trace: [],
+    });
+    const sink = inner.park.sink!;
+    const callbacks = inner.park.callbacks!;
+    const appendTrace = inner.trace!;
+    const host: EngineHost = {
+      ...inner,
+      park: {
+        ...inner.park,
+        sink: {
+          ...sink,
+          commitTimerPark: (input) => record('park.sink.commitTimerPark', input, sink.commitTimerPark(input)),
+        },
+        callbacks: { ...callbacks, mint: (input) => record('park.callbacks.mint', input, callbacks.mint(input)) },
+      },
+      lookup: {
+        resolveActingUser: (input) => record('lookup.resolveActingUser', input, inner.lookup.resolveActingUser(input)),
+      },
+      locks: {
+        acquire: (input) => record('locks.acquire', input, inner.locks.acquire(input)),
+        release: (input) => record('locks.release', input, inner.locks.release(input)),
+      },
+      trace: {
+        append: (input) => {
+          appended.push(...input.entries);
+          return record('trace.append', input, appendTrace.append(input));
+        },
+      },
+    };
+    const result = await runMovement({
+      source: [
+        'import { manual, kg } from adapters',
+        'import { kg_cred } from credentials',
+        'runs = manual()',
+        'graph = kg(credentials: kg_cred)',
+        '',
+        'movement m(go: <runs-[:Invocation]->>) {',
+        '  write graph-[:note]-> { unique by (`body`) body: "by ${@user_email}" }',
+        '  cb = callback({ write graph-[:note]-> { body: "called" } }, { ttl: 2d })',
+        '  await sleep(1d)',
+        '}',
+        'listen to runs {} fire m',
+      ].join('\n'),
+      event: {
+        pipelineInputId: 'trigger:manual-families',
+        adapterType: 'manual',
+        triggerType: 'webhook',
+        payload: { firedAt: '2026-10-07T09:00:00.000Z' },
+        occurredAt: '2026-10-07T09:00:00.000Z',
+      },
+      teamId,
+      firedAt: '2026-10-07T09:00:00.000Z',
+      catalog: staticCatalogSnapshot({
+        credentials: { kg_cred: { adapters: ['kg'] } },
+        instanceSchemas: {
+          kg: {
+            positions: { note: { properties: { body: 'text' }, edges: {} } },
+            collections: { note: { target: 'note' } },
+            writableRoots: { note: { fields: { body: 'text' }, resultShape: { externalId: 'text' } } },
+          },
+        },
+      }),
+      host,
+    });
+
+    expect(result.parked).toBe(true);
+    expect(result.writes[0]?.writtenValues).toEqual({ body: 'by amy@acme.dev' });
+    const made = new Set(calls.map((c) => c.call));
+    expect([...made].sort()).toEqual([
+      'locks.acquire',
+      'locks.release',
+      'lookup.resolveActingUser',
+      'park.callbacks.mint',
+      'park.sink.commitTimerPark',
+      'trace.append',
+    ]);
+    const lookup = calls.find((c) => c.call === 'lookup.resolveActingUser');
+    expect(lookup?.input).toMatchObject({ teamId, segmentId: expect.any(String), instance: expect.any(String) });
+    expect(calls.find((c) => c.call === 'park.callbacks.mint')?.input).toMatchObject({ expiresAt: expect.any(String) });
+    expect(calls.find((c) => c.call === 'park.sink.commitTimerPark')?.input).toMatchObject({
+      wakeAt: expect.any(String),
+    });
+    // What the host was handed of the trace is the run's whole trace.
+    expect(appended).toEqual(result.trace);
+    expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
+  });
 });

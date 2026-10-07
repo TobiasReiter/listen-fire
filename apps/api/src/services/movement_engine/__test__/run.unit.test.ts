@@ -157,7 +157,8 @@ import type { LlmClient } from '../../translation_graph/engine/batched_extractio
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { credentialIdsFor, makeTestHost, type EngineHost } from '../host';
+import { credentialIdsFor, makeTestHost, type ActingUserLookup, type EngineHost } from '../host';
+import type { ActingUser } from '../../translation_graph/adapter';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
@@ -1672,7 +1673,7 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
   // tables; this one still consumes the adapter-parsed candidates the engine
   // passes through `getCandidates`, so the test proves the source-adapter
   // wiring.
-  const candidateDrivenActingUser: EngineHost['lookup']['resolveActingUser'] = async ({ getCandidates }) => {
+  const candidateDrivenActingUser = async ({ getCandidates }: ActingUserLookup): Promise<ActingUser | null> => {
     const first = (await getCandidates())[0];
     if (!first) return null;
     return { id: 'user-1', email: first.identity.email ?? first.identity.identifier, name: first.identity.name ?? null };
@@ -1769,7 +1770,7 @@ describe('the run clock is pinned to the firing instant', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      ...(firedAt !== undefined ? { firedAt } : {}),
+      ...(firedAt !== undefined ? { firedAt: firedAt.toISOString() } : {}),
       credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
@@ -4085,12 +4086,12 @@ describe('tuple-path multi-parent writes — adapter targets', () => {
 function makeFakeParkSink(_opts: { created?: boolean } = {}): {
   sink: ParkSink;
   joins: Array<{ frameAddress: string; parkedChildren: number }>;
-  timerParks: Array<{ address: string; state: unknown; wakeAt: Date }>;
+  timerParks: Array<{ address: string; state: unknown; wakeAt: string }>;
   awaitParks: Array<{ address: string; state: unknown }>;
   cancelled: string[];
 } {
   const joins: Array<{ frameAddress: string; parkedChildren: number }> = [];
-  const timerParks: Array<{ address: string; state: unknown; wakeAt: Date }> = [];
+  const timerParks: Array<{ address: string; state: unknown; wakeAt: string }> = [];
   const awaitParks: Array<{ address: string; state: unknown }> = [];
   const cancelled: string[] = [];
 
@@ -4256,7 +4257,7 @@ describe('sleep — durable timer park', () => {
     expect(timerParks[0].address).toBe('s0');
 
     // wake_at is now + 30s, bounded by the wall-clock window of the call.
-    const wakeMs = timerParks[0].wakeAt.getTime();
+    const wakeMs = new Date(timerParks[0].wakeAt).getTime();
     expect(wakeMs).toBeGreaterThanOrEqual(before + 30_000);
     expect(wakeMs).toBeLessThanOrEqual(after + 30_000);
 

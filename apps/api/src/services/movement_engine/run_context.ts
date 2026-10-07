@@ -1,7 +1,7 @@
 // What one run SEGMENT carries about itself, as engine state: the run it
 // belongs to, the language version it is pinned to, its cancel gate, the
-// cross-run lock holder its effects take locks through, the host segment it
-// opened, and the run's spend account.
+// cross-run locks its effects take, the host segment it opened, and the run's
+// spend account.
 //
 // None of it is ambient. Each entry point opens one context (`openRunContext`)
 // and the interpreter hands it, or the part a callee needs (`RunFacts`), to
@@ -30,14 +30,14 @@ import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
-import type { EntityArbitration } from '../translation_graph/engine/entity_match';
-import type { WriteLockHolder } from '../write_locks/write_locks';
-import type { FileTextResolution } from './expression';
-import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs } from './extraction';
+import type { ArbitrationAnswer, EntityArbitration } from '../translation_graph/engine/entity_match';
+import type { CrossRunLocks } from './effect_locks';
+import type { FileTextResolution, MovementTraceEntry } from './expression';
 import type { ExtractCallLlmClient } from './extraction_call';
 import type { BudgetRefusal, EngineHost, PricedAnswer } from './host';
 import type { CancelGate } from './run';
 
+import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs } from './extraction';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import { RunCancelledSignal } from './errors';
@@ -67,11 +67,14 @@ export interface RunContext extends RunFacts {
   /** The host segment this one opened (`host.segment.open`): every adapter
    *  host call names it. */
   readonly segmentId: string;
-  /** The holder of the cross-run write locks this segment's effects take,
-   *  each held for its effect (`effect_locks.ts`); the holder's session lives
-   *  for the segment. */
-  readonly writeLockHolder: WriteLockHolder;
+  /** The cross-run write locks this segment's effects take, each held for
+   *  its effect (`effect_locks.ts`): the host's `locks`, named by this
+   *  segment. The lock session is the host's, and closes with the segment. */
+  readonly locks: CrossRunLocks;
   readonly ledger: RunLedger;
+  /** The segment's decision trace, and how much of it the host has been
+   *  handed (`host.trace.append`). */
+  readonly trace: { readonly entries: MovementTraceEntry[]; published: number };
 }
 
 /** The pin a callee honours: its run's, or — outside a run (a script, a test
@@ -224,7 +227,7 @@ export interface PricedCalls {
   client: LlmClient;
   extractCall: ExtractCallLlmClient;
   transforms: MovementTransformInvoker;
-  arbitrateEntities: (input: EntityArbitration) => Promise<number | null>;
+  arbitrateEntities: (input: EntityArbitration) => Promise<ArbitrationAnswer>;
   resolveFileText: (input: { file: FileRef }) => Promise<FileTextResolution>;
 }
 
@@ -251,17 +254,19 @@ export function pricedCalls(
         return charged(ledger, (budget) => llm.transforms.invoke({ ...input, budget }));
       },
     },
-    arbitrateEntities: async (input) =>
-      (await charged(ledger, (budget) => llm.arbitrateEntities({ ...input, budget }))).index,
+    arbitrateEntities: async (input) => {
+      const { index, judgeUnavailable } = await charged(ledger, (budget) => llm.arbitrateEntities({ ...input, budget }));
+      return { index, ...(judgeUnavailable !== undefined ? { judgeUnavailable } : {}) };
+    },
     resolveFileText: (input) => charged(ledger, (budget) => files.resolveFileText({ ...input, budget })),
   };
 }
 
 // ── Opening and closing a segment ───────────────────────────────────────────
 
-/** Open one segment: its cross-run lock holder, its host segment, and the
- *  run's account seeded with what the run spent before it. The holder comes
- *  first so a segment that fails to open leaves nothing open behind it. */
+/** Open one segment: its host segment, the cross-run locks its effects take
+ *  through it, and the run's account seeded with what the run spent before
+ *  it. */
 export async function openRunContext(input: {
   host: EngineHost;
   teamId: TeamId;
@@ -270,39 +275,45 @@ export async function openRunContext(input: {
   spend: ConstructorParameters<typeof RunLedger>[0];
 }): Promise<RunContext> {
   const { host, teamId, runId, languageVersion } = input;
-  const writeLockHolder = host.locks.holder(teamId);
-  let segmentId: string;
-  try {
-    ({ segmentId } = await host.segment.open({
-      teamId,
-      languageVersion,
-      ...(runId !== undefined ? { runId } : {}),
-    }));
-  } catch (error) {
-    await writeLockHolder.release();
-    throw error;
-  }
+  const { segmentId } = await host.segment.open({
+    teamId,
+    languageVersion,
+    ...(runId !== undefined ? { runId } : {}),
+  });
   return {
     teamId,
     languageVersion,
     cancel: host.control.cancel,
     ...(runId !== undefined ? { runId } : {}),
     segmentId,
-    writeLockHolder,
+    locks: {
+      acquire: async (names) => (await host.locks.acquire({ segmentId, names })).token,
+      release: (token) => host.locks.release({ token }),
+    },
     ledger: new RunLedger(input.spend),
+    trace: { entries: [], published: 0 },
   };
 }
 
+/** Hand the host the trace entries it has not seen yet. */
+export async function publishTrace(context: RunContext, host: EngineHost): Promise<void> {
+  const { trace } = context;
+  if (host.trace === undefined || trace.published >= trace.entries.length) return;
+  const entries = trace.entries.slice(trace.published);
+  trace.published = trace.entries.length;
+  await host.trace.append({ segmentId: context.segmentId, entries });
+}
+
 /**
- * End a segment however it ended: release its locks, close its host segment,
- * and charge what the host says the segment's adapter calls spent (a model
- * call an adapter makes to match a record). Every step is attempted, and none
- * throws: this runs in the segment's `finally`, where a failure here would
- * replace the run's own result or error. A step that fails is logged with the
- * run it belongs to.
+ * End a segment however it ended: close its host segment (which lets go of
+ * its cross-run locks) and charge what the host says the segment's adapter
+ * calls spent (a model call an adapter makes to match a record). Nothing here
+ * throws: this runs in the segment's `finally`, where a failure would replace
+ * the run's own result or error. A failure is logged with the run it belongs
+ * to.
  */
 export async function closeRunContext(context: RunContext, host: EngineHost): Promise<void> {
-  await settled('release its cross-run write locks', context, () => context.writeLockHolder.release());
+  await settled('hand the host the rest of its trace', context, () => publishTrace(context, host));
   await settled('close its host segment', context, async () => {
     const { cost } = await host.segment.close({ segmentId: context.segmentId });
     context.ledger.charge(cost);

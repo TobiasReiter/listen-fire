@@ -16,6 +16,8 @@ import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
 import type { MovementTraceEntry } from '../../movement_engine/expression';
 import type { ExtractCallLlmClient } from '../../movement_engine/extraction_call';
 import {
+  appendingInto,
+  closeSegmentWith,
   NEVER_CANCELLED,
   type Costed,
   type EngineHost,
@@ -23,14 +25,19 @@ import {
   type HostLlmClient,
   type HostTransformInvoker,
   type PricedAnswer,
-  type ResolveActingUserInput,
+  type ActingUserLookup,
   type ResolveFileText,
 } from '../../movement_engine/host';
 import { makeRecorderParkSink } from '../../movement_engine/park_sink';
 import type { CancelGate } from '../../movement_engine/run';
 import { notifyWork } from '../../work/drain';
 import { PostgresWriteLocks } from '../../write_locks/postgres';
-import { parseWriteLockTimeoutMs, WRITE_LOCK_TIMEOUT_ENV_VAR, type WriteLocks } from '../../write_locks/write_locks';
+import {
+  parseWriteLockTimeoutMs,
+  segmentWriteLocks,
+  WRITE_LOCK_TIMEOUT_ENV_VAR,
+  type WriteLocks,
+} from '../../write_locks/write_locks';
 import type { ActingUser } from '../adapter';
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
@@ -64,6 +71,8 @@ export function productionEngineHost(input: {
   parksInto?: TriggerRunRecorder;
   /** Absent ⇒ the run is never cancelled. */
   cancel?: CancelGate;
+  /** Where the run's trace is appended as it goes, so a caller can publish it
+   *  before the run settles. */
   trace?: MovementTraceEntry[];
   /** Where file text is stored. Absent ⇒ the team's `raw_text` table. */
   rawText?: RawTextStore;
@@ -89,13 +98,16 @@ export function productionEngineHost(input: {
     ...segmentScopedCalls,
     ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });
+  // Each segment's cross-run lock session, closed with the segment.
+  const locks = segmentWriteLocks(input.locks ?? processWriteLocks());
   return {
     segment: {
-      open: hostSegments.open,
-      close: async (closing) => {
-        adapters.closeSegment(closing.segmentId);
-        return hostSegments.close(closing);
+      open: async (opening) => {
+        const opened = await hostSegments.open(opening);
+        locks.opened(opened.segmentId, opening.teamId);
+        return opened;
       },
+      close: (closing) => closeSegmentWith(closing, { table: adapters, locks, close: hostSegments.close }),
     },
     adapters: { resolve: (resolution) => adapters.resolve(resolution), call: (call) => adapters.call(call) },
     llm: {
@@ -128,9 +140,18 @@ export function productionEngineHost(input: {
       ),
       render: renderFileArtifact,
     },
-    lookup: { resolveActingUser: resolveTeamActingUser },
-    locks: input.locks ?? processWriteLocks(),
-    ...(input.trace !== undefined ? { trace: input.trace } : {}),
+    lookup: {
+      // The source instance's parse of the event's actors, asked of it inside
+      // its segment, only when the trigger does not already decide the user.
+      resolveActingUser: ({ teamId, triggerId, segmentId, instance, event }) =>
+        resolveTeamActingUser({
+          teamId,
+          ...(triggerId !== undefined ? { triggerId } : {}),
+          getCandidates: () => adapters.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
+        }),
+    },
+    locks: { acquire: (request) => locks.acquire(request), release: (request) => locks.release(request) },
+    ...(input.trace !== undefined ? { trace: appendingInto(input.trace) } : {}),
   };
 }
 
@@ -233,7 +254,7 @@ function lockDatabaseUrl(): string {
 /** The trigger the event dispatched through decides first (its creator
  *  override and creator fallback); then the source adapter's candidates. A
  *  trigger that is gone reads as none. */
-async function resolveTeamActingUser(input: ResolveActingUserInput): Promise<ActingUser | null> {
+async function resolveTeamActingUser(input: ActingUserLookup): Promise<ActingUser | null> {
   const trigger = input.triggerId !== undefined ? await loadActingUserTrigger(input.triggerId) : undefined;
   return resolveActingUser({
     teamId: input.teamId,

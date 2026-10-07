@@ -79,7 +79,7 @@ export function makeRecorderCallbackSink(
         params: input.params,
         state: input.state,
         singleUse: input.singleUse,
-        ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        ...(input.expiresAt !== undefined ? { expiresAt: new Date(input.expiresAt) } : {}),
       });
       return { id: record.id, url: callbackUrl(record.id) };
     },

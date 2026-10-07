@@ -374,7 +374,15 @@ export interface EntityArbitration {
   constraints: UniquenessConstraints;
   /** The pin of the run asking: whether a blank key is a key. */
   languageVersion: LanguageVersion;
-  onJudgeUnavailable?: (message: string) => void;
+}
+
+/** The judge's answer: the candidate the write IS, or null to create — and,
+ *  when the judge could not be asked at all (its call failed), why, so the
+ *  write can say so instead of reading as a considered decline. */
+export interface ArbitrationAnswer {
+  index: number | null;
+  /** The judge's failure, in its own words. */
+  judgeUnavailable?: string;
 }
 
 /**
@@ -400,7 +408,9 @@ export interface EntityArbitration {
  *
  * Returns the index into `candidates`, or null to create a new record.
  */
-export async function arbitrateEntityCandidates(input: EntityArbitration): Promise<number | null> {
+export async function arbitrateEntityCandidates(
+  input: EntityArbitration & { onJudgeUnavailable?: (message: string) => void },
+): Promise<number | null> {
   const decided = arbitrateWithoutJudge(input);
   if (decided !== undefined) return decided;
   return judgeEntityMatch({
@@ -416,7 +426,15 @@ export async function arbitrateEntityCandidates(input: EntityArbitration): Promi
 export async function meteredArbitration({
   budget,
   ...arbitration
-}: Priced<EntityArbitration>): Promise<Costed<{ index: number | null }>> {
-  const { value, cost } = await withSpendMeter(budget, () => arbitrateEntityCandidates(arbitration));
-  return { index: value, cost };
+}: Priced<EntityArbitration>): Promise<Costed<ArbitrationAnswer>> {
+  let judgeUnavailable: string | undefined;
+  const { value, cost } = await withSpendMeter(budget, () =>
+    arbitrateEntityCandidates({
+      ...arbitration,
+      onJudgeUnavailable: (message) => {
+        judgeUnavailable = message;
+      },
+    }),
+  );
+  return { index: value, ...(judgeUnavailable !== undefined ? { judgeUnavailable } : {}), cost };
 }

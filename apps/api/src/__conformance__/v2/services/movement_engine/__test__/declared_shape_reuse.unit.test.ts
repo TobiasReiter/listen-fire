@@ -501,7 +501,7 @@ describe('an IMPORTED declaration', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/entries': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -510,9 +510,6 @@ describe('an IMPORTED declaration', () => {
           }),
         },
         llm: { client: llm.client },
-        files: {
-          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-        },
       }),
       dryRun: true,
     });
@@ -538,7 +535,7 @@ describe('an IMPORTED declaration', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/entries': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -547,9 +544,6 @@ describe('an IMPORTED declaration', () => {
           }),
         },
         llm: { client: llm.client },
-        files: {
-          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-        },
       }),
       dryRun: true,
     });
@@ -607,7 +601,7 @@ describe('an IMPORTED declaration', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/triage': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -616,7 +610,6 @@ describe('an IMPORTED declaration', () => {
           }),
         },
         llm: { client: llm.client },
-        files: { resolveFile: (path) => (path === 'lib/triage' ? { source: library } : undefined) },
       }),
       dryRun: true,
     });
@@ -679,7 +672,7 @@ describe('a spread of a declared structure, or of a record built in memory', () 
       source,
       event: webhookEvent('email', { subject: 'Acme', text: '' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/deals': { source: library } } },
       host: makeTestHost({
         writeSink: (w) => writes.push(w),
         adapters: {
@@ -689,7 +682,6 @@ describe('a spread of a declared structure, or of a record built in memory', () 
           }),
         },
         llm: { client: queuedMovementLlm([]).client },
-        files: { resolveFile: (path) => (path === 'lib/deals' ? { source: library } : undefined) },
       }),
       dryRun: true,
     });
@@ -840,7 +832,7 @@ describe('`node X extends Y` as an extraction shape', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/entries': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -849,9 +841,6 @@ describe('`node X extends Y` as an extraction shape', () => {
           }),
         },
         llm: { client: llm.client },
-        files: {
-          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-        },
       }),
       dryRun: true,
     });

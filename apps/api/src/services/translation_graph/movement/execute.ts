@@ -94,7 +94,7 @@ async function interpretMovementFiring(input: {
     ...(input.movementName !== undefined ? { movementName: input.movementName } : {}),
     event: input.event,
     teamId: input.teamId,
-    firedAt: input.firedAt,
+    firedAt: input.firedAt.toISOString(),
     // The deployment's cost cap, read once as the run starts.
     costCapMicrodollars: runCostCapFromEnv(),
     catalog: teamCatalog.snapshot,
@@ -508,7 +508,7 @@ async function resumeMovementFiringInContext(
       // The ORIGINAL firing's instant, read back off the run row by
       // `adoptOpsRun()` above: a run that waited a day on an answer still
       // computes the window it started with.
-      firedAt: recorder.firedAt,
+      firedAt: recorder.firedAt.toISOString(),
       // What the run spent before it parked, read back with its clock: the
       // cost cap is the run's, not the segment's — counted from the run's last
       // resume from a limit pause, which reset its usage. The cap is read
@@ -726,7 +726,7 @@ async function fireCallbackFiringInContext(
         teamId: input.teamId,
         // The run's original firing instant (see the resume path) — a callback
         // body belongs to the run that minted it, clock included.
-        firedAt: recorder.firedAt,
+        firedAt: recorder.firedAt.toISOString(),
         costCapMicrodollars: runCostCapFromEnv(),
         priorSpentMicrodollars: recorder.priorSpentMicrodollars,
         capBaselineMicrodollars: recorder.capBaselineMicrodollars,

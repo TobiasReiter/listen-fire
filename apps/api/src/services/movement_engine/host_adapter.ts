@@ -11,8 +11,9 @@
 // `AdapterCallCeilingReached` (which `onError` never forgives), anything else
 // is an ordinary failure carrying the host's message.
 
-import { iterateRelatedPages, type Adapter } from '../translation_graph/adapter';
 import type { AdapterCallMap, AdapterMethod, EngineHost, HostCallError, ResolvedAdapter } from './host';
+
+import { iterateRelatedPages, type Adapter } from '../translation_graph/adapter';
 
 /** Where a stand-in's calls go: the instance's id within its segment. */
 const HOST_INSTANCE = Symbol('host adapter instance');

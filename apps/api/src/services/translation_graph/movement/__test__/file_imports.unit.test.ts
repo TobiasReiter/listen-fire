@@ -250,6 +250,8 @@ const CONSUMER = [
 
 const FILES = new Map([['lib/file-routines', FILES_LIB]]);
 const resolveFile = resolverOverSources(FILES);
+/** The same library as the run's catalog snapshot carries it. */
+const SNAPSHOT_FILES = Object.fromEntries([...FILES].map(([path, source]) => [path, { source }]));
 
 // ── 1. Resolver closure ──────────────────────────────────────────────────────
 
@@ -320,7 +322,7 @@ describe('diagnoseMovementSource with resolved file imports', () => {
 
 // ── 3. Engine path — the §G two-file fixture RUNS ───────────────────────────
 
-describe('runMovement with resolveFile (the §G two-file fixture)', () => {
+describe('runMovement with the snapshot\'s files (the §G two-file fixture)', () => {
   it('an imported movement executes against its own library file scope', async () => {
     const email = makeFakeAdapter('email', {
       resources: [
@@ -343,13 +345,12 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: SNAPSHOT_FILES },
       credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
         },
-        files: { resolveFile },
       }),
     });
 
@@ -383,13 +384,12 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: SNAPSHOT_FILES },
       credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
         },
-        files: { resolveFile },
       }),
     });
     expect(dropbox.creates).toHaveLength(1);
@@ -435,16 +435,11 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/shaping': { source: `${FILES_LIB}\n\n${LIB}` } } },
       credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
-        },
-        files: {
-          resolveFile: resolverOverSources(
-            new Map([['lib/shaping', `${FILES_LIB}\n\n${LIB}`]]),
-          ),
         },
       }),
     });

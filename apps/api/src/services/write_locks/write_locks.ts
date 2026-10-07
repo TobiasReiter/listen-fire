@@ -5,6 +5,8 @@
 // advisory locks across processes (`postgres.ts`), and an in-process gate for
 // tests and single-process embeds.
 
+import type { HostLocks } from '../movement_engine/host';
+
 import { MovementEngineError } from '../movement_engine/errors';
 
 export const DEFAULT_WRITE_LOCK_TIMEOUT_MS = 60_000;
@@ -66,6 +68,64 @@ export interface WriteLockHolder {
 export interface WriteLocks {
   /** One holder per segment. `scope` is prefixed into every key (teamId). */
   holder(scope: string): WriteLockHolder;
+}
+
+/**
+ * The host's `locks` family over a `WriteLocks`: one holder per segment,
+ * opened at the segment's first acquire under the segment's team, and closed
+ * when the segment closes. Each acquire answers a token that releases exactly
+ * what it took, so an effect gives its names back when it is done.
+ */
+export interface SegmentWriteLocks extends HostLocks {
+  /** Remember the team a segment's holder is scoped to. */
+  opened(segmentId: string, teamId: string): void;
+  /** Close the segment's holder (letting go of anything still held). */
+  closed(segmentId: string): Promise<void>;
+}
+
+export function segmentWriteLocks(locks: WriteLocks): SegmentWriteLocks {
+  const teams = new Map<string, string>();
+  const holders = new Map<string, WriteLockHolder>();
+  const tokens = new Map<string, { segmentId: string; names: readonly string[] }>();
+  let next = 0;
+  const holderOf = (segmentId: string): WriteLockHolder => {
+    let holder = holders.get(segmentId);
+    if (holder === undefined) {
+      const team = teams.get(segmentId);
+      if (team === undefined) {
+        throw new MovementEngineError('MOVENG_RUNTIME', `write locks asked for segment '${segmentId}', which is not open`);
+      }
+      holder = locks.holder(team);
+      holders.set(segmentId, holder);
+    }
+    return holder;
+  };
+  return {
+    opened(segmentId, teamId) {
+      teams.set(segmentId, teamId);
+    },
+    async acquire({ segmentId, names }) {
+      await holderOf(segmentId).acquire(names);
+      const token = `${segmentId}#${++next}`;
+      tokens.set(token, { segmentId, names: [...names] });
+      return { token };
+    },
+    async release({ token }) {
+      const taken = tokens.get(token);
+      if (taken === undefined) {
+        throw new MovementEngineError('MOVENG_RUNTIME', `write lock token '${token}' is not held: released twice, or never acquired`);
+      }
+      tokens.delete(token);
+      await holders.get(taken.segmentId)?.release(taken.names);
+    },
+    async closed(segmentId) {
+      teams.delete(segmentId);
+      for (const [token, taken] of tokens) if (taken.segmentId === segmentId) tokens.delete(token);
+      const holder = holders.get(segmentId);
+      holders.delete(segmentId);
+      await holder?.release();
+    },
+  };
 }
 
 export function lockKey(scope: string, name: string): string {

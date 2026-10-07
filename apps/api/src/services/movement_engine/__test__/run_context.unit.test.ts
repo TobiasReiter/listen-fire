@@ -200,20 +200,32 @@ describe('priced host calls under the run budget', () => {
     expect(invoked).toEqual(['free']);
   });
 
-  it('the judge answers its index; its spend is charged', async () => {
+  it("the judge answers its index, and why it could not judge when it could not; its spend is charged", async () => {
     const host = makeTestHost({
       llm: { arbitrateEntities: async () => ({ index: 1, cost: [{ source: 'model:judge', microdollars: 300 }] }) },
     });
     const ledger = new RunLedger({});
-    const index = await pricedCalls(host, { ledger, plugins: {} }).arbitrateEntities({
+    const answer = await pricedCalls(host, { ledger, plugins: {} }).arbitrateEntities({
       asserted: {},
       candidates: [],
       recordType: 'company',
       constraints: { any: [] },
       languageVersion: 2,
     });
-    expect(index).toBe(1);
+    expect(answer).toEqual({ index: 1 });
     expect(ledger.spend.bySource).toEqual({ 'model:judge': 300 });
+
+    const unavailable = makeTestHost({
+      llm: { arbitrateEntities: async () => ({ index: null, judgeUnavailable: 'anthropic 529' }) },
+    });
+    const declined = await pricedCalls(unavailable, { ledger, plugins: {} }).arbitrateEntities({
+      asserted: {},
+      candidates: [],
+      recordType: 'company',
+      constraints: { any: [] },
+      languageVersion: 2,
+    });
+    expect(declined).toEqual({ index: null, judgeUnavailable: 'anthropic 529' });
   });
 });
 
@@ -242,15 +254,17 @@ describe("a segment's opening and closing", () => {
     expect(context.ledger.spend.bySource).toEqual({ 'model:adapter-match': 40 });
   });
 
-  it('a segment holds one lock holder for its team and releases it when it ends', async () => {
+  it("a segment's locks are taken by token, and whatever it still holds is let go when it ends", async () => {
     const locks = new InMemoryWriteLocks({ timeoutMs: 100 });
     const host = makeTestHost({ locks });
     const first = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 2, spend: {} });
-    await first.writeLockHolder.acquire(['record attio 1']);
+    await first.locks.acquire(['record attio 1']);
     await closeRunContext(first, host);
 
     const second = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 2, spend: {} });
-    await second.writeLockHolder.acquire(['record attio 1']);
+    const token = await second.locks.acquire(['record attio 1']);
+    await second.locks.release(token);
+    await expect(second.locks.release(token)).rejects.toThrow(/is not held/);
     await closeRunContext(second, host);
   });
 });
@@ -259,12 +273,20 @@ describe("a segment's opening and closing", () => {
 
 /** Locks that remember every name a holder took and how often a holder was
  *  released whole (its session closed), over the real in-memory gate. */
-function recordingLocks(): { locks: WriteLocks; taken: Set<string>; closed: () => number; inner: InMemoryWriteLocks } {
+function recordingLocks(): {
+  locks: WriteLocks;
+  taken: Set<string>;
+  opened: () => number;
+  closed: () => number;
+  inner: InMemoryWriteLocks;
+} {
   const inner = new InMemoryWriteLocks({ timeoutMs: 100 });
   const taken = new Set<string>();
+  let opened = 0;
   let closed = 0;
   const locks: WriteLocks = {
     holder(scope): WriteLockHolder {
+      opened += 1;
       const holder = inner.holder(scope);
       return {
         acquire: async (names) => {
@@ -278,7 +300,7 @@ function recordingLocks(): { locks: WriteLocks; taken: Set<string>; closed: () =
       };
     },
   };
-  return { locks, taken, closed: () => closed, inner };
+  return { locks, taken, opened: () => opened, closed: () => closed, inner };
 }
 
 const kgSchema: InstanceSchema = {
@@ -380,7 +402,7 @@ describe("a run's segment ends exactly once, however the run ends", () => {
     await next.release();
   });
 
-  it('a host segment that fails to open leaves no lock holder open', async () => {
+  it('a host segment that fails to open has taken no lock session', async () => {
     const recorded = recordingLocks();
     const host = makeTestHost({
       locks: recorded.locks,
@@ -393,7 +415,8 @@ describe("a run's segment ends exactly once, however the run ends", () => {
     await expect(openRunContext({ host, teamId: TEAM_ID, languageVersion: 2, spend: {} })).rejects.toThrow(
       'no segment today',
     );
-    expect(recorded.closed()).toBe(1);
+    // The host opens a segment's lock session at its first acquire.
+    expect(recorded.opened()).toBe(0);
   });
 
   it("a close that fails never replaces the run's own answer", async () => {

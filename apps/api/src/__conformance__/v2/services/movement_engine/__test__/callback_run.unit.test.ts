@@ -110,7 +110,7 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
     params: Array<{ name: string; type: string }>;
     state: ParkedScopeState;
     singleUse: boolean;
-    expiresAt?: Date;
+    expiresAt?: string;
   }> = [];
   let n = 0;
   const sink: CallbackSink = {
@@ -246,7 +246,7 @@ listen to runs {} fire m
     expect(callbacks.mints.map((m) => m.singleUse)).toEqual([true, false]);
     expect(callbacks.mints[0].expiresAt).toBeUndefined();
     // 2d out, give or take the test's own clock.
-    const ttl = callbacks.mints[1].expiresAt!.getTime() - Date.now();
+    const ttl = new Date(callbacks.mints[1].expiresAt!).getTime() - Date.now();
     expect(ttl).toBeGreaterThan(47 * 60 * 60 * 1000);
     expect(ttl).toBeLessThan(49 * 60 * 60 * 1000);
   });

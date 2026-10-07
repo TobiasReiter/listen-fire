@@ -139,6 +139,7 @@ import type {
 import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { EngineHost, RenderFile } from './host';
+import { hostInstanceOf } from './host_adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import {
   isStablePosition,
@@ -2003,11 +2004,15 @@ async function resolveMovementActingUserUncached(
   const sourceAdapter = ctx.source?.adapter;
   if (!event || meta.teamId === undefined) return null;
   if (!sourceAdapter?.getActorCandidates) return null;
+  // The host asks the source instance for the event's actors itself.
+  const source = hostInstanceOf(sourceAdapter);
+  if (source === undefined) return null;
   try {
     return await meta.resolveActingUser({
       teamId: meta.teamId,
       ...(event.triggerEntryId ? { triggerId: event.triggerEntryId } : {}),
-      getCandidates: () => sourceAdapter.getActorCandidates!({ event }),
+      ...source,
+      event,
     });
   } catch {
     // Flaky adapter lookups shouldn't crash the whole run — `@user_*`

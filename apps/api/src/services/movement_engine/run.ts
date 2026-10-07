@@ -59,8 +59,7 @@
 // `Adapter.linkRecords` seam (KG: edge-only insert mirroring parentLink;
 // Attio: reference-field set/append) — adapters without the capability
 // are rejected by name. E8 lifts file imports (movement libraries, §H):
-// the catalog snapshot's `files` (else the host's `files.resolveFile`) are
-// the one injection point — resolution
+// the catalog snapshot's `files` are the one injection point — resolution
 // lives in movement-lang (`checkProgramWithLink` validates and returns
 // the link), imported movements execute against their library's OWN file
 // environment (built once per path), imported shapes bind as
@@ -347,6 +346,7 @@ import {
 import {
   closeRunContext,
   openRunContext,
+  publishTrace,
   pricedCalls,
   type PricedCalls,
   type RunContext,
@@ -388,11 +388,11 @@ export interface RunMovementInput {
    * passes the run row's `started_at`, which a resume reads back unchanged, so
    * a run that parks for a day still computes the window it started with.
    *
-   * Absent ⇒ the interpreter pins `new Date()` once at construction: still one
-   * instant for the whole run, just not one that survives a park. Every path
-   * that can park supplies it.
+   * An ISO 8601 instant. Absent ⇒ the interpreter pins `new Date()` once at
+   * construction: still one instant for the whole run, just not one that
+   * survives a park. Every path that can park supplies it.
    */
-  firedAt?: Date;
+  firedAt?: string;
   /**
    * The most the run may spend on priced work (model calls, paid services,
    * priced plugins), in microdollars — the run host reads its deployment's cap
@@ -433,6 +433,15 @@ export interface RunMovementInput {
    *  its writes (into the host's write sink) rather than performing them. */
   dryRun?: boolean;
   /**
+   * Where to suspend the run's flows, by address: just before a statement, or
+   * just before the k-th call a statement makes (an address ending in that
+   * call's `c k` step). The first flow to reach a listed address parks there,
+   * once for the segment, to re-run the statement on resume. The cost cap needs none of this —
+   * the engine suspends on its own ledger; it is for a host that wants a run
+   * paused at a known point. Absent ⇒ nowhere.
+   */
+  suspendAt?: readonly string[];
+  /**
    * Imported credential name → its credential id
    * (`external_service_credentials.id`), as the run host read them with the
    * catalog snapshot. Ids never go into the snapshot itself. A name absent
@@ -447,15 +456,6 @@ export interface RunLimitPause {
   limit: 'cost';
   capMicrodollars: number;
   spentMicrodollars: number;
-}
-
-/** A place the engine may suspend a flow (`EngineHost.control.suspendWhen`):
- *  just before a statement, or just before the k-th call a statement makes
- *  (`address` ends in that call's `c k` step). Either way the flow parks at the
- *  STATEMENT and re-runs it on resume. */
-export interface SuspensionPoint {
-  kind: 'statement' | 'call';
-  address: string;
 }
 
 /**
@@ -481,7 +481,12 @@ export interface ParkSink {
    * minted — the wake driver resumes without a human answer. Idempotent on
    * `(run_id, address)`.
    */
-  commitTimerPark(input: { address: string; state: unknown; wakeAt: Date }): Promise<void>;
+  commitTimerPark(input: {
+    address: string;
+    state: unknown;
+    /** When to wake, as an ISO 8601 instant. */
+    wakeAt: string;
+  }): Promise<void>;
   /**
    * Record an AWAIT park (`await x-[:E]->` untilNonEmpty, asks-as-adapter §A):
    * a `parked_run` row with `park_reason='await'` + the serialized scope, then
@@ -685,6 +690,17 @@ export class MovementRunFailed extends Error {
  * raised before the interpreter starts (parse / check) are never wrapped and
  * pass straight back.
  */
+/** The run's pinned instant, from the ISO string it is handed. A string that
+ *  names no instant is refused: a clock that read "Invalid Date" would make
+ *  every date the run computes wrong without saying so. */
+function firedInstant(firedAt: string): Date {
+  const instant = new Date(firedAt);
+  if (Number.isNaN(instant.getTime())) {
+    throw new MovementEngineError('MOVENG_RUNTIME', `firedAt '${firedAt}' is not an ISO 8601 instant`);
+  }
+  return instant;
+}
+
 export function runFailureCause(error: unknown): unknown {
   return error instanceof MovementRunFailed ? error.cause : error;
 }
@@ -760,12 +776,12 @@ interface PreparedRun {
   link?: ProgramLink;
 }
 
-/** The resolver file imports read. The snapshot's own files win: they were
- *  captured with the catalog the program is checked against, so imports and
- *  instance schemas describe one moment of the workspace. The host's resolver
- *  serves a host that resolves imports dynamically and ships no files. */
+/** The resolver file imports read: the snapshot's own files, captured with
+ *  the catalog the program is checked against, so imports and instance
+ *  schemas describe one moment of the workspace. A snapshot with no files
+ *  resolves no import. */
 function fileResolverOf(input: RunMovementInput): ResolveFile | undefined {
-  return resolveFileFromSnapshot(input.catalog) ?? input.host.files.resolveFile;
+  return resolveFileFromSnapshot(input.catalog);
 }
 
 /** Parse + check the program, throwing the same MOVENG_PARSE / MOVENG_CHECK
@@ -2336,6 +2352,8 @@ class Interpreter {
    *  answers one id per instance, so an instance resolved twice is one
    *  adapter here too. */
   private readonly hostAdapters = new Map<string, Adapter>();
+  /** The `suspendAt` addresses not yet suspended at: each suspends once. */
+  private readonly pendingSuspensions: Set<string>;
   /** Rebuilt in run() for snapshot seeds, where the event envelope's
    *  adapterType is a placeholder and the source instance is canonical. */
   private mutationContext: MutationContext;
@@ -2449,16 +2467,17 @@ class Interpreter {
     this.catalog = prepared.catalog;
     this.context = prepared.context;
     this.priced = pricedCalls(input.host, { ledger: prepared.context.ledger, plugins: input.catalog.plugins });
-    this.effectLocks = new EffectLocks({ holder: prepared.context.writeLockHolder });
-    this.runTrace = input.host.trace ?? [];
+    this.effectLocks = new EffectLocks({ crossRun: prepared.context.locks });
+    this.runTrace = prepared.context.trace.entries;
     this.limitPaused = input.limitPaused === true;
+    this.pendingSuspensions = new Set(input.suspendAt ?? []);
     // A deprecated pin runs, and says so on the run's own record. (An
     // unsupported one never gets this far — parseAndCheck refused it.)
     const versionWarning = languageVersionDiagnostic(this.languageVersion);
     if (versionWarning !== undefined) {
       this.trace.push({ kind: 'warning', code: versionWarning.code, message: versionWarning.message });
     }
-    this.pinnedNow = input.firedAt ?? new Date();
+    this.pinnedNow = input.firedAt !== undefined ? firedInstant(input.firedAt) : new Date();
     // Every adapter is resolved for this segment, so it answers inside the
     // segment's host scope. What comes back is the instance as data; the
     // engine holds a stand-in that calls it through the host.
@@ -3869,7 +3888,7 @@ class Interpreter {
           if (!this.currentImports) {
             throw unsupported(
               `the file import "${statement.source.path}"`,
-              'this run has no file resolver — its catalog snapshot carries no files and its host provides no `files.resolveFile`',
+              'this run has no file resolver — its catalog snapshot carries no files',
             );
           }
           await this.declareFileImports(statement.names, statement.source.path, env);
@@ -4310,9 +4329,7 @@ class Interpreter {
         // A paused run (a limit met here or in another flow) stops each flow
         // between statements: the one it was running finished, the next waits.
         if (this.limitPaused && this.canSuspend()) await this.suspendFlow();
-        if (this.input.host.control.suspendWhen?.({ kind: 'statement', address: encodeAddress(stmtAddress) })) {
-          await this.suspendFlow();
-        }
+        if (this.pendingSuspensions.delete(encodeAddress(stmtAddress))) await this.suspendFlow();
         try {
           return await this.interpretStatement(statement, env, body, stmtAddress);
         } catch (error) {
@@ -4322,6 +4339,9 @@ class Interpreter {
           throw error;
         }
       });
+      // The host sees the trace as the run goes, a statement at a time. A flow
+      // keeps its own until it joins the run's, so only the run's is handed over.
+      if (this.flowFrames.getStore() === undefined) await publishTrace(this.context, this.input.host);
       if (outcome !== undefined) return outcome;
     }
     return FELL_THROUGH;
@@ -5300,14 +5320,7 @@ class Interpreter {
       site.calls.completed.set(index, replayed);
       return { site, index, replayed };
     }
-    if (
-      this.input.host.control.suspendWhen?.({
-        kind: 'call',
-        address: encodeAddress(childCall(site.stmtAddress, index)),
-      })
-    ) {
-      await this.suspendFlow();
-    }
+    if (this.pendingSuspensions.delete(encodeAddress(childCall(site.stmtAddress, index)))) await this.suspendFlow();
     site.calls.next += 1;
     return { site, index };
   }
@@ -5669,7 +5682,7 @@ class Interpreter {
       if (callee?.kind === 'opaque') {
         throw unsupported(
           `calling the import '${statement.callee}'`,
-          'this run has no file resolver — its catalog snapshot carries no files and its host provides no `files.resolveFile` (or declare the movement in this file)',
+          'this run has no file resolver — its catalog snapshot carries no files (or declare the movement in this file)',
         );
       }
       throw new MovementEngineError(
@@ -6039,7 +6052,7 @@ class Interpreter {
       ...(presenceBindingName !== undefined ? { presenceBind: true } : {}),
       scopeChain: serializeScopeChain(env.chainFromRoot(), park),
     }));
-    const wakeAt = new Date(Date.now() + durationToMs(sleep.duration.raw));
+    const wakeAt = new Date(Date.now() + durationToMs(sleep.duration.raw)).toISOString();
     await parkSink.commitTimerPark({ address, state, wakeAt });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -6158,9 +6171,9 @@ class Interpreter {
   private async callbackConfig(
     callback: CallbackExpression,
     env: Environment,
-  ): Promise<{ singleUse: boolean; expiresAt?: Date }> {
+  ): Promise<{ singleUse: boolean; expiresAt?: string }> {
     let singleUse = true;
-    let expiresAt: Date | undefined;
+    let expiresAt: string | undefined;
     for (const entry of callback.config) {
       switch (entry.name) {
         case 'once': {
@@ -6170,7 +6183,7 @@ class Interpreter {
         }
         case 'ttl':
           // Checker-validated duration literal, so the raw spelling parses.
-          expiresAt = new Date(Date.now() + durationToMs(entry.value.raw.trim()));
+          expiresAt = new Date(Date.now() + durationToMs(entry.value.raw.trim())).toISOString();
           break;
         default:
           throw new MovementEngineError(
@@ -6669,7 +6682,7 @@ class Interpreter {
     await parkSink.commitTimerPark({
       address,
       state,
-      wakeAt: new Date(Date.now() + everyMs),
+      wakeAt: new Date(Date.now() + everyMs).toISOString(),
     });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -8446,7 +8459,6 @@ class Interpreter {
             where: input.candidateWhere,
           })
         : predicateNarrowed;
-    let judgeUnavailable: string | undefined;
     // The rules settle most searches; only a real judgement costs the host a
     // model call.
     const decided = arbitrateWithoutJudge({
@@ -8455,18 +8467,15 @@ class Interpreter {
       constraints: input.constraints,
       languageVersion: this.languageVersion,
     });
-    const chosen =
+    const { index: chosen, judgeUnavailable } =
       decided !== undefined
-        ? decided
+        ? { index: decided, judgeUnavailable: undefined }
         : await this.priced.arbitrateEntities({
             asserted: input.asserted,
             candidates,
             recordType: input.recordType,
             constraints: input.constraints,
             languageVersion: this.languageVersion,
-            onJudgeUnavailable: (message) => {
-              judgeUnavailable = message;
-            },
           });
     // The index is into the list the arbiter saw — the narrowed one.
     return {

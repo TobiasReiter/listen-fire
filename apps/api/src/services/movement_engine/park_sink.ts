@@ -42,8 +42,9 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
     async commitTimerPark(input: {
       address: string;
       state: unknown;
-      wakeAt: Date;
+      wakeAt: string;
     }): Promise<void> {
+      const wakeAt = new Date(input.wakeAt);
       // A timer park (`sleep` statement): the run row must exist before its
       // FK-bearing parked_run. Idempotent ensureStarted.
       await recorder.ensureStarted();
@@ -58,19 +59,19 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
           address: input.address,
           status: 'parked',
           park_reason: 'timer',
-          wake_at: input.wakeAt,
+          wake_at: wakeAt,
           state: jsonb(input.state),
         })
         .onConflict((oc) =>
           oc.columns(['run_id', 'address']).doUpdateSet({
             state: jsonb(input.state),
             park_reason: 'timer',
-            wake_at: input.wakeAt,
+            wake_at: wakeAt,
           }),
         )
         .execute();
       // The parked_run row stays the truth; the work row only says when to look.
-      await armTimerWake({ runId, teamId: recorder.teamId, wakeAt: input.wakeAt });
+      await armTimerWake({ runId, teamId: recorder.teamId, wakeAt });
       await recorder.markParked();
       await settleIfCancelledDuringPark(runId);
     },

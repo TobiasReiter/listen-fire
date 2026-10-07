@@ -91,7 +91,7 @@ describe('commitTimerPark', () => {
     const sink = makeRecorderParkSink(makeStubRecorder({ teamId, runId }));
     const wakeAt = new Date(Date.now() + 60_000);
 
-    await sink.commitTimerPark({ address: 's1', state: { x: 1 }, wakeAt });
+    await sink.commitTimerPark({ address: 's1', state: { x: 1 }, wakeAt: wakeAt.toISOString() });
 
     const row = await getAutomationsQb(['parked_run'])
       .selectFrom('parked_run')
@@ -119,8 +119,8 @@ describe('commitTimerPark', () => {
     const wakeAt1 = new Date(Date.now() + 60_000);
     const wakeAt2 = new Date(Date.now() + 120_000);
 
-    await sink.commitTimerPark({ address: 's2', state: { original: true }, wakeAt: wakeAt1 });
-    await sink.commitTimerPark({ address: 's2', state: { updated: true }, wakeAt: wakeAt2 });
+    await sink.commitTimerPark({ address: 's2', state: { original: true }, wakeAt: wakeAt1.toISOString() });
+    await sink.commitTimerPark({ address: 's2', state: { updated: true }, wakeAt: wakeAt2.toISOString() });
 
     const rows = await getAutomationsQb(['parked_run'])
       .selectFrom('parked_run')

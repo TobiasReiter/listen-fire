@@ -7,8 +7,7 @@
 // fakes, and a piece a test did not provide fails loudly when the run reaches
 // it, never by quietly reaching a real system.
 
-import type { CatalogSnapshot, FileArtifactType, LanguageVersion, ResolveFile } from 'movement-lang';
-
+import type { CatalogSnapshot, FileArtifactType, LanguageVersion } from 'movement-lang';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { Budget, CostLine } from '../../lib/run_cost';
 import type {
@@ -24,16 +23,23 @@ import type { AwaitPoint, AwaitResolution } from '../translation_graph/awaitable
 import type { DryRunWriteSink } from '../translation_graph/engine/dry_run_adapter';
 import type { MethodName } from '../translation_graph/protocol/schema';
 import type { SourcePosition } from '../translation_graph/types';
+import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { LlmCallInput, LlmCallResult } from '../translation_graph/engine/batched_extraction';
-import type { EntityArbitration } from '../translation_graph/engine/entity_match';
-import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
-import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
+import type { ArbitrationAnswer, EntityArbitration } from '../translation_graph/engine/entity_match';
 import type { CallbackCall, CallbackParamSpec } from './callback_types';
 import type { MovementTraceEntry } from './expression';
 import type { FileTextResolution, TransformInvocationResult, TransformInvokeInput } from './extraction';
 import type { ExtractCallLlmInput, ExtractCallLlmResult } from './extraction_call';
-import type { CancelGate, ParkSink, SuspensionPoint } from './run';
+import type { CancelGate, ParkSink } from './run';
 import type { ParkedScopeState } from './serialize';
+
+import {
+  InMemoryWriteLocks,
+  segmentWriteLocks,
+  type SegmentWriteLocks,
+  type WriteLocks,
+} from '../write_locks/write_locks';
+import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
 
 // ── Priced calls ────────────────────────────────────────────────────────────
 //
@@ -236,9 +242,11 @@ export interface HostTransformInvoker {
 }
 
 /** Which candidate an identity search's write IS: the index into
- *  `candidates`, or null to create. Asked only when the rules alone cannot
- *  decide (`arbitrateWithoutJudge`), so it is the judge's model call. */
-export type ArbitrateEntities = (input: Priced<EntityArbitration>) => Promise<PricedAnswer<{ index: number | null }>>;
+ *  `candidates`, or null to create, with the judge's failure when it could
+ *  not be asked (`judgeUnavailable`, its message). Asked only when the rules
+ *  alone cannot decide (`arbitrateWithoutJudge`), so it is the judge's model
+ *  call. */
+export type ArbitrateEntities = (input: Priced<EntityArbitration>) => Promise<PricedAnswer<ArbitrationAnswer>>;
 
 /** A file's extracted TEXT (the knowledge-pipeline parity path). The host
  *  redeems the descriptor's bytes and runs the extractor (transcription and
@@ -316,8 +324,19 @@ export interface ResolveActingUserInput {
   /** The trigger the event dispatched through; absent when the event predates
    *  trigger-aware dispatch. */
   triggerId?: string;
-  /** The source adapter's parse of the event's actors — called only when the
-   *  trigger does not already decide the user. */
+  /** The source instance (as `adapters.resolve` answered it) whose parse of
+   *  the event's actors the host asks for — only when the trigger does not
+   *  already decide the user. */
+  segmentId: string;
+  instance: string;
+  event: TriggerEvent;
+}
+
+/** An acting-user lookup with the source's candidates as a call: what the
+ *  host's resolver works from, and what a test's lookup is handed. */
+export interface ActingUserLookup {
+  teamId: TeamId;
+  triggerId?: string;
   getCandidates: () => Promise<ActorCandidate[]>;
 }
 
@@ -332,7 +351,8 @@ export interface CallbackSink {
     params: CallbackParamSpec[];
     state: ParkedScopeState;
     singleUse: boolean;
-    expiresAt?: Date;
+    /** When it stops answering, as an ISO 8601 instant. Absent ⇒ never. */
+    expiresAt?: string;
   }): Promise<{ id: string; url: string }>;
   /** The LIVE call ledger — what `cb-[:Called]->` reads and what a re-entered
    *  `await cb-[:Called]->` re-checks. */
@@ -345,6 +365,12 @@ export interface AwaitWakeRequest {
   adapterType: string;
   teamId: TeamId;
   correlationKey: string;
+}
+
+/** Cross-run write locks, by segment. A token stands for one acquire. */
+export interface HostLocks {
+  acquire(input: { segmentId: string; names: readonly string[] }): Promise<{ token: string }>;
+  release(input: { token: string }): Promise<void>;
 }
 
 export interface EngineHost {
@@ -398,22 +424,8 @@ export interface EngineHost {
     /** Consulted at each statement and LLM-call boundary; a cancel stops the
      *  run there, never mid-write. */
     cancel: CancelGate;
-    /**
-     * Where the engine may suspend a flow of its own accord: asked before
-     * every statement and before every call a statement makes; `true` parks
-     * the flow just before the statement, to re-run it on resume. No
-     * production host supplies it (the cost cap suspends from the engine's
-     * own ledger); tests use it to suspend at a chosen point. Absent ⇒ never.
-     */
-    suspendWhen?: (point: SuspensionPoint) => boolean;
   };
   files: {
-    /** File-import resolution (movement libraries): the checker links imports
-     *  through it and the engine runs the linked result. Consulted only when
-     *  the run's catalog snapshot carries no `files` — the snapshot's files
-     *  were captured with its schemas, so they win. Neither ⇒ a file import
-     *  raises MOVENG_UNSUPPORTED. */
-    resolveFile?: ResolveFile;
     resolveFileText: ResolveFileText;
     render: RenderFile;
   };
@@ -426,14 +438,21 @@ export interface EngineHost {
      */
     resolveActingUser(input: ResolveActingUserInput): Promise<ActingUser | null>;
   };
-  /** The cross-run write locks each segment takes beneath its effect locks. */
-  locks: WriteLocks;
+  /** The cross-run write locks each segment's effects take beneath their
+   *  own: `acquire({ segmentId, names })` answers a token, `release({ token })`
+   *  gives back what that acquire took. The segment's lock session closes with
+   *  the segment. */
+  locks: HostLocks;
   /**
-   * The array the run appends its decision trace to, held by reference so a
-   * caller can read it while the run is still going. Absent ⇒ the run keeps
-   * its own, visible only on the result.
+   * Where the run's decision trace goes while the run is still going, so a
+   * caller can publish it before the run settles: the engine appends each
+   * statement's new entries once the statement is done, and what is left as
+   * the segment ends. The whole trace is on the run's result either way.
+   * Absent ⇒ the result only.
    */
-  trace?: MovementTraceEntry[];
+  trace?: {
+    append(input: { segmentId: string; entries: MovementTraceEntry[] }): Promise<void>;
+  };
 }
 
 /** What a test supplies: any piece of any group, the rest defaulted. */
@@ -450,8 +469,11 @@ export interface TestHostOverrides {
   park?: Partial<EngineHost['park']>;
   control?: Partial<EngineHost['control']>;
   files?: Partial<EngineHost['files']>;
-  lookup?: Partial<EngineHost['lookup']>;
+  /** The acting-user lookup, handed the source instance's candidates as a
+   *  call into the test's live adapter. */
+  lookup?: { resolveActingUser?: (input: ActingUserLookup) => Promise<ActingUser | null> };
   locks?: WriteLocks;
+  /** Where the run's trace is appended as it goes. */
   trace?: MovementTraceEntry[];
   /** Where the default `park.wake` records each wake the engine asks for. */
   wakes?: AwaitWakeRequest[];
@@ -494,14 +516,17 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     ...(adapters.classify !== undefined ? { classify: adapters.classify } : {}),
     ...(overrides.writeSink !== undefined ? { writeSink: overrides.writeSink } : {}),
   });
+  const locks = segmentWriteLocks(overrides.locks ?? new InMemoryWriteLocks());
+  const open = segment.open ?? (async () => ({ segmentId: `test-segment-${++segments}` }));
   const close = segment.close ?? (async () => ({}));
   return {
     segment: {
-      open: segment.open ?? (async () => ({ segmentId: `test-segment-${++segments}` })),
-      close: async (input) => {
-        table.closeSegment(input.segmentId);
-        return close(input);
+      open: async (input) => {
+        const opened = await open(input);
+        locks.opened(opened.segmentId, input.teamId);
+        return opened;
       },
+      close: async (input) => closeSegmentWith(input, { table, locks, close }),
     },
     adapters: { resolve: (input) => table.resolve(input), call: (input) => table.call(input) },
     llm: {
@@ -548,10 +573,8 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     },
     control: {
       cancel: control.cancel ?? NEVER_CANCELLED,
-      ...(control.suspendWhen !== undefined ? { suspendWhen: control.suspendWhen } : {}),
     },
     files: {
-      ...(files.resolveFile !== undefined ? { resolveFile: files.resolveFile } : {}),
       resolveFileText:
         files.resolveFileText ??
         (async () => {
@@ -560,11 +583,52 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
       render: files.render ?? renderIntoNowhere(),
     },
     lookup: {
-      resolveActingUser: lookup.resolveActingUser ?? (async () => null),
+      resolveActingUser: async ({ teamId, triggerId, segmentId, instance, event }) => {
+        const resolve = lookup.resolveActingUser;
+        if (resolve === undefined) return null;
+        return resolve({
+          teamId,
+          ...(triggerId !== undefined ? { triggerId } : {}),
+          getCandidates: () =>
+            table.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
+        });
+      },
     },
-    locks: overrides.locks ?? new InMemoryWriteLocks(),
-    trace: overrides.trace ?? [],
+    locks: { acquire: (input) => locks.acquire(input), release: (input) => locks.release(input) },
+    ...(overrides.trace !== undefined ? { trace: appendingInto(overrides.trace) } : {}),
   };
+}
+
+/** A host's `trace` family over an array a caller reads as the run goes. */
+export function appendingInto(trace: MovementTraceEntry[]): NonNullable<EngineHost['trace']> {
+  return {
+    append: async ({ entries }) => {
+      trace.push(...entries);
+    },
+  };
+}
+
+/** Close a segment's host half: forget its adapter instances, close its lock
+ *  session, then the segment itself. The segment closes even when its lock
+ *  session would not; that failure is raised after. */
+export async function closeSegmentWith(
+  input: { segmentId: string },
+  parts: {
+    table: { closeSegment(segmentId: string): void };
+    locks: SegmentWriteLocks;
+    close: EngineHost['segment']['close'];
+  },
+): Promise<{ cost?: CostLine[] }> {
+  parts.table.closeSegment(input.segmentId);
+  let lockFailure: unknown;
+  try {
+    await parts.locks.closed(input.segmentId);
+  } catch (error) {
+    lockFailure = error;
+  }
+  const answer = await parts.close(input);
+  if (lockFailure !== undefined) throw lockFailure;
+  return answer;
 }
 
 /** A test's run input `credentialIds`: each credential the catalog imports,
@@ -603,11 +667,11 @@ function renderIntoNowhere(): RenderFile {
  *  serialized, a `ParkedScopeState`. */
 export function makeFakeParkSink(): {
   sink: ParkSink;
-  timerParks: Array<{ address: string; state: unknown; wakeAt: Date }>;
+  timerParks: Array<{ address: string; state: unknown; wakeAt: string }>;
   awaitParks: Array<{ address: string; state: unknown }>;
   joins: Array<{ frameAddress: string; parkedChildren: number }>;
 } {
-  const timerParks: Array<{ address: string; state: unknown; wakeAt: Date }> = [];
+  const timerParks: Array<{ address: string; state: unknown; wakeAt: string }> = [];
   const awaitParks: Array<{ address: string; state: unknown }> = [];
   const joins: Array<{ frameAddress: string; parkedChildren: number }> = [];
   const sink: ParkSink = {

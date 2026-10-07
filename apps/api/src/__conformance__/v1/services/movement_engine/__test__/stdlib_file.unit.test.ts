@@ -473,7 +473,7 @@ describe('DATE.TODAY / DATETIME.AT through runMovement', () => {
       event: EVENT,
       teamId: TEAM_ID,
       catalog,
-      firedAt,
+      firedAt: firedAt.toISOString(),
       credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
