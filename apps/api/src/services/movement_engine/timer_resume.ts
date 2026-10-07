@@ -32,7 +32,7 @@ import { SECOND } from '../../constants';
 import { getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
-import { settleCancelledRun, settleUnresumableRun } from '../interaction/run_failure';
+import { settleCancelledRun, settleStampedParkedRuns, settleUnresumableRun } from '../interaction/run_failure';
 import { runningSegment } from '../translation_graph/runs/trigger_run';
 import { claimParkedLeaf, finishResumedLeaf, ORPHAN_AFTER, withRunLease, type HeldRunLease } from './run_lease';
 import { neverAsAny } from '../../lib/utils/types';
@@ -149,12 +149,13 @@ async function recheckLiveRunLater(input: { runId: TriggerRunId; now: Date }): P
   });
 }
 
-/** The periodic `timer_sweep`: the cancel-race closure, then re-arms any timer
- *  park that has no work row (parked before work rows existed, or whose enqueue
- *  failed after its parked_run was written). */
+/** The periodic `timer_sweep`: the cancel-race closure for every parked run
+ *  (whatever it is parked on), then re-arms any timer park that has no work
+ *  row (parked before work rows existed, or whose enqueue failed after its
+ *  parked_run was written). */
 export const settleCancelledTimersHandler: WorkHandler = {
   async run() {
-    await settleStampedTimerParkedRuns();
+    await settleStampedParkedRuns();
     await armUnarmedTimerParks();
   },
 };
@@ -216,36 +217,6 @@ async function armUnarmedTimerParks(): Promise<void> {
   for (const run of runs) {
     if (!run.wakeAt || leasedKeys.has(timerWorkKey(run.runId))) continue;
     await armTimerWake({ runId: run.runId, teamId: run.teamId, wakeAt: new Date(run.wakeAt) });
-  }
-}
-
-/**
- * The stamped-but-still-parked set: every distinct run holding a live timer
- * park that also carries a `cancel_requested_at` stamp. Settling here (rather
- * than waiting for the run's wake) is the race closure: a timer may be hours
- * away, and a cancelled run must not sit parked until then.
- */
-export async function settleStampedTimerParkedRuns(): Promise<void> {
-  const rows = await getAutomationsQb(['trigger_run', 'parked_run'])
-    .selectFrom('trigger_run')
-    .innerJoin('parked_run', 'parked_run.run_id', 'trigger_run.id')
-    .where('parked_run.park_reason', '=', 'timer')
-    .where('parked_run.status', '=', 'parked')
-    .where('trigger_run.cancel_requested_at', 'is not', null)
-    .select('trigger_run.id as run_id')
-    .distinct()
-    .execute();
-  for (const row of rows) {
-    try {
-      // Under the run's lease; a run another instance is stepping is that
-      // holder's to settle (its cancel gate sees the stamp), or the next pass's.
-      await withRunLease(row.run_id, () => settleCancelledRun(row.run_id));
-    } catch (err) {
-      logger.error('[TimerResume] settle-cancelled failed', {
-        runId: row.run_id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
   }
 }
 

@@ -1,4 +1,4 @@
-import { sql } from 'kysely';
+import { sql, type QueryExecutorProvider } from 'kysely';
 
 import type { Work } from '../../generated/kysely/automations/Work';
 
@@ -57,7 +57,12 @@ export interface EnqueueWorkInput {
  *  NEW due_at and payload win: a re-arm during the run, which completeWork then
  *  honours. Against an unleased row the EARLIEST due_at wins with the new payload
  *  (several leaves of one run share a key). */
-export async function enqueueWork(input: EnqueueWorkInput): Promise<void> {
+export async function enqueueWork(
+  input: EnqueueWorkInput,
+  /** Enqueue inside a caller's transaction, so the row commits with whatever
+   *  it is the work of. */
+  opts: { db?: QueryExecutorProvider } = {},
+): Promise<void> {
   const dueAt = input.dueAt ?? new Date();
   await sql`
     INSERT INTO automations.work (kind, key, team_id, payload, due_at, updated_at)
@@ -66,7 +71,7 @@ export async function enqueueWork(input: EnqueueWorkInput): Promise<void> {
       SET due_at = CASE WHEN work.lease_until > now() THEN EXCLUDED.due_at ELSE LEAST(work.due_at, EXCLUDED.due_at) END,
           payload = EXCLUDED.payload,
           team_id = COALESCE(EXCLUDED.team_id, work.team_id),
-          updated_at = ${nextVersion('work')}`.execute(getAutomationsQb(['work']));
+          updated_at = ${nextVersion('work')}`.execute(opts.db ?? getAutomationsQb(['work']));
 }
 
 /** Upsert a self-rescheduling row (interval_ms set). Idempotent; call at boot. */

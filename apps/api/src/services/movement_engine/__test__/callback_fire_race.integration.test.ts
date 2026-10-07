@@ -43,6 +43,7 @@ import { getCallback, mintCallback, revokeRunCallbacks } from '../callback_store
 import { claimRunLease, releaseRunLease } from '../run_lease';
 import { registerCallbackFireWork } from '../callback_fire';
 import { drainWork, resetWorkHandlersForTests } from '../../work/drain';
+import * as workStore from '../../work/store';
 import { enqueueWork } from '../../work/store';
 
 const SOURCE = 'go = manual()';
@@ -223,6 +224,27 @@ describe('a fired callback body runs once per recorded call, even under a mid-bo
     expect((await getCallback(callbackId))?.calls).toHaveLength(1);
   });
 
+  it('a call whose body row cannot be written is not recorded: the claim rolls back, and a retry records it', async () => {
+    const { callbackId } = await seedFiredRun();
+    fireCallbackFiringMock.mockResolvedValue({ result: { movementName: 'book_it' } });
+    const enqueue = jest.spyOn(workStore, 'enqueueWork').mockRejectedValueOnce(new Error('test: the insert failed'));
+
+    await expect(
+      fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20', awaitExecution: true }),
+    ).rejects.toThrow('test: the insert failed');
+    const untouched = await getCallback(callbackId);
+    expect(untouched?.status).toBe('live');
+    expect(untouched?.calls).toEqual([]);
+    expect(fireCallbackFiringMock).not.toHaveBeenCalled();
+
+    // The single-use callback was not consumed, so the tapper's retry lands.
+    const retried = await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20', awaitExecution: true });
+    expect(retried.kind).toBe('recorded');
+    expect((await getCallback(callbackId))?.calls).toHaveLength(1);
+    expect(fireCallbackFiringMock).toHaveBeenCalledTimes(1);
+    enqueue.mockRestore();
+  });
+
   it('a recorded call queues a delayed wake for its awaiters, which outlives this process', async () => {
     const { callbackId } = await seedFiredRun();
     fireCallbackFiringMock.mockResolvedValue({ result: { movementName: 'book_it' } });
@@ -292,10 +314,13 @@ describe('two processes fire one run at once', () => {
     const answered = await Promise.race([here, there]);
     expect(answered).toMatchObject({ kind: 'recorded', queued: true });
     expect(bodies).toHaveLength(1);
+    // Each call's body row was written with its claim: the running body's is
+    // due only as a backstop, the waiting one's at once.
     const queuedRows = await getAutomationsQb(['work'])
       .selectFrom('work')
       .where('kind', '=', 'fire_callback')
       .where('team_id', '=', teamId)
+      .where('due_at', '<=', new Date())
       .select(['key', 'payload'])
       .execute();
     expect(queuedRows).toHaveLength(1);
@@ -323,9 +348,10 @@ describe('two processes fire one run at once', () => {
       .where('team_id', '=', teamId)
       .execute();
     const freed = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
-    // A deferred row's re-claim is its second attempt (the backoff counts them).
-    expect(freed).toMatchObject({ claimed: 1, failed: 0, deferred: 0 });
-    expect(freed.ran + freed.recovered).toBe(1);
+    // Both calls' rows: the waiting body runs; the one that already ran finds
+    // its body started and does nothing.
+    expect(freed).toMatchObject({ claimed: 2, failed: 0, deferred: 0 });
+    expect(freed.ran + freed.recovered).toBe(2);
     // Two calls on the ledger, two bodies, each at its own call's frame.
     expect((await getCallback(callbackId))?.calls).toHaveLength(2);
     expect([...bodies].sort()).toEqual([0, 1]);

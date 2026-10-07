@@ -14,6 +14,7 @@ import { dropAwaitCorrelationsForRun } from '../translation_graph/adapters/await
 import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
 import { revokeRunCallbacks } from '../movement_engine/callback_store';
 import { withRunLease } from '../movement_engine/run_lease';
+import { logger } from '../logger';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 
 /**
@@ -103,6 +104,39 @@ export async function settleRunsParkedOnTriggers(input: {
     );
     if (settled.kind === 'busy') {
       await stampCancelRequested(run.id, { reason: input.reason, statuses: ['running', 'parked'] });
+    }
+  }
+}
+
+/**
+ * The cancel-race closure for parked runs: every run that still holds a
+ * parked leaf and carries a `cancel_requested_at` stamp, whatever the leaf is
+ * parked on (a timer, an await, a limit). A cancel is stamped rather than
+ * settled when another entry holds the run; that entry's cancel gate, or its
+ * park sink's tail check, normally settles it. A resume that finished without
+ * reaching either (it completed its branch before the gate read the stamp,
+ * and parked nothing new) leaves the run parked on its other leaves with the
+ * stamp unread. Settling here bounds that to one sweep, rather than waiting
+ * for a wake that may be hours away or never come.
+ */
+export async function settleStampedParkedRuns(): Promise<void> {
+  const rows = await getAutomationsQb(['trigger_run', 'parked_run'])
+    .selectFrom('trigger_run')
+    .innerJoin('parked_run', 'parked_run.run_id', 'trigger_run.id')
+    .where('trigger_run.cancel_requested_at', 'is not', null)
+    .select('trigger_run.id as run_id')
+    .distinct()
+    .execute();
+  for (const row of rows) {
+    try {
+      // Under the run's lease; a run another instance is stepping is that
+      // holder's to settle (its cancel gate sees the stamp), or the next pass's.
+      await withRunLease(row.run_id, () => settleCancelledRun(row.run_id));
+    } catch (err) {
+      logger.error('[RunFailure] settling a stamped parked run failed', {
+        runId: row.run_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 }

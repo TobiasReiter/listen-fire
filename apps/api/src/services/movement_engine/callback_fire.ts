@@ -4,17 +4,20 @@
 // after-effects); recognition and execution converge here.
 //
 // CAPTURE, RESPOND, THEN RUN. `fireCallback` validates + CLAIMS synchronously
-// so the caller gets a true outcome to ack with, and returns. Execution — the
-// body segment and the wake of whoever awaits `Called` — happens OFF-REQUEST,
-// under the run's lease (taken before the ack) and the SAME per-run
-// single-flight slot the await-resume worker uses, so a fire and a resume of
-// one run never overlap, in this process or across processes. A run another
-// process is stepping queues the body as a `fire_callback` row instead, which
-// runs it once the run is free.
+// so the caller gets a true outcome to ack with, and returns. The claim writes
+// the call's `fire_callback` row in the same transaction, so a recorded call's
+// body is never lost. Execution — the body segment and the wake of whoever
+// awaits `Called` — happens OFF-REQUEST, under the run's lease (taken before
+// the ack) and the SAME per-run single-flight slot the await-resume worker
+// uses, so a fire and a resume of one run never overlap, in this process or
+// across processes. A run another process is stepping leaves the body to its
+// row, made due at once, which runs it once the run is free; a row whose body
+// already started does nothing.
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
 
+import type { Kysely, QueryExecutorProvider } from 'kysely';
 import { z } from 'zod';
 
 import { getQb, getAutomationsQb } from '../../lib/kysely';
@@ -82,7 +85,20 @@ export async function fireCallback(input: {
     return { kind: 'mismatch', callback: existing, message: coerced.message };
   }
 
-  const claim = await claimCallbackFire({ id: input.id, values: coerced.values });
+  // The claim and its body's work row commit together: once a call is on the
+  // ledger, its body is durable work, whatever this process does next. The
+  // row is due only once the body would long since have run here; the queued
+  // row that finds the body started does nothing.
+  const claim = await inTransaction(getAutomationsQb(['callback']), async (trx) => {
+    const claimed = await claimCallbackFire({ id: input.id, values: coerced.values }, { db: trx });
+    if (claimed.kind === 'recorded') {
+      await queueCallbackBody(
+        { callback: claimed.callback, callIndex: claimed.callback.calls.length - 1 },
+        { dueAt: new Date(Date.now() + CALLBACK_BACKSTOP_MS), db: trx },
+      );
+    }
+    return claimed;
+  });
   switch (claim.kind) {
     case 'not_found':
       return { kind: 'not_found' };
@@ -91,15 +107,14 @@ export async function fireCallback(input: {
     case 'expired':
       return { kind: 'expired', callback: claim.callback };
     case 'recorded': {
-      // The ledger already carries this call, so an awaiter woken at any point
-      // from here on sees it. The index is the body's own address frame.
+      // The ledger already carries this call, so an awaiter woken once its
+      // body has started sees it. The index is the body's own address frame.
+      // Nothing from here on may refuse the tap: the call is recorded and its
+      // body is queued, so a failure only delays the body to its row.
       const callIndex = claim.callback.calls.length - 1;
       await queueWakeBackstop(claim.callback);
-      const lease = await takeRunLease(claim.callback.runId);
-      if (lease === null) {
-        await queueCallbackFire({ callback: claim.callback, callIndex });
-        return { kind: 'recorded', callback: claim.callback, queued: true };
-      }
+      const lease = await takeLeaseOrQueue(claim.callback, callIndex);
+      if (lease === null) return { kind: 'recorded', callback: claim.callback, queued: true };
       // EXCLUSIVE, never coalesced: this body belongs to THIS recorded call. The
       // slot's coalescing entry replays its task whenever an arrival lands
       // mid-flight (that is what makes the await drain re-gather), and a replayed
@@ -120,27 +135,61 @@ export async function fireCallback(input: {
   }
 }
 
+/** `fn` inside a transaction: the caller's own when it is already in one,
+ *  else a fresh one. */
+async function inTransaction<DB, T>(db: Kysely<DB>, fn: (trx: Kysely<DB>) => Promise<T>): Promise<T> {
+  return db.isTransaction ? fn(db) : db.transaction().execute(fn);
+}
+
+/** The run's lease for the body to run under now, or null when the body
+ *  waits for its row: the run is held elsewhere (the row is made due at
+ *  once), or the lease could not be asked for (the row runs at its backstop
+ *  time). */
+async function takeLeaseOrQueue(callback: CallbackRecord, callIndex: number): Promise<HeldRunLease | null> {
+  try {
+    const lease = await takeRunLease(callback.runId);
+    if (lease === null) {
+      await queueCallbackBody({ callback, callIndex }, { dueAt: new Date() });
+      notifyWork();
+    }
+    return lease;
+  } catch (err) {
+    logger.error('[Callback] could not start the body now; its queued row will run it', {
+      callbackId: callback.id,
+      callIndex,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 const fireCallbackPayloadSchema = z.object({
   callbackId: z.string(),
   teamId: z.string(),
   callIndex: z.number().int().nonnegative(),
 });
 
-/** Queue one recorded call's body for when the run is free. Keyed by the call,
- *  so a call is queued once however often this is reached. */
-async function queueCallbackFire(input: { callback: CallbackRecord; callIndex: number }): Promise<void> {
+/** One recorded call's body as a work row, keyed by the call, so a call is
+ *  queued once however often this is reached; an earlier due time wins. */
+async function queueCallbackBody(
+  input: { callback: CallbackRecord; callIndex: number },
+  opts: { dueAt: Date; db?: QueryExecutorProvider },
+): Promise<void> {
   const payload: z.infer<typeof fireCallbackPayloadSchema> = {
     callbackId: input.callback.id,
     teamId: input.callback.teamId,
     callIndex: input.callIndex,
   };
-  await enqueueWork({
-    kind: 'fire_callback',
-    key: `fire_callback:${input.callback.id}:${input.callIndex}`,
-    teamId: input.callback.teamId,
-    payload,
-  });
-  notifyWork();
+  await enqueueWork(
+    {
+      kind: 'fire_callback',
+      key: `fire_callback:${input.callback.id}:${input.callIndex}`,
+      teamId: input.callback.teamId,
+      payload,
+      dueAt: opts.dueAt,
+    },
+    opts.db !== undefined ? { db: opts.db } : {},
+  );
 }
 
 /** Why a queued body must not run now, or null when it may: the door's own
@@ -193,10 +242,11 @@ export function registerCallbackFireWork(): void {
   registerWorkHandler('fire_callback', fireCallbackHandler);
 }
 
-/** How long after a fire the durable wake runs. The body and the prompt wake
- *  run in this process right after the claim; this row only matters if the
- *  process dies before they finish, so it waits well past a normal body. */
-const CALLBACK_WAKE_BACKSTOP_MS = 30 * SECOND;
+/** How long after a fire its durable rows (the body's, the wake's) come due.
+ *  The body and the prompt wake run in this process right after the claim;
+ *  these rows only matter if the process dies before they finish, so they wait
+ *  well past a normal body. */
+const CALLBACK_BACKSTOP_MS = 30 * SECOND;
 
 /**
  * Queue the durable half of the wake before the body starts. The prompt wake
@@ -212,7 +262,7 @@ async function queueWakeBackstop(callback: CallbackRecord): Promise<void> {
       { adapterType: CALLBACK_AWAIT_TYPE, teamId: callback.teamId, correlationKey: callback.id },
       {
         coalesceKey: `callback_backstop:${callback.id}`,
-        dueAt: new Date(Date.now() + CALLBACK_WAKE_BACKSTOP_MS),
+        dueAt: new Date(Date.now() + CALLBACK_BACKSTOP_MS),
       },
     );
   } catch (err) {

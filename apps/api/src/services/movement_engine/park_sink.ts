@@ -322,16 +322,11 @@ async function cancelRaceSubtrees(
  * termination via `settleCancelledRun`, which deletes the parked_run row(s) it
  * just wrote along with everything else. Ordering matters the OTHER way too: a
  * crash between the park-write and this check leaves a genuinely parked run
- * carrying a stamp with nobody having settled it. That gap's closure is NOT
- * symmetric across park kinds: the timer-resume driver sweeps every stamped run
- * on EVERY scan tick regardless of whether anything else is happening
- * (`settleStampedTimerParkedRuns`), so a timer park's crash-window stamp is
- * bounded — caught within one scan interval. An `ask` park has no such sweep:
- * its cancel check
- * (`resume.ts`'s `resumeRun`) only runs for runs with an ANSWERED request, so
- * a crash-window stamp on an ask sits uncaught until an answer actually
- * arrives — indefinitely, if it never does. Best-effort: never let a settle
- * failure break the park path.
+ * carrying a stamp with nobody having settled it. The periodic sweep
+ * (`settleStampedParkedRuns`) closes that gap for every park reason, a timer,
+ * an await and a limit alike: it settles every stamped run that still holds a
+ * parked leaf, within one sweep interval.
+ * Best-effort: never let a settle failure break the park path.
  */
 async function settleIfCancelledDuringPark(runId: TriggerRunId): Promise<void> {
   try {
