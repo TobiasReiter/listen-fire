@@ -8,7 +8,8 @@
     "lib": [
       "es2022",
       "DOM",
-      "ESNext.Promise" // https://github.com/mozilla/pdf.js/issues/17932#issuecomment-2051120892 to avoid error TS2304: Cannot find name 'PromiseWithResolvers'.
+      "ESNext.Promise", // https://github.com/mozilla/pdf.js/issues/17932#issuecomment-2051120892 to avoid error TS2304: Cannot find name 'PromiseWithResolvers'.
+      "ESNext.String" // String.prototype.isWellFormed (Node 20+)
     ],
     "module": "commonjs",
     "moduleResolution": "node",

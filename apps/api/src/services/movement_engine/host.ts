@@ -515,6 +515,37 @@ type Exactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Holds<T extends true> = T;
 export type ManifestIsTheHost = Holds<Exactly<ManifestPath, HostMethodPath>>;
 
+/** The methods whose answer is nothing: over a wire their reply carries no
+ *  value, and every other method's reply must. */
+export const VOID_HOST_METHODS = [
+  'park.sink.recordJoin',
+  'park.sink.commitTimerPark',
+  'park.sink.commitAwaitPark',
+  'park.sink.persistBranchExport',
+  'park.sink.cancelSubtrees',
+  'park.sink.commitSuspension',
+  'park.sink.commitLimitPause',
+  'park.wake',
+  'park.bindings.record',
+  'park.bindings.delete',
+  'locks.release',
+  'trace.append',
+] as const;
+
+type VoidMethodPaths<T, Prefix extends string> = {
+  [K in keyof T & string]-?: NonNullable<T[K]> extends (...args: never[]) => infer R
+    ? [Awaited<R>] extends [void]
+      ? `${Prefix}${K}`
+      : never
+    : VoidMethodPaths<NonNullable<T[K]>, `${Prefix}${K}.`>;
+}[keyof T & string];
+
+// The void list names exactly the methods `EngineHost` declares as answering
+// nothing.
+export type VoidListIsTheHost = Holds<
+  Exactly<(typeof VOID_HOST_METHODS)[number], VoidMethodPaths<EngineHost, ''>>
+>;
+
 /** Each method's path (`park.sink.recordJoin`), from the manifest. */
 export function hostMethodPaths(): string[] {
   return Object.entries(HOST_FAMILIES).flatMap(([family, { methods }]) => methods.map((method) => `${family}.${method}`));

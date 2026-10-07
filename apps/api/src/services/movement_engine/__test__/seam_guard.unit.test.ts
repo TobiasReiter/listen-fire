@@ -698,6 +698,8 @@ describe('the engine/host seam carries data', () => {
 // (`HOST_FAMILIES`) is what the doc and this test agree the host is, and the
 // runs below reach every method on it.
 
+/** Each method path the family suite's runs reached; only that suite's
+ *  runs add to it, and only that suite asserts it. */
 const REACHED = new Set<string>();
 const ROUND_TRIP_TEAM = '00000000-0000-0000-0000-000000000046' as TeamId;
 
@@ -975,6 +977,8 @@ describe('the round trip', () => {
       [BigInt(1), 'a BigInt'],
       [Number.NaN, 'NaN'],
       [Number.POSITIVE_INFINITY, 'Infinity'],
+      [-0, '-0'],
+      ['half a pair \uD83D', 'a string with a lone surrogate'],
     ];
     for (const [value, what] of refused) {
       const host = roundTripHost(
@@ -1006,6 +1010,39 @@ describe('the round trip', () => {
     );
     // An undefined field is an absent one on the far side.
     expect(notJsonAt({ a: undefined, b: [null, { c: 'x' }] }, 'value')).toBeUndefined();
+    // A value that contains itself is named, not recursed into; the same
+    // object twice side by side is no cycle.
+    const loop: Record<string, unknown> = { name: 'loop' };
+    loop.inner = { back: loop };
+    expect(notJsonAt({ loop }, 'answer')).toEqual({
+      path: 'answer.loop.inner.back',
+      what: 'a cycle back to answer.loop',
+    });
+    const shared = { x: 1 };
+    expect(notJsonAt({ a: shared, b: shared }, 'answer')).toBeUndefined();
+    expect(notJsonAt('a whole pair \uD83D\uDE00', 'answer')).toBeUndefined();
+  });
+
+  it('only a void method may answer nothing', async () => {
+    const silent = roundTripHost({
+      ...makeTestHost(),
+      lookup: { resolveActingUser: async () => undefined as never },
+    });
+    await expect(silent.lookup.resolveActingUser({} as never)).rejects.toThrow(
+      'lookup.resolveActingUser: answer is undefined',
+    );
+    const chatty = roundTripHost({
+      ...makeTestHost(),
+      locks: { ...makeTestHost().locks, release: async () => ({ released: true }) as never },
+    });
+    await expect(chatty.locks.release({ token: 't' })).rejects.toThrow(
+      'locks.release: answer is a value from a void method',
+    );
+    const quiet = roundTripHost({
+      ...makeTestHost(),
+      locks: { ...makeTestHost().locks, release: async () => {} },
+    });
+    await expect(quiet.locks.release({ token: 't' })).resolves.toBeUndefined();
   });
 
   it('wraps every method of every family, which are the manifest’s', () => {
@@ -1030,7 +1067,19 @@ describe('the round trip', () => {
 });
 
 describe('every family crosses as JSON', () => {
-  it('models and plugins: AI(), extract(…), a plugin, and the judge', async () => {
+  // The manifest check below holds only over a whole run of this suite: a
+  // filtered run (`-t`) reaches a subset, which proves nothing either way.
+  const declared = new Set<string>();
+  const ran = new Set<string>();
+  const familyRun = (name: string, fn: () => Promise<void>): void => {
+    declared.add(name);
+    it(name, async () => {
+      ran.add(name);
+      await fn();
+    });
+  };
+
+  familyRun('models and plugins: AI(), extract(…), a plugin, and the judge', async () => {
     const h = roundTrip(
       [
         '  page = fetch_url(url: m.`text`)',
@@ -1079,7 +1128,7 @@ describe('every family crosses as JSON', () => {
     ]);
   });
 
-  it('bindings: a bound counterpart found, gone, forgotten and rebound', async () => {
+  familyRun('bindings: a bound counterpart found, gone, forgotten and rebound', async () => {
     const recorded: unknown[] = [];
     const h = roundTrip(
       [
@@ -1116,7 +1165,7 @@ describe('every family crosses as JSON', () => {
     expect(recorded).toHaveLength(1);
   });
 
-  it('parks: a callback and its ledger, a parallel join, a race settled', async () => {
+  familyRun('parks: a callback and its ledger, a parallel join, a race settled', async () => {
     const parks = joiningParkSink();
     const h = roundTrip(
       [
@@ -1163,7 +1212,7 @@ describe('every family crosses as JSON', () => {
     expect(parks.cancelled.length).toBeGreaterThan(0);
   });
 
-  it('a limit pause: a priced call refused past the budget suspends the run', async () => {
+  familyRun('a limit pause: a priced call refused past the budget suspends the run', async () => {
     const parks = joiningParkSink();
     let invocations = 0;
     const h = roundTrip(
@@ -1195,7 +1244,7 @@ describe('every family crosses as JSON', () => {
     expect([...parks.parks.values()].map((p) => p.kind)).toEqual(['suspension']);
   });
 
-  it('an await: the awaitable checked, parked, re-checked and woken', async () => {
+  familyRun('an await: the awaitable checked, parked, re-checked and woken', async () => {
     const { sink } = joiningParkSink();
     const wakes: AwaitWakeRequest[] = [];
     const result = await runAwaiting({
@@ -1219,7 +1268,7 @@ describe('every family crosses as JSON', () => {
     ]);
   });
 
-  it('adapters, the lookup, locks and the trace: a paged traversal, an identity write, the acting user', async () => {
+  familyRun('adapters, the lookup, locks and the trace: a paged traversal, an identity write, the acting user', async () => {
     const inbox = pagedInbox();
     const trace: MovementTraceEntry[] = [];
     const h = roundTrip(
@@ -1248,7 +1297,7 @@ describe('every family crosses as JSON', () => {
     expect(trace).toEqual(result.trace);
   });
 
-  it('an adapter failure: its message, name and detail, as data', async () => {
+  familyRun('an adapter failure: its message, name and detail, as data', async () => {
     class CrmApiError extends Error {
       readonly status = 409;
       readonly code = 'conflict';
@@ -1269,7 +1318,7 @@ describe('every family crosses as JSON', () => {
     });
   });
 
-  it('the call ceiling: answered as data, raised as the engine’s own', async () => {
+  familyRun('the call ceiling: answered as data, raised as the engine’s own', async () => {
     const h = roundTrip(['  write crm-[:notes]-> { title: "x" }'], {
       crm: fakeCrm({ createFails: new Error('ceiling') }),
       adapters: {
@@ -1285,7 +1334,7 @@ describe('every family crosses as JSON', () => {
     });
   });
 
-  it('files: a FILE() rendered and READ', async () => {
+  familyRun('files: a FILE() rendered and READ', async () => {
     const h = roundTrip(
       [
         '  f = FILE("the digest", "text")',
@@ -1300,6 +1349,8 @@ describe('every family crosses as JSON', () => {
   });
 
   it('reached every method on the manifest', () => {
+    const skipped = [...declared].filter((name) => !ran.has(name));
+    if (skipped.length > 0) return;
     expect([...REACHED].sort()).toEqual(hostMethodPaths().sort());
   });
 });
