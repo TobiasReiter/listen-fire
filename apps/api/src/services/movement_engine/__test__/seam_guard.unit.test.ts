@@ -11,18 +11,54 @@
 import { builtinModules } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+
 import ts from 'typescript';
+import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { Adapter } from '../../translation_graph/adapter';
-import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
+import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
+import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { MovementTraceEntry } from '../expression';
+import type { ParkedScopeState } from '../serialize';
 
-import type { AwaitWakeRequest, EngineHost, RenderFile, ResolveFileText } from '../host';
-import { makeFakeParkSink, makeTestHost } from '../test_host';
-import { runMovement, type ParkSink } from '../run';
+import {
+  iterateRelatedPages,
+  containerAssociation,
+  type Adapter,
+  type ExternalRecordRef,
+  type GetRelatedInput,
+  type RelatedPage,
+  type RelatedResult,
+} from '../../translation_graph/adapter';
+import { createEmailAdapter } from '../../translation_graph/adapters/email';
+import { createManualAdapter } from '../../translation_graph/adapters/manual';
+import { adapterErrorOf } from '../../translation_graph/engine/adapter_table';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
+import { productionEngineHost } from '../../translation_graph/movement/engine_host';
+import { inMemoryRawTextStore } from '../../translation_graph/movement/raw_text_store';
+import { makeUnstablePosition, positionData } from '../../translation_graph/types';
+import { InMemoryWriteLocks } from '../../write_locks/write_locks';
+import {
+  HOST_FAMILIES,
+  hostMethodPaths,
+  type AwaitWakeRequest,
+  type EngineHost,
+  type RenderFile,
+  type ResolveFileText,
+} from '../host';
+import {
+  MovementRunFailed,
+  resumeMovement,
+  runMovement,
+  type ParkSink,
+  type ResumeMovementInput,
+  type RunLimitPause,
+  type RunMovementInput,
+} from '../run';
+import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+import { methodPaths, notJsonAt, roundTripHost } from './round_trip_host';
 
 const ENGINE_DIR = path.resolve(__dirname, '..');
 const SRC_DIR = path.resolve(__dirname, '../../..');
@@ -83,7 +119,8 @@ const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }>
   { matches: under('lib/llm_usage'), reason: 'billing context (the host wraps model calls)' },
   {
     matches: under('lib/run_spend'),
-    reason: "a priced call's spend meter (the host meters its calls; the engine keeps the run's ledger)",
+    reason:
+      "a priced call's spend meter (the host meters its calls; the engine keeps the run's ledger)",
   },
   {
     matches: under('services/translation_graph/segment_scope'),
@@ -93,18 +130,23 @@ const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }>
     matches: under('services/translation_graph/adapters'),
     reason: 'adapter implementations (the host supplies `adapters`)',
   },
-  { matches: under('services/translation_graph/runs'), reason: 'run recording (the host supplies `trace`)' },
+  {
+    matches: under('services/translation_graph/runs'),
+    reason: 'run recording (the host supplies `trace`)',
+  },
   { matches: under('services/translation_graph/movement'), reason: 'the production host itself' },
   { matches: under('services/document'), reason: 'document storage (the host supplies `files`)' },
   {
-    matches: (m) => BYTE_READERS.some((reader) => m === `services/translation_graph/engine/files/${reader}`),
+    matches: (m) =>
+      BYTE_READERS.some((reader) => m === `services/translation_graph/engine/files/${reader}`),
     reason: 'a file byte reader (bytes stay on the host: the engine holds descriptors)',
   },
   { matches: under('services/work'), reason: 'the work queue (the host supplies `park`)' },
   { matches: under('services/interaction'), reason: 'run failure reporting (host side)' },
   { matches: under('services/webhook_sync'), reason: 'inbound sync (host side)' },
   {
-    matches: (m) => HOST_SIDE_FILES.some((f) => m === `services/movement_engine/${f.replace(/\.ts$/, '')}`),
+    matches: (m) =>
+      HOST_SIDE_FILES.some((f) => m === `services/movement_engine/${f.replace(/\.ts$/, '')}`),
     reason: 'a host-side movement_engine module',
   },
 ];
@@ -143,12 +185,21 @@ function under(prefix: string): (module: string) => boolean {
 function moduleOf(fromFile: string, specifier: string): string {
   if (!specifier.startsWith('.')) return specifier;
   const resolved = path.relative(SRC_DIR, path.resolve(path.dirname(fromFile), specifier));
-  return resolved.split(path.sep).join('/').replace(/\.(ts|js)$/, '').replace(/\/index$/, '');
+  return resolved
+    .split(path.sep)
+    .join('/')
+    .replace(/\.(ts|js)$/, '')
+    .replace(/\/index$/, '');
 }
 
 /** Every specifier the file loads at run time. */
 function valueImports(file: string): string[] {
-  const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const source = ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+  );
   const specifiers: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -248,9 +299,17 @@ describe('the engine/host seam', () => {
     expect(classify(`import '../../lib/kysely';`)).toBe(false);
     expect(moduleOf(probe, '../../lib/kysely')).toBe('lib/kysely');
     expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, './park_sink')))).toBe(true);
-    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../translation_graph/engine/files/retrieve')))).toBe(true);
-    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../../lib/run_spend')))).toBe(true);
-    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../translation_graph/segment_scope')))).toBe(true);
+    expect(
+      FORBIDDEN.some((rule) =>
+        rule.matches(moduleOf(probe, '../translation_graph/engine/files/retrieve')),
+      ),
+    ).toBe(true);
+    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../../lib/run_spend')))).toBe(
+      true,
+    );
+    expect(
+      FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../translation_graph/segment_scope'))),
+    ).toBe(true);
   });
 });
 
@@ -308,7 +367,11 @@ describe('the engine/host seam carries data', () => {
       return output;
     };
     const resolveFileText: ResolveFileText = async (input) => {
-      const output = { text: 'the digest', rawTextId: 'rt-1', cost: [{ source: 'model:ocr', microdollars: 120 }] };
+      const output = {
+        text: 'the digest',
+        rawTextId: 'rt-1',
+        cost: [{ source: 'model:ocr', microdollars: 120 }],
+      };
       calls.push({ call: 'resolveFileText', input, output });
       return output;
     };
@@ -360,12 +423,20 @@ describe('the engine/host seam carries data', () => {
 
     expect(result.trace.filter((entry) => entry.kind === 'warning')).toEqual([]);
     const made = calls.filter((c) => c.call !== 'adapters.resolve');
-    expect(made.map((c) => c.call)).toEqual(['segment.open', 'render', 'resolveFileText', 'segment.close']);
+    expect(made.map((c) => c.call)).toEqual([
+      'segment.open',
+      'render',
+      'resolveFileText',
+      'segment.close',
+    ]);
     expect(made[0]?.input).toEqual({ teamId, languageVersion: CURRENT_LANGUAGE_VERSION });
     expect(made[1]?.input).toEqual({ content: 'the digest', type: 'text' });
     // A priced call: the run's budget in (no cap here), what it spent out —
     // and the run charged it.
-    expect(made[2]?.input).toEqual({ file: made[1]?.output, budget: { remainingMicrodollars: null } });
+    expect(made[2]?.input).toEqual({
+      file: made[1]?.output,
+      budget: { remainingMicrodollars: null },
+    });
     expect(result.spentBySource).toEqual({ 'model:ocr': 120 });
     expect(made[3]?.input).toEqual({ segmentId: 'seg-1' });
     // Every adapter is resolved for the segment, by its id.
@@ -386,14 +457,22 @@ describe('the engine/host seam carries data', () => {
     const kg: Adapter = {
       adapterType: 'kg',
       supportedTriggers: ['webhook'],
-      runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+      runtimeCapabilities: () => ({
+        traversal: { incoming: false, edgeProperties: false },
+        resources: false,
+      }),
       listEntryPoints: async () => [],
       describe: async () => null,
       resolveEntity: async () => ({ candidates: [] }),
       getFieldValue: async () => null,
       getRelated: async () => [],
       createRecord: async () => ({ adapterType: 'kg', externalId: 'note-1', data: {} }),
-      updateRecord: async (input) => ({ adapterType: 'kg', externalId: input.externalId, data: {}, association: 'none' }),
+      updateRecord: async (input) => ({
+        adapterType: 'kg',
+        externalId: input.externalId,
+        data: {},
+        association: 'none',
+      }),
       deleteRecord: async () => ({}),
     };
     const inner = makeTestHost({
@@ -440,7 +519,9 @@ describe('the engine/host seam carries data', () => {
           kg: {
             positions: { note: { properties: { body: 'text' }, edges: {} } },
             collections: { note: { target: 'note' } },
-            writableRoots: { note: { fields: { body: 'text' }, resultShape: { externalId: 'text' } } },
+            writableRoots: {
+              note: { fields: { body: 'text' }, resultShape: { externalId: 'text' } },
+            },
           },
         },
       }),
@@ -473,14 +554,22 @@ describe('the engine/host seam carries data', () => {
     const kg: Adapter = {
       adapterType: 'kg',
       supportedTriggers: ['webhook'],
-      runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+      runtimeCapabilities: () => ({
+        traversal: { incoming: false, edgeProperties: false },
+        resources: false,
+      }),
       listEntryPoints: async () => [],
       describe: async () => null,
       resolveEntity: async () => ({ candidates: [] }),
       getFieldValue: async () => null,
       getRelated: async () => [],
       createRecord: async () => ({ adapterType: 'kg', externalId: 'note-1', data: {} }),
-      updateRecord: async (input) => ({ adapterType: 'kg', externalId: input.externalId, data: {}, association: 'none' }),
+      updateRecord: async (input) => ({
+        adapterType: 'kg',
+        externalId: input.externalId,
+        data: {},
+        association: 'none',
+      }),
       deleteRecord: async () => ({}),
     };
     const parks = makeFakeParkSink();
@@ -489,9 +578,14 @@ describe('the engine/host seam carries data', () => {
       adapters: { resolve: ({ adapterType }) => (adapterType === 'kg' ? kg : manual) },
       park: {
         sink: parks.sink,
-        callbacks: { mint: async () => ({ id: 'cb_1', url: 'https://api.test/api/cb/cb_1' }), calls: async () => [] },
+        callbacks: {
+          mint: async () => ({ id: 'cb_1', url: 'https://api.test/api/cb/cb_1' }),
+          calls: async () => [],
+        },
       },
-      lookup: { resolveActingUser: async () => ({ id: 'user-1', email: 'amy@acme.dev', name: 'Amy' }) },
+      lookup: {
+        resolveActingUser: async () => ({ id: 'user-1', email: 'amy@acme.dev', name: 'Amy' }),
+      },
       trace: [],
     });
     const sink = inner.park.sink!;
@@ -503,12 +597,17 @@ describe('the engine/host seam carries data', () => {
         ...inner.park,
         sink: {
           ...sink,
-          commitTimerPark: (input) => record('park.sink.commitTimerPark', input, sink.commitTimerPark(input)),
+          commitTimerPark: (input) =>
+            record('park.sink.commitTimerPark', input, sink.commitTimerPark(input)),
         },
-        callbacks: { ...callbacks, mint: (input) => record('park.callbacks.mint', input, callbacks.mint(input)) },
+        callbacks: {
+          ...callbacks,
+          mint: (input) => record('park.callbacks.mint', input, callbacks.mint(input)),
+        },
       },
       lookup: {
-        resolveActingUser: (input) => record('lookup.resolveActingUser', input, inner.lookup.resolveActingUser(input)),
+        resolveActingUser: (input) =>
+          record('lookup.resolveActingUser', input, inner.lookup.resolveActingUser(input)),
       },
       locks: {
         acquire: (input) => record('locks.acquire', input, inner.locks.acquire(input)),
@@ -550,7 +649,9 @@ describe('the engine/host seam carries data', () => {
           kg: {
             positions: { note: { properties: { body: 'text' }, edges: {} } },
             collections: { note: { target: 'note' } },
-            writableRoots: { note: { fields: { body: 'text' }, resultShape: { externalId: 'text' } } },
+            writableRoots: {
+              note: { fields: { body: 'text' }, resultShape: { externalId: 'text' } },
+            },
           },
         },
       }),
@@ -569,13 +670,724 @@ describe('the engine/host seam carries data', () => {
       'trace.append',
     ]);
     const lookup = calls.find((c) => c.call === 'lookup.resolveActingUser');
-    expect(lookup?.input).toMatchObject({ teamId, segmentId: expect.any(String), instance: expect.any(String) });
-    expect(calls.find((c) => c.call === 'park.callbacks.mint')?.input).toMatchObject({ expiresAt: expect.any(String) });
+    expect(lookup?.input).toMatchObject({
+      teamId,
+      segmentId: expect.any(String),
+      instance: expect.any(String),
+    });
+    expect(calls.find((c) => c.call === 'park.callbacks.mint')?.input).toMatchObject({
+      expiresAt: expect.any(String),
+    });
     expect(calls.find((c) => c.call === 'park.sink.commitTimerPark')?.input).toMatchObject({
       wakeAt: expect.any(String),
     });
     // What the host was handed of the trace is the run's whole trace.
     expect(appended).toEqual(result.trace);
     expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
+  });
+});
+
+// ── Every family, round-tripped ─────────────────────────────────────────────
+//
+// The tests above pin particular shapes. These prove the general claim: every
+// method of every family takes and answers JSON. The host each run is handed
+// is wrapped so each request and each answer is serialised and parsed on the
+// way across (`round_trip_host.ts`), and fails naming the method and the path
+// of anything JSON cannot carry. The wrapper walks the host object, so a
+// method added to any family is wrapped without being listed; the manifest
+// (`HOST_FAMILIES`) is what the doc and this test agree the host is, and the
+// runs below reach every method on it.
+
+const REACHED = new Set<string>();
+const ROUND_TRIP_TEAM = '00000000-0000-0000-0000-000000000046' as TeamId;
+
+/** A CRM whose companies resolve by similarity, with notes beside them. */
+const CRM_SCHEMA: InstanceSchema = {
+  supportsInPlaceUpdate: true,
+  positions: {
+    company: { properties: { name: 'text', summary: 'text' }, edges: {} },
+    note: { properties: { title: 'text' }, edges: {} },
+  },
+  collections: { companies: { target: 'company' }, notes: { target: 'note' } },
+  writableRoots: {
+    company: {
+      fields: { name: 'text', summary: 'text' },
+      resultShape: { externalId: 'text', name: 'text', summary: 'text' },
+      fuzzyResolution: true,
+    },
+    note: { fields: { title: 'text' }, resultShape: { externalId: 'text', title: 'text' } },
+  },
+};
+const roundTripCatalog = staticCatalogSnapshot({
+  credentials: { acme_main: { adapters: ['attio'] } },
+  instanceSchemas: { attio: CRM_SCHEMA },
+});
+
+const ROUND_TRIP_PRELUDE = [
+  'import { email, attio } from adapters',
+  'import { acme_main } from credentials',
+  'import { fetch_url } from plugins',
+  '',
+  'inbox = email()',
+  'crm = attio(credentials: acme_main)',
+  '',
+  'node Detail: "more about the company" {',
+  '  summary: <text> "one line on what it does"',
+  '}',
+  '',
+].join('\n');
+
+interface FakeCrm {
+  adapter: Adapter;
+  creates: Array<{ recordType: string; fields: Record<string, unknown> }>;
+}
+
+/** A CRM fake: finds `candidates` for a company, creates with fresh ids, and
+ *  answers an update by id as not found when `updatesFind` is false. */
+function fakeCrm(
+  options: { candidates?: ExternalRecordRef[]; updatesFind?: boolean; createFails?: Error } = {},
+): FakeCrm {
+  const creates: FakeCrm['creates'] = [];
+  const adapter: Adapter = {
+    adapterType: 'attio',
+    supportedTriggers: [],
+    runtimeCapabilities: () => ({
+      traversal: { incoming: true, edgeProperties: true },
+      resources: true,
+    }),
+    listEntryPoints: async () => [],
+    describe: async () => null,
+    resolveEntity: async ({ recordType }) => ({
+      candidates: recordType === 'company' ? options.candidates ?? [] : [],
+    }),
+    getFieldValue: async ({ position, fieldId }) => {
+      const data = positionData(position);
+      return typeof data === 'object' && data !== null ? Reflect.get(data, fieldId) ?? null : null;
+    },
+    getRelated: async () => [],
+    createRecord: async (input) => {
+      if (options.createFails !== undefined) throw options.createFails;
+      creates.push({ recordType: input.recordType, fields: input.fields });
+      return {
+        adapterType: 'attio',
+        externalId: `co-new-${creates.length}`,
+        data: { ...input.fields },
+      };
+    },
+    updateRecord: async (input) =>
+      options.updatesFind === false
+        ? { notFound: true }
+        : {
+            adapterType: 'attio',
+            externalId: input.externalId,
+            data: {},
+            association: containerAssociation(input),
+          },
+    deleteRecord: async () => ({}),
+  };
+  return { adapter, creates };
+}
+
+/** The inbound email as a source fake that pages its attachments: two pages,
+ *  the second asked for by a cursor that is a JSON object. */
+function pagedInbox(): { adapter: Adapter; cursors: unknown[] } {
+  const cursors: unknown[] = [];
+  const attachment = (name: string): RelatedResult => ({
+    position: makeUnstablePosition({
+      adapterType: 'email',
+      recordType: 'attachment',
+      data: { filename: name },
+    }),
+  });
+  const page = async (_input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage> => {
+    cursors.push(cursor ?? null);
+    return cursor === undefined
+      ? { items: [attachment('deck.pdf')], nextCursor: { after: 'deck.pdf', page: 2 } }
+      : { items: [attachment('cap-table.xlsx')] };
+  };
+  const adapter: Adapter = {
+    adapterType: 'email',
+    supportedTriggers: ['webhook'],
+    runtimeCapabilities: () => ({
+      traversal: { incoming: false, edgeProperties: false },
+      resources: true,
+    }),
+    listEntryPoints: async () => [],
+    describe: async () => null,
+    resolveEntity: async () => ({ candidates: [] }),
+    getFieldValue: async ({ position, fieldId }) => {
+      const data = positionData(position);
+      return typeof data === 'object' && data !== null ? Reflect.get(data, fieldId) ?? null : null;
+    },
+    getRelated: async () => [],
+    iterateRelated: (input) => iterateRelatedPages((cursor) => page(input, cursor)),
+    iterateRelatedPage: page,
+    getActorCandidates: async () => [{ identity: { identifier: 'amy@acme.dev', scheme: 'email' }, source: 'originator' }],
+    createRecord: async () => {
+      throw new Error('test: email is a source');
+    },
+    updateRecord: async () => {
+      throw new Error('test: email is a source');
+    },
+    deleteRecord: async () => ({}),
+  };
+  return { adapter, cursors };
+}
+
+type ParkKind = 'timer' | 'await' | 'suspension';
+
+/** An in-memory park sink with the durable join semantics of the real one. */
+function joiningParkSink() {
+  const parks = new Map<string, { kind: ParkKind; state: ParkedScopeState }>();
+  const joins = new Map<
+    string,
+    { pending: number; closedBy: string | null; decremented: Set<string> }
+  >();
+  const exports = new Map<string, Map<string, { branchIndex: number; exports: unknown }>>();
+  const pauses: RunLimitPause[] = [];
+  const cancelled: Array<{ subtreeAddresses: string[]; excludeLeaf?: string }> = [];
+  const keep = (kind: ParkKind, address: string, state: unknown): void => {
+    parks.set(address, { kind, state: JSON.parse(JSON.stringify(state)) as ParkedScopeState });
+  };
+  const sink: ParkSink = {
+    async recordJoin(input) {
+      const existing = joins.get(input.frameAddress);
+      joins.set(input.frameAddress, {
+        pending: input.parkedChildren,
+        closedBy: existing?.closedBy ?? null,
+        decremented: existing?.decremented ?? new Set(),
+      });
+    },
+    async commitTimerPark(input) {
+      keep('timer', input.address, input.state);
+    },
+    async commitAwaitPark(input) {
+      keep('await', input.address, input.state);
+    },
+    async commitSuspension(input) {
+      keep('suspension', input.address, input.state);
+    },
+    async commitLimitPause(pause) {
+      pauses.push(pause);
+    },
+    async decrementJoin(input) {
+      const frame = joins.get(input.frameAddress);
+      if (frame === undefined) return { closed: false };
+      if (frame.decremented.has(input.branchAddress))
+        return { closed: frame.closedBy === input.leafAddress };
+      frame.decremented.add(input.branchAddress);
+      if (frame.pending === 0) return { closed: frame.closedBy === input.leafAddress };
+      frame.pending -= 1;
+      if (frame.pending > 0) return { closed: false };
+      frame.closedBy = input.leafAddress;
+      return { closed: true };
+    },
+    async persistBranchExport(input) {
+      const byBranch = exports.get(input.frameAddress) ?? new Map();
+      byBranch.set(input.branchAddress, { branchIndex: input.branchIndex, exports: input.exports });
+      exports.set(input.frameAddress, byBranch);
+    },
+    async collectBranchExports(input) {
+      return [...(exports.get(input.frameAddress) ?? new Map()).entries()]
+        .map(([branchAddress, row]) => ({
+          branchAddress,
+          branchIndex: row.branchIndex,
+          exports: row.exports,
+        }))
+        .sort((a, b) => a.branchIndex - b.branchIndex);
+    },
+    async cancelSubtrees(input) {
+      cancelled.push(input);
+      for (const address of [...parks.keys()]) {
+        const under = input.subtreeAddresses.some(
+          (prefix) => address === prefix || address.startsWith(`${prefix}.`),
+        );
+        if (under && address !== input.excludeLeaf) parks.delete(address);
+      }
+    },
+  };
+  return { sink, parks, pauses, cancelled };
+}
+
+function roundTripEvent(
+  payload: Record<string, unknown> = { subject: 'Acme intro', text: 'https://acme.example' },
+): TriggerEvent {
+  return {
+    pipelineInputId: 'pi-round-trip',
+    adapterType: 'email',
+    triggerType: 'webhook',
+    payload,
+  };
+}
+
+/** One run through a round-tripped test host, and resumes of whatever it
+ *  parked. */
+function roundTrip(
+  body: string[],
+  overrides: TestHostOverrides & { crm?: FakeCrm; inbox?: Adapter } = {},
+) {
+  const crm = overrides.crm ?? fakeCrm();
+  const inbox = overrides.inbox ?? pagedInbox().adapter;
+  const { crm: _crm, inbox: _inbox, ...hostOverrides } = overrides;
+  const input = () => ({
+    source: [ROUND_TRIP_PRELUDE, 'movement intake(m: <inbox-[:message]->>) {', ...body, '}'].join(
+      '\n',
+    ),
+    movementName: 'intake',
+    event: roundTripEvent(),
+    teamId: ROUND_TRIP_TEAM,
+    catalog: roundTripCatalog,
+    credentialIds: { acme_main: 'cred-attio-1' },
+    firedAt: '2026-10-07T09:00:00.000Z',
+    host: roundTripHost(
+      makeTestHost({
+        ...hostOverrides,
+        adapters: {
+          ...hostOverrides.adapters,
+          resolve: ({ adapterType }) => (adapterType === 'email' ? inbox : crm.adapter),
+        },
+      }),
+      REACHED,
+    ),
+    dryRun: false,
+  });
+  return {
+    crm,
+    run: (extra: Partial<RunMovementInput> = {}) => runMovement({ ...input(), ...extra }),
+    resume: (state: ParkedScopeState, extra: Partial<ResumeMovementInput> = {}) =>
+      resumeMovement({ ...input(), state, ...extra }),
+  };
+}
+
+describe('the round trip', () => {
+  it('names the method and the path of whatever JSON cannot carry', async () => {
+    class Money {
+      constructor(readonly cents: number) {}
+    }
+    const refused: Array<[unknown, string]> = [
+      [() => 1, 'a function'],
+      [new Money(5), 'an instance of Money'],
+      [new Date('2026-10-07T09:00:00.000Z'), 'an instance of Date'],
+      [new Map([['a', 1]]), 'an instance of Map'],
+      [new Set([1]), 'an instance of Set'],
+      [Readable.from(['bytes']), 'an instance of Readable'],
+      [[1, undefined], 'undefined'],
+      [BigInt(1), 'a BigInt'],
+      [Number.NaN, 'NaN'],
+      [Number.POSITIVE_INFINITY, 'Infinity'],
+    ];
+    for (const [value, what] of refused) {
+      const host = roundTripHost(
+        makeTestHost({
+          files: { resolveFileText: async () => ({ text: 'ok', nested: { value } }) as never },
+        }),
+      );
+      await expect(
+        host.files.resolveFileText({
+          file: { __brand: 'FileRef', name: 'x', source: { store: 'document', objectUri: 'u' } },
+          budget: { remainingMicrodollars: null },
+        }),
+      ).rejects.toThrow(
+        `files.resolveFileText: answer.nested.value${Array.isArray(value) ? '[1]' : ''} is ${what}`,
+      );
+    }
+    // The request is checked too, and a method that answers without a promise
+    // could not cross a wire.
+    const host = roundTripHost(makeTestHost());
+    expect(() => host.locks.release({ token: new Date() as never })).toThrow(
+      'locks.release: request[0].token is an instance of Date',
+    );
+    const sync = roundTripHost({
+      ...makeTestHost(),
+      lookup: { resolveActingUser: (() => null) as never },
+    });
+    expect(() => sync.lookup.resolveActingUser({} as never)).toThrow(
+      'lookup.resolveActingUser: answer is answered synchronously',
+    );
+    // An undefined field is an absent one on the far side.
+    expect(notJsonAt({ a: undefined, b: [null, { c: 'x' }] }, 'value')).toBeUndefined();
+  });
+
+  it('wraps every method of every family, which are the manifest’s', () => {
+    const { sink } = joiningParkSink();
+    const host = makeTestHost({
+      park: {
+        sink,
+        callbacks: { mint: async () => ({ id: 'cb', url: 'u' }), calls: async () => [] },
+      },
+      trace: [],
+    });
+    expect(methodPaths(roundTripHost(host)).sort()).toEqual(hostMethodPaths().sort());
+  });
+
+  it('the manifest is the contract docs/engine-host.md documents, method by method', () => {
+    const doc = fs.readFileSync(path.resolve(SRC_DIR, '../../../docs/engine-host.md'), 'utf8');
+    const documented = [...doc.matchAll(/^#### `([A-Za-z.]+)`/gm)].map((match) => match[1]);
+    expect(documented.sort()).toEqual(hostMethodPaths().sort());
+    const families = [...doc.matchAll(/^### `([A-Za-z.]+)`/gm)].map((match) => match[1]);
+    expect(families.sort()).toEqual(Object.keys(HOST_FAMILIES).sort());
+  });
+});
+
+describe('every family crosses as JSON', () => {
+  it('models and plugins: AI(), extract(…), a plugin, and the judge', async () => {
+    const h = roundTrip(
+      [
+        '  page = fetch_url(url: m.`text`)',
+        '  found = extract([m.`subject`], Detail)',
+        '  co = match crm-[:companies]-> { unique by (FUZZY `name`)',
+        '    name: "Acme"',
+        '  }',
+        '  write crm-[:notes]-> { title: "${AI(m.`subject`)} ${COALESCE(page, "")} ${COALESCE(FIRST(found).summary, "")}" }',
+      ],
+      {
+        crm: fakeCrm({
+          candidates: [
+            { adapterType: 'attio', externalId: 'co-1', data: { name: 'Acme Inc', summary: 's' } },
+          ],
+        }),
+        llm: {
+          client: {
+            call: async () => ({
+              parsedJson: { value: 'ACME', has_value: true },
+              cost: [{ source: 'model:test', microdollars: 3 }],
+            }),
+          },
+          extractCall: {
+            call: async () => ({
+              parsedJson: {
+                records: [
+                  { summary: { value: 'builds infra', evidence: { item: 0, quote: 'Acme' } } },
+                ],
+              },
+              usage: {
+                inputTokens: 10,
+                outputTokens: 2,
+                cacheReadTokens: 0,
+                cacheCreationTokens: 0,
+              },
+            }),
+          },
+          transforms: { invoke: async () => ({ text: 'raised a seed' }) },
+          arbitrateEntities: async () => ({ index: 0 }),
+        },
+      },
+    );
+    await h.run();
+    expect(h.crm.creates).toEqual([
+      { recordType: 'note', fields: { title: 'ACME raised a seed builds infra' } },
+    ]);
+  });
+
+  it('bindings: a bound counterpart found, gone, forgotten and rebound', async () => {
+    const recorded: unknown[] = [];
+    const h = roundTrip(
+      [
+        '  co = match crm-[:companies]-> { unique by (`name`)',
+        '    name: "Acme"',
+        '  }',
+        '  write crm-[:notes]-> bind co { title: m.`subject` }',
+      ],
+      {
+        crm: fakeCrm({
+          candidates: [
+            { adapterType: 'attio', externalId: 'co-1', data: { name: 'Acme', summary: 's' } },
+          ],
+          updatesFind: false,
+        }),
+        park: {
+          bindings: {
+            record: async (input) => {
+              recorded.push(input);
+            },
+            findBoundCounterpart: async () => ({
+              adapterType: 'attio',
+              instanceKey: 'k',
+              typeId: 'company',
+              recordId: 'co-gone',
+            }),
+            delete: async () => {},
+          },
+        },
+      },
+    );
+    await h.run();
+    expect(h.crm.creates).toHaveLength(1);
+    expect(recorded).toHaveLength(1);
+  });
+
+  it('parks: a callback and its ledger, a parallel join, a race settled', async () => {
+    const parks = joiningParkSink();
+    const h = roundTrip(
+      [
+        '  cb = callback({ write crm-[:notes]-> { title: "called" } }, { ttl: 2d })',
+        '  cb-[c:Called]-> { write crm-[:notes]-> { title: c.At } }',
+        '  r = await parallel([',
+        '    () => { await sleep(1h)',
+        '      return "a" },',
+        '    () => { await sleep(2h)',
+        '      return "b" },',
+        '  ])',
+        '  w = await race([',
+        '    () => { await sleep(1h)',
+        '      return "first" },',
+        '    () => { await sleep(30d) },',
+        '  ])',
+        '  write crm-[:notes]-> { title: "${AT(r, 0)}${AT(r, 1)} ${AT(w, 0)}" }',
+      ],
+      {
+        park: {
+          sink: parks.sink,
+          callbacks: {
+            mint: async () => ({ id: 'cb_1', url: 'https://api.test/api/cb/cb_1' }),
+            calls: async () => [{ at: '2026-10-07T10:00:00.000Z', values: {} }],
+          },
+        },
+      },
+    );
+    const wake = async (): Promise<void> => {
+      while (parks.parks.size > 0) {
+        const [address, park] = [...parks.parks.entries()].sort(([a], [b]) =>
+          a.localeCompare(b),
+        )[0]!;
+        parks.parks.delete(address);
+        await h.resume(park.state);
+      }
+    };
+    expect((await h.run()).parked).toBe(true);
+    await wake();
+    expect(h.crm.creates.map((c) => c.fields.title)).toEqual([
+      '2026-10-07T10:00:00.000Z',
+      'ab first',
+    ]);
+    expect(parks.cancelled.length).toBeGreaterThan(0);
+  });
+
+  it('a limit pause: a priced call refused past the budget suspends the run', async () => {
+    const parks = joiningParkSink();
+    let invocations = 0;
+    const h = roundTrip(
+      [
+        '  a = fetch_url(url: "a")',
+        '  b = fetch_url(url: "b")',
+        '  write crm-[:notes]-> { title: "${a}${b}" }',
+      ],
+      {
+        park: { sink: parks.sink },
+        llm: {
+          transforms: {
+            invoke: async () =>
+              ++invocations === 1
+                ? { text: 'got', cost: [{ source: 'plugin:fetch_url', microdollars: 900 }] }
+                : {
+                    error: { kind: 'budget', message: 'run budget spent' },
+                    cost: [{ source: 'plugin:fetch_url', microdollars: 200 }],
+                  },
+          },
+        },
+      },
+    );
+    const result = await h.run({ costCapMicrodollars: 1000 });
+    expect(result.parked).toBe(true);
+    expect(parks.pauses).toEqual([
+      { limit: 'cost', capMicrodollars: 1000, spentMicrodollars: 1100 },
+    ]);
+    expect([...parks.parks.values()].map((p) => p.kind)).toEqual(['suspension']);
+  });
+
+  it('an await: the awaitable checked, parked, re-checked and woken', async () => {
+    const { sink } = joiningParkSink();
+    const wakes: AwaitWakeRequest[] = [];
+    const result = await runAwaiting({
+      teamId: ROUND_TRIP_TEAM,
+      source: awaitingSource(),
+      adapter: makeAwaitingAdapter([
+        { status: 'pending', correlationKey: 'req-1' },
+        {
+          status: 'landed',
+          correlationKey: 'req-1',
+          landings: [{ recordId: 'req-1', recordType: 'Check Response', fields: { Answer: true } }],
+        },
+      ]).adapter,
+      parkSink: sink,
+      wakes,
+      wrapHost: (host) => roundTripHost(host, REACHED),
+    });
+    expect(result.parked).toBe(true);
+    expect(wakes).toEqual([
+      { adapterType: 'ask', teamId: ROUND_TRIP_TEAM, correlationKey: 'req-1' },
+    ]);
+  });
+
+  it('adapters, the lookup, locks and the trace: a paged traversal, an identity write, the acting user', async () => {
+    const inbox = pagedInbox();
+    const trace: MovementTraceEntry[] = [];
+    const h = roundTrip(
+      [
+        '  m-[a:files]-> {',
+        '    write crm-[:companies]-> { unique by (`name`) name: a.`filename`, summary: @user_email }',
+        '  }',
+      ],
+      {
+        inbox: inbox.adapter,
+        trace,
+        lookup: {
+          resolveActingUser: async ({ getCandidates }) => {
+            const [candidate] = await getCandidates();
+            return { id: 'user-1', email: candidate?.identity.identifier ?? 'nobody', name: 'Amy' };
+          },
+        },
+      },
+    );
+    const result = await h.run();
+    expect(inbox.cursors).toEqual([null, { after: 'deck.pdf', page: 2 }]);
+    expect(h.crm.creates.map((c) => c.fields)).toEqual([
+      { name: 'deck.pdf', summary: 'amy@acme.dev' },
+      { name: 'cap-table.xlsx', summary: 'amy@acme.dev' },
+    ]);
+    expect(trace).toEqual(result.trace);
+  });
+
+  it('an adapter failure: its message, name and detail, as data', async () => {
+    class CrmApiError extends Error {
+      readonly status = 409;
+      readonly code = 'conflict';
+      constructor() {
+        super('attio: 409 Conflict');
+        this.name = 'CrmApiError';
+      }
+    }
+    const h = roundTrip(['  write crm-[:notes]-> { title: "x" }'], {
+      crm: fakeCrm({ createFails: new CrmApiError() }),
+    });
+    const failure: unknown = await h.run().catch((error: unknown) => error);
+    if (!(failure instanceof MovementRunFailed)) throw failure;
+    expect(failure.cause).toMatchObject({
+      message: 'attio: 409 Conflict',
+      name: 'CrmApiError',
+      detail: { status: 409, code: 'conflict' },
+    });
+  });
+
+  it('the call ceiling: answered as data, raised as the engine’s own', async () => {
+    const h = roundTrip(['  write crm-[:notes]-> { title: "x" }'], {
+      crm: fakeCrm({ createFails: new Error('ceiling') }),
+      adapters: {
+        classify: (error) =>
+          error instanceof Error && error.message === 'ceiling'
+            ? { kind: 'call_ceiling', message: 'Affinity call ceiling reached' }
+            : adapterErrorOf(error),
+      },
+    });
+    await expect(h.run()).rejects.toMatchObject({
+      name: 'AdapterCallCeilingExceeded',
+      message: 'Affinity call ceiling reached',
+    });
+  });
+
+  it('files: a FILE() rendered and READ', async () => {
+    const h = roundTrip(
+      [
+        '  f = FILE("the digest", "text")',
+        '  write crm-[:notes]-> { title: COALESCE(READ(f), "unread") }',
+      ],
+      {
+        files: { resolveFileText: async () => ({ text: 'the digest', rawTextId: 'rt-1' }) },
+      },
+    );
+    await h.run();
+    expect(h.crm.creates).toEqual([{ recordType: 'note', fields: { title: 'the digest' } }]);
+  });
+
+  it('reached every method on the manifest', () => {
+    expect([...REACHED].sort()).toEqual(hostMethodPaths().sort());
+  });
+});
+
+// Production results are JSON too: a conformance-style run against the real
+// built-in email adapter, through the production host, wrapped the same way.
+describe('the production host crosses as JSON', () => {
+  // The email instance as the adapter describes itself (its natural names),
+  // where the static catalog's stand-in carries a test's own spelling.
+  const manifestCatalog = staticCatalogSnapshot({
+    credentials: { acme_main: { adapters: ['attio'] } },
+    instanceSchemas: {
+      attio: CRM_SCHEMA,
+      email: {
+        positions: {
+          Email: { properties: { Subject: 'text', From: 'text', Body: 'text' }, edges: { Attachments: { target: 'Attachment' } } },
+          Attachment: { properties: { Name: 'text', 'Content Type': 'text', File: 'file' }, edges: {} },
+        },
+        collections: { message: { target: 'Email' } },
+        writableRoots: {},
+      },
+    },
+  });
+
+  it('reads a real email and walks its attachments', async () => {
+    const writes: CapturedWrite[] = [];
+    const reached = new Set<string>();
+    const host = roundTripHost(
+      productionEngineHost({
+        teamId: ROUND_TRIP_TEAM,
+        resolveLive: ({ adapterType }) =>
+          adapterType === 'email'
+            ? createEmailAdapter({ teamId: ROUND_TRIP_TEAM })
+            : fakeCrm().adapter,
+        writeSink: (write) => writes.push(write),
+        locks: new InMemoryWriteLocks(),
+        rawText: inMemoryRawTextStore(),
+      }),
+      reached,
+    );
+    const result = await runMovement({
+      source: [
+        'import { email, attio } from adapters',
+        'import { acme_main } from credentials',
+        'inbox = email()',
+        'crm = attio(credentials: acme_main)',
+        '',
+        'movement intake(m: <inbox-[:Email]->>) {',
+        '  m-[a:Attachments]-> {',
+        '    write crm-[:notes]-> { title: "${m.`Subject`} from ${m.`From`}: ${a.`Name`}" }',
+        '  }',
+        '}',
+      ].join('\n'),
+      movementName: 'intake',
+      event: roundTripEvent({
+        messageId: '<msg-001@sender.example>',
+        subject: 'Series A deck',
+        sender: 'jane@acme.example',
+        attachments: [
+          { key: 'att-deck-1', filename: 'deck.pdf', contentType: 'application/pdf', size: 12345 },
+          {
+            key: 'att-cap-2',
+            filename: 'cap-table.xlsx',
+            contentType: 'application/vnd.ms-excel',
+            size: 6789,
+          },
+        ],
+      }),
+      teamId: ROUND_TRIP_TEAM,
+      catalog: manifestCatalog,
+      credentialIds: { acme_main: 'cred-attio-1' },
+      host,
+      dryRun: true,
+    });
+    expect(writes.map((write) => write.fields)).toEqual([
+      { title: 'Series A deck from jane@acme.example: deck.pdf' },
+      { title: 'Series A deck from jane@acme.example: cap-table.xlsx' },
+    ]);
+    expect(result.trace.filter((entry) => entry.kind === 'warning')).toEqual([]);
+    expect(reached).toEqual(
+      new Set([
+        'segment.open',
+        'adapters.resolve',
+        'adapters.call',
+        'control.cancel.cancelled',
+        'control.cancel.cancelledNow',
+        'segment.close',
+      ]),
+    );
   });
 });

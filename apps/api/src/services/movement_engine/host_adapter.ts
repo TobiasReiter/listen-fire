@@ -152,7 +152,6 @@ export function hostAdapter(input: { host: EngineHost; segmentId: string; resolv
     readRecord: optional('readRecord', (args) => call('readRecord', args)),
     describeOpaqueId: optional('describeOpaqueId', (args) => call('describeOpaqueId', args)),
     translateFilter: optional('translateFilter', (args) => call('translateFilter', args)),
-    resolveFileRef: optional('resolveFileRef', (args) => call('resolveFileRef', args)),
     getDedupRules: optional('getDedupRules', (args) => call('getDedupRules', args)),
     getActorCandidates: optional('getActorCandidates', (args) => call('getActorCandidates', args)),
     extractActor: optional('extractActor', (args) => call('extractActor', args)),

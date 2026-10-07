@@ -104,10 +104,12 @@ export interface AdapterResolution {
 
 /**
  * The adapter protocol's methods the engine may call on an instance, by name
- * (the protocol's own `METHODS`, translation_graph/protocol/schema.ts). Two
- * are not here: `manifest`, which `adapters.resolve` answers as data, and
+ * (the protocol's own `METHODS`, translation_graph/protocol/schema.ts). Three
+ * are not here: `manifest`, which `adapters.resolve` answers as data;
  * `iterateRelated`, whose async iterable never crosses — the engine walks a
- * traversal page by page with `iterateRelatedPage`.
+ * traversal page by page with `iterateRelatedPage`; and `resolveFileRef`,
+ * whose answer is a byte stream — bytes stay on the host, which redeems a
+ * file's descriptor itself (`files.resolveFileText`, a target's upload).
  */
 export const ADAPTER_METHODS = [
   'listEntryPoints',
@@ -134,7 +136,6 @@ export const ADAPTER_METHODS = [
   'getActorCandidates',
   'extractActor',
   'describeOpaqueId',
-  'resolveFileRef',
   'invokeFieldFunction',
 ] as const satisfies readonly MethodName[];
 
@@ -183,7 +184,6 @@ export interface AdapterCallMap {
   getActorCandidates: OneInput<'getActorCandidates'>;
   extractActor: OneInput<'extractActor'>;
   describeOpaqueId: OneInput<'describeOpaqueId'>;
-  resolveFileRef: OneInput<'resolveFileRef'>;
   invokeFieldFunction: OneInput<'invokeFieldFunction'>;
 }
 
@@ -452,4 +452,70 @@ export interface EngineHost {
   trace?: {
     append(input: { segmentId: string; entries: MovementTraceEntry[] }): Promise<void>;
   };
+}
+
+// ── The manifest ────────────────────────────────────────────────────────────
+
+/** Every method of every family, by its path on `EngineHost`
+ *  (`park.sink.recordJoin`), each callable on its own. */
+type MethodPaths<T, Prefix extends string> = {
+  [K in keyof T & string]-?: NonNullable<T[K]> extends (...args: never[]) => unknown
+    ? `${Prefix}${K}`
+    : MethodPaths<NonNullable<T[K]>, `${Prefix}${K}.`>;
+}[keyof T & string];
+
+export type HostMethodPath = MethodPaths<EngineHost, ''>;
+
+/**
+ * The host's families and their methods: the contract docs/engine-host.md
+ * documents family by family, and the set the seam guard proves crosses as
+ * JSON. `optional` marks a family an embedder may leave out (the engine takes
+ * its no-substrate path) or, within `park.sink`, a method it may.
+ */
+export const HOST_FAMILIES = {
+  segment: { methods: ['open', 'close'] },
+  adapters: { methods: ['resolve', 'call'] },
+  'llm.client': { methods: ['call'] },
+  'llm.extractCall': { methods: ['call'] },
+  'llm.transforms': { methods: ['invoke'] },
+  llm: { methods: ['arbitrateEntities'] },
+  'park.sink': {
+    optional: true,
+    methods: [
+      'recordJoin',
+      'commitTimerPark',
+      'commitAwaitPark',
+      'decrementJoin',
+      'persistBranchExport',
+      'collectBranchExports',
+      'cancelSubtrees',
+      'commitSuspension',
+      'commitLimitPause',
+    ],
+  },
+  park: { methods: ['wake'] },
+  'park.callbacks': { optional: true, methods: ['mint', 'calls'] },
+  'park.bindings': { methods: ['record', 'findBoundCounterpart', 'delete'] },
+  'control.cancel': { methods: ['cancelled', 'cancelledNow'] },
+  files: { methods: ['resolveFileText', 'render'] },
+  lookup: { methods: ['resolveActingUser'] },
+  locks: { methods: ['acquire', 'release'] },
+  trace: { optional: true, methods: ['append'] },
+} as const satisfies Record<string, { optional?: true; methods: readonly string[] }>;
+
+type Manifest = typeof HOST_FAMILIES;
+type ManifestPath = {
+  [F in keyof Manifest & string]: `${F}.${Manifest[F]['methods'][number]}`;
+}[keyof Manifest & string];
+
+// The manifest names exactly the methods `EngineHost` declares: a method added
+// to a family and left out here, or listed here and not on the host, fails to
+// compile.
+type Exactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type Holds<T extends true> = T;
+export type ManifestIsTheHost = Holds<Exactly<ManifestPath, HostMethodPath>>;
+
+/** Each method's path (`park.sink.recordJoin`), from the manifest. */
+export function hostMethodPaths(): string[] {
+  return Object.entries(HOST_FAMILIES).flatMap(([family, { methods }]) => methods.map((method) => `${family}.${method}`));
 }

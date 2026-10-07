@@ -68,7 +68,6 @@ const DISPATCH: { [M in AdapterMethod]: (adapter: Adapter, args: AdapterCallMap[
   getActorCandidates: (adapter, args) => implemented(adapter, 'getActorCandidates', adapter.getActorCandidates)(args),
   extractActor: (adapter, args) => implemented(adapter, 'extractActor', adapter.extractActor)(args),
   describeOpaqueId: (adapter, args) => implemented(adapter, 'describeOpaqueId', adapter.describeOpaqueId)(args),
-  resolveFileRef: (adapter, args) => implemented(adapter, 'resolveFileRef', adapter.resolveFileRef)(args),
   invokeFieldFunction: (adapter, args) =>
     implemented(adapter, 'invokeFieldFunction', adapter.invokeFieldFunction)(args),
 };
