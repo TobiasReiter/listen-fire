@@ -70,20 +70,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   BridgeError,
-  DiagnosticCodes,
   MovementParseError,
   readCollectionConfig,
   SEQUENTIAL_COLLECTION_SETTINGS,
   type CollectionRunSettings,
-  checkProgramWithLink,
-  fromCatalogSnapshot,
   pluginOutputUnder,
   type PluginOutput,
-  resolveFileFromSnapshot,
   before,
   CURRENT_LANGUAGE_VERSION,
   languageVersionDiagnostic,
-  diagnosticSeverity,
   credentialArgOf,
   aggregatedBarePath,
   bareName,
@@ -99,7 +94,6 @@ import {
   conditionOfSlot,
   expressionOfSlot,
   parseMovementExpression,
-  parseProgram,
   readExtractCallConfig,
   resolveBorrowedField,
   borrowedTypeSegments,
@@ -183,7 +177,6 @@ import type {
   PathHead,
   Program,
   ProgramLink,
-  ResolveFile,
   ShapeDeclaration,
   ShapeNode,
   Statement,
@@ -343,6 +336,8 @@ import {
   type CallbackCall,
   type CallbackParamSpec,
 } from './callback_types';
+import { checkPinned, parsePinned, type CheckInput } from './program_check';
+import { engineChoice, resumeSegmentInRust, runSegmentInRust, rustCanResume, rustCanRun } from './rust_engine';
 import {
   closeRunContext,
   openRunContext,
@@ -710,8 +705,34 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // file resolver, the check RESOLVES file imports and the returned link is
   // the engine's import structure — validation and execution consume one
   // resolution.
-  const { program, prepared } = parseAndCheck(input);
+  //
+  // A program the Rust engine runs whole is only parsed here, to decide: the
+  // segment asks for its own check (the `check.program` host call), which
+  // throws exactly what parseAndCheck throws. It runs inside the same segment
+  // the interpreter would: its host calls are the run's.
+  const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
+  if (parsed !== undefined && rustCanRun(parsed, input)) {
+    return inRunContext(input, async (context) => {
+      const outcome = await runSegmentInRust({ input, context, parsed });
+      if ('ran' in outcome) return outcome.ran;
+      // Declined before any host-visible effect: the interpreter runs it, in
+      // the same segment, on a fresh parse (the segment's check may have
+      // stamped `parsed`).
+      const { program, prepared } = parseAndCheck(input);
+      return new Interpreter(input, { ...prepared, context }).run(program);
+    });
+  }
+  const { program, prepared } = parseAndCheck(input, parsed);
   return inRunContext(input, (context) => new Interpreter(input, { ...prepared, context }).run(program));
+}
+
+/** What the check reads of a run's input. */
+function checkInputOf(input: RunMovementInput): CheckInput {
+  return {
+    source: input.source,
+    catalog: input.catalog,
+    ...(input.languageVersion !== undefined ? { languageVersion: input.languageVersion } : {}),
+  };
 }
 
 /**
@@ -754,18 +775,6 @@ async function inRunContext(
   return { ...result, ...spendFields(context.ledger) };
 }
 
-/**
- * Diagnostics an author may no longer WRITE, but a saved program may still
- * RUN. A retirement refuses the construct where a program is authored; it must
- * not stop automations that were saved while the construct was legal, so the
- * run gate lets exactly these through and the engine still executes them.
- *
- * Empties out at the wave that deletes each construct's engine path — see the
- * deploy block in
- * plans/2026-06-10-data-movement-language/9_node_synthesis_build.md.
- */
-const RETIRED_BUT_STILL_RUNNABLE = new Set<string>([DiagnosticCodes.WRITE_SHAPE_RETIRED]);
-
 /** What every entry point hands its interpreter: the catalog rebuilt from the
  *  input's snapshot (once — the checker and the run's instantiations read the
  *  same one) and the program's import link. */
@@ -774,56 +783,12 @@ interface PreparedRun {
   link?: ProgramLink;
 }
 
-/** The resolver file imports read: the snapshot's own files, captured with
- *  the catalog the program is checked against, so imports and instance
- *  schemas describe one moment of the workspace. A snapshot with no files
- *  resolves no import. */
-function fileResolverOf(input: RunMovementInput): ResolveFile | undefined {
-  return resolveFileFromSnapshot(input.catalog);
-}
-
-/** Parse + check the program, throwing the same MOVENG_PARSE / MOVENG_CHECK
- *  errors `runMovement` does. Shared by run + resume so a resume re-validates
- *  the pinned source exactly as a fresh run did. */
-function parseAndCheck(input: RunMovementInput): { program: Program; prepared: PreparedRun } {
-  const languageVersion = input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
-  // The pin is answered before the source is read: a version this release
-  // cannot honour must fail as exactly that, not as whatever the current
-  // grammar makes of the text.
-  const versionDiagnostic = languageVersionDiagnostic(languageVersion);
-  if (versionDiagnostic !== undefined && diagnosticSeverity(versionDiagnostic) === 'error') {
-    throw new MovementEngineError('MOVENG_LANGUAGE_VERSION', versionDiagnostic.message, [
-      versionDiagnostic,
-    ]);
-  }
-  let program: Program;
-  try {
-    program = parseProgram(input.source, { languageVersion });
-  } catch (e) {
-    if (e instanceof MovementParseError) {
-      throw new MovementEngineError('MOVENG_PARSE', e.message);
-    }
-    throw e;
-  }
-  const catalog = fromCatalogSnapshot(input.catalog);
-  const resolveFile = fileResolverOf(input);
-  const { diagnostics: allDiagnostics, link } = checkProgramWithLink(program, catalog, {
-    languageVersion,
-    ...(resolveFile !== undefined ? { resolveFile } : {}),
-  });
-
-  const diagnostics = allDiagnostics.filter(
-    (d) => (d.severity ?? 'error') === 'error' && !RETIRED_BUT_STILL_RUNNABLE.has(d.code),
-  );
-  if (diagnostics.length > 0) {
-    throw new MovementEngineError(
-      'MOVENG_CHECK',
-      `the movement program failed checking:\n${diagnostics
-        .map((d) => `  ${d.code} (line ${d.span.start.line}): ${d.message}`)
-        .join('\n')}`,
-      diagnostics,
-    );
-  }
+/** Parse + check the program (program_check.ts), throwing the same
+ *  MOVENG_LANGUAGE_VERSION / MOVENG_PARSE / MOVENG_CHECK errors every entry
+ *  point does. Shared by run + resume so a resume re-validates the pinned
+ *  source exactly as a fresh run did. */
+function parseAndCheck(input: RunMovementInput, parsed?: Program): { program: Program; prepared: PreparedRun } {
+  const { program, catalog, link } = checkPinned(checkInputOf(input), parsed);
   return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
 }
 
@@ -867,7 +832,26 @@ export interface ResumeMovementInput extends RunMovementInput {
  * is byte-identical. Single-ask linear body only (chunk 5).
  */
 export async function resumeMovement(input: ResumeMovementInput): Promise<MovementRunResult> {
-  const { program, prepared } = parseAndCheck(input);
+  // A parked state the Rust engine resumes (its own or the TypeScript
+  // engine's: the state is one shape) is only parsed here, as `runMovement`
+  // parses a run it routes.
+  const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
+  if (parsed !== undefined && rustCanResume(parsed, input)) {
+    return inRunContext(input, async (context) => {
+      const outcome = await resumeSegmentInRust({ input, context, parsed });
+      if ('ran' in outcome) return outcome.ran;
+      const { program, prepared } = parseAndCheck(input);
+      return resumeInterpreter(input, { program, prepared, context });
+    });
+  }
+  const { program, prepared } = parseAndCheck(input, parsed);
+  return inRunContext(input, (context) => resumeInterpreter(input, { program, prepared, context }));
+}
+
+function resumeInterpreter(
+  input: ResumeMovementInput,
+  { program, prepared, context }: { program: Program; prepared: PreparedRun; context: RunContext },
+): Promise<MovementRunResult> {
   // The answer graph `r` (§4.4): for the single-ask scalar case it's a value
   // binding (the validated answer); the post-ask body reads it as a value. A
   // `Correct` answer is a curated position-SET (the edited + surviving rows) —
@@ -876,17 +860,15 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // edited fields off the synthetic emission (chunk 6c). Under `reenter` there is
   // no answer to bind (cost / error resume re-enters AT the un-run statement).
   const answer: Binding | undefined = input.reenter ? undefined : rematerialiseAnswer(input.answer);
-  return inRunContext(input, (context) =>
-    new Interpreter(input, { ...prepared, context }).resume({
-      program,
-      state: input.state,
-      ...(answer !== undefined ? { answer } : {}),
-      ...(input.reenter !== undefined ? { reenter: input.reenter } : {}),
-      ...(input.deferRaceSettlement !== undefined
-        ? { deferRaceSettlement: input.deferRaceSettlement }
-        : {}),
-    }),
-  );
+  return new Interpreter(input, { ...prepared, context }).resume({
+    program,
+    state: input.state,
+    ...(answer !== undefined ? { answer } : {}),
+    ...(input.reenter !== undefined ? { reenter: input.reenter } : {}),
+    ...(input.deferRaceSettlement !== undefined
+      ? { deferRaceSettlement: input.deferRaceSettlement }
+      : {}),
+  });
 }
 
 /**

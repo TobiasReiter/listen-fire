@@ -42,6 +42,7 @@ import { assertExtractionTiersConfigured } from './services/movement_engine/ai_t
 import { assertMaxCallDepthConfigured } from './services/movement_engine/call_depth';
 import { assertWriteLockTimeoutConfigured } from './services/write_locks/write_locks';
 import { assertParserReady } from 'movement-lang';
+import { assertEngineChoiceConfigured } from './services/movement_engine/rust_engine';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';
 import { rootHandler } from './lib/middleware/root_handler';
 import { HEALTH_CHECK_ENDPOINT, WORKERS_HEALTH_ENDPOINT } from './constants';
@@ -115,6 +116,10 @@ assertWriteLockTimeoutConfigured();
 // build that left the artifact behind (tsc does not copy it) would otherwise
 // boot and then fail every validate and run at its first parse.
 assertParserReady();
+
+// An engine choice that is neither "rust" nor "ts" would fail every run at its
+// first statement; refuse it here instead. Each run still reads the choice.
+assertEngineChoiceConfigured();
 
 // A blocked event loop is the one failure this process cannot narrate: the
 // health check goes unanswered, the logs stop mid-sentence, and the platform

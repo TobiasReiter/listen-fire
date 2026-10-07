@@ -25,6 +25,7 @@ import { canonical } from '../../parser/expression/__test__/lowering_fixture';
 import { checkNow, loadChecks as load, SNAPSHOT_TABLE, writeChecks, type CheckRecord } from './checks_fixture';
 
 declare const process: { env: Record<string, string | undefined> };
+declare function require(id: string): unknown;
 declare const console: { warn(...args: unknown[]): void };
 
 const KNOWN_VERSIONS = [1, 2, 3];
@@ -46,6 +47,16 @@ describe('checks regression', () => {
         const pinned = canonical(pin.diagnostics);
         return now === pinned ? [] : [`${label(pin)}: pinned ${pinned.slice(0, 400)} | now ${now.slice(0, 400)}`];
       });
+    expect(drifted).toEqual([]);
+  });
+
+  it('keys every snapshot by the sha256 of its canonical form, as the harvest does', () => {
+    // A hand edit to a snapshot that keeps its old key would leave two
+    // catalogs able to share one key; the harvest never writes one.
+    const crypto = require('crypto') as { createHash(algorithm: 'sha256'): { update(text: string): { digest(encoding: 'hex'): string } } };
+    const drifted = [...SNAPSHOT_TABLE.entries()]
+      .filter(([key, snapshot]) => crypto.createHash('sha256').update(canonical(snapshot)).digest('hex') !== key)
+      .map(([key]) => key);
     expect(drifted).toEqual([]);
   });
 

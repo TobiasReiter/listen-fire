@@ -2,6 +2,8 @@
 
 The movement-language parser and expression lowering in Rust, compiled to
 WASM and called from TypeScript through `packages/movement-lang/wasm/loader.ts`.
+It ships inside the one movement artifact, which crates/movement-engine builds
+and whose exports are this crate's ABI plus the engine's.
 
 ## Modules
 
@@ -35,33 +37,47 @@ No wasm-bindgen and no wasm-pack: the crate exports a hand-written C ABI.
 ## Building
 
 ```bash
-scripts/build-parser-wasm.sh   # release build → packages/movement-lang/wasm/movement_parser.wasm, prints sha256
-cargo test -p movement-parser  # native unit tests
+scripts/build-movement-wasm.sh  # release builds of both artifacts (below), each one's sha256 and size
+cargo test -p movement-parser   # native unit tests
 ```
 
-The `.wasm` is committed so the pnpm dev loop needs no Rust. CI
-(`.github/workflows/parser-wasm.yml`) rebuilds it and fails when the bytes
-differ, so a change to the crate, `Cargo.lock`, the release profile or the
-toolchain ships with a rebuilt artifact.
+Two artifacts are committed in `packages/movement-lang/wasm/`, so the pnpm
+dev loop needs no Rust:
 
-The web app copies the artifact into `apps/web/public` (under a content-hashed
-name) when `next.config.ts` loads, so a running `next dev` keeps serving the old
-parser until it is restarted.
+- `movement_parser.wasm`: this crate alone (the parser, the lowering, the
+  catalog). The browser loads it.
+- `movement.wasm`: crates/movement-engine, which links this crate in. The API
+  loads it, and runs movements on it.
+
+CI (`.github/workflows/movement-wasm.yml`) rebuilds both and fails when
+either's bytes differ, so a change to the crate, `Cargo.lock`, the release
+profile or the toolchain ships with rebuilt artifacts.
+
+The web app copies the parser's artifact into `apps/web/public` (under a
+content-hashed name) when `next.config.ts` loads, so a running `next dev`
+keeps serving the old parser until it is restarted.
 
 ## Size budget
 
-Current: about 1.18 MB raw, about 322 KB gzipped. CI measures the committed
-`.wasm` gzipped (`parser-wasm.yml`, "Size budget"): it warns above 600 KB
-(614,400 bytes) and fails above 1 MB (1,048,576 bytes), printing raw and
-gzipped sizes either way. Policy: if the budget is approached, the checker port
-replaces serde derives with hand readers, as the lowering already did.
+Current (2026-10-07, gzip -9): the parser's artifact is 1,182,906 bytes raw,
+321,899 gzipped; the engine's (this crate included) 1,987,389 raw, 557,438
+gzipped. CI measures each committed `.wasm` gzipped (`movement-wasm.yml`,
+"Size budgets"), printing raw and gzipped sizes either way:
+
+| artifact | who downloads it | warns above | fails above |
+|---|---|---|---|
+| `movement_parser.wasm` | every browser | 400 KB (409,600 bytes) | 600 KB (614,400 bytes) |
+| `movement.wasm` | the API only | 600 KB (614,400 bytes) | 1 MB (1,048,576 bytes) |
+
+Policy: if the parser's budget is approached, the checker port replaces serde
+derives with hand readers, as the lowering already did.
 
 ## Reproducibility
 
 The committed artifact is built on a laptop; `--remap-path-prefix` in the build
 script and the pinned toolchain are meant to make the Linux CI rebuild
 byte-identical. That is unproven until the first green run of
-`.github/workflows/parser-wasm.yml`, which fails with the two hashes when they
+`.github/workflows/movement-wasm.yml`, which fails with the two hashes when they
 differ.
 
 ## The ABI (`src/abi.rs`)
@@ -78,6 +94,9 @@ differ.
 | `lower_condition` | as `lower_expression` | the `MovementCondition` |
 | `catalog_query` | `(snapshot_ptr, snapshot_len, query_ptr, query_len, out_ptr_ptr, out_len_ptr) -> status` | one lookup (`{op: "instantiate" \| "adapter" \| "credential" \| "credentialNames" \| "plugin" \| "models" \| "constructionArgOptions", …}`) or helper call (`{op: "helper", name, args}`) against the snapshot; `{"value": …}`, `{}` for `undefined`, or `{"error": {message}}`; nothing is kept between calls |
 | `last_panic` | `(out_ptr_ptr, out_len_ptr)` | the last panic's message, in a static buffer (not freed) |
+
+The artifact also carries the engine's exports (`engine_start`, `engine_answer`,
+`engine_finish`), documented in crates/movement-engine/README.md.
 
 Status 0 means the output is the tree; 1 means it is `{"error": {…}}`. The
 output is UTF-8 JSON the caller must `dealloc`. Every value is an i32 on

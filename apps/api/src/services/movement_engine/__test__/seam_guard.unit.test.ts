@@ -69,6 +69,7 @@ const SRC_DIR = path.resolve(__dirname, '../../..');
 const PURE_FILES = [
   'address.ts',
   'ai_tiers.ts',
+  'builtins.ts',
   'call_depth.ts',
   'callback_types.ts',
   'effect_locks.ts',
@@ -81,9 +82,14 @@ const PURE_FILES = [
   'interpretable.ts',
   'kg.ts',
   'local_edge_adapter.ts',
+  'program_check.ts',
   'provenance.ts',
   'run.ts',
   'run_context.ts',
+  'rust_engine.ts',
+  'rust_host.ts',
+  'rust_stats.ts',
+  'rust_wire.ts',
   'serialize.ts',
 ];
 

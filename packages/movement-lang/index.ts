@@ -2,7 +2,16 @@ export * from './never';
 export * from './parser/ast';
 export * from './parser/scan';
 export * from './parser/parse';
-export { MovementParserNotReady, assertParserReady, initParser, isParserReady } from './wasm/loader';
+export {
+  MovementParserNotReady,
+  assertParserReady,
+  callEvalExpression,
+  initEngine,
+  initParser,
+  isParserReady,
+  openEngineSegment,
+  type EngineSegment,
+} from './wasm/loader';
 export * from './parser/duration';
 export * from './expression/bridge';
 export * from './expression/stdlib';

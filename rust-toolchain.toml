@@ -1,5 +1,6 @@
-# Pinned so a rebuild anywhere (CI's hash check included) reproduces the
-# committed movement_parser.wasm byte for byte.
+# Pinned so a rebuild anywhere (CI's hash check included) reproduces both
+# committed artifacts byte for byte: movement.wasm (the engine, the API's)
+# and movement_parser.wasm (the parser, the browser's).
 [toolchain]
 channel = "1.99.0"
 targets = ["wasm32-unknown-unknown"]

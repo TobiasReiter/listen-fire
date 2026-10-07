@@ -1658,7 +1658,11 @@ export function mockCatalog(spec: {
     adapter(name) {
       const found = spec.adapters?.[name];
       if (found === undefined) return undefined;
-      return { canFire: true, ...found };
+      // The fixture's `schema` is how `instantiate` answers, not a member of
+      // the adapter's spec: left on it, it would ride into a snapshot as a
+      // key no snapshot declares.
+      const { schema: _instantiated, ...adapter } = found;
+      return { canFire: true, ...adapter };
     },
     credential(name) {
       const c = spec.credentials?.[name];

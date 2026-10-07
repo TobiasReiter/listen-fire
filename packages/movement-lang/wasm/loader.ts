@@ -1,9 +1,23 @@
-// Loads the Rust parser and lowering (crates/movement-parser, built by
-// scripts/build-parser-wasm.sh) and calls its hand-written C ABI: UTF-8 bytes
-// in, UTF-8 JSON bytes out, every buffer freed by the side that did not
-// allocate it. Node instantiates synchronously when this module loads; a
-// browser must `await initParser(…)` first, because browsers refuse large
-// synchronous compiles on the main thread.
+// Loads a movement artifact (built by scripts/build-movement-wasm.sh) and
+// calls its hand-written C ABI: UTF-8 bytes in, UTF-8 JSON bytes out, every
+// buffer freed by the side that did not allocate it. There are two artifacts,
+// and this one loader serves both:
+//
+//  - movement.wasm (crates/movement-engine, which links in crates/movement-
+//    parser): the parser and the engine. Node instantiates it synchronously
+//    when this module loads; the API runs movements on it.
+//  - movement_parser.wasm (crates/movement-parser alone): the parser, the
+//    lowering and the catalog. A browser loads it with `await initParser(url)`
+//    (browsers refuse large synchronous compiles on the main thread), and so
+//    never downloads the engine; `eval_expression` and the engine segments
+//    are then absent, and refused by name.
+//
+// One compiled module serves two kinds of instance: the parser's, long-lived
+// and replaced only after a trap, and one per engine segment
+// (`openEngineSegment`), which lives exactly as long as its segment.
+//
+// Every instance imports `movement_env.call`: the environment services the
+// engine asks JavaScript for mid-evaluation (env_services.ts).
 
 // Declared here rather than taken from a lib: this package compiles without
 // the DOM and Node libs, while apps/api and apps/web compile it with them.
@@ -26,6 +40,8 @@ declare const process: { versions?: { node?: string }; getBuiltinModule?(id: str
 declare const window: unknown;
 declare const __dirname: string;
 
+import { answerEnvRequest } from './env_services';
+
 interface WasmModule {
   readonly __wasmModule?: never;
 }
@@ -40,12 +56,10 @@ type CatalogFunction = 'catalog_query';
 
 type WasmFunction = ParserFunction | LoweringFunction | CatalogFunction;
 
-interface ParserExports {
-  memory: { readonly buffer: unknown };
-  alloc(len: number): number;
-  dealloc(ptr: number, len: number): void;
+interface ParserExports extends BufferExports {
   call(fn: WasmFunction, args: number[]): number;
-  lastPanic(outPtrPtr: number, outLenPtr: number): void;
+  /** Absent from a module built without the engine (the loader test's). */
+  evalExpression: ((...args: number[]) => number) | undefined;
 }
 
 interface Loaded {
@@ -54,7 +68,7 @@ interface Loaded {
   exports: ParserExports | undefined;
 }
 
-const WASM_FILE = 'movement_parser.wasm';
+const WASM_FILE = 'movement.wasm';
 const OK = 0;
 const ERROR = 1;
 
@@ -153,6 +167,30 @@ export function callCatalog(snapshotJson: string, queryJson: string): { ok: bool
   return call('catalog_query', [snapshotJson, queryJson], []);
 }
 
+/**
+ * One expression evaluated by the Rust engine against value bindings
+ * (crates/movement-engine/src/abi.rs `eval_expression`), on the parser's
+ * instance: the lowered expression's JSON and the bindings envelope's, and
+ * the reply — `{value, provenance}`, `{error}` or `{fallback}` — or a
+ * misuse as `{ok: false, json: {error: {message}}}`.
+ *
+ * @internal Used by the engine's evaluator switch (apps/api's rust_engine.ts).
+ */
+export function callEvalExpression(exprJson: string, envelopeJson: string): { ok: boolean; json: unknown } {
+  const exports = currentExports();
+  const evalExpression = exports.evalExpression;
+  if (evalExpression === undefined) throw new Error('this movement artifact has no eval_expression()');
+  let reply: { status: number; text: string };
+  try {
+    reply = exchange(exports, [exprJson, envelopeJson], (pairs, slots) => evalExpression(...pairs, slots, slots + 4));
+  } catch (trap) {
+    if (!(trap instanceof WasmTrap)) throw trap;
+    if (loaded) loaded.exports = undefined;
+    throw new Error(`movement engine crashed in eval_expression: ${trap.detail}`, { cause: trap.trapped });
+  }
+  return statusReply(reply, 'movement engine returned unknown status %s from eval_expression');
+}
+
 /** `inputs`: one (pointer, length) pair each, in order, before `extra`. */
 function call(
   fn: WasmFunction,
@@ -160,11 +198,53 @@ function call(
   extra: number[],
 ): { ok: boolean; json: unknown } {
   const exports = currentExports();
-  const buffers = (Array.isArray(inputs) ? inputs : [inputs]).map(input =>
-    typeof input === 'string' ? encoder.encode(input) : input,
-  );
-  let status: number;
-  let json: string;
+  let reply: { status: number; text: string };
+  try {
+    reply = exchange(exports, Array.isArray(inputs) ? inputs : [inputs], (pairs, slots) =>
+      exports.call(fn, [...pairs, ...extra, slots, slots + 4]),
+    );
+  } catch (trap) {
+    if (!(trap instanceof WasmTrap)) throw trap;
+    // A trap (a Rust panic aborts) leaves the instance's heap in an unknown
+    // state, so it is never called again.
+    if (loaded) loaded.exports = undefined;
+    throw new Error(`movement parser crashed in ${fn}: ${trap.detail}`, { cause: trap.trapped });
+  }
+  return statusReply(reply, `movement parser returned unknown status %s from ${fn}`);
+}
+
+/** What every instance's exports share: memory, its allocator, and the
+ *  panic message a trap leaves behind. */
+interface BufferExports {
+  memory: { readonly buffer: unknown };
+  alloc(len: number): number;
+  dealloc(ptr: number, len: number): void;
+  lastPanic(outPtrPtr: number, outLenPtr: number): void;
+}
+
+/** A call that trapped; `detail` is the trap and the panic message, if any. */
+class WasmTrap extends Error {
+  constructor(
+    readonly trapped: unknown,
+    readonly detail: string,
+  ) {
+    super(detail);
+  }
+}
+
+/**
+ * Copies each input into the instance, calls `invoke` with their (pointer,
+ * length) pairs flattened and an 8-byte pair of out slots, and reads back the
+ * UTF-8 output the call wrote there, freeing everything it allocated. A trap
+ * is rethrown as a `WasmTrap` carrying the panic message, read from the
+ * trapped instance's memory, the one place it lives.
+ */
+function exchange(
+  exports: BufferExports,
+  inputs: Array<string | Uint8Array>,
+  invoke: (pairs: number[], slots: number) => number,
+): { status: number; text: string } {
+  const buffers = inputs.map(input => (typeof input === 'string' ? encoder.encode(input) : input));
   let slots: number | undefined;
   try {
     const pairs = buffers.map(bytes => {
@@ -173,33 +253,36 @@ function call(
       return { ptr, len: bytes.length };
     });
     slots = exports.alloc(8);
-    status = exports.call(fn, [...pairs.flatMap(p => [p.ptr, p.len]), ...extra, slots, slots + 4]);
+    const status = invoke(
+      pairs.flatMap(p => [p.ptr, p.len]),
+      slots,
+    );
     for (const p of pairs) exports.dealloc(p.ptr, p.len);
     const view = new DataView(memoryBuffer(exports));
     const outPtr = view.getUint32(slots, true);
     const outLen = view.getUint32(slots + 4, true);
     exports.dealloc(slots, 8);
-    json = decoder.decode(memoryBytes(exports).subarray(outPtr, outPtr + outLen));
+    const text = decoder.decode(memoryBytes(exports).subarray(outPtr, outPtr + outLen));
     exports.dealloc(outPtr, outLen);
+    return { status, text };
   } catch (cause) {
-    // A trap (a Rust panic aborts) leaves the instance's heap in an unknown
-    // state, so it is never called again — except to read the panic's
-    // message, which lives only in its memory.
     const panic = slots === undefined ? undefined : panicMessage(exports, slots);
-    if (loaded) loaded.exports = undefined;
-    const detail = panic ? `: ${panic}` : '';
-    throw new Error(`movement parser crashed in ${fn}: ${String(cause)}${detail}`, { cause });
+    throw new WasmTrap(cause, `${String(cause)}${panic ? `: ${panic}` : ''}`);
   }
-  if (status !== OK && status !== ERROR) {
-    throw new Error(`movement parser returned unknown status ${status} from ${fn}`);
+}
+
+/** `unknownStatus` names the call, with `%s` where the status goes. */
+function statusReply(reply: { status: number; text: string }, unknownStatus: string): { ok: boolean; json: unknown } {
+  if (reply.status !== OK && reply.status !== ERROR) {
+    throw new Error(unknownStatus.replace('%s', String(reply.status)));
   }
-  return { ok: status === OK, json: JSON.parse(json) };
+  return { ok: reply.status === OK, json: JSON.parse(reply.text) };
 }
 
 /** What the Rust panic hook recorded before the trap, read through the
  *  out slots the failed call had already allocated. A static buffer, so it
  *  is not freed. Best effort: the error is thrown either way. */
-function panicMessage(exports: ParserExports, slots: number): string | undefined {
+function panicMessage(exports: BufferExports, slots: number): string | undefined {
   try {
     exports.lastPanic(slots, slots + 4);
     const view = new DataView(memoryBuffer(exports));
@@ -209,6 +292,59 @@ function panicMessage(exports: ParserExports, slots: number): string | undefined
   } catch {
     return undefined;
   }
+}
+
+/**
+ * One engine segment's conversation (crates/movement-engine/src/abi.rs):
+ * `start` and `answer` each return the next step as `{ok: true, json}` —
+ * `{pending: [{id, family, method, args}]}` or `{done: result}` — or a
+ * protocol misuse as `{ok: false, json: {error: {message}}}`. A trap
+ * (a panic) throws with the panic's message and ends the segment.
+ */
+export interface EngineSegment {
+  start(inputJson: string): { ok: boolean; json: unknown };
+  answer(id: number, answerJson: string): { ok: boolean; json: unknown };
+  /** Drops the segment's state. The instance is never used again. */
+  finish(): void;
+}
+
+/** Resolves once the engine can open segments: the parser's load, since
+ *  they are one artifact. */
+export async function initEngine(bytesOrUrl?: Uint8Array | string): Promise<void> {
+  await initParser(bytesOrUrl);
+}
+
+/** A fresh instance for one segment: its memory is the segment's, and goes
+ *  with it. */
+export function openEngineSegment(): EngineSegment {
+  if (!loaded) throw new MovementParserNotReady(loadFailure);
+  const exports = readEngineExports(newInstance(loaded.module));
+  let state: 'open' | 'trapped' | 'finished' = 'open';
+  const step = (fn: string, inputJson: string, invoke: (pairs: number[], slots: number) => number) => {
+    if (state !== 'open') throw new Error(`the engine segment is ${state}: ${fn} cannot be called`);
+    try {
+      return statusReply(exchange(exports, [inputJson], invoke), `movement engine returned unknown status %s from ${fn}`);
+    } catch (trap) {
+      if (!(trap instanceof WasmTrap)) throw trap;
+      state = 'trapped';
+      throw new Error(`movement engine crashed in ${fn}: ${trap.detail}`, { cause: trap.trapped });
+    }
+  };
+  return {
+    start: inputJson => step('engine_start', inputJson, (pairs, slots) => exports.start(...pairs, slots, slots + 4)),
+    answer: (id, answerJson) =>
+      step('engine_answer', answerJson, (pairs, slots) => exports.answer(id, ...pairs, slots, slots + 4)),
+    finish: () => {
+      if (state === 'open') exports.finish();
+      state = 'finished';
+    },
+  };
+}
+
+interface EngineExports extends BufferExports {
+  start(...args: number[]): number;
+  answer(...args: number[]): number;
+  finish(): void;
 }
 
 /**
@@ -235,28 +371,50 @@ function install(module: WasmModule): void {
 }
 
 function instantiate(module: WasmModule): ParserExports {
-  const exports = readExports(new WebAssembly.Instance(module, {}).exports);
+  const exports = readExports(newInstance(module));
   generation += 1;
   return exports;
 }
 
+/**
+ * A fresh instance of `module`, its `movement_env.call` import answering
+ * from this runtime: the request's JSON in, the `{value}` reply copied into
+ * a buffer of the instance's own `alloc` (the Rust side frees it), through
+ * the two out slots. Status 1 with `{error: {message}}` for a request it
+ * cannot read or answer. Only a failure to hand the reply back (the
+ * instance's `alloc` trapping, or its memory gone) throws through the
+ * instance, which then traps as any call into it would.
+ */
+function newInstance(module: WasmModule): Record<string, unknown> {
+  let raw: Record<string, unknown> | undefined;
+  let read: ReturnType<typeof exportReader> | undefined;
+  const call = (requestPtr: number, requestLen: number, outPtrPtr: number, outLenPtr: number): number => {
+    if (raw === undefined) throw new Error('the movement artifact called its environment while instantiating');
+    read ??= exportReader(raw, 'movement engine');
+    const exports = read;
+    let status = OK;
+    let reply: unknown;
+    try {
+      const request: unknown = JSON.parse(decoder.decode(memoryBytes(exports).slice(requestPtr, requestPtr + requestLen)));
+      reply = answerEnvRequest(request);
+    } catch (error) {
+      status = ERROR;
+      reply = { error: { message: error instanceof Error ? error.message : String(error) } };
+    }
+    const bytes = encoder.encode(JSON.stringify(reply));
+    const ptr = exports.buffers.alloc(bytes.length);
+    memoryBytes(exports).set(bytes, ptr);
+    const view = new DataView(memoryBuffer(exports));
+    view.setUint32(outPtrPtr, ptr, true);
+    view.setUint32(outLenPtr, bytes.length, true);
+    return status;
+  };
+  raw = new WebAssembly.Instance(module, { movement_env: { call } }).exports;
+  return raw;
+}
+
 function readExports(raw: Record<string, unknown>): ParserExports {
-  const memory = raw.memory;
-  if (typeof memory !== 'object' || memory === null || !('buffer' in memory)) {
-    throw new Error('movement parser module exports no memory');
-  }
-  const exported = (name: string): ((...args: number[]) => unknown) => {
-    const fn = raw[name];
-    if (typeof fn !== 'function') throw new Error(`movement parser module exports no ${name}()`);
-    return (...args) => fn(...args);
-  };
-  const number = (value: unknown, name: string): number => {
-    if (typeof value !== 'number') throw new Error(`movement parser ${name}() returned ${typeof value}`);
-    return value;
-  };
-  const alloc = exported('alloc');
-  const dealloc = exported('dealloc');
-  const lastPanic = exported('last_panic');
+  const { memory, exported, number, buffers } = exportReader(raw, 'movement parser');
   const parsers: Record<WasmFunction, (...args: number[]) => unknown> = {
     parse_program: exported('parse_program'),
     parse_program_eager: exported('parse_program_eager'),
@@ -266,17 +424,58 @@ function readExports(raw: Record<string, unknown>): ParserExports {
     lower_condition: exported('lower_condition'),
     catalog_query: exported('catalog_query'),
   };
+  const evalExpression = typeof raw.eval_expression === 'function' ? exported('eval_expression') : undefined;
   return {
     memory,
-    alloc: (len) => number(alloc(len), 'alloc'),
-    dealloc: (ptr, len) => void dealloc(ptr, len),
+    ...buffers,
     call: (fn, args) => number(parsers[fn](...args), fn),
-    lastPanic: (outPtrPtr, outLenPtr) => void lastPanic(outPtrPtr, outLenPtr),
+    evalExpression: evalExpression && ((...args) => number(evalExpression(...args), 'eval_expression')),
   };
 }
 
+// Read only when a segment opens, so a module without the engine (the
+// loader test's hand-built one) still serves the parser.
+function readEngineExports(raw: Record<string, unknown>): EngineExports {
+  const { exported, number, buffers, memory } = exportReader(raw, 'movement engine');
+  const start = exported('engine_start');
+  const answer = exported('engine_answer');
+  const finish = exported('engine_finish');
+  return {
+    memory,
+    ...buffers,
+    start: (...args) => number(start(...args), 'engine_start'),
+    answer: (...args) => number(answer(...args), 'engine_answer'),
+    finish: () => void finish(),
+  };
+}
+
+function exportReader(raw: Record<string, unknown>, what: string) {
+  const memory = raw.memory;
+  if (typeof memory !== 'object' || memory === null || !('buffer' in memory)) {
+    throw new Error(`${what} module exports no memory`);
+  }
+  const exported = (name: string): ((...args: number[]) => unknown) => {
+    const fn = raw[name];
+    if (typeof fn !== 'function') throw new Error(`${what} module exports no ${name}()`);
+    return (...args) => fn(...args);
+  };
+  const number = (value: unknown, name: string): number => {
+    if (typeof value !== 'number') throw new Error(`${what} ${name}() returned ${typeof value}`);
+    return value;
+  };
+  const alloc = exported('alloc');
+  const dealloc = exported('dealloc');
+  const lastPanic = exported('last_panic');
+  const buffers = {
+    alloc: (len: number) => number(alloc(len), 'alloc'),
+    dealloc: (ptr: number, len: number) => void dealloc(ptr, len),
+    lastPanic: (outPtrPtr: number, outLenPtr: number) => void lastPanic(outPtrPtr, outLenPtr),
+  };
+  return { memory, exported, number, buffers };
+}
+
 // Read afresh on every access: growing the memory detaches the old buffer.
-function memoryBuffer(exports: ParserExports): ArrayBuffer {
+function memoryBuffer(exports: Pick<BufferExports, 'memory'>): ArrayBuffer {
   const buffer = exports.memory.buffer;
   if (!isArrayBuffer(buffer)) throw new Error('movement parser memory has no ArrayBuffer');
   return buffer;
@@ -288,7 +487,7 @@ function isArrayBuffer(value: unknown): value is ArrayBuffer {
   return Object.prototype.toString.call(value) === '[object ArrayBuffer]';
 }
 
-function memoryBytes(exports: ParserExports): Uint8Array {
+function memoryBytes(exports: Pick<BufferExports, 'memory'>): Uint8Array {
   return new Uint8Array(memoryBuffer(exports));
 }
 

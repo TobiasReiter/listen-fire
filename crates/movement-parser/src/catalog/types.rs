@@ -573,6 +573,9 @@ pub struct EarlierOutput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginSpec {
     pub args: Vec<String>,
+    /// Whether invoking it may cost money: the engine refuses to start a
+    /// priced plugin once the run has spent its cost cap.
+    pub priced: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_args: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

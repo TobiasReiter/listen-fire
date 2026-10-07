@@ -6,14 +6,19 @@
 //! declares its fields in the order the TypeScript lowering built the object,
 //! so a consumer that walks an object's keys (or stringifies one) sees what
 //! it saw before. Absent optionals are omitted, never null.
+//!
+//! They also read back (`Deserialize`): the engine (crates/movement-engine)
+//! evaluates the very JSON the lowering wrote, so the two share one
+//! definition of its shape.
 
 use indexmap::IndexMap;
-use serde::Serialize;
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::tree::JsNumber;
 
 /// `static.value`: `string | number | boolean | null`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum StaticValue {
     String(String),
@@ -22,7 +27,7 @@ pub enum StaticValue {
     Null,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Expression {
     #[serde(rename = "property")]
@@ -158,13 +163,13 @@ impl Expression {
 }
 
 /// `{ type: 'spread', expression }` — in a list, or an object literal.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "spread")]
 pub struct ListSpread {
     pub expression: Box<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListElement {
     Expression(Expression),
@@ -172,14 +177,14 @@ pub enum ListElement {
 }
 
 /// An object entry has no `type`; `isObjectSpread` tells the two apart by it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ObjectMember {
     Entry { key: String, value: Expression },
     Spread(ListSpread),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum TraversalStep {
     #[serde(rename = "edge")]
@@ -192,7 +197,7 @@ pub enum TraversalStep {
     MetaEdge(MetaEdgeStep),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EdgeStep {
     #[serde(rename = "edgeTypeId")]
     pub edge_type_id: String,
@@ -208,7 +213,7 @@ pub struct EdgeStep {
     pub expression_filter: Option<Box<Expression>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Cardinality {
     pub mode: CardinalityMode,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,7 +224,7 @@ pub struct Cardinality {
     pub order_direction: Option<OrderDirection>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceStep {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<ResourceFilter>,
@@ -227,20 +232,20 @@ pub struct ResourceStep {
     pub cardinality: Option<ResourceCardinality>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceCardinality {
     pub mode: CardinalityMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<JsNumber>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetaEdgeStep {
     #[serde(rename = "metaEdge")]
     pub meta_edge: MetaEdgeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "meta_config")]
     pub config: Option<MetaConfig>,
     #[serde(rename = "expressionFilter", skip_serializing_if = "Option::is_none")]
     pub expression_filter: Option<Box<Expression>>,
@@ -253,6 +258,36 @@ pub struct MetaEdgeStep {
 /// ordered map of the five known keys, with `extra` itself an ordered map.
 pub type MetaConfig = IndexMap<&'static str, MetaSetting>;
 
+/// A hop's settings read back key by key, in the order written, each key's
+/// value read as the one shape that key holds.
+fn meta_config<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<MetaConfig>, D::Error> {
+    struct Settings;
+    impl<'de> Visitor<'de> for Settings {
+        type Value = MetaConfig;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a hop's settings")
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<MetaConfig, A::Error> {
+            let mut config = MetaConfig::new();
+            while let Some(key) = map.next_key::<String>()? {
+                let (key, setting) = match key.as_str() {
+                    "description" => ("description", MetaSetting::Expression(map.next_value()?)),
+                    "plugin" => ("plugin", MetaSetting::Expression(map.next_value()?)),
+                    "data" => ("data", MetaSetting::Expressions(map.next_value()?)),
+                    "enrichWith" => ("enrichWith", MetaSetting::EnrichWith(map.next_value()?)),
+                    "extra" => ("extra", MetaSetting::Extra(map.next_value()?)),
+                    other => return Err(de::Error::custom(format!("a hop's settings have no key `{other}`"))),
+                };
+                config.insert(key, setting);
+            }
+            Ok(config)
+        }
+    }
+    deserializer.deserialize_map(Settings).map(Some)
+}
+
+/// Read back by its key (`meta_config`), never by trying each shape in turn:
+/// an `extra` map with a `type` key would otherwise read as an expression.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum MetaSetting {
@@ -262,13 +297,13 @@ pub enum MetaSetting {
     Extra(IndexMap<String, Expression>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnrichWithEntry {
     pub transform: Expression,
     pub argument: Expression,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceFilter {
     #[serde(rename = "resourceType", skip_serializing_if = "Option::is_none")]
     pub resource_type: Option<String>,
@@ -280,7 +315,7 @@ pub struct ResourceFilter {
     pub name_pattern: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArithmeticOp {
     #[serde(rename = "+")]
     Add,
@@ -294,7 +329,7 @@ pub enum ArithmeticOp {
     Rem,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FilterOperator {
     Eq,
@@ -309,14 +344,14 @@ pub enum FilterOperator {
     Within,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogicalOp {
     And,
     Or,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AggregationFunction {
     First,
@@ -353,21 +388,21 @@ impl AggregationFunction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderDirection {
     Asc,
     Desc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EdgeDirection {
     Outgoing,
     Incoming,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CardinalityMode {
     All,
@@ -375,7 +410,7 @@ pub enum CardinalityMode {
     N,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MetaEdgeKind {
     Extract,

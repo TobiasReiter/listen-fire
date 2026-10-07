@@ -6,7 +6,7 @@
 // the checker without reaching the lowering too.
 //
 // Set UPDATE_LOWERING_VOCABULARY=1 to rewrite the copy (then rebuild the
-// WASM: scripts/build-parser-wasm.sh).
+// WASM: scripts/build-movement-wasm.sh).
 import { AI_TIERS } from '@listen-fire/shared/expression/types';
 import {
   BUILTIN_OPTIONS,

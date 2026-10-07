@@ -107,6 +107,15 @@ describe('the parser loader', () => {
       expect(loader.callJson('parse_program', '', [3])).toEqual({ statements: [] });
     });
 
+    it("in a browser, loads the parser's own artifact: it parses, lowers and checks, and runs no movement", async () => {
+      const loader = loadWithout('node');
+      await loader.initParser(committedArtifact('movement_parser.wasm'));
+      expect(loader.callJson('parse_program', '', [3])).toEqual({ statements: [] });
+      expect(loader.callLowering('lower_expression', JSON.stringify(loader.callJson('parse_expression', 'a', [3])), 'a').ok).toBe(true);
+      expect(() => loader.callEvalExpression('{}', '{}')).toThrow('this movement artifact has no eval_expression()');
+      expect(() => loader.openEngineSegment()).toThrow();
+    });
+
     it('in a Node that could not read the artifact, says why, at boot and at every parse', () => {
       const loader = loadWithout('disk');
       const atBoot = thrownBy(() => loader.assertParserReady());
@@ -146,12 +155,14 @@ describe('the parser loader', () => {
   });
 });
 
-function committedArtifact(): Uint8Array {
+/** A committed artifact: the API's (`movement.wasm`, the parser and the
+ *  engine) unless named. */
+function committedArtifact(file = 'movement.wasm'): Uint8Array {
   const fs = require('fs');
   if (typeof fs !== 'object' || fs === null || !('readFileSync' in fs) || typeof fs.readFileSync !== 'function') {
     throw new Error('no fs');
   }
-  const bytes: unknown = fs.readFileSync(`${__dirname}/../movement_parser.wasm`);
+  const bytes: unknown = fs.readFileSync(`${__dirname}/../${file}`);
   if (!ArrayBuffer.isView(bytes)) throw new Error('no bytes');
   return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }

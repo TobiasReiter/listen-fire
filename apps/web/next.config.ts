@@ -5,7 +5,8 @@ import fs from 'fs';
 import path from 'path';
 import { apiProxyRewrites } from './src/lib/api-proxy';
 
-// The browser fetches the movement parser from public/ (src/lib/parser-provider.tsx).
+// The browser fetches the movement parser from public/ (src/lib/parser-provider.tsx):
+// the parser's own artifact, without the engine the API runs movements on.
 // Copied here, where `next dev` and `next build` both pass, rather than by a
 // webpack asset rule: the loader is CommonJS shared with the api, so it cannot
 // name the file through `new URL(…, import.meta.url)`. The copy is named by
