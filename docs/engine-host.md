@@ -97,6 +97,109 @@ interface ParkedScopeState { version: 1; address: string; bindingName: string | 
 - **The catalog snapshot.** The team's catalog as plain JSON: adapters and their schemas, credential names, plugins, models, and the saved files the program imports (file imports resolve from the snapshot's `files` only). Everything the engine knows of a plugin comes from the snapshot's `plugins`: the arguments a stage feeds it (`fedArgs`), the ones it must be handed (`requiredArgs`), what a plain call hands back (`output`, `earlierOutputs`), and whether it is `priced`.
 - **A host.** The families below.
 
+## Entry points
+
+A run is entered one segment at a time. Each entry is one call into the engine with one JSON input, the host beside it; the engine opens one segment for it and closes it as it returns. Four engine calls serve every way in: `runMovement`, `resumeMovement`, `settleRaceFrame` and `fireCallbackBody` (`movement_engine/run.ts`). What follows is each input, and which a run host passes in each situation. (Production's run host is `translation_graph/movement/execute.ts` and the resume drivers beside it.)
+
+### The input every entry takes
+
+```ts
+interface RunInput {
+  source: string;                         // the pinned version's source, byte for byte (a resume re-parses it, so every address is the same)
+  languageVersion?: LanguageVersion;      // the pin the run started under; absent: the current version
+  movementName?: string;                  // which movement in the file; absent: the file's only one
+  event: TriggerEvent;                    // the event the run fired on (a resume passes the run's original)
+  teamId: TeamId;                         // the team the segment is opened for
+  runId?: string;                         // the run record; absent for a test or a dry run
+  firedAt?: string;                       // ISO 8601: when the run first fired; every clock read answers from it
+  costCapMicrodollars?: number;           // the cap, read by the run host as each segment starts; absent: no cap
+  priorSpentMicrodollars?: number;        // what the run spent in its earlier segments; absent: 0
+  capBaselineMicrodollars?: number;       // what the run had spent when last resumed from a limit pause; absent: 0
+  limitPaused?: boolean;                  // the run is paused at a limit (see "Operator limit resume")
+  catalog: CatalogSnapshot;
+  credentialIds?: Record<string, string>; // import name to credential id
+  dryRun?: boolean;                       // rehearse every target
+  suspendAt?: string[];                   // addresses to suspend at, once each
+}
+```
+
+- A run host passes the run's own `firedAt` on every entry, the first included (production: the run row's `started_at`). Absent, the engine pins its own clock once per segment, which a park does not survive.
+- The cap counts `priorSpentMicrodollars - capBaselineMicrodollars` plus what this segment spends.
+
+### First firing
+
+```ts
+runMovement(input: RunInput)
+```
+
+- A fresh run: `priorSpentMicrodollars` and `capBaselineMicrodollars` are 0 (or absent), `limitPaused` is absent.
+
+### Resume
+
+```ts
+resumeMovement(input: RunInput & {
+  state: ParkedScopeState;        // the parked leaf's state, as park.sink stored it
+  answer?: unknown;               // what to bind on a step-past resume (an ask's answer)
+  reenter?: boolean;              // absent: false
+  deferRaceSettlement?: boolean;  // batch mode; absent: false
+})
+```
+
+- **The address.** `state.address` is the parked leaf's own address, the `address` its `commitTimerPark`, `commitAwaitPark` or `commitSuspension` was given. The resume descends the program to it through `state`'s frames and scopes.
+- **Step past** (`reenter` false). The parked statement is done. The resume binds `answer` (when given) at `state.bindingName` and continues with the statement after it. An answer is a JSON scalar, or a curated row set `{ __correct: { type: string; rows: Array<{ fields: Record<string, unknown> }> } }`. A timer's `sleep` resumes this way, with no answer.
+- **Re-enter** (`reenter` true). The parked statement runs again: an await re-checks its edge live and binds its own landing, an `until` timer re-tests its condition, and a limit suspension re-runs its statement, replaying the calls it had finished. `answer` is ignored.
+- Which a host passes, by what the leaf was parked on:
+
+| Parked on | `reenter` | `answer` |
+|---|---|---|
+| an ask (answered) | false | the validated answer |
+| a timer `sleep` | false | absent |
+| a timer `await until(…)` | true | absent |
+| an await (woken) | true | absent |
+| a limit suspension (operator resume) | true | absent |
+
+- The result says what became of the leaf: `parked` with `parkedAddress` (the same address: an await or `until` that re-armed; another: the branch parked further on), `cancelled`, or neither (the branch completed; see "Join closing").
+
+### Race settlement
+
+- **Inline** (`deferRaceSettlement` false). A race arm that completes on resume persists its exports and decrements the race's frame, as a join branch does (see "Join closing"; a race's frame is pending one). The first to complete wins: in the same segment it cancels the arms still parked (`park.sink.cancelSubtrees`) and runs the race's continuation. A later one stops.
+- **Batch mode** (`deferRaceSettlement` true). A host that resumes every resolvable leaf of a run in one pass (production's await drain) defers each race: a completing arm persists its exports and decrements the frame, but settles nothing, and the result lists the race's frame address in `deferredRaceFrames`. Once every leaf of the pass has been stepped, the host settles each listed frame once, so every branch that completed in the pass is a winner:
+
+```ts
+settleRaceFrame(input: RunInput & {
+  state: ParkedScopeState;  // any completed branch's state from the pass
+  frameAddress: string;     // one of the pass's deferredRaceFrames
+})
+```
+
+- The settlement builds the race's answer from every completed branch's exports (`park.sink.collectBranchExports`), cancels the arms still parked, and runs the continuation after the race statement.
+
+### A callback body
+
+```ts
+fireCallbackBody(input: RunInput & {
+  state: ParkedScopeState;          // the callback's captured continuation, as park.callbacks.mint was given it
+  values: Record<string, unknown>;  // the call's values, validated against the callback's parameters
+  callIndex: number;                // the call's index on the callback's ledger
+})
+```
+
+- `state.address` is the callback expression's address. The body runs in a child of the captured scope, at its own address frame (`callIndex`), so the bodies of a repeatable callback's calls never share a leaf.
+- A body never suspends: one that meets the cost cap fails, as that call's failure only.
+- A body never settles the run. The run's main continuation stays parked; a body that parks gets a leaf of its own. A host wakes the run's awaiters on the callback after the body (production: in the same process, with a queued wake behind it).
+
+### Operator limit resume
+
+- A run paused at its cost limit is resumed by an operator only. The host lifts the pause first, then resumes each leaf the pause suspended (`commitSuspension`) with `reenter: true`, `limitPaused` absent, `priorSpentMicrodollars` the run's spend, and `capBaselineMicrodollars` the run's spend at this moment, so the cap counts afresh.
+- Any other entry into a run that is paused passes `limitPaused: true`: the woken branch takes its event (binds the answer, steps past the sleep) and then suspends before its next statement, joining the pause.
+
+### Join closing
+
+The decision that a join has closed is split between the engine and the run host.
+
+- **The engine closes the frame.** A resumed branch that completes walks back up through its join frames (`parallel`, a fan-out, a race). At each one it persists its exports (`park.sink.persistBranchExport`) and decrements the frame (`park.sink.decrementJoin`). `closed: true` comes back for exactly one branch, which collects the exports (`collectBranchExports`) and runs what follows the join, in its own segment. Any other branch's segment ends there. Without `park.sink`, a resumed join closes only its own leaf.
+- **The run host closes the run.** Whether the whole run is complete is not a host call: the host decides it from what its park sink persisted, once the segment has returned without parking, cancelling or failing. The run is complete when no join frame is still pending and no leaf other than the one just resumed is parked (production: `settleBranchComplete` in each resume driver). Complete, the host settles the run `success`; otherwise it records the segment's writes and keeps the run parked.
+
 ## The families
 
 | Family | Methods | Optional for an embedder |
@@ -108,7 +211,7 @@ interface ParkedScopeState { version: 1; address: string; bindingName: string | 
 | `llm.transforms` | `invoke` | same as `llm.client` |
 | `llm` | `arbitrateEntities` | same as `llm.client` |
 | `park.sink` | `recordJoin`, `commitTimerPark`, `commitAwaitPark`, `decrementJoin`, `persistBranchExport`, `collectBranchExports`, `cancelSubtrees`, `commitSuspension`, `commitLimitPause` | yes: absent, a run that reaches a park fails (a dry run) |
-| `park` | `wake` | no |
+| `park` | `wake` | no (may throw, if `park.sink` is absent: only an await park asks for a wake) |
 | `park.callbacks` | `mint`, `calls` | yes: absent, `callback(…)` fails as unsupported |
 | `park.bindings` | `record`, `findBoundCounterpart`, `delete` | no (may throw, if no program binds) |
 | `control.cancel` | `cancelled`, `cancelledNow` | no (answer `false` for a run nothing cancels) |
