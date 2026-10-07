@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { RemoteAdapterManifestFile, remoteAdapterManifest } from '../manifest';
 
 const base = {
+  protocolVersion: 2,
   adapterType: 'acme_crm',
   displayName: 'Acme CRM',
   baseUrl: 'https://crm.example/adapter',
@@ -31,6 +32,17 @@ describe('RemoteAdapterManifestFile', () => {
     const id = randomUUID();
     const parsed = RemoteAdapterManifestFile.parse({ ...base, credentialsId: id });
     expect(parsed.credentialsId).toBe(id);
+  });
+
+  it('refuses a manifest without protocolVersion 2, naming the field', () => {
+    const { protocolVersion: _omit, ...unversioned } = base;
+    const missing = RemoteAdapterManifestFile.safeParse(unversioned);
+    expect(missing.success).toBe(false);
+    expect(missing.error?.issues[0]?.path).toEqual(['protocolVersion']);
+    expect(missing.error?.issues[0]?.message).toMatch(/^protocolVersion: expected 2, got nothing/);
+
+    const v1 = RemoteAdapterManifestFile.safeParse({ ...base, protocolVersion: 1 });
+    expect(v1.error?.issues[0]?.message).toMatch(/^protocolVersion: expected 2, got 1/);
   });
 
   it('projection advertises no requiredCredentialType (construction stays credential-free)', () => {

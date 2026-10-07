@@ -92,6 +92,7 @@ describe('catalog connect-method (real manifests)', () => {
 
   it('surfaces a remote install as needs-secret until its secret is provisioned', async () => {
     const manifest = RemoteAdapterManifestFile.parse({
+      protocolVersion: 2,
       adapterType: 'acme_crm',
       displayName: 'Acme CRM',
       baseUrl: 'https://crm.example/adapter',

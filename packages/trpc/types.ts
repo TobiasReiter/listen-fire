@@ -13219,6 +13219,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
             }, {
+                protocolVersion: 2;
                 adapterType: string;
                 baseUrl: string;
                 authStrategy: {
@@ -13283,6 +13284,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     authorise: () => Promise<void>;
                 };
                 _input_in: {
+                    protocolVersion: 2;
                     adapterType: string;
                     baseUrl: string;
                     authStrategy: {
@@ -13331,6 +13333,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     secret?: string | undefined;
                 };
                 _input_out: {
+                    protocolVersion: 2;
                     adapterType: string;
                     baseUrl: string;
                     authStrategy: {

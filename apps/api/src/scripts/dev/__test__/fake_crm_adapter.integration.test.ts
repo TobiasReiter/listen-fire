@@ -115,6 +115,7 @@ describe('resolveEntity bare-array tolerance (over real HTTP)', () => {
         switch (method) {
           case 'manifest':
             return send({
+              protocolVersion: 2,
               adapterType: FAKE_CRM_ADAPTER_TYPE,
               supportedTriggers: [],
               runtimeCapabilities: BASE_RUNTIME_CAPABILITIES,

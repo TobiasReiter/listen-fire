@@ -67,6 +67,7 @@ describe('postRpc', () => {
     expect(url).toBe('https://adapter.example/rpc');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+    expect(PROTOCOL_VERSION).toBe('2');
     expect(JSON.parse(init.body as string)).toEqual({
       protocolVersion: PROTOCOL_VERSION,
       method: 'describe',

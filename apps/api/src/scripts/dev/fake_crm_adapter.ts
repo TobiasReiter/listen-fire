@@ -15,8 +15,7 @@
 //
 // The descriptor shapes mirror a real hardcoded writable adapter (see
 // `adapters/native_valuations.ts`, whose `commonFields()` / per-type descriptors
-// are the template): `displayName === fieldId` so the remote shim's
-// natural-name → internal-id resolution is the identity.
+// are the template), with `displayName === fieldId`.
 
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -86,6 +85,7 @@ export function fakeCrmBaseUrl(): string {
  */
 export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile, 'credentialsId'> {
   return {
+    protocolVersion: 2,
     adapterType: FAKE_CRM_ADAPTER_TYPE,
     displayName: FAKE_CRM_DISPLAY_NAME,
     description: 'A homespun CRM installed as a remote adapter for e2e verification.',
@@ -112,8 +112,7 @@ export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile
 }
 
 /** The `Company` type descriptor: a writable `Name` (required) + `Description`
- *  (optional). `displayName === fieldId` on purpose (the natural-name resolver
- *  then round-trips as the identity). */
+ *  (optional). */
 const COMPANY_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: FAKE_CRM_COMPANY_TYPE,
   displayName: FAKE_CRM_COMPANY_TYPE,

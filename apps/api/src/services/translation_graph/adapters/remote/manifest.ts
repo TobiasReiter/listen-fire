@@ -13,9 +13,13 @@
 
 import { z } from 'zod';
 import type { AdapterManifest } from '../../adapter';
+import { WireManifestProtocolVersion } from '../../protocol/schema';
 import type { TriggerType } from '../../triggers/types';
 
 export const RemoteAdapterManifestFile = z.object({
+  /** The adapter protocol version the server speaks. Required: a manifest
+   *  without it predates protocol v2, whose wire currency differs. */
+  protocolVersion: WireManifestProtocolVersion,
   /** Slug the engine routes on. One install per slug per team. */
   adapterType: z.string().min(1),
   /** Human-friendly name for the picker. Falls back to `adapterType`. */

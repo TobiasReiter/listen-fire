@@ -110,6 +110,7 @@ describe('listener retirement on re-save (real Postgres + live adapter socket)',
       teamId,
       userId: null,
       manifest: {
+        protocolVersion: 2,
         adapterType: FAKE_CRM_ADAPTER_TYPE,
         baseUrl: server.baseUrl,
         authStrategy: { kind: 'bearer' },

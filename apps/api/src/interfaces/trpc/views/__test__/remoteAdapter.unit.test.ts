@@ -21,6 +21,7 @@ describe('remoteAdapter router — sanity', () => {
 
 describe('upsertFromManifest input contract', () => {
   const validManifest = {
+    protocolVersion: 2,
     adapterType: 'acme-crm',
     baseUrl: 'https://adapter.example.com',
     authStrategy: { kind: 'bearer' as const },

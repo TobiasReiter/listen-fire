@@ -20,6 +20,7 @@ let teamId: TeamId;
 
 const manifest = (adapterType: string) =>
   RemoteAdapterManifestFile.parse({
+    protocolVersion: 2,
     adapterType,
     displayName: 'Acme CRM',
     baseUrl: 'https://crm.example/adapter',
@@ -75,6 +76,31 @@ describe('installRemoteAdapterFromManifest', () => {
       .executeTakeFirstOrThrow();
     expect(cred.type).toBe(ExternalServiceType.REMOTE);
     expect(cred.app_id).toBe('acme_crm');
+  });
+
+  it('refuses a manifest for an older protocol before minting anything', async () => {
+    await expect(
+      installRemoteAdapterFromManifest({
+        teamId,
+        // @ts-expect-error a v1 manifest is exactly what the type now rules out
+        manifest: { ...manifest('legacy_crm'), protocolVersion: 1 },
+        secret: 'legacy-token',
+      }),
+    ).rejects.toThrow(/Remote adapter "legacy_crm" cannot be installed: protocolVersion: expected 2, got 1/);
+
+    const rows = await getAutomationsQb(['remote_adapter'])
+      .selectFrom('remote_adapter')
+      .where('team_id', '=', teamId)
+      .where('adapter_type', '=', 'legacy_crm')
+      .select(['id'])
+      .execute();
+    expect(rows).toEqual([]);
+    const creds = await getAutomationsQb(['external_service_credentials'])
+      .selectFrom('external_service_credentials')
+      .where('app_id', '=', 'legacy_crm')
+      .select(['id'])
+      .execute();
+    expect(creds).toEqual([]);
   });
 
   it('without a secret: installs with a null credential FK (needs connecting)', async () => {

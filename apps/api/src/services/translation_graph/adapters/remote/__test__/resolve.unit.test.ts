@@ -75,6 +75,7 @@ const TEAM = 'team-1' as never;
 
 function validManifest(adapterType: string) {
   return {
+    protocolVersion: 2,
     adapterType,
     baseUrl: 'https://example.test/rpc',
     authStrategy: { kind: 'bearer' },

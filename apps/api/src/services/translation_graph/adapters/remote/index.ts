@@ -3,6 +3,13 @@
 // A third-party (or out-of-process) adapter server speaks the same method
 // registry; this class lets the TG engine drive it as if it were local.
 //
+// A pure forwarder: the wire speaks the same NATURAL names (type, field and
+// edge display names) the in-process interface does, so nothing is translated
+// here. The remote server resolves names to its own internal ids exactly as an
+// in-process adapter does on the first line of each method. The only rewriting
+// is transport: FileRefs written into the remote are exposed at a fetchable
+// URL, and FileRefs read back get a `retrieve()` bound to `resolveFileRef`.
+//
 // Construction is synchronous: the manifest is fetched once at install time
 // (`fetchRemoteManifest`) and passed IN, so the engine can read
 // `adapterType` / `runtimeCapabilities` / `supportedTriggers` immediately. The factory
@@ -48,7 +55,20 @@ import type {
   WriteResult,
   ExternalRecordRef,
   ParentAssociation,
+  LinkRecordsInput,
+  LinkRecordsResult,
+  UnlinkRecordsInput,
+  UnlinkRecordsResult,
+  EnsureEventSubscriptionInput,
+  EventSubscriptionRegistration,
+  RemoveEventSubscriptionInput,
 } from '../../adapter';
+import type {
+  AwaitableCapability,
+  AwaitParkRef,
+  AwaitPoint,
+  AwaitResolution,
+} from '../../awaitable';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
@@ -61,15 +81,12 @@ import type { Expression } from '#shared/expression/types';
 
 import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
 import type { AuthStrategy } from '../../protocol/client';
-import { METHODS } from '../../protocol/schema';
-import type { MethodName } from '../../protocol/schema';
+import { METHODS, WireManifestProtocolVersion } from '../../protocol/schema';
+import type { MethodName, WireAwaitResolutionShape } from '../../protocol/schema';
 import { writeParentLinks, unsupportedAssociation } from '../../adapter';
-import { META_RECORD_TYPE } from '../../types';
-import {
-  memoizedResolver,
-  naturalName,
-  type ScopedResolver,
-} from '../name_resolution';
+import { dropAwaitCorrelation, registerAwaitCorrelation } from '../await_correlation';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
 
 export interface RemoteAdapterConfig {
   /** Slug the engine routes on. */
@@ -92,17 +109,15 @@ export interface RemoteManifest {
 }
 
 /**
- * Optional `Adapter` methods that round-trip cleanly over the protocol. The
- * factory deletes any of these the manifest didn't advertise so the engine's
- * `if (adapter.method)` capability gates see `undefined`.
- *
- * `extractActor` is async (post-refactor) and so is a full forwarder here.
- * `getPositionTypeId` is gone entirely — position type is now resolved
- * generically from the manifest's `webhookEventTypeId`.
+ * Optional methods that round-trip cleanly over the protocol. The factory
+ * deletes any of these the manifest didn't advertise so the engine's
+ * `if (adapter.method)` capability gates see `undefined`. Two optional
+ * surfaces are gated differently: `iterateRelated` stays while the server
+ * advertises either paging method, and `awaitable` exists only when the
+ * server advertises `resolveAwait`.
  */
 export const OPTIONAL_REMOTE_METHODS = [
   'edgesFrom',
-  'iterateRelated',
   'preprocessInbound',
   'listEventTypes',
   'readRecord',
@@ -113,7 +128,12 @@ export const OPTIONAL_REMOTE_METHODS = [
   'extractActor',
   'resolveFileRef',
   'invokeFieldFunction',
-] as const satisfies readonly (keyof Adapter)[];
+  'linkRecords',
+  'unlinkRecords',
+  'ensureEventSubscription',
+  'removeEventSubscription',
+  'wakeKeys',
+] as const satisfies readonly (keyof RemoteAdapter)[];
 
 /**
  * Install-time manifest fetch. Calls the server's `manifest` method and
@@ -132,6 +152,16 @@ export async function fetchRemoteManifest(
     cacheScopeId: '<none>',
     params: {},
   });
+  // Checked ahead of the full parse so an older server is refused for what it
+  // is, not for whichever other field happens to have changed shape.
+  const version = WireManifestProtocolVersion.safeParse(
+    raw !== null && typeof raw === 'object' ? Reflect.get(raw, 'protocolVersion') : undefined,
+  );
+  if (!version.success) {
+    throw new Error(
+      `Remote adapter "${config.adapterType}" refused: ${version.error.issues[0]?.message ?? 'protocolVersion is not 2'}`,
+    );
+  }
   const result = parseWireResult(METHODS.manifest.result, raw, {
     method: 'manifest',
     adapter: config.adapterType,
@@ -167,9 +197,12 @@ export class RemoteAdapter implements Adapter {
   private readonly _runtimeCapabilities: RuntimeCapabilities;
   readonly webhookEventTypeId?: string;
 
+  readonly awaitable?: AwaitableCapability;
+
   private readonly config: RemoteAdapterConfig;
   private readonly secret: string;
   private readonly cacheScopeId: string;
+  private readonly advertised: ReadonlySet<string>;
 
   constructor(input: RemoteAdapterInput) {
     this.config = input.config;
@@ -179,65 +212,12 @@ export class RemoteAdapter implements Adapter {
     this.supportedTriggers = input.manifest.supportedTriggers;
     this._runtimeCapabilities = input.manifest.runtimeCapabilities;
     this.webhookEventTypeId = input.manifest.webhookEventTypeId;
+    this.advertised = new Set(input.manifest.methods);
+    if (this.advertised.has('resolveAwait')) this.awaitable = this.remoteAwaitable();
   }
 
   runtimeCapabilities(): RuntimeCapabilities {
     return this._runtimeCapabilities;
-  }
-
-  /**
-   * Natural-name → internal-id resolver, memoized from the introspection this
-   * shim ALREADY fetches over the wire (`listEntryPoints()` + `describe()`).
-   * The remote server's wire protocol still speaks ITS OWN internal ids
-   * (Decision #3: "the remote shim translates locally from the manifest it
-   * fetched, wire protocol unchanged") — so the shim resolves the program's
-   * NATURAL names to those internal ids on the first line of each forwarding
-   * method, then forwards the internal ids over the wire UNCHANGED. The remote
-   * adapter doesn't extend BaseAdapter (it's a wire forwarder, not an
-   * external-record adapter), so it composes the same `memoizedResolver` helper
-   * BaseAdapter wires in — exactly as the KG adapter does.
-   *
-   * When the remote server's introspection already publishes natural names as
-   * its own ids (displayName === typeId/fieldId), translation is the identity —
-   * we do NOT special-case it; the resolver returns the same value.
-   */
-  private readonly resolver: ScopedResolver = memoizedResolver(this);
-
-  /**
-   * Resolve a `describe(ref)` argument to the remote server's INTERNAL typeId.
-   * `describe` accepts the program's NATURAL type name (engine / checker
-   * currency) OR an internal typeId (the resolver build feeds it the entry's
-   * own typeId; legacy callers pass stored ids). Entries-only — it NEVER calls
-   * `describe`, so the resolver build (which calls `describe` per entry typeId)
-   * stays recursion-free. A natural name maps to its entry's typeId; an
-   * already-internal id (or an unknown one) passes through.
-   */
-  private async resolveTypeRef(ref: string): Promise<string> {
-    if (this.typeIdByDisplayName === undefined) {
-      this.typeIdByDisplayName = (async () => {
-        const map = new Map<string, string>();
-        for (const entry of await this.listEntryPoints()) {
-          map.set(entry.displayName, entry.typeId);
-        }
-        return map;
-      })();
-      this.typeIdByDisplayName.catch(() => {
-        this.typeIdByDisplayName = undefined;
-      });
-    }
-    return (await this.typeIdByDisplayName).get(ref) ?? ref;
-  }
-  private typeIdByDisplayName?: Promise<Map<string, string>>;
-
-  /** Resolve a NATURAL field name to the remote's internal field id against a
-   *  position's NATURAL type. Identity when the position carries no type. */
-  private async resolveFieldId(
-    typeName: string | null,
-    fieldNaturalName: string,
-  ): Promise<string> {
-    if (typeName === null) return fieldNaturalName;
-    const resolver = await this.resolver({ types: [typeName] });
-    return resolver.fieldId(naturalName(typeName), naturalName(fieldNaturalName));
   }
 
   private async call<M extends MethodName>(
@@ -263,22 +243,12 @@ export class RemoteAdapter implements Adapter {
     return this.call('listEntryPoints', {}) as Promise<SchemaEntryPoint[]>;
   }
 
-  async describe(typeRef: string): Promise<SchemaTypeDescriptor | null> {
-    // Resolve the NATURAL type name to the remote's internal typeId, then
-    // forward the internal id over the wire. `resolveTypeRef` is entries-only
-    // (it passes an already-internal id through), so the resolver build —
-    // which calls `describe(entry.typeId)` — never recurses.
-    const typeId = await this.resolveTypeRef(typeRef);
-    return this.call('describe', { typeId }) as Promise<SchemaTypeDescriptor | null>;
+  describe(typeRef: string): Promise<SchemaTypeDescriptor | null> {
+    return this.call('describe', { typeId: typeRef }) as Promise<SchemaTypeDescriptor | null>;
   }
 
-  /**
-   * Meta-graph walk — a pure forwarder. No name resolution on the way in:
-   * unlike `describe`'s typeRef, a position is not a name the program wrote,
-   * it is one the remote MINTED and we are echoing back, so translating it
-   * would corrupt the remote's own path. Pruned to `undefined` by
-   * `createRemoteAdapter` when the manifest doesn't advertise it.
-   */
+  /** Meta-graph walk. Pruned to `undefined` by `createRemoteAdapter` when the
+   *  manifest doesn't advertise it. */
   async edgesFrom(position: SourcePosition, cursor?: unknown): Promise<EdgesFromResult | null> {
     return this.call('edgesFrom', {
       position,
@@ -286,76 +256,12 @@ export class RemoteAdapter implements Adapter {
     }) as Promise<EdgesFromResult | null>;
   }
 
-  async resolveEntity(input: ResolveEntityInput): Promise<ResolveEntityResult> {
-    // recordType + record keys + each constraint field are the program's
-    // NATURAL names; translate them to the remote's internal currency, then
-    // forward. Candidate `data` comes back keyed by the remote's internal field
-    // ids — rename it to NATURAL names so the engine arbitrates in the same
-    // currency it holds the asserted record + constraints in.
-    const resolver = await this.resolver({ types: [input.recordType] });
-    const type = naturalName(input.recordType);
-    const internalFieldName = (name: string): string =>
-      resolver.tryFieldId(type, naturalName(name)) ??
-      resolver.tryEdgeWriteName(type, naturalName(name)) ??
-      name;
-    const record: Record<string, unknown> = {};
-    for (const [name, value] of Object.entries(input.record)) {
-      record[internalFieldName(name)] = value;
-    }
-    const constraints = {
-      any: input.constraints.any.map((branch) => ({
-        all: branch.all.map((entry) => ({ ...entry, field: internalFieldName(entry.field) })),
-      })),
-    };
-    const result = (await this.call('resolveEntity', {
-      ...input,
-      recordType: resolver.typeId(type),
-      record,
-      constraints,
-    })) as ResolveEntityResult;
-
-    // Candidate `data` comes back keyed by the remote's internal field ids —
-    // rename to the NATURAL field names (the same currency the engine holds the
-    // asserted record + constraints in) via a reverse map built from the
-    // remote's own descriptor. A key with no reverse mapping (already natural,
-    // or a folded relationship entry) round-trips as itself.
-    const naturalByInternalField = await this.naturalFieldNameMap(input.recordType);
-    return {
-      candidates: result.candidates.map((c) => {
-        const data: Record<string, unknown> = {};
-        for (const [id, value] of Object.entries(c.data)) {
-          data[naturalByInternalField.get(id) ?? id] = value;
-        }
-        return { ...c, data };
-      }),
-    };
-  }
-
-  /** internal field id → NATURAL field name for one type, from the remote's
-   *  fetched descriptor — the reverse of the resolver's forward field lookup,
-   *  used to rename a candidate's `data` bag back to natural names. */
-  private async naturalFieldNameMap(typeNaturalName: string): Promise<Map<string, string>> {
-    const typeId = await this.resolveTypeRef(typeNaturalName);
-    const descriptor = await this.describeInternal(typeId);
-    const map = new Map<string, string>();
-    if (descriptor) {
-      for (const f of descriptor.fields) map.set(f.fieldId, f.displayName);
-    }
-    return map;
-  }
-
-  /** Forward a describe call for an already-internal typeId (no re-resolution).
-   *  Shared by the resolver-build path and the candidate-data reverse map. */
-  private describeInternal(typeId: string): Promise<SchemaTypeDescriptor | null> {
-    return this.call('describe', { typeId }) as Promise<SchemaTypeDescriptor | null>;
+  resolveEntity(input: ResolveEntityInput): Promise<ResolveEntityResult> {
+    return this.call('resolveEntity', input) as Promise<ResolveEntityResult>;
   }
 
   async getFieldValue(input: GetFieldValueInput): Promise<unknown> {
-    // `fieldId` is the NATURAL field name; `position.recordType` is the NATURAL
-    // type name. Resolve to the remote's internal field id, then forward.
-    const fieldId = await this.resolveFieldId(input.position.recordType, input.fieldId);
-    const value = await this.call('getFieldValue', { ...input, fieldId });
-    return this.reviveFileRefs(value);
+    return this.reviveFileRefs(await this.call('getFieldValue', input));
   }
 
   /**
@@ -384,46 +290,18 @@ export class RemoteAdapter implements Adapter {
     });
   }
 
-  async getRelated(input: GetRelatedInput): Promise<RelatedResult[]> {
-    return this.call('getRelated', await this.toInternalRelatedInput(input)) as Promise<
-      RelatedResult[]
-    >;
-  }
-
-  /** Translate a `getRelated` input's NATURAL edge / collection name to the
-   *  remote's internal currency. A meta-root hop names a collection (a type);
-   *  a normal hop names an edge on the position's natural type. */
-  private async toInternalRelatedInput(input: GetRelatedInput): Promise<GetRelatedInput> {
-    // The meta branch is entries-only (`collectionTypeId`); only the edge
-    // branch below needs the holder's type described.
-    const resolver = await this.resolver({
-      types:
-        input.position.recordType !== null && input.position.recordType !== META_RECORD_TYPE
-          ? [input.position.recordType]
-          : [],
-    });
-    if (input.position.recordType === META_RECORD_TYPE) {
-      return { ...input, fieldId: resolver.collectionTypeId(naturalName(input.fieldId)) };
-    }
-    if (input.position.recordType === null) return input;
-    return {
-      ...input,
-      fieldId: resolver.edgeReadId(
-        naturalName(input.position.recordType),
-        naturalName(input.fieldId),
-      ),
-    };
+  getRelated(input: GetRelatedInput): Promise<RelatedResult[]> {
+    return this.call('getRelated', input) as Promise<RelatedResult[]>;
   }
 
   async createRecord(input: WriteInput): Promise<WriteResult> {
-    return this.call('createRecord', await this.toInternalWriteInput(input)) as Promise<WriteResult>;
+    return this.call('createRecord', await this.toWireWriteInput(input)) as Promise<WriteResult>;
   }
 
   async updateRecord(input: UpdateInput): Promise<UpdateResult> {
-    const result = (await this.call('updateRecord', {
-      ...(await this.toInternalWriteInput(input)),
-      externalId: input.externalId,
-    })) as UpdateResult | (ExternalRecordRef & { association?: ParentAssociation });
+    const result = (await this.call('updateRecord', await this.toWireWriteInput(input))) as
+      | UpdateResult
+      | (ExternalRecordRef & { association?: ParentAssociation });
     if ('notFound' in result) return result;
     // A connector that says nothing about the parent it was handed has told us
     // nothing, and nothing is not a link. Silence reads as `unsupported`, which
@@ -432,51 +310,25 @@ export class RemoteAdapter implements Adapter {
     return { ...result, association: result.association ?? unsupportedAssociation(input) };
   }
 
-  async deleteRecord(input: DeleteInput): Promise<DeleteResult> {
-    const resolver = await this.resolver();
-    return this.call('deleteRecord', {
-      ...input,
-      recordType: resolver.typeId(naturalName(input.recordType)),
-    }) as Promise<DeleteResult>;
+  deleteRecord(input: DeleteInput): Promise<DeleteResult> {
+    return this.call('deleteRecord', input) as Promise<DeleteResult>;
   }
 
-  /** Translate a write's NATURAL currency to the remote's internal ids:
-   *  recordType + field keys (+ per-field evidence keys) + each parent's type /
-   *  edge name. The wire body then speaks the remote server's own ids. */
-  private async toInternalWriteInput<T extends WriteInput>(input: T): Promise<T> {
-    const resolver = await this.resolver({ types: [input.recordType] });
-    const type = naturalName(input.recordType);
+  /** A write as it rides the wire: the parent set normalised to a list, and
+   *  every FileRef (in a field or a resource) exposed at a fetchable URL,
+   *  since bytes can't cross the JSON envelope. */
+  private async toWireWriteInput<T extends WriteInput>(input: T): Promise<T> {
     const fields: Record<string, unknown> = {};
     for (const [name, value] of Object.entries(input.fields)) {
-      // A file field can't ride raw bytes over the JSON wire — expose any
-      // FileRef (buffer its bytes to a short-lived Listen-Fire URL) so the remote
-      // server can fetch them. Deep-walks: a FileRef may nest in an array.
-      fields[resolver.fieldId(type, naturalName(name))] = await this.exposeWriteFileRefs(value);
+      fields[name] = await this.exposeWriteFileRefs(value);
     }
-    let evidence: WriteInput['evidence'];
-    if (input.evidence) {
-      evidence = {};
-      for (const [name, ev] of Object.entries(input.evidence)) {
-        evidence[resolver.fieldId(type, naturalName(name))] = ev;
-      }
-    }
-    const parentLinks = writeParentLinks(input).map((p) => ({
-      ...p,
-      recordType: resolver.typeId(naturalName(p.recordType)),
-      edgeName: resolver.edgeWriteName(naturalName(p.recordType), naturalName(p.edgeName)),
-    }));
-    // Node-level resources carry file bytes on their own `fileRef` — expose
-    // those too so a written resource's file is fetchable server-side.
     const resources = input.resources
       ? ((await Promise.all(input.resources.map((r) => this.exposeWriteFileRefs(r)))) as T['resources'])
       : undefined;
     return {
       ...input,
-      recordType: resolver.typeId(type),
       fields,
-      ...(evidence ? { evidence } : {}),
-      // The normalized, translated parent set (0/1/N).
-      parentLinks,
+      parentLinks: writeParentLinks(input),
       ...(resources !== undefined ? { resources } : {}),
     };
   }
@@ -533,11 +385,10 @@ export class RemoteAdapter implements Adapter {
   // ── Streaming (paged) ──────────────────────────────────────────────────
 
   async *iterateRelated(input: GetRelatedInput): AsyncIterable<RelatedResult> {
-    // Same NATURAL edge / collection → internal translation as `getRelated`.
-    const internal = await this.toInternalRelatedInput(input);
+    const method = this.advertised.has('iterateRelatedPage') ? 'iterateRelatedPage' : 'iterateRelated';
     let cursor: unknown = undefined;
     do {
-      const page = await this.call('iterateRelated', { ...internal, cursor });
+      const page = await this.call(method, { ...input, cursor });
       yield* page.items as unknown as RelatedResult[];
       cursor = page.nextCursor;
     } while (cursor != null);
@@ -567,28 +418,82 @@ export class RemoteAdapter implements Adapter {
     return this.call('describeOpaqueId', input);
   }
 
-  async translateFilter(input: {
+  translateFilter(input: {
     expression: Expression;
     entityType: string;
   }): Promise<FilterTranslationResult> {
-    // `entityType` is the NATURAL type name; resolve to the remote's internal
-    // typeId before forwarding (the body's field names inside `expression` are
-    // the remote server's own concern — it owns its filter dialect).
-    const resolver = await this.resolver();
-    return this.call('translateFilter', {
-      ...input,
-      entityType: resolver.typeId(naturalName(input.entityType)),
-    }) as Promise<FilterTranslationResult>;
+    return this.call('translateFilter', input) as Promise<FilterTranslationResult>;
   }
 
-  async getDedupRules(input: { typeRef: string }): Promise<DedupRules | null> {
-    // `typeRef` is the NATURAL type name; resolve to the remote's internal
-    // typeId before forwarding.
-    const resolver = await this.resolver();
-    return this.call('getDedupRules', {
-      ...input,
-      typeRef: resolver.typeId(naturalName(input.typeRef)),
-    }) as Promise<DedupRules | null>;
+  getDedupRules(input: { typeRef: string }): Promise<DedupRules | null> {
+    return this.call('getDedupRules', input);
+  }
+
+  linkRecords(input: LinkRecordsInput): Promise<LinkRecordsResult> {
+    return this.call('linkRecords', input);
+  }
+
+  unlinkRecords(input: UnlinkRecordsInput): Promise<UnlinkRecordsResult> {
+    return this.call('unlinkRecords', input);
+  }
+
+  async ensureEventSubscription(
+    input: EnsureEventSubscriptionInput,
+  ): Promise<EventSubscriptionRegistration | undefined> {
+    return (await this.call('ensureEventSubscription', input)) ?? undefined;
+  }
+
+  async removeEventSubscription(input: RemoveEventSubscriptionInput): Promise<void> {
+    await this.call('removeEventSubscription', input);
+  }
+
+  /** The correlation keys an inbound payload resolves — the keys a pending
+   *  `resolveAwait` named — so the host can wake the runs parked on them. */
+  wakeKeys(input: { raw: unknown }): Promise<string[]> {
+    return this.call('wakeKeys', input);
+  }
+
+  /**
+   * The awaitable capability over the wire. The server answers `resolveAwait`
+   * with the correlation key when pending; the current capability contract
+   * still asks the adapter to register that key itself, so the key from the
+   * last pending answer is remembered per watch-point and written to the
+   * shared correlation table, as the in-process awaitables do.
+   */
+  private remoteAwaitable(): AwaitableCapability {
+    const pendingKeys = new Map<string, string>();
+    const pointKey = (point: AwaitPoint): string => JSON.stringify([point.recordId, point.edge]);
+    const resolveOverWire = async (point: AwaitPoint): Promise<WireAwaitResolutionShape> => {
+      const resolution = await this.call('resolveAwait', {
+        recordId: point.recordId,
+        edge: point.edge,
+        ...(point.headData !== undefined ? { headData: point.headData } : {}),
+      });
+      if (resolution.status === 'pending') pendingKeys.set(pointKey(point), resolution.correlationKey);
+      return resolution;
+    };
+    return {
+      resolveAwait: (point: AwaitPoint): Promise<AwaitResolution> => resolveOverWire(point),
+      registerAwait: async (input: AwaitPoint & AwaitParkRef): Promise<void> => {
+        let correlationKey = pendingKeys.get(pointKey(input));
+        if (correlationKey === undefined) {
+          const resolution = await resolveOverWire(input);
+          // Landed since the check that parked it: there is nothing to wait on.
+          if (resolution.status !== 'pending') return;
+          correlationKey = resolution.correlationKey;
+        }
+        await registerAwaitCorrelation({
+          adapterType: this.adapterType,
+          correlationKey,
+          runId: input.runId as TriggerRunId,
+          teamId: input.teamId as TeamId,
+          address: input.address,
+        });
+      },
+      dropCorrelation: async (input: Pick<AwaitParkRef, 'runId' | 'address'>): Promise<void> => {
+        await dropAwaitCorrelation({ runId: input.runId as TriggerRunId, address: input.address });
+      },
+    };
   }
 
   getActorCandidates(input: { event: TriggerEvent }): Promise<ActorCandidate[]> {
@@ -599,16 +504,8 @@ export class RemoteAdapter implements Adapter {
     return this.call('extractActor', input) as Promise<ActorIdentity | null>;
   }
 
-  async invokeFieldFunction(input: InvokeFieldFunctionInput): Promise<unknown> {
-    // `recordType` + `fieldId` are the program's NATURAL names; translate to
-    // the remote's internal currency before forwarding.
-    const resolver = await this.resolver({ types: [input.recordType] });
-    const type = naturalName(input.recordType);
-    return this.call('invokeFieldFunction', {
-      ...input,
-      recordType: resolver.typeId(type),
-      fieldId: resolver.fieldId(type, naturalName(input.fieldId)),
-    });
+  invokeFieldFunction(input: InvokeFieldFunctionInput): Promise<unknown> {
+    return this.call('invokeFieldFunction', input);
   }
 
   /**
@@ -644,10 +541,14 @@ export function createRemoteAdapter(input: RemoteAdapterInput): RemoteAdapter {
   const adapter = new RemoteAdapter(input);
   const advertised = new Set(input.manifest.methods);
 
+  const prune = (method: string): void => {
+    Reflect.set(adapter, method, undefined);
+  };
   for (const method of OPTIONAL_REMOTE_METHODS) {
-    if (!advertised.has(method)) {
-      (adapter as unknown as Record<string, unknown>)[method] = undefined;
-    }
+    if (!advertised.has(method)) prune(method);
+  }
+  if (!advertised.has('iterateRelated') && !advertised.has('iterateRelatedPage')) {
+    prune('iterateRelated');
   }
 
   return adapter;

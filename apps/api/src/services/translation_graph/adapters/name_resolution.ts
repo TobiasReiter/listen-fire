@@ -21,8 +21,8 @@
 // displayName↔typeId, `describe(typeId)` field displayName↔fieldId + reference
 // name↔fieldId/EdgeTypeId). The KG is NOT special — its `displayName` is the
 // ontology node/property/edge name and its internal id is a UUID, resolved
-// through this same path. A REMOTE adapter works identically: the shim builds
-// the resolver from the introspection it already fetches over the wire.
+// through this same path. A REMOTE adapter's server does the same on its own
+// side; names cross the wire untranslated.
 //
 // Two settled properties shape the contract:
 //
@@ -200,7 +200,7 @@ export function adapterNameResolver(
      *  Supplied by `memoizedResolver`, whose descriptor map fills in as types
      *  are asked for, so `tryEdgeReadIdAnyType` has something complete to scan.
      *  Absent for a resolver built from an introspection that is already whole
-     *  (the remote shim, test fakes), where there is nothing left to fetch. */
+     *  (test fakes), where there is nothing left to fetch. */
     describeAll?: () => Promise<void>;
   },
 ): AdapterNameResolver {
@@ -329,8 +329,8 @@ export function memoizedResolver(introspect: {
     //
     // That matters for currency the entry list doesn't publish. A scoped ask
     // may carry a traversed-to type name, which is forwarded to `describe`
-    // as-is; a REMOTE adapter forwards that to somebody else's server, and a
-    // server that throws on an unknown typeRef rather than answering null would
+    // as-is; an adapter backed by somebody else's API may forward it there, and
+    // a server that throws on an unknown typeRef rather than answering null would
     // otherwise turn a lookup that used to fall through into a failed write.
     // Swallowing here keeps a scoped resolve strictly no more fragile than the
     // eager one it replaced. The single-flight entry is dropped on failure, so

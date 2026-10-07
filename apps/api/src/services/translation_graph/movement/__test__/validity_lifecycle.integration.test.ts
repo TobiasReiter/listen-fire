@@ -89,6 +89,7 @@ describe('movement validity lifecycle (real save gate + firings + live remote so
       teamId,
       userId: null,
       manifest: {
+        protocolVersion: 2,
         adapterType: FAKE_CRM_ADAPTER_TYPE,
         baseUrl: server.baseUrl,
         authStrategy: { kind: 'bearer' },

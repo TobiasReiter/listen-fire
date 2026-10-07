@@ -1,4 +1,11 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import type { Adapter } from '../../adapter';
+import { BASE_RUNTIME_CAPABILITIES } from '../../adapter';
+import { createAdapterProtocolHandler } from '../server';
 import {
+  MANIFEST_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   RpcRequest,
   RpcError,
@@ -24,8 +31,9 @@ const samplePosition = {
 };
 
 describe('protocol envelope', () => {
-  it('PROTOCOL_VERSION is the string "1"', () => {
-    expect(PROTOCOL_VERSION).toBe('1');
+  it('PROTOCOL_VERSION is the string "2"; the manifest field is the number 2', () => {
+    expect(PROTOCOL_VERSION).toBe('2');
+    expect(MANIFEST_PROTOCOL_VERSION).toBe(2);
   });
 
   it('RpcRequest round-trips a well-formed request', () => {
@@ -213,6 +221,13 @@ describe('METHODS registry', () => {
       'describeOpaqueId',
       'resolveFileRef',
       'invokeFieldFunction',
+      'linkRecords',
+      'unlinkRecords',
+      'ensureEventSubscription',
+      'removeEventSubscription',
+      'resolveAwait',
+      'wakeKeys',
+      'iterateRelatedPage',
     ];
     expect(Object.keys(METHODS).sort()).toEqual([...expected].sort());
   });
@@ -229,6 +244,7 @@ describe('METHODS registry', () => {
   it('manifest: params {} → { adapterType, supportedTriggers, runtimeCapabilities, methods }', () => {
     expect(METHODS.manifest.params.parse({})).toEqual({});
     const result = {
+      protocolVersion: 2,
       adapterType: 'remote-email',
       supportedTriggers: ['snapshot', 'webhook'],
       runtimeCapabilities: {
@@ -243,6 +259,7 @@ describe('METHODS registry', () => {
 
   it('manifest: result carries the optional webhookEventTypeId config', () => {
     const result = {
+      protocolVersion: 2,
       adapterType: 'remote-attio',
       supportedTriggers: ['webhook'],
       runtimeCapabilities: {
@@ -258,6 +275,7 @@ describe('METHODS registry', () => {
   it('manifest: result rejects a payload missing the methods array', () => {
     expect(() =>
       METHODS.manifest.result.parse({
+        protocolVersion: 2,
         adapterType: 'remote-email',
         supportedTriggers: [],
         runtimeCapabilities: {
@@ -266,6 +284,21 @@ describe('METHODS registry', () => {
         },
       }),
     ).toThrow();
+  });
+
+  it('manifest: result refuses a missing or older protocolVersion, naming the field', () => {
+    const v2 = {
+      protocolVersion: 2,
+      adapterType: 'remote-email',
+      supportedTriggers: [],
+      runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
+      methods: [],
+    };
+    const { protocolVersion: _omit, ...unversioned } = v2;
+    expect(() => METHODS.manifest.result.parse(unversioned)).toThrow(/protocolVersion: expected 2/);
+    expect(() => METHODS.manifest.result.parse({ ...v2, protocolVersion: 1 })).toThrow(
+      /protocolVersion: expected 2, got 1/,
+    );
   });
 
   it('describe: params { typeId } → descriptor | null', () => {
@@ -343,6 +376,175 @@ describe('METHODS registry', () => {
     expect(METHODS.resolveFileRef.result.parse({ url: 'https://x/y' })).toEqual({ url: 'https://x/y' });
     // url is required.
     expect(() => METHODS.resolveFileRef.result.parse({})).toThrow();
+  });
+});
+
+describe('v2 methods', () => {
+  const mutationContext = { source: { adapterType: 'kg' }, occurredAt: '2026-10-07T00:00:00Z' };
+  const link = {
+    from: { recordType: 'Contact', externalId: 'c1' },
+    edgeName: 'Company',
+    to: { recordType: 'Company', externalId: 'co1' },
+    mutationContext,
+  };
+
+  it('linkRecords / unlinkRecords: the Adapter interface shapes', () => {
+    expect(METHODS.linkRecords.params.parse(link)).toEqual(link);
+    expect(METHODS.unlinkRecords.params.parse(link)).toEqual(link);
+    expect(METHODS.linkRecords.result.parse({ created: true })).toEqual({ created: true });
+    expect(METHODS.unlinkRecords.result.parse({ removed: false })).toEqual({ removed: false });
+    expect(() => METHODS.linkRecords.params.parse({ ...link, edgeName: undefined })).toThrow();
+  });
+
+  it('ensureEventSubscription / removeEventSubscription', () => {
+    const ensure = {
+      events: ['record.created'],
+      callbackUrl: 'https://host.example/hook/1',
+      current: { externalId: 'wh-1', events: [] },
+      scope: { base: 'b1' },
+    };
+    expect(METHODS.ensureEventSubscription.params.parse(ensure)).toEqual(ensure);
+    expect(METHODS.ensureEventSubscription.result.parse({ externalId: 'wh-2', secret: 's' })).toEqual({
+      externalId: 'wh-2',
+      secret: 's',
+    });
+    // null: the documented "nothing registered" no-op.
+    expect(METHODS.ensureEventSubscription.result.parse(null)).toBeNull();
+    const remove = { callbackUrl: 'https://host.example/hook/1', externalId: 'wh-1' };
+    expect(METHODS.removeEventSubscription.params.parse(remove)).toEqual(remove);
+    expect(METHODS.removeEventSubscription.result.parse(null)).toBeNull();
+  });
+
+  it('resolveAwait: pending carries a correlation key; landed carries landings; empty is bare', () => {
+    const point = { recordId: 'ask-1', edge: 'Response', headData: { channel: 'C1' } };
+    expect(METHODS.resolveAwait.params.parse(point)).toEqual(point);
+    const pending = { status: 'pending', correlationKey: 'C1:123.4' };
+    expect(METHODS.resolveAwait.result.parse(pending)).toEqual(pending);
+    expect(() => METHODS.resolveAwait.result.parse({ status: 'pending' })).toThrow();
+    const landed = {
+      status: 'landed',
+      landings: [{ recordId: 'r1', recordType: 'Response', fields: { Answer: 'yes' } }],
+    };
+    expect(METHODS.resolveAwait.result.parse(landed)).toEqual(landed);
+    expect(METHODS.resolveAwait.result.parse({ status: 'empty' })).toEqual({ status: 'empty' });
+  });
+
+  it('wakeKeys: { raw } → string[]', () => {
+    expect(METHODS.wakeKeys.params.parse({ raw: { any: 'thing' } })).toEqual({ raw: { any: 'thing' } });
+    expect(METHODS.wakeKeys.result.parse(['C1:123.4'])).toEqual(['C1:123.4']);
+    expect(() => METHODS.wakeKeys.result.parse([1])).toThrow();
+  });
+
+  it('iterateRelatedPage: GetRelatedInput + cursor → a RelatedPage', () => {
+    const params = { position: samplePosition, fieldId: 'attachments', direction: 'outgoing', cursor: 'c1' };
+    expect(METHODS.iterateRelatedPage.params.parse(params)).toEqual(params);
+    const page = { items: [{ position: samplePosition }], nextCursor: 'c2' };
+    expect(METHODS.iterateRelatedPage.result.parse(page)).toEqual(page);
+  });
+});
+
+describe('protocol server: the boundary checks', () => {
+  const describeCalls: unknown[] = [];
+  const adapter: Adapter = {
+    adapterType: 'probe',
+    supportedTriggers: [],
+    runtimeCapabilities: () => BASE_RUNTIME_CAPABILITIES,
+    listEntryPoints: async () => [],
+    describe: async (typeId: string) => {
+      describeCalls.push(typeId);
+      return null;
+    },
+    resolveEntity: async () => ({ candidates: [] }),
+    getFieldValue: async () => null,
+    getRelated: async () => [],
+    createRecord: async () => {
+      throw new Error('not a target');
+    },
+    updateRecord: async () => {
+      throw new Error('not a target');
+    },
+    deleteRecord: async () => {
+      throw new Error('not a target');
+    },
+  };
+
+  let server: http.Server;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    const handler = createAdapterProtocolHandler({ adapter });
+    server = http.createServer((req, res) => {
+      void handler(req, res);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address: AddressInfo | string | null = server.address();
+    if (address === null || typeof address === 'string') throw new Error('no port');
+    baseUrl = `http://127.0.0.1:${address.port}/`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  beforeEach(() => {
+    describeCalls.length = 0;
+  });
+
+  async function rpc(body: Record<string, unknown>): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cacheScopeId: 's', ...body }),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  it('refuses any protocol version but 2, in the envelope', async () => {
+    for (const protocolVersion of ['1', '3']) {
+      const res = await rpc({ protocolVersion, method: 'describe', params: { typeId: 'Contact' } });
+      expect(res).toEqual({
+        status: 200,
+        body: {
+          ok: false,
+          error: { code: 'protocol_version', message: 'expected protocol version 2', retryable: false },
+        },
+      });
+    }
+    expect(describeCalls).toEqual([]);
+  });
+
+  it('answers a bad param with bad_request naming the method and the path, without dispatching', async () => {
+    const res = await rpc({ protocolVersion: '2', method: 'describe', params: { typeId: 7 } });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      ok: false,
+      error: { code: 'bad_request', retryable: false, message: expect.stringMatching(/^describe: typeId: /) },
+    });
+    expect(describeCalls).toEqual([]);
+
+    const nested = await rpc({
+      protocolVersion: '2',
+      method: 'getRelated',
+      params: { position: { adapterType: 'probe', recordType: 'Contact' }, fieldId: 'Company', direction: 'outgoing' },
+    });
+    expect(nested.body).toMatchObject({
+      ok: false,
+      error: { code: 'bad_request', message: expect.stringMatching(/^getRelated: position\.identity: /) },
+    });
+  });
+
+  it('dispatches valid params, and advertises protocolVersion 2 in the manifest', async () => {
+    const res = await rpc({ protocolVersion: '2', method: 'describe', params: { typeId: 'Contact' } });
+    expect(res.body).toEqual({ ok: true, result: null });
+    expect(describeCalls).toEqual(['Contact']);
+
+    const manifest = await rpc({ protocolVersion: '2', method: 'manifest', params: {} });
+    expect(manifest.body).toMatchObject({ ok: true, result: { protocolVersion: 2, adapterType: 'probe' } });
+  });
+
+  it('a prototype key is an unknown method, not a dispatch', async () => {
+    const res = await rpc({ protocolVersion: '2', method: 'toString', params: {} });
+    expect(res.body).toMatchObject({ ok: false, error: { code: 'method_not_implemented' } });
   });
 });
 

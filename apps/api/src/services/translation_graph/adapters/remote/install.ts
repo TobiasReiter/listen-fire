@@ -13,7 +13,7 @@
 import { mintRemoteCredential } from '../../../credentials/remote_credential';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { UserId } from '../../../../generated/kysely/core/User';
-import type { RemoteAdapterManifestFile } from './manifest';
+import { RemoteAdapterManifestFile } from './manifest';
 import { upsertRemoteAdapter } from './store';
 
 export interface InstallRemoteAdapterInput {
@@ -35,6 +35,16 @@ export interface InstallRemoteAdapterInput {
 export async function installRemoteAdapterFromManifest(
   input: InstallRemoteAdapterInput,
 ): Promise<{ id: string; credentialsId: string | null }> {
+  // Refused before a credential is minted, so an older adapter leaves nothing behind.
+  const version = RemoteAdapterManifestFile.shape.protocolVersion.safeParse(
+    input.manifest.protocolVersion,
+  );
+  if (!version.success) {
+    throw new Error(
+      `Remote adapter "${input.manifest.adapterType}" cannot be installed: ${version.error.issues[0]?.message ?? 'protocolVersion is not 2'}`,
+    );
+  }
+
   let credentialsId: string | null = input.manifest.credentialsId ?? null;
 
   if (input.secret !== undefined) {

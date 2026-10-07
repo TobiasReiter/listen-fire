@@ -188,6 +188,7 @@ const OTHER_TEAM = 'team-2' as TeamId;
 
 function makeManifest(overrides: Record<string, unknown> = {}) {
   return {
+    protocolVersion: 2,
     adapterType: 'remote-email',
     baseUrl: 'https://adapter.example.com/rpc',
     authStrategy: { kind: 'bearer' as const },

@@ -17,6 +17,7 @@ jest.mock('../../../../credentials/credential_lifecycle', () => ({
 let teamId: TeamId;
 
 const manifest = RemoteAdapterManifestFile.parse({
+  protocolVersion: 2,
   adapterType: 'acme_crm',
   displayName: 'Acme CRM',
   baseUrl: 'https://crm.example/adapter',

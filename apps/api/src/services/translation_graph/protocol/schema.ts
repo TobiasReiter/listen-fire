@@ -10,12 +10,30 @@
 // page / cursor / method routing and lenient (`z.unknown()` / `.passthrough()`)
 // on opaque or deeply-nested payload leaves (cursors, filters, native query
 // bodies, Expressions, deep MutationContext internals, position `data`).
+//
+// Names on this wire are NATURAL names — a type's, field's or edge's display
+// name — exactly what the in-process `Adapter` interface trades in. An
+// adapter's own internal ids never cross it (record ids aside: those are
+// identity, not names); each side resolves names to whatever it needs.
 
 import { z } from 'zod';
 
 // ── Envelope ───────────────────────────────────────────────────────────────
 
-export const PROTOCOL_VERSION = '1';
+export const PROTOCOL_VERSION = '2';
+
+/** The same version as the manifest's `protocolVersion` field. A number there
+ *  because manifests are hand-written files, where `2` is what an author types. */
+export const MANIFEST_PROTOCOL_VERSION = 2;
+
+/** A manifest's `protocolVersion`, shared by the server's `manifest` answer and
+ *  the installable manifest file so both refuse an older adapter in the same
+ *  words. */
+export const WireManifestProtocolVersion = z.literal(MANIFEST_PROTOCOL_VERSION, {
+  error: (issue) =>
+    `protocolVersion: expected ${MANIFEST_PROTOCOL_VERSION}, got ${JSON.stringify(issue.input) ?? 'nothing'} — ` +
+    `this adapter targets an older adapter protocol; update it to protocol version ${MANIFEST_PROTOCOL_VERSION}.`,
+});
 
 export const RpcRequest = z.object({
   protocolVersion: z.string(),
@@ -361,6 +379,11 @@ export const WireGetRelatedInput = z.object({
   fieldId: z.string(),
   direction: z.enum(['outgoing', 'incoming']),
   nativeFilter: z.unknown().optional(),
+  // The hop's pushed WHERE / ORDER BY / LIMIT — hints the adapter may ignore
+  // (the engine re-applies them). The WHERE Expression stays opaque.
+  where: z.unknown().optional(),
+  orderBy: z.object({ fieldId: z.string(), direction: z.enum(['asc', 'desc']) }).optional(),
+  limit: z.number().optional(),
 });
 
 // ── Write DTOs ───────────────────────────────────────────────────────────────
@@ -436,6 +459,17 @@ export const WireDeleteResult = z
   })
   .passthrough();
 
+/** Mirror of `LinkRecordsInput` / `UnlinkRecordsInput` — two existing records
+ *  and the edge between them, named from the FROM side's type. */
+const WireLinkRecordEndpoint = z.object({ recordType: z.string(), externalId: z.string() });
+
+export const WireLinkRecordsInput = z.object({
+  from: WireLinkRecordEndpoint,
+  edgeName: z.string(),
+  to: WireLinkRecordEndpoint,
+  mutationContext: WireMutationContext,
+});
+
 export const WireReadInput = z.object({
   recordType: z.string(),
   externalId: z.string(),
@@ -497,6 +531,7 @@ export const WireInvokeFieldFunctionInput = z.object({
 });
 
 export const WireManifestResult = z.object({
+  protocolVersion: WireManifestProtocolVersion,
   adapterType: z.string(),
   supportedTriggers: z.array(z.string()),
   // Whole-adapter capability (mirrors `Adapter.runtimeCapabilities()`):
@@ -552,9 +587,60 @@ export const WireEventType = z.object({
     .optional(),
 });
 
+// ── Event subscriptions (mirror `EnsureEventSubscriptionInput` & co.) ───────
+
+export const WireEnsureEventSubscriptionInput = z.object({
+  events: z.array(z.string()),
+  callbackUrl: z.string(),
+  current: z
+    .object({ externalId: z.string().optional(), events: z.array(z.string()) })
+    .optional(),
+  scope: z.record(z.string(), z.string()).optional(),
+});
+
+export const WireEventSubscriptionRegistration = z.object({
+  externalId: z.string().optional(),
+  secret: z.string().optional(),
+});
+
+export const WireRemoveEventSubscriptionInput = z.object({
+  callbackUrl: z.string(),
+  externalId: z.string().optional(),
+  scope: z.record(z.string(), z.string()).optional(),
+});
+
+// ── Await (the awaitable capability over the wire) ───────────────────────────
+
+export const WireAwaitPoint = z.object({
+  recordId: z.string(),
+  edge: z.string(),
+  headData: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const WireAwaitLanding = z.object({
+  recordId: z.string().optional(),
+  recordType: z.string().optional(),
+  fields: z.record(z.string(), z.unknown()),
+});
+
+/**
+ * What an awaited edge resolves to now. A pending answer names the
+ * correlation key the adapter will later `wake` with — the engine keeps the
+ * key → parked-run map, so the adapter never writes the engine's tables.
+ */
+export const WireAwaitResolution = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('pending'), correlationKey: z.string() }),
+  z.object({ status: z.literal('landed'), landings: z.array(WireAwaitLanding) }),
+  z.object({ status: z.literal('empty') }),
+]);
+export type WireAwaitResolutionShape = z.infer<typeof WireAwaitResolution>;
+
 // ── Method registry ──────────────────────────────────────────────────────────
 // One entry per protocol method, each describing its params + result schema.
-// The client and server share this; adding a method is one entry.
+// The client and server share this; adding a method is one entry. The server
+// validates every request's params against its entry before dispatch (a
+// mismatch answers `bad_request` naming the method and the offending path);
+// the client validates every result.
 
 export const METHODS = {
   manifest: {
@@ -572,11 +658,10 @@ export const METHODS = {
   // The meta-graph walk. OPTIONAL (see `OPTIONAL_REMOTE_METHODS`): a server
   // that doesn't advertise it is pruned client-side and callers fall back to
   // `describe`. It arrives as a NEW NAME rather than a `position` param on
-  // `describe` deliberately — params are never validated on this wire, so an
-  // old server accepting a position and ignoring it would be indistinguishable
-  // from one honouring it, and the caller would get a plausible type-wide
-  // descriptor either way. Presence in `methods[]` is a checkable signal;
-  // a silently-ignored param is not.
+  // `describe` deliberately — a server that accepted a position and ignored it
+  // would be indistinguishable from one honouring it, and the caller would get
+  // a plausible type-wide descriptor either way. Presence in `methods[]` is a
+  // checkable signal; a silently-ignored param is not.
   edgesFrom: {
     params: z.object({ position: WireSourcePosition, cursor: z.unknown().optional() }),
     result: WireEdgesFromResult.nullable(),
@@ -594,6 +679,13 @@ export const METHODS = {
     result: z.array(WireRelatedResult),
   },
   iterateRelated: {
+    params: WireGetRelatedInput.extend({ cursor: z.unknown().optional() }),
+    result: RelatedPage,
+  },
+  // One bounded page of a traversal: the server returns `nextCursor` while
+  // more remain and the client echoes it back. Preferred over `iterateRelated`
+  // when advertised.
+  iterateRelatedPage: {
     params: WireGetRelatedInput.extend({ cursor: z.unknown().optional() }),
     result: RelatedPage,
   },
@@ -619,6 +711,33 @@ export const METHODS = {
   deleteRecord: {
     params: WireDeleteInput,
     result: WireDeleteResult,
+  },
+  linkRecords: {
+    params: WireLinkRecordsInput,
+    result: z.object({ created: z.boolean() }),
+  },
+  unlinkRecords: {
+    params: WireLinkRecordsInput,
+    result: z.object({ removed: z.boolean() }),
+  },
+  ensureEventSubscription: {
+    params: WireEnsureEventSubscriptionInput,
+    // `null` is the documented no-op: nothing was registered.
+    result: WireEventSubscriptionRegistration.nullable(),
+  },
+  removeEventSubscription: {
+    params: WireRemoveEventSubscriptionInput,
+    result: z.null(),
+  },
+  resolveAwait: {
+    params: WireAwaitPoint,
+    result: WireAwaitResolution,
+  },
+  // The correlation keys an inbound payload resolves — the same keys a
+  // pending `resolveAwait` returned — so the host can wake the parked runs.
+  wakeKeys: {
+    params: z.object({ raw: z.unknown() }),
+    result: z.array(z.string()),
   },
   readRecord: {
     params: WireReadInput,
