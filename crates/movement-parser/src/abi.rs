@@ -178,6 +178,36 @@ unsafe fn lower(
     status
 }
 
+/// `catalog_query(snapshot, query)`: one catalog lookup or helper call
+/// (`crate::catalog::query`), the snapshot's JSON and the query's in, `{"value":
+/// …}` or `{}` (status 0) or `{"error": {message}}` (status 1) out. No state
+/// is kept between calls.
+///
+/// # Safety
+/// Both input ranges must be readable; the out slots writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn catalog_query(
+    snapshot_ptr: *const u8,
+    snapshot_len: u32,
+    query_ptr: *const u8,
+    query_len: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    install_panic_hook();
+    let inputs = unsafe { utf8(snapshot_ptr, snapshot_len) }
+        .and_then(|snapshot| Ok((snapshot, unsafe { utf8(query_ptr, query_len) }?)));
+    let (status, bytes) = match inputs {
+        Ok((snapshot, query)) => match crate::catalog::query::query_json(snapshot, query) {
+            Ok(bytes) => (OK, bytes),
+            Err(bytes) => (ERROR, bytes),
+        },
+        Err(error) => (ERROR, to_sorted_json(&json!({ "error": error }))),
+    };
+    unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
+    status
+}
+
 /// Room for one panic message. Fixed so that recording a panic allocates
 /// nothing: the panic may have struck inside the allocator.
 const PANIC_CAPACITY: usize = 1024;

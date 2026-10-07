@@ -18,8 +18,9 @@ serde = { version = "1", features = ["derive"] }
 # what makes `to_sorted_json` emit sorted keys.
 # `float_roundtrip`: the lowering parses the tree's numbers, and the default
 # parser can be one ULP off. `unbounded_depth`: a tree at the grammar's depth
-# limit nests deeper than serde_json's default 128.
-serde_json = { version = "1", features = ["float_roundtrip", "unbounded_depth"] }
+# limit nests deeper than serde_json's default 128. `raw_value`: the catalog
+# reads data maps straight from the text, since a `Value`'s map is sorted.
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
 
 [dev-dependencies]
 sha2 = "0.11.0"

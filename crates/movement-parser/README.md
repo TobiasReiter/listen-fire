@@ -9,7 +9,9 @@ WASM and called from TypeScript through `packages/movement-lang/wasm/loader.ts`.
 |---|---|
 | `lexer`, `expr`, `stmt`, `tree`, `ast`, `scan` | the parser: statement and expression grammars, their JSON shapes |
 | `lowering` | the expression tree → the shared `Expression` (packages/shared/expression/types.ts); the only lowering since `parser/expression/lower.ts` became its wrapper |
-| `abi` | the C ABI over both |
+| `catalog` | the checker's catalog: the schema types (checker/catalog.ts), a snapshot's lookups (service/snapshot.ts `fromCatalogSnapshot`) and the pure catalog helpers; proven by checker/__test__/catalog_differential |
+| `util` | UTF-16 text, the JavaScript semantics both lean on, bounded JSON reads |
+| `abi` | the C ABI over all three |
 
 `lowering/vocabulary/data.rs` (the stdlib families, the FILE/READ and
 options-map contracts, the AI tiers) is generated from the TypeScript
@@ -66,6 +68,7 @@ differ.
 | `parse_nested_call` | `(raw_ptr, raw_len, at_start, at_end, origin_line, origin_col, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `lower_expression` | `(tree_ptr, tree_len, src_ptr, src_len, out_ptr_ptr, out_len_ptr) -> status` | the tree's JSON and its source text in; the `Expression`, or `{"error": {message, code?, class?}}` |
 | `lower_condition` | as `lower_expression` | the `MovementCondition` |
+| `catalog_query` | `(snapshot_ptr, snapshot_len, query_ptr, query_len, out_ptr_ptr, out_len_ptr) -> status` | one lookup (`{op: "instantiate" \| "adapter" \| "credential" \| "credentialNames" \| "plugin" \| "models" \| "constructionArgOptions", …}`) or helper call (`{op: "helper", name, args}`) against the snapshot; `{"value": …}`, `{}` for `undefined`, or `{"error": {message}}`; nothing is kept between calls |
 | `last_panic` | `(out_ptr_ptr, out_len_ptr)` | the last panic's message, in a static buffer (not freed) |
 
 Status 0 means the output is the tree; 1 means it is `{"error": {…}}`. The
@@ -171,7 +174,7 @@ a call taking at most 1,024 arguments. Past it:
   building the tree with its loops and checking it with a heap-stack walk;
 - the lowering refuses a tree it is handed with the `LoweringError` `chain
   too long`; it first refuses, as a malformed tree, JSON nested deeper than
-  2,048 levels (`MAX_JSON_DEPTH`, twice the chain limit, which admits every
+  2,048 levels (`util::json::MAX_DEPTH`, twice the chain limit, which admits every
   tree the parser builds), so it never recurses over one;
 - a tree is dropped level by level from a heap stack (`impl Drop for
   MExpr`), so a refused chain, or a parse that fails after building one, is
@@ -179,3 +182,60 @@ a call taking at most 1,024 arguments. Past it:
 
 A chain continued through parentheses is one chain: the bound is the tree's
 depth, not one loop's count.
+
+## The catalog
+
+`catalog::types` is checker/catalog.ts's schema types and service/snapshot.ts's
+`CatalogSnapshot`, field for field. A member the TypeScript does not declare
+is refused when a snapshot loads (the TypeScript would pass it through, so
+dropping it would be a silent disagreement), and so is a schema field typed
+with what only the checker's typing builds (a union, a record).
+
+Every object keyed by data is a `JsMap`: the order a JavaScript object holds
+its keys in, since a diagnostic lists a position's fields in schema order.
+That rules out a `serde_json::Value` anywhere data is read, because its maps
+are sorted (`preserve_order` is off for `to_sorted_json`); the catalog reads
+its inputs from their text (`util::json::from_json`, `RawValue` for the
+parts read later). Its answers are written in the data's order too; the
+differential canonicalises, and separately compares every data map's key
+order.
+
+`catalog::snapshot::instantiate` is `fromCatalogSnapshot`'s: the credential
+argument (backtick-unwrapped) picks the schemas, the entry position the
+position arguments pin picks among them, and a positioned key that is
+missing falls back to the credential's unpositioned one. A credential with
+no schema is no schema, never another credential's.
+
+The differential replays every corpus record through the TypeScript checker
+with its catalog and helpers recording, and asks the Rust the same; run it
+with `MOVEMENT_CATALOG_DIFFERENTIAL=1` (CI's parser-tests job does). Not
+compared: a `describeFieldType` or `variantOf` of a record type carrying its
+position (the typing layer's `PositionTypeRef`, with sets and instance
+tokens) — describing one is refused here until the typing layer is ported.
+
+### JavaScript semantics in the catalog
+
+- **Key order.** `JsMap` reads in JavaScript's order: array-index keys
+  (`"0"`–`"4294967294"`) first, ascending, then the rest as written
+  (`util::js::object_key_order`). `declaredTypesIn` is a `Map`, so it keeps
+  plain insertion order.
+- **`<` on strings.** `unionVariants` and `refinementKey`'s key sort compare
+  UTF-16 units (`util::js::cmp_utf16`), not code points: an astral character
+  sorts before U+E000–U+FFFF.
+- **`localeCompare`.** `entryPositionKeyOf` sorts position-argument names
+  with it. `util::js::locale_compare` reproduces Node's ICU order for ASCII
+  (spaces and punctuation, then digits, then letters with case ignored until
+  everything else ties, lower case first; control characters ignored), read
+  off Node 22 on 2026-10-07. Outside ASCII it falls back to code points,
+  where ICU sorts an accented letter with its base letter. The sort only
+  matters for an adapter with two or more position arguments — none in the
+  corpus has more than one — and a name outside ASCII; either side would
+  then key the schema differently.
+- **`JSON.stringify`** of the position key and the refinement key: serde_json
+  escapes strings the same way; numbers print as `String(x)` does.
+- **`trim()`** is JavaScript's whitespace, as in the lowering.
+- **Prototype keys.** The TypeScript looks names up on plain objects, so
+  `instantiate` with a credential named `constructor` finds
+  `Object.prototype.constructor` and answers it as a schema; the Rust finds
+  no such schema. No corpus call names one.
+

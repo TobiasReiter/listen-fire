@@ -26,6 +26,12 @@ pub struct Name {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JsNumber(pub f64);
 
+impl<'de> serde::Deserialize<'de> for JsNumber {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        <f64 as serde::Deserialize>::deserialize(deserializer).map(JsNumber)
+    }
+}
+
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 impl Serialize for JsNumber {

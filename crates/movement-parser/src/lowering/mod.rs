@@ -18,7 +18,6 @@
 mod call_shape;
 pub mod condition;
 pub mod expression;
-mod js;
 mod read;
 mod vocabulary;
 
@@ -32,6 +31,7 @@ use crate::tree::{
     Arrow, BinaryOp, CHAIN_TOO_LONG, CallArg, Direction, Hop, LiteralValue, MExpr, MapLiteral, MapMember, Name, SortDirection,
     StringPart, UnaryOp,
 };
+use crate::util::js;
 use crate::util::utf16::{self, Utf16};
 pub use condition::MovementCondition;
 use expression::{

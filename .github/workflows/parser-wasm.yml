@@ -5,7 +5,9 @@ name: parser-wasm
 #  - rebuild-matches-committed rebuilds the artifact and fails if it differs.
 #  - parser-tests runs the crate's tests (including the strict programs
 #    harness) and the movement-lang parser pins through the committed
-#    artifact: every corpus program and expression text parses as pinned.
+#    artifact: every corpus program and expression text parses as pinned;
+#    and the catalog differential: the Rust catalog answers every lookup the
+#    checker corpus makes as the TypeScript one does.
 #
 # The committed artifact was built on macOS; the path remapping and pinned
 # toolchain in scripts/build-parser-wasm.sh are meant to make Linux produce the
@@ -95,3 +97,10 @@ jobs:
       - name: Parser pins through the committed artifact
         working-directory: packages/movement-lang
         run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points'
+      # The TypeScript catalog stays in use until the checker is ported, so
+      # the Rust one is held to it on every change to either.
+      - name: Catalog differential through the committed artifact
+        working-directory: packages/movement-lang
+        env:
+          MOVEMENT_CATALOG_DIFFERENTIAL: "1"
+        run: pnpm run test --testPathPattern 'catalog_differential'

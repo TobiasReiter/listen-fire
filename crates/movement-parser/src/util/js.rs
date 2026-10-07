@@ -1,5 +1,7 @@
-//! The JavaScript semantics the lowering's messages and text reads depend on,
-//! made explicit. The crate README lists each.
+//! The JavaScript semantics the lowering and the catalog depend on, made
+//! explicit. The crate README lists each.
+
+use std::cmp::Ordering;
 
 use crate::util::utf16::{self, Utf16};
 
@@ -40,8 +42,6 @@ pub fn number_to_string(x: f64) -> String {
     }
 }
 
-/// `text.slice(start, end)` with UTF-16 offsets, as a tree's `at` indexes
-/// its source.
 /// A JavaScript object's own-key order: array-index keys (the canonical
 /// decimal of an integer below 2^32 - 1) first, ascending, then the rest in
 /// insertion order. `IndexMap` keeps only the second.
@@ -59,6 +59,8 @@ pub fn object_key_order<V>(map: &mut indexmap::IndexMap<String, V>) {
     });
 }
 
+/// `text.slice(start, end)` with UTF-16 offsets, as a tree's `at` indexes
+/// its source.
 pub fn slice(source: &Utf16, start: usize, end: usize) -> String {
     source.text(start, end)
 }
@@ -81,6 +83,45 @@ pub fn lowercase_last_unit(s: &str) -> String {
         }
         _ => s.to_string(),
     }
+}
+
+/// `a < b` on strings: UTF-16 code units, where Rust's `Ord` compares code
+/// points; the two disagree when one side is astral and the other sits in
+/// U+E000–U+FFFF.
+pub fn cmp_utf16(a: &str, b: &str) -> Ordering {
+    a.encode_utf16().cmp(b.encode_utf16())
+}
+
+/// `a.localeCompare(b)` as Node's ICU collation answers it for the default
+/// locale, for the text it is given here (identifiers): punctuation and
+/// spaces before digits before letters, a letter's case ignored until every
+/// letter ties, then lower case first; control characters ignored. Outside
+/// ASCII it falls back to code-point order, which ICU does not (an accented
+/// letter sorts with its base letter) — a divergence the crate README names.
+pub fn locale_compare(a: &str, b: &str) -> Ordering {
+    // Node's own order for printable ASCII, read off `localeCompare`
+    // (2026-10-07); letters appear once, lower case standing for both.
+    const ASCII_ORDER: &str = "\t\n\u{b}\u{c}\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz";
+    fn weights(s: &str) -> (Vec<u32>, Vec<u8>) {
+        let mut primary = Vec::new();
+        let mut tertiary = Vec::new();
+        for c in s.chars() {
+            if c.is_ascii_control() && !matches!(c, '\t' | '\n' | '\u{b}' | '\u{c}' | '\r') {
+                continue;
+            }
+            let lower = c.to_ascii_lowercase();
+            let weight = match ASCII_ORDER.find(lower) {
+                Some(i) if c.is_ascii() => i as u32,
+                _ => ASCII_ORDER.len() as u32 + u32::from(c),
+            };
+            primary.push(weight);
+            tertiary.push(u8::from(c.is_ascii_uppercase()));
+        }
+        (primary, tertiary)
+    }
+    let (pa, ta) = weights(a);
+    let (pb, tb) = weights(b);
+    pa.cmp(&pb).then_with(|| ta.cmp(&tb))
 }
 
 #[cfg(test)]
@@ -124,5 +165,26 @@ mod tests {
         assert_eq!(lowercase_last_unit(""), "");
         // Half of an astral character has no case.
         assert_eq!(lowercase_last_unit("3🌍"), "3🌍");
+    }
+
+    #[test]
+    fn strings_compare_by_utf16_units() {
+        // U+FF61 is one unit above U+D83C, the first unit of 🌍; by code
+        // point the emoji is the greater.
+        assert_eq!(cmp_utf16("🌍", "\u{ff61}"), Ordering::Less);
+        assert_eq!("🌍".cmp("\u{ff61}"), Ordering::Greater);
+        assert_eq!(cmp_utf16("a", "b"), Ordering::Less);
+        assert_eq!(cmp_utf16("ab", "a"), Ordering::Greater);
+    }
+
+    #[test]
+    fn locale_compare_is_node_s_for_identifiers() {
+        // The order Node printed for these (2026-10-07).
+        let mut names = vec!["b", "B", "ab_", "Ab", "aB", "ab", "a1", "a-b", "a_b", "A", "a"];
+        names.sort_by(|a, b| locale_compare(a, b));
+        assert_eq!(names, ["a", "A", "a_b", "a-b", "a1", "ab", "aB", "Ab", "ab_", "b", "B"]);
+        assert_eq!(locale_compare("a\u{1}b", "ab"), Ordering::Equal);
+        assert_eq!(locale_compare("\t", " "), Ordering::Less);
+        assert_eq!(locale_compare("spreadsheet", "sheet"), Ordering::Greater);
     }
 }

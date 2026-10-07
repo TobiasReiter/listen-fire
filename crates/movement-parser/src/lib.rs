@@ -4,6 +4,7 @@
 
 pub mod abi;
 pub mod ast;
+pub mod catalog;
 pub mod expr;
 pub mod lexer;
 pub mod lowering;

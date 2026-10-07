@@ -542,7 +542,7 @@ fn lowered_on(stack: usize, json: String) -> Result<(), Value> {
 
 #[test]
 fn a_chain_handed_to_the_lowering_is_bounded_as_the_parser_bounds_it() {
-    use crate::lowering::read::MAX_JSON_DEPTH;
+    use crate::util::json::MAX_DEPTH as MAX_JSON_DEPTH;
     use crate::tree::MAX_CHAIN;
     assert_eq!(lowered_on(256 << 20, member_chain_json(MAX_CHAIN - 1)), Ok(()));
     assert_eq!(lowered_on(256 << 20, member_chain_json(MAX_CHAIN)), Err(json!({ "message": "chain too long" })));

@@ -35,11 +35,16 @@ type ParserFunction = 'parse_program' | 'parse_program_eager' | 'parse_expressio
 /** The lowering's exports take two inputs: the tree's JSON, and its source. */
 type LoweringFunction = 'lower_expression' | 'lower_condition';
 
+/** The catalog's export takes two inputs: the snapshot's JSON, and the query's. */
+type CatalogFunction = 'catalog_query';
+
+type WasmFunction = ParserFunction | LoweringFunction | CatalogFunction;
+
 interface ParserExports {
   memory: { readonly buffer: unknown };
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
-  call(fn: ParserFunction | LoweringFunction, args: number[]): number;
+  call(fn: WasmFunction, args: number[]): number;
   lastPanic(outPtrPtr: number, outLenPtr: number): void;
 }
 
@@ -136,9 +141,21 @@ export function callLowering(fn: LoweringFunction, treeJson: string, source: str
   return call(fn, [treeJson, source], []);
 }
 
+/**
+ * One catalog lookup or helper call (crates/movement-parser/src/catalog):
+ * the snapshot and the query as JSON, and the JSON answer — `{value}`, `{}`
+ * for an `undefined` answer, or `{error}`.
+ *
+ * @internal Used by the catalog differential; the checker's own callers
+ * arrive with the Rust checker.
+ */
+export function callCatalog(snapshotJson: string, queryJson: string): { ok: boolean; json: unknown } {
+  return call('catalog_query', [snapshotJson, queryJson], []);
+}
+
 /** `inputs`: one (pointer, length) pair each, in order, before `extra`. */
 function call(
-  fn: ParserFunction | LoweringFunction,
+  fn: WasmFunction,
   inputs: string | Uint8Array | Array<string | Uint8Array>,
   extra: number[],
 ): { ok: boolean; json: unknown } {
@@ -240,13 +257,14 @@ function readExports(raw: Record<string, unknown>): ParserExports {
   const alloc = exported('alloc');
   const dealloc = exported('dealloc');
   const lastPanic = exported('last_panic');
-  const parsers: Record<ParserFunction | LoweringFunction, (...args: number[]) => unknown> = {
+  const parsers: Record<WasmFunction, (...args: number[]) => unknown> = {
     parse_program: exported('parse_program'),
     parse_program_eager: exported('parse_program_eager'),
     parse_expression: exported('parse_expression'),
     parse_nested_call: exported('parse_nested_call'),
     lower_expression: exported('lower_expression'),
     lower_condition: exported('lower_condition'),
+    catalog_query: exported('catalog_query'),
   };
   return {
     memory,

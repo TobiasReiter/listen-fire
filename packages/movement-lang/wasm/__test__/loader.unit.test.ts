@@ -159,7 +159,8 @@ function committedArtifact(): Uint8Array {
 // The loader's ABI in miniature: a bump `alloc`, a no-op `dealloc`, one
 // function behind all four parse exports that writes `{"ok":true}` to the
 // out slots and returns status 0 — or hits `unreachable` on a leading "T" —
-// one behind both lowering exports that always answers `{"ok":true}`, and a
+// one behind both lowering exports and the catalog's that always answers
+// `{"ok":true}`, and a
 // `last_panic` that points at a recorded panic message.
 function trappingModule(): Uint8Array {
   const I32 = 0x7f;
@@ -192,6 +193,7 @@ function trappingModule(): Uint8Array {
     [...name('last_panic'), ...fn(3)],
     [...name('lower_expression'), ...fn(4)],
     [...name('lower_condition'), ...fn(4)],
+    [...name('catalog_query'), ...fn(4)],
   ]);
   const code = vec([
     // ptr = next; next += len

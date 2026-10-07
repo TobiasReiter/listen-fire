@@ -6,7 +6,7 @@
 
 use super::LoweringRefusal;
 use super::expression::{Expression, ObjectMember, StaticValue};
-use super::js::number_to_string;
+use crate::util::js::number_to_string;
 use super::vocabulary::{OptionSpec, OptionType, OptionsContract, quoted_list, vocabulary};
 use indexmap::IndexMap;
 
