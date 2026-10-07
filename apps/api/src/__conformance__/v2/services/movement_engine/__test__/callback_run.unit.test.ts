@@ -112,7 +112,6 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
     singleUse: boolean;
     expiresAt?: Date;
   }> = [];
-  const correlations: Array<{ callbackId: string; address: string }> = [];
   let n = 0;
   const sink: CallbackSink = {
     async mint(input) {
@@ -123,26 +122,33 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
     async calls(callbackId) {
       return ledger[callbackId] ?? [];
     },
-    async correlateAwait(input) {
-      correlations.push(input);
-    },
   };
-  return { sink, mints, correlations, ledger };
+  return { sink, mints, ledger };
 }
 
 /** A fake park sink: records the await parks (the only kind these tests hit). */
 function makeFakeParkSink() {
-  const awaitParks: Array<{ address: string; state: ParkedScopeState }> = [];
+  const awaitParks: Array<{
+    address: string;
+    state: ParkedScopeState;
+    adapterType: string;
+    correlationKey: string;
+  }> = [];
   const sink = {
     async recordJoin() {},
     async commitTimerPark() {},
     async commitAwaitPark(input: {
       address: string;
       state: unknown;
-      correlate: (runId: string) => Promise<void>;
+      adapterType: string;
+      correlationKey: string;
     }) {
-      await input.correlate('run-1');
-      awaitParks.push({ address: input.address, state: input.state as ParkedScopeState });
+      awaitParks.push({
+        address: input.address,
+        state: input.state as ParkedScopeState,
+        adapterType: input.adapterType,
+        correlationKey: input.correlationKey,
+      });
     },
     async decrementJoin() {
       return { closed: false };
@@ -373,7 +379,7 @@ listen to runs {} fire m
     expect(result.parked).toBe(true);
     // The await is stmt1 (the callback mint is stmt0).
     expect(parks.awaitParks.map((p) => p.address)).toEqual(['s1']);
-    expect(callbacks.correlations).toEqual([{ callbackId: 'cb_fake1', address: 's1' }]);
+    expect(parks.awaitParks.map((p) => [p.adapterType, p.correlationKey])).toEqual([['callback', 'cb_fake1']]);
     // Nothing past the await ran.
     expect(kg.creates).toHaveLength(0);
   });

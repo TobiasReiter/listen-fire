@@ -4123,7 +4123,6 @@ function makeFakeParkSink(_opts: { created?: boolean } = {}): {
       timerParks.push({ address: input.address, state: input.state, wakeAt: input.wakeAt });
     },
     async commitAwaitPark(input) {
-      await input.correlate('test-run');
       awaitParks.push({ address: input.address, state: input.state });
     },
     async recordJoin(input) {
