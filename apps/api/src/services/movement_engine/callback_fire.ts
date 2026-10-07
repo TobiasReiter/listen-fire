@@ -13,6 +13,7 @@ import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun
 import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
 
 import { getQb, getAutomationsQb } from '../../lib/kysely';
+import { SECOND } from '../../constants';
 import type { LanguageVersion } from 'movement-lang';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
@@ -21,6 +22,7 @@ import { triggerEventSchema, type TriggerEvent } from '../translation_graph/trig
 import { fireCallbackFiring } from '../translation_graph/movement/execute';
 import { loadCorrelatedParks } from '../translation_graph/adapters/await_correlation';
 import { drainRunAwaits, runResumeSlot } from './await_resume';
+import { enqueueAwaitWake } from './await_wake';
 import { CALLBACK_AWAIT_TYPE } from './callback_types';
 import { claimCallbackFire, coerceCallbackValues, getCallback, type CallbackRecord } from './callback_store';
 import type { CallbackParamSpec } from './callback_types';
@@ -74,6 +76,7 @@ export async function fireCallback(input: {
       // The ledger already carries this call, so an awaiter woken at any point
       // from here on sees it. The index is the body's own address frame.
       const callIndex = claim.callback.calls.length - 1;
+      await queueWakeBackstop(claim.callback);
       // EXCLUSIVE, never coalesced: this body belongs to THIS recorded call. The
       // slot's coalescing entry replays its task whenever an arrival lands
       // mid-flight (that is what makes the await drain re-gather), and a replayed
@@ -87,6 +90,38 @@ export async function fireCallback(input: {
       else void execution.catch(() => {}); // logged inside; never breaks the ack
       return { kind: 'recorded', callback: claim.callback };
     }
+  }
+}
+
+/** How long after a fire the durable wake runs. The body and the prompt wake
+ *  run in this process right after the claim; this row only matters if the
+ *  process dies before they finish, so it waits well past a normal body. */
+const CALLBACK_WAKE_BACKSTOP_MS = 30 * SECOND;
+
+/**
+ * Queue the durable half of the wake before the body starts. The prompt wake
+ * at the end of `executeFire` is in-process and is lost if the process dies
+ * between the claim and the wake; this row is not, and the call is already on
+ * the ledger, so the parked await still resolves. When the prompt wake did run,
+ * the correlation is gone and this row is a no-op. Coalesced per callback, so a
+ * reusable callback tapped many times holds one pending row.
+ */
+async function queueWakeBackstop(callback: CallbackRecord): Promise<void> {
+  try {
+    await enqueueAwaitWake(
+      { adapterType: CALLBACK_AWAIT_TYPE, teamId: callback.teamId, correlationKey: callback.id },
+      {
+        coalesceKey: `callback_backstop:${callback.id}`,
+        dueAt: new Date(Date.now() + CALLBACK_WAKE_BACKSTOP_MS),
+      },
+    );
+  } catch (err) {
+    // The call is recorded and the prompt wake still runs; only the crash cover
+    // is missing, which is worth an error but not a refused tap.
+    logger.error('[Callback] could not queue the wake backstop', {
+      callbackId: callback.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -226,7 +261,7 @@ async function executeFire(callback: CallbackRecord, callIndex: number): Promise
     });
     if (parks.length > 0) await drainRunAwaits(callback.runId, parks);
   } catch (err) {
-    logger.error('[Callback] await wake failed (the poll worker will retry)', {
+    logger.error('[Callback] await wake failed (the queued backstop wake will retry)', {
       callbackId: callback.id,
       error: err instanceof Error ? err.message : String(err),
     });

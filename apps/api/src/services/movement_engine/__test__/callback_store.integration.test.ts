@@ -247,7 +247,7 @@ describe('revocation follows the run (ruling (b))', () => {
   });
 });
 
-describe('the poll backstop — a callback with a recorded call is resolvable', () => {
+describe('the backstop wake — a callback with a recorded call is resolvable', () => {
   async function correlate(callbackId: string, address: string) {
     await getAutomationsQb(['adapter_await'])
       .insertInto('adapter_await')

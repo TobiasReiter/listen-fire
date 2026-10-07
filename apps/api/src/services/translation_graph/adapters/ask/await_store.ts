@@ -2,9 +2,10 @@
 // with `adapter_type='ask'`). The engine writes and drops the rows itself
 // (`await_correlation.ts`); what is ask-SPECIFIC and lives here is RESOLVABILITY:
 // an ask await resolves when its ask record SETTLES (answered / expired), which
-// the resume worker discovers by joining the correlation rows to `ask.state`.
-// (Slack, by contrast, is event-driven and needs no such poll.) Correlation, NOT
-// stability — the ask id IS the identity, stored as the row's `correlation_key`.
+// the resume drain reads by joining the correlation rows to `ask.state`. An
+// answer wakes its awaiters through the settle notifier; an expiry has no door
+// of its own, so the expiry sweep finds it here. Correlation, NOT stability —
+// the ask id IS the identity, stored as the row's `correlation_key`.
 
 import { getAsksQb, getAutomationsQb, getQb } from '../../../../lib/kysely';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
@@ -102,4 +103,30 @@ export async function loadResolvableAskAwaits(
     // `adapter_await.team_id` is an opaque tenant uuid (D3 dropped the FK, and
     // with it the brand); naming it as core's team id is the boundary conversion.
     .map((r) => ({ runId: r.run_id, teamId: r.team_id as TeamId, address: r.address }));
+}
+
+/**
+ * Every EXPIRED ask that a run is still parked on — what the expiry sweep wakes.
+ * The correlation row is the "not yet woken" marker: a resumed await drops it,
+ * so an ask drops out of this read once its wake has run, and a sweep that
+ * overlaps an earlier one's pending wake finds the same asks and coalesces onto
+ * the same rows. No timestamp is kept between sweeps, so a missed sweep loses
+ * nothing.
+ */
+export async function loadExpiredAskAwaits(): Promise<Array<{ teamId: TeamId; askId: AskId }>> {
+  const rows = await getAutomationsQb(['adapter_await'])
+    .selectFrom('adapter_await')
+    .where('adapter_type', '=', ASK_ADAPTER_TYPE)
+    .select('correlation_key')
+    .distinct()
+    .execute();
+  if (rows.length === 0) return [];
+
+  const expired = await getAsksQb(['ask'])
+    .selectFrom('ask')
+    .where('id', 'in', rows.map((r) => r.correlation_key) as AskId[])
+    .where('state', '=', 'expired')
+    .select(['id', 'team_id'])
+    .execute();
+  return expired.map((a) => ({ teamId: a.team_id as TeamId, askId: a.id }));
 }

@@ -8,17 +8,22 @@
 // subscriber and the knowledge usage sink: the two products meet here and
 // nowhere else.
 //
-// The behaviour is exactly what the door did inline before the seam existed —
-// a fire-and-forget kick at the await-resume worker so a parked run wakes on
-// the answer rather than on the next poll tick (A-5: wrapped, not replaced).
+// A settle queues the engine's wake for the ask's id — the same `wake_await`
+// row an inbound signal queues — so every answer door (the link page, Slack,
+// MCP, the control tower, a Response write in movement code) wakes its run
+// through one durable door, and the wake outlives this process. The kick asks
+// this process's drain for a pass now rather than on its next tick.
 
 import { registerAskSettledNotifier } from '../translation_graph/adapters/ask/notifier';
-import { nudgeAwaitResume } from '../movement_engine/await_resume';
+import { ASK_ADAPTER_TYPE } from '../translation_graph/adapters/ask/type';
+import { enqueueAwaitWake } from '../movement_engine/await_wake';
+import { notifyWork } from '../work/drain';
 
 export function notifyEngineOfSettledAsks(): void {
   registerAskSettledNotifier({
-    async notify() {
-      nudgeAwaitResume();
+    async notify(ask) {
+      await enqueueAwaitWake({ adapterType: ASK_ADAPTER_TYPE, teamId: ask.teamId, correlationKey: ask.id });
+      notifyWork();
     },
   });
 }

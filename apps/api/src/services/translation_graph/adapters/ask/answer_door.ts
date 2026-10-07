@@ -12,9 +12,9 @@
 //   • the control tower  — an operator answering on a person's behalf
 // One semantics, several callers. The engine is never involved — a settle just
 // hands the record to this deployment's `AskSettledNotifier` (composed: the
-// in-process nudge that wakes a parked run promptly, with the poll as the
-// backstop; standalone: a signed webhook to whoever asked). Either way it is a
-// courtesy on top of an answer that is already durable.
+// engine's queued wake for the run parked on it; standalone: a signed webhook
+// to whoever asked). Either way the answer is already durable before anyone is
+// told.
 //
 // GET never writes ANYWHERE: this door is only ever reached from a POST /
 // block-action / authed call. A `?answer=` query param PRE-FILLS a control; it

@@ -21,6 +21,8 @@ import {
 } from '../ask_records';
 import { listOpenAsksForTeam, answerForTeam } from '../answer_surfaces';
 import { describeRunAwaits } from '../../movement_engine/await_description';
+import { notifyEngineOfSettledAsks } from '../../asks/in_process_notifier';
+import { registerAwaitCorrelation } from '../../translation_graph/adapters/await_correlation';
 
 async function makeTeam(): Promise<TeamId> {
   const teamId = randomUUID() as TeamId;
@@ -79,6 +81,35 @@ describe('chunk F — new-store ask surfaces (real DB)', () => {
       const result = await answerAskRecordForTeam({ askId: open.id, answer: 'true', teamId });
       expect(result.state).toBe('answered');
       expect((await getAsk(open.id))?.answer).toBe(true);
+    });
+
+    it('answering wakes the parked run through the shared door: one queued wake, nothing resumed in the request', async () => {
+      notifyEngineOfSettledAsks();
+      const runId = await makeParkedRun(teamId);
+      const ask = await createAsk({ teamId, family: 'Check', prompt: 'Ship it?', provenance: { runId } });
+      await getAutomationsQb(['parked_run'])
+        .insertInto('parked_run')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .values({ run_id: runId, address: 'await-ask', status: 'parked', park_reason: 'await', state: '{}' } as any)
+        .execute();
+      await registerAwaitCorrelation({ adapterType: 'ask', correlationKey: ask.id, runId, teamId, address: 'await-ask' });
+
+      await answerAskRecordForTeam({ askId: ask.id, answer: 'true', teamId });
+
+      const wakes = await getAutomationsQb(['work'])
+        .selectFrom('work')
+        .where('team_id', '=', teamId)
+        .where('kind', '=', 'wake_await')
+        .select('payload')
+        .execute();
+      expect(wakes.map((w) => w.payload)).toEqual([{ adapterType: 'ask', teamId, correlationKey: ask.id }]);
+      // The run is resumed by the drain, not by the request.
+      const park = await getAutomationsQb(['parked_run'])
+        .selectFrom('parked_run')
+        .where('run_id', '=', runId)
+        .select('status')
+        .executeTakeFirst();
+      expect(park?.status).toBe('parked');
     });
 
     it('refuses a question owned by another team, and a bad answer', async () => {

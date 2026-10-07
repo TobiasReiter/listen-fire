@@ -9,16 +9,17 @@
  *
  * <value> is parsed leniently: `true`/`false` → boolean, a numeric string →
  * number, a JSON object/array → its parsed shape, anything else → the raw
- * string. The answer door validates it against the ask's family and flips the
- * record `answered`; the await-resume worker (running in the dev-loop stack)
- * then drives any run waiting on the ask's Response forward.
+ * string. The answer door validates it against the ask's family, flips the
+ * record `answered` and queues the engine's wake for it; the dev-loop stack's
+ * drain then drives any run waiting on the ask's Response forward.
  */
 
 import './_profile_loader';
 
 import { getAsksQb, getQb } from '../../lib/kysely';
 import type { AskId } from '../../generated/kysely/asks/Ask';
-import { answerAsk } from '../../services/translation_graph/adapters/ask/store';
+import { answerAskById } from '../../services/translation_graph/adapters/ask/answer_door';
+import { notifyEngineOfSettledAsks } from '../../services/asks/in_process_notifier';
 
 function parseValue(raw: string): unknown {
   if (raw === 'true') return true;
@@ -57,7 +58,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const value = parseValue(args[1]);
-  const outcome = await answerAsk({ id: askId as unknown as AskId, raw: value });
+  // The composed deployment's wiring, so the answer queues its wake exactly as
+  // the stack's own doors do; the stack's drain picks the row up.
+  notifyEngineOfSettledAsks();
+  const outcome = await answerAskById(askId as unknown as AskId, value);
   console.log(JSON.stringify({ outcome }, null, 2));
 }
 

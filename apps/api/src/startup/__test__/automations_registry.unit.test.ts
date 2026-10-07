@@ -27,7 +27,7 @@ const ensure = jest.mocked(ensurePeriodicWork);
 const PERIODIC_KINDS = [
   'cron_reconcile',
   'poll_reconcile',
-  'await_resume_sweep',
+  'ask_expiry_sweep',
   'timer_sweep',
   'exposed_file_sweep',
   'airtable_webhook_refresh',
@@ -143,7 +143,7 @@ describe('registerAutomationsWork', () => {
     expect(Object.fromEntries(ensured.map((input) => [input.kind, input.intervalMs]))).toMatchObject({
       cron_reconcile: 30_000,
       poll_reconcile: 30_000,
-      await_resume_sweep: 5_000,
+      ask_expiry_sweep: 30_000,
       timer_sweep: 30_000,
       exposed_file_sweep: 5 * 60_000,
       airtable_webhook_refresh: 60 * 60_000,

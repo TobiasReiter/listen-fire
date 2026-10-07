@@ -24,7 +24,6 @@ import {
   type AskViewCorrect,
 } from '../translation_graph/adapters/ask/surface_view';
 import { answerAskById } from '../translation_graph/adapters/ask/answer_door';
-import { resumeAwaitsForCorrelation } from '../movement_engine/await_resume';
 import { resolveAutomationName } from '../../lib/automation/naming';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { AskId } from '../../generated/kysely/asks/Ask';
@@ -84,15 +83,10 @@ export async function listAskRecordsForTeam(teamId: TeamId): Promise<AskRecordSu
 }
 
 /** Answer a new-store question on the operator's behalf — clamps team ownership,
- *  then drives the ONE door (which nudges the resume worker on a real settle).
- *  The door's nudge is fire-and-forget (Slack/link-page callers don't wait on
- *  it — the poll is the backstop), but this caller is a person staring at the
- *  control tower expecting the card to update the moment they answer. So this
- *  path additionally AWAITS the targeted resume for this one ask's correlated
- *  parks before returning — by the time the mutation settles, the run's
- *  `parked_run` row (what `listParkedRuns` reads) is already caught up, so the
- *  client's post-mutation refetch sees it. Idempotent with the door's own
- *  nudge (single-flight per run, F21). */
+ *  then drives the ONE door, whose settle queues the wake for any run parked on
+ *  the ask. The run resumes off-request, as it does for every other door: what
+ *  this surface refetches is the question itself, which is answered before the
+ *  door returns. */
 export async function answerAskRecordForTeam(input: {
   askId: AskId;
   answer: unknown;
@@ -105,11 +99,6 @@ export async function answerAskRecordForTeam(input: {
   const outcome = await answerAskById(input.askId, input.answer);
   switch (outcome.kind) {
     case 'answered':
-      await resumeAwaitsForCorrelation({
-        adapterType: 'ask',
-        teamId: input.teamId,
-        correlationKey: outcome.ask.id as unknown as string,
-      });
       return { askId: outcome.ask.id as unknown as string, state: outcome.ask.state };
     case 'closed':
       return { askId: outcome.ask.id as unknown as string, state: outcome.ask.state };

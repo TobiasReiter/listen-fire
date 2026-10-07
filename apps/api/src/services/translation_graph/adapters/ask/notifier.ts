@@ -6,10 +6,9 @@
 // settled record to an `AskSettledNotifier` and the deployment decides what
 // that means.
 //
-//   • composed — the composition root registers a notifier wrapping today's
-//     `nudgeAwaitResume()`. Byte-for-byte the behaviour that was here before:
-//     a fire-and-forget kick so a parked run wakes promptly, with the poll
-//     worker as the durable backstop.
+//   • composed — the composition root registers a notifier that queues the
+//     engine's durable wake for the ask, so the parked run resumes promptly
+//     and the wake survives a restart.
 //   • standalone — no engine exists. The waiter is whoever supplied a
 //     `callback_url` when they created the ask, so the settle is enqueued into
 //     `ask_webhook_delivery` and the worker signs and POSTs it.
@@ -19,8 +18,7 @@
 //
 // The notification is a COURTESY. The answer is already durable on the ask by
 // the time we get here, and readable over `GET /v1/asks/:id` — a delivery that
-// never lands loses a nudge, never an answer. That is the same relationship the
-// engine's nudge has always had with its poll.
+// never lands loses a notification, never an answer.
 
 import { getAsksQb } from '../../../../lib/kysely';
 import { logger } from '../../../logger';
@@ -68,11 +66,10 @@ export async function notifyAskSettled(ask: AskRecord): Promise<void> {
       case 'local': {
         if (!inProcessNotifier) {
           // Standalone deployments set `webhook`. Local with nothing registered
-          // is therefore a composed deployment whose root did not wire itself —
-          // a parked run that will only wake on the next poll tick, which is
-          // slow rather than broken, and worth saying so.
-          logger.warn(
-            '[asks] an ask settled with no in-process notifier registered, but ASKS_SETTLE_DELIVERY is "local"',
+          // is therefore a composed deployment whose root did not wire itself:
+          // nothing wakes a run parked on this ask, so say so loudly.
+          logger.error(
+            '[asks] an ask settled with no in-process notifier registered, but ASKS_SETTLE_DELIVERY is "local" — a run parked on it will not wake',
             { askId: ask.id },
           );
           return;

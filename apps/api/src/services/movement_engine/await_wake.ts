@@ -16,14 +16,23 @@ export const wakeAwaitPayloadSchema = z.object({
 
 type AwaitWake = z.infer<typeof wakeAwaitPayloadSchema>;
 
-/** Queue the event-driven wake for one adapter identity. Never deduped: a second
- *  signal on the same identity while the first wake is running must still drive
- *  the parks the first pass already looked past. */
-export async function enqueueAwaitWake(wake: AwaitWake): Promise<void> {
+/** Queue the event-driven wake for one adapter identity. A signal's wake is
+ *  never deduped: a second signal on the same identity while the first wake is
+ *  running must still drive the parks the first pass already looked past.
+ *
+ *  A sweep or backstop that re-derives the same wake on every pass names a
+ *  `coalesceKey` instead, so repeated passes fold onto one pending row rather
+ *  than piling up while the drain is behind. `dueAt` defers it (a backstop that
+ *  should only matter if the prompt wake was lost). */
+export async function enqueueAwaitWake(
+  wake: AwaitWake,
+  opts: { coalesceKey?: string; dueAt?: Date } = {},
+): Promise<void> {
   await enqueueWork({
     kind: 'wake_await',
-    key: `wake_await:${randomUUID()}`,
+    key: `wake_await:${opts.coalesceKey ?? randomUUID()}`,
     teamId: wake.teamId,
     payload: wake,
+    ...(opts.dueAt !== undefined ? { dueAt: opts.dueAt } : {}),
   });
 }

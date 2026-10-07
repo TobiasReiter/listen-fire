@@ -4,7 +4,7 @@
 // source span, with the main continuation's step wedged between them).
 //
 // The cause is not the claim (that UPDATE is atomic — `callback_store`) and not
-// the poll backstop (it only ever RESUMES awaits). It is the per-run slot the
+// the backstop wake (it only ever RESUMES awaits). It is the per-run slot the
 // fire shares with the await drain: its coalescing entry REPLAYS the in-flight
 // task whenever another arrival lands mid-flight, because a drain is supposed to
 // re-gather. A callback body is not re-gatherable — it belongs to ONE recorded
@@ -161,7 +161,7 @@ describe('a fired callback body runs once per recorded call, even under a mid-bo
     fireCallbackFiringMock.mockImplementation(async (input: { callIndex: number }) => {
       bodyCalls.push(input.callIndex);
       if (bodyCalls.length === 1) {
-        // The poll worker / inbound seam entering the SAME run's slot while the
+        // A wake (inbound seam, backstop) entering the SAME run's slot while the
         // body is in flight — in the incident, the Slack message the body had
         // just posted arriving back through `resumeAwaitsForCorrelation`.
         nudge = runResumeSlot.coalesce(runId, async () => {
@@ -215,5 +215,24 @@ describe('a fired callback body runs once per recorded call, even under a mid-bo
     expect(second.kind).toBe('closed');
     expect(fireCallbackFiringMock).toHaveBeenCalledTimes(1);
     expect((await getCallback(callbackId))?.calls).toHaveLength(1);
+  });
+
+  it('a recorded call queues a delayed wake for its awaiters, which outlives this process', async () => {
+    const { callbackId } = await seedFiredRun();
+    fireCallbackFiringMock.mockResolvedValue({ result: { movementName: 'book_it' } });
+    const before = Date.now();
+
+    await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20', awaitExecution: true });
+
+    const rows = await getAutomationsQb(['work'])
+      .selectFrom('work')
+      .where('key', '=', `wake_await:callback_backstop:${callbackId}`)
+      .select(['kind', 'payload', 'due_at'])
+      .execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe('wake_await');
+    expect(rows[0].payload).toEqual({ adapterType: 'callback', teamId, correlationKey: callbackId });
+    // Deferred well past the in-process wake, so it only matters if that was lost.
+    expect(rows[0].due_at.getTime()).toBeGreaterThan(before + 10_000);
   });
 });

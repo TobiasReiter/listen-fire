@@ -11,6 +11,7 @@ import { registerAwaitWork } from '../movement_engine/await_resume';
 import { registerTimerWork } from '../movement_engine/timer_resume';
 import { registerCronWork } from '../movement_scheduler/worker';
 import { registerPollWork } from '../poll_source/worker';
+import { registerAskExpiryWork } from '../translation_graph/adapters/ask/expiry_sweep';
 import { registerRunOrphanSweepWork } from '../translation_graph/runs/trigger_run';
 import { registerDispatchWork } from '../translation_graph/triggers/dispatch_event';
 import { registerLinkedObjectWork } from '../webhook_sync/linked_object_refresh';
@@ -20,7 +21,7 @@ import { ensurePeriodicWork } from './store';
 const PERIODIC_WORK: ReadonlyArray<{ kind: WorkKind; intervalMs: number }> = [
   { kind: 'cron_reconcile', intervalMs: 30 * SECOND },
   { kind: 'poll_reconcile', intervalMs: 30 * SECOND },
-  { kind: 'await_resume_sweep', intervalMs: 5 * SECOND },
+  { kind: 'ask_expiry_sweep', intervalMs: 30 * SECOND },
   { kind: 'timer_sweep', intervalMs: 30 * SECOND },
   { kind: 'exposed_file_sweep', intervalMs: EXPOSED_FILE_SWEEP_INTERVAL },
   { kind: 'airtable_webhook_refresh', intervalMs: AIRTABLE_WEBHOOK_SCAN_INTERVAL },
@@ -42,6 +43,7 @@ async function registerAutomationsWork(): Promise<void> {
   registerPollWork();
   registerDispatchWork();
   registerAwaitWork();
+  registerAskExpiryWork();
   registerLinkedObjectWork();
   registerExposedFileWork();
   registerAirtableWebhookRefreshWork();

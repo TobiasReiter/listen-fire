@@ -222,9 +222,9 @@ function responseEdge(family: AskFamily): SchemaReferenceDescriptor {
     cardinality: 'one',
     direction: 'outgoing',
     awaitable: true,
-    // Answering an ask resumes the run that raised it, in the same request
-    // (`answerAskRecordForTeam` → `resumeAwaitsForCorrelation`) — the wake is
-    // delivered, so an await here needs no cadence.
+    // Answering an ask queues the wake for the run that raised it (the settle
+    // notifier), and the expiry sweep queues one for a cancelled ask — the
+    // wake is delivered, so an await here needs no cadence.
     watchable: true,
     resolvesEmpty: true,
     readable: true,

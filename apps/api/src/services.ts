@@ -368,9 +368,9 @@ if (DROPBOX_CLIENT_ID && DROPBOX_CLIENT_SECRET) {
 // METERING + ADMISSION (D8)
 // Automations meters and admits through interfaces and ships with no-ops.
 // ASK SETTLE NOTIFICATION (A-5)
-// The composed deployment notifies in-process: a settled ask kicks the
-// await-resume worker so a parked run wakes on the answer rather than the next
-// poll tick. Standalone runs `webhook` instead and never registers anything
+// The composed deployment notifies in-process: a settled ask queues the
+// engine's wake for it, which is the only thing that wakes a run parked on an
+// answered ask. Standalone runs `webhook` instead and never registers anything
 // here — exactly one path is active, so an answer is never announced twice.
 // Registered beside the other provider choices rather than in the worker
 // registries, because the answer door runs in the request path of every

@@ -1,19 +1,20 @@
 // The await-resume worker (asks-as-adapter §A) — the engine half of the
-// awaitable capability, adapter-agnostic. Two entry points, ONE drive:
-//   • POLL (ask): `resumeAwaitedRuns` finds parks whose ask has SETTLED
-//     (answered / expired) via the settled-state join and drives each run.
-//   • EVENT (Slack, and any watch-point adapter): `resumeAwaitsForCorrelation`
-//     is called from the inbound seam when a signal lands on an adapter identity
-//     (`channel:thread_ts`); it drives the parks correlated to that identity.
-// Both feed `resumeAwaitRun`, which RE-ENTERS each leaf at its await (the await
-// re-checks the edge live via `resolveAwait` and binds its own landing) rather
-// than injecting an answer.
+// awaitable capability, adapter-agnostic. ONE entry point: a `wake_await` row
+// names an adapter identity (an ask id, a callback id, `channel:thread_ts`) and
+// `resumeAwaitsForCorrelation` drives the parks correlated to it. Every door
+// queues that row — an inbound signal, an answered ask, the ask service's
+// expiry sweep, a fired callback's backstop — so a wake survives the process
+// that raised it. There is no engine-side poll.
+//
+// Each wake feeds `resumeAwaitRun`, which RE-ENTERS each leaf at its await (the
+// await re-checks the edge live via `resolveAwait` and binds its own landing)
+// rather than injecting an answer.
 //
 // F21 (batched resume, one movement instance at a time): the single-flight
 // per-run slot resumes one run at a time; each of a run's resolvable leaves is
 // stepped forward in turn, so a multi-winner tie (F18) settles in one batch. A
-// crash mid-drain leaves the `adapter_await` rows for the next pass to
-// re-process (idempotent — a resolved leaf has no parked_run left).
+// crash mid-drain leaves the `adapter_await` rows and the leased wake row, which
+// is re-claimed (idempotent — a resolved leaf has no parked_run left).
 
 import { getQb, getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
@@ -40,11 +41,11 @@ import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
 import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
 
-// Single-flight per run (F18/F21): concurrent scans/nudges for the SAME run
+// Single-flight per run (F18/F21): concurrent wakes for the SAME run
 // coalesce — one drain runs, gathering ALL of that run's currently-resolvable
 // leaves as one batch (which is what makes the multi-winner tie deterministic);
-// a nudge arriving mid-drain queues exactly one follow-up rather than racing a
-// second overlapping scan that would double-settle the same race frame.
+// a wake arriving mid-drain queues exactly one follow-up rather than racing a
+// second overlapping drain that would double-settle the same race frame.
 /** Exported so the CALLBACK fire path shares the very same slot: a fire's body
  *  segment and an await resume of the same run must never overlap (one movement
  *  instance at a time, F21). A drain enters through `coalesce` — it re-gathers
@@ -55,31 +56,13 @@ import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_ru
  *  would await its own promise. */
 export const runResumeSlot = createSingleFlight<string>();
 
-/** One POLL scan (the ask half): discover every run with a settled-ask await park
- *  and drive each once through its single-flight slot (F21 — one movement instance
- *  at a time). Slack needs no poll — it is event-driven (see
- *  `resumeAwaitsForCorrelation`). The authoritative per-run batch is (re-)loaded
- *  inside the slot, so overlapping scans never drain a run twice. */
-export async function resumeAwaitedRuns(): Promise<void> {
-  // Two resolvability sources, one drive: a SETTLED ask, and a callback with a
-  // recorded call whose event-driven wake was lost. Slack still needs no poll.
-  const resolvable = [
-    ...(await loadResolvableAskAwaits()),
-    ...(await loadResolvableCallbackAwaits()),
-  ];
-  const runIds = new Set(resolvable.map((r) => r.runId));
-  await Promise.all(
-    [...runIds].map((runId) => runResumeSlot.coalesce(runId, () => drainRunAwaits(runId))),
-  );
-}
-
 /**
- * The EVENT-DRIVEN entry (Slack, and any future watch-point adapter): an inbound
- * signal has arrived on some adapter identity (`channel:thread_ts`). Look up the
- * parks awaiting that identity and drive each of their runs through the SAME
- * single-flight slot the poll uses — so an ask leaf and a Slack leaf resolving in
- * the same window still batch under one drain (F18/F21). The passed-in leaves are
- * folded into the run's batch; `resolveAwait` re-checks each live at re-entry.
+ * The wake: something has happened on an adapter identity (an ask settled, a
+ * callback fired, a reply landed on `channel:thread_ts`). Look up the parks
+ * awaiting that identity and drive each of their runs through the per-run
+ * single-flight slot — so an ask leaf and a Slack leaf resolving in the same
+ * window still batch under one drain (F18/F21). The passed-in leaves are folded
+ * into the run's batch; `resolveAwait` re-checks each live at re-entry.
  */
 export async function resumeAwaitsForCorrelation(input: {
   adapterType: string;
@@ -195,7 +178,7 @@ async function resumeAwaitRun(runId: TriggerRunId, leaves: ResolvableAwait[]): P
       .executeTakeFirst();
     if (!parked || !parked.state) {
       // Already drained in a prior pass (or cancelled as a race loser) — clear
-      // its correlation so the scan doesn't loop on it.
+      // its correlation so later wakes do not re-drive it.
       await dropAwaitCorrelation({ runId, address: leaf.address });
       continue;
     }
@@ -352,26 +335,6 @@ export const wakeAwaitHandler: WorkHandler = {
   },
 };
 
-/** The periodic backstop: settled asks, and callbacks whose wake was lost. */
-export const awaitResumeSweepHandler: WorkHandler = {
-  async run() {
-    await resumeAwaitedRuns();
-  },
-};
-
 export function registerAwaitWork(): void {
   registerWorkHandler('wake_await', wakeAwaitHandler);
-  registerWorkHandler('await_resume_sweep', awaitResumeSweepHandler);
-}
-
-/** Latency hint: an ask just settled, so kick a resume pass next tick rather than
- *  waiting for the poll worker. Fire-and-forget — the scan is idempotent. */
-export function nudgeAwaitResume(): void {
-  setImmediate(() => {
-    void resumeAwaitedRuns().catch((err) => {
-      logger.error('[AwaitResume] nudge pass failed (poll worker will retry)', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  });
 }

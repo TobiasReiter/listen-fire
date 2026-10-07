@@ -7,7 +7,7 @@ export const WORK_KINDS = [
   'linked_object_refresh', // payload: LinkedObjectRefresh (webhook_sync/linked_object_refresh.ts)
   'cron_reconcile', // periodic, payload {}
   'poll_reconcile', // periodic, payload {}
-  'await_resume_sweep', // periodic, payload {}  (temporary until protocol v2)
+  'ask_expiry_sweep', // periodic, payload {}
   'timer_sweep', // periodic, payload {}
   'exposed_file_sweep', // periodic, payload {}
   'airtable_webhook_refresh', // periodic, payload {}

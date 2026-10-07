@@ -25,12 +25,12 @@ import { CALLBACK_AWAIT_TYPE } from './callback_types';
 export type { CallbackSink };
 
 /**
- * The callback half of the resume worker's POLL — the durable backstop behind
- * the event-driven wake. A fire records its call and then nudges the awaiters;
- * if that nudge is lost (a restart between the claim and the wake), the call is
- * still on the ledger, so the park is still resolvable. Without this a lost
- * nudge would strand the run parked forever, deaf to a tap that DID happen —
- * the absence of a guarantee, not a weaker one.
+ * The callback half of the resume drain's resolvability read: a park on a
+ * callback is resolvable once the callback has a recorded call. A fire wakes
+ * its awaiters in-process and also queues a delayed `wake_await` row
+ * (`callback_fire.ts`), so a wake lost to a restart between the claim and the
+ * wake still finds the call on the ledger — without that a run would sit
+ * parked forever, deaf to a tap that DID happen.
  *
  * Resolvability is per-adapter and lives outside the generic correlation map,
  * exactly as the ask's does: load this type's rows, then keep the ones whose

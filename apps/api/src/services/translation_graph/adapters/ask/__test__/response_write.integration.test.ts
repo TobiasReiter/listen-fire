@@ -10,18 +10,14 @@
 // The store's own lattice is proven next door in `store_lattice`; what is new
 // here is the ADAPTER reaching it through the write path.
 
-// The wake reaches the engine through the `AskSettledNotifier` seam now (A-5),
-// so the composed wiring is registered here exactly as the composition root
+// The wake reaches the engine through the `AskSettledNotifier` seam (A-5), so
+// the composed wiring is registered here exactly as the composition root
 // registers it — proving the seam carries the behaviour rather than that the
-// door still names the engine.
-const nudgeAwaitResume = jest.fn();
-jest.mock('../../../../movement_engine/await_resume', () => ({
-  nudgeAwaitResume: () => nudgeAwaitResume(),
-}));
+// door still names the engine. What it leaves is the engine's queued wake row.
 
 import { randomUUID } from 'node:crypto';
 
-import { getCoreQb } from '../../../../../lib/kysely';
+import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import { cleanupTeam } from '../../../../../test/harness/cleanup';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import { AskAdapter } from '../index';
@@ -52,9 +48,18 @@ describe('the Response edge write (real DB)', () => {
   let teamId: TeamId;
   let adapter: AskAdapter;
 
+  const wakeRows = async (): Promise<unknown[]> =>
+    (
+      await getAutomationsQb(['work'])
+        .selectFrom('work')
+        .where('team_id', '=', teamId)
+        .where('kind', '=', 'wake_await')
+        .select('payload')
+        .execute()
+    ).map((row) => row.payload);
+
   beforeEach(async () => {
     notifyEngineOfSettledAsks();
-    nudgeAwaitResume.mockReset();
     teamId = randomUUID() as TeamId;
     await getCoreQb(['team'])
       .insertInto('team')
@@ -82,8 +87,8 @@ describe('the Response edge write (real DB)', () => {
       expect(result.data.Answer).toEqual(stored);
       expect((await getAsk(ask.id))?.answer).toEqual(stored);
       expect((await getAsk(ask.id))?.state).toBe('answered');
-      // The parked continuation is woken now rather than at the next poll tick.
-      expect(nudgeAwaitResume).toHaveBeenCalled();
+      // The settle queued the engine's wake for this ask, durably.
+      expect(await wakeRows()).toEqual([{ adapterType: 'ask', teamId, correlationKey: ask.id }]);
     },
   );
 
