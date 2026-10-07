@@ -29,7 +29,6 @@
 // are the template), with `displayName === fieldId`.
 
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -62,7 +61,7 @@ import type {
   SchemaTypeDescriptor,
 } from '../../services/translation_graph/types';
 import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../services/translation_graph/types';
-import { createAdapterProtocolHandler } from '../../services/translation_graph/protocol/server';
+import { AdapterBadRequestError, createAdapterProtocolHandler } from '../../services/translation_graph/protocol/server';
 import type { RemoteAdapterManifestFile } from '../../services/translation_graph/adapters/remote/manifest';
 
 /** Slug the engine routes on — the `acme_crm` in `import { acme_crm } from adapters`. */
@@ -147,7 +146,7 @@ export const FAKE_CRM_PAGE_SIZE = 2;
 function fakeCrmPageOffset(cursor: unknown): number {
   if (cursor === undefined || cursor === null) return 0;
   if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor >= 0) return cursor;
-  throw new Error(`fake CRM: unrecognised page cursor ${JSON.stringify(cursor)}.`);
+  throw new AdapterBadRequestError(`fake CRM: unrecognised page cursor ${JSON.stringify(cursor)}.`);
 }
 
 /** The one event the CRM emits: a company was created. */
@@ -171,6 +170,10 @@ export type FakeCrmDelivery = z.infer<typeof FakeCrmDelivery>;
 export function fakeCrmThreadKey(thread: string): string {
   return `thread:${thread}`;
 }
+
+/** The fields a position carries: what `createRecord` echoed back, or a
+ *  comment's `Text`. Anything else carries no fields. */
+const PositionFields = z.record(z.string(), z.unknown());
 
 /** A body that is not the CRM's own delivery is refused, not read as empty:
  *  the host should hear that it handed over something this adapter never sent. */
@@ -376,8 +379,8 @@ export function createFakeCrmAdapter(): FakeCrmAdapter {
     },
 
     async getFieldValue(input: GetFieldValueInput): Promise<unknown> {
-      const data = (positionData(input.position) ?? {}) as Record<string, unknown>;
-      return data[input.fieldId] ?? null;
+      const data = PositionFields.safeParse(positionData(input.position));
+      return data.success ? (data.data[input.fieldId] ?? null) : null;
     },
 
     // The companies written so far, read back from the root — paged in
@@ -661,7 +664,11 @@ export async function startFakeCrmServer(options: {
   });
 
   await new Promise<void>((resolve) => server.listen(requestedPort, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
+  const address = server.address();
+  if (typeof address !== 'object' || address === null) {
+    throw new Error('fake CRM: the server is not listening on a TCP port.');
+  }
+  const { port } = address;
 
   return {
     baseUrl: `http://127.0.0.1:${port}/`,

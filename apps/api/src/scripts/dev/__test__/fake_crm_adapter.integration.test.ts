@@ -143,13 +143,13 @@ describe('Fake CRM pages a traversal over the wire', () => {
     expect(streamed).toEqual(names.map((Name) => ({ Name })));
   });
 
-  it('refuses a cursor it did not mint', async () => {
+  it('refuses a cursor it did not mint, as a bad request (not retryable)', async () => {
     await expect(
       remote.iterateRelatedPage!(
         { position: makeMetaPosition(FAKE_CRM_ADAPTER_TYPE), fieldId: FAKE_CRM_COMPANY_TYPE, direction: 'outgoing' },
         'not-an-offset',
       ),
-    ).rejects.toThrow(/unrecognised page cursor/);
+    ).rejects.toThrow(/bad_request — iterateRelatedPage: fake CRM: unrecognised page cursor/);
   });
 });
 

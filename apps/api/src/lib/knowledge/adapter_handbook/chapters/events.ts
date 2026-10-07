@@ -14,7 +14,7 @@ and the two ways they reach Listen-Fire.
 
 - An event type is an entry point with \`"fires": true\`, usually
   \`"readable": false\` (pushed, never listed). An automation listens with
-  \`movement m(e: <crm-[:Company]->>) { … }\` and \`listen to crm {} fire m\`.
+  \`function m(e: <crm-[:Company]->>) { … }\` and \`listen to crm {} fire m\`.
 - \`listEventTypes\` maps your event tags to that type:
   \`\`\`json
   [ { "tag": "company.created", "positionType": "Company" } ]
@@ -66,8 +66,11 @@ POST {listen-fire}/api/public/adapter/{adapterType}/wake   { "keys": ["thread:co
   does nothing.
 - **401** for anything unauthenticated (never 404). **409** when one
   secret matches installs on several teams: send the team's id in the
-  \`x-listen-fire-team\` header. **400** for a malformed body — one bad
-  event fails the whole \`emit\`. Retry on 5xx.
+  \`x-listen-fire-team\` header (a UUID; anything else is 401). **400** for a malformed body — one bad
+  event fails the whole \`emit\`. Retry on 5xx — but a
+  \`capture_failed\` 500 on \`emit\` is partial: the events counted in its
+  \`accepted\` were already queued, so resend only the events that failed,
+  or accept duplicate runs.
 - 1 to 1,000 events or keys per call. Delivery is at least once, and
   \`emit\` is not idempotent: an event sent twice runs twice.
 - An event's \`payload\` is the delivered record's data, read through your
@@ -83,12 +86,16 @@ If your system already sends webhooks:
 
 1. Implement \`ensureEventSubscription\`
    (\`{ events, callbackUrl, current? }\` → \`{ externalId?, secret }\`).
-   An empty \`events\` means everything you offer. **Return a secret** — a
-   subscription without one is refused and withdrawn.
+   It is called on every save or delete of an automation in the team, even
+   when nothing changed: make it an idempotent upsert, and return the same
+   secret to keep it or a new one to rotate it. An empty \`events\` means
+   everything you offer. **Return a secret** — a subscription without one is
+   refused and withdrawn.
 2. \`POST\` each webhook to \`callbackUrl\` with header
    \`x-listen-fire-signature\`: the lowercase hex HMAC-SHA256 of the exact
    raw body, keyed by that secret. There is no replay protection.
-3. Implement \`preprocessInbound\` (\`{ raw }\` → \`{ events }\`) and
+3. Implement \`preprocessInbound\` (\`{ raw }\` → \`{ events }\`; required —
+   without it every delivery fails) and
    \`wakeKeys\` (\`{ raw }\` → \`["thread:company-1"]\`). Listen-Fire calls
    both, and \`listEventTypes\`, while your delivery is still open. A failing
    \`wakeKeys\` never costs a delivery its events.

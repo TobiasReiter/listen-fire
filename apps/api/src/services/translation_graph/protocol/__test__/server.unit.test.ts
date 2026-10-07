@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Adapter, GetRelatedInput, RelatedPage, RelatedResult } from '../../adapter';
 import { BASE_RUNTIME_CAPABILITIES } from '../../adapter';
 import { makeMetaPosition, makeStablePosition } from '../../types';
-import { createAdapterProtocolHandler, DRAINED_PAGE_LIMIT } from '../server';
+import { AdapterBadRequestError, createAdapterProtocolHandler, DRAINED_PAGE_LIMIT } from '../server';
 import { PROTOCOL_VERSION } from '../schema';
 
 function baseAdapter(overrides: Partial<Adapter> = {}): Adapter {
@@ -52,7 +52,7 @@ async function rpc(
   handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,
   method: string,
   params: unknown,
-): Promise<{ status: number; body: { ok: boolean; result?: unknown; error?: { code: string; message: string } } }> {
+): Promise<{ status: number; body: { ok: boolean; result?: unknown; error?: { code: string; message: string; retryable?: boolean } } }> {
   const req = Object.assign(
     Readable.from([JSON.stringify({ protocolVersion: PROTOCOL_VERSION, method, cacheScopeId: 's', params })]),
     { headers: {} },
@@ -213,5 +213,33 @@ describe('resolveFileRef answers by URL', () => {
     expect((owner.body.result as { methods: string[] }).methods).toContain('resolveFileRef');
     const plain = await rpc(createAdapterProtocolHandler({ adapter: baseAdapter() }), 'manifest', {});
     expect((plain.body.result as { methods: string[] }).methods).not.toContain('resolveFileRef');
+  });
+});
+
+describe('what an adapter throw answers', () => {
+  it('a request the adapter refuses is bad_request, not retryable', async () => {
+    const handler = createAdapterProtocolHandler({
+      adapter: baseAdapter({
+        iterateRelatedPage: async () => {
+          throw new AdapterBadRequestError('unrecognised page cursor "x"');
+        },
+      }),
+    });
+    const { status, body } = await rpc(handler, 'iterateRelatedPage', { ...relatedInput, cursor: 'x' });
+    expect(status).toBe(200);
+    expect(body.error).toEqual({
+      code: 'bad_request',
+      message: 'iterateRelatedPage: unrecognised page cursor "x"',
+      retryable: false,
+    });
+  });
+
+  it('any other throw is adapter_error, retryable', async () => {
+    const { body } = await rpc(
+      createAdapterProtocolHandler({ adapter: baseAdapter() }),
+      'createRecord',
+      { recordType: 'Company', fields: {}, mutationContext: { source: {}, occurredAt: 'now' } },
+    );
+    expect(body.error).toEqual({ code: 'adapter_error', message: 'read-only', retryable: true });
   });
 });

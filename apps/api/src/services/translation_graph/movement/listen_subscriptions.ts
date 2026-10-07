@@ -67,6 +67,8 @@ interface SubscriptionRow {
   provider: string;
   credentialsId: string | null;
   externalWebhookId: string | null;
+  /** The secret deliveries are verified with (`UNREGISTERED_SECRET` until registered). */
+  secret: string;
   events: string[];
   scope: Record<string, string>;
   /** 'active' once registered; 'pending' while it still needs registering
@@ -230,13 +232,23 @@ async function provisionedRows(teamId: TeamId): Promise<SubscriptionRow[]> {
     .where('team_id', '=', teamId)
     .where('provisioned_by', '=', MOVEMENT_LISTEN_PROVISIONER)
     .where('deleted_at', 'is', null)
-    .select(['id', 'provider', 'credentials_id', 'external_webhook_id', 'subscriptions', 'scope', 'status'])
+    .select([
+      'id',
+      'provider',
+      'credentials_id',
+      'external_webhook_id',
+      'webhook_secret',
+      'subscriptions',
+      'scope',
+      'status',
+    ])
     .execute();
   return rows.map((r) => ({
     id: r.id as unknown as string,
     provider: r.provider,
     credentialsId: (r.credentials_id as unknown as string | null) ?? null,
     externalWebhookId: r.external_webhook_id,
+    secret: r.webhook_secret,
     events: eventsOfSubscriptionsJson(r.subscriptions),
     scope: scopeOfJson(r.scope),
     status: r.status,
@@ -303,7 +315,13 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
   // ── Ensure each desired channel's registration ──
   for (const channel of desired) {
     const row = rowFor(channel);
-    if (row && row.status === 'active' && sameEventSet(row.events, channel.events)) continue;
+    const settled = row !== undefined && row.status === 'active' && sameEventSet(row.events, channel.events);
+    // A remote is asked again on every sync even when nothing changed here: its
+    // subscription lives in somebody else's system, which may have lost it (a
+    // restart, a wiped store), and an idempotent re-ensure is the only way this
+    // side finds out. A built-in's registration is trusted until it changes.
+    const remote = remoteSlugs.has(channel.slug);
+    if (settled && !remote) continue;
     try {
       const adapter = await resolveAdapter({
         adapterType: channel.slug,
@@ -328,7 +346,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           ...(Object.keys(channel.scope).length > 0 ? { scope: channel.scope } : {}),
         });
         const refused =
-          remoteSlugs.has(channel.slug) &&
+          remote &&
           (await withdrawIfSecretless({
             adapter,
             registration,
@@ -350,6 +368,15 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
             .where('id', '=', row.id as WebhookSubscriptionId)
             .execute();
           notes.push(`${channel.slug}: event-subscription provisioning failed (${NO_SECRET_REFUSAL})`);
+          continue;
+        }
+        // The remote confirmed what this side already holds: nothing to write.
+        // A different secret is a rotation, written below like any registration.
+        if (
+          settled &&
+          registration?.secret === row.secret &&
+          (registration.externalId === undefined || registration.externalId === row.externalWebhookId)
+        ) {
           continue;
         }
         await getAutomationsQb(['webhook_subscription'])

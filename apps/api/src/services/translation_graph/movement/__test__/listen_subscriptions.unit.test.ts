@@ -478,6 +478,69 @@ describe('syncListenSubscriptions — a remote install subscribes over the wire'
     expect(ensureCalls.at(-1)?.events).toEqual(['company.created', 'company.deleted']);
   });
 
+  /** A remote that answers every ensure with the same id and `secret`. */
+  function steadyRemote(secret: string): void {
+    (resolveAdapter as jest.Mock).mockResolvedValueOnce({
+      ensureEventSubscription: async (input: { events: string[]; callbackUrl: string }) => {
+        ensureCalls.push(input);
+        return { externalId: 'wh-1', secret };
+      },
+      removeEventSubscription: async () => undefined,
+    });
+  }
+
+  it('an active remote channel with unchanged events is ensured again on every sync', async () => {
+    await liveRemoteChannel();
+    const before = ensureCalls.length;
+    steadyRemote('secret-1');
+
+    await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(ensureCalls).toHaveLength(before + 1);
+    expect(ensureCalls.at(-1)?.events).toEqual(['company.created']);
+  });
+
+  it('the same secret back leaves the row untouched', async () => {
+    await liveRemoteChannel();
+    const row = kyselyMock.__tables.webhook_subscription[0];
+    const updatedAt = row.updated_at;
+    row.updated_at = 'untouched';
+    steadyRemote('secret-1');
+
+    await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(row).toMatchObject({ status: 'active', webhook_secret: 'secret-1', external_webhook_id: 'wh-1' });
+    expect(row.updated_at).toBe('untouched');
+    row.updated_at = updatedAt;
+  });
+
+  it('a new secret back rotates the stored one', async () => {
+    await liveRemoteChannel();
+    steadyRemote('rotated');
+
+    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(notes).toEqual([]);
+    expect(kyselyMock.__tables.webhook_subscription[0]).toMatchObject({
+      status: 'active',
+      webhook_secret: 'rotated',
+      external_webhook_id: 'wh-1',
+    });
+  });
+
+  it('a built-in channel with unchanged events is not ensured again', async () => {
+    kyselyMock.__tables.trigger.push(
+      triggerRow({ name: 'steady', config: {}, resolvedAddress: { shelf: 'shf_north', crate: 'crt_apples' } }),
+    );
+    await syncListenSubscriptions({ teamId: TEAM });
+    const before = ensureCalls.length;
+    expect(before).toBe(1);
+
+    await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(ensureCalls).toHaveLength(before);
+  });
+
   it('a row left needing registration is registered again even when its events have not changed', async () => {
     await liveRemoteChannel();
     kyselyMock.__tables.webhook_subscription[0].status = 'pending';

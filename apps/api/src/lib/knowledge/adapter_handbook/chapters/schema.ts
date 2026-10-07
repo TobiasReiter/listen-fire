@@ -32,8 +32,8 @@ Returns one type's full shape, or \`null\` if the \`typeId\` is unknown:
   "typeId": "Company",
   "displayName": "Company",
   "fields": [
-    { "fieldId": "Name", "displayName": "Name", "kind": "text", "writable": true, "required": true },
-    { "fieldId": "Stage", "displayName": "Stage", "kind": "text", "writable": true, "required": false }
+    { "fieldId": "Name", "displayName": "Name", "kind": "string", "writable": true, "required": true },
+    { "fieldId": "Stage", "displayName": "Stage", "kind": "string", "writable": true, "required": false }
   ],
   "references": []
 }
@@ -42,8 +42,11 @@ Returns one type's full shape, or \`null\` if the \`typeId\` is unknown:
   your system needs an internal id distinct from the human name — Listen-Fire
   writes \`fields\` keyed by \`displayName\`, so keeping them equal makes
   the mapping the identity.
-- \`kind\` describes the field type (\`text\`, \`number\`, \`boolean\`,
-  \`date\`, \`enum\`, \`reference\`, …). \`writable\` / \`required\`
+- \`kind\` is one of \`string\`, \`number\`, \`boolean\`, \`date\`,
+  \`file\`, \`json\`, \`enum\` (list the options in \`enumValues\`) or
+  \`reference\`. Any other kind is silently dropped and leaves the type
+  unchecked — automations may then read any field name off it. Add
+  \`"cardinality": "many"\` for a list. \`writable\` / \`required\`
   gate authoring.
 - A field that only means something on a write — send-side media, a
   one-shot payload your system never stores — marks itself
@@ -52,10 +55,11 @@ Returns one type's full shape, or \`null\` if the \`typeId\` is unknown:
   instead of silently returning nothing at run time.
 - \`references\` are edges to other types (each at least
   \`{ "fieldId": "..." }\`); leave \`[]\` if your type has none.
-- References take the same pair, both defaulting to true when absent:
-  \`"readable": false\` marks a pure create path with nothing to read
-  behind it (a reply thread your system can't list); \`"writable":
-  false\` marks an edge your system fills itself (a message's inbound
+- References take the same pair, with different defaults:
+  \`readable\` defaults to true, and \`"readable": false\` marks a pure
+  create path with nothing to read behind it (a reply thread your system
+  can't list); \`writable\` is only true when you say \`"writable": true\`
+  — leave it out for an edge your system fills itself (a message's inbound
   attachments — nothing can ever be created along it). Read and write
   surfaces are allowed to be asymmetric — describe what each direction
   honestly supports rather than forcing one shape on both.

@@ -20,8 +20,8 @@ const SECRET = process.env.ADAPTER_SECRET;
 const COMPANY = {
   typeId: 'Company', displayName: 'Company',
   fields: [
-    { fieldId: 'Name', displayName: 'Name', kind: 'text', writable: true, required: true },
-    { fieldId: 'Description', displayName: 'Description', kind: 'text', writable: true, required: false },
+    { fieldId: 'Name', displayName: 'Name', kind: 'string', writable: true, required: true },
+    { fieldId: 'Description', displayName: 'Description', kind: 'string', writable: true, required: false },
   ],
   references: [],
 };
@@ -111,7 +111,7 @@ here.**
    \`\`\`
    import { acme_crm } from adapters
    crm = acme_crm()
-   movement push(e: <inbox-[:\`Email Received\`]->>) {
+   function push(e: <inbox-[:\`Email Received\`]->>) {
      e-[m:record]-> {
        write crm-[:Company]-> { Name: m.\`Subject\` }
      }

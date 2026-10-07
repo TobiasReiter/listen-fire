@@ -194,10 +194,18 @@ Each example shows `params` → `result` (the `result` inside `ok: true`).
 }
 ```
 
+- A field's `kind` is one of `string`, `number`, `boolean`, `date`,
+  `file`, `json` or `enum` (with `enumValues`), or `reference` (an edge, not
+  a value). A field with any other `kind` is silently dropped, and the
+  type's position is then left open: automations may read any field name
+  off it unchecked. Add `"cardinality": "many"` for a list.
 - Fields and references pass through with whatever extra keys you declare.
-  The ones Listen-Fire reads on a reference: `readable` and `writable`
-  (default true), `awaitable`, `watchable`, `resolvesEmpty` (see
-  [awaits](#waiting-on-your-system-awaits)).
+  On a reference Listen-Fire reads:
+  - `readable` — defaults to true; `false` marks a write-only edge;
+  - `writable` — only an explicit `true` allows creating along the edge;
+    absent means read-only;
+  - `awaitable`, `watchable`, `resolvesEmpty` (see
+    [awaits](#waiting-on-your-system-awaits)).
 - `edgesFrom` (optional) replaces `describe` for nested systems: `{ position, cursor? }`
   → `{ descriptor, targetPositions?, nextCursor? }` or `null`. The adapter
   handbook's schema chapter covers it.
@@ -302,7 +310,7 @@ The `createRecord` input plus `externalId` →
 | `iterateRelatedPage` | `getRelated` params + `cursor?` | `{ items, nextCursor? }` ([Paging](#paging)) |
 | `resolveAwait` | `{ recordId, edge, headData? }` | `pending` / `landed` / `empty` ([awaits](#waiting-on-your-system-awaits)) |
 | `wakeKeys` | `{ raw }` | `string[]` ([awaits](#waiting-on-your-system-awaits)) |
-| `preprocessInbound` | `{ raw, checkpoint? }` | `{ events, checkpoint? }` ([host door](#inbound-through-the-host-door)) |
+| `preprocessInbound` | `{ raw, checkpoint? }` | `{ events, checkpoint? }` — **required** to receive webhooks through the [host door](#inbound-through-the-host-door) |
 | `listEventTypes` | `{}` | `[{ tag, positionType, match? }]` |
 | `ensureEventSubscription` | `{ events, callbackUrl, current?, scope? }` | `{ externalId?, secret }` |
 | `removeEventSubscription` | `{ callbackUrl, externalId?, scope? }` | `null` |
@@ -376,7 +384,10 @@ Answer one of three:
   will later wake with. Listen-Fire stores the key against the waiting run.
 - `landed`: here is what arrived. `correlationKey` is required here too: if
   no landing passes the automation's `WHERE`, the run keeps waiting on it.
-- `empty`: the wait is over with nothing. Only on an edge declared `resolvesEmpty`.
+- `empty`: the wait is over with nothing. Only on an edge declared
+  `resolvesEmpty`. Listen-Fire does not yet enforce this: an `empty` on any
+  other edge is bound anyway, and the run continues with an absent value
+  the author was never made to handle. Never return it there.
 - Each landing's `fields` are read back through your `getFieldValue` for its
   `recordType`, so key them the way your positions' `data` is keyed.
 - The first landing that passes the `WHERE` wins.
@@ -431,8 +442,9 @@ Authentication:
 - Send the same header, with the same secret, that Listen-Fire sends you (your
   `authStrategy`). The install whose secret matches is the team.
 - You never name the team, except with the optional `x-listen-fire-team`
-  header (the team's id). Use it when one secret serves several teams'
-  installs of your adapter: it narrows the lookup to that team.
+  header. Use it when one secret serves several teams' installs of your
+  adapter: it narrows the lookup to that team. Its value must be the team's
+  id, a UUID; anything else is answered 401 with no further detail.
 
 Answers:
 
@@ -442,13 +454,18 @@ Answers:
 | 400 | `{ "error": "bad_request", "issues": [{ "path", "message" }] }` | malformed body |
 | 401 | `{ "error": "unauthorized" }` | the secret matches no install of this type, the type is not installed, or the named team has no matching install |
 | 409 | `{ "error": "ambiguous_credential", "message" }` | the secret matches installs on several teams and no `x-listen-fire-team` was sent |
-| 500 | `{ "error": "capture_failed", "accepted", "failed" }` or `{ "error": "internal" }` | retry later |
+| 500 | `{ "error": "capture_failed", "accepted", "failed" }` | some events could not be receipted (see below) |
+| 500 | `{ "error": "internal" }` | retry later |
 
 - Authentication is checked before the body, so an unauthenticated caller
   learns nothing about the body's shape.
 - 401 is the only refusal for anything unauthenticated: never 404.
 - A body carries 1 to 1,000 events or keys.
 - Delivery is at least once. Retry on 5xx or a network failure.
+- A `capture_failed` 500 on `emit` is partial: the events counted in
+  `accepted` were receipted and queued before the 500. Since `emit` is not
+  idempotent, resending the whole batch runs those again. Resend only the
+  events that failed, or accept the duplicate runs.
 
 #### emit: new data
 
@@ -495,8 +512,9 @@ Answers:
 
 If your system sends webhooks, let Listen-Fire subscribe:
 
-1. When an automation listens to your adapter, Listen-Fire calls
-   `ensureEventSubscription`:
+1. While any automation listens to your adapter, Listen-Fire calls
+   `ensureEventSubscription` on every reconcile of the team's listens (each
+   time an automation is saved or deleted), even when nothing changed:
 
    ```json
    { "events": [], "callbackUrl": "https://listen-fire.example/api/public/webhook-sync/acme_crm/5f0c…" }
@@ -507,8 +525,13 @@ If your system sends webhooks, let Listen-Fire subscribe:
    ```
 
    - `events` is the selection. An empty selection means every event you offer.
-   - `current` (the previous `externalId` and `events`) arrives when a
-     subscription already exists; update it rather than adding another.
+   - Make it an idempotent upsert. `current` (the previous `externalId` and
+     `events`) arrives when a subscription already exists; update it rather
+     than adding another.
+   - Return the same secret to keep it. A different secret rotates it:
+     Listen-Fire stores it and verifies the next delivery with it.
+   - Being asked again is how a subscription you lost (a restart, a wiped
+     store) comes back.
    - Treat `callbackUrl` as opaque. It is stable for the install.
    - `secret` is required. Without one the subscription is refused, withdrawn
      (`removeEventSubscription`), and reported as a problem when the automation
@@ -520,8 +543,15 @@ If your system sends webhooks, let Listen-Fire subscribe:
    x-listen-fire-signature: <lowercase hex HMAC-SHA256 of the exact raw body, keyed by the secret>
    ```
 
-   The body is your own format. Listen-Fire answers 200 `{ "ok": true, "eventsProcessed": n }`,
-   401 for a bad signature, 404 for an unknown subscription.
+   The body is your own format. Listen-Fire answers:
+
+   | Status | When |
+   |---|---|
+   | 200 `{ "ok": true, "eventsProcessed": n }` | accepted |
+   | 400 `{ "error": "provider_mismatch" }` | the URL's adapter segment does not match the subscription |
+   | 401 `{ "error": "signature_invalid" }` | bad or missing signature |
+   | 404 `{ "error": "subscription_not_found" }` | unknown or deleted subscription |
+   | 500 | your adapter does not implement `preprocessInbound`, or an internal failure |
 
 3. While your delivery is open, Listen-Fire calls you back:
    `preprocessInbound({ raw })` turns your body into events, `wakeKeys({ raw })`
@@ -562,7 +592,10 @@ again. Keep the callback on HTTPS.
 - The cursor is any JSON value you like. Listen-Fire echoes it back unchanged.
 - Returning the same cursor you were given fails the walk (it would never
   end), and so does a walk past 10,000 pages.
-- Refuse a cursor you did not mint (throw: it becomes `adapter_error`).
+- Refuse a cursor you did not mint with `bad_request` (not retryable). On
+  the TypeScript reference kit, throw `AdapterBadRequestError`; any other
+  throw becomes `adapter_error`, which is retryable, so Listen-Fire would
+  ask again with the same cursor.
 
 The TypeScript reference kit (`createAdapterProtocolHandler`) serves
 `iterateRelatedPage` for you. If your in-process adapter only offers a stream
@@ -607,8 +640,8 @@ Inside the envelope (HTTP 200, `ok: false`):
 | `code` | `retryable` | Meaning |
 |---|---|---|
 | `method_not_implemented` | false | Unknown method, or one you do not implement |
-| `adapter_error` | true | Your code threw; Listen-Fire may retry |
-| `bad_request` | false | `params` did not match the method's schema; the message is `<method>: <path>: <problem>` |
+| `adapter_error` | true | Your code failed; Listen-Fire may retry |
+| `bad_request` | false | `params` did not match the method's schema (the message is `<method>: <path>: <problem>`), or you refused the request (a cursor you never minted) |
 | `protocol_version` | false | The request's `protocolVersion` is not `"2"` |
 
 Outside it:
@@ -622,8 +655,13 @@ Use your own `code` for anything else; set `retryable` honestly.
 
 The fake CRM is a complete protocol-2 adapter in one file:
 `apps/api/src/scripts/dev/fake_crm_adapter.ts`. It has one type, `Company`,
-with a comment thread, and it uses every route above. Read it next to this
-walkthrough.
+with a comment thread. It uses both push doors and the host door's methods,
+and it pages. Read it next to this walkthrough.
+
+Its paging is exercised only by its integration test
+(`scripts/dev/__test__/fake_crm_adapter.integration.test.ts`), not by an
+automation: `Company` is not readable from the root, so no automation can
+walk the collection.
 
 1. **Describe your data.** `listEntryPoints` publishes `Company` (writable,
    fires) and `Comment`. `describe` gives `Company` its fields and its
@@ -668,7 +706,7 @@ walkthrough.
    import { manual, acme_crm } from adapters
    crm = acme_crm()
    runs = manual()
-   movement crm_review(go: <runs-[:Invocation]->>) {
+   function crm_review(go: <runs-[:Invocation]->>) {
      c = write crm-[:Company]-> { Name: "Vireo Robotics" }
      r = await FIRST(c-[:Comments]->)
      write crm-[:Company]-> { Name: "Vireo Robotics (reviewed)", Description: COALESCE(r.Text, "no comment") }
@@ -679,7 +717,7 @@ walkthrough.
    ```
    import { acme_crm } from adapters
    crm = acme_crm()
-   movement crm_intake(e: <crm-[:Company]->>) {
+   function crm_intake(e: <crm-[:Company]->>) {
      write crm-[:Company]-> { Name: "Seen: ${e.Name}" }
    }
    listen to crm {} fire crm_intake

@@ -59,6 +59,20 @@ const PAGED_METHODS = new Set<MethodName>(['iterateRelated', 'iterateRelatedPage
 export const DRAINED_PAGE_LIMIT = 1_000;
 
 /**
+ * Thrown by an adapter served through this kit when the REQUEST is wrong in a
+ * way the schema cannot see — a cursor it never minted, an id of the wrong
+ * shape. Answers `bad_request` (not retryable) instead of the `adapter_error`
+ * (retryable) every other throw becomes: asking again with the same input
+ * cannot succeed.
+ */
+export class AdapterBadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdapterBadRequestError';
+  }
+}
+
+/**
  * A few `Adapter` members take a single POSITIONAL argument rather than an
  * options object, while the wire protocol uniformly wraps params in an object
  * (`describe` → `{ typeId }`). For these the server unwraps the named field
@@ -338,7 +352,11 @@ export function createAdapterProtocolHandler(opts: {
       const result = await call(...args);
       send(res, 200, { ok: true, result: result ?? null });
     } catch (err) {
-      // Any throw inside the adapter becomes a retryable dispatch error —
+      if (err instanceof AdapterBadRequestError) {
+        send(res, 200, errorEnvelope('bad_request', `${method}: ${err.message}`, false));
+        return;
+      }
+      // Any other throw inside the adapter becomes a retryable dispatch error —
       // the engine decides whether to retry. Source-only adapters that throw
       // on writes (email) surface here as a structured envelope, not a 500.
       send(

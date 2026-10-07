@@ -133,9 +133,9 @@ large, also implement \`iterateRelatedPage\` and list it in
 - The cursor is any JSON value; Listen-Fire echoes it back unchanged.
   Answering the cursor you were given again fails the walk, as does a walk
   past 10,000 pages.
-- On the TypeScript reference kit, an in-process adapter that only streams
-  is served as one page capped at 1,000 items (with a warning); one with
-  neither method answers \`method_not_implemented\`.
+- Refuse a cursor you did not mint with \`bad_request\` (not
+  retryable), not \`adapter_error\` — a retryable refusal is asked again
+  with the same cursor.
 
 ### resolveEntity (matching / dedup)
 
