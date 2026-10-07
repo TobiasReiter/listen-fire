@@ -64,7 +64,8 @@ pub struct LoweringRefusal {
 pub enum RefusalClass {
     #[serde(rename = "LoweringError")]
     Lowering,
-    /// expression/call_shape.ts throws a plain `BridgeError`.
+    /// A built-in call's static shape: a plain `BridgeError`, as the
+    /// TypeScript's expression/call_shape.ts threw it.
     #[serde(rename = "BridgeError")]
     CallShape,
 }

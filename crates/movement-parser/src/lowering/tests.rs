@@ -1,7 +1,8 @@
-//! One test per lowering rule and per refusal (lower.ts and
-//! expression/call_shape.ts). The corpus-wide proof is the differential the
-//! TypeScript ran before it was deleted, and the pinned fixture
-//! (parser/expression/__test__/lowering_regression) that now runs through this.
+//! One test per lowering rule and per refusal (ported from the TypeScript's
+//! lower.ts and expression/call_shape.ts). The corpus-wide proof was the
+//! differential against the TypeScript, run until it was deleted, and is the
+//! pinned fixture (parser/expression/__test__/lowering_regression) that now
+//! runs through this.
 
 use serde_json::{Value, json};
 

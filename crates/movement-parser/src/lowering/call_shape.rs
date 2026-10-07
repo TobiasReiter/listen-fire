@@ -1,7 +1,8 @@
-//! The static shape of a built-in call (expression/call_shape.ts): FILE's
-//! artifact type, READ's one argument, an options map's keys. Its refusals
-//! are the TypeScript's `BridgeError`s, not `LoweringError`s, and keep that
-//! class across the boundary (`RefusalClass::CallShape`).
+//! The static shape of a built-in call (ported from the TypeScript's
+//! expression/call_shape.ts): FILE's artifact type, READ's one argument, an
+//! options map's keys. Its refusals were `BridgeError`s, not
+//! `LoweringError`s, and keep that class across the boundary
+//! (`RefusalClass::CallShape`).
 
 use super::LoweringRefusal;
 use super::expression::{Expression, ObjectMember, StaticValue};

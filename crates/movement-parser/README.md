@@ -71,8 +71,8 @@ differ.
 Status 0 means the output is the tree; 1 means it is `{"error": {…}}`. The
 output is UTF-8 JSON the caller must `dealloc`. Every value is an i32 on
 wasm32. A lowering refusal's `class` is absent for a `LoweringError`,
-`"BridgeError"` for a built-in call's static shape (expression/call_shape.ts
-threw that class), and `"MalformedTree"` when the input was not a tree.
+`"BridgeError"` for a built-in call's static shape (the TypeScript's
+expression/call_shape.ts, now ported, threw that class), and `"MalformedTree"` when the input was not a tree.
 
 A panic aborts (`panic = "abort"`), which traps the instance. A panic hook
 records the message first; the loader reads it through `last_panic` from the
