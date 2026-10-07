@@ -1,11 +1,12 @@
-// An expired ask wakes the run parked on it, against a real DB.
+// A closed ask wakes the run parked on it, against a real DB.
 //
-// An answer queues its own wake (the settle notifier); an expiry — a cancel,
-// the `open → expired` transition — has no door, so the ask service's periodic
-// sweep finds it and queues the same `wake_await` row. Sweep → row → drain →
-// the run re-enters its await, which reads the ask through the real adapter and
-// resolves `empty`. Only the engine step itself is stubbed, so the test can see
-// what the re-entered await got back.
+// An answer and a cancel each queue their own wake at their door. The ask
+// service's periodic closed sweep is the safety net behind both: it finds a
+// closed ask a run is still parked on (its wake was lost) and queues the same
+// `wake_await` row. Sweep → row → drain → the run re-enters its await, which
+// reads the ask through the real adapter. Only the engine step itself is
+// stubbed, so the test can see what the re-entered await got back. Store-level
+// transitions stand in for a door whose wake was lost.
 
 import { randomUUID } from 'node:crypto';
 
@@ -32,7 +33,8 @@ import { registerAwaitWork } from '../../../../movement_engine/await_resume';
 import { enqueueAwaitWake } from '../../../../movement_engine/await_wake';
 import { drainUntilIdle, inProcessNotifier, resetWorkHandlersForTests, setWorkNotifier } from '../../../../work/drain';
 import { loadCorrelatedParks, registerAwaitCorrelation } from '../../await_correlation';
-import { askExpirySweepHandler, registerAskExpiryWork } from '../expiry_sweep';
+import { askClosedSweepHandler, registerAskClosedSweepWork } from '../closed_sweep';
+import { cancelAskAndWake } from '../answer_door';
 import { AskAdapter } from '../index';
 import { ASK_ADAPTER_TYPE } from '../type';
 import { answerAsk, cancelAsk, createAsk, type AskRecord } from '../store';
@@ -47,7 +49,7 @@ let movementVersionId: string;
 beforeAll(async () => {
   resetWorkHandlersForTests();
   registerAwaitWork();
-  registerAskExpiryWork();
+  registerAskClosedSweepWork();
   // The test drains explicitly.
   setWorkNotifier({ notify() {} });
 
@@ -105,8 +107,10 @@ afterAll(async () => {
   await getCoreQb(['team']).deleteFrom('team').where('id', '=', teamId).execute();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   resumeMovementFiringMock.mockReset();
+  // The team is shared across cases; each starts with an empty queue.
+  await getAutomationsQb(['work']).deleteFrom('work').where('team_id', '=', teamId).execute();
 });
 
 /** A live run parked on an open ask, exactly as `commitAwaitPark` leaves it. */
@@ -152,7 +156,7 @@ async function wakeRows(): Promise<unknown[]> {
 }
 
 async function sweep(): Promise<void> {
-  await askExpirySweepHandler.run({}, testWorkContext());
+  await askClosedSweepHandler.run({}, testWorkContext());
 }
 
 /** The re-entered await: read the ask through the real adapter, as the engine's
@@ -164,8 +168,8 @@ function awaitReadsTheAsk(askId: string, seen: AwaitResolution[]): void {
   });
 }
 
-describe('an expired ask wakes the run parked on it', () => {
-  it('sweep → a wake row → draining resumes the run, and the await resolves empty', async () => {
+describe('a closed ask wakes the run parked on it', () => {
+  it('an expired ask: sweep → a wake row → draining resumes the run, and the await resolves empty', async () => {
     const { runId, ask } = await runParkedOnAsk();
     const seen: AwaitResolution[] = [];
     awaitReadsTheAsk(ask.id, seen);
@@ -205,13 +209,28 @@ describe('an expired ask wakes the run parked on it', () => {
     expect(resumeMovementFiringMock).toHaveBeenCalledTimes(1);
   });
 
-  it('an answered ask is not the sweep\'s to wake', async () => {
+  it('an answered ask whose wake was lost (no notifier) gets exactly one wake row', async () => {
     const { ask } = await runParkedOnAsk();
-    // The bare lattice transition, without the door's notifier: whatever wakes
-    // an answer, it is not this sweep.
+    // The bare lattice transition, without the door's notifier: the wake an
+    // answer would have queued never was.
     expect((await answerAsk({ id: ask.id, raw: 'true' })).ok).toBe(true);
+    expect(await wakeRows()).toEqual([]);
 
     await sweep();
-    expect(await wakeRows()).toEqual([]);
+    await sweep();
+    expect(await wakeRows()).toEqual([{ adapterType: ASK_ADAPTER_TYPE, teamId, correlationKey: ask.id }]);
+  });
+
+  it('the cancel door queues the wake itself, before any sweep', async () => {
+    const { ask } = await runParkedOnAsk();
+    const seen: AwaitResolution[] = [];
+    awaitReadsTheAsk(ask.id, seen);
+
+    expect((await cancelAskAndWake({ id: ask.id })).ok).toBe(true);
+    expect(await wakeRows()).toEqual([{ adapterType: ASK_ADAPTER_TYPE, teamId, correlationKey: ask.id }]);
+
+    await drainUntilIdle({ owner: 'test', teamId });
+    expect(seen).toEqual([{ status: 'empty' }]);
+    expect(await loadCorrelatedParks({ adapterType: ASK_ADAPTER_TYPE, teamId, correlationKey: ask.id })).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { ensurePeriodicWork } from '../../services/work/store';
+import { ensurePeriodicWork, removeRetiredWork } from '../../services/work/store';
 import {
   recordExternalDrainPass,
   registerWorkHandler,
@@ -18,16 +18,18 @@ jest.mock('../../services/work/drain', () => ({
 jest.mock('../../services/work/store', () => ({
   ...jest.requireActual('../../services/work/store'),
   ensurePeriodicWork: jest.fn(async () => {}),
+  removeRetiredWork: jest.fn(async () => {}),
 }));
 
 const startLoop = jest.mocked(startDrainLoop);
 const register = jest.mocked(registerWorkHandler);
 const ensure = jest.mocked(ensurePeriodicWork);
+const removeRetired = jest.mocked(removeRetiredWork);
 
 const PERIODIC_KINDS = [
   'cron_reconcile',
   'poll_reconcile',
-  'ask_expiry_sweep',
+  'ask_closed_sweep',
   'timer_sweep',
   'exposed_file_sweep',
   'airtable_webhook_refresh',
@@ -143,11 +145,18 @@ describe('registerAutomationsWork', () => {
     expect(Object.fromEntries(ensured.map((input) => [input.kind, input.intervalMs]))).toMatchObject({
       cron_reconcile: 30_000,
       poll_reconcile: 30_000,
-      ask_expiry_sweep: 30_000,
+      ask_closed_sweep: 30_000,
       timer_sweep: 30_000,
       exposed_file_sweep: 5 * 60_000,
       airtable_webhook_refresh: 60 * 60_000,
       run_orphan_sweep: 30_000,
     });
+  });
+
+  it('deletes the rows of retired kinds where the periodic rows are ensured', async () => {
+    await registerAutomationsWork();
+    expect(removeRetired).toHaveBeenCalledWith(['await_resume_sweep']);
+    // A retired kind is gone from the live list, not merely unscheduled.
+    expect(new Set<string>(WORK_KINDS).has('await_resume_sweep')).toBe(false);
   });
 });

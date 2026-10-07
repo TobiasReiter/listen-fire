@@ -109,6 +109,10 @@ export async function drainRunAwaits(
       runId,
       error: err instanceof Error ? err.message : String(err),
     });
+    // Rethrown so the wake row that brought us here is released for a backoff
+    // retry rather than completed: with no poll behind it, a wake that fails on
+    // a transient fault and is then deleted would strand the run.
+    throw err;
   }
 }
 

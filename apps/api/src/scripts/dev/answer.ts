@@ -17,8 +17,8 @@
 import './_profile_loader';
 
 import { getAsksQb, getQb } from '../../lib/kysely';
-import type { AskId } from '../../generated/kysely/asks/Ask';
 import { answerAskById } from '../../services/translation_graph/adapters/ask/answer_door';
+import { askIdSchema } from '../../services/translation_graph/adapters/ask/store';
 import { notifyEngineOfSettledAsks } from '../../services/asks/in_process_notifier';
 
 function parseValue(raw: string): unknown {
@@ -52,7 +52,11 @@ async function main(): Promise<void> {
     await listAsks();
     return;
   }
-  const askId = args[0];
+  const askId = askIdSchema.safeParse(args[0]);
+  if (!askId.success) {
+    console.error(`Not an ask id: ${args[0]}`);
+    process.exit(1);
+  }
   if (args[1] === undefined) {
     console.error('Usage: pnpm dev:answer <askId> <value>   |   pnpm dev:answer --list');
     process.exit(1);
@@ -61,7 +65,7 @@ async function main(): Promise<void> {
   // The composed deployment's wiring, so the answer queues its wake exactly as
   // the stack's own doors do; the stack's drain picks the row up.
   notifyEngineOfSettledAsks();
-  const outcome = await answerAskById(askId as unknown as AskId, value);
+  const outcome = await answerAskById(askId.data, value);
   console.log(JSON.stringify({ outcome }, null, 2));
 }
 

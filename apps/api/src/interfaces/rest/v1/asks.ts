@@ -13,7 +13,7 @@
 // human answering it.
 //
 // Team scoping is explicit and caller-side on purpose (§4): `getAsk` and
-// `cancelAsk` do not check ownership themselves, so every route that reaches
+// `cancelAskAndWake` do not check ownership themselves, so every route that reaches
 // an ask by id compares `ask.teamId` before doing anything with it, and a
 // mismatch is a 404 rather than a 403 — another team's ask should not be
 // discoverable by probing ids.
@@ -27,12 +27,12 @@ import { z } from 'zod';
 import {
   ASK_ANSWER_TYPES,
   ASK_FAMILIES,
-  cancelAsk,
   createAsk,
   getAsk,
   listAsksForTeam,
   type AskRecord,
 } from '../../../services/translation_graph/adapters/ask/store';
+import { cancelAskAndWake } from '../../../services/translation_graph/adapters/ask/answer_door';
 import { readAskDeliveryHealth } from '../../../services/asks/webhook_delivery/worker';
 import { askSettleDelivery } from '../../../services/translation_graph/adapters/ask/delivery_mode';
 import { currentPrincipal } from 'principal';
@@ -193,7 +193,7 @@ asksRouter.post('/:id/cancel', async (req, res) => {
   try {
     const existing = await getAsk(parsed.data.id as AskId);
     if (!existing || existing.teamId !== teamId()) return res.status(404).json({ error: 'not_found' });
-    const outcome = await cancelAsk({ id: existing.id });
+    const outcome = await cancelAskAndWake({ id: existing.id });
     if (outcome.ok) return res.status(200).json({ data: view(outcome.ask) });
     if (outcome.reason === 'not_found') return res.status(404).json({ error: 'not_found' });
     return res.status(409).json({

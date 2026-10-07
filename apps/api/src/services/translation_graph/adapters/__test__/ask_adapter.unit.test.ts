@@ -22,6 +22,13 @@ jest.mock('../ask/store', () => {
   };
 });
 
+// A cancel goes through the cancel door, which queues the engine's wake.
+const enqueueAwaitWakeMock = jest.fn();
+jest.mock('../../../movement_engine/await_wake', () => ({
+  enqueueAwaitWake: (...a: unknown[]) => enqueueAwaitWakeMock(...a),
+}));
+jest.mock('../../../work/drain', () => ({ notifyWork: jest.fn() }));
+
 import { AskAdapter } from '../ask';
 import { AskResponseRefused } from '../ask/answer_door';
 import { UPDATE_NOT_FOUND } from '../not_found';
@@ -524,6 +531,10 @@ describe('updateRecord — the cancellation surface', () => {
     );
     expect(cancelAskMock).toHaveBeenCalledWith({ id: 'ask-1' });
     expect(result).toMatchObject({ externalId: 'ask-1', data: { State: 'expired' } });
+    // …and wakes the run parked on it now, not at the next sweep.
+    expect(enqueueAwaitWakeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ adapterType: 'ask', correlationKey: STORED.id }),
+    );
   });
 
   it('rejects observably when the ask has already settled', async () => {

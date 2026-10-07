@@ -133,7 +133,20 @@ jest.mock('../../translation_graph/triggers/types', () => ({
   triggerEventSchema: { parse: (x: unknown) => x },
 }));
 
-import { resumeAwaitsForCorrelation } from '../await_resume';
+// The work table, in memory: what the drain claims, completes and releases.
+const claimDueWorkMock = jest.fn();
+const completeWorkMock = jest.fn();
+const releaseWorkMock = jest.fn();
+jest.mock('../../work/store', () => ({
+  claimDueWork: (...a: unknown[]) => claimDueWorkMock(...a),
+  completeWork: (...a: unknown[]) => completeWorkMock(...a),
+  releaseWork: (...a: unknown[]) => releaseWorkMock(...a),
+  heartbeatWork: jest.fn(async () => true),
+  enqueueWork: jest.fn(),
+}));
+
+import { registerAwaitWork, resumeAwaitsForCorrelation } from '../await_resume';
+import { drainWork, resetWorkHandlersForTests } from '../../work/drain';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 
@@ -255,5 +268,41 @@ describe('await-resume driver — the language version a resume runs under', () 
     expect(resumeMovementFiringMock).toHaveBeenCalledWith(
       expect.objectContaining({ pinnedSource: 'PINNED SOURCE', pinnedLanguageVersion: 1 }),
     );
+  });
+});
+
+describe('await-resume driver — a failing resume is retried by the work table', () => {
+  it('a throwing resume releases its wake row for a backoff retry instead of completing it', async () => {
+    resetWorkHandlersForTests();
+    registerAwaitWork();
+    const claimedAt = new Date('2001-01-01T00:00:00.000Z');
+    claimDueWorkMock.mockResolvedValueOnce([
+      {
+        id: 'w-1',
+        teamId: TEAM,
+        kind: 'wake_await',
+        key: 'wake_await:k',
+        payload: { adapterType: 'slack', teamId: TEAM, correlationKey: 'C123:1700000000.000100' },
+        dueAt: claimedAt,
+        intervalMs: null,
+        attempts: 1,
+        leaseOwner: 'me',
+        leaseUntil: claimedAt,
+        leaseToken: 'token-1',
+        updatedAt: claimedAt,
+      },
+    ]);
+    // A transient fault mid-resume (the database went away).
+    resumeMovementFiringMock.mockRejectedValue(new Error('connection reset'));
+
+    const result = await drainWork({ owner: 'me', heartbeatMs: false });
+
+    expect(loggerErrorMock).toHaveBeenCalledWith('[AwaitResume] run resume failed', expect.anything());
+    expect(result).toMatchObject({ claimed: 1, failed: 1 });
+    expect(completeWorkMock).not.toHaveBeenCalled();
+    expect(releaseWorkMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'w-1', leaseToken: 'token-1' }));
+    // The park is untouched for the retry to find.
+    expect(livePark.has(LEAF)).toBe(true);
+    expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();
   });
 });

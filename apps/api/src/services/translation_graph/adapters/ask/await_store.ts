@@ -3,9 +3,9 @@
 // (`await_correlation.ts`); what is ask-SPECIFIC and lives here is RESOLVABILITY:
 // an ask await resolves when its ask record SETTLES (answered / expired), which
 // the resume drain reads by joining the correlation rows to `ask.state`. An
-// answer wakes its awaiters through the settle notifier; an expiry has no door
-// of its own, so the expiry sweep finds it here. Correlation, NOT stability —
-// the ask id IS the identity, stored as the row's `correlation_key`.
+// answer and a cancel each wake their awaiters at their own door; the closed
+// sweep reads here for the parks a lost wake left behind. Correlation, NOT
+// stability — the ask id IS the identity, stored as the row's `correlation_key`.
 
 import { getAsksQb, getAutomationsQb, getQb } from '../../../../lib/kysely';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
@@ -13,7 +13,7 @@ import type { AskId } from '../../../../generated/kysely/asks/Ask';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
 import { dropAwaitCorrelation, type ResolvableAwait } from '../await_correlation';
 import { ASK_ADAPTER_TYPE } from './type';
-import { cancelAsk } from './store';
+import { askIdSchema, cancelAsk } from './store';
 
 /**
  * Withdraw ask await parks that will NEVER be consumed — a race arm that lost,
@@ -105,28 +105,52 @@ export async function loadResolvableAskAwaits(
     .map((r) => ({ runId: r.run_id, teamId: r.team_id as TeamId, address: r.address }));
 }
 
-/**
- * Every EXPIRED ask that a run is still parked on — what the expiry sweep wakes.
- * The correlation row is the "not yet woken" marker: a resumed await drops it,
- * so an ask drops out of this read once its wake has run, and a sweep that
- * overlaps an earlier one's pending wake finds the same asks and coalesces onto
- * the same rows. No timestamp is kept between sweeps, so a missed sweep loses
- * nothing.
- */
-export async function loadExpiredAskAwaits(): Promise<Array<{ teamId: TeamId; askId: AskId }>> {
-  const rows = await getAutomationsQb(['adapter_await'])
-    .selectFrom('adapter_await')
-    .where('adapter_type', '=', ASK_ADAPTER_TYPE)
-    .select('correlation_key')
-    .distinct()
-    .execute();
-  if (rows.length === 0) return [];
+/** One page of the closed sweep: the wakes it found, and where the next page
+ *  starts (absent on the last page). */
+export interface ClosedAskAwaitPage {
+  wakes: Array<{ teamId: string; askId: AskId }>;
+  next?: string;
+}
 
-  const expired = await getAsksQb(['ask'])
-    .selectFrom('ask')
-    .where('id', 'in', rows.map((r) => r.correlation_key) as AskId[])
-    .where('state', '=', 'expired')
-    .select(['id', 'team_id'])
+/**
+ * One page of CLOSED asks (anything but `open`) that a run is still parked on —
+ * what the closed sweep wakes. Paged over the correlation rows, keyed and
+ * ordered by ask id, so each read is bounded however many runs are parked on
+ * open asks. The team comes from the correlation row: it is the tenant the
+ * park, and so the wake, belongs to.
+ *
+ * The correlation row is the "not yet woken" marker: a resumed await drops it,
+ * so an ask drops out of this read once its wake has run. No timestamp is kept
+ * between sweeps, so a missed sweep loses nothing.
+ */
+export async function loadClosedAskAwaitPage(
+  opts: { after?: string; limit: number },
+): Promise<ClosedAskAwaitPage> {
+  let corr = getAutomationsQb(['adapter_await'])
+    .selectFrom('adapter_await')
+    .where('adapter_type', '=', ASK_ADAPTER_TYPE);
+  if (opts.after !== undefined) corr = corr.where('correlation_key', '>', opts.after);
+  const rows = await corr
+    .select(['team_id', 'correlation_key'])
+    .distinct()
+    .orderBy('correlation_key')
+    .limit(opts.limit)
     .execute();
-  return expired.map((a) => ({ teamId: a.team_id as TeamId, askId: a.id }));
+  const last = rows[rows.length - 1];
+  const next = rows.length === opts.limit && last !== undefined ? { next: last.correlation_key } : {};
+
+  const parked = rows.flatMap((r) => {
+    const askId = askIdSchema.safeParse(r.correlation_key);
+    return askId.success ? [{ teamId: r.team_id, askId: askId.data }] : [];
+  });
+  if (parked.length === 0) return { wakes: [], ...next };
+
+  const closed = await getAsksQb(['ask'])
+    .selectFrom('ask')
+    .where('id', 'in', parked.map((p) => p.askId))
+    .where('state', '!=', 'open')
+    .select('id')
+    .execute();
+  const closedIds = new Set<string>(closed.map((a) => a.id));
+  return { wakes: parked.filter((p) => closedIds.has(p.askId)), ...next };
 }

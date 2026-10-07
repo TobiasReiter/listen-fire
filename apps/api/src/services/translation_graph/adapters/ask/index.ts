@@ -65,7 +65,6 @@ import type {
 import {
   ASK_FAMILIES,
   ASK_ANSWER_TYPES,
-  cancelAsk,
   createAsk,
   getAsk,
   isAskAnswerType,
@@ -75,7 +74,7 @@ import {
   type AskProvenance,
   type AskRowSpec,
 } from './store';
-import { AskResponseRefused, writeAskResponse } from './answer_door';
+import { AskResponseRefused, cancelAskAndWake, writeAskResponse } from './answer_door';
 import { ASK_ADAPTER_TYPE } from './type';
 
 export { ASK_ADAPTER_TYPE } from './type';
@@ -222,8 +221,8 @@ function responseEdge(family: AskFamily): SchemaReferenceDescriptor {
     cardinality: 'one',
     direction: 'outgoing',
     awaitable: true,
-    // Answering an ask queues the wake for the run that raised it (the settle
-    // notifier), and the expiry sweep queues one for a cancelled ask — the
+    // Answering or cancelling an ask queues the wake for the run parked on it
+    // (the answer and cancel doors), with the closed sweep behind both — the
     // wake is delivered, so an await here needs no cadence.
     watchable: true,
     resolvesEmpty: true,
@@ -828,7 +827,7 @@ export class AskAdapter extends BaseAdapter implements Adapter {
       );
     }
 
-    const outcome = await cancelAsk({ id: input.externalId as AskId });
+    const outcome = await cancelAskAndWake({ id: input.externalId as AskId });
     if (!outcome.ok) {
       if (outcome.reason === 'not_found') return UPDATE_NOT_FOUND;
       // Settled — reject observably.

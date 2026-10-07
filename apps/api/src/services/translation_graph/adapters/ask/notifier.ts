@@ -67,9 +67,9 @@ export async function notifyAskSettled(ask: AskRecord): Promise<void> {
         if (!inProcessNotifier) {
           // Standalone deployments set `webhook`. Local with nothing registered
           // is therefore a composed deployment whose root did not wire itself:
-          // nothing wakes a run parked on this ask, so say so loudly.
+          // a run parked on this ask waits for the closed sweep, so say so loudly.
           logger.error(
-            '[asks] an ask settled with no in-process notifier registered, but ASKS_SETTLE_DELIVERY is "local" — a run parked on it will not wake',
+            '[asks] an ask settled with no in-process notifier registered, but ASKS_SETTLE_DELIVERY is "local" — a run parked on it wakes only on the 30 s closed sweep',
             { askId: ask.id },
           );
           return;

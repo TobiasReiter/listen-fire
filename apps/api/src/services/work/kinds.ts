@@ -3,11 +3,11 @@ export const WORK_KINDS = [
   'resume_timer', // payload: { runId: string }
   'fire_cron', // payload: { triggerId: string }
   'poll_source', // payload: { triggerId: string }
-  'wake_await', // payload: { adapterType: string; correlationKey: string }
+  'wake_await', // payload: { adapterType: string; teamId: string; correlationKey: string }
   'linked_object_refresh', // payload: LinkedObjectRefresh (webhook_sync/linked_object_refresh.ts)
   'cron_reconcile', // periodic, payload {}
   'poll_reconcile', // periodic, payload {}
-  'ask_expiry_sweep', // periodic, payload {}
+  'ask_closed_sweep', // periodic, payload {}
   'timer_sweep', // periodic, payload {}
   'exposed_file_sweep', // periodic, payload {}
   'airtable_webhook_refresh', // periodic, payload {}

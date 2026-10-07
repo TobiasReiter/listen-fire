@@ -185,6 +185,13 @@ export async function releaseWork(input: {
     WHERE ${heldBy(input)}`.execute(getAutomationsQb(['work']));
 }
 
+/** Delete every row of kinds this build no longer handles. Takes plain strings:
+ *  a retired kind is by definition not a `WorkKind` any more. */
+export async function removeRetiredWork(kinds: readonly string[]): Promise<void> {
+  if (kinds.length === 0) return;
+  await getAutomationsQb(['work']).deleteFrom('work').where('kind', 'in', [...kinds]).execute();
+}
+
 /** Delete by key (reconcile removes rows for triggers that went away). */
 export async function removeWork(input: { key: string }): Promise<void> {
   await getAutomationsQb(['work']).deleteFrom('work').where('key', '=', input.key).execute();
