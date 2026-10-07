@@ -1820,7 +1820,8 @@ class AttioAPIClient implements AttioConfigurer {
    * automatically (default redirect mode), so the response body carries the
    * raw bytes. We bypass `this.fetch` here because that path expects a JSON
    * body — this one is binary. Auth is the same Bearer token the upload path
-   * uses, so a read-side `retrieve()` mirrors the write-side credential.
+   * uses, so the read side (`AttioAdapter.resolveFileRef`, redeeming a file
+   * descriptor) fetches with the write side's credential.
    *
    * Returns a Web `ReadableStream` of the bytes plus the resolved content type
    * (the signed-URL host sets it). Throws on a non-2xx so a file the author

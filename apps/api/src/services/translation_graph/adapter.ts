@@ -122,8 +122,9 @@ export interface FileRef {
   /** Byte length when known. */
   size?: number;
   /** Where the bytes live. Absent only for a file that has no way back to
-   *  them (a value that arrived with nothing but a display `url`). */
-  source?: FileSource;
+   *  them. A run parked before descriptors named their instance holds the
+   *  earlier spelling. */
+  source?: FileSource | EarlierFileSource;
   /**
    * A short-lived, fetchable Listen-Fire URL for the bytes. Set when a FileRef is
    * written INTO a remote adapter: the `RemoteAdapter` boundary buffers the
@@ -165,6 +166,18 @@ export function ownedFileSource(input: {
     ...(input.constructionArgs !== undefined ? { constructionArgs: input.constructionArgs } : {}),
     handle: input.handle,
   };
+}
+
+/**
+ * How a file's source was spelled before it named its owning instance — the
+ * owner TYPE and its handle, no credential (`'document-store'` for the
+ * document store). Nothing produces it any more; it is read from runs parked
+ * before descriptors changed, which resolve their owner credential-free, as
+ * they did when they parked.
+ */
+export interface EarlierFileSource {
+  ownerAdapterType: string;
+  handle: string;
 }
 
 /** Structural guard for a branded `FileRef`. */

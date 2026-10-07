@@ -9,7 +9,7 @@
 // engine never imports this module; bytes never reach it.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { Adapter, FileRef, FileSource, ResolveFileRefResult } from '../../adapter';
+import type { Adapter, EarlierFileSource, FileRef, FileSource, ResolveFileRefResult } from '../../adapter';
 import { DOCUMENT_STORE_OWNER } from './document_store';
 
 /** How the owning instance is resolved: production's `resolveAdapter` unless a
@@ -71,14 +71,19 @@ export type FileOwner =
 
 /**
  * The owner a descriptor names. A run parked before descriptors carried
- * instance identity holds the earlier spelling, `{ ownerAdapterType, handle }`
- * (the remote wire's), with no credential: it still resolves, to the type's
- * credential-free instance, exactly as it did when it parked.
+ * instance identity holds the earlier spelling (`EarlierFileSource`): it still
+ * resolves, to the type's credential-free instance, exactly as it did when it
+ * parked. Parked data is JSON from storage, so each spelling is checked for
+ * the strings it needs rather than trusted.
  */
-export function fileOwner(source: FileSource | undefined): FileOwner | undefined {
+export function fileOwner(source: FileSource | EarlierFileSource | undefined): FileOwner | undefined {
   if (source === undefined) return undefined;
-  if ('store' in source) return { kind: 'document', objectUri: source.objectUri };
-  if ('ownerAdapterType' in source && typeof source.ownerAdapterType === 'string') {
+  if ('store' in source) {
+    return typeof source.objectUri === 'string' ? { kind: 'document', objectUri: source.objectUri } : undefined;
+  }
+  if (typeof source.handle !== 'string') return undefined;
+  if ('ownerAdapterType' in source) {
+    if (typeof source.ownerAdapterType !== 'string') return undefined;
     return source.ownerAdapterType === DOCUMENT_STORE_OWNER
       ? { kind: 'document', objectUri: source.handle }
       : { kind: 'adapter', adapterType: source.ownerAdapterType, handle: source.handle };

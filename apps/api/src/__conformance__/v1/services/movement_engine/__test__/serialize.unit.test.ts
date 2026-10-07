@@ -145,8 +145,8 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       expect(out.emission.fields).toEqual({ amount: 1000 });
       const kids = out.emission.children.get('company');
       expect(kids?.[0].fields).toEqual({ name: 'Acme' });
-      // The source FILE resource survives — its fileRef is revived to a live
-      // closure through the seam (Bucket 2).
+      // The source FILE resource survives — its fileRef is a descriptor and
+      // comes back as it stands.
       expect(out.emission.resources[0].name).toBe('deck.pdf');
       expect(out.emission.resources[0].fileRef).toEqual({
         __brand: 'FileRef',

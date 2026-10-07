@@ -93,6 +93,7 @@ import {
   ownedFileSource,
   unsupportedAssociation,
   writeParentLinks,
+  type EarlierFileSource,
   type FileSource,
 } from '../../adapter';
 
@@ -280,13 +281,16 @@ export class RemoteAdapter implements Adapter {
    * A FileRef read off the wire names its file by the remote's own handle
    * (`{ ownerAdapterType, handle }`); this side's descriptor names the owning
    * INSTANCE — this remote install, with its credential — so the host can
-   * resolve it again to redeem the handle through `resolveFileRef`. Deep,
-   * because a file can sit anywhere in a list or a record.
+   * resolve it again to redeem the handle through `resolveFileRef`. The wire
+   * makes `source` optional: a file that arrives with only a `url` is named by
+   * that url, and `resolveFileRef` sends it back as before (the reference kit
+   * answers with the ref's url). Deep, because a file can sit anywhere in a
+   * list or a record.
    */
   private filesFromWire(value: unknown): unknown {
     return mapFileRefs(value, (ref) => {
       const { source, ...rest } = ref;
-      const handle = wireHandle(source);
+      const handle = wireHandle(source) ?? (typeof rest.url === 'string' ? rest.url : undefined);
       return handle === undefined
         ? rest
         : {
@@ -522,7 +526,7 @@ export class RemoteAdapter implements Adapter {
 
 /** A descriptor's source as the wire spells it: the owner TYPE and its
  *  handle. The credential stays on this side. */
-function wireSource(source: FileSource): { ownerAdapterType: string; handle: string } | undefined {
+function wireSource(source: FileSource | EarlierFileSource): EarlierFileSource | undefined {
   const owner = fileOwner(source);
   if (owner === undefined) return undefined;
   return owner.kind === 'document'

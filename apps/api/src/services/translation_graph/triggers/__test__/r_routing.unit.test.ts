@@ -157,7 +157,7 @@ describe('R — trigger-first dispatch wiring', () => {
     it('capture scopes triggers by the subscription provider key', () => {
       const fnRange = extractFunction(src, 'captureProviderTriggerEvents');
       expect(fnRange).toMatch(/findTriggersByKind\(\{/);
-      expect(fnRange).toMatch(/kinds:\s*\[subscription\.provider\]/);
+      expect(fnRange).toMatch(/kinds:\s*\[\.\.\.new Set\(\[subscription\.provider, adapterType\]\)\]/);
     });
 
     it('capture honours credentials_id scope when set on the trigger', () => {
