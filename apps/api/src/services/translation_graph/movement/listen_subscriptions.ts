@@ -69,6 +69,9 @@ interface SubscriptionRow {
   externalWebhookId: string | null;
   events: string[];
   scope: Record<string, string>;
+  /** 'active' once registered; 'pending' while it still needs registering
+   *  (just minted, or its last registration was refused). */
+  status: string;
 }
 
 /** Same (key → value) scope. `{}` vs `{}` is the unscoped match. */
@@ -227,7 +230,7 @@ async function provisionedRows(teamId: TeamId): Promise<SubscriptionRow[]> {
     .where('team_id', '=', teamId)
     .where('provisioned_by', '=', MOVEMENT_LISTEN_PROVISIONER)
     .where('deleted_at', 'is', null)
-    .select(['id', 'provider', 'credentials_id', 'external_webhook_id', 'subscriptions', 'scope'])
+    .select(['id', 'provider', 'credentials_id', 'external_webhook_id', 'subscriptions', 'scope', 'status'])
     .execute();
   return rows.map((r) => ({
     id: r.id as unknown as string,
@@ -236,23 +239,27 @@ async function provisionedRows(teamId: TeamId): Promise<SubscriptionRow[]> {
     externalWebhookId: r.external_webhook_id,
     events: eventsOfSubscriptionsJson(r.subscriptions),
     scope: scopeOfJson(r.scope),
+    status: r.status,
   }));
 }
+
+const NO_SECRET_REFUSAL = 'remote adapter returned no secret; deliveries cannot be verified';
 
 /**
  * A remote's deliveries are verified only by the secret its registration
  * returns (webhook_sync/remote_inbound.ts), so a registration without one is
  * refused — and withdrawn, so no unverifiable subscription is left on the
  * remote. Built-ins are not held to this: some legitimately issue no secret.
+ * True when the registration was refused.
  */
-async function requireRemoteSecret(input: {
+async function withdrawIfSecretless(input: {
   adapter: Adapter;
   registration: EventSubscriptionRegistration | undefined;
   callbackUrl: string;
   scope: Record<string, string>;
-}): Promise<void> {
+}): Promise<boolean> {
   const { adapter, registration } = input;
-  if (registration?.secret !== undefined && registration.secret.length > 0) return;
+  if (registration?.secret !== undefined && registration.secret.length > 0) return false;
   try {
     await adapter.removeEventSubscription?.({
       callbackUrl: input.callbackUrl,
@@ -265,7 +272,7 @@ async function requireRemoteSecret(input: {
       error: err instanceof Error ? err.message : String(err),
     });
   }
-  throw new Error('remote adapter returned no secret; deliveries cannot be verified');
+  return true;
 }
 
 /**
@@ -296,7 +303,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
   // ── Ensure each desired channel's registration ──
   for (const channel of desired) {
     const row = rowFor(channel);
-    if (row && sameEventSet(row.events, channel.events)) continue;
+    if (row && row.status === 'active' && sameEventSet(row.events, channel.events)) continue;
     try {
       const adapter = await resolveAdapter({
         adapterType: channel.slug,
@@ -320,13 +327,30 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           },
           ...(Object.keys(channel.scope).length > 0 ? { scope: channel.scope } : {}),
         });
-        if (remoteSlugs.has(channel.slug)) {
-          await requireRemoteSecret({
+        const refused =
+          remoteSlugs.has(channel.slug) &&
+          (await withdrawIfSecretless({
             adapter,
             registration,
             callbackUrl: buildWebhookTargetUrl(channel.providerKey, row.id),
             scope: channel.scope,
-          });
+          }));
+        if (refused) {
+          // The row stays (its id is the stable URL) but is no longer live: back
+          // to 'pending' with no secret anything can verify against, so
+          // deliveries are refused and the next sync registers it again.
+          await getAutomationsQb(['webhook_subscription'])
+            .updateTable('webhook_subscription')
+            .set({
+              status: 'pending',
+              webhook_secret: UNREGISTERED_SECRET,
+              external_webhook_id: null,
+              updated_at: new Date(),
+            })
+            .where('id', '=', row.id as WebhookSubscriptionId)
+            .execute();
+          notes.push(`${channel.slug}: event-subscription provisioning failed (${NO_SECRET_REFUSAL})`);
+          continue;
         }
         await getAutomationsQb(['webhook_subscription'])
           .updateTable('webhook_subscription')
@@ -372,13 +396,16 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           callbackUrl: buildWebhookTargetUrl(channel.providerKey, subscriptionId),
           ...(Object.keys(channel.scope).length > 0 ? { scope: channel.scope } : {}),
         });
-        if (remoteSlugs.has(channel.slug)) {
-          await requireRemoteSecret({
+        if (
+          remoteSlugs.has(channel.slug) &&
+          (await withdrawIfSecretless({
             adapter,
             registration,
             callbackUrl: buildWebhookTargetUrl(channel.providerKey, subscriptionId),
             scope: channel.scope,
-          });
+          }))
+        ) {
+          throw new Error(NO_SECRET_REFUSAL);
         }
         await getAutomationsQb(['webhook_subscription'])
           .updateTable('webhook_subscription')

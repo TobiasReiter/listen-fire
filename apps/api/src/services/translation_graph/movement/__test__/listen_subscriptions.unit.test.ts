@@ -450,18 +450,42 @@ describe('syncListenSubscriptions — a remote install subscribes over the wire'
     expect(removeCalls[0].callbackUrl).toBe(ensureCalls[0].callbackUrl);
   });
 
-  it('an updated remote channel whose registration returns no secret keeps its old secret and is withdrawn', async () => {
+  it('an updated remote channel answered without a secret goes back to needing registration, and the next sync restores it', async () => {
     await liveRemoteChannel();
     kyselyMock.__tables.trigger[0].config = { events: ['company.created', 'company.deleted'] };
     secretlessRemote();
 
-    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+    const refused = await syncListenSubscriptions({ teamId: TEAM });
 
-    expect(notes).toEqual([
+    expect(refused.notes).toEqual([
       'acme_crm: event-subscription provisioning failed (remote adapter returned no secret; deliveries cannot be verified)',
     ]);
     expect(removeCalls).toHaveLength(1);
     const [sub] = kyselyMock.__tables.webhook_subscription;
-    expect(sub.webhook_secret).toBe('secret-1');
+    expect(sub).toMatchObject({ status: 'pending', webhook_secret: 'pending', external_webhook_id: null });
+    expect(sub.deleted_at ?? null).toBeNull();
+
+    // The remote answers with a secret again: the same row is registered and live.
+    const restored = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(restored.notes).toEqual([]);
+    expect(kyselyMock.__tables.webhook_subscription).toHaveLength(1);
+    expect(kyselyMock.__tables.webhook_subscription[0]).toMatchObject({
+      id: sub.id,
+      status: 'active',
+      webhook_secret: `secret-${ensureCalls.length}`,
+    });
+    expect(ensureCalls.at(-1)?.events).toEqual(['company.created', 'company.deleted']);
+  });
+
+  it('a row left needing registration is registered again even when its events have not changed', async () => {
+    await liveRemoteChannel();
+    kyselyMock.__tables.webhook_subscription[0].status = 'pending';
+    const before = ensureCalls.length;
+
+    await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(ensureCalls).toHaveLength(before + 1);
+    expect(kyselyMock.__tables.webhook_subscription[0].status).toBe('active');
   });
 });
