@@ -9,7 +9,7 @@ import { testWorkContext } from '../../../../test/harness/work';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../../generated/kysely/automations/TriggerEvent';
-import { runOrphanSweepHandler } from '../trigger_run';
+import { noteFirstFiringLeaseLost, runOrphanSweepHandler } from '../trigger_run';
 
 const MINUTE = 60_000;
 
@@ -112,6 +112,18 @@ describe('run_orphan_sweep (real DB)', () => {
     });
     expect((await runState(live)).status).toBe('running');
     expect((await runState(parked)).status).toBe('parked');
+  });
+
+  it('settles a first firing that stopped for a lost lease with that reason, not a dead process', async () => {
+    const id = await seedRun({ teamId, status: 'running', lastHeartbeatAt: new Date(Date.now() - 2 * MINUTE) });
+    await noteFirstFiringLeaseLost(id);
+
+    await runOrphanSweepHandler.run({}, testWorkContext(new Date()));
+
+    expect(await runState(id)).toEqual({
+      status: 'failed',
+      failure_reason: 'segment did not complete: its run lease was lost to another instance',
+    });
   });
 
   it('judges a run that never beat by its start', async () => {

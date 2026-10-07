@@ -86,7 +86,9 @@ export const resumeTimerHandler: WorkHandler = {
         await settleCancelledRun(runId);
         return;
       }
-      await resumeTimerParkedRun({ runId, teamId }, ctx.now, lease);
+      // A lost lease leaves every row as it is, the timer row included: the
+      // run is the new holder's to re-arm.
+      if ((await resumeTimerParkedRun({ runId, teamId }, ctx.now, lease)) === 'lease_lost') return;
       await rearmForNextLeaf({ runId, teamId, now: ctx.now });
     });
     // Another process is stepping the run (its first firing, a wake): look
@@ -261,7 +263,7 @@ export async function resumeTimerParkedRun(
   now: Date,
   /** The run lease the caller holds: each resumed segment watches it. */
   lease?: HeldRunLease,
-): Promise<void> {
+): Promise<'done' | 'lease_lost'> {
   const { runId, teamId } = run;
   const triggerRun = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
@@ -270,7 +272,7 @@ export async function resumeTimerParkedRun(
     .executeTakeFirst();
   if (!triggerRun || !triggerRun.trigger_payload) {
     logger.error('[TimerResume] trigger_run missing or has no payload', { runId });
-    return;
+    return 'done';
   }
 
   const trigger = await loadTriggerById(triggerRun.trigger_id);
@@ -279,7 +281,7 @@ export async function resumeTimerParkedRun(
       runId,
       triggerId: triggerRun.trigger_id,
     });
-    return;
+    return 'done';
   }
 
   const pinned = triggerRun.movement_version_id
@@ -290,7 +292,7 @@ export async function resumeTimerParkedRun(
       runId,
       movementVersionId: triggerRun.movement_version_id,
     });
-    return;
+    return 'done';
   }
 
   const event = triggerEventSchema.parse(triggerRun.trigger_payload) as TriggerEvent;
@@ -347,14 +349,14 @@ export async function resumeTimerParkedRun(
 
     // The lease was lost mid-step: the run may be another instance's now, so
     // this one leaves every row as it is.
-    if (outcome.leaseLost) return;
+    if (outcome.leaseLost) return 'lease_lost';
     if (outcome.error) {
       // An engine ERROR in any branch fails the whole run (P14): drop the timer
       // rows + pending joins; prior writes (incl. this branch's, before the
       // error) stay committed. No ask requests to cancel (timer parks never
       // created any).
       await settleFailure(runId);
-      return;
+      return 'done';
     }
 
 
@@ -395,6 +397,7 @@ export async function resumeTimerParkedRun(
       await clearJoins(runId);
     }
   }
+  return 'done';
 }
 
 /**

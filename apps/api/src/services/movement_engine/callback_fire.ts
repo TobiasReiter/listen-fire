@@ -37,7 +37,8 @@ import {
   claimCallbackFire,
   coerceCallbackValues,
   getCallback,
-  markCallbackBodyRan,
+  callbackRefusal,
+  markCallbackBodyStarted,
   type CallbackRecord,
 } from './callback_store';
 import type { CallbackParamSpec } from './callback_types';
@@ -142,14 +143,15 @@ async function queueCallbackFire(input: { callback: CallbackRecord; callIndex: n
   notifyWork();
 }
 
-/** Why a queued body must not run now, or null when it may. The door's own
- *  rule, applied when the body finally gets the run: a callback stops
- *  answering when its run ends (it is revoked with it), so a body whose run
- *  has ended or whose callback was revoked meanwhile does not run either; and
- *  a body the ledger says already ran never runs again. */
+/** Why a queued body must not run now, or null when it may: the door's own
+ *  rule (`callbackRefusal`, for a call already recorded), applied when the
+ *  body finally gets the run; a body the ledger says already started never
+ *  runs again; and, in case revocation has not caught up with the run's end,
+ *  a run that is gone or over runs no more of its bodies. */
 async function queuedBodyRefusal(callback: CallbackRecord, callIndex: number): Promise<string | null> {
-  if (callback.status === 'revoked') return 'its callback was revoked';
-  if (callback.calls[callIndex]?.bodyRanAt !== undefined) return 'its body already ran';
+  const refused = callbackRefusal(callback, { for: 'a recorded call', now: new Date() });
+  if (refused !== null) return `its callback is ${refused}`;
+  if (callback.calls[callIndex]?.bodyStartedAt !== undefined) return 'its body already started';
   const run = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('id', '=', callback.runId)
@@ -320,6 +322,9 @@ async function executeFire(callback: CallbackRecord, callIndex: number, lease: H
         runId: callback.runId,
       });
     } else {
+      // Marked before the body starts: at most once after start, a crash
+      // included (the ledger's own comment says what that trades away).
+      await markCallbackBodyStarted({ id: callback.id, callIndex });
       const outcome = await fireCallbackFiring({
         teamId: callback.teamId,
         triggerId: context.triggerId,
@@ -339,9 +344,6 @@ async function executeFire(callback: CallbackRecord, callIndex: number, lease: H
         callIndex,
         lease,
       });
-      // The body ran (to its end, to a failure, or to a lost lease part way):
-      // the ledger says so, and no queued retry of this call runs it again.
-      await markCallbackBodyRan({ id: callback.id, callIndex });
       if (outcome.leaseLost) return;
     }
   } catch (err) {

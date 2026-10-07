@@ -23,7 +23,9 @@ const markParked = jest.fn(async () => undefined);
 const beginLiveTrace = jest.fn();
 const endLiveTrace = jest.fn();
 
+const noteFirstFiringLeaseLost = jest.fn(async () => undefined);
 jest.mock('../../runs/trigger_run', () => ({
+  noteFirstFiringLeaseLost: (...args: unknown[]) => noteFirstFiringLeaseLost(...(args as [])),
   TriggerRunRecorder: jest.fn(() => ({
     recordStep,
     recordMovementStep,
@@ -292,6 +294,8 @@ describe('runMovementFiring', () => {
     });
     expect(recordStepFailure).not.toHaveBeenCalled();
     expect(finish).not.toHaveBeenCalled();
+    // The row says why, for the orphan sweep that settles it.
+    expect(noteFirstFiringLeaseLost).toHaveBeenCalledWith('run-1');
   });
 
   it('contains a thrown engine error: failed step recorded, error returned as a value', async () => {

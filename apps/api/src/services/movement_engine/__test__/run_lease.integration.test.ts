@@ -106,6 +106,15 @@ describe('the run lease', () => {
     expect(await renewRunLease(runId, randomUUID(), 60_000)).toBe(false);
   });
 
+  it('a lapsed lease cannot be revived by its own token', async () => {
+    const runId = await seedRun();
+    const lapsed = await claimRunLease(runId, { owner: 'stalled', ttlMs: 1 });
+    await wait(20);
+    expect(await renewRunLease(runId, lapsed!.token, 60_000)).toBe(false);
+    // Still free for anyone to claim.
+    expect(await claimRunLease(runId, { owner: 'next', ttlMs: 60_000 })).not.toBeNull();
+  });
+
   it('lapses by expiry: another holder claims it, and the old token can neither renew nor release it', async () => {
     const runId = await seedRun();
     const stale = await claimRunLease(runId, { owner: 'crashed', ttlMs: 1 });

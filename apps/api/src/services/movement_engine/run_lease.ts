@@ -69,13 +69,15 @@ export async function claimRunLease(
 
 /** Extend a held lease, and stamp the run's heartbeat in the same statement:
  *  a holder renewing is a segment alive. False once the lease is no longer
- *  this token's (it lapsed and someone else claimed it). */
+ *  this token's, or has already lapsed: a lapsed lease is free for anyone to
+ *  claim, and renewing it would revive it under a holder that lost it. */
 export async function renewRunLease(runId: TriggerRunId, token: string, ttlMs: number): Promise<boolean> {
   const row = await getAutomationsQb(['trigger_run'])
     .updateTable('trigger_run')
     .set({ lease_until: leaseFromNow(ttlMs), last_heartbeat_at: sql<Date>`now()` })
     .where('id', '=', runId)
     .where('lease_token', '=', token)
+    .where('lease_until', '>', sql<Date>`now()`)
     .returning('id')
     .executeTakeFirst();
   return row !== undefined;
@@ -96,8 +98,8 @@ export interface HeldRunLease {
   readonly runId: TriggerRunId;
   readonly token: string;
   /** True once this holder can no longer be sure the run is still its own: a
-   *  renewal found the lease taken, a renewal failed, or the lease outlived its
-   *  last successful renewal. A segment checks it at every statement boundary
+   *  renewal found the lease taken or lapsed, or the lease outlived its last
+   *  successful renewal. A segment checks it at every statement boundary
    *  and stops (`RunLeaseLost`); it never comes back. */
   isLost(): boolean;
   release(): Promise<void>;
@@ -105,7 +107,8 @@ export interface HeldRunLease {
 
 /** A segment whose run lease was lost stops at its next statement: another
  *  instance may be stepping the run, so it settles nothing and touches no
- *  parked row. */
+ *  parked row. The statement in flight when the lease lapsed has already run,
+ *  and the new holder may run it again: its effects can land twice. */
 export class RunLeaseLost extends Error {
   constructor(readonly runId: TriggerRunId) {
     super('run lease lost; another instance may hold the run');
@@ -125,12 +128,13 @@ export async function takeRunLease(
   opts: { ttlMs?: number } = {},
 ): Promise<HeldRunLease | null> {
   const ttlMs = opts.ttlMs ?? RUN_LEASE_TTL_MS;
+  // The local deadline: the lease is ours for one life past the moment we
+  // asked for it (or last renewed it), and not a moment longer. Taken before
+  // the round trip, so the database's own expiry is never earlier than ours.
+  let deadline = Date.now() + ttlMs;
   const claimed = await claimRunLease(runId, { owner: LEASE_OWNER, ttlMs });
   if (claimed === null) return null;
   const { token } = claimed;
-  // The local deadline: the lease is ours for one life past the last renewal
-  // the database confirmed, and not a moment longer.
-  let deadline = Date.now() + ttlMs;
   let lost = false;
   let released = false;
   const markLost = (reason: string, error?: unknown): void => {
@@ -140,15 +144,23 @@ export async function takeRunLease(
     logger.warn('[RunLease] lease lost while held', { runId, reason, ...(error !== undefined ? { error } : {}) });
   };
   const renew = async (): Promise<void> => {
+    // Past the deadline the lease may already be someone else's: never renew
+    // it, and touch nothing.
     const attemptedAt = Date.now();
+    if (attemptedAt > deadline) {
+      markLost('expired');
+      return;
+    }
     try {
       if (await renewRunLease(runId, token, ttlMs)) {
         if (!lost) deadline = attemptedAt + ttlMs;
       } else {
-        markLost('taken');
+        markLost('taken or lapsed');
       }
     } catch (error) {
-      markLost('renewal failed', error);
+      // One failed renewal is not a lost lease: the next tick tries again,
+      // and the deadline is what marks a lease that truly lapsed.
+      logger.warn('[RunLease] renewal failed; retrying at the next tick', { runId, error });
     }
   };
   const timer = setInterval(() => {

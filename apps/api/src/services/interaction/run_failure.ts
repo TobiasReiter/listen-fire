@@ -77,9 +77,12 @@ export async function settleRunsParkedOnTriggers(input: {
   // `parked_run` holds only LIVE leaves (a settled one is deleted), so this is
   // bounded live state rather than run history — cheap to read whole, and this
   // runs only when a listener is actually being retired.
+  // A leaf another instance is resuming right now (`resuming`) counts too:
+  // missed, its run would be stranded on a retired trigger the moment that
+  // resume parks again. Such a run is busy below, and is stamped.
   const parked = await getAutomationsQb(['parked_run'])
     .selectFrom('parked_run')
-    .where('status', '=', 'parked')
+    .where('status', 'in', ['parked', 'resuming'])
     .select('run_id')
     .execute();
   const parkedRunIds = [...new Set(parked.map((p) => p.run_id))];

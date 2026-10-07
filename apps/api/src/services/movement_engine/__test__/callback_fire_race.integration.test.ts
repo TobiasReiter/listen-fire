@@ -351,14 +351,20 @@ describe('two processes fire one run at once', () => {
     expect(fireCallbackFiringMock).not.toHaveBeenCalled();
   });
 
-  it('a queued body the ledger says already ran never runs again (its row outlived the body)', async () => {
+  it('a queued body the ledger says already started never runs again (its row outlived the body)', async () => {
     const { callbackId } = await seedFiredRun({ singleUse: false });
-    fireCallbackFiringMock.mockResolvedValue({ result: { movementName: 'book_it' } });
+    // The mark is on the ledger before the body begins.
+    let markedBeforeBody: string | undefined;
+    fireCallbackFiringMock.mockImplementation(async () => {
+      markedBeforeBody = (await getCallback(callbackId))?.calls[0]?.bodyStartedAt;
+      return { result: { movementName: 'book_it' } };
+    });
     await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20', awaitExecution: true });
     expect(fireCallbackFiringMock).toHaveBeenCalledTimes(1);
-    expect((await getCallback(callbackId))?.calls[0]?.bodyRanAt).toEqual(expect.any(String));
+    expect(markedBeforeBody).toEqual(expect.any(String));
+    expect((await getCallback(callbackId))?.calls[0]?.bodyStartedAt).toEqual(expect.any(String));
 
-    // The crash window: the body committed, the row did not complete.
+    // The crash window: the body started (and maybe committed), the row did not complete.
     await enqueueWork({
       kind: 'fire_callback',
       key: `fire_callback:${callbackId}:0`,

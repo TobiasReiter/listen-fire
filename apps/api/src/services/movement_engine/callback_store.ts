@@ -66,12 +66,15 @@ export {
   type CallbackParamType,
 } from './callback_types';
 
-/** A call as the ledger keeps it: the call itself, and when its body ran —
- *  so a queued body that already ran (its row lost after the body committed)
- *  is never run twice. `bodyRanAt` is the host's bookkeeping; the engine's
- *  `Called` landing never sees it. */
+/** A call as the ledger keeps it: the call itself, and when its body started.
+ *  The mark is written BEFORE the body runs, so a body runs at most once
+ *  after it starts, across a crash too: a queued retry of a call whose body
+ *  started never runs it again. The trade-off is deliberate — a crash mid-body
+ *  leaves a callback whose body never completes rather than one whose writes
+ *  land twice. `bodyStartedAt` is the host's bookkeeping; the engine's `Called`
+ *  landing never sees it. */
 export interface LedgerCall extends CallbackCall {
-  bodyRanAt?: string;
+  bodyStartedAt?: string;
 }
 
 /** `live` is the only non-terminal state. `fired` is a single-use claim; a
@@ -198,12 +201,12 @@ export async function readCallbackCalls(id: string): Promise<CallbackCall[]> {
   return (record?.calls ?? []).map(({ at, values }) => ({ at, values }));
 }
 
-/** Record on the ledger that call `callIndex`'s body has run. */
-export async function markCallbackBodyRan(input: { id: string; callIndex: number }): Promise<void> {
+/** Record on the ledger that call `callIndex`'s body is starting. */
+export async function markCallbackBodyStarted(input: { id: string; callIndex: number }): Promise<void> {
   await getAutomationsQb(['callback'])
     .updateTable('callback')
     .set({
-      calls: sql`jsonb_set(calls, ${`{${input.callIndex}}`}::text[], (calls -> ${input.callIndex}::int) || jsonb_build_object('bodyRanAt', to_jsonb(now())))` as never,
+      calls: sql`jsonb_set(calls, ${`{${input.callIndex}}`}::text[], (calls -> ${input.callIndex}::int) || jsonb_build_object('bodyStartedAt', to_jsonb(now())))` as never,
       updated_at: new Date(),
     })
     .where('id', '=', input.id as CallbackId)
@@ -284,8 +287,26 @@ export async function claimCallbackFire(input: {
 
   const existing = await getCallback(input.id);
   if (existing === null) return { kind: 'not_found' };
-  if (existing.status === 'live') return { kind: 'expired', callback: existing };
-  return { kind: 'closed', callback: existing };
+  return { kind: callbackRefusal(existing, { for: 'a new call', now: at }) ?? 'closed', callback: existing };
+}
+
+/**
+ * Why a callback refuses, or null when it accepts — the ONE rule, shared by
+ * the door that records a new call and the queued body of a call already
+ * recorded. Revoked (its run ended, was cancelled, its movement deleted)
+ * refuses both. A new call is refused by a single-use callback that already
+ * fired, and by expiry; a recorded call is not: firing it is what made the
+ * callback `fired`, and it was recorded inside its window.
+ */
+export function callbackRefusal(
+  callback: CallbackRecord,
+  opts: { for: 'a new call' | 'a recorded call'; now: Date },
+): 'closed' | 'expired' | null {
+  if (callback.status === 'revoked') return 'closed';
+  if (opts.for === 'a recorded call') return null;
+  if (callback.status === 'fired') return 'closed';
+  if (callback.expiresAt !== null && callback.expiresAt <= opts.now) return 'expired';
+  return null;
 }
 
 // ── Revocation (the run's lifecycle drives it; there is no sweeper) ────────

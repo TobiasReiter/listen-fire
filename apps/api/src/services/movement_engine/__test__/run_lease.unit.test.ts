@@ -71,12 +71,35 @@ describe('a held run lease', () => {
     expect(lease?.isLost()).toBe(true);
   });
 
-  it('is lost once a renewal fails, even with life left', async () => {
-    answers.push(claimed, () => Promise.reject(new Error('connection reset')));
+  it('is not lost to one failed renewal: the next renewal that lands keeps it', async () => {
+    answers.push(claimed, () => Promise.reject(new Error('connection reset')), renewed);
     const lease = await takeRunLease(RUN, { ttlMs: TTL });
     jest.advanceTimersByTime(TTL / 3);
     await settle();
+    expect(lease?.isLost()).toBe(false);
+    jest.advanceTimersByTime(TTL / 3);
+    await settle();
+    jest.advanceTimersByTime(TTL / 2);
+    expect(lease?.isLost()).toBe(false);
+    await lease?.release();
+  });
+
+  it('past its deadline, a renewal tick marks it lost without touching the row', async () => {
+    const failing = () => Promise.reject(new Error('connection reset'));
+    const untouched = jest.fn(renewed);
+    answers.push(claimed, failing, failing, failing, untouched);
+    const lease = await takeRunLease(RUN, { ttlMs: TTL });
+    for (let tick = 0; tick < 3; tick++) {
+      jest.advanceTimersByTime(TTL / 3);
+      await settle();
+    }
+    // Three failed renewals, the third at the deadline itself: still held.
+    expect(lease?.isLost()).toBe(false);
+    jest.advanceTimersByTime(TTL / 3);
+    await settle();
     expect(lease?.isLost()).toBe(true);
+    expect(untouched).not.toHaveBeenCalled();
+    expect(answers).toHaveLength(1);
   });
 
   it('is lost once its last confirmed renewal is a whole life ago, though no renewal has answered', async () => {

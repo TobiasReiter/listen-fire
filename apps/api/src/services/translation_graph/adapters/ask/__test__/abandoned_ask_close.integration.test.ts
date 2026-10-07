@@ -259,6 +259,23 @@ describe('retiring a listener closes the asks its stranded runs were awaiting', 
     await releaseRunLease(runId, elsewhere!.token);
   });
 
+  it('a run whose leaf another instance is resuming is stamped, not missed', async () => {
+    await askParkedAt('s2');
+    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    await getAutomationsQb(['parked_run']).updateTable('parked_run').set({ status: 'resuming' }).where('run_id', '=', runId).execute();
+    const reason = 'The listener that started this run was removed';
+
+    await settleRunsParkedOnTriggers({ triggerIds: [triggerId], reason });
+
+    const run = await getAutomationsQb(['trigger_run'])
+      .selectFrom('trigger_run')
+      .where('id', '=', runId)
+      .select(['status', 'cancel_reason'])
+      .executeTakeFirstOrThrow();
+    expect(run).toEqual({ status: 'parked', cancel_reason: reason });
+    await releaseRunLease(runId, elsewhere!.token);
+  });
+
   it('leaves an ask answered BEFORE the settle exactly as it was', async () => {
     const ask = await askParkedAt('s2');
     const answered = await answerAskByToken(ask.token, 'Vireo Robotics');

@@ -974,6 +974,20 @@ export async function runningSegment(
 }
 
 const ORPHANED_SEGMENT = 'segment did not complete: process died or stalled';
+const LEASE_LOST_SEGMENT = 'segment did not complete: its run lease was lost to another instance';
+
+/** A first firing that lost its run lease stopped without settling its run,
+ *  which stays `running` for the orphan sweep: say why on the row, so the
+ *  sweep's settle does not claim the process died. */
+export async function noteFirstFiringLeaseLost(runId: TriggerRunId): Promise<void> {
+  await getAutomationsQb(['trigger_run'])
+    .updateTable('trigger_run')
+    .set({ failure_reason: LEASE_LOST_SEGMENT })
+    .where('id', '=', runId)
+    .where('status', '=', 'running')
+    .where('failure_reason', 'is', null)
+    .execute();
+}
 
 /**
  * Fail every `running` run whose segment has gone silent for ORPHAN_AFTER,
@@ -988,16 +1002,16 @@ export async function settleOrphanedRunningRuns(): Promise<void> {
     .selectFrom('trigger_run')
     .where('status', '=', 'running')
     .where((eb) => eb(eb.fn.coalesce('last_heartbeat_at', 'started_at'), '<', cutoff))
-    .select(['id', 'trigger_event_id'])
+    .select(['id', 'trigger_event_id', 'failure_reason'])
     .execute();
   for (const orphan of orphans) {
+    // A segment that stopped for a lost lease said so on the row.
+    const reason = orphan.failure_reason ?? ORPHANED_SEGMENT;
     // Under the run's lease, which a dead segment's has lapsed by now (the
     // same silence). Held, the run is not orphaned after all: leave it.
-    const settled = await withRunLease(orphan.id, () =>
-      settleUnresumableRun({ runId: orphan.id, reason: ORPHANED_SEGMENT }),
-    );
+    const settled = await withRunLease(orphan.id, () => settleUnresumableRun({ runId: orphan.id, reason }));
     if (settled.kind === 'held' && orphan.trigger_event_id !== null) {
-      await markTriggerEventFailed(orphan.trigger_event_id, ORPHANED_SEGMENT);
+      await markTriggerEventFailed(orphan.trigger_event_id, reason);
     }
   }
 }

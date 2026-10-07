@@ -36,7 +36,7 @@ import { runCostCapFromEnv } from '../../../lib/run_spend';
 import type { ParkedScopeState } from '../../movement_engine/serialize';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
-import { TriggerRunRecorder, type TriggerRunTriggerType } from '../runs/trigger_run';
+import { noteFirstFiringLeaseLost, TriggerRunRecorder, type TriggerRunTriggerType } from '../runs/trigger_run';
 import type { TriggerEvent } from '../triggers/types';
 import { runCatalogSnapshotForTeam } from './catalog';
 import { getMovementRow, recordValidityOutcome, type MovementRow } from './store';
@@ -380,7 +380,15 @@ async function runMovementFiringInContext(
     return { result };
   } catch (err) {
     const lost = leaseLostOutcome(err, { runId: recorder.triggerRunId, movementId: input.movementRow.id });
-    if (lost !== null) return lost;
+    if (lost !== null) {
+      await noteFirstFiringLeaseLost(recorder.triggerRunId).catch((noteErr) =>
+        logger.warn('[MovementEngine] could not note the lost lease on the run', {
+          runId: recorder.triggerRunId,
+          error: noteErr instanceof Error ? noteErr.message : String(noteErr),
+        }),
+      );
+      return lost;
+    }
     const { error, partial } = unwrapRunFailure(err);
     const message = describeError(error);
     logger.error('[MovementEngine] movement firing failed', {
