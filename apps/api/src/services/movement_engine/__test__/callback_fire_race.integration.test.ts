@@ -39,6 +39,7 @@ import { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { cleanupTeam } from '../../../test/harness/cleanup';
 import { fireCallback } from '../callback_fire';
 import { runResumeSlot } from '../await_resume';
+import * as callbackStore from '../callback_store';
 import { getCallback, mintCallback, revokeRunCallbacks } from '../callback_store';
 import { claimRunLease, releaseRunLease } from '../run_lease';
 import { registerCallbackFireWork } from '../callback_fire';
@@ -401,6 +402,57 @@ describe('two processes fire one run at once', () => {
     expect(result).toMatchObject({ claimed: 1, ran: 1 });
     expect(fireCallbackFiringMock).toHaveBeenCalledTimes(1);
     expect((await getCallback(callbackId))?.status).toBe('live');
+  });
+
+  it('a queued body whose lease is lost before it starts re-queues, unmarked, and the next holder runs it once', async () => {
+    const { runId, callbackId } = await seedFiredRun({ singleUse: false });
+    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    expect(await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20' })).toMatchObject({
+      queued: true,
+    });
+    await releaseRunLease(runId, elsewhere!.token);
+    fireCallbackFiringMock.mockResolvedValue({ result: { movementName: 'book_it' } });
+
+    // Between the row taking the lease and the body starting, another
+    // instance takes the run over.
+    const realMark = callbackStore.markCallbackBodyStarted;
+    const mark = jest.spyOn(callbackStore, 'markCallbackBodyStarted').mockImplementationOnce(async (input) => {
+      await getAutomationsQb(['trigger_run'])
+        .updateTable('trigger_run')
+        .set({ lease_token: randomUUID(), lease_owner: 'the-new-holder' })
+        .where('id', '=', runId)
+        .execute();
+      return realMark(input);
+    });
+    const lost = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    mark.mockRestore();
+
+    expect(lost).toMatchObject({ claimed: 1, deferred: 1 });
+    expect(fireCallbackFiringMock).not.toHaveBeenCalled();
+    expect((await getCallback(callbackId))?.calls[0]?.bodyStartedAt).toBeUndefined();
+    const rows = await getAutomationsQb(['work'])
+      .selectFrom('work')
+      .where('key', '=', `fire_callback:${callbackId}:0`)
+      .select('lease_until')
+      .execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.lease_until).toBeNull();
+
+    // The new holder lets go; the row, due again, runs the body once.
+    await getAutomationsQb(['trigger_run'])
+      .updateTable('trigger_run')
+      .set({ lease_token: null, lease_owner: null, lease_until: null })
+      .where('id', '=', runId)
+      .execute();
+    await getAutomationsQb(['work'])
+      .updateTable('work')
+      .set({ due_at: new Date(Date.now() - 1_000) })
+      .where('key', '=', `fire_callback:${callbackId}:0`)
+      .execute();
+    const ran = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(ran).toMatchObject({ claimed: 1, deferred: 0, failed: 0 });
+    expect(fireCallbackFiringMock).toHaveBeenCalledTimes(1);
+    expect((await getCallback(callbackId))?.calls[0]?.bodyStartedAt).toEqual(expect.any(String));
   });
 
   it('a queued body whose callback is gone finds nothing to do', async () => {
