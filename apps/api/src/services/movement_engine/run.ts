@@ -347,7 +347,7 @@ import {
   type CallbackParamSpec,
 } from './callback_types';
 import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
-import { engineChoice, runSegmentInRust, rustCanRun } from './rust_engine';
+import { engineChoice, resumeSegmentInRust, runSegmentInRust, rustCanResume, rustCanRun } from './rust_engine';
 import type { WriteLocks } from '../write_locks/write_locks';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';
 import {
@@ -788,7 +788,15 @@ export interface ResumeMovementInput extends RunMovementInput {
  * is byte-identical. Single-ask linear body only (chunk 5).
  */
 export async function resumeMovement(input: ResumeMovementInput): Promise<MovementRunResult> {
-  const { program, prepared } = parseAndCheck(input);
+  // A parked state the Rust engine resumes (its own or the TypeScript
+  // engine's: the state is one shape) is only parsed here, as `runMovement`
+  // parses a run it routes.
+  const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
+  if (parsed !== undefined && rustCanResume(parsed, input)) {
+    const outcome = await withRunCallLedger(() => resumeSegmentInRust(input), runScopeOf(input));
+    if ('ran' in outcome) return outcome.ran;
+  }
+  const { program, prepared } = parseAndCheck(input, parsed);
   // The answer graph `r` (§4.4): for the single-ask scalar case it's a value
   // binding (the validated answer); the post-ask body reads it as a value. A
   // `Correct` answer is a curated position-SET (the edited + surviving rows) —

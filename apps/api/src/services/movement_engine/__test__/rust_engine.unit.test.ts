@@ -280,8 +280,8 @@ describe('the Rust engine shim', () => {
       writtenValues: { name: 'Acme' }, outcome: 'create', provenance: { name: [] },
     };
     const wired = ['l', 0, [['o', 1, Object.entries(write).map(([k, v]) => [k, typeof v === 'object' ? ['o', 2, Object.entries(v).map(([a, b]) => [a, Array.isArray(b) ? ['l', 3, []] : b])] : v])]]];
-    expect(readRunResult({ result: { movementName: 'm', writes: wired } }, { trace: [], hostErrors: [] })).toEqual({
-      ran: { movementName: 'm', writes: [write], trace: [], extractionSites: {} },
+    expect(readRunResult({ result: { movementName: 'm', writes: wired, parked: true, parkedAddress: 's0' } }, { trace: [], hostErrors: [] })).toEqual({
+      ran: { movementName: 'm', writes: [write], trace: [], extractionSites: {}, parked: true, parkedAddress: 's0' },
     });
     expect(() => readRunResult({ result: { movementName: 'm', extractionSites: {} } }, { trace: [], hostErrors: [] })).toThrow(
       'the Rust engine result has extractionSites, which this shim does not decode yet',

@@ -10,8 +10,9 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
   to `eval_expression` (slice 1, "The evaluator" below);
 - **a whole run** of a program the shim's `rustCanRun` admits: bindings, `if`
   and `return` over reads of the event and of values (slice 2a), writes with
-  identity (`unique by`) and the nodes a run builds (slice 2b) — "The run"
-  below. apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
+  identity (`unique by`) and the nodes a run builds (slice 2b), and `sleep`,
+  parked and resumed in the TypeScript engine's own state (slice 2b) — "The
+  run" below. apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
   hold these runs to the TypeScript engine; the conformance corpora route
   their admitted cases whole.
 
@@ -25,10 +26,11 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
-| `run` | the `segment` entry: `runMovement` for the programs the shim admits (below) |
+| `run` | the `segment` entry: `runMovement` / `resumeMovement` for the programs the shim admits (below) |
 | `write` | the `write` statement: targets, fields, identity, update or create, the firing record |
 | `unique` | `unique by`: the clauses split into keys and narrowings, the search record, the rules that decide without a judge, the identity lock |
 | `node` | node and graph literals: value entries, nested nodes, reference entries and record copies (the checker's stamps) |
+| `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`) |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
@@ -56,12 +58,13 @@ Measured 2026-10-07 (gzip -9):
 | slice 1, fix round 1 (`ryu-js`, bounded regex parsing) | 1,593,666 | 438,383 |
 | slice 2a (environment services, the check, the run) | 1,751,210 | 488,922 |
 | slice 2a, fix round 1 | 1,751,076 | 488,997 |
-| slice 2b (writes, nodes) | 1,945,584 | 542,520 |
+| slice 2b, the writes (writes, nodes) | 1,945,584 | 542,520 |
+| slice 2b, the parks | 1,991,568 | 557,094 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
 back, the standard library, the regex matcher, Unicode case tables); slice
-the writes about 54 KB more. The total is under the 600 KB warning line with
-about 57 KB to spare: the browser needs only the parser, so the next slice that
+2b about 68 KB more (the writes 54 KB, the parks 15 KB). The total is under
+the 600 KB warning line with about 43 KB to spare: the browser needs only the parser, so the next slice that
 grows it should split the browser's parser into an artifact of its own.
 
 ## The protocol
@@ -191,7 +194,8 @@ TypeScript takes through its host is a host request here:
 | `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`; what its `onJudgeUnavailable` heard rides back |
 | `locks.acquire`, `locks.release` | around an identity search and an update by id | the segment's cross-run write-lock holder |
 | `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature, `WITHIN`) | the TypeScript member itself |
-| `control.cancelledNow` | the last check | `host.control.cancel.cancelledNow()` |
+| `park.commitTimerPark` | a `sleep` in a run that is not a rehearsal | `host.park.sink`, woken `wakeAfterMs` from the host's clock |
+| `control.cancelledNow` | the last check (not after a park) | `host.control.cancel.cancelledNow()` |
 
 ### Writes
 
@@ -223,11 +227,12 @@ in place (`write co { … }`):
 
 The firing record is held as the JavaScript object the TypeScript builds,
 keys in its order, so the result, a handle read (`co.externalId`, a field of
-what was written, of the adapter's result data) and the handle all see one value.
+what was written, of the adapter's result data) and a park all see one value.
 
 **Provenance origin ids** are internal: origins live in the run's table and
 trails hold their ids, but nothing a caller sees carries an id — the result's
-provenance is the origins themselves, summarised in trail order. The order of a trail is the order of
+provenance is the origins themselves, summarised in trail order, and a park
+writes the origins themselves. The order of a trail is the order of
 evaluation in both engines (a literal minted once per evaluation, an event
 or handle read once per ask), and deduplication is by origin, which a fresh
 id per mint reproduces exactly (identity, in the TypeScript).
@@ -240,6 +245,20 @@ checker's `reference` stamp — as an edge landing the record itself, a record
 spread copied by the checker's `copy` plan (fields; a plan that walks edges
 is refused), and a map spread. A node's field reads carry the trail it was
 written with.
+
+### Parks
+
+`park.rs` writes `ParkedScopeState` version 1 for a `sleep` (and `x = await
+sleep(…)`, its `presenceBind`): the scope chain root first, each scope's own
+bindings in declaration order, as `serializeBinding` writes the kinds this
+engine binds (`event`, `instance`, `opaque`, `movement`, `value` as its JSON
+round trip with its origins, `handle` as its record, `nodePosition` /
+`nodeRef` numbered as one park's table numbers them). A resume
+(`input.resume = {state, reenter?}`) re-layers the movement's scope, descends
+the `if` arms the address names, steps past (or re-enters) the leaf, and
+finishes each enclosing body. A state either engine wrote resumes on either;
+the shim leaves anything else (frames, a journal, a suspension, `until`, other
+binding kinds, extraction origins) to the TypeScript engine.
 
 - An expression is evaluated by the one evaluator. What it cannot answer
   itself it asks (`eval::Reader`); the evaluation stops, the run asks the
@@ -298,8 +317,9 @@ one value. `["i", id]` (one of the caller's own objects) appears only in
 writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
-movementName?, event, teamId, now, catalog, dryRun?}`. `dryRun` is a
-rehearsal (writes captured). `languageVersion` is the pin,
+movementName?, event, teamId, now, catalog, dryRun?, resume?}`. `dryRun` is a
+rehearsal (writes captured, `sleep` fast-forwarded); `resume` is `{state,
+reenter?}`, a `ParkedScopeState` to resume rather than a run to start. `languageVersion` is the pin,
 written out (the engine does not know the release's current one); `event`
 is the `TriggerEvent` on the eval wire; `now` is the run's pinned instant as
 a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
@@ -317,6 +337,7 @@ host keeps, so a run that fails with it can name it.
 | `adapters.has {instance, method}` | whether the adapter implements `method` |
 | `llm.arbitrateEntities {asserted, candidates, recordType, constraints}` (values on the eval wire) | `{index: number \| null, judgeUnavailable?: message}` |
 | `locks.acquire {names}` / `locks.release {names}` | `undefined` once held / let go |
+| `park.commitTimerPark {address, state, wakeAfterMs}` | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
 | `adapters.call {instance, method, args}` | the method's result as plain JSON (anything else fails the run in the shim) |
 | `adapters.call {instance, method, args, wire: true}` | `args` on the eval wire, the result too |
 | `control.cancelled {}` / `control.cancelledNow {}` | a boolean: the cancel gate, debounced / not |
@@ -326,7 +347,7 @@ host keeps, so a run that fails with it can name it.
 
 **`done`**:
 
-- `{result: {movementName, writes, cancelled?: true}}`,
+- `{result: {movementName, writes, parked?: true, parkedAddress?, cancelled?: true}}`,
   `writes` the firing records on the eval wire;
 - `{failed: {error, result}}`: the body failed, and `result` is what the run
   had when it did (the shim throws `MovementRunFailed`);

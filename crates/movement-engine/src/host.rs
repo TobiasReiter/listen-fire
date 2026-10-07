@@ -172,6 +172,21 @@ pub mod locks {
     }
 }
 
+pub mod park {
+    use super::*;
+
+    /// A timer park (`sleep`): the leaf's address and its `ParkedScopeState`,
+    /// to wake `wakeAfterMs` from the host's own clock (`Date.now()`, as the
+    /// TypeScript reads it).
+    pub fn commit_timer_park(address: &str, state: Json, wake_after_ms: f64) -> Request {
+        Request {
+            family: Family::Park,
+            method: "commitTimerPark".into(),
+            args: json!({ "address": address, "state": state, "wakeAfterMs": wake_after_ms }),
+        }
+    }
+}
+
 pub mod control {
     use super::*;
 

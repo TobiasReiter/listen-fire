@@ -47,7 +47,8 @@ import { neverAsAny } from '../../lib/utils/types';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
-import { MovementRunFailed, type MovementRunResult, type RunMovementInput } from './run';
+import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
+import type { BindingDescriptor } from './serialize';
 import { serve, type RouteContext } from './rust_host';
 import { rustEvalStats, rustRunStats } from './rust_stats';
 import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
@@ -106,16 +107,27 @@ export async function runSegmentInRust(
   input: RunMovementInput,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  return segmentInRust(input, engine);
+  return segmentInRust(input, undefined, engine);
+}
+
+/** A parked run resumed in the Rust engine (`rustCanResume` admits its
+ *  state): its result, or that the engine declined it before touching an
+ *  adapter. */
+export async function resumeSegmentInRust(
+  input: ResumeMovementInput,
+  engine?: EngineProtocol,
+): Promise<{ ran: MovementRunResult } | { declined: string }> {
+  return segmentInRust(input, { state: input.state, ...(input.reenter === true ? { reenter: true } : {}) }, engine);
 }
 
 async function segmentInRust(
   input: RunMovementInput,
+  resume: { state: unknown; reenter?: true } | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
   // Read before the instance opens: an input that cannot cross must not
   // leave a segment open behind it.
-  const start = segmentInput(input);
+  const start = segmentInput(input, resume);
   if (start === undefined) throw new RustShimError('this run cannot cross to the Rust engine (rustCanRun admits none such)');
   const trace = input.host.trace ?? [];
   const hostErrors: unknown[] = [];
@@ -189,13 +201,14 @@ export async function driveEngine(
  *  (crates/movement-engine/src/run.rs `SegmentInput`): the event on the eval
  *  wire, so its payload keeps its key order. Undefined for an input that
  *  cannot cross as itself. */
-function segmentInput(input: RunMovementInput): unknown {
+function segmentInput(input: RunMovementInput, resume?: { state: unknown; reenter?: true }): unknown {
   const event = new WireOut().value(input.event);
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
   return plainJson(
     {
       entry: 'segment',
       ...(input.dryRun === true ? { dryRun: true } : {}),
+      ...(resume !== undefined ? { resume } : {}),
       source: input.source,
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
@@ -232,7 +245,7 @@ export function readRunResult(
   throw new RustShimError(`the Rust engine finished with ${Object.keys(outcome).join(', ') || 'nothing'}, which this shim does not decode`);
 }
 
-const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'cancelled']);
+const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'parked', 'parkedAddress', 'cancelled']);
 
 function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRunResult {
   const result = record(value, 'the Rust engine result');
@@ -241,6 +254,7 @@ function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRu
     throw new RustShimError(`the Rust engine result has ${unread.join(', ')}, which this shim does not decode yet`);
   }
   if (result.cancelled !== undefined && result.cancelled !== true) throw new RustShimError('a cancelled result says true');
+  if (result.parked !== undefined && result.parked !== true) throw new RustShimError('a parked result says true');
   const writes = new WireOut().read(result.writes ?? ['l', 0, []]);
   if (!Array.isArray(writes) || !writes.every(isWriteRecord)) throw new RustShimError('the Rust engine result writes are write records');
   // The run spent nothing itself; what the run had spent before rides along,
@@ -251,6 +265,7 @@ function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRu
     writes,
     extractionSites: {},
     trace,
+    ...(result.parked === true ? { parked: true, parkedAddress: string(result.parkedAddress, 'the parked address') } : {}),
     ...(result.cancelled === true ? { cancelled: true } : {}),
     ...(spend.segmentMicrodollars > 0
       ? { spentMicrodollars: spend.segmentMicrodollars, spentBySource: spend.bySource }
@@ -305,6 +320,7 @@ function failureOf(value: unknown, hostErrors: unknown[]): unknown {
  *   onto a held handle (`write co { … }`); with no `bind`; whose `unique by`
  *   clauses are keys only (no conjunct that narrows); whose fields and spreads
  *   read what an expression may;
+ * - `await sleep(…)`, bare or bound;
  * - every expression one `rustCanEval` admits, where a name read is a value
  *   the bodies bind, plus `p.field` with no hops on the movement's event
  *   parameter, on such a value, or on a write's handle;
@@ -414,6 +430,7 @@ function bodyRuns(statements: Statement[], names: RunNames): boolean {
     switch (statement.kind) {
       case 'assign':
         if (statement.value.kind === 'write') return writeRuns(statement.value.write, names);
+        if (statement.value.kind === 'await') return statement.value.await.source.kind === 'sleep';
         if (statement.value.kind === 'construct') return !names.movements.has(statement.value.construct.callee);
         if (statement.value.kind === 'node') return nodeRuns(statement.value.node, names, statement.value.node.graph !== undefined);
         return rvalueRuns(statement.value, names);
@@ -421,6 +438,8 @@ function bodyRuns(statements: Statement[], names: RunNames): boolean {
         return rvalueRuns(statement.value, names);
       case 'write':
         return writeRuns(statement.write, names);
+      case 'await':
+        return statement.await.source.kind === 'sleep';
       case 'if':
         return (
           statement.arms.every((arm) => conditionRuns(arm.condition, names) && bodyRuns(arm.body, names))
@@ -580,6 +599,53 @@ function runExpressionRuns(expr: Expression, names: RunNames): boolean {
     default:
       return rustCanEval(expr, (child) => runExpressionRuns(child, names));
   }
+}
+
+/**
+ * Whether the Rust engine resumes this parked state: a timer park's state
+ * of version 1 (no frames, no journal, no suspension, no `until`), whose
+ * address steps only into `if` arms, and whose scopes hold only the binding
+ * kinds the engine binds — values that hold no records, write handles, the
+ * event, instances, imports and movements — with provenance it summarises.
+ * The program itself must be one `rustCanRun` admits, and nothing may be
+ * answered into the leaf.
+ */
+export function rustCanResume(
+  program: Program,
+  input: Pick<ResumeMovementInput, 'host' | 'limitPaused' | 'languageVersion' | 'state' | 'answer' | 'deferRaceSettlement'>,
+): boolean {
+  const state = input.state;
+  if (input.answer !== undefined || input.deferRaceSettlement === true) return false;
+  if (state.version !== 1 || state.frames !== undefined || state.journal !== undefined) return false;
+  if (state.suspended !== undefined || state.until !== undefined) return false;
+  if (!/^s\d+(\.b\d+\.s\d+)*$/.test(state.address)) return false;
+  const plainOrigins = (provenance: Provenance | undefined): boolean =>
+    provenance === undefined
+    || [...provenance.origins, ...(provenance.direct !== undefined ? [provenance.direct] : [])].every(
+      (origin) => origin.kind !== 'extraction',
+    );
+  const holds = (descriptor: BindingDescriptor): boolean => {
+    switch (descriptor.kind) {
+      case 'event':
+      case 'instance':
+      case 'opaque':
+      case 'movement':
+      case 'handle':
+      case 'nodeRef':
+        return true;
+      case 'value':
+        return plainOrigins(descriptor.provenance) && new WireOut().value(descriptor.value) !== REFUSED;
+      case 'nodePosition':
+        return (
+          Object.values(descriptor.fieldProvenance).every(plainOrigins)
+          && Object.values(descriptor.edges).every((edge) => edge.kind === 'landed' && edge.landing === undefined && edge.landingShape === undefined && edge.landings.every(holds))
+        );
+      default:
+        return false;
+    }
+  };
+  const resumable = state.scopeChain.every((scope) => Object.values(scope.bindings).every(holds));
+  return resumable && rustCanRun(program, input);
 }
 
 // ── The WASM engine ───────────────────────────────────────────────────────────

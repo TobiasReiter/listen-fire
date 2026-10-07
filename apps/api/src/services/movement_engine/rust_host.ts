@@ -180,6 +180,23 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
       return undefined;
     },
   },
+  park: {
+    /** A timer park: woken `wakeAfterMs` from now by this host's clock. A run
+     *  with no park sink is told so, and fails as the interpreter fails it. */
+    async commitTimerPark(args, context) {
+      const request = record(args, 'park.commitTimerPark');
+      const sink = context.host.park.sink;
+      if (sink === undefined) return { noSink: true };
+      const wakeAfterMs = request.wakeAfterMs;
+      if (typeof wakeAfterMs !== 'number') throw new RustShimError('park.commitTimerPark wakeAfterMs is a number');
+      await sink.commitTimerPark({
+        address: string(request.address, 'park.commitTimerPark address'),
+        state: request.state,
+        wakeAt: new Date(Date.now() + wakeAfterMs),
+      });
+      return undefined;
+    },
+  },
   control: {
     /** The cancel gate at a statement boundary. */
     async cancelled(_args, context) {

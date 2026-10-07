@@ -1,9 +1,10 @@
-// Writes in the Rust engine (slice 2b), held to the TypeScript
+// Writes and parks in the Rust engine (slice 2b), held to the TypeScript
 // engine: each program runs under MOVEMENT_ENGINE=ts and =rust against fakes
 // of its own, and the two must agree on everything a caller can see — the
 // result or the error, the trace, every call each adapter received in order,
 // the resolver's requests, the judge's questions, a rehearsal's captured
-// writes.
+// writes, the park sink's rows. A park written by either engine resumes on
+// the other.
 
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
@@ -15,8 +16,19 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import { positionData } from '../../translation_graph/types';
 import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../host';
-import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult, type RunMovementInput } from '../run';
+import {
+  MovementRunFailed,
+  resumeMovement,
+  runFailureCause,
+  runMovement,
+  type MovementRunResult,
+  type ResumeMovementInput,
+  type RunMovementInput,
+} from '../run';
+import { rustCanResume, rustCanRun } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
+import type { ParkedScopeState } from '../serialize';
+import { parsePinned } from '../program_check';
 
 const TEAM_ID = '00000000-0000-0000-0000-0000000000b2' as TeamId;
 
@@ -124,6 +136,8 @@ interface Case {
   dryRun?: boolean;
   /** The judge, given the questions it is asked. */
   judge?: (asked: unknown[]) => NonNullable<TestHostOverrides['llm']>['arbitrateEntities'];
+  /** Resume this state rather than run. */
+  resume?: ParkedScopeState;
 }
 
 /** One run on one engine: what it returned or threw, and everything the
@@ -176,7 +190,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   };
   const world = () => ({ email: email.calls, attio: attio.calls, resolved, trace, captured, asked, parks: park.timerParks });
   try {
-    const result = await runMovement(input);
+    const result = c.resume !== undefined ? await resumeMovement({ ...input, state: c.resume } satisfies ResumeMovementInput) : await runMovement(input);
     return { failed: false, result, ...world() };
   } catch (error) {
     return { failed: true, error, ...world() };
@@ -408,11 +422,16 @@ describe('writes in the Rust engine', () => {
       '  g = graph { owner: co, title: msg.`subject`, ...co }',
       '  d = { label: "x", inner: { n: 1 } }',
       '  write crm-[:companies]-> { name: "${g.`title`}/${g.`stage`}/${d.`label`}" }',
+      '  await sleep(1h)',
       '}',
     ].join('\n');
-    // Read as a field, `owner` would be the handle as a value, which neither
-    // engine reads: the run agreeing is the stamp honoured.
-    await agree({ source, event: webhook({ subject: 'Acme' }) });
+    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    // The park holds the graph as the TypeScript engine holds it: `owner` an
+    // edge landing the handle, not a field.
+    const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
+    const g = state.scopeChain[1]?.bindings.g;
+    expect(g).toMatchObject({ kind: 'nodePosition', edges: { owner: { kind: 'landed', landings: [{ kind: 'handle' }] } } });
+    expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
   it('declines nothing it admitted: a date-typed event field is declined before the source is resolved', async () => {
@@ -424,5 +443,63 @@ describe('writes in the Rust engine', () => {
     expect(rustRunStats.declined).toEqual({ "the event's `when` is a date, which an adapter may answer as a Date": 1 });
     // It ran on the TypeScript engine instead, and the source was resolved once.
     expect(before.resolved).toHaveLength(2);
+  });
+});
+
+describe('parks in the Rust engine', () => {
+  const PARKS = [
+    'movement m(msg: <inbox-[:message]->>) {',
+    '  co = write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }',
+    '  label = "${co.`name`} (${co.externalId})"',
+    '  if label != "" {',
+    '    waited = await sleep(30s)',
+    '    write co-[:notes]-> { body: "${label} after ${waited}" }',
+    '  }',
+    '  write crm-[:companies]-> { name: "${label}!" }',
+    '}',
+  ].join('\n');
+
+  it('parks at a sleep with the state the TypeScript engine writes', async () => {
+    const { ts, rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
+    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
+    expect(rust.parks[0]?.address).toBe('s2.b0.s0');
+    expect(JSON.parse(JSON.stringify(rust.parks[0]?.state))).toEqual(JSON.parse(JSON.stringify(ts.parks[0]?.state)));
+  });
+
+  it('a rehearsal fast-forwards past a sleep', async () => {
+    const { rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }), dryRun: true });
+    expect(rust.parks).toEqual([]);
+  });
+
+  it('resumes on either engine what either engine parked', async () => {
+    const event = webhook({ subject: 'Acme' });
+    const parkedBy = async (engine: 'ts' | 'rust') => {
+      const run = await runOn(engine, { source: PARKS, event });
+      return JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
+    };
+    const [fromTs, fromRust] = [await parkedBy('ts'), await parkedBy('rust')];
+    expect(fromRust).toEqual(fromTs);
+    const parsed = parsePinned({ source: PRELUDE + PARKS });
+    expect(rustCanResume(parsed, { host: makeTestHost(), state: fromTs })).toBe(true);
+    // A state parked by the TypeScript engine, resumed by the Rust one, and
+    // the reverse: each resume agrees with the TypeScript engine's own.
+    for (const state of [fromTs, fromRust]) {
+      const { rust } = await agree({ source: PARKS, event, resume: state });
+      expect(rust.result?.parked).toBeUndefined();
+      expect(rust.result?.writes.map((w) => w.recordType)).toEqual(['note', 'company']);
+    }
+    // The TypeScript engine resumes the Rust engine's park as its own.
+    const onTs = await runOn('ts', { source: PARKS, event, resume: fromRust });
+    const ownTs = await runOn('ts', { source: PARKS, event, resume: fromTs });
+    expect(onTs.result).toEqual(ownTs.result);
+    expect(onTs.attio).toEqual(ownTs.attio);
+  });
+
+  it('leaves to the TypeScript engine a state it does not resume', () => {
+    const parsed = parsePinned({ source: PRELUDE + PARKS });
+    const state: ParkedScopeState = { version: 1, address: 's2.b0.s0', bindingName: null, scopeChain: [], journal: [] };
+    expect(rustCanResume(parsed, { host: makeTestHost(), state })).toBe(false);
+    expect(rustCanResume(parsed, { host: makeTestHost(), state: { ...state, journal: undefined, address: 's1.i0.s0' } })).toBe(false);
+    expect(rustCanRun(parsed, { host: makeTestHost() })).toBe(true);
   });
 });

@@ -11,9 +11,10 @@
 //! 3. `interpretBody` over the movement's statements, the cancel gate asked
 //!    at each (`control.cancelled`): `x = <expr>`, `if`/`else`, `return`,
 //!    writes (crate::write), node and graph literals (crate::node), body
-//!    constructions;
+//!    constructions, `sleep` (a park: crate::park) — or, resuming, the parked
+//!    leaf's continuation;
 //! 4. the last cancel check (`control.cancelledNow`) and the result: the
-//!    writes.
+//!    writes, and where the run parked.
 //!
 //! An expression is evaluated by `eval::Evaluator`. What it cannot answer
 //! itself — a field of the event, read through the source adapter; a
@@ -23,7 +24,7 @@
 //!
 //! `done` is one of:
 //!
-//! - `{result: {movementName, writes, cancelled?}}`;
+//! - `{result: {movementName, writes, parked?, parkedAddress?, cancelled?}}`;
 //! - `{failed: {error, result}}`: the body failed (`MovementRunFailed`,
 //!   which carries what the run did before it);
 //! - `{thrown: error}`: it failed before the body ran;
@@ -38,7 +39,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use movement_parser::ast::{self, ExprSlot, MovementDeclaration, ParamTypeRef, RValue, Statement};
+use movement_parser::ast::{self, AwaitSource, ExprSlot, MovementDeclaration, ParamTypeRef, RValue, Statement};
 use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg};
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
@@ -77,9 +78,13 @@ pub struct SegmentInput {
     pub now: String,
     /// Kept as text: the catalog's maps are ordered.
     pub catalog: Box<RawValue>,
-    /// A rehearsal: every write captured by the host, not committed.
+    /// A rehearsal: every write captured by the host, not committed, and a
+    /// `sleep` fast-forwarded.
     #[serde(default)]
     pub dry_run: bool,
+    /// Resume a parked run from its state (crate::park), rather than run it.
+    #[serde(default)]
+    pub resume: Option<crate::park::ResumeInput>,
 }
 
 /// The segment entry: the run, and its `done`.
@@ -89,7 +94,7 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
         Err(Stop::Declined(reason)) => json!({ "declined": reason }),
         Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
         Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
-        Err(Stop::Cancelled) => unreachable!("a cancel ends the body, and the run returns its result"),
+        Err(Stop::Cancelled | Stop::Parked(_)) => unreachable!("a cancel or a park ends the body, and the run returns its result"),
     }
 }
 
@@ -101,6 +106,8 @@ pub(crate) enum Stop {
     Failed(Failure, Json),
     /// The cancel gate said so at a statement boundary (`RunCancelledSignal`).
     Cancelled,
+    /// The flow parked at this address (`RunParked`): its state is durable.
+    Parked(String),
 }
 
 #[derive(Debug, Clone)]
@@ -259,9 +266,13 @@ impl Run<'_> {
 
     /// `assembleResult`: the writes cross on the eval wire, as the records
     /// the TypeScript builds.
-    fn result(&self, cancelled: bool) -> Json {
+    fn result(&self, cancelled: bool, parked: Option<&str>) -> Json {
         let writes: Vec<Js> = self.writes.borrow().iter().map(|w| w.object.clone()).collect();
         let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": env::encode_plain(&Js::array(writes)) });
+        if let Some(address) = parked {
+            result["parked"] = json!(true);
+            result["parkedAddress"] = json!(address);
+        }
         if cancelled {
             result["cancelled"] = json!(true);
         }
@@ -271,16 +282,24 @@ impl Run<'_> {
     async fn execute(&self) -> Result<Json, Stop> {
         let (movement, index, scope) = self.prepare().await?;
         let path = format!("/statements/{index}/body");
-        let cancelled = match self.body(&movement.body, &scope, &Address::default(), &path, 0).await {
-            Ok(_) => false,
-            Err(Stop::Cancelled) => true,
-            Err(Stop::Thrown(failure)) => return Err(Stop::Failed(failure, self.result(false))),
+        let ran = match &self.input.resume {
+            None => self.body(&movement.body, &scope, &Address::default(), &path, 0).await.map(|_| ()),
+            Some(resume) => self.resume(resume, &movement, &scope, &path).await,
+        };
+        let (cancelled, parked) = match ran {
+            Ok(()) => (false, None),
+            Err(Stop::Cancelled) => (true, None),
+            Err(Stop::Parked(address)) => (false, Some(address)),
+            Err(Stop::Thrown(failure)) => return Err(Stop::Failed(failure, self.result(false, None))),
             Err(other) => return Err(other),
         };
         // The last cancel check: a cancel stamped while the final statement
-        // ran has no later boundary to be found at.
-        let cancelled = cancelled || self.ask_bool(host::control::cancelled_now()).await.map_err(|f| Stop::Failed(f, self.result(false)))?;
-        Ok(self.result(cancelled))
+        // ran has no later boundary to be found at. A parked run's cancel is
+        // the park sink's to settle.
+        let cancelled = cancelled
+            || (parked.is_none()
+                && self.ask_bool(host::control::cancelled_now()).await.map_err(|f| Stop::Failed(f, self.result(false, None)))?);
+        Ok(self.result(cancelled, parked.as_deref()))
     }
 
     // ── prepareMovement ──
@@ -582,6 +601,13 @@ impl Run<'_> {
                         let instance = self.instance_binding(&assign.name, construct);
                         scope.declare(assign.name.clone(), Binding::Instance(Rc::new(instance)));
                     }
+                    RValue::Await { r#await } => match &r#await.source {
+                        AwaitSource::Sleep { duration, .. } => {
+                            self.sleep(duration, at, scope, Some(&assign.name)).await?;
+                            scope.declare(assign.name.clone(), Binding::Value(env::ValueBinding { value: Js::Bool(true), trail: Some(Trail::default()), many: false }));
+                        }
+                        _ => return Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
+                    },
                     _ => {
                         let expr = self.value_slot(&assign.value, scope)?;
                         let bound = self.bind_slot(expr, scope).await?;
@@ -594,6 +620,13 @@ impl Run<'_> {
                 self.write(&statement.write, None, scope, &format!("{path}/write")).await?;
                 Ok(Flow::FellThrough)
             }
+            Statement::Await(statement) => match &statement.r#await.source {
+                AwaitSource::Sleep { duration, .. } => {
+                    self.sleep(duration, at, scope, None).await?;
+                    Ok(Flow::FellThrough)
+                }
+                _ => Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
+            },
             // `return <value>`: the same right-hand side, bound into a slot
             // the grammar cannot spell, and the body ends.
             Statement::Return(ret) => {
@@ -615,7 +648,7 @@ impl Run<'_> {
                     None => Ok(Flow::FellThrough),
                 }
             }
-            _ => Err(Stop::Thrown(Failure::unsupported("this statement", "the Rust engine runs bindings, writes, `if` and `return`"))),
+            _ => Err(Stop::Thrown(Failure::unsupported("this statement", "the Rust engine runs bindings, writes, `if`, `sleep` and `return`"))),
         }
     }
 
@@ -793,6 +826,31 @@ impl Run<'_> {
     pub(crate) fn summarised_origin(&self, id: u32) -> Js {
         let origin = self.origins.borrow().get(id as usize).cloned().unwrap_or(Json::Null);
         crate::env::js_of_json(&summarise(&origin))
+    }
+
+    /// `interpretSleep`: a rehearsal fast-forwards; a real run parks the flow
+    /// on a timer, its scope chain serialized, and stops here.
+    async fn sleep(&self, duration: &ast::DurationLiteral, at: &Address, scope: &Rc<Scope>, presence: Option<&str>) -> Result<(), Stop> {
+        if self.input.dry_run {
+            return Ok(());
+        }
+        let address = at.encode();
+        let state = crate::park::parked_state(self, &address, presence, scope);
+        let ms = crate::park::duration_ms(&duration.raw).ok_or_else(|| {
+            Stop::Thrown(Failure::Engine {
+                class: ErrorClass::Error,
+                message: format!("invalid duration literal '{}' — use unit-suffixed literals like 4h, 2d, 90m, 1h30m", duration.raw),
+            })
+        })?;
+        let answer = self.ask(host::park::commit_timer_park(&address, state, ms)).await.map_err(Stop::Thrown)?;
+        if answer.as_ref().and_then(|a| a.get("noSink")).is_some() {
+            return Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("sleep reached at '{address}' with no park sink — the run cannot suspend on a timer without the durable trigger-run substrate"),
+            )));
+        }
+        self.trace(TraceEntry::Gate { outcome: false }).await.map_err(Stop::Thrown)?;
+        Err(Stop::Parked(address))
     }
 
     async fn trace_miss(&self, source: &Source, field: &str) -> Result<(), Failure> {
