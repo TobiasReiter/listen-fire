@@ -1,7 +1,10 @@
 // The engine's ABI through the committed artifact (packages/movement-lang/
-// wasm/movement.wasm): a segment's start → pending → answer → done, with the
-// program-less `echo` entry, raw and through the shim; and a trap's panic
-// message. Protocol only: no language semantics run here.
+// wasm/movement.wasm): a segment's start → pending → answer → done, raw and
+// through the shim. Protocol only: the runs themselves are rust_run's and
+// rust_write's. Several requests in flight at once, answered out of order,
+// and a panic's trap are the executor's and abi.rs's tests (the probe entries
+// that exercise them are built into test builds only), and the loader's trap
+// path is movement-lang's loader test.
 
 import { EMPTY_CATALOG_SNAPSHOT, openEngineSegment } from 'movement-lang';
 
@@ -11,34 +14,34 @@ import { openRunContext } from '../run_context';
 import { driveEngine, openWasmEngine, RustShimError } from '../rust_engine';
 import { makeTestHost } from '../test_host';
 
+/** A program that parses and declares nothing. */
+const SOURCE = 'import { manual } from adapters';
+
+/** A `segment` entry's input: the smallest run, which asks its host for
+ *  the check first. */
+function segmentStart(source: string, segmentId = 'g1'): string {
+  return JSON.stringify({
+    entry: 'segment',
+    source,
+    languageVersion: 3,
+    event: ['o', 0, [['pipelineInputId', 'p'], ['adapterType', 'manual'], ['triggerType', 'webhook'], ['payload', ['o', 1, []]]]],
+    segmentId,
+    now: '2026-10-07T09:00:00.000Z',
+    catalog: EMPTY_CATALOG_SNAPSHOT,
+  });
+}
+
 describe('the Rust engine artifact', () => {
-  it('round-trips start → two pending at once → answers out of order → done', () => {
+  it('round-trips start → pending → answer → done, and refuses an answer after done', () => {
     const segment = openEngineSegment();
-    const started = segment.start(
-      JSON.stringify({
-        entry: 'echo',
-        requests: [
-          { family: 'echo', method: 'first', args: { n: 1 } },
-          { family: 'echo', method: 'second', args: ['é🌍'] },
-        ],
-      }),
-    );
-    expect(started).toEqual({
+    expect(segment.start(segmentStart(SOURCE))).toEqual({
       ok: true,
-      json: {
-        pending: [
-          { id: 1, family: 'echo', method: 'first', args: { n: 1 } },
-          { id: 2, family: 'echo', method: 'second', args: ['é🌍'] },
-        ],
-      },
+      json: { pending: [{ id: 1, family: 'check', method: 'program', args: { source: SOURCE, languageVersion: 3 } }] },
     });
-    expect(segment.answer(2, JSON.stringify({ error: { message: 'no second' } }))).toEqual({
+    // A host error answers the request; the run ends naming it by its ref.
+    expect(segment.answer(1, JSON.stringify({ error: { message: 'no checker', ref: 0 } }))).toEqual({
       ok: true,
-      json: { pending: [] },
-    });
-    expect(segment.answer(1, JSON.stringify({ value: 'one' }))).toEqual({
-      ok: true,
-      json: { done: { answers: [{ value: 'one' }, { error: { message: 'no second' } }] } },
+      json: { done: { thrown: { hostError: 0 } } },
     });
     expect(segment.answer(1, '{}')).toEqual({
       ok: false,
@@ -51,44 +54,34 @@ describe('the Rust engine artifact', () => {
   it('gives each segment an instance of its own', () => {
     const a = openEngineSegment();
     const b = openEngineSegment();
-    const echo = JSON.stringify({ entry: 'echo', requests: [{ family: 'echo', method: 'm' }] });
-    expect(a.start(echo).ok).toBe(true);
-    expect(b.start(echo).ok).toBe(true);
-    expect(a.answer(1, '{}').json).toEqual({ done: { answers: [{}] } });
-    expect(b.answer(1, JSON.stringify({ value: 2 })).json).toEqual({ done: { answers: [{ value: 2 }] } });
+    expect(a.start(segmentStart(SOURCE)).ok).toBe(true);
+    expect(b.start(segmentStart(SOURCE)).ok).toBe(true);
+    expect(a.answer(1, JSON.stringify({ error: { message: 'a', ref: 3 } })).json).toEqual({ done: { thrown: { hostError: 3 } } });
+    expect(b.answer(1, JSON.stringify({ error: { message: 'b', ref: 4 } })).json).toEqual({ done: { thrown: { hostError: 4 } } });
     a.finish();
     b.finish();
   });
 
-  it('throws a panic with its message and ends the segment', () => {
-    const segment = openEngineSegment();
-    expect(() => segment.start(JSON.stringify({ entry: 'panic', message: 'boom 7' }))).toThrow(
-      /^movement engine crashed in engine_start: RuntimeError: unreachable: panicked at crates\/movement-engine\/src\/lib\.rs:\d+:\d+:\nboom 7$/,
-    );
-    expect(() => segment.answer(1, '{}')).toThrow('the engine segment is trapped');
-    segment.finish();
-    // The next segment starts clean.
-    expect(openEngineSegment().start(JSON.stringify({ entry: 'echo', requests: [] })).json).toEqual({
-      done: { answers: [] },
-    });
+  it('ships no probe entries', () => {
+    for (const entry of ['echo', 'panic']) {
+      expect(openEngineSegment().start(JSON.stringify({ entry, requests: [], message: 'x' }))).toEqual({
+        ok: false,
+        json: { error: { message: `no entry \`${entry}\`` } },
+      });
+    }
   });
 
-  it('is driven by the shim against a host', async () => {
-    const host = makeTestHost({ control: { cancel: { cancelled: async () => true, cancelledNow: async () => false } } });
+  it('is driven by the shim against a host: the check is the TypeScript checker, and its failure ends the run', async () => {
+    // Parses, and fails the check: no adapter `nope` in the snapshot.
+    const host = makeTestHost();
     const context = await openRunContext({ host, teamId: 'team-1' as TeamId, languageVersion: 3, spend: {} });
-    const { segmentId } = context;
-    const done = await driveEngine(
-      openWasmEngine(),
-      {
-        entry: 'echo',
-        requests: [
-          { family: 'control.cancel', method: 'cancelled', args: { segmentId } },
-          { family: 'trace', method: 'append', args: { segmentId, entries: [] } },
-        ],
-      },
-      { host, context, catalog: EMPTY_CATALOG_SNAPSHOT },
-    );
-    expect(done).toEqual({ answers: [{ value: true }, {}] });
+    await expect(
+      driveEngine(openWasmEngine(), JSON.parse(segmentStart('import { nope } from adapters', context.segmentId)), {
+        host,
+        context,
+        catalog: EMPTY_CATALOG_SNAPSHOT,
+      }),
+    ).rejects.toThrow(/^MOVENG_CHECK: /);
   });
 
   it('refuses a protocol misuse loudly through the shim', () => {

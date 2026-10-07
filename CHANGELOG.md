@@ -44,7 +44,7 @@ Entries are written for two readers: an operator running a self-hosted installat
 - Chains over 1,024 members are refused ("chain too long"). A resource limit, not a language rule, so no language-version conditional (same precedent as the 128 nesting limit).
 - Deep nesting is refused at the limits: 128 for parse, 2,048 for JSON reads, 256 for typed catalog reads. Resource limits, not language rules, so no language-version conditional.
 - The movement engine has a second implementation, in Rust (`crates/movement-engine`), behind `MOVEMENT_ENGINE` (new, optional): `ts`, the default, runs every movement on the TypeScript engine as before; `rust` runs on the Rust engine every run it can run whole, and the rest on TypeScript. Any other value fails startup. Under `rust` it runs reads of the event and of values, bindings, `if`, `return`, the built-ins, writes (with `unique by`), node and graph literals, and `sleep` with its resume, and hands a run back before any effect when it needs more. A run with a cost cap whose program has a `unique by` write stays on TypeScript, which can pause at the cap. Both engines park in one format, so a run parked on one resumes on the other. Under `rust` the conformance corpora run 69 runs (v1) and 75 runs (v2) whole on the Rust engine, all agreeing with TypeScript, with no hand-backs. Authors see no difference.
-- The browser now loads the parser's own WebAssembly artifact (`movement_parser.wasm`, 322 KB gzipped), not the API's (`movement.wasm`, parser and engine, 560 KB gzipped).
+- The browser now loads the parser's own WebAssembly artifact (`movement_parser.wasm`, 322 KB gzipped), not the API's (`movement.wasm`, parser and engine, 557 KB gzipped).
 
 ### Fixed
 

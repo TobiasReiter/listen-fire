@@ -2,13 +2,14 @@
 //! future (`executor`); whatever it needs from the world it asks the
 //! TypeScript host for, one request at a time or several at once (`host`),
 //! and the host answers each by id. `abi` carries that conversation across
-//! the boundary; `value` is the engine's value model.
+//! the boundary.
 //!
-//! The first slice of language semantics is the pure evaluator (`eval`,
-//! with `stdlib` and `filter`), which the TypeScript evaluator calls
-//! synchronously through `abi::eval_expression` for an expression over value
-//! bindings (apps/api/src/services/movement_engine/rust_engine.ts). Segment
-//! entries are still the protocol's own probes.
+//! Two things run here: the pure evaluator (`eval`, with `stdlib` and
+//! `filter`), which the TypeScript evaluator calls synchronously through
+//! `abi::eval_expression` for an expression over value bindings; and a whole
+//! run, the `segment` entry (`run`), for the programs the shim admits
+//! (apps/api/src/services/movement_engine/rust_engine.ts). JavaScript's value
+//! semantics are `js`'s, and values cross on `env`'s wire.
 
 pub mod abi;
 pub mod bindings;
@@ -29,7 +30,6 @@ pub mod run;
 pub mod stdlib;
 pub mod trace;
 pub mod unique;
-pub mod value;
 pub mod write;
 
 use movement_parser::lowering::expression::Expression;
@@ -38,19 +38,24 @@ use eval::{ErrorClass, EvalError, Evaluator, Prov};
 
 use serde_json::{Value as Json, json};
 
-use executor::{Answer, HostError, ProtocolError, Segment, join_all};
+use executor::{Answer, HostError, ProtocolError, Segment};
+#[cfg(test)]
+use executor::join_all;
+#[cfg(test)]
 use host::{Family, Request};
 
 /// The segment `start`'s input asks for, by its `entry`:
 ///
-/// - `echo`: issues each of `requests` (`{family, method, args}`) at once
-///   and finishes with `{answers}`, each in the answer envelope it came in.
 /// - `segment`: a run, executed whole (crate::run says what it runs).
-/// - `panic`: panics with `message` on the first poll, so a loader can prove
-///   its trap path against the real artifact.
+///
+/// Two probes exist in test builds only, so they never ship: `echo` issues
+/// each of `requests` (`{family, method, args}`) at once and finishes with
+/// `{answers}`, each in the answer envelope it came in; `panic` panics with
+/// `message` on the first poll.
 pub fn begin(input_text: &str) -> Result<Segment, ProtocolError> {
     let input: Json = serde_json::from_str(input_text).map_err(|e| ProtocolError(format!("the input is not JSON: {e}")))?;
     match input.get("entry").and_then(Json::as_str) {
+        #[cfg(test)]
         Some("echo") => {
             let requests = input
                 .get("requests")
@@ -69,6 +74,7 @@ pub fn begin(input_text: &str) -> Result<Segment, ProtocolError> {
                 serde_json::from_str(input_text).map_err(|e| ProtocolError(format!("a segment's input does not read: {e}")))?;
             Ok(Segment::new(|host| run::segment(host, segment)))
         }
+        #[cfg(test)]
         Some("panic") => {
             let message = input.get("message").and_then(Json::as_str).unwrap_or("").to_string();
             Ok(Segment::new(|_host| async move { panic!("{message}") }))
@@ -78,6 +84,7 @@ pub fn begin(input_text: &str) -> Result<Segment, ProtocolError> {
     }
 }
 
+#[cfg(test)]
 fn echo_request(request: &Json) -> Result<Request, ProtocolError> {
     let text = |name: &str| {
         request
@@ -107,6 +114,7 @@ pub fn read_answer(json: &str) -> Result<Answer, ProtocolError> {
     }
 }
 
+#[cfg(test)]
 fn answer_envelope(answer: &Answer) -> Json {
     match answer {
         Ok(Some(value)) => json!({ "value": value }),

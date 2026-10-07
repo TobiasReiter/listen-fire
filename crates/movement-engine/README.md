@@ -25,7 +25,6 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight |
 | `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `park.sink`, `control.cancel`, `locks`, `trace`), plus the engine's own (`check`, `builtins`); every host request names the segment |
 | `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the charges handed back with `done` |
-| `value` | the value model (data, record, list, map, absent), its JSON the parked state's `ValueDescriptor` |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
@@ -71,12 +70,13 @@ Measured 2026-10-07 (gzip -9):
 | slice 2b, the parks | 1,991,568 | 557,094 |
 | slice 2b, fix round 1 | 1,978,540 | 555,330 |
 | the chunk 4A host contract (segments, the ledger, the clock) | 1,994,270 | 559,928 |
+| the probe entries test-only, the dead value model removed | 1,987,389 | 557,438 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
 back, the standard library, the regex matcher, Unicode case tables); slice
 2b about 68 KB more (the writes 54 KB, the parks 15 KB). With the split the
-browser downloads 322 KB instead of 560 KB, and the engine's growth no longer
+browser downloads 322 KB instead of 557 KB, and the engine's growth no longer
 reaches it.
 
 ## The protocol
@@ -106,8 +106,12 @@ Entries (`input.entry`):
 | entry | what |
 |---|---|
 | `segment` | a run, executed whole (`run`) |
-| `echo` | issues each of `requests` (`{family, method, args}`) at once, finishes with `{answers}` in the answer envelope |
-| `panic` | panics with `message`: the loader's trap path, provable against the real artifact |
+
+Two probe entries exist in test builds only (`cfg(test)`), so the shipped
+artifact has neither: `echo` issues each of `requests` (`{family, method,
+args}`) at once and finishes with `{answers}` in the answer envelope (the
+executor's and abi.rs's tests of several requests in flight, answered out of
+order), and `panic` panics with `message`.
 
 A panic aborts and traps the instance. The parser's panic hook records the
 message first; the loader reads it through `last_panic` and throws it, and the
@@ -379,6 +383,15 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 A host answer is `{value}`, `{}` for `undefined`, or `{error: {message,
 name?, ref?}}` for a call the host threw on.
 
+**How a failure is encoded.** Four places, one rule each:
+
+| what failed | encoding |
+|---|---|
+| a host call the host **threw** on (a park it could not persist, a lock timeout, a lost lease) | the answer envelope's `{error: {message, name?, ref}}`; the request's future resolves to an `Err`. `ref` numbers the very error the shim holds |
+| an adapter call whose **own** result is a failure (`call_ceiling`, `adapter_error`), or a priced call refused as `budget` | data inside `{value}`: `{value: {error: {kind, message, …}}}`, as the host contract answers it; the engine decides what it means |
+| a built-in the TypeScript member answered by throwing (`builtins.*`) | `{value: {threw: {class, code?, message}}}`: the engine rethrows it as its own error of that class |
+| the run, at its end | `done`'s `error`: `{class, code?, message}` for an engine error, or `{hostError: ref}` for the error a host call failed with (the shim throws that very object) |
+
 **`done`**:
 
 - `{result: {movementName, writes, parked?: true, parkedAddress?, cancelled?: true}}`,
@@ -409,14 +422,26 @@ The rule for what this engine reproduces of JavaScript:
   permissive date parsing (V8's legacy parser, local time), Unicode case
   tables and prototype-key quirks get the language's own semantics. Until
   then this engine answers only what it reproduces and hands the rest back
-  (`fallback`, `builtins.*`), so no reading differs.
+  (`fallback`, `builtins.*`).
+- **One reading differs today: Unicode case mapping.** `toLowerCase` /
+  `toUpperCase` follow Rust's tables (Unicode 17); Node 22's ICU follows
+  Unicode 16. A character whose properties changed between the two can map
+  differently. The known case is U+0295 (ʕ), which counts as cased for the
+  final-sigma rule in Rust and not in Node: `"ΑΣʕ"` lowers to `αςʕ` here and
+  `ασʕ` in TypeScript. This is an accepted divergence, pinned by
+  `stdlib::tests::case_mapping_follows_rusts_unicode_tables`, and is not
+  handed back.
 - **The specification lands as a language-version change.** A version
   conditional at the point of difference, and a checker diagnostic under the
   new version for any construct whose meaning changes. Saved movements keep
   their pin, and with it JavaScript's behaviour, on the TypeScript engine
-  until that version is deprecated. **Deferred:** the next language-version
-  bump carries the regex and date decisions. The hand-written regex matcher
-  (`js_regex`) is a transition artefact that the bump retires.
+  until that version is deprecated. **Deferred** to the next
+  language-version bump:
+  - the regex dialect (the hand-written matcher, `js_regex`, is a
+    transition artefact that the bump retires);
+  - date parsing (what a date text may be, and no local time);
+  - Unicode case mapping: which Unicode version the language's case tables
+    follow, so neither engine's runtime decides it.
 
 ## The check
 
@@ -504,7 +529,7 @@ JavaScript one to the same file. Where they differed, and what was done:
 
 ```bash
 scripts/build-movement-wasm.sh    # the artifact, its sha256 and size
-cargo test -p movement-engine     # the executor, builders, value model, evaluator, ABI and environment services, natively
+cargo test -p movement-engine     # the executor, builders, evaluator, run, ABI and environment services, natively
 ```
 
 The TypeScript side: `apps/api/src/services/movement_engine/__test__/rust_engine.unit.test.ts`

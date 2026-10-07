@@ -11,11 +11,12 @@ use serde::Serialize;
 use serde_json::{Value as Json, json};
 
 /// The `EngineHost` families a request can address (docs/engine-host.md;
-/// host.ts `HOST_FAMILIES`), spelled as the manifest spells them, plus three
-/// that are this engine's own and never reach an `EngineHost`: `Check` (the
-/// TypeScript checker, until the checker is Rust), `Builtins` (the
-/// TypeScript standard library, for the readings this engine hands back) and
-/// `Echo` (the protocol's own probe, served by no host).
+/// host.ts `HOST_FAMILIES`), spelled as the manifest spells them, plus the
+/// ones that are this engine's own and never reach an `EngineHost`: `Check`
+/// (the TypeScript checker, until the checker is Rust), `Builtins` (the
+/// TypeScript standard library, for the readings this engine hands back),
+/// and in test builds only `Echo` (the protocol's own probe, served by no
+/// host).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     Adapters,
@@ -26,10 +27,11 @@ pub enum Family {
     Trace,
     Check,
     Builtins,
+    #[cfg(test)]
     Echo,
 }
 
-const FAMILIES: [Family; 9] = [
+const FAMILIES: &[Family] = &[
     Family::Adapters,
     Family::Llm,
     Family::ParkSink,
@@ -38,6 +40,7 @@ const FAMILIES: [Family; 9] = [
     Family::Trace,
     Family::Check,
     Family::Builtins,
+    #[cfg(test)]
     Family::Echo,
 ];
 
@@ -52,12 +55,13 @@ impl Family {
             Family::Trace => "trace",
             Family::Check => "check",
             Family::Builtins => "builtins",
+            #[cfg(test)]
             Family::Echo => "echo",
         }
     }
 
     pub fn parse(name: &str) -> Option<Family> {
-        FAMILIES.into_iter().find(|family| family.as_str() == name)
+        FAMILIES.iter().copied().find(|family| family.as_str() == name)
     }
 }
 
