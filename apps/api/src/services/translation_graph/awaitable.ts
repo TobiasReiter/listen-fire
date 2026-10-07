@@ -20,8 +20,8 @@ export type AwaitResolution =
    *  the await's WHERE) and continues inline. Each landing carries the fields
    *  the resumed body reads (`r.answer`). `correlationKey` is the key to keep
    *  waiting on should no landing pass the WHERE (a thread with replies, none of
-   *  them the one asked for); without it such an await cannot park. */
-  | { status: 'landed'; landings: AwaitLanding[]; correlationKey?: string }
+   *  them the one asked for). */
+  | { status: 'landed'; landings: AwaitLanding[]; correlationKey: string }
   /** A `resolvesEmpty` settlement (an ask explicitly cancelled → expired, F6):
    *  the await completes immediately with an EMPTY match — downstream blocks run
    *  zero times. Only legal on an edge declared `resolvesEmpty`. */

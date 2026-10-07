@@ -111,7 +111,7 @@ async function loadHandler(options: {
   waCallback?: boolean;
   /** What the adapter's `wakeKeys` names for the delivery; absent ⇒ the
    *  adapter has no wake door. */
-  wakeKeys?: string[];
+  wakeKeys?: string[] | Error;
 }): Promise<Harness> {
   jest.resetModules();
 
@@ -185,7 +185,14 @@ async function loadHandler(options: {
       adapterType: options.adapterType ?? 'attio',
       preprocessInbound,
       listEventTypes: jest.fn(async () => []),
-      ...(options.wakeKeys !== undefined ? { wakeKeys: jest.fn(async () => options.wakeKeys) } : {}),
+      ...(options.wakeKeys !== undefined
+        ? {
+            wakeKeys: jest.fn(async () => {
+              if (options.wakeKeys instanceof Error) throw options.wakeKeys;
+              return options.wakeKeys;
+            }),
+          }
+        : {}),
     })),
   }));
   jest.doMock('../../translation_graph/storage/tg_table', () => ({
@@ -398,6 +405,19 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
       correlationKey: 'C1:111.1',
     });
     expect(h.enqueueCapturedEvents).toHaveBeenCalledWith([]);
+  });
+
+  it('a wake door that throws costs the delivery nothing: its events are still captured and enqueued', async () => {
+    const h = await loadHandler({ events: [EVENT_A], adapterType: 'slack', wakeKeys: new Error('wake door down') });
+
+    const result = await deliver(h);
+    expect(result.ok).toBe(true);
+    expect(result.eventsProcessed).toBe(1);
+    expect(h.captureDiscriminableEvent).toHaveBeenCalledTimes(1);
+
+    await result.enqueueDeferred!();
+    expect(h.enqueueCapturedEvents).toHaveBeenCalledTimes(1);
+    expect(h.enqueueAwaitWake).not.toHaveBeenCalled();
   });
 
   it('a delivery with wake keys but no events still queues the wakes', async () => {

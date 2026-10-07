@@ -343,11 +343,12 @@ describe('RemoteAdapter awaitable gating', () => {
     expect(adapter.awaitable).toBeDefined();
     enqueue(
       { status: 'pending', correlationKey: 'C1:1.2' },
-      { status: 'landed', landings: [{ recordType: 'Response', fields: { Answer: 'yes' } }] },
+      { status: 'landed', correlationKey: 'C1:1.2', landings: [{ recordType: 'Response', fields: { Answer: 'yes' } }] },
     );
     expect(await adapter.awaitable!.resolveAwait(point)).toEqual({ status: 'pending', correlationKey: 'C1:1.2' });
     expect(await adapter.awaitable!.resolveAwait(point)).toEqual({
       status: 'landed',
+      correlationKey: 'C1:1.2',
       landings: [{ recordType: 'Response', fields: { Answer: 'yes' } }],
     });
     expect(postRpcMock).toHaveBeenCalledWith(expect.objectContaining({ method: 'resolveAwait', params: point }));

@@ -6350,7 +6350,7 @@ class Interpreter {
     const check = async (): Promise<
       | { status: 'bind'; landing: { recordType?: string; fields: Record<string, unknown> } }
       | { status: 'empty' }
-      | { status: 'wait'; correlationKey: string | undefined }
+      | { status: 'wait'; correlationKey: string }
     > => {
       const resolution = await awaitable.resolveAwait(point);
       switch (resolution.status) {
@@ -6400,13 +6400,6 @@ class Interpreter {
       this.declareAwaitResult(env, bindingName, adapterType, adapter, {}, instanceName);
       return;
     }
-    if (outcome.correlationKey === undefined) {
-      // Parking with no key would wait on a wake nothing can send.
-      throw new Error(
-        `await '-[:${edge}]->' on '${adapterType}': no landing passed the WHERE, and the adapter named no key to keep waiting on`,
-      );
-    }
-
     // Pending: record the await park under the adapter's key, and suspend.
     // Resume re-enters here.
     const parkSink = this.input.host.park.sink;

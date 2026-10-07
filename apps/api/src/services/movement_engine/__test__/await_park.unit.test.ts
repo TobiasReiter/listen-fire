@@ -72,15 +72,27 @@ describe('await park — the adapter names the key, the engine keeps the correla
     expect(await parks[0]!.resolvesNow()).toBe(false);
   });
 
-  it('refuses to park on unmatched landings that name no key', async () => {
-    const { adapter } = makeAwaitingAdapter([
-      { status: 'landed', landings: [{ recordType: 'Check Response', fields: { Answer: false } }] },
-    ]);
+  it('a landed-but-unmatched answer parks on the key it returned, and a later matching landing resolves the re-check', async () => {
+    const unmatched: AwaitResolution = {
+      status: 'landed',
+      correlationKey: 'thread-9',
+      landings: [{ recordType: 'Check Response', fields: { Answer: false } }],
+    };
+    const matched: AwaitResolution = {
+      status: 'landed',
+      correlationKey: 'thread-9',
+      landings: [
+        { recordType: 'Check Response', fields: { Answer: false } },
+        { recordType: 'Check Response', fields: { Answer: true } },
+      ],
+    };
+    const { adapter } = makeAwaitingAdapter([unmatched, matched]);
     const { sink, parks } = recordingSink();
 
-    await expect(
-      runAwaiting({ teamId: TEAM_ID, source: awaitingSource('r.Answer'), adapter, parkSink: sink }),
-    ).rejects.toThrow(/no landing passed the WHERE, and the adapter named no key/);
-    expect(parks).toHaveLength(0);
+    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource('r.Answer'), adapter, parkSink: sink });
+
+    expect(result.parked).toBe(true);
+    expect(parks[0]).toMatchObject({ adapterType: 'ask', correlationKey: 'thread-9' });
+    expect(await parks[0]!.resolvesNow()).toBe(true);
   });
 });

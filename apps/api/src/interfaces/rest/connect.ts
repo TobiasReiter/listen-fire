@@ -35,7 +35,12 @@ import { bindFlowToUser, extractStateFromUrl } from '../../lib/oauthFlows';
 import { claimPendingCredentials } from '../../lib/pendingCredentials';
 import { persistCredential } from '../../services/credentials/persist_credential';
 import { mintRemoteCredential } from '../../services/credentials/remote_credential';
-import { linkRemoteAdapterCredential } from '../../services/translation_graph/adapters/remote/store';
+import {
+  getRemoteAdapter,
+  linkRemoteAdapterCredential,
+  rowToManifest,
+} from '../../services/translation_graph/adapters/remote/store';
+import { probeProtocolVersion } from '../../services/translation_graph/adapters/remote/install';
 import { RemoteAdapterCredentialPayload } from '../../services/translation_graph/adapters/remote/manifest';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import {
@@ -207,6 +212,17 @@ const submitHandler: RequestHandler = async (req, res) => {
     }
   }
 
+  // A remote adapter's server is asked its protocol version with the secret
+  // being linked, exactly as an install with the secret is — refused before the
+  // token is spent or a credential minted, so the user can still fix the server.
+  if (row.serviceType === ExternalServiceType.REMOTE) {
+    const refusal = await remoteProtocolRefusal(row, credentials);
+    if (refusal !== undefined) {
+      res.status(400).type('html').send(keyEntryPage(row, token, { error: refusal }));
+      return;
+    }
+  }
+
   // Consume FIRST (single-use, atomic) so a replayed submit can't double-persist.
   const consumed = await consumeConnectToken(row.id);
   if (!consumed) {
@@ -253,6 +269,20 @@ const submitHandler: RequestHandler = async (req, res) => {
 
   res.status(200).type('html').send(connectedPage(displayName));
 };
+
+/** Why the remote adapter's server cannot take this secret, or undefined when
+ *  it answers protocol version 2. */
+async function remoteProtocolRefusal(row: ConnectTokenRow, credentials: unknown): Promise<string | undefined> {
+  const install = await getRemoteAdapter({ teamId: row.teamId, adapterType: row.adapterSlug });
+  if (!install) return `Remote adapter "${row.adapterSlug}" is not installed.`;
+  const { secret } = RemoteAdapterCredentialPayload.parse(credentials);
+  try {
+    await probeProtocolVersion({ teamId: row.teamId, manifest: rowToManifest(install), secret });
+    return undefined;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
 
 // OAuth start (POST leg of the confirm page). Generate the adapter's install
 // URL and bind the OAuth flow to BOTH the token's user (so the connector

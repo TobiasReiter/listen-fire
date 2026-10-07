@@ -203,8 +203,18 @@ async function handleInboundWebhook(options: {
     checkpoint: sub.inbound_checkpoint ?? undefined,
   });
   // The wake door, independent of the events: a delivery may resolve a parked
-  // await whether or not it carries anything a trigger listens for.
-  const wakeKeys = adapter.wakeKeys ? await adapter.wakeKeys({ raw: body }) : [];
+  // await whether or not it carries anything a trigger listens for, and a wake
+  // door that fails never costs the delivery its events.
+  let wakeKeys: string[] = [];
+  if (adapter.wakeKeys) {
+    try {
+      wakeKeys = await adapter.wakeKeys({ raw: body });
+    } catch (err) {
+      logger.warn(`[webhook] wakeKeys failed for provider ${sub.provider}; no await wakes from this delivery`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   const events = extraction.events;
   if (!events.length && !wakeKeys.length) {

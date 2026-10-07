@@ -67,10 +67,11 @@ export async function installRemoteAdapterFromManifest(
 /**
  * The server's own answer to `manifest` decides the version, not the file: a
  * hand-edited or form-built manifest can claim 2 for a server that speaks 1.
- * Runs before a credential is minted, so a refused server leaves nothing behind.
+ * Runs before a credential is minted — at install, and when the connect link
+ * supplies the secret later — so a refused server leaves nothing behind.
  */
-async function probeProtocolVersion(
-  input: InstallRemoteAdapterInput,
+export async function probeProtocolVersion(
+  input: Pick<InstallRemoteAdapterInput, 'teamId' | 'manifest' | 'secret'>,
 ): Promise<RemoteAdapterManifestFile['protocolVersion']> {
   const { manifest } = input;
   const secret =

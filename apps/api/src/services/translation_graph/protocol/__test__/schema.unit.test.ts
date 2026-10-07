@@ -415,20 +415,21 @@ describe('v2 methods', () => {
     expect(METHODS.removeEventSubscription.result.parse(null)).toBeNull();
   });
 
-  it('resolveAwait: pending carries a correlation key; landed carries landings; empty is bare', () => {
+  it('resolveAwait: pending and landed both carry a correlation key; empty is bare', () => {
     const point = { recordId: 'ask-1', edge: 'Response', headData: { channel: 'C1' } };
     expect(METHODS.resolveAwait.params.parse(point)).toEqual(point);
     const pending = { status: 'pending', correlationKey: 'C1:123.4' };
     expect(METHODS.resolveAwait.result.parse(pending)).toEqual(pending);
     expect(() => METHODS.resolveAwait.result.parse({ status: 'pending' })).toThrow();
+    // The key to keep waiting on, for landings that all fail the await's WHERE.
     const landed = {
       status: 'landed',
+      correlationKey: 'C1:1.2',
       landings: [{ recordId: 'r1', recordType: 'Response', fields: { Answer: 'yes' } }],
     };
     expect(METHODS.resolveAwait.result.parse(landed)).toEqual(landed);
-    // The key to keep waiting on, for landings that all fail the await's WHERE.
-    const keyed = { ...landed, correlationKey: 'C1:1.2' };
-    expect(METHODS.resolveAwait.result.parse(keyed)).toEqual(keyed);
+    const { correlationKey: _key, ...keyless } = landed;
+    expect(() => METHODS.resolveAwait.result.parse(keyless)).toThrow();
     expect(METHODS.resolveAwait.result.parse({ status: 'empty' })).toEqual({ status: 'empty' });
   });
 
