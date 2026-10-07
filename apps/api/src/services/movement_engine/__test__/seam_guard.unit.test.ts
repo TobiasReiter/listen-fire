@@ -25,6 +25,7 @@ const SRC_DIR = path.resolve(__dirname, '../../..');
 const PURE_FILES = [
   'address.ts',
   'ai_tiers.ts',
+  'builtins.ts',
   'call_depth.ts',
   'callback_types.ts',
   'effect_locks.ts',

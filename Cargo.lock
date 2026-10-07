@@ -108,6 +108,7 @@ name = "movement-engine"
 version = "0.1.0"
 dependencies = [
  "movement-parser",
+ "ryu-js",
  "serde",
  "serde_json",
 ]
@@ -139,6 +140,12 @@ checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "ryu-js"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
 
 [[package]]
 name = "serde"

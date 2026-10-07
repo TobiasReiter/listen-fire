@@ -21,7 +21,12 @@ export default {
   setupFilesAfterEnv: [
     path.join(CONFORMANCE, 'v1.setup.cjs'),
     path.join(CONFORMANCE, 'triage.setup.cjs'),
+    // Under MOVEMENT_ENGINE=rust: count the Rust evaluator's answers, and
+    // fail a run in which it answered none.
+    '<rootDir>/src/test/rust_eval_stats.setup.ts',
   ],
+  globalSetup: '<rootDir>/src/test/rust_eval_stats.global-setup.cjs',
+  globalTeardown: '<rootDir>/src/test/rust_eval_stats.teardown.cjs',
   // The corpus is typed against v0.6.0's tree, not today's: transpile only.
   transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true }] },
 };

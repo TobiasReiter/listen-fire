@@ -654,10 +654,20 @@ pub const BINDING_KINDS: [&str; 20] = [
     "plugin", "opaque",
 ];
 
+/// `Object.prototype`'s own names: `kind in describeBinding` walks the
+/// prototype chain, so to the TypeScript `{kind: "toString"}` is a record too.
+const OBJECT_PROTOTYPE_NAMES: [&str; 12] = [
+    "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty", "__lookupGetter__", "__lookupSetter__",
+    "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "__proto__", "toLocaleString",
+];
+
 /// `bindingOf(value) !== undefined`.
 pub fn is_binding_shaped(value: &Js) -> bool {
     match value {
-        Js::Object(object) => matches!(object.get("kind"), Some(Js::String(kind)) if BINDING_KINDS.contains(&kind.as_str())),
+        Js::Object(object) => matches!(
+            object.get("kind"),
+            Some(Js::String(kind)) if BINDING_KINDS.contains(&kind.as_str()) || OBJECT_PROTOTYPE_NAMES.contains(&kind.as_str())
+        ),
         _ => false,
     }
 }
@@ -792,7 +802,8 @@ fn parse_host(input: &str) -> Result<Option<String>, EvalError> {
         return unsupported("an IPv6 host");
     }
     let (host, port) = host_port.split_once(':').unwrap_or((host_port, ""));
-    if !port.bytes().all(|c| c.is_ascii_digit()) || port.parse::<u64>().is_ok_and(|p| p > 65535) {
+    // A port too long for a u64 is past 65535 all the same.
+    if !port.bytes().all(|c| c.is_ascii_digit()) || port.parse::<u64>().map_or(!port.is_empty(), |p| p > 65535) {
         return Ok(None);
     }
     if host.is_empty() {
@@ -988,6 +999,9 @@ mod tests {
         assert_eq!(host("http://:pw@acme.com"), "acme.com");
         assert_eq!(host("http://a@b@c.com"), "<null>");
         assert_eq!(host("http://acme.com:99999"), "<null>");
+        assert_eq!(host("http://acme.com:99999999999999999999999"), "<null>");
+        assert_eq!(host("http://acme.com:"), "acme.com");
+        assert_eq!(host("http://acme.com:0080"), "acme.com");
         assert_eq!(host("http://acme.com:8a"), "<null>");
         // No `://`, and `http:` not followed by `//` reads as an opaque uri.
         assert_eq!(host("http:\\\\acme.com\\x"), "<null>");
@@ -999,6 +1013,31 @@ mod tests {
         for t in ["http://127.0.0.1", "http://[::1]", "http://b\u{fc}cher.de", "file:///x", "git://Host/x", "http://xn--bcher-kva.de", "http://a%41.com"] {
             assert!(matches!(apply_namespaced("url.host", &[s(t)], &NoClock), Err(EvalError::Fallback(_))), "{t}");
         }
+    }
+
+    /// An accepted divergence (README): Rust's tables are Unicode 17,
+    /// Node 22's ICU is Unicode 16, and U+0295 is cased for the final-sigma
+    /// rule only in the newer one. TypeScript lowers "ΑΣʕ" to "ασʕ".
+    #[test]
+    fn case_mapping_follows_rusts_unicode_tables() {
+        assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "αςʕ");
+        assert_eq!(text(call("lower", vec![s("ΑΣ ʕ")])), "ας ʕ");
+    }
+
+    #[test]
+    fn record_detection_walks_the_prototype_chain_as_in_does() {
+        let with_kind = |kind: &str| {
+            let mut o = JsObject::new();
+            o.set("kind".into(), s(kind));
+            Js::object(o)
+        };
+        for kind in ["event", "handle", "toString", "constructor", "valueOf", "__proto__", "hasOwnProperty"] {
+            assert!(is_binding_shaped(&with_kind(kind)), "{kind}");
+        }
+        for kind in ["nope", "tostring", "prototype", ""] {
+            assert!(!is_binding_shaped(&with_kind(kind)), "{kind}");
+        }
+        assert!(!is_binding_shaped(&s("event")));
     }
 
     #[test]

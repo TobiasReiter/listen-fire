@@ -456,21 +456,45 @@ export function rustCanEval(expr: Expression): boolean {
 }
 
 /**
+ * What the evaluator switch did in this process: expressions it did not send
+ * (`notAdmitted`), sent (`admitted`), had answered by Rust (`answered`, a
+ * thrown error included) and had handed back, by Rust's reason (`fallback`).
+ * The conformance runs print it and fail on a Rust run Rust answered nothing in.
+ */
+export const rustEvalStats: {
+  notAdmitted: number;
+  admitted: number;
+  answered: number;
+  fallback: Record<string, number>;
+} = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
+
+export function resetRustEvalStats(): void {
+  rustEvalStats.notAdmitted = 0;
+  rustEvalStats.admitted = 0;
+  rustEvalStats.answered = 0;
+  rustEvalStats.fallback = {};
+}
+
+/**
  * `expr` evaluated by the Rust engine, or undefined where the TypeScript
  * evaluator must answer: not admitted, a name that is not a value binding, a
  * value that cannot cross as itself, or a reading Rust does not reproduce
  * (its `fallback`). Errors are thrown as the TypeScript evaluator throws them.
  */
 export function evalInRust(expr: Expression, ctx: MovementExprContext): MovementEvalResult | undefined {
-  if (!rustCanEval(expr)) return undefined;
+  const notAdmitted = (): undefined => {
+    rustEvalStats.notAdmitted += 1;
+    return undefined;
+  };
+  if (!rustCanEval(expr)) return notAdmitted();
   const wire = new WireOut();
   const bindings: Record<string, unknown> = {};
   const read = new Map<string, Extract<Binding, { kind: 'value' }>>();
   for (const name of namesRead(expr)) {
     const binding = ctx.env.resolve(name);
-    if (binding?.kind !== 'value') return undefined;
+    if (binding?.kind !== 'value') return notAdmitted();
     const value = wire.value(binding.value);
-    if (value === REFUSED) return undefined;
+    if (value === REFUSED) return notAdmitted();
     read.set(name, binding);
     bindings[name] = {
       value,
@@ -479,7 +503,8 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     };
   }
   const today = todayAnswers(expr, ctx.meta?.now ?? new Date());
-  if (today === undefined) return undefined;
+  if (today === undefined) return notAdmitted();
+  rustEvalStats.admitted += 1;
   const envelope = {
     bindings,
     origins: wire.origins.length,
@@ -491,7 +516,12 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
   if (!reply.ok) {
     throw new RustShimError(`the Rust evaluator refused its input: ${String(record(answer.error, 'its error').message)}`);
   }
-  if ('fallback' in answer) return undefined;
+  if ('fallback' in answer) {
+    const reason = String(answer.fallback);
+    rustEvalStats.fallback[reason] = (rustEvalStats.fallback[reason] ?? 0) + 1;
+    return undefined;
+  }
+  rustEvalStats.answered += 1;
   if ('error' in answer) throw thrownBy(record(answer.error, 'the Rust evaluator error'));
   const literal = new Map<number, ProvenanceOrigin>();
   const origin = (id: unknown): ProvenanceOrigin => {

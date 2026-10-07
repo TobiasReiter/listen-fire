@@ -299,44 +299,12 @@ fn radix_digits(digits: &str, radix: u32) -> f64 {
     (m as f64) * 2f64.powi(scale)
 }
 
-/// `Number.prototype.toString()`: the shortest digits that round-trip, laid
-/// out by Number::toString's rules (plain up to 21 digits, exponent with an
-/// explicit sign past them or below 1e-6, `-0` printed as `0`).
+/// `Number.prototype.toString()`: ECMAScript's Number::toString, from
+/// `ryu-js`. Rust's own shortest form picks a different digit string on a
+/// 17-digit tie (where JavaScript takes the closer one, then the even one),
+/// so it is not used for text.
 pub fn number_to_string(x: f64) -> String {
-    if x.is_nan() {
-        return "NaN".into();
-    }
-    if x == 0.0 {
-        return "0".into();
-    }
-    if x.is_infinite() {
-        return if x > 0.0 { "Infinity" } else { "-Infinity" }.into();
-    }
-    if x < 0.0 {
-        return format!("-{}", number_to_string(-x));
-    }
-    // `{:e}` is Rust's shortest round-trip form in scientific notation.
-    let scientific = format!("{x:e}");
-    let (mantissa, exponent) = scientific.split_once('e').expect("`{:e}` always writes an exponent");
-    let exponent: i32 = exponent.parse().expect("`{:e}` writes a decimal exponent");
-    let digits: String = mantissa.chars().filter(|&c| c != '.').collect();
-    let k = digits.len() as i32;
-    let n = exponent + 1;
-    if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
-    } else {
-        let e = n - 1;
-        let sign = if e >= 0 { '+' } else { '-' };
-        if k == 1 {
-            format!("{digits}e{sign}{}", e.abs())
-        } else {
-            format!("{}.{}e{sign}{}", &digits[..1], &digits[1..], e.abs())
-        }
-    }
+    ryu_js::Buffer::new().format(x).to_string()
 }
 
 /// `Number.isInteger`.
@@ -518,6 +486,8 @@ mod tests {
             (f64::INFINITY, "Infinity"),
             (f64::NEG_INFINITY, "-Infinity"),
             (1234.5, "1234.5"),
+            // A 17-digit tie: JavaScript prints the closer digits.
+            (16086.196899414062, "16086.196899414062"),
         ];
         for (x, want) in cases {
             assert_eq!(number_to_string(*x), *want, "{x:?}");

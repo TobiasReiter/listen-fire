@@ -40,6 +40,7 @@ Measured 2026-10-07 (gzip -9):
 | the parser crate alone | 1,182,582 | 321,745 |
 | this crate (the parser included), the protocol only | 1,222,941 | 336,866 |
 | this crate with the evaluator (slice 1) | 1,581,987 | 426,071 |
+| slice 1, fix round 1 (`ryu-js`, bounded regex parsing) | 1,593,666 | 438,383 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
 back, the standard library, the regex matcher, Unicode case tables). The
@@ -115,34 +116,46 @@ branch or a `COALESCE` passes its binding's trail through as `{binding}`.
 
 ### JavaScript semantics, written out
 
-| what | how it is handled |
-|---|---|
-| `Number(text)` | StringToNumber by hand: JS whitespace trimmed, `""` → 0, `"  12 "` → 12, `"1e3"`, `".5"`, `"5."`, `0x`/`0o`/`0b` (unsigned only, rounded once), `Infinity` (case-sensitive), else NaN; Rust's `parse` sees only validated decimal digits |
-| `String(number)` | shortest round-trip digits (Rust's `{:e}`), laid out by Number::toString: plain to 21 digits, `1e+21` past it, `0.000001` but `1e-7`, `-0` → `0`, `NaN`, `Infinity` |
-| `String(value)` | arrays join with `,` (null and undefined members empty), objects `[object Object]` |
-| `===`, `includes`, `Set` | strict equality (NaN not itself, `-0 === 0`), SameValueZero for membership, objects by identity (`Rc`) |
-| truthiness | `0`, `-0`, `NaN`, `""`, null, undefined are false |
-| `Math.round` | half toward +∞ (`-2.5` → `-2`), `-0` for a negative that rounds to zero; not Rust's `round` |
-| `toFixed` (NUMBER.FORMAT, CURRENCY) | the double's exact decimal expansion rounded half up (`0.25` → `0.3`); not Rust's `{:.1}`, which rounds half to even |
-| `%` | Rust's `%` is fmod, the dividend's sign, as JavaScript's |
-| object key order | array-index keys ascending first, then insertion order; a repeated key keeps its place |
-| `trim`, `\s` | JavaScript's WhiteSpace + LineTerminator set (with U+FEFF, without U+0085); not `char::is_whitespace` |
-| `.length`, `<` on text | UTF-16 code units; comparison in code-unit order |
-| `split("")` | per UTF-16 unit: BMP text splits per character, astral text goes back to TypeScript |
-| `toLowerCase`/`toUpperCase` | Rust's Unicode case mapping (special casings and the final sigma, as V8); a character newer than one side's Unicode tables could differ |
-| `new Date(text)` | the ISO forms V8's spec parser reads (`YYYY-MM-DD`, `…THH:mm[:ss[.f…]]` with `Z`/`±HH:mm`; day 31 rolls over, `24:00`, three fraction digits kept); a text with no digit is Invalid; anything else (V8's legacy parser, a date-time without offset = local time) goes back to TypeScript |
-| `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month |
-| `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) |
-| regexes (TEXT.REGEX_EXTRACT) | a backtracking matcher over UTF-16 units with Annex B syntax: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators. Invalid patterns are null, as `new RegExp` throws; lookbehind, named groups, octal and `\c` escapes, an escape class at a range end, and a match past its step/depth budget go back to TypeScript. No corpus text uses the function. |
-| `URL` (URL.HOST) | WHATWG parsing for special schemes with ASCII hosts: slashes and backslashes, userinfo, ports, forbidden host code points, lower-casing. IDNA, percent-encoded hosts, IPv4/IPv6, `file:` and non-special schemes go back to TypeScript |
-| `normalize("NFKD")` (TEXT.SLUG) | ASCII is its own NFKD; non-ASCII text goes back to TypeScript |
-| `JSON.stringify` (TEXT.SERIALISE) | its quoting and two-space layout; keys sorted by UTF-16 unit, then laid out in object order (index keys first) as `Object.fromEntries` does |
-| object-literal prototypes | `MAGNITUDE_SUFFIXES["constructor"]` is `Object`, so `"5 constructor"` is NaN; `MONTH_NAMES["constructor"]` fails `validParts` like no month |
-| a dict whose `kind` names a binding kind | the TypeScript reads it as a record (`bindingOf`): its `==`, spreads and record arguments go back to TypeScript, and the shim sends no such value |
+Each row names the test that pins it (`js::tests::…` and so on are in the
+module; `oracle::…` is tests/stdlib_oracle.rs).
 
-`tests/stdlib_oracle.rs` holds the standard library and the comparator to the
-TypeScript's own answers over 9,132 hazardous inputs (tests/oracle/stdlib.json,
-written by tests/oracle/generate.ts).
+| what | how it is handled | test |
+|---|---|---|
+| `Number(text)` | StringToNumber by hand: JS whitespace trimmed, `""` → 0, `"  12 "` → 12, `"1e3"`, `".5"`, `"5."`, `0x`/`0o`/`0b` (unsigned only, rounded once), `Infinity` (case-sensitive), else NaN; Rust's `parse` sees only validated decimal digits | `js::tests::string_to_number_matches_javascript`, `oracle::the_standard_library_answers_as_typescript_does` (`coerce.number`, `flat.tonumber`) |
+| `String(number)` | ECMAScript Number::toString from the `ryu-js` crate. Rust's own shortest form breaks 17-digit ties differently (`16086.196899414062`), so it is not used for text | `js::tests::number_to_string_matches_javascript`, `oracle::numbers_print_as_javascript_prints_them` (30,000 seeded doubles) |
+| `String(value)` | arrays join with `,` (null and undefined members empty), objects `[object Object]` | `js::tests::string_and_number_coercions_of_composites` |
+| `===`, `includes`, `Set` | strict equality (NaN not itself, `-0 === 0`), SameValueZero for membership, objects by identity (`Rc`) | `js::tests::identity_not_shape_decides_equality`, `filter::tests::membership_uses_same_value_zero`, `tests::identity_crosses_the_boundary` |
+| truthiness | `0`, `-0`, `NaN`, `""`, null, undefined are false | `tests::absence_reads_as_typescript_reads_it` |
+| `Math.round` | half toward +∞ (`-2.5` → `-2`), `-0` for a negative that rounds to zero; not Rust's `round` | `js::tests::math_round_is_half_toward_positive_infinity` |
+| `toFixed` (NUMBER.FORMAT, CURRENCY) | the double's exact decimal expansion rounded half up (`0.25` → `0.3`); not Rust's `{:.1}`, which rounds half to even | `js::tests::to_fixed_rounds_the_exact_value_half_up`, `stdlib::tests::number_format_and_currency` |
+| `%` | Rust's `%` is fmod, the dividend's sign, as JavaScript's | `filter::tests::remainder_and_division_by_zero`, `tests::arithmetic_keeps_javascript_semantics` |
+| object key order | array-index keys ascending first, then insertion order; a repeated key keeps its place | `js::tests::objects_keep_javascript_key_order`, `tests::maps_keep_javascript_key_order` |
+| `trim`, `\s` | JavaScript's WhiteSpace + LineTerminator set (with U+FEFF, without U+0085); not `char::is_whitespace` | `js::tests::strings_are_utf16_where_javascript_says_so` |
+| `.length`, `<` on text | UTF-16 code units; comparison in code-unit order | `js::tests::strings_are_utf16_where_javascript_says_so`, `stdlib::tests::flat_builtins` |
+| `split("")` | per UTF-16 unit: BMP text splits per character, astral text goes back to TypeScript | `stdlib::tests::flat_builtins`, `oracle::…` (`flat.split`) |
+| `toLowerCase`/`toUpperCase` | Rust's case mapping, which follows Unicode 17; Node 22's ICU follows Unicode 16. **An accepted divergence**: a character whose properties changed between the two can map differently. Known case: U+0295 (ʕ) counts as cased for the final-sigma rule in Rust and not in Node, so `"ΑΣʕ"` lowers to `αςʕ` here and `ασʕ` in TypeScript | `stdlib::tests::case_mapping_follows_rusts_unicode_tables` |
+| `new Date(text)` | the ISO forms V8's spec parser reads (`YYYY-MM-DD`, `…THH:mm[:ss[.f…]]` with `Z`/`±HH:mm`; day 31 rolls over, `24:00`, three fraction digits kept); a text with no digit is Invalid; anything else (V8's legacy parser, a date-time without offset = local time) goes back to TypeScript | `js_date::tests::reads_the_iso_forms_as_v8_does`, `js_date::tests::leaves_what_only_v8_can_read_unknown` |
+| `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
+| `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) | `js_date::tests::iso_strings_outside_four_digit_years`, `js_date::tests::time_clip_bounds_and_truncates`, `tests::coalesce_short_circuits_from_version_three` |
+| regexes (TEXT.REGEX_EXTRACT) | a backtracking matcher over UTF-16 units with Annex B syntax: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators. Invalid patterns are null, as `new RegExp` throws; lookbehind, named groups, octal and `\c` escapes, an escape class at a range end, groups nested past 100, and a match past its step/depth budget go back to TypeScript | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them` (3,200 seeded cases) |
+| `URL` (URL.HOST) | WHATWG parsing for special schemes with ASCII hosts: slashes and backslashes, userinfo, ports (any too large for 65535, however long, fails), forbidden host code points, lower-casing. IDNA, percent-encoded hosts, IPv4/IPv6, `file:` and non-special schemes go back to TypeScript | `stdlib::tests::url_host_as_whatwg_reads_it` |
+| `normalize("NFKD")` (TEXT.SLUG) | ASCII is its own NFKD; non-ASCII text goes back to TypeScript | `stdlib::tests::text_members` |
+| `JSON.stringify` (TEXT.SERIALISE) | its quoting and two-space layout; keys sorted by UTF-16 unit, then laid out in object order (index keys first) as `Object.fromEntries` does | `js::tests::json_stringify_indents_as_javascript_does`, `stdlib::tests::text_members` |
+| object-literal prototypes | `MAGNITUDE_SUFFIXES["constructor"]` is `Object`, so `"5 constructor"` is NaN; `MONTH_NAMES["constructor"]` fails `validParts` like no month | `stdlib::tests::figures_read_as_the_regex_reads_them` |
+| a dict whose `kind` names a binding kind | the TypeScript reads it as a record (`bindingOf`, whose `kind in describeBinding` walks the prototype chain, so `"toString"` and `"constructor"` count): its `==`, spreads and record arguments go back to TypeScript, and the shim sends no such value | `stdlib::tests::record_detection_walks_the_prototype_chain_as_in_does`, `tests::maps_keep_javascript_key_order` |
+
+`tests/stdlib_oracle.rs` holds every built-in and the comparator to the
+TypeScript's own answers (tests/oracle/stdlib.json, 10,455 cases), number
+printing to 30,000 seeded doubles (numbers.json) and the regex matcher to
+Node over 3,200 seeded pattern/text pairs (regex.json). Each function may
+hand back to TypeScript no more than its recorded share. All three files are
+written by tests/oracle/generate.ts, deterministically; CI regenerates and
+diffs them.
+
+The evaluator switch counts what it did (`rustEvalStats` in rust_engine.ts:
+not admitted, admitted, answered, fallback by reason). Under
+`MOVEMENT_ENGINE=rust` the conformance runs print the totals and fail when Rust
+answered nothing.
 
 ## Building and testing
 

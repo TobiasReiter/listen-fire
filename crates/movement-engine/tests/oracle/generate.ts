@@ -1,8 +1,15 @@
-// Writes stdlib.json: the TypeScript standard library's answers (and the
-// shared comparator's) for a spread of hazardous inputs, which
-// tests/stdlib_oracle.rs holds the Rust engine to. Values travel in the
-// eval wire format (crates/movement-engine/src/env.rs), so NaN, -0,
-// undefined and key order survive.
+// Writes the TypeScript's own answers, which tests/stdlib_oracle.rs holds the
+// Rust engine to:
+//   - stdlib.json: every built-in (flat and namespaced) and the shared
+//     comparator over a spread of hazardous inputs, values in the eval wire
+//     format (crates/movement-engine/src/env.rs) so NaN, -0, undefined and key
+//     order survive;
+//   - numbers.json: `String(x)` for 30,000 seeded doubles (bit patterns as
+//     hex), the 17-digit ties included;
+//   - regex.json: `new RegExp(pattern).exec(text)` for seeded patterns over
+//     backreferences, lazy quantifiers, lookaheads, \b, classes, anchors,
+//     alternation and empty iterations.
+// Deterministic: a rerun writes the same bytes (CI diffs them).
 //
 // Regenerate from apps/api (for its ts-node and compiler settings):
 //   TS_NODE_PROJECT=tsconfig.json npx ts-node --transpile-only \
@@ -18,6 +25,7 @@ import {
   coerceToNumber,
   stdlibFunctionById,
 } from '../../../../packages/movement-lang/expression/stdlib';
+import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
@@ -41,10 +49,17 @@ function wire(value: unknown): unknown {
  *  a case back to TypeScript. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+function holdsLoneSurrogate(value: unknown): boolean {
+  if (typeof value === 'string') return LONE_SURROGATE.test(value);
+  if (Array.isArray(value)) return value.some(holdsLoneSurrogate);
+  if (value !== null && typeof value === 'object') return Object.entries(value).some(([k, v]) => LONE_SURROGATE.test(k) || holdsLoneSurrogate(v));
+  return false;
+}
+
 function outcome(run: () => unknown): unknown {
   try {
     const value = run();
-    if (typeof value === 'string' && LONE_SURROGATE.test(value)) return { loneSurrogate: true };
+    if (holdsLoneSurrogate(value)) return { loneSurrogate: true };
     return { value: wire(value) };
   } catch (error) {
     const e = error instanceof Error ? error : new Error(String(error));
@@ -104,6 +119,21 @@ stdlib('text.serialise', [
   [1, 'json'], [1, undefined], [1, 7], [1, { a: 1 }],
 ]);
 
+const FLAT_UNARY = [
+  'isnull', 'trim', 'lower', 'upper', 'length', 'abs', 'round', 'floor', 'ceil', 'tostring', 'tonumber', 'date',
+  'datetime', 'number',
+];
+const flat = (id: string, args: unknown[]) =>
+  cases.push({ fn: `flat.${id}`, args: args.map(wire), outcome: outcome(() => applyMovementFunction(id, args)) });
+for (const id of FLAT_UNARY) for (const value of VALUES) flat(id, [value]);
+for (const id of FLAT_UNARY) flat(id, []);
+for (const args of [[], [null], [1, null, [2, undefined, null], 'x'], [[]], [[1], [2]], [undefined, 0, false, ''], [{ a: 1 }, NaN]]) {
+  flat('multi', args);
+}
+for (const args of cross([' a, ,b ,', 'a,b', '', 'x😀y', null, undefined, 12.5, ['p', 'q']], [undefined, null, ',', '', ' ', 'a,', 0])) {
+  flat('split', args[1] === undefined ? [args[0]] : args);
+}
+
 for (const value of VALUES) {
   cases.push({ fn: 'coerce.date', args: [wire(value)], outcome: outcome(() => coerceToDate(value)) });
   cases.push({ fn: 'coerce.datetime', args: [wire(value)], outcome: outcome(() => coerceToDatetime(value)) });
@@ -124,4 +154,97 @@ for (const left of COMPARED) {
 }
 
 writeFileSync(path.join(__dirname, 'stdlib.json'), `${JSON.stringify(cases, null, 0).replace(/\},\{"fn"/g, '},\n{"fn"')}\n`);
-console.log(`${cases.length} cases`);
+console.log(`stdlib.json: ${cases.length} cases`);
+
+// ── Seeded randomness ─────────────────────────────────────────────────────────
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ── numbers.json ──────────────────────────────────────────────────────────────
+
+const random = mulberry32(20261007);
+const view = new DataView(new ArrayBuffer(8));
+const numbers: Array<[string, string]> = [];
+const bitsOf = (x: number) => {
+  view.setFloat64(0, x);
+  return view.getBigUint64(0).toString(16).padStart(16, '0');
+};
+// Any bit pattern: every magnitude, subnormals included.
+while (numbers.length < 20_000) {
+  view.setUint32(0, Math.floor(random() * 2 ** 32));
+  view.setUint32(4, Math.floor(random() * 2 ** 32));
+  const x = view.getFloat64(0);
+  if (Number.isFinite(x)) numbers.push([bitsOf(x), String(x)]);
+}
+// A 53-bit integer scaled by a small power of two: a short exact expansion,
+// where two 17-digit candidates are most often equally near.
+while (numbers.length < 30_000) {
+  const m = 2 ** 52 + Math.floor(random() * 2 ** 52);
+  const x = (random() < 0.5 ? -1 : 1) * m * 2 ** -(Math.floor(random() * 50) + 1);
+  numbers.push([bitsOf(x), String(x)]);
+}
+writeFileSync(path.join(__dirname, 'numbers.json'), `[\n${numbers.map((n) => JSON.stringify(n)).join(',\n')}\n]\n`);
+console.log(`numbers.json: ${numbers.length} doubles`);
+
+// ── regex.json ────────────────────────────────────────────────────────────────
+
+const rx = mulberry32(7);
+const pick = <T>(items: readonly T[]): T => items[Math.floor(rx() * items.length)]!;
+const ATOMS = ['a', 'b', 'c', '.', '\\d', '\\w', '\\s', '\\W', '[a-c]', '[^ab]', '[\\d_]', 'x', ' ', '\\.', '-'];
+const ASSERTIONS = ['^', '$', '\\b', '\\B'];
+const QUANTIFIERS = ['*', '+', '?', '{2}', '{1,2}', '{0,}', '{0,1}', '*?', '+?', '??', '{1,3}?'];
+
+function regexPattern(depth: number, groups: { count: number }): string {
+  const terms: string[] = [];
+  const length = 1 + Math.floor(rx() * 4);
+  for (let i = 0; i < length; i++) {
+    const roll = rx();
+    let term: string;
+    if (roll < 0.12) term = pick(ASSERTIONS);
+    else if (roll < 0.22 && groups.count > 0) term = `\\${1 + Math.floor(rx() * groups.count)}`;
+    else if (roll < 0.45 && depth < 3) {
+      const kind = pick(['(', '(', '(?:', '(?=', '(?!']);
+      if (kind === '(') groups.count += 1;
+      const inner = [regexPattern(depth + 1, groups)];
+      if (rx() < 0.4) inner.push(regexPattern(depth + 1, groups));
+      term = `${kind}${inner.join('|')})`;
+    } else term = pick(ATOMS);
+    if (!ASSERTIONS.includes(term) && !term.startsWith('(?=') && !term.startsWith('(?!') && rx() < 0.4) term += pick(QUANTIFIERS);
+    terms.push(term);
+  }
+  if (rx() < 0.1 && depth === 0) terms.push(pick(['(', ')', '[', '*', '{2,1}', '(?<n>a)', '(?<=a)']));
+  return terms.join('');
+}
+
+const TEXT_UNITS = ['a', 'b', 'c', 'x', ' ', '1', '_', '-', '.', '\n', 'A', 'é'];
+const regexCases: Array<{ pattern: string; text: string; outcome: unknown }> = [];
+for (let p = 0; p < 400; p++) {
+  const pattern = regexPattern(0, { count: 0 });
+  for (let t = 0; t < 8; t++) {
+    const length = Math.floor(rx() * 10);
+    let text = '';
+    for (let i = 0; i < length; i++) text += pick(TEXT_UNITS);
+    let outcome: unknown;
+    try {
+      const match = new RegExp(pattern).exec(text);
+      outcome = match === null ? { match: null } : { match: [...match].map((g) => (g === undefined ? null : g)) };
+    } catch {
+      outcome = { syntaxError: true };
+    }
+    regexCases.push({ pattern, text, outcome });
+  }
+}
+writeFileSync(
+  path.join(__dirname, 'regex.json'),
+  `[\n${regexCases.map((c) => JSON.stringify(c)).join(',\n')}\n]\n`,
+);
+console.log(`regex.json: ${regexCases.length} cases`);

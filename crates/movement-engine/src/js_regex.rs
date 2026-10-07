@@ -96,18 +96,29 @@ impl Regex {
     }
 }
 
+/// Groups nested deeper than this are not parsed: the parser recurses per
+/// level, and V8 reads patterns far deeper than a stack here allows (5,000
+/// levels compile there), so such a pattern goes back to TypeScript.
+const MAX_NESTING: usize = 100;
+
 /// Capturing groups in the whole pattern: a `\N` reads as a backreference
 /// when N is at most this, wherever the group is.
 fn count_groups(p: &[u16]) -> Result<usize, RegexError> {
     let mut count = 0;
     let mut i = 0;
     let mut in_class = false;
+    let mut depth = 0usize;
     while i < p.len() {
         match p[i] {
             0x5C => i += 1,
             0x5B => in_class = true,
             0x5D => in_class = false,
+            0x29 if !in_class => depth = depth.saturating_sub(1),
             0x28 if !in_class => {
+                depth += 1;
+                if depth > MAX_NESTING {
+                    return Err(RegexError::Unsupported("groups nested past the parser's depth".into()));
+                }
                 if p.get(i + 1) == Some(&u16::from(b'?')) {
                     if p.get(i + 2) == Some(&u16::from(b'<')) {
                         return Err(RegexError::Unsupported("named groups and lookbehind".into()));
@@ -684,6 +695,8 @@ mod tests {
         for pattern in ["(?<y>a)", "(?<=a)b", r"\2(a)", r"\08", r"\c", r"[\d-z]", r"\k<a>", "(?=a)*", r"\p{L}"] {
             assert!(matches!(Regex::new(pattern), Err(RegexError::Unsupported(_))), "{pattern}");
         }
+        let nested = format!("{}a{}", "(".repeat(5000), ")".repeat(5000));
+        assert!(matches!(Regex::new(&nested), Err(RegexError::Unsupported(_))));
         let long = "a".repeat(5000);
         assert!(matches!(Regex::new("(a|b)*c").unwrap().exec(&long), Err(RegexError::Unsupported(_))));
         // A one-character repeat loops rather than recursing, so a long text

@@ -9,7 +9,9 @@ name: movement-wasm
 #    artifact: every corpus program and expression text parses as pinned;
 #    and the catalog differential: the Rust catalog answers every lookup the
 #    checker corpus makes as the TypeScript one does; and the engine's
-#    TypeScript shim, against a double and through the committed artifact.
+#    TypeScript shim, against a double and through the committed artifact;
+#    the Rust engine's oracle regenerated from the TypeScript and diffed;
+#    and both conformance corpora run with MOVEMENT_ENGINE=rust.
 #
 # The committed artifact was built on macOS; the path remapping and pinned
 # toolchain in scripts/build-movement-wasm.sh are meant to make Linux produce the
@@ -25,6 +27,10 @@ on:
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
       - "apps/api/src/services/movement_engine/rust_engine*.ts"
+      - "apps/api/src/services/movement_engine/expression.ts"
+      - "apps/api/src/services/movement_engine/builtins.ts"
+      - "apps/api/src/test/rust_eval_stats*"
+      - "apps/api/src/test/jest-conformance-v*.config.ts"
       - "apps/api/src/services/movement_engine/__test__/rust_e*"
       - ".github/workflows/movement-wasm.yml"
   push:
@@ -39,6 +45,10 @@ on:
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
       - "apps/api/src/services/movement_engine/rust_engine*.ts"
+      - "apps/api/src/services/movement_engine/expression.ts"
+      - "apps/api/src/services/movement_engine/builtins.ts"
+      - "apps/api/src/test/rust_eval_stats*"
+      - "apps/api/src/test/jest-conformance-v*.config.ts"
       - "apps/api/src/services/movement_engine/__test__/rust_e*"
       - ".github/workflows/movement-wasm.yml"
 
@@ -115,6 +125,27 @@ jobs:
       - name: Engine shim, against a double and through the committed artifact
         working-directory: apps/api
         run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/rust_e(ngine|val)'
+      # The oracle the crate tests hold the Rust engine to is the TypeScript's
+      # own answers: a TypeScript change that moves one must move the oracle.
+      - name: The Rust engine's oracle is current
+        working-directory: apps/api
+        run: |
+          TS_NODE_PROJECT=tsconfig.json npx ts-node --transpile-only ../../crates/movement-engine/tests/oracle/generate.ts
+          git diff --exit-code -- ../../crates/movement-engine/tests/oracle || {
+            echo "::error::crates/movement-engine/tests/oracle is stale: regenerate it (see generate.ts) and commit it, then make the crate tests pass."
+            exit 1
+          }
+      # The corpora's suites import the generated Prisma client's types.
+      - run: pnpm prisma generate
+      # Everything the allow-list admits runs in Rust; the teardown fails a
+      # run in which Rust answered nothing.
+      - name: Conformance corpora through the Rust evaluator
+        working-directory: apps/api
+        env:
+          MOVEMENT_ENGINE: rust
+        run: |
+          pnpm run test:conformance:v1
+          pnpm run test:conformance:v2
       # The artifact ships to browsers: keep its download size in view.
       - name: Size budget
         run: |

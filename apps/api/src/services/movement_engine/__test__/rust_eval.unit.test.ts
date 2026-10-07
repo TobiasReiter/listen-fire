@@ -8,7 +8,7 @@ import { parseMovementExpression } from 'movement-lang';
 import { MovementEngineError } from '../errors';
 import { Environment, evalMovementExpr, type Binding, type MovementExprContext } from '../expression';
 import type { Provenance } from '../provenance';
-import { evalInRust, rustCanEval } from '../rust_engine';
+import { evalInRust, resetRustEvalStats, rustCanEval, rustEvalStats } from '../rust_engine';
 
 function contextOf(bindings: Record<string, unknown>, extra: Partial<MovementExprContext> = {}): MovementExprContext {
   const env = new Environment();
@@ -101,5 +101,21 @@ describe('the Rust evaluator switch', () => {
     expect(inRust('missing', ctx)).toBeUndefined();
     // A date-time with no offset is local time, which only V8 knows here.
     expect(inRust('DATE.FORMAT_ISO(t)', ctx)).toBeUndefined();
+  });
+
+  it('counts what it sent, what Rust answered and what came back, by reason', () => {
+    resetRustEvalStats();
+    const ctx = contextOf({ n: 2, t: '2026-03-12T09:30' });
+    inRust('n + 1', ctx);
+    inRust('DATE.FORMAT_ISO(t)', ctx);
+    inRust('@current_date', ctx);
+    expect(rustEvalStats).toEqual({
+      notAdmitted: 1,
+      admitted: 2,
+      answered: 1,
+      fallback: { 'V8 reads "2026-03-12T09:30" its own way': 1 },
+    });
+    resetRustEvalStats();
+    expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   });
 });
