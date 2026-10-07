@@ -15,7 +15,8 @@
 import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient';
 import { logger } from '../../../logger';
 import type { FileRef, WriteResult } from '../../adapter';
-import { streamFileRef } from '../../engine/files/retrieve';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { SLACK_ADAPTER_TYPE } from './types';
 import { finalizeMessageText } from './mentions';
 
@@ -123,10 +124,12 @@ const WRITE_UNION_CLASH =
  */
 export async function createUnifiedMessage(input: {
   client: SlackClient;
+  /** The team whose run is posting — a `File` value is redeemed for it. */
+  teamId: TeamId;
   anchor: SlackWriteAnchor;
   fields: Record<string, unknown>;
 }): Promise<WriteResult> {
-  const { client, anchor, fields } = input;
+  const { client, teamId, anchor, fields } = input;
   const text = str(fields.text);
   const fileValue = asFileValue(fields.file);
   const blocks = asBlocksValue(fields.blocks);
@@ -149,7 +152,7 @@ export async function createUnifiedMessage(input: {
   if (fileValue) {
     // A file share carries no interactive blocks (Slack's upload flow has no
     // blocks surface) — the writeUnion rules this combination out already.
-    return uploadFileMessage({ client, channelId, threadTs, fileValue, comment: finalText });
+    return uploadFileMessage({ client, teamId, channelId, threadTs, fileValue, comment: finalText });
   }
 
   // Blocks ride verbatim; `text` is the notification fallback Slack shows in
@@ -311,13 +314,14 @@ function enrichPostMessageError(err: unknown): Error {
  */
 async function uploadFileMessage(input: {
   client: SlackClient;
+  teamId: TeamId;
   channelId: string;
   threadTs: string | undefined;
   fileValue: FileValue;
   comment: string | undefined;
 }): Promise<WriteResult> {
-  const { client, channelId, threadTs, fileValue, comment } = input;
-  const bytes = await fetchFileBytes(fileValue);
+  const { client, teamId, channelId, threadTs, fileValue, comment } = input;
+  const bytes = await fetchFileBytes(fileValue, teamId);
   if (!bytes) {
     throw new Error('SlackAdapter.createRecord: could not retrieve file bytes for the File value.');
   }
@@ -420,10 +424,10 @@ interface FileBytes {
   contentType: string;
 }
 
-async function fetchFileBytes(fileValue: FileValue): Promise<FileBytes | null> {
-  if (typeof fileValue.retrieve === 'function') {
+async function fetchFileBytes(fileValue: FileValue, teamId: TeamId): Promise<FileBytes | null> {
+  if (hasFileSource(fileValue)) {
     try {
-      const resolved = await streamFileRef(fileValue);
+      const resolved = await streamFileRef(fileValue, { teamId });
       const body = await streamToBuffer(resolved.stream);
       return {
         body,

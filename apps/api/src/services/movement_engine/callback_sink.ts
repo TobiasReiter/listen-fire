@@ -9,7 +9,9 @@ import type { CallbackId } from '../../generated/kysely/automations/Callback';
 import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
 import type { TeamId } from '../../generated/kysely/core/Team';
 
-import { getAutomationsQb, getQb } from '../../lib/kysely';
+import { sql } from 'kysely';
+
+import { getAutomationsQb } from '../../lib/kysely';
 import type { ResolvableAwait } from '../translation_graph/adapters/await_correlation';
 import {
   callbackUrl,
@@ -26,15 +28,18 @@ export type { CallbackSink };
 
 /**
  * The callback half of the resume drain's resolvability read: a park on a
- * callback is resolvable once the callback has a recorded call. A fire wakes
- * its awaiters in-process and also queues a delayed `wake_await` row
- * (`callback_fire.ts`), so a wake lost to a restart between the claim and the
- * wake still finds the call on the ledger — without that a run would sit
- * parked forever, deaf to a tap that DID happen.
+ * callback is resolvable once one of its calls has LANDED — its body has
+ * started (`LedgerCall`). The body runs under the run's lease and the drain
+ * reads this under it too, so a started body is a finished one unless its
+ * holder died mid-body; an awaiter never resumes ahead of the body its call
+ * fired. A fire wakes its awaiters in-process after the body and also queues
+ * a delayed `wake_await` row (`callback_fire.ts`), so a wake lost to a restart
+ * still finds the landed call — without that a run would sit parked forever,
+ * deaf to a tap that DID happen.
  *
  * Resolvability is per-adapter and lives outside the generic correlation map,
  * exactly as the ask's does: load this type's rows, then keep the ones whose
- * callback has at least one recorded call.
+ * callback has a landed call.
  */
 export async function loadResolvableCallbackAwaits(
   opts: { runId?: TriggerRunId } = {},
@@ -50,7 +55,7 @@ export async function loadResolvableCallbackAwaits(
   const fired = await getAutomationsQb(['callback'])
     .selectFrom('callback')
     .where('id', 'in', ids)
-    .where(({ eb, fn, val }) => eb(fn('jsonb_array_length', ['calls']), '>', val(0)))
+    .where(sql<boolean>`EXISTS (SELECT 1 FROM jsonb_array_elements(calls) AS call WHERE call ? 'bodyStartedAt')`)
     .select('id')
     .execute();
   const firedIds = new Set<string>(fired.map((f) => f.id));
@@ -79,12 +84,12 @@ export function makeRecorderCallbackSink(
         params: input.params,
         state: input.state,
         singleUse: input.singleUse,
-        ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        ...(input.expiresAt !== undefined ? { expiresAt: new Date(input.expiresAt) } : {}),
       });
       return { id: record.id, url: callbackUrl(record.id) };
     },
 
-    calls(callbackId) {
+    calls({ callbackId }) {
       return readCallbackCalls(callbackId);
     },
 

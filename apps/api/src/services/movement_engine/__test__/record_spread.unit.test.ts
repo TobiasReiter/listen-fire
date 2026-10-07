@@ -98,7 +98,7 @@ import {
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000053' as TeamId;
 
@@ -190,7 +190,7 @@ const DECK: FileRef = {
   name: 'deck.pdf',
   contentType: 'application/pdf',
   size: 1234,
-  source: { ownerAdapterType: 'email', handle: 'attachment-1' },
+  source: { adapterType: 'email', handle: 'attachment-1' },
 };
 
 function event(): TriggerEvent {
@@ -234,6 +234,7 @@ async function run(body: string[], replies: Reply[]) {
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: { resolve: ({ adapterType }) => fakeAdapter(adapterType) },
       llm: { extractCall: llm.client },
       files: {
@@ -241,7 +242,6 @@ async function run(body: string[], replies: Reply[]) {
       },
     }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { calls: llm.calls, writes, result };
 }

@@ -89,6 +89,7 @@ import {
   foldKeyValue,
   identityLocks,
   recordLock,
+  type CrossRunLocks,
 } from '../effect_locks';
 import { InMemoryWriteLocks, type WriteLockHolder } from '../../write_locks/write_locks';
 
@@ -100,12 +101,11 @@ import {
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type SchemaTypeDescriptor, type TransformOutputShape } from '../../translation_graph/types';
+import { positionData, type SchemaTypeDescriptor } from '../../translation_graph/types';
 import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { InstanceSchema } from 'movement-lang';
-import { makeTestHost } from '../host';
+import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
 
@@ -273,14 +273,8 @@ const PRELUDE = [
   '',
 ].join('\n');
 
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
-}
-
 /** A `fetch_url` that takes as long as its url says (`"40"` → 40ms). */
 const delayedFetch: MovementTransformInvoker = {
-  declaredOutput: (plugin) => realOutput(plugin),
   async invoke({ config }) {
     await sleep(Number(config.url));
     return { text: `got-${String(config.url)}` };
@@ -308,9 +302,9 @@ async function run(
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email : crm.adapter,
       },
@@ -496,12 +490,32 @@ describe('the arms of parallel and race are isolated as members are', () => {
   });
 });
 
+/** A holder as the host's token-based locks: each acquire answers a token
+ *  that gives back exactly its names. */
+function byToken(holder: WriteLockHolder): CrossRunLocks {
+  const taken = new Map<string, readonly string[]>();
+  let next = 0;
+  return {
+    acquire: async (names) => {
+      await holder.acquire(names);
+      const token = `t${++next}`;
+      taken.set(token, names);
+      return token;
+    },
+    release: async (token) => {
+      const names = taken.get(token);
+      taken.delete(token);
+      if (names !== undefined) await holder.release(names);
+    },
+  };
+}
+
 describe('the lock table', () => {
   const exclusive = { kind: 'exclusive' } as const;
   const inMemoryHolder = () => new InMemoryWriteLocks().holder(TEAM_ID);
 
   it('two effects wanting the same locks in opposite orders both finish', async () => {
-    const locks = new EffectLocks({ holder: inMemoryHolder() });
+    const locks = new EffectLocks({ crossRun: byToken(inMemoryHolder()) });
     const done: string[] = [];
     await Promise.all([
       locks.withLocks(
@@ -523,7 +537,7 @@ describe('the lock table', () => {
   });
 
   it('an effect asking again for a lock it holds does not wait on itself', async () => {
-    const locks = new EffectLocks({ holder: inMemoryHolder() });
+    const locks = new EffectLocks({ crossRun: byToken(inMemoryHolder()) });
     const answer = await locks.withLocks([{ name: 'k', mode: exclusive }], () =>
       locks.withLocks([{ name: 'k', mode: exclusive }], async () => 'inner'),
     );
@@ -531,7 +545,7 @@ describe('the lock table', () => {
   });
 
   it('one group shares a lock; another group, and an exclusive holder, wait — first come, first served', async () => {
-    const locks = new EffectLocks({ holder: inMemoryHolder() });
+    const locks = new EffectLocks({ crossRun: byToken(inMemoryHolder()) });
     const events: string[] = [];
     const hold = (label: string, mode: { kind: 'exclusive' } | { kind: 'shared'; group: string }, ms: number) =>
       locks.withLocks([{ name: 't', mode }], async () => {
@@ -565,6 +579,7 @@ describe('the lock table', () => {
       constraints: { any: [{ all: [{ field: 'tags' }] }] },
       resolveRecord: { tags: ['a'] },
       fields: { tags: ['a'] },
+      languageVersion: CURRENT_LANGUAGE_VERSION,
     });
     expect(locks).toEqual([{ name: expect.stringMatching(/^identity /), mode: { kind: 'exclusive' } }]);
   });
@@ -578,6 +593,7 @@ describe('the cross-run locks beneath the lock table', () => {
     constraints: { any: [{ all: [{ field: 'domain' }] }] },
     resolveRecord: { domain: 'acme.com' },
     fields: { domain: 'acme.com' },
+    languageVersion: CURRENT_LANGUAGE_VERSION,
   });
   const typeLockName = companyIdentity[0]!.name;
 
@@ -614,6 +630,7 @@ describe('the cross-run locks beneath the lock table', () => {
         constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] },
         resolveRecord: { name: 'Acme' },
         fields: { name: 'Acme' },
+        languageVersion: CURRENT_LANGUAGE_VERSION,
       }),
       [typeLockName],
     ],
@@ -628,7 +645,7 @@ describe('the cross-run locks beneath the lock table', () => {
 
   it("takes a flow's cross-run names once, after the run's own gate and before the effect", async () => {
     const holder = recordingHolder();
-    const locks = new EffectLocks({ holder });
+    const locks = new EffectLocks({ crossRun: byToken(holder) });
     await locks.withLocks([recordLock(system, 'r1'), ...companyIdentity, recordLock(system, 'r1')], async () => {
       holder.events.push('effect');
     });
@@ -639,7 +656,7 @@ describe('the cross-run locks beneath the lock table', () => {
 
   it('gives back exactly what it took when the effect throws', async () => {
     const holder = recordingHolder();
-    const locks = new EffectLocks({ holder });
+    const locks = new EffectLocks({ crossRun: byToken(holder) });
     await expect(
       locks.withLocks([recordLock(system, 'r1')], async () => {
         throw new Error('the write failed');
@@ -653,7 +670,7 @@ describe('the cross-run locks beneath the lock table', () => {
 
   it('a nested flow gives back only what it took itself, before the outer flow gives back its own', async () => {
     const holder = recordingHolder();
-    const locks = new EffectLocks({ holder });
+    const locks = new EffectLocks({ crossRun: byToken(holder) });
     await locks.withLocks(companyIdentity, () =>
       locks.withLocks([...companyIdentity, recordLock(system, 'r1')], async () => undefined),
     );
@@ -670,7 +687,7 @@ describe('the cross-run locks beneath the lock table', () => {
     const holder = table.holder(TEAM_ID);
     const acquire = jest.spyOn(holder, 'acquire');
     const release = jest.spyOn(holder, 'release');
-    const locks = new EffectLocks({ holder });
+    const locks = new EffectLocks({ crossRun: byToken(holder) });
     const identity = (domain: string) =>
       identityLocks({
         system,
@@ -678,6 +695,7 @@ describe('the cross-run locks beneath the lock table', () => {
         constraints: { any: [{ all: [{ field: 'domain' }] }] },
         resolveRecord: { domain },
         fields: { domain },
+        languageVersion: CURRENT_LANGUAGE_VERSION,
       });
     let releaseSecond: () => void = () => {};
     const secondRunning = new Promise<void>((resolve) => (releaseSecond = resolve));
@@ -701,7 +719,7 @@ describe('the cross-run locks beneath the lock table', () => {
 
   it('a flow asking again for names it holds does not take them again', async () => {
     const holder = recordingHolder();
-    const locks = new EffectLocks({ holder });
+    const locks = new EffectLocks({ crossRun: byToken(holder) });
     await locks.withLocks(companyIdentity, () =>
       locks.withLocks([...companyIdentity, recordLock(system, 'r1')], async () => undefined),
     );
@@ -710,7 +728,7 @@ describe('the cross-run locks beneath the lock table', () => {
 
   it('a flow whose locks are all its own takes nothing across runs', async () => {
     const holder = recordingHolder();
-    const locks = new EffectLocks({ holder });
+    const locks = new EffectLocks({ crossRun: byToken(holder) });
     await locks.withLocks(companyIdentity, () =>
       locks.withLocks(companyIdentity, async () => undefined),
     );
@@ -719,7 +737,7 @@ describe('the cross-run locks beneath the lock table', () => {
 
   it("a second flow waiting on the run's own gate does not wait across runs until it is let through", async () => {
     const holder = recordingHolder();
-    const locks = new EffectLocks({ holder });
+    const locks = new EffectLocks({ crossRun: byToken(holder) });
     const flow = (label: string) =>
       locks.withLocks([recordLock(system, 'r1')], async () => {
         holder.events.push(`start ${label}`);

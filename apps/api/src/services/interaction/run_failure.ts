@@ -13,6 +13,8 @@ import { clearJoins } from '../movement_engine/join_pending';
 import { dropAwaitCorrelationsForRun } from '../translation_graph/adapters/await_correlation';
 import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
 import { revokeRunCallbacks } from '../movement_engine/callback_store';
+import { withRunLease } from '../movement_engine/run_lease';
+import { logger } from '../logger';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 
 /**
@@ -76,9 +78,12 @@ export async function settleRunsParkedOnTriggers(input: {
   // `parked_run` holds only LIVE leaves (a settled one is deleted), so this is
   // bounded live state rather than run history — cheap to read whole, and this
   // runs only when a listener is actually being retired.
+  // A leaf another instance is resuming right now (`resuming`) counts too:
+  // missed, its run would be stranded on a retired trigger the moment that
+  // resume parks again. Such a run is busy below, and is stamped.
   const parked = await getAutomationsQb(['parked_run'])
     .selectFrom('parked_run')
-    .where('status', '=', 'parked')
+    .where('status', 'in', ['parked', 'resuming'])
     .select('run_id')
     .execute();
   const parkedRunIds = [...new Set(parked.map((p) => p.run_id))];
@@ -91,8 +96,68 @@ export async function settleRunsParkedOnTriggers(input: {
     .select('id')
     .execute();
   for (const run of runs) {
-    await settleUnresumableRun({ runId: run.id, reason: input.reason });
+    // Under the run's lease. A run another instance is resuming right now is
+    // stamped instead: its cancel gate stops it at the next statement and
+    // settles it with this reason (or the park sink does, should it park).
+    const settled = await withRunLease(run.id, () =>
+      settleUnresumableRun({ runId: run.id, reason: input.reason }),
+    );
+    if (settled.kind === 'busy') {
+      await stampCancelRequested(run.id, { reason: input.reason, statuses: ['running', 'parked'] });
+    }
   }
+}
+
+/**
+ * The cancel-race closure for parked runs: every run that still holds a
+ * parked leaf and carries a `cancel_requested_at` stamp, whatever the leaf is
+ * parked on (a timer, an await, a limit). A cancel is stamped rather than
+ * settled when another entry holds the run; that entry's cancel gate, or its
+ * park sink's tail check, normally settles it. A resume that finished without
+ * reaching either (it completed its branch before the gate read the stamp,
+ * and parked nothing new) leaves the run parked on its other leaves with the
+ * stamp unread. Settling here bounds that to one sweep, rather than waiting
+ * for a wake that may be hours away or never come.
+ */
+export async function settleStampedParkedRuns(): Promise<void> {
+  const rows = await getAutomationsQb(['trigger_run', 'parked_run'])
+    .selectFrom('trigger_run')
+    .innerJoin('parked_run', 'parked_run.run_id', 'trigger_run.id')
+    .where('trigger_run.cancel_requested_at', 'is not', null)
+    .select('trigger_run.id as run_id')
+    .distinct()
+    .execute();
+  for (const row of rows) {
+    try {
+      // Under the run's lease; a run another instance is stepping is that
+      // holder's to settle (its cancel gate sees the stamp), or the next pass's.
+      await withRunLease(row.run_id, () => settleCancelledRun(row.run_id));
+    } catch (err) {
+      logger.error('[RunFailure] settling a stamped parked run failed', {
+        runId: row.run_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+/** The guarded stamp: only lands on a run that is STILL in one of `statuses`
+ *  (`running` unless said) with no cancel already in flight. Returns whether
+ *  it won the race. */
+export async function stampCancelRequested(
+  runId: TriggerRunId,
+  opts: { reason: string; statuses?: ReadonlyArray<'running' | 'parked'> },
+): Promise<boolean> {
+  const { reason, statuses = ['running'] } = opts;
+  const row = await getAutomationsQb(['trigger_run'])
+    .updateTable('trigger_run')
+    .set({ cancel_requested_at: sql`now()`, cancel_reason: reason })
+    .where('id', '=', runId)
+    .where('status', 'in', [...statuses])
+    .where('cancel_requested_at', 'is', null)
+    .returning('id')
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 export async function failRunAndCancelRequests(input: {

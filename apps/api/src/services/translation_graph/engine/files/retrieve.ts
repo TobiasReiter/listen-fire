@@ -1,52 +1,120 @@
-// Consumer-side FileRef byte resolution.
+// Host-side FileRef byte resolution.
 //
-// A consuming adapter calls `streamFileRef(ref)` at the write to get the bytes;
-// the channel is the producer-supplied `ref.retrieve()` (lazy-at-write — see
-// plans/2026-06-18-fileref-resolution-rework). Byte resolution lives with the
-// producer, not the engine — a FileRef that reaches a consumer without a
-// `retrieve()` is a producer bug (the remote adapter re-binds wire FileRefs
-// before they get here), so this throws rather than guessing.
+// A FileRef is a descriptor: it names where its bytes live and carries no way
+// to fetch them. Whatever needs the bytes — a target adapter's write, the
+// file-to-text seam, the remote adapter exposing a file to its server — is
+// host code, and redeems the descriptor here: the document store by its key,
+// or the owning adapter INSTANCE (re-resolved with the credential and
+// construction args the descriptor names) through its `resolveFileRef`. The
+// engine never imports this module; bytes never reach it.
 
-import type { FileRef, ResolveFileRefResult } from '../../adapter';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { Adapter, EarlierFileSource, FileRef, FileSource, ResolveFileRefResult } from '../../adapter';
+import { DOCUMENT_STORE_OWNER } from './document_store';
 
-export async function streamFileRef(ref: FileRef): Promise<ResolveFileRefResult> {
-  if (typeof ref.retrieve === 'function') return ref.retrieve();
-  throw new Error(
-    'FileRef has no retrieve() — its producer did not supply a byte channel.',
-  );
+/** How the owning instance is resolved: production's `resolveAdapter` unless a
+ *  test supplies its own. */
+export type ResolveFileOwner = (input: {
+  adapterType: string;
+  teamId: TeamId;
+  credentialsId?: string;
+  constructionArgs?: Record<string, string>;
+}) => Adapter | Promise<Adapter>;
+
+export interface StreamFileRefOptions {
+  /** The team the file was read for — the owner instance is the team's. */
+  teamId: TeamId;
+  resolveOwner?: ResolveFileOwner;
 }
 
-/** Structural guard for a branded `FileRef`. */
-export function isFileRef(value: unknown): value is FileRef {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as { __brand?: unknown }).__brand === 'FileRef'
-  );
+/** Fresh bytes for a descriptor on every call (a consumer that needs them
+ *  twice calls twice). Throws when the descriptor has no way back to them. */
+export async function streamFileRef(
+  ref: FileRef,
+  options: StreamFileRefOptions,
+): Promise<ResolveFileRefResult> {
+  const owner = fileOwner(ref.source);
+  if (owner === undefined) {
+    throw new Error(
+      `the file${ref.name !== undefined ? ` '${ref.name}'` : ''} carries no handle to its bytes, so they cannot be fetched`,
+    );
+  }
+  if (owner.kind === 'document') return streamDocument(owner.objectUri, ref);
+  const resolveOwner = options.resolveOwner ?? productionResolveOwner;
+  const adapter = await resolveOwner({
+    adapterType: owner.adapterType,
+    teamId: options.teamId,
+    ...(owner.credentialId !== undefined ? { credentialsId: owner.credentialId } : {}),
+    ...(owner.constructionArgs !== undefined ? { constructionArgs: owner.constructionArgs } : {}),
+  });
+  if (!adapter.resolveFileRef) {
+    throw new Error(`the adapter '${owner.adapterType}' that owns this file cannot serve its bytes`);
+  }
+  return adapter.resolveFileRef({ ref });
 }
+
+/** Whether `streamFileRef` has anywhere to go for this file's bytes. */
+export function hasFileSource(ref: FileRef): boolean {
+  return fileOwner(ref.source) !== undefined;
+}
+
+/** Where a file's bytes are, whichever spelling its descriptor carries. */
+export type FileOwner =
+  | { kind: 'document'; objectUri: string }
+  | {
+      kind: 'adapter';
+      adapterType: string;
+      credentialId?: string;
+      constructionArgs?: Record<string, string>;
+      handle: string;
+    };
 
 /**
- * Give back the byte channel to every FileRef inside a value that crossed a
- * JSON-only boundary — the remote adapter's wire, or a parked run's stored
- * state. Such a FileRef keeps its metadata and its producer's durable handle
- * (`source`) and loses `retrieve()`, which is a closure; `revive` rebinds it
- * through whatever can redeem the handle. A FileRef that still has its channel
- * is left as it is. Deep, because a file can sit anywhere in a list or a
- * record; a copy, so the stored form is never changed under its reader.
+ * The owner a descriptor names. A run parked before descriptors carried
+ * instance identity holds the earlier spelling (`EarlierFileSource`): it still
+ * resolves, to the type's credential-free instance, exactly as it did when it
+ * parked. Parked data is JSON from storage, so each spelling is checked for
+ * the strings it needs rather than trusted.
  */
-export function reviveFileRefs(value: unknown, revive: (ref: FileRef) => FileRef): unknown {
-  if (Array.isArray(value)) return value.map((item) => reviveFileRefs(item, revive));
-  if (isFileRef(value)) return typeof value.retrieve === 'function' ? value : revive(value);
-  if (isPlainObject(value)) {
-    const out: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) out[key] = reviveFileRefs(entry, revive);
-    return out;
+export function fileOwner(source: FileSource | EarlierFileSource | undefined): FileOwner | undefined {
+  if (source === undefined) return undefined;
+  if ('store' in source) {
+    return typeof source.objectUri === 'string' ? { kind: 'document', objectUri: source.objectUri } : undefined;
   }
-  return value;
+  if (typeof source.handle !== 'string') return undefined;
+  if ('ownerAdapterType' in source) {
+    if (typeof source.ownerAdapterType !== 'string') return undefined;
+    return source.ownerAdapterType === DOCUMENT_STORE_OWNER
+      ? { kind: 'document', objectUri: source.handle }
+      : { kind: 'adapter', adapterType: source.ownerAdapterType, handle: source.handle };
+  }
+  if (typeof source.adapterType !== 'string') return undefined;
+  return {
+    kind: 'adapter',
+    adapterType: source.adapterType,
+    ...(source.credentialId !== undefined ? { credentialId: source.credentialId } : {}),
+    ...(source.constructionArgs !== undefined ? { constructionArgs: source.constructionArgs } : {}),
+    handle: source.handle,
+  };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object') return false;
-  const proto: unknown = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
+async function streamDocument(objectUri: string, ref: FileRef): Promise<ResolveFileRefResult> {
+  // Lazy: the document store's registry is off this module's eval-time graph,
+  // which every byte-consuming adapter imports.
+  const { services } = await import('../../../../adapters/registry');
+  const stream = await services.document.getFileNodeStream({ objectUri });
+  const contentType = stream.contentType ?? ref.contentType;
+  const size = stream.size ?? ref.size;
+  return {
+    stream,
+    ...(contentType !== undefined ? { contentType } : {}),
+    ...(size !== undefined ? { size } : {}),
+  };
 }
+
+const productionResolveOwner: ResolveFileOwner = async (input) => {
+  // Lazy: the adapter registry imports every adapter, and the adapters import
+  // this module.
+  const { resolveAdapter } = await import('../../adapters/resolve');
+  return resolveAdapter(input);
+};

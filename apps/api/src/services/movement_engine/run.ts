@@ -59,8 +59,7 @@
 // `Adapter.linkRecords` seam (KG: edge-only insert mirroring parentLink;
 // Attio: reference-field set/append) — adapters without the capability
 // are rejected by name. E8 lifts file imports (movement libraries, §H):
-// the catalog snapshot's `files` (else the host's `files.resolveFile`) are
-// the one injection point — resolution
+// the catalog snapshot's `files` are the one injection point — resolution
 // lives in movement-lang (`checkProgramWithLink` validates and returns
 // the link), imported movements execute against their library's OWN file
 // environment (built once per path), imported shapes bind as
@@ -75,6 +74,8 @@ import {
   readCollectionConfig,
   SEQUENTIAL_COLLECTION_SETTINGS,
   type CollectionRunSettings,
+  pluginOutputUnder,
+  type PluginOutput,
   before,
   CURRENT_LANGUAGE_VERSION,
   languageVersionDiagnostic,
@@ -176,7 +177,6 @@ import type {
   PathHead,
   Program,
   ProgramLink,
-  ResolveFile,
   ShapeDeclaration,
   ShapeNode,
   Statement,
@@ -206,14 +206,9 @@ import type {
   WriteInput,
   WriteResult,
 } from '../translation_graph/adapter';
-import { updateRecordSucceeded } from '../translation_graph/adapter';
-import type { BindingEndpoint, CallbackSink, EngineHost, ResolveAdapter } from './host';
-import {
-  newDryRunRehearsal,
-  wrapAdapterForDryRun,
-  type DryRunRehearsal,
-  type DryRunWriteSink,
-} from '../translation_graph/engine/dry_run_adapter';
+import { fileHandle, updateRecordSucceeded } from '../translation_graph/adapter';
+import type { AdapterResolution, BindingEndpoint, CallbackSink, EngineHost } from './host';
+import { hostAdapter, isAdapterCallCeilingReached } from './host_adapter';
 import { applicableRequiredFields } from '../translation_graph/required_fields';
 import type { MutationContext } from '../translation_graph/mutation_context';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
@@ -226,8 +221,6 @@ import {
   positionRecordId,
   type SchemaFieldDescriptor,
   type SourcePosition,
-  type TransformOutputKind,
-  transformOutputUnder,
 } from '../translation_graph/types';
 import {
   arbitrateWithoutJudge,
@@ -240,7 +233,6 @@ import {
   matchesResourceFilter,
   resolvePositionResources,
 } from '../translation_graph/engine/files/resources';
-import { DOCUMENT_STORE_OWNER, documentStoreFileRef } from '../translation_graph/engine/files/document_store';
 import {
   Environment,
   MovementEngineError,
@@ -283,7 +275,6 @@ import {
   type SummarisedOrigin,
 } from './provenance';
 import { surfaceReadAdapter } from './kg';
-import { checkPinned, parsePinned, type CheckInput } from './program_check';
 import { localEdgeAdapter } from './local_edge_adapter';
 import {
   countShapeNodes,
@@ -298,8 +289,8 @@ import {
   buildDeclarationSpec,
   buildExtractSpec,
   materializeExtract,
+  pluginSpecNamed,
   recordExtractedEntities,
-  invokePricedTransform,
   tracedUrl,
   type DeclaredNodeShape,
   type ExtractNodeSpec,
@@ -307,7 +298,7 @@ import {
   type FileTextResolution,
   type TransformInvocationResult,
 } from './extraction';
-import { RunCancelledSignal } from './errors';
+import { RunCancelledSignal, RunLeaseLost } from './errors';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import {
@@ -332,7 +323,6 @@ import {
   type ParkReader,
   type ParkWriter,
   type BindingDescriptor,
-  type FileRefDescriptor,
   type InstanceIdentityDescriptor,
   type ParkedScopeState,
   type RehydrationContext,
@@ -346,17 +336,24 @@ import {
   type CallbackCall,
   type CallbackParamSpec,
 } from './callback_types';
-import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
+import { checkPinned, parsePinned, type CheckInput } from './program_check';
 import { engineChoice, resumeSegmentInRust, runSegmentInRust, rustCanResume, rustCanRun } from './rust_engine';
-import type { WriteLocks } from '../write_locks/write_locks';
+import {
+  closeRunContext,
+  openRunContext,
+  publishTrace,
+  pricedCalls,
+  type PricedCalls,
+  type RunContext,
+  type RunLedger,
+} from './run_context';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';
 import {
-  currentRunSpend,
   formatUsd,
   isRunCostCapExceeded,
   RUN_COST_CAP_ENV_VAR,
   type RunCostCapExceeded,
-} from '../../lib/run_spend';
+} from '../../lib/run_cost';
 
 /** The in-memory graph a `Called` landing belongs to. A callback belongs to no
  *  SYSTEM, so this names the construct, never an adapter — it is what an `IS`
@@ -369,8 +366,8 @@ export interface RunMovementInput {
   source: string;
   /**
    * The language version the movement is pinned to — the run compiles and
-   * executes under it, and it is the run context's `languageVersion` for every
-   * plugin and adapter the run calls (`currentLanguageVersion()`). Absent ⇒
+   * executes under it, it is the segment's pin (`RunContext.languageVersion`),
+   * and every adapter answers under it (the host segment opened with it). Absent ⇒
    * the current version. A version this release does not support is refused
    * (MOVENG_LANGUAGE_VERSION), never run as the current one.
    */
@@ -386,16 +383,22 @@ export interface RunMovementInput {
    * passes the run row's `started_at`, which a resume reads back unchanged, so
    * a run that parks for a day still computes the window it started with.
    *
-   * Absent ⇒ the interpreter pins `new Date()` once at construction: still one
-   * instant for the whole run, just not one that survives a park. Every path
-   * that can park supplies it.
+   * An ISO 8601 instant. Absent ⇒ the interpreter pins `new Date()` once at
+   * construction: still one instant for the whole run, just not one that
+   * survives a park. Every path that can park supplies it.
    */
-  firedAt?: Date;
+  firedAt?: string;
+  /**
+   * The most the run may spend on priced work (model calls, paid services,
+   * priced plugins), in microdollars — the run host reads its deployment's cap
+   * once and hands it over as data. Absent ⇒ no cap.
+   */
+  costCapMicrodollars?: number;
   /**
    * What this run spent in its EARLIER segments, in microdollars — the host
    * reads it back off the run's record when it resumes a parked run, so the
-   * cost cap (`lib/run_spend.ts`) holds across every park. Absent ⇒ a fresh
-   * run, which has spent nothing.
+   * cost cap holds across every park. Absent ⇒ a fresh run, which has spent
+   * nothing.
    */
   priorSpentMicrodollars?: number;
   /**
@@ -421,11 +424,25 @@ export interface RunMovementInput {
   /** The run this is (the host's trigger-run id), named on the engine's log
    *  lines. Absent ⇒ the lines carry none (a test run, a script). */
   runId?: string;
-  /** Wrap every target adapter so writes are captured, not performed. */
+  /** Rehearse every target: each is resolved `dryRun`, so the host captures
+   *  its writes (into the host's write sink) rather than performing them. */
   dryRun?: boolean;
-  /** Receives each would-be write under `dryRun` — same `CapturedWrite`
-   *  currency as the TG engine's dry runs. */
-  writeSink?: DryRunWriteSink;
+  /**
+   * Where to suspend the run's flows, by address: just before a statement, or
+   * just before the k-th call a statement makes (an address ending in that
+   * call's `c k` step). The first flow to reach a listed address parks there,
+   * once for the segment, to re-run the statement on resume. The cost cap needs none of this —
+   * the engine suspends on its own ledger; it is for a host that wants a run
+   * paused at a known point. Absent ⇒ nowhere.
+   */
+  suspendAt?: readonly string[];
+  /**
+   * Imported credential name → its credential id
+   * (`external_service_credentials.id`), as the run host read them with the
+   * catalog snapshot. Ids never go into the snapshot itself. A name absent
+   * here ⇒ the instance is constructed with no credential.
+   */
+  credentialIds?: Readonly<Record<string, string>>;
 }
 
 /** Why a run paused: the limit it met, with what it had spent against it and
@@ -434,15 +451,6 @@ export interface RunLimitPause {
   limit: 'cost';
   capMicrodollars: number;
   spentMicrodollars: number;
-}
-
-/** A place the engine may suspend a flow (`EngineHost.control.suspendWhen`):
- *  just before a statement, or just before the k-th call a statement makes
- *  (`address` ends in that call's `c k` step). Either way the flow parks at the
- *  STATEMENT and re-runs it on resume. */
-export interface SuspensionPoint {
-  kind: 'statement' | 'call';
-  address: string;
 }
 
 /**
@@ -468,7 +476,12 @@ export interface ParkSink {
    * minted — the wake driver resumes without a human answer. Idempotent on
    * `(run_id, address)`.
    */
-  commitTimerPark(input: { address: string; state: unknown; wakeAt: Date }): Promise<void>;
+  commitTimerPark(input: {
+    address: string;
+    state: unknown;
+    /** When to wake, as an ISO 8601 instant. */
+    wakeAt: string;
+  }): Promise<void>;
   /**
    * Record an AWAIT park (`await x-[:E]->` untilNonEmpty, asks-as-adapter §A):
    * a `parked_run` row with `park_reason='await'` + the serialized scope, then
@@ -559,8 +572,6 @@ export interface CancelGate {
    *  where a stale "no" is not a few seconds' latency but a cancel discarded
    *  forever, because there is no later boundary to notice it at. */
   cancelledNow(): Promise<boolean>;
-  /** The stamped human-readable reason, once cancelled. */
-  reason(): string | null;
 }
 
 // Re-exported for the engine's public surface, alongside `CancelGate`.
@@ -672,6 +683,17 @@ export class MovementRunFailed extends Error {
  * raised before the interpreter starts (parse / check) are never wrapped and
  * pass straight back.
  */
+/** The run's pinned instant, from the ISO string it is handed. A string that
+ *  names no instant is refused: a clock that read "Invalid Date" would make
+ *  every date the run computes wrong without saying so. */
+function firedInstant(firedAt: string): Date {
+  const instant = new Date(firedAt);
+  if (Number.isNaN(instant.getTime())) {
+    throw new MovementEngineError('MOVENG_RUNTIME', `firedAt '${firedAt}' is not an ISO 8601 instant`);
+  }
+  return instant;
+}
+
 export function runFailureCause(error: unknown): unknown {
   return error instanceof MovementRunFailed ? error.cause : error;
 }
@@ -686,20 +708,21 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   //
   // A program the Rust engine runs whole is only parsed here, to decide: the
   // segment asks for its own check (the `check.program` host call), which
-  // throws exactly what parseAndCheck throws.
+  // throws exactly what parseAndCheck throws. It runs inside the same segment
+  // the interpreter would: its host calls are the run's.
   const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
   if (parsed !== undefined && rustCanRun(parsed, input)) {
-    const outcome = await withRunCallLedger(() => runSegmentInRust(input), runScopeOf(input));
-    // A program the Rust engine declined (before it touched an adapter) runs here.
-    if ('ran' in outcome) return outcome.ran;
+    return inRunContext(input, async (context) => {
+      const outcome = await runSegmentInRust(input, context);
+      if ('ran' in outcome) return outcome.ran;
+      // Declined before any host-visible effect: the interpreter runs it, in
+      // the same segment.
+      const { program, prepared } = parseAndCheck(input, parsed);
+      return new Interpreter(input, { ...prepared, context }).run(program);
+    });
   }
   const { program, prepared } = parseAndCheck(input, parsed);
-  // Every way into the interpreter opens the same door: one segment, one
-  // third-party call ceiling (run_scope.ts). A fifth entry point that
-  // forgets `withRunCallLedger` loses the safeguard silently, so they all
-  // wrap here rather than deeper. The Rust engine's segment opens the same
-  // door: its host calls are the run's.
-  return withRunCallLedger(() => new Interpreter(input, prepared).run(program), runScopeOf(input));
+  return inRunContext(input, (context) => new Interpreter(input, { ...prepared, context }).run(program));
 }
 
 /** What the check reads of a run's input. */
@@ -708,27 +731,47 @@ function checkInputOf(input: RunMovementInput): CheckInput {
     source: input.source,
     catalog: input.catalog,
     ...(input.languageVersion !== undefined ? { languageVersion: input.languageVersion } : {}),
-    ...(input.host.files.resolveFile !== undefined ? { hostResolveFile: input.host.files.resolveFile } : {}),
   };
 }
 
-/** The run context every entry point opens its segment under. */
-function runScopeOf(input: RunMovementInput): {
-  languageVersion: LanguageVersion;
-  priorSpentMicrodollars: number;
-  capBaselineMicrodollars: number;
-  writeLocks: { locks: WriteLocks; teamId: string };
-  cancel: CancelGate;
-  runId?: string;
-} {
-  return {
-    languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
-    priorSpentMicrodollars: input.priorSpentMicrodollars ?? 0,
-    capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
-    writeLocks: { locks: input.host.locks, teamId: input.teamId },
-    cancel: input.host.control.cancel,
+/**
+ * Every way into the interpreter opens the same door: one segment — its host
+ * segment (the adapters' read memo and call ceiling), its cross-run lock
+ * holder, the run's spend account — closed however the segment ends. A fifth
+ * entry point that skipped it would lose those safeguards silently, so they
+ * all go through here.
+ *
+ * What the segment's adapter calls spent is known only once the host segment
+ * closes, so the spend on the result (or on a failure's partial result) is
+ * read after the close.
+ */
+async function inRunContext(
+  input: RunMovementInput,
+  run: (context: RunContext) => Promise<MovementRunResult>,
+): Promise<MovementRunResult> {
+  const context = await openRunContext({
+    host: input.host,
+    teamId: input.teamId,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
-  };
+    languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+    spend: {
+      priorMicrodollars: input.priorSpentMicrodollars ?? 0,
+      capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
+      ...(input.costCapMicrodollars !== undefined ? { capMicrodollars: input.costCapMicrodollars } : {}),
+    },
+  });
+  let result: MovementRunResult;
+  try {
+    try {
+      result = await run(context);
+    } finally {
+      await closeRunContext(context, input.host);
+    }
+  } catch (error) {
+    if (error instanceof MovementRunFailed) Object.assign(error.partial, spendFields(context.ledger));
+    throw error;
+  }
+  return { ...result, ...spendFields(context.ledger) };
 }
 
 /** What every entry point hands its interpreter: the catalog rebuilt from the
@@ -793,10 +836,21 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // parses a run it routes.
   const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
   if (parsed !== undefined && rustCanResume(parsed, input)) {
-    const outcome = await withRunCallLedger(() => resumeSegmentInRust(input), runScopeOf(input));
-    if ('ran' in outcome) return outcome.ran;
+    return inRunContext(input, async (context) => {
+      const outcome = await resumeSegmentInRust(input, context);
+      if ('ran' in outcome) return outcome.ran;
+      const { program, prepared } = parseAndCheck(input, parsed);
+      return resumeInterpreter(input, { program, prepared, context });
+    });
   }
   const { program, prepared } = parseAndCheck(input, parsed);
+  return inRunContext(input, (context) => resumeInterpreter(input, { program, prepared, context }));
+}
+
+function resumeInterpreter(
+  input: ResumeMovementInput,
+  { program, prepared, context }: { program: Program; prepared: PreparedRun; context: RunContext },
+): Promise<MovementRunResult> {
   // The answer graph `r` (§4.4): for the single-ask scalar case it's a value
   // binding (the validated answer); the post-ask body reads it as a value. A
   // `Correct` answer is a curated position-SET (the edited + surviving rows) —
@@ -805,18 +859,15 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // edited fields off the synthetic emission (chunk 6c). Under `reenter` there is
   // no answer to bind (cost / error resume re-enters AT the un-run statement).
   const answer: Binding | undefined = input.reenter ? undefined : rematerialiseAnswer(input.answer);
-  return withRunCallLedger(() =>
-    new Interpreter(input, prepared).resume({
-      program,
-      state: input.state,
-      ...(answer !== undefined ? { answer } : {}),
-      ...(input.reenter !== undefined ? { reenter: input.reenter } : {}),
-      ...(input.deferRaceSettlement !== undefined
-        ? { deferRaceSettlement: input.deferRaceSettlement }
-        : {}),
-    }),
-    runScopeOf(input),
-  );
+  return new Interpreter(input, { ...prepared, context }).resume({
+    program,
+    state: input.state,
+    ...(answer !== undefined ? { answer } : {}),
+    ...(input.reenter !== undefined ? { reenter: input.reenter } : {}),
+    ...(input.deferRaceSettlement !== undefined
+      ? { deferRaceSettlement: input.deferRaceSettlement }
+      : {}),
+  });
 }
 
 /**
@@ -832,13 +883,12 @@ export async function settleRaceFrame(
   input: ResumeMovementInput & { frameAddress: string },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
-  return withRunCallLedger(() =>
-    new Interpreter(input, prepared).settleRaceFrame({
+  return inRunContext(input, (context) =>
+    new Interpreter(input, { ...prepared, context }).settleRaceFrame({
       program,
       state: input.state,
       frameAddress: input.frameAddress,
     }),
-    runScopeOf(input),
   );
 }
 
@@ -853,14 +903,13 @@ export async function fireCallbackBody(
   input: ResumeMovementInput & { values: Record<string, unknown>; callIndex: number },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
-  return withRunCallLedger(() =>
-    new Interpreter(input, prepared).fireCallback({
+  return inRunContext(input, (context) =>
+    new Interpreter(input, { ...prepared, context }).fireCallback({
       program,
       state: input.state,
       values: input.values,
       callIndex: input.callIndex,
     }),
-    runScopeOf(input),
   );
 }
 
@@ -1624,13 +1673,12 @@ interface CallFrame {
   declaration?: MovementDeclaration;
 }
 
-/** What this segment and the run have spent so far (`lib/run_spend.ts`) —
- *  a run that has made no priced call carries no fields. */
-function spendFields(): Pick<
-  MovementRunResult,
-  'spentMicrodollars' | 'runSpentMicrodollars' | 'spentBySource'
-> {
-  const spend = currentRunSpend();
+/** What this segment and the run have spent so far (the run's ledger,
+ *  `run_context.ts`) — a run that has made no priced call carries no fields. */
+function spendFields(
+  ledger: RunLedger,
+): Pick<MovementRunResult, 'spentMicrodollars' | 'runSpentMicrodollars' | 'spentBySource'> {
+  const spend = ledger.spend;
   return {
     ...(spend.segmentMicrodollars > 0
       ? { spentMicrodollars: spend.segmentMicrodollars, spentBySource: spend.bySource }
@@ -1829,7 +1877,7 @@ function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]):
 /**
  * Did a member's function FAIL, as opposed to the run's control flow passing
  * through it? Only a failure is the member's, and only a failure can be
- * forgiven by `onError`: a cancel, the call ceiling, the cost cap, the call
+ * forgiven by `onError`: a cancel, a lost run lease, the call ceiling, the cost cap, the call
  * depth limit, a park and a quiet scope end all mean something about the run, and swallowing one would
  * leave the run believing it had done something it had not.
  */
@@ -1838,7 +1886,8 @@ function isMemberFailure(error: unknown): boolean {
     error instanceof RunParked
     || error instanceof ScopeEndedQuietly
     || error instanceof RunCancelledSignal
-    || isAdapterCallCeilingExceeded(error)
+    || error instanceof RunLeaseLost
+    || isAdapterCallCeilingReached(error)
     || isRunCostCapExceeded(error)
     || isCallDepthExceeded(error)
   );
@@ -2278,7 +2327,13 @@ class Interpreter {
   private readonly targetAdapterCache = new Map<string, Adapter>();
   /** Source-role adapters for graph-rooted traversals (see graphReadFor). */
   private readonly sourceAdapterCache = new Map<string, Adapter>();
-  private readonly resolveAdapterFn: ResolveAdapter;
+  private readonly resolveAdapterFn: (input: AdapterResolution) => Promise<Adapter>;
+  /** The engine's stand-in for each host instance, by its id: the host
+   *  answers one id per instance, so an instance resolved twice is one
+   *  adapter here too. */
+  private readonly hostAdapters = new Map<string, Adapter>();
+  /** The `suspendAt` addresses not yet suspended at: each suspends once. */
+  private readonly pendingSuspensions: Set<string>;
   /** Rebuilt in run() for snapshot seeds, where the event envelope's
    *  adapterType is a placeholder and the source instance is canonical. */
   private mutationContext: MutationContext;
@@ -2316,7 +2371,12 @@ class Interpreter {
   private readonly boundaries = new AsyncLocalStorage<readonly LiveBoundary[]>();
   /** What keeps concurrent flows' effects on the world from racing — see
    *  `effect_locks.ts`. */
-  private readonly effectLocks = new EffectLocks({ holder: segmentWriteLockHolder() });
+  private readonly effectLocks: EffectLocks;
+  /** This segment's engine state: the pin, the cancel gate, the host
+   *  segment, the spend account. */
+  private readonly context: RunContext;
+  /** The host's priced families under the run's budget. */
+  private readonly priced: PricedCalls;
   /** The run is PAUSED at a limit: every flow suspends at its next statement
    *  boundary, and no collection op starts another member. Set by the first
    *  flow to meet the cost cap (`suspendAtLimit`), or from the start when an
@@ -2358,9 +2418,10 @@ class Interpreter {
   private readonly libraryEnvs = new Map<string, Environment>();
 
   /** The movement's pin — what the engine's `since`/`before` conditionals
-   *  read (a plugin or adapter reads the same value off the run scope). */
+   *  read (an adapter reads the same value off its host segment, opened with
+   *  it). */
   private get languageVersion(): LanguageVersion {
-    return this.input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
+    return this.context.languageVersion;
   }
 
   /** Where a trace entry lands: the running flow's own buffer inside a
@@ -2381,19 +2442,38 @@ class Interpreter {
 
   constructor(
     private readonly input: RunMovementInput,
-    prepared: PreparedRun,
+    prepared: PreparedRun & { context: RunContext },
   ) {
     this.catalog = prepared.catalog;
-    this.runTrace = input.host.trace ?? [];
+    this.context = prepared.context;
+    this.priced = pricedCalls(input.host, {
+      segmentId: prepared.context.segmentId,
+      ledger: prepared.context.ledger,
+      plugins: input.catalog.plugins,
+    });
+    this.effectLocks = new EffectLocks({ crossRun: prepared.context.locks });
+    this.runTrace = prepared.context.trace.entries;
     this.limitPaused = input.limitPaused === true;
+    this.pendingSuspensions = new Set(input.suspendAt ?? []);
     // A deprecated pin runs, and says so on the run's own record. (An
     // unsupported one never gets this far — parseAndCheck refused it.)
     const versionWarning = languageVersionDiagnostic(this.languageVersion);
     if (versionWarning !== undefined) {
       this.trace.push({ kind: 'warning', code: versionWarning.code, message: versionWarning.message });
     }
-    this.pinnedNow = input.firedAt ?? new Date();
-    this.resolveAdapterFn = input.host.adapters.resolve;
+    this.pinnedNow = input.firedAt !== undefined ? firedInstant(input.firedAt) : new Date();
+    // Every adapter is resolved for this segment, so it answers inside the
+    // segment's host scope. What comes back is the instance as data; the
+    // engine holds a stand-in that calls it through the host.
+    this.resolveAdapterFn = async (resolution) => {
+      const { segmentId } = prepared.context;
+      const resolved = await prepared.context.host.adapters.resolve(resolution);
+      const known = this.hostAdapters.get(resolved.instance);
+      if (known !== undefined) return known;
+      const adapter = hostAdapter({ host: input.host, segmentId, resolved });
+      this.hostAdapters.set(resolved.instance, adapter);
+      return adapter;
+    };
     this.currentImports = prepared.link?.imports;
     // The firing that started this run rides along in the provenance of every
     // graph write it makes. `suppress_self` — the 2-way-sync flag — is answered
@@ -2464,7 +2544,7 @@ class Interpreter {
    */
   private async checkCancelBeforeFinishing(): Promise<void> {
     if (this.cancelled || this.parked) return;
-    if (await this.input.host.control.cancel.cancelledNow()) {
+    if (await this.context.host.control.cancel.cancelledNow()) {
       this.cancelled = true;
     }
   }
@@ -2630,7 +2710,7 @@ class Interpreter {
         `settleRace: no race statement at frame '${input.frameAddress}'`,
       );
     }
-    const rows = await this.input.host.park.sink!.collectBranchExports({ frameAddress: input.frameAddress });
+    const rows = await this.context.host.park.sink!.collectBranchExports({ frameAddress: input.frameAddress });
     const armCount = armCountOf(combinator, rows);
     const receipt = await this.receiptFromExports(rows, armCount, this.rehydrationContext());
     const frameAddr = parseAddress(input.frameAddress);
@@ -2638,7 +2718,7 @@ class Interpreter {
     for (let j = 0; j < armCount; j++) {
       loserSubtrees.push(encodeAddress(childBranch(frameAddr, j)));
     }
-    await this.input.host.park.sink!.cancelSubtrees({ subtreeAddresses: loserSubtrees });
+    await this.context.host.park.sink!.cancelSubtrees({ subtreeAddresses: loserSubtrees });
     const bound = boundRValueOf(input.statement);
     if (bound !== undefined) input.env.declare(bound.name, receipt);
   }
@@ -3038,7 +3118,7 @@ class Interpreter {
     // (persist / decrement / collect). A resume with no sink is a degenerate
     // test-only mode with no durable join to close — complete only the leaf block,
     // exactly as before the unwind existed. Production resume always has a sink.
-    if (this.input.host.park.sink === undefined) return STOPPED;
+    if (this.context.host.park.sink === undefined) return STOPPED;
     const continuation = async (): Promise<SpineCompletion> => ({
       done: true,
       outcome: await this.continueAfter(frame.parentStatements, frame.containerIndex, frame.parentEnv, {
@@ -3061,13 +3141,13 @@ class Interpreter {
       // still-parked arms (one signal per park), builds the receipt, and runs
       // the continuation; a non-winner (already claimed) did its writes and
       // stops — the run stays parked on the winner's continuation, if any.
-      await this.input.host.park.sink.persistBranchExport({
+      await this.context.host.park.sink.persistBranchExport({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         branchIndex: frame.branchIndex,
         exports: this.serializeBranchExport(frame),
       });
-      const { closed } = await this.input.host.park.sink.decrementJoin({
+      const { closed } = await this.context.host.park.sink.decrementJoin({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         leafAddress,
@@ -3090,13 +3170,13 @@ class Interpreter {
       // Persist THIS branch's export contribution durably, keyed by the join
       // frame + this branch, BEFORE decrementing (§12.1) — so by the time ANY
       // branch observes `closed`, every sibling's export row is committed.
-      await this.input.host.park.sink.persistBranchExport({
+      await this.context.host.park.sink.persistBranchExport({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         branchIndex: frame.branchIndex,
         exports: this.serializeBranchExport(frame),
       });
-      const { closed } = await this.input.host.park.sink.decrementJoin({
+      const { closed } = await this.context.host.park.sink.decrementJoin({
         frameAddress: encodeAddress(frame.containerAddress),
         branchAddress: encodeAddress(frame.branchAddress),
         leafAddress,
@@ -3192,7 +3272,7 @@ class Interpreter {
       into.push(...flow.trace);
     }
 
-    const sink = this.input.host.park.sink;
+    const sink = this.context.host.park.sink;
     if (sink === undefined) return STOPPED;
     const frameAddress = encodeAddress(op.address);
     const branchAddress = encodeAddress(childIter(op.address, frame.boundary.member));
@@ -3223,7 +3303,7 @@ class Interpreter {
     op: ResumedCollectionOp,
     frameAddress: string,
   ): Promise<CollectionRun & { answers: MemberAnswer[] }> {
-    const rows = await this.input.host.park.sink!.collectBranchExports({ frameAddress });
+    const rows = await this.context.host.park.sink!.collectBranchExports({ frameAddress });
     const ctx = this.rehydrationContext();
     const stateRow = rows.find((row) => row.branchIndex === FRAME_STATE_INDEX);
     if (stateRow === undefined || !isCollectionOpState(stateRow.exports)) {
@@ -3286,7 +3366,7 @@ class Interpreter {
    * would.
    */
   private async mergeJoinBranch(frame: ResumeAncestorFrame): Promise<void> {
-    const rows = await this.input.host.park.sink!.collectBranchExports({
+    const rows = await this.context.host.park.sink!.collectBranchExports({
       frameAddress: encodeAddress(frame.containerAddress),
     });
     const ctx = this.rehydrationContext();
@@ -3331,7 +3411,7 @@ class Interpreter {
    */
   private async settleRaceWinner(frame: ResumeAncestorFrame, leafAddress: string): Promise<void> {
     const combinator = combinatorOf(frame.container);
-    const kept = await this.input.host.park.sink!.collectBranchExports({
+    const kept = await this.context.host.park.sink!.collectBranchExports({
       frameAddress: encodeAddress(frame.containerAddress),
     });
     const armCount = combinator !== undefined ? armCountOf(combinator, kept) : 0;
@@ -3342,7 +3422,7 @@ class Interpreter {
       loserSubtrees.push(encodeAddress(childBranch(frame.containerAddress, j)));
     }
     if (loserSubtrees.length > 0) {
-      await this.input.host.park.sink!.cancelSubtrees({
+      await this.context.host.park.sink!.cancelSubtrees({
         subtreeAddresses: loserSubtrees,
         excludeLeaf: leafAddress,
       });
@@ -3527,15 +3607,16 @@ class Interpreter {
       ...(this.deferredRaceFrames.size > 0
         ? { deferredRaceFrames: [...this.deferredRaceFrames] }
         : {}),
-      ...spendFields(),
+      ...spendFields(this.context.ledger),
     };
   }
 
   /**
    * The rehydration seam (§4.1) backed by THIS interpreter's already-prepared
    * live context — the same registry / adapter resolution `prepareMovement`
-   * wired. Adapters re-resolve via `graphReadFor` / the catalog; FileRefs revive
-   * via the owner adapter; code refs come from the re-parsed file env.
+   * wired. Adapters re-resolve via `graphReadFor` / the catalog; code refs come
+   * from the re-parsed file env. A file needs nothing: its descriptor is what
+   * parked, and the host redeems it when something reads the bytes.
    */
   private rehydrationContext(): RehydrationContext {
     return {
@@ -3557,7 +3638,6 @@ class Interpreter {
         }
         return read.read;
       },
-      reviveFileRef: (descriptor) => this.reviveResumedFileRef(descriptor),
       resolveCodeRef: (name) => {
         const binding = this.fileEnv?.resolve(name);
         if (!binding) {
@@ -3613,61 +3693,6 @@ class Interpreter {
         : {}),
       schema,
     };
-  }
-
-  /**
-   * Rebind a parked FileRef's `retrieve()` from its `source` handle — the owner
-   * adapter's `resolveFileRef`, re-resolved live via `resolveAdapter` (the same
-   * cross-wire revive pattern, §4.1), or the document store for a file that
-   * lives in our own storage (`FILE()` artifacts, manual uploads' store).
-   *
-   * A FileRef with no `source` has no way back to its bytes. Every producer
-   * sets one, so only a state parked by an older writer can carry such a ref;
-   * its channel still exists, and says exactly why it cannot fetch — the read
-   * that reaches for it then lands on the run as a warning
-   * (`MOVENG_FILE_BYTES_UNAVAILABLE`), never as a silently thinner input.
-   */
-  private reviveResumedFileRef(descriptor: FileRefDescriptor): FileRef {
-    const ref: FileRef = {
-      __brand: 'FileRef',
-      ...(descriptor.name !== undefined ? { name: descriptor.name } : {}),
-      ...(descriptor.contentType !== undefined ? { contentType: descriptor.contentType } : {}),
-      ...(descriptor.size !== undefined ? { size: descriptor.size } : {}),
-      ...(descriptor.source !== undefined ? { source: descriptor.source } : {}),
-      ...(descriptor.url !== undefined ? { url: descriptor.url } : {}),
-    };
-    const source = descriptor.source;
-    if (!source) {
-      ref.retrieve = async () => {
-        throw new MovementEngineError(
-          'MOVENG_RUNTIME',
-          'it was parked without a durable handle, so its bytes cannot be fetched after the run resumed',
-        );
-      };
-    } else if (source.ownerAdapterType === DOCUMENT_STORE_OWNER) {
-      ref.retrieve = documentStoreFileRef({
-        objectUri: source.handle,
-        ...(ref.name !== undefined ? { name: ref.name } : {}),
-        ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
-        ...(ref.size !== undefined ? { size: ref.size } : {}),
-      }).retrieve;
-    } else {
-      ref.retrieve = async () => {
-        const owner = await this.resolveAdapterFn({
-          adapterType: source.ownerAdapterType,
-          teamId: this.input.teamId,
-          role: 'source',
-        });
-        if (!owner.resolveFileRef) {
-          throw new MovementEngineError(
-            'MOVENG_RUNTIME',
-            `resume: owner adapter '${source.ownerAdapterType}' cannot resolve a parked FileRef`,
-          );
-        }
-        return owner.resolveFileRef({ ref });
-      };
-    }
-    return ref;
   }
 
   /**
@@ -3733,8 +3758,7 @@ class Interpreter {
     if (sourceBinding?.kind === 'instance') {
       const sourceAdapter = await this.resolveAdapterFn({
         adapterType: sourceBinding.adapterSlug,
-        teamId: this.input.teamId,
-        credentialsId: this.credentialsIdFor(sourceBinding),
+                credentialsId: this.credentialsIdFor(sourceBinding),
         role: 'source',
       });
       // The program reads the source by NATURAL names; the wrapper
@@ -3847,7 +3871,7 @@ class Interpreter {
           if (!this.currentImports) {
             throw unsupported(
               `the file import "${statement.source.path}"`,
-              'this run has no file resolver — its catalog snapshot carries no files and its host provides no `files.resolveFile`',
+              'this run has no file resolver — its catalog snapshot carries no files',
             );
           }
           await this.declareFileImports(statement.names, statement.source.path, env);
@@ -4183,8 +4207,7 @@ class Interpreter {
     if (!adapter) {
       const inner = await this.resolveAdapterFn({
         adapterType: binding.adapterSlug,
-        teamId: this.input.teamId,
-        credentialsId,
+                credentialsId,
         ...(Object.keys(constructionArgs).length ? { constructionArgs } : {}),
         role: 'source',
       });
@@ -4234,8 +4257,10 @@ class Interpreter {
   }
 
   private credentialsIdFor(instance: Extract<Binding, { kind: 'instance' }>): string | undefined {
-    if (!instance.credentialName) return undefined;
-    return this.input.host.adapters.credentialId(instance.credentialName);
+    const name = instance.credentialName;
+    if (!name) return undefined;
+    const ids = this.input.credentialIds ?? {};
+    return Object.hasOwn(ids, name) ? ids[name] : undefined;
   }
 
   // ── Statement interpretation (movement body / if arms) ──
@@ -4270,7 +4295,7 @@ class Interpreter {
       // Debounced DB read; latches once true. Caught at the top of
       // run()/resume() (like RunParked), never by the fan-out/parallel park
       // machinery (they re-throw anything but RunParked/ScopeEndedQuietly).
-      if (await this.input.host.control.cancel.cancelled()) {
+      if (await this.context.host.control.cancel.cancelled()) {
         throw new RunCancelledSignal();
       }
       // The statement is the SITE of any call nested in its expressions: such a
@@ -4286,9 +4311,7 @@ class Interpreter {
         // A paused run (a limit met here or in another flow) stops each flow
         // between statements: the one it was running finished, the next waits.
         if (this.limitPaused && this.canSuspend()) await this.suspendFlow();
-        if (this.input.host.control.suspendWhen?.({ kind: 'statement', address: encodeAddress(stmtAddress) })) {
-          await this.suspendFlow();
-        }
+        if (this.pendingSuspensions.delete(encodeAddress(stmtAddress))) await this.suspendFlow();
         try {
           return await this.interpretStatement(statement, env, body, stmtAddress);
         } catch (error) {
@@ -4298,6 +4321,9 @@ class Interpreter {
           throw error;
         }
       });
+      // The host sees the trace as the run goes, a statement at a time. A flow
+      // keeps its own until it joins the run's, so only the run's is handed over.
+      if (this.flowFrames.getStore() === undefined) await publishTrace(this.context, this.input.host);
       if (outcome !== undefined) return outcome;
     }
     return FELL_THROUGH;
@@ -4714,7 +4740,7 @@ class Interpreter {
     parkedMembers: number,
   ): Promise<never> {
     const frameAddress = encodeAddress(run.address);
-    const sink = this.input.host.park.sink;
+    const sink = this.context.host.park.sink;
     if (sink !== undefined) {
       const state: CollectionOpState = {
         source: serializeBinding({
@@ -5041,7 +5067,7 @@ class Interpreter {
         // Stop listening on every arm still parked at a suspension — one signal
         // per park, and the record behind it stays answerable (F7).
         if (parked.length > 0) {
-          await this.input.host.park.sink?.cancelSubtrees({
+          await this.context.host.park.sink?.cancelSubtrees({
             subtreeAddresses: parked.map((fork) => encodeAddress(fork.address)),
           });
         }
@@ -5050,7 +5076,7 @@ class Interpreter {
       }
       const frameAddress = encodeAddress(stmtAddress);
       await this.keepArmCount(expr, frameAddress, forks.length);
-      await this.input.host.park.sink?.recordJoin({ frameAddress, parkedChildren: 1 });
+      await this.context.host.park.sink?.recordJoin({ frameAddress, parkedChildren: 1 });
       throw new RunParked(frameAddress);
     }
 
@@ -5062,14 +5088,14 @@ class Interpreter {
       for (const fork of forks) {
         const value = settled.get(fork.index);
         if (value === undefined) continue;
-        await this.input.host.park.sink?.persistBranchExport({
+        await this.context.host.park.sink?.persistBranchExport({
           frameAddress,
           branchAddress: encodeAddress(fork.address),
           branchIndex: fork.index,
           exports: { [RETURN_SLOT]: serializeBinding(value) },
         });
       }
-      await this.input.host.park.sink?.recordJoin({
+      await this.context.host.park.sink?.recordJoin({
         frameAddress,
         parkedChildren: parked.length,
       });
@@ -5083,7 +5109,7 @@ class Interpreter {
   private async keepArmCount(expr: CombinatorExpression, frameAddress: string, arms: number): Promise<void> {
     if (expr.arms.kind !== 'dynamic') return;
     const state: CombinatorFrameState = { arms };
-    await this.input.host.park.sink?.persistBranchExport({
+    await this.context.host.park.sink?.persistBranchExport({
       frameAddress,
       branchAddress: frameAddress,
       branchIndex: FRAME_STATE_INDEX,
@@ -5276,14 +5302,7 @@ class Interpreter {
       site.calls.completed.set(index, replayed);
       return { site, index, replayed };
     }
-    if (
-      this.input.host.control.suspendWhen?.({
-        kind: 'call',
-        address: encodeAddress(childCall(site.stmtAddress, index)),
-      })
-    ) {
-      await this.suspendFlow();
-    }
+    if (this.pendingSuspensions.delete(encodeAddress(childCall(site.stmtAddress, index)))) await this.suspendFlow();
     site.calls.next += 1;
     return { site, index };
   }
@@ -5336,7 +5355,7 @@ class Interpreter {
       );
     }
     const address = encodeAddress(site.stmtAddress);
-    const commit = this.input.host.park.sink?.commitSuspension?.bind(this.input.host.park.sink);
+    const commit = this.context.host.park.sink?.commitSuspension?.bind(this.context.host.park.sink);
     if (commit === undefined) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -5366,7 +5385,7 @@ class Interpreter {
     return (
       !this.firingCallback
       && this.statementSites.getStore() !== undefined
-      && this.input.host.park.sink?.commitSuspension !== undefined
+      && this.context.host.park.sink?.commitSuspension !== undefined
     );
   }
 
@@ -5382,7 +5401,7 @@ class Interpreter {
     if (!this.limitPaused) {
       // Set before the await, so flows meeting the cap together pause it once.
       this.limitPaused = true;
-      await this.input.host.park.sink?.commitLimitPause?.({
+      await this.context.host.park.sink?.commitLimitPause?.({
         limit: 'cost',
         capMicrodollars: error.capMicrodollars,
         spentMicrodollars: error.spentMicrodollars,
@@ -5645,7 +5664,7 @@ class Interpreter {
       if (callee?.kind === 'opaque') {
         throw unsupported(
           `calling the import '${statement.callee}'`,
-          'this run has no file resolver — its catalog snapshot carries no files and its host provides no `files.resolveFile` (or declare the movement in this file)',
+          'this run has no file resolver — its catalog snapshot carries no files (or declare the movement in this file)',
         );
       }
       throw new MovementEngineError(
@@ -5806,8 +5825,11 @@ class Interpreter {
     env: Environment,
     body: BodyContext,
   ): Promise<Binding | undefined> {
-    const invoker = this.input.host.llm.transforms;
-    const declared = invoker.declaredOutput?.(plugin);
+    const invoker = this.priced.transforms;
+    // The shape the movement's pin gets — a plugin whose output changed keeps
+    // its older shape for movements pinned before the change.
+    const spec = pluginSpecNamed(this.input.catalog.plugins, plugin);
+    const declared = spec !== undefined ? pluginOutputUnder(spec, this.languageVersion) : undefined;
     if (declared === undefined) {
       // The checker refuses a plain call to a plugin that declared no output,
       // so reaching here means the two disagree — which is worth saying, not
@@ -5841,13 +5863,11 @@ class Interpreter {
       trails.push(provenance);
     }
     const started = Date.now();
-    const result = await invokePricedTransform(invoker, { plugin, config, extractedContext: {} });
+    const result = await invoker.invoke({ plugin, config, extractedContext: {} });
     // What the plugin brought back is no longer justified by the quote that
     // pointed at it, so the origins survive and the direct citation does not.
-    // The shape the movement's pin gets — a plugin whose output changed keeps
-    // its older shape for movements pinned before the change.
     const { binding, handedBack } = pluginCallBinding(
-      transformOutputUnder(declared, this.languageVersion),
+      declared,
       result,
       transformed(unionProvenance(trails)),
     );
@@ -5996,7 +6016,7 @@ class Interpreter {
       logger.info(`slept ${sleep.duration.raw} (fast-forwarded)`);
       return;
     }
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     const address = encodeAddress(stmtAddress);
     if (!parkSink) {
       throw new MovementEngineError(
@@ -6014,7 +6034,7 @@ class Interpreter {
       ...(presenceBindingName !== undefined ? { presenceBind: true } : {}),
       scopeChain: serializeScopeChain(env.chainFromRoot(), park),
     }));
-    const wakeAt = new Date(Date.now() + durationToMs(sleep.duration.raw));
+    const wakeAt = new Date(Date.now() + durationToMs(sleep.duration.raw)).toISOString();
     await parkSink.commitTimerPark({ address, state, wakeAt });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -6040,7 +6060,7 @@ class Interpreter {
     env: Environment,
     stmtAddress: Address,
   ): Promise<Binding> {
-    const sink = this.input.host.park.callbacks;
+    const sink = this.context.host.park.callbacks;
     if (!sink) {
       throw unsupported(
         'callback(…)',
@@ -6133,9 +6153,9 @@ class Interpreter {
   private async callbackConfig(
     callback: CallbackExpression,
     env: Environment,
-  ): Promise<{ singleUse: boolean; expiresAt?: Date }> {
+  ): Promise<{ singleUse: boolean; expiresAt?: string }> {
     let singleUse = true;
-    let expiresAt: Date | undefined;
+    let expiresAt: string | undefined;
     for (const entry of callback.config) {
       switch (entry.name) {
         case 'once': {
@@ -6145,7 +6165,7 @@ class Interpreter {
         }
         case 'ttl':
           // Checker-validated duration literal, so the raw spelling parses.
-          expiresAt = new Date(Date.now() + durationToMs(entry.value.raw.trim()));
+          expiresAt = new Date(Date.now() + durationToMs(entry.value.raw.trim())).toISOString();
           break;
         default:
           throw new MovementEngineError(
@@ -6285,8 +6305,7 @@ class Interpreter {
       headInstance !== undefined ? constructionArgsOf(headInstance) : {};
     const adapter = await this.resolveAdapterFn({
       adapterType,
-      teamId: this.input.teamId,
-      ...(headCredentialsId !== undefined ? { credentialsId: headCredentialsId } : {}),
+            ...(headCredentialsId !== undefined ? { credentialsId: headCredentialsId } : {}),
       ...(Object.keys(headConstructionArgs).length ? { constructionArgs: headConstructionArgs } : {}),
       role: 'source',
     });
@@ -6368,7 +6387,7 @@ class Interpreter {
     }
     // Pending: record the await park under the adapter's key, and suspend.
     // Resume re-enters here.
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     if (!parkSink) {
       throw unsupported(
         'await (a durable park)',
@@ -6423,7 +6442,7 @@ class Interpreter {
         `a callback has one edge, '${CALLBACK_CALLED_EDGE}'`,
       );
     }
-    const sink = this.input.host.park.callbacks;
+    const sink = this.context.host.park.callbacks;
     if (!sink) {
       throw unsupported(
         `await cb-[:${CALLBACK_CALLED_EDGE}]->`,
@@ -6432,7 +6451,7 @@ class Interpreter {
     }
 
     const firstMatch = async (): Promise<CallbackCall | undefined> =>
-      (await sink.calls(binding.callbackId)).find((call) => this.callbackCallMatches(call, input.hopFilter));
+      (await sink.calls({ callbackId: binding.callbackId })).find((call) => this.callbackCallMatches(call, input.hopFilter));
     const matched = await firstMatch();
     if (matched !== undefined) {
       // The resolved shortcut (S2): a fire already landed — continue inline.
@@ -6440,7 +6459,7 @@ class Interpreter {
       return;
     }
 
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     if (!parkSink) {
       throw unsupported(
         `await cb-[:${CALLBACK_CALLED_EDGE}]-> (a durable park)`,
@@ -6488,23 +6507,25 @@ class Interpreter {
     correlationKey: string;
     resolvesNow: () => Promise<boolean>;
   }): Promise<void> {
-    const wake = { adapterType: input.adapterType, teamId: this.input.teamId, correlationKey: input.correlationKey };
+    const wake = { adapterType: input.adapterType, correlationKey: input.correlationKey };
     let resolved: boolean;
     try {
       resolved = await input.resolvesNow();
     } catch (err) {
       logger.error('[MovementEngine] await re-check after parking failed; the run stays parked without a wake', {
         ...wake,
+        teamId: this.input.teamId,
         error: err instanceof Error ? err.message : String(err),
       });
       return;
     }
     if (!resolved) return;
     try {
-      await this.input.host.park.wake(wake);
+      await this.context.host.park.wake(wake);
     } catch (err) {
       logger.error('[MovementEngine] await wake after parking could not be queued', {
         ...wake,
+        teamId: this.input.teamId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -6621,7 +6642,7 @@ class Interpreter {
       return;
     }
 
-    const parkSink = this.input.host.park.sink;
+    const parkSink = this.context.host.park.sink;
     const address = encodeAddress(stmtAddress);
     if (!parkSink) {
       throw new MovementEngineError(
@@ -6644,7 +6665,7 @@ class Interpreter {
     await parkSink.commitTimerPark({
       address,
       state,
-      wakeAt: new Date(Date.now() + everyMs),
+      wakeAt: new Date(Date.now() + everyMs).toISOString(),
     });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -6805,8 +6826,7 @@ class Interpreter {
       recordType = binding.handle.recordType;
       adapter = await this.resolveAdapterFn({
         adapterType: binding.handle.adapterType,
-        teamId: this.input.teamId,
-        role: 'source',
+                role: 'source',
       });
       const handle = binding.handle;
       snapshot = { ...(handle.resultData ?? {}), ...handle.writtenValues };
@@ -7314,10 +7334,12 @@ class Interpreter {
       spec,
       runtime: {
         llm: this.llmClient(),
-        transformInvoker: this.input.host.llm.transforms,
+        transformInvoker: this.priced.transforms,
+        plugins: this.input.catalog.plugins,
         evalSlot: (slot) => this.evaluateSlot(slot, { env }),
         resolveFileText: this.fileTextResolver(),
         trace: this.trace,
+        run: this.context,
       },
     });
     recordExtractedEntities(this.trace, traceMark, emission);
@@ -7376,6 +7398,7 @@ class Interpreter {
         resolveFileText: this.fileTextResolver(),
         trace: this.trace,
         state: this.extractCalls,
+        run: this.context,
       },
     });
   }
@@ -7408,7 +7431,7 @@ class Interpreter {
   }
 
   private extractCallClient(): ExtractCallLlmClient {
-    return this.input.host.llm.extractCall;
+    return this.priced.extractCall;
   }
 
   private async describeIn(slot: ExprSlot, env: Environment): Promise<string> {
@@ -7425,15 +7448,13 @@ class Interpreter {
   }
 
   private llmClient(): LlmClient {
-    return this.input.host.llm.client;
+    return this.priced.client;
   }
 
   /** The one file→text seam for the whole run — an `extract from [ … ]` file
    *  source and a `READ(file)` in an expression read a file the same way. */
   private fileTextResolver(): (ref: FileRef) => Promise<FileTextResolution> {
-    this.fileTextSeam ??= this.warnWhenBytesUnavailable(
-      this.input.host.files.resolveFileText,
-    );
+    this.fileTextSeam ??= this.warnWhenBytesUnavailable((file) => this.priced.resolveFileText({ file }));
     return this.fileTextSeam;
   }
 
@@ -7453,7 +7474,7 @@ class Interpreter {
     return async (ref) => {
       const result = await resolve(ref);
       if (!isFileUnreadable(result) || result.unreadable !== 'bytes_unavailable') return result;
-      const key = ref.source?.handle ?? ref.name ?? '';
+      const key = fileHandle(ref) ?? ref.name ?? '';
       if (!warned.has(key)) {
         warned.add(key);
         const name = ref.name !== undefined ? `'${ref.name}'` : 'a file';
@@ -7547,14 +7568,14 @@ class Interpreter {
       // What the iterations that finished returned waits at the frame with the
       // parked ones' exports, so the closer's value holds every iteration.
       for (const { index, value } of finished) {
-        await this.input.host.park.sink?.persistBranchExport({
+        await this.context.host.park.sink?.persistBranchExport({
           frameAddress,
           branchAddress: encodeAddress(childIter(parentAddress, index)),
           branchIndex: index,
           exports: { [RETURN_SLOT]: serializeBinding(value) },
         });
       }
-      await this.input.host.park.sink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });
+      await this.context.host.park.sink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });
       throw new RunParked(frameAddress);
     }
   }
@@ -7670,14 +7691,14 @@ class Interpreter {
           `a callback has one edge, '${CALLBACK_CALLED_EDGE}'`,
         );
       }
-      const sink = this.input.host.park.callbacks;
+      const sink = this.context.host.park.callbacks;
       if (!sink) {
         throw unsupported(
           `cb-[:${CALLBACK_CALLED_EDGE}]->`,
           'this run has no callback sink — a callback needs the durable trigger-run substrate',
         );
       }
-      const calls = await sink.calls(rootBinding.callbackId);
+      const calls = await sink.calls({ callbackId: rootBinding.callbackId });
       return calls
         .filter((call) => this.callbackCallMatches(call, step.expressionFilter))
         .map((call) => {
@@ -8368,7 +8389,7 @@ class Interpreter {
     // reads a null key component as "cannot match on this", so blank becomes
     // null here, once, instead of in each adapter's search.
     for (const field of constraintFields) {
-      if (isBlankIdentityValue(record[field])) record[field] = null;
+      if (isBlankIdentityValue(record[field], this.languageVersion)) record[field] = null;
     }
     for (const parent of input.target.parents) {
       if (parent.externalId === undefined) continue;
@@ -8420,25 +8441,23 @@ class Interpreter {
             where: input.candidateWhere,
           })
         : predicateNarrowed;
-    let judgeUnavailable: string | undefined;
     // The rules settle most searches; only a real judgement costs the host a
     // model call.
     const decided = arbitrateWithoutJudge({
       asserted: input.asserted,
       candidates,
       constraints: input.constraints,
+      languageVersion: this.languageVersion,
     });
-    const chosen =
+    const { index: chosen, judgeUnavailable } =
       decided !== undefined
-        ? decided
-        : await this.input.host.llm.arbitrateEntities({
+        ? { index: decided, judgeUnavailable: undefined }
+        : await this.priced.arbitrateEntities({
             asserted: input.asserted,
             candidates,
             recordType: input.recordType,
             constraints: input.constraints,
-            onJudgeUnavailable: (message) => {
-              judgeUnavailable = message;
-            },
+            languageVersion: this.languageVersion,
           });
     // The index is into the list the arbiter saw — the narrowed one.
     return {
@@ -8520,6 +8539,7 @@ class Interpreter {
       constraints: input.constraints,
       resolveRecord: input.resolveRecord,
       fields: input.fields,
+      languageVersion: this.languageVersion,
     });
     return this.effectLocks.withLocks(locks, () => this.findThenWrite(input));
   }
@@ -8624,9 +8644,8 @@ class Interpreter {
         isRoot: target.parents.length === 0,
       });
       if (created.externalId !== undefined && !this.input.dryRun) {
-        await this.input.host.park.bindings.record({
-          teamId: this.input.teamId,
-          from: other,
+        await this.context.host.park.bindings.record({
+                    from: other,
           to: {
             adapterType: adapter.adapterType,
             ...targetInstance,
@@ -8642,9 +8661,8 @@ class Interpreter {
     // Find-then-create on the correspondence: held until the binding is
     // recorded, so two flows binding the same counterpart create one record.
     return this.effectLocks.withLocks([bindLock(other, counterpart)], async () => {
-      const bound = await this.input.host.park.bindings.findBoundCounterpart({
-        teamId: this.input.teamId,
-        endpoint: other,
+      const bound = await this.context.host.park.bindings.findBoundCounterpart({
+                endpoint: other,
         counterpart,
       });
       if (bound === null) return create();
@@ -8667,7 +8685,7 @@ class Interpreter {
       // binding (keyed on the counterpart's exact stored components), then
       // create a fresh record + record a fresh binding.
       if (!this.input.dryRun) {
-        await this.input.host.park.bindings.delete({ teamId: this.input.teamId, from: other, to: bound });
+        await this.context.host.park.bindings.delete({ from: other, to: bound });
       }
       return create();
     });
@@ -9184,6 +9202,7 @@ class Interpreter {
             constraints: identity.constraints,
             resolveRecord,
             fields,
+            languageVersion: this.languageVersion,
           }),
         ];
       },
@@ -11167,8 +11186,8 @@ class Interpreter {
         ...this.parentSummaries(input.parentLinks),
       };
     }
-    // Any `FileRef` in the fields carries its own `retrieve()` byte channel —
-    // the consuming adapter pulls the bytes itself (streamFileRef). The engine
+    // Any `FileRef` in the fields is a descriptor — the consuming adapter
+    // redeems it for the bytes on the host side (streamFileRef). The engine
     // just hands the fields through. Node-level resources ride alongside
     // (`WriteInput.resources`) — the adapter's resource sink persists them.
     const updated = await input.adapter.updateRecord({
@@ -11269,9 +11288,9 @@ class Interpreter {
           .join(', ')} have no value`,
       );
     }
-    // Any `FileRef` in the fields (an email attachment, a `#resources` file)
-    // carries its own `retrieve()` byte channel — the consuming adapter pulls the
-    // bytes itself (streamFileRef / exposeFile). The engine hands fields through.
+    // Any `FileRef` in the fields (an email attachment, a `#resources` file) is
+    // a descriptor — the consuming adapter redeems it for the bytes on the host
+    // side (streamFileRef / exposeFile). The engine hands fields through.
     const created = await input.adapter.createRecord({
       recordType: input.recordType,
       fields: input.fields,
@@ -11304,8 +11323,8 @@ class Interpreter {
 
   /**
    * Per-instance target adapters, resolved through the shared seam with
-   * `role: 'target'` and dry-run-wrapped — cached per (slug, credential)
-   * exactly like the TG engine's `resolveTargetAdapter`.
+   * `role: 'target'` and, when rehearsed, `dryRun` — cached per (slug,
+   * credential) exactly like the TG engine's `resolveTargetAdapter`.
    */
   private async targetAdapterFor(
     instance: Extract<Binding, { kind: 'instance' }>,
@@ -11337,34 +11356,24 @@ class Interpreter {
     const cacheKey = `${dryRun ? 'dry ' : ''}${adapterType} ${credentialsId ?? ''} ${argsKey}`;
     const cached = this.targetAdapterCache.get(cacheKey);
     if (cached) return cached;
-    const real = await this.resolveAdapterFn({
+    // A rehearsed target is the host's to wrap: it captures the writes into
+    // its sink and remembers the ids it invented, for the whole segment.
+    const adapter = await this.resolveAdapterFn({
       adapterType,
-      teamId: this.input.teamId,
-      credentialsId,
+            credentialsId,
       ...(constructionArgs && Object.keys(constructionArgs).length ? { constructionArgs } : {}),
       role: 'target',
+      ...(dryRun ? { dryRun: true } : {}),
     });
-    const wrapped = dryRun ? wrapAdapterForDryRun(real, this.rehearsal) : real;
-    if (dryRun) this.dryAdapters.add(wrapped);
-    this.targetAdapterCache.set(cacheKey, wrapped);
-    return wrapped;
+    if (dryRun) this.dryAdapters.add(adapter);
+    this.targetAdapterCache.set(cacheKey, adapter);
+    return adapter;
   }
 
-  /** The dry-run-wrapped target adapters — membership is the per-write
-   *  `committed` signal: a write through one of these was captured, not
-   *  committed (`resolveTargetAdapter` wraps + registers iff the target is
-   *  rehearsed). */
+  /** The rehearsed target adapters — membership is the per-write `committed`
+   *  signal: a write through one of these was captured, not committed
+   *  (`resolveTargetAdapter` registers iff the target is rehearsed). */
   private readonly dryAdapters = new WeakSet<Adapter>();
-
-  /** THIS run's rehearsal, shared by every target it wraps: one sink, and one
-   *  memory of the ids it invented. A write chained off a rehearsed parent
-   *  routinely crosses systems (the company in the CRM, the entry on its
-   *  list), so the memory of what is real belongs to the run rather than to
-   *  either adapter. */
-  private rehearsalState?: DryRunRehearsal;
-  private get rehearsal(): DryRunRehearsal {
-    return (this.rehearsalState ??= newDryRunRehearsal(this.input.writeSink));
-  }
 
   /** Whether a write through this resolved adapter actually committed —
    *  false when the adapter is a dry-run wrapper. */
@@ -11386,6 +11395,7 @@ class Interpreter {
         ),
       llm: this.llmClient(),
       resolveFileText: this.fileTextResolver(),
+      renderFile: (input) => this.context.host.files.render(input),
       trace: this.trace,
       // `@<key>` resolution — the dispatch context the frozen engine's
       // resolveMetaKey reads, with the run-wide actor caches. The bag
@@ -11395,7 +11405,7 @@ class Interpreter {
         teamId: this.input.teamId,
         now: this.pinnedNow,
         bag: { trigger: this.input.event, mutationContext: this.mutationContext },
-        resolveActingUser: (input) => this.input.host.lookup.resolveActingUser(input),
+        resolveActingUser: (input) => this.context.host.lookup.resolveActingUser(input),
         actingUserCache: this.actingUserCache,
         actorCache: this.actorCache,
       },
@@ -12063,7 +12073,7 @@ const PLUGIN_FETCHED_TEXT_FIELD = 'text';
  * separate question, and it is the trace's, not the program's.
  */
 function pluginCallBinding(
-  output: TransformOutputKind,
+  output: PluginOutput,
   result: TransformInvocationResult,
   provenance: Provenance,
 ): { binding: Binding; handedBack: boolean } {

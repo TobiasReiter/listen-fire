@@ -5,8 +5,11 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { AwaitResolution } from '../../translation_graph/awaitable';
-import type { ParkSink } from '../run';
-import { makeFakeParkSink, type AwaitWakeRequest } from '../host';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import { runFailureCause, type ParkSink } from '../run';
+import { RunLeaseLost } from '../run_lease';
+import type { QueuedWake } from '../host_kit';
+import { makeFakeParkSink } from '../test_host';
 import { logger } from '../../logger';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 
@@ -19,10 +22,10 @@ type AwaitPark = Parameters<ParkSink['commitAwaitPark']>[0];
 function recording(): {
   sink: ParkSink;
   parks: AwaitPark[];
-  wakes: AwaitWakeRequest[];
+  wakes: QueuedWake[];
 } {
   const parks: AwaitPark[] = [];
-  const wakes: AwaitWakeRequest[] = [];
+  const wakes: QueuedWake[] = [];
   const { sink } = makeFakeParkSink();
   return {
     sink: {
@@ -144,5 +147,24 @@ describe('await park — the adapter names the key, the engine keeps the correla
     expect(result.parked).toBe(true);
     expect(parks[0]).toMatchObject({ adapterType: 'ask', correlationKey: 'thread-9' });
     expect(wakes).toEqual([{ adapterType: 'ask', teamId: TEAM_ID, correlationKey: 'thread-9' }]);
+  });
+});
+
+describe('a park the host refuses because the run lease was lost', () => {
+  it('reaches the run host as that failure, so the segment stops rather than failing the run', async () => {
+    const awaiting = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }]);
+    const { sink } = makeFakeParkSink();
+    const refusing: ParkSink = {
+      ...sink,
+      async commitAwaitPark() {
+        throw new RunLeaseLost('run-1' as TriggerRunId);
+      },
+    };
+
+    const failed = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: refusing }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(runFailureCause(failed)).toBeInstanceOf(RunLeaseLost);
   });
 });

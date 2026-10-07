@@ -21,7 +21,7 @@ import {
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
 const KG = 'kg';
@@ -124,6 +124,7 @@ listen to runs {} fire sweep
       instanceSchemas: { [KG]: schema },
     }),
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: {
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'manual') return manualAdapter;
@@ -133,7 +134,6 @@ listen to runs {} fire sweep
       },
     }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return writes.map((w) => w.fields?.text);
 }

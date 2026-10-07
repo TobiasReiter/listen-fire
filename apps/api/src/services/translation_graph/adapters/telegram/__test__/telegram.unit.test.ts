@@ -643,7 +643,7 @@ describe('TelegramAdapter.createRecord (edge-anchored DM / reply)', () => {
   });
 });
 
-describe('TelegramAdapter attachment `data` — a self-retrieving FileRef', () => {
+describe('TelegramAdapter attachment `data` — a FileRef descriptor', () => {
   const ATTACHMENT_TYPE = 'Attachment';
 
   function attachmentPosition(att: Record<string, unknown>) {
@@ -664,12 +664,11 @@ describe('TelegramAdapter attachment `data` — a self-retrieving FileRef', () =
       name: 'voice_uv1.ogg',
       contentType: 'audio/ogg',
       size: 4321,
-      source: { ownerAdapterType: TELEGRAM_ADAPTER_TYPE, handle: 'VOICE1' },
+      source: { adapterType: TELEGRAM_ADAPTER_TYPE, credentialId: CRED_ID, handle: 'VOICE1' },
     });
-    expect(typeof ref.retrieve).toBe('function');
   });
 
-  it('the FileRef retrieves its own bytes (getFile → file-path fetch, no owner re-resolve)', async () => {
+  it('the owner redeems the FileRef for its bytes (getFile → file-path fetch)', async () => {
     const fetchMock = jest.fn(async (url: string) => {
       if (url.includes('/getFile')) {
         return {
@@ -687,8 +686,9 @@ describe('TelegramAdapter attachment `data` — a self-retrieving FileRef', () =
     const position = attachmentPosition({
       file_id: 'VOICE1', name: 'voice_uv1.ogg', contentType: 'audio/ogg', size: 4321,
     });
-    const ref = (await adapter().getFieldValue({ position, fieldId: 'File' })) as FileRef;
-    const resolved = await ref.retrieve!();
+    const owner = adapter();
+    const ref = (await owner.getFieldValue({ position, fieldId: 'File' })) as FileRef;
+    const resolved = await owner.resolveFileRef({ ref });
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.telegram.org/botBOT123/getFile');
     expect(fetchMock.mock.calls[1][0]).toBe('https://api.telegram.org/file/botBOT123/voice/file_1.oga');
     expect(resolved.contentType).toBe('audio/ogg');
@@ -730,7 +730,7 @@ describe('TelegramAdapter.resolveFileRef', () => {
     (global as unknown as { fetch: unknown }).fetch = fetchMock;
 
     const result = await adapter().resolveFileRef({
-      ref: { __brand: 'FileRef', source: { ownerAdapterType: TELEGRAM_ADAPTER_TYPE, handle: 'FILE9' } },
+      ref: { __brand: 'FileRef', source: { adapterType: TELEGRAM_ADAPTER_TYPE, handle: 'FILE9' } },
     });
 
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.telegram.org/botBOT123/getFile');

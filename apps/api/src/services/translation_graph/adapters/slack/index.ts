@@ -55,7 +55,7 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink } from '../../adapter';
+import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import type { EventType } from '../../adapter';
 import type {
   SchemaEntryPoint,
@@ -1002,9 +1002,9 @@ export class SlackAdapter extends BaseAdapter {
         naturalName(resolver.naturalTypeName(SLACK_FILE_TYPE_ID)),
         naturalName(input.fieldId),
       );
-      // The `File` (`data`) field is the binary primitive — a `FileRef` whose
-      // `retrieve()` streams the bytes via the bot credential (the same FileRef
-      // the retired input-side `_resources` bundle built). This is what
+      // The `File` (`data`) field is the binary primitive — a `FileRef`
+      // descriptor redeemed via the bot credential (the same FileRef the
+      // retired input-side `_resources` bundle built). This is what
       // `msg-[:Files]->.\`File\`` evaluates so file bytes reach extraction /
       // carry-forward.
       if (fileFieldId === 'data') {
@@ -1905,11 +1905,10 @@ export class SlackAdapter extends BaseAdapter {
   }
 
   /**
-   * The `File` primitive for a Slack file record — a branded `FileRef` whose
-   * `retrieve()` streams the bytes via the bot credential
-   * (`streamSlackFileBytes`). `source.handle` is the raw Slack file id, so the
-   * engine can also redeem bytes through the owner (`resolveFileRef`). Returns
-   * null when the record carries no file id.
+   * The `File` primitive for a Slack file record — a `FileRef` descriptor
+   * naming this instance as the owner and the raw Slack file id as the handle,
+   * redeemed through `resolveFileRef`. Returns null when the record carries no
+   * file id.
    */
   private slackFileRef(record: SlackFileRecord | null): FileRef | null {
     if (!record?.id) return null;
@@ -1920,23 +1919,25 @@ export class SlackAdapter extends BaseAdapter {
       name: record.name || undefined,
       contentType,
       size: record.size ?? undefined,
-      retrieve: () => this.streamSlackFileBytes(id, contentType),
-      source: { ownerAdapterType: SLACK_ADAPTER_TYPE, handle: id },
+      source: ownedFileSource({
+        adapterType: SLACK_ADAPTER_TYPE,
+        ...(this.credentialsId !== undefined ? { credentialsId: this.credentialsId } : {}),
+        handle: id,
+      }),
     };
   }
 
   // ── 4c. Byte resolution (owner-side) ─────────────────────────────────────
-  // Slack OWNS the FILE resources it emits (P4): the engine redeems their
-  // `fileRef.source.handle` here, while the originating action is in flight,
-  // via `/api/files/{token}`. The handle is the raw Slack file id; Slack file
+  // Slack OWNS the FILE resources it emits (P4): the host redeems their
+  // handle here, on the instance the descriptor names. The handle is the raw Slack file id; Slack file
   // bytes live behind an authenticated `url_private_download`, so we resolve
   // the id to that URL via `files.info` and fetch it WITH the bot token
   // (`SlackAPIClient.fetch` attaches the bearer) — the owner's own creds, as
-  // P4 requires. The engine receives a Node stream.
+  // P4 requires. The host receives a Node stream.
   //
   // owners serve bytes
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const handle = input.ref.source?.handle;
+    const handle = fileHandle(input.ref);
     if (!handle) {
       throw new Error(
         `${SLACK_ADAPTER_TYPE}.resolveFileRef: FileRef has no source handle to resolve.`,
@@ -1946,12 +1947,10 @@ export class SlackAdapter extends BaseAdapter {
   }
 
   /**
-   * The byte channel for a Slack file id. The same logic backs both
-   * `resolveFileRef` (engine-swap migration path) and the `retrieve()` a
-   * produced FileRef carries — Slack file bytes live behind an authenticated
-   * `url_private_download`, resolved via `files.info` and fetched WITH the bot
-   * token (`client.fetch` attaches the bearer). Re-callable: a fresh round trip
-   * each call, as the rework's repeated-retrieval contract requires.
+   * The byte channel for a Slack file id, behind `resolveFileRef` — Slack file
+   * bytes live behind an authenticated `url_private_download`, resolved via
+   * `files.info` and fetched WITH the bot token (`client.fetch` attaches the
+   * bearer). A fresh round trip each call.
    */
   private async streamSlackFileBytes(
     handle: string,
@@ -2050,6 +2049,7 @@ export class SlackAdapter extends BaseAdapter {
     }
     return createUnifiedMessage({
       client,
+      teamId: this.teamId,
       anchor: this.messageWriteAnchor({ parent, parentTypeId, edge }),
       fields,
     });

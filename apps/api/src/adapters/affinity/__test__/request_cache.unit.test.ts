@@ -23,7 +23,12 @@ jest.mock('../../../services/context', () => ({
 }));
 
 import { AffinityAPIClient } from '../apiClient';
-import { withRunCallLedger } from '../../../services/movement_engine/run_scope';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import { withSegment } from '../../../services/translation_graph/segment_scope';
+
+/** One run segment's host scope, as the engine opens it for a run. */
+const inARun = <T>(fn: () => Promise<T>) =>
+  withSegment({ teamId: '00000000-0000-0000-0000-000000000081' as TeamId }, fn);
 
 const BASE = 'https://affinity.test';
 
@@ -203,7 +208,7 @@ describe('within one run, a record is read once', () => {
     const { calls } = serve(workspace());
     const client = new AffinityAPIClient({ apiKey: 'k', baseUrl: BASE });
 
-    await withRunCallLedger(async () => {
+    await inARun(async () => {
       await client.getPersonById(5);
       await client.getPersonById(5);
       await client.getOrganisationById(3);
@@ -212,7 +217,7 @@ describe('within one run, a record is read once', () => {
     expect(countOf(calls, 'GET /persons/5')).toBe(1);
     expect(countOf(calls, 'GET /organizations/3')).toBe(1);
 
-    await withRunCallLedger(async () => {
+    await inARun(async () => {
       await client.getPersonById(5);
     });
     expect(countOf(calls, 'GET /persons/5')).toBe(2);
@@ -232,7 +237,7 @@ describe('within one run, a record is read once', () => {
     const { calls } = serve(workspace());
     const client = new AffinityAPIClient({ apiKey: 'k', baseUrl: BASE });
 
-    await withRunCallLedger(async () => {
+    await inARun(async () => {
       await client.getPersonById(5);
       await client.updatePerson(5, { emails: ['ada@x.test', 'ada@y.test'] });
       const after = await client.getPersonById(5);
@@ -252,7 +257,7 @@ describe('within one run, a record is read once', () => {
     const { calls } = serve(workspace());
     const client = new AffinityAPIClient({ apiKey: 'k', baseUrl: BASE });
 
-    await withRunCallLedger(async () => {
+    await inARun(async () => {
       await Promise.all([
         client.getFieldValues({ organization_id: 3 }),
         client.getFieldValues({ organization_id: 3 }),
@@ -267,7 +272,7 @@ describe('within one run, a record is read once', () => {
     const { calls } = serve(workspace());
     const client = new AffinityAPIClient({ apiKey: 'k', baseUrl: BASE });
 
-    await withRunCallLedger(async () => {
+    await inARun(async () => {
       await client.getFieldValues({ organization_id: 3 });
       await client.getFieldValues({ organization_id: 3 });
       expect(countOf(calls, 'GET /field-values')).toBe(1);
@@ -283,7 +288,7 @@ describe('within one run, a record is read once', () => {
     const { calls } = serve(workspace());
     const client = new AffinityAPIClient({ apiKey: 'k', baseUrl: BASE });
 
-    await withRunCallLedger(async () => {
+    await inARun(async () => {
       const before = await client.findManyOrganisations({
         search: 'late-arrival.test',
         includeGlobal: false,

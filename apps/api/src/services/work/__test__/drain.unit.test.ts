@@ -2,6 +2,8 @@ import type { WorkKind, WorkRow } from '../kinds';
 
 import { logger } from '../../logger';
 import {
+  deferredDueMs,
+  drainPassFailing,
   drainWork,
   notifyWork,
   registerWorkHandler,
@@ -10,12 +12,14 @@ import {
   inProcessNotifier,
   startDrainLoop,
   type StopDrainLoop,
+  WorkDeferred,
 } from '../drain';
-import { claimDueWork, completeWork, heartbeatWork, releaseWork } from '../store';
+import { claimDueWork, completeWork, deferWork, heartbeatWork, releaseWork } from '../store';
 
 jest.mock('../store', () => ({
   claimDueWork: jest.fn(),
   completeWork: jest.fn(),
+  deferWork: jest.fn(),
   heartbeatWork: jest.fn(),
   releaseWork: jest.fn(),
 }));
@@ -28,10 +32,11 @@ const claim = jest.mocked(claimDueWork);
 const complete = jest.mocked(completeWork);
 const heartbeat = jest.mocked(heartbeatWork);
 const release = jest.mocked(releaseWork);
+const defer = jest.mocked(deferWork);
 
 const UPDATED_AT = new Date('2001-01-01T00:00:00.000Z');
 
-function row(input: { kind?: WorkKind; attempts?: number; key?: string } = {}): WorkRow {
+function row(input: { kind?: WorkKind; attempts?: number; deferrals?: number; key?: string } = {}): WorkRow {
   return {
     id: `id-${input.key ?? 'a'}`,
     teamId: null,
@@ -41,6 +46,7 @@ function row(input: { kind?: WorkKind; attempts?: number; key?: string } = {}): 
     dueAt: UPDATED_AT,
     intervalMs: null,
     attempts: input.attempts ?? 1,
+    deferrals: input.deferrals ?? 0,
     leaseOwner: 'me',
     leaseUntil: UPDATED_AT,
     leaseToken: `token-${input.key ?? 'a'}`,
@@ -82,7 +88,7 @@ describe('drainWork', () => {
       claimedUpdatedAt: UPDATED_AT,
     });
     expect(release).not.toHaveBeenCalled();
-    expect(result).toEqual({ claimed: 1, ran: 1, recovered: 0, failed: 0, claimFailed: false });
+    expect(result).toEqual({ claimed: 1, ran: 1, recovered: 0, failed: 0, deferred: 0, claimFailed: false });
   });
 
   it('a second attempt calls recover when defined, else run', async () => {
@@ -98,7 +104,7 @@ describe('drainWork', () => {
     expect(recover).toHaveBeenCalledWith({ runId: 'r' }, expect.objectContaining({ attempts: 2 }));
     expect(run).not.toHaveBeenCalled();
     expect(fallback).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ claimed: 2, ran: 0, recovered: 2, failed: 0, claimFailed: false });
+    expect(result).toEqual({ claimed: 2, ran: 0, recovered: 2, failed: 0, deferred: 0, claimFailed: false });
   });
 
   it('a handler that throws releases the row and the drain resolves', async () => {
@@ -119,7 +125,39 @@ describe('drainWork', () => {
       expect.any(String),
       expect.objectContaining({ kind: 'resume_timer', key: 'a', attempts: 1 }),
     );
-    expect(result).toEqual({ claimed: 1, ran: 0, recovered: 0, failed: 1, claimFailed: false });
+    expect(result).toEqual({ claimed: 1, ran: 0, recovered: 0, failed: 1, deferred: 0, claimFailed: false });
+  });
+
+  it('a handler that defers is deferred, not released: uncompleted, no failure, on the deferral schedule', async () => {
+    registerWorkHandler('wake_await', {
+      run: async () => {
+        throw new WorkDeferred('run busy');
+      },
+    });
+    const now = new Date('2026-10-07T12:00:00.000Z');
+    // Deferred twice already, and many attempts in: the schedule reads the
+    // deferrals, never the attempts.
+    pending = [row({ kind: 'wake_await', attempts: 9, deferrals: 2 })];
+
+    const result = await drainWork({ owner: 'me', now: () => now });
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+    expect(defer).toHaveBeenCalledWith({
+      id: 'id-a',
+      leaseToken: 'token-a',
+      claimedUpdatedAt: UPDATED_AT,
+      dueAt: new Date(now.getTime() + 6_000),
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(result).toEqual({ claimed: 1, ran: 0, recovered: 0, failed: 0, deferred: 1, claimFailed: false });
+    expect(drainPassFailing(result)).toBe(false);
+  });
+
+  it('the deferral schedule: two seconds a deferral, never more than thirty', () => {
+    expect([1, 2, 3, 14, 15, 16, 100].map(deferredDueMs)).toEqual([
+      2_000, 4_000, 6_000, 28_000, 30_000, 30_000, 30_000,
+    ]);
   });
 
   it('a known kind with no registered handler is released with a warning', async () => {
@@ -225,6 +263,7 @@ describe('drainWork', () => {
       ran: 0,
       recovered: 0,
       failed: 0,
+      deferred: 0,
       claimFailed: true,
     });
   });

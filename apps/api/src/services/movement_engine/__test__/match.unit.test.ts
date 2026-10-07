@@ -93,7 +93,8 @@ import {
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost, type ArbitrateEntities } from '../host';
+import type { ArbitrateEntities } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
 /** The host's judge: the candidate index it picks, or null to decline. */
@@ -234,10 +235,10 @@ function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       llm: { arbitrateEntities },
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'email') return adapters.email;
           if (adapterType === 'attio') return adapters.attio;
@@ -267,7 +268,7 @@ describe('a match against a system', () => {
   ];
 
   it('a lone fuzzy hit goes to the judge; accepted, the handle is the record and the block runs', async () => {
-    arbitrateEntities.mockResolvedValue(0);
+    arbitrateEntities.mockResolvedValue({ index: 0 });
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio', { company: [ACME] });
     const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter });
@@ -283,7 +284,7 @@ describe('a match against a system', () => {
   });
 
   it('the judge declining is a miss: the scope ends, nothing is written', async () => {
-    arbitrateEntities.mockResolvedValue(null);
+    arbitrateEntities.mockResolvedValue({ index: null });
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio', { company: [ACME] });
     const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter });

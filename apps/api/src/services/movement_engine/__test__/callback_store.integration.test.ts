@@ -14,8 +14,10 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { ParkedScopeState } from '../serialize';
 
+import { sql } from 'kysely';
+
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
-import { CALLBACK_ID_PREFIX, callbackUrl, claimCallbackFire, coerceCallbackValues, getCallback, isCallbackId, listRunCallbacks, mintCallback, readCallbackCalls, revokeRunCallbacks } from '../callback_store';
+import { CALLBACK_ID_PREFIX, callbackUrl, claimCallbackFire, coerceCallbackValues, getCallback, isCallbackId, listRunCallbacks, markCallbackBodyStarted, mintCallback, readCallbackCalls, revokeRunCallbacks } from '../callback_store';
 import { CALLBACK_AWAIT_TYPE, type CallbackParamSpec } from '../callback_types';
 import { loadResolvableCallbackAwaits } from '../callback_sink';
 
@@ -134,8 +136,7 @@ describe('the claim (CAS)', () => {
     const kinds = [a.kind, b.kind].sort();
     expect(kinds).toEqual(['closed', 'recorded']);
     // The ledger is the proof: the loser's call is not in it.
-    const calls = await readCallbackCalls(record.id);
-    expect(calls).toHaveLength(1);
+    expect((await getCallback(record.id))?.calls).toHaveLength(1);
   });
 
   it('a repeatable callback stays live and ACCUMULATES calls', async () => {
@@ -157,11 +158,50 @@ describe('the claim (CAS)', () => {
       [1, 2, 3, 4, 5].map((n) => claimCallbackFire({ id: record.id, values: { n } })),
     );
 
-    const calls = await readCallbackCalls(record.id);
+    const calls = (await getCallback(record.id))?.calls ?? [];
     expect(calls).toHaveLength(5);
     expect(new Set(calls.map((c) => (c.values as { n: number }).n))).toEqual(
       new Set([1, 2, 3, 4, 5]),
     );
+  });
+
+  it('a call is seen once its body has started, never before', async () => {
+    const record = await mint({ singleUse: false });
+    await claimCallbackFire({ id: record.id, values: { n: 1 } });
+    expect(await readCallbackCalls(record.id)).toEqual([]);
+
+    await markCallbackBodyStarted({ id: record.id, callIndex: 0 });
+    const calls = await readCallbackCalls(record.id);
+    expect(calls).toEqual([{ at: expect.any(String), values: { n: 1 } }]);
+    // The landing's `At` is an instant JavaScript reads back as itself.
+    expect(new Date(calls[0]!.at).toISOString()).toBe(calls[0]!.at);
+  });
+
+  it('expiry is read on the database clock, so a refusal says expired, whatever this process thinks the time is', async () => {
+    // Expired a second ago by the database's clock.
+    const record = await mint({ expiresAt: new Date(Date.now() + 60 * 60 * 1000) });
+    await getAutomationsQb(['callback'])
+      .updateTable('callback')
+      .set({ expires_at: sql<Date>`now() - interval '1 second'` })
+      .where('id', '=', record.id)
+      .execute();
+    // This process's clock runs an hour slow.
+    const slow = jest.spyOn(Date, 'now').mockReturnValue(Date.now() - 60 * 60 * 1000);
+    try {
+      expect((await claimCallbackFire({ id: record.id, values: {} })).kind).toBe('expired');
+    } finally {
+      slow.mockRestore();
+    }
+  });
+
+  it('a malformed ledger is refused where it is read, naming the callback', async () => {
+    const record = await mint();
+    await getAutomationsQb(['callback'])
+      .updateTable('callback')
+      .set({ calls: sql`'[{"values": {}}]'::jsonb` })
+      .where('id', '=', record.id)
+      .execute();
+    await expect(getCallback(record.id)).rejects.toThrow(`callback ${record.id} has a malformed call ledger`);
   });
 
   it('TTL expiry is LAZY — checked at the claim, never by a sweeper', async () => {
@@ -273,10 +313,19 @@ describe('the backstop wake — a callback with a recorded call is resolvable', 
     expect(await loadResolvableCallbackAwaits({ runId })).toEqual([]);
   });
 
-  it('a FIRED callback’s park is resolvable — so a lost wake nudge cannot strand the run', async () => {
+  it('a recorded call whose body has not started does not resolve the park: the awaiter waits for the body', async () => {
     const record = await mint();
     await correlate(record.id, 's1');
     await claimCallbackFire({ id: record.id, values: {} });
+
+    expect(await loadResolvableCallbackAwaits({ runId })).toEqual([]);
+  });
+
+  it('a FIRED callback’s park is resolvable once its body started — so a lost wake nudge cannot strand the run', async () => {
+    const record = await mint();
+    await correlate(record.id, 's1');
+    await claimCallbackFire({ id: record.id, values: {} });
+    await markCallbackBodyStarted({ id: record.id, callIndex: 0 });
 
     const resolvable = await loadResolvableCallbackAwaits({ runId });
     expect(resolvable).toEqual([{ runId, teamId, address: 's1' }]);

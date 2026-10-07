@@ -38,7 +38,7 @@ import { z } from 'zod';
 import { neverAsAny } from '../../lib/utils/types';
 import type { LlmCallResult } from '../translation_graph/engine/batched_extraction';
 import type { FileRef } from '../translation_graph/adapter';
-import { isFileRef } from '../translation_graph/engine/files/retrieve';
+import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { Effort, ExtractionCallSettings, TierModel } from './ai_tiers';
 import {
   absentIfBlank,
@@ -65,7 +65,7 @@ import {
   type MovementTraceEntry,
 } from './expression';
 import { fromOrigin, NO_PROVENANCE, type ExtractSiteRef, type Provenance, type ProvenanceOrigin } from './provenance';
-import { throwIfCancelled } from './run_scope';
+import { throwIfCancelled, type RunFacts } from './run_context';
 
 // ── The model seam ──────────────────────────────────────────────────────────
 
@@ -178,6 +178,9 @@ export interface ExtractCallRuntime {
   resolveFileText?: (ref: FileRef) => Promise<FileTextResolution>;
   trace?: MovementTraceEntry[];
   state: ExtractCallRunState;
+  /** The run this call is in — its cancel gate and its id for log lines.
+   *  Absent ⇒ outside a run: nothing to cancel. */
+  run?: RunFacts;
 }
 
 // ── The prompt ──────────────────────────────────────────────────────────────
@@ -552,7 +555,8 @@ async function contentFile(ref: FileRef, runtime: ExtractCallRuntime): Promise<C
     ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
   };
   if (runtime.resolveFileText === undefined) return { traced: { ...named, unreadable: 'bytes_unavailable' } };
-  const key = ref.source?.handle ?? ref.name;
+  const handle = fileHandle(ref);
+  const key = handle ?? ref.name;
   const read = async (): Promise<ContentFile> => {
     const result = await runtime.resolveFileText!(ref);
     if (isFileUnreadable(result)) {
@@ -565,13 +569,13 @@ async function contentFile(ref: FileRef, runtime: ExtractCallRuntime): Promise<C
       };
     }
     if (result.text.trim() === '') return { traced: { ...named, unreadable: 'no_text' } };
-    const bounded = boundFileText(result.text, ref);
+    const bounded = boundFileText({ text: result.text, ref, run: runtime.run });
     return {
       text: bounded.content,
       origin: {
         kind: 'file',
         ...(result.rawTextId !== undefined ? { rawTextId: result.rawTextId } : {}),
-        ...(ref.source?.handle !== undefined ? { handle: ref.source.handle } : {}),
+        ...(handle !== undefined ? { handle } : {}),
         ...named,
       },
       traced: {
@@ -716,7 +720,7 @@ export async function runExtractCall(input: ExtractCallInput): Promise<Binding> 
     return reply ? { reply } : {};
   };
   const ask = async (last: string, label: string): Promise<ExtractCallLlmResult> => {
-    await throwIfCancelled();
+    await throwIfCancelled(runtime.run);
     const reply = await runtime.llm.call({
       system: EXTRACT_CALL_SYSTEM_PROMPT,
       blocks: [...contentBlocks, { text: last }],

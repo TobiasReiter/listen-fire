@@ -394,6 +394,7 @@ describe('a meaning-changed construct inside an imported library', () => {
     plugins: {
       scan_web: {
         args: ['url'],
+        priced: false,
         effects: { reads: ['the web'], ai: true },
         output: { kind: 'records', fields: { url: 'text', text: 'text' } },
         earlierOutputs: [{ before: 2, output: { kind: 'value', type: 'text' } }],

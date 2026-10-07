@@ -105,7 +105,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
@@ -321,6 +321,7 @@ async function run(
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: {
         resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
       },
@@ -328,7 +329,6 @@ async function run(
     }),
     ...(movementName !== undefined ? { movementName } : {}),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { calls: llm.calls, writes };
 }
@@ -495,7 +495,7 @@ describe('an IMPORTED declaration', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/entries': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -504,9 +504,6 @@ describe('an IMPORTED declaration', () => {
           }),
         },
         llm: { client: llm.client },
-        files: {
-          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-        },
       }),
       dryRun: true,
     });
@@ -532,7 +529,7 @@ describe('an IMPORTED declaration', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/entries': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -541,9 +538,6 @@ describe('an IMPORTED declaration', () => {
           }),
         },
         llm: { client: llm.client },
-        files: {
-          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-        },
       }),
       dryRun: true,
     });
@@ -601,7 +595,7 @@ describe('an IMPORTED declaration', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/triage': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -610,7 +604,6 @@ describe('an IMPORTED declaration', () => {
           }),
         },
         llm: { client: llm.client },
-        files: { resolveFile: (path) => (path === 'lib/triage' ? { source: library } : undefined) },
       }),
       dryRun: true,
     });
@@ -673,8 +666,9 @@ describe('a spread of a declared structure, or of a record built in memory', () 
       source,
       event: webhookEvent('email', { subject: 'Acme', text: '' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/deals': { source: library } } },
       host: makeTestHost({
+        writeSink: (w) => writes.push(w),
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -682,10 +676,8 @@ describe('a spread of a declared structure, or of a record built in memory', () 
           }),
         },
         llm: { client: queuedMovementLlm([]).client },
-        files: { resolveFile: (path) => (path === 'lib/deals' ? { source: library } : undefined) },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     expect(writes).toEqual([
       expect.objectContaining({ kind: 'create', fields: { name: 'Acme', stage: 'Seed' } }),
@@ -834,7 +826,7 @@ describe('`node X extends Y` as an extraction shape', () => {
       source,
       event: webhookEvent('email', { subject: 'Deals', text: 'Acme is raising.' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: { ...catalog, files: { 'lib/entries': { source: library } } },
       host: makeTestHost({
         adapters: {
           resolve: makeResolver({
@@ -843,9 +835,6 @@ describe('`node X extends Y` as an extraction shape', () => {
           }),
         },
         llm: { client: llm.client },
-        files: {
-          resolveFile: (path) => (path === 'lib/entries' ? { source: library } : undefined),
-        },
       }),
       dryRun: true,
     });

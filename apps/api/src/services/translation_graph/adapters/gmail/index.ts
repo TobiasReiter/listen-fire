@@ -32,7 +32,7 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink } from '../../adapter';
+import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
 import {
   ADAPTER_META_TYPE_ID,
@@ -375,11 +375,11 @@ export class GmailAdapter extends BaseAdapter implements Adapter {
   }
 
   // ── 5. Byte resolution (owner-side) ────────────────────────────────────
-  // Gmail OWNS the files it hands out: the engine redeems a `FileRef.source
-  // .handle` here while the action that produced it is in flight.
+  // Gmail OWNS the files it hands out: the host redeems their handle here, on
+  // the instance (the credential) the descriptor names.
 
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const handle = input.ref.source?.handle;
+    const handle = fileHandle(input.ref);
     const pair = handle === undefined ? undefined : decodeAttachmentId(handle);
     if (pair === undefined) {
       throw new Error(
@@ -401,9 +401,9 @@ export class GmailAdapter extends BaseAdapter implements Adapter {
     };
   }
 
-  /** The `File` primitive for an attachment — a FileRef whose `retrieve()`
-   *  fetches the bytes from Gmail, and whose handle lets the engine redeem them
-   *  through this adapter instead. Null when the position names no file. */
+  /** The `File` primitive for an attachment — a FileRef descriptor naming this
+   *  instance as the owner, redeemed through `resolveFileRef`. Null when the
+   *  position names no file. */
   private attachmentFileRef(data: Record<string, unknown>): FileRef | null {
     const messageId = stringAt(data['messageId']);
     const attachmentId = stringAt(data['attachmentId']);
@@ -416,11 +416,11 @@ export class GmailAdapter extends BaseAdapter implements Adapter {
       name: filename,
       contentType,
       ...(size !== undefined ? { size } : {}),
-      retrieve: () => this.fetchAttachment({ messageId, attachmentId }, contentType),
-      source: {
-        ownerAdapterType: GMAIL_ADAPTER_TYPE,
+      source: ownedFileSource({
+        adapterType: GMAIL_ADAPTER_TYPE,
+        ...(this.credentialsId !== undefined ? { credentialsId: this.credentialsId } : {}),
         handle: encodeAttachmentId({ messageId, attachmentId }),
-      },
+      }),
     };
   }
 
@@ -452,6 +452,7 @@ export class GmailAdapter extends BaseAdapter implements Adapter {
     const parent = singleParentLink(input);
     return sendGmailMessage({
       client,
+      teamId: this.teamId,
       fields,
       ...(parent !== undefined ? { replyTo: await this.replyTarget(parent) } : {}),
     });

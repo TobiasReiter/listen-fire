@@ -33,11 +33,11 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink } from '../../adapter';
+import { fileHandle, isFileRef, ownedFileSource, singleParentLink } from '../../adapter';
 import { naturalName } from '../name_resolution';
 import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
-import { isFileRef, streamFileRef } from '../../engine/files/retrieve';
+import { streamFileRef } from '../../engine/files/retrieve';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
@@ -580,8 +580,8 @@ export class WhatsappAdapter extends BaseAdapter implements Adapter {
       // `name` is a friendly alias for `filename`.
       if (fieldId === 'name') return att.filename ?? null;
       // The `File` (`data`) field is the binary primitive — a `FileRef`
-      // carrying its own byte channel (`retrieve()`), the same FileRef the
-      // retired input-side `_resources` bundle built. This is what
+      // descriptor this adapter redeems (`resolveFileRef`), the same FileRef
+      // the retired input-side `_resources` bundle built. This is what
       // `msg-[:Attachments]->.\`File\`` evaluates so media bytes reach
       // extraction / carry-forward.
       if (fieldId === 'data') return whatsappMediaFileRef(att);
@@ -664,15 +664,14 @@ export class WhatsappAdapter extends BaseAdapter implements Adapter {
   }
 
   // ── 3c. Byte resolution (owner-side) ─────────────────────────────────────
-  // WhatsApp OWNS the FILE resources it emits (P4): the engine redeems their
-  // `fileRef.source.handle` here, while the originating action is in flight,
-  // via `/api/files/{token}`. The handle is the media url (`key`) — the same
-  // Twilio media URL the inbound layer uses to fetch the bytes — so we fetch
-  // it and hand the engine a Node stream.
+  // WhatsApp OWNS the FILE resources it emits (P4): the host redeems their
+  // handle here. The handle is the media url (`key`) — the same Twilio media
+  // URL the inbound layer uses to fetch the bytes — so we fetch it and hand
+  // back a Node stream.
   //
   // owners serve bytes
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const handle = input.ref.source?.handle;
+    const handle = fileHandle(input.ref);
     if (!handle) {
       throw new Error(
         `${WHATSAPP_ADAPTER_TYPE}.resolveFileRef: FileRef has no source handle to resolve.`,
@@ -810,7 +809,7 @@ export class WhatsappAdapter extends BaseAdapter implements Adapter {
         replyToMessageId: parent.externalId,
       });
     } else if (isFileRef(fileValue)) {
-      const resolved = await streamFileRef(fileValue);
+      const resolved = await streamFileRef(fileValue, { teamId: this.teamId });
       const chunks: Buffer[] = [];
       for await (const chunk of resolved.stream) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
@@ -961,10 +960,10 @@ async function getMimeExtension(contentType: string): Promise<string | null> {
 }
 
 /**
- * The `File` primitive for a WhatsApp media item — a branded `FileRef` whose
- * `retrieve()` re-fetches the bytes from the media url (`key`). `source.handle`
- * is that same key, so the engine can also redeem bytes through the owner
- * (`resolveFileRef`). Returns null when the media carries no url handle.
+ * The `File` primitive for a WhatsApp media item — a `FileRef` descriptor
+ * whose handle is the media url (`key`), redeemed through the owner
+ * (`resolveFileRef`). WhatsApp takes no credential, so the descriptor names
+ * none. Returns null when the media carries no url handle.
  */
 function whatsappMediaFileRef(att: Partial<WhatsappAttachment>): FileRef | null {
   if (!att.key || !att.filename) return null;
@@ -973,8 +972,7 @@ function whatsappMediaFileRef(att: Partial<WhatsappAttachment>): FileRef | null 
     __brand: 'FileRef',
     name: att.filename,
     contentType: att.contentType,
-    retrieve: () => fetchUrlToStream(key),
-    source: { ownerAdapterType: WHATSAPP_ADAPTER_TYPE, handle: key },
+    source: ownedFileSource({ adapterType: WHATSAPP_ADAPTER_TYPE, handle: key }),
   };
 }
 

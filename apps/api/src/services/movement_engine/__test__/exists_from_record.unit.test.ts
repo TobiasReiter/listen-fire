@@ -27,7 +27,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, positionRecordId } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
 const KG = 'kg';
@@ -161,6 +161,7 @@ listen to runs {} fire probe
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: {
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'manual') return manualAdapter;
@@ -172,7 +173,6 @@ listen to runs {} fire probe
     // A write handle needs the record the graph really created (its id is what
     // the hop walks from), so those cases run live against the fake.
     dryRun: options.live !== true,
-    writeSink: (w) => writes.push(w),
   });
   const written = options.live === true ? graph.created : writes;
   return written.filter((w) => w.recordType === 'note').map((w) => w.fields?.text);

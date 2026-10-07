@@ -93,8 +93,7 @@ import {
 import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { InMemoryWriteLocks, type WriteLocks } from '../../write_locks/write_locks';
 import { PostgresWriteLocks, type PostgresWriteLockHolder } from '../../write_locks/postgres';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
-import { makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -223,8 +222,6 @@ const SOURCE = [
 /** A `fetch_url` that takes as long as its url says, after `whileWaiting`. */
 function slowFetch(whileWaiting: () => Promise<void>): MovementTransformInvoker {
   return {
-    declaredOutput: (plugin) =>
-      (getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-')))?.signature.output,
     async invoke({ config }) {
       await whileWaiting();
       await sleep(Number(config.url));
@@ -252,9 +249,9 @@ function runsAgainst(writeLocks: WriteLocks, whileWaiting: () => Promise<void> =
       movementName,
       event: webhookEvent(subject),
       teamId,
+      credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
           resolve: ({ adapterType }: { adapterType: string }) =>
             adapterType === 'email' ? email : crm.adapter,
         },
@@ -424,7 +421,7 @@ describe('two runs whose parallel members update the same two records in opposit
         event: webhookEvent(order.join('-')),
         teamId,
         host: makeTestHost({
-          adapters: { credentialId: () => undefined, resolve: () => inboxListing(order, updates) },
+          adapters: { resolve: () => inboxListing(order, updates) },
           locks: recording,
         }),
         catalog: INBOX_CATALOG,

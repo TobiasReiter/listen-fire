@@ -23,7 +23,9 @@ const markParked = jest.fn(async () => undefined);
 const beginLiveTrace = jest.fn();
 const endLiveTrace = jest.fn();
 
+const noteFirstFiringLeaseLost = jest.fn(async () => undefined);
 jest.mock('../../runs/trigger_run', () => ({
+  noteFirstFiringLeaseLost: (...args: unknown[]) => noteFirstFiringLeaseLost(...(args as [])),
   TriggerRunRecorder: jest.fn(() => ({
     recordStep,
     recordMovementStep,
@@ -33,6 +35,7 @@ jest.mock('../../runs/trigger_run', () => ({
     markParked,
     beginLiveTrace,
     endLiveTrace,
+    holdLease: jest.fn(),
     startOpsRun: jest.fn(async () => undefined),
     adoptOpsRun: jest.fn(async () => undefined),
     triggerRunId: 'run-1',
@@ -42,6 +45,13 @@ jest.mock('../../runs/trigger_run', () => ({
 
 // The production engine host wires the DB, the adapter registry and the model
 // clients; the engine is stubbed below, so the host it is handed is inert.
+// The run's lease: always free here (a second process is the integration
+// tests' business).
+const takeRunLease = jest.fn(async () => ({ isLost: () => false, release: async () => {} }) as unknown);
+jest.mock('../../../movement_engine/run_lease', () => ({
+  ...jest.requireActual('../../../movement_engine/run_lease'),
+  takeRunLease: () => takeRunLease(),
+}));
 jest.mock('../engine_host', () => ({
   productionEngineHost: jest.fn(() => ({})),
 }));
@@ -114,6 +124,7 @@ jest.mock('../issues', () => ({
   resolveMovementIssues: jest.fn(async () => undefined),
 }));
 
+import { RunLeaseLost } from '../../../movement_engine/run_lease';
 import { movementForTrigger, resumeMovementFiring, runMovementFiring } from '../execute';
 import type { TriggerEvent } from '../../triggers/types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
@@ -243,6 +254,74 @@ describe('runMovementFiring', () => {
     });
     expect(finish).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({ result: runResult });
+  });
+
+  it('a first firing that cannot take its run lease fails, recorded, rather than staying running', async () => {
+    takeRunLease.mockResolvedValueOnce(null);
+
+    const outcome = await runMovementFiring({
+      teamId: TEAM,
+      triggerId: 't-1',
+      triggerName: 'movement/intake_file/intake',
+      movementRow: movementRow() as never,
+      event,
+      recordingTriggerType: 'webhook',
+    });
+
+    expect(runMovement).not.toHaveBeenCalled();
+    expect(recordStepFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('could not take its run lease') }),
+    );
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(outcome.error).toContain('could not take its run lease');
+  });
+
+  it('a firing whose lease is lost stops without recording or settling anything', async () => {
+    runMovement.mockRejectedValue(new RunLeaseLost('run-1' as never));
+
+    const outcome = await runMovementFiring({
+      teamId: TEAM,
+      triggerId: 't-1',
+      triggerName: 'movement/intake_file/intake',
+      movementRow: movementRow() as never,
+      event,
+      recordingTriggerType: 'webhook',
+    });
+
+    expect(outcome).toEqual({
+      result: null,
+      error: 'run lease lost; another instance may hold the run',
+      leaseLost: true,
+    });
+    expect(recordStepFailure).not.toHaveBeenCalled();
+    expect(finish).not.toHaveBeenCalled();
+    // The row says why, for the orphan sweep that settles it.
+    expect(noteFirstFiringLeaseLost).toHaveBeenCalledWith('run-1');
+  });
+
+  it('a firing whose lease lapsed during its last statement returns normally and still settles nothing', async () => {
+    // The engine had no boundary left to stop at: it returned as if all went well.
+    runMovement.mockResolvedValue({ movementName: 'intake', writes: [], extractionSites: {}, trace: [] });
+    takeRunLease.mockResolvedValueOnce({ isLost: () => true, release: async () => {} });
+
+    const outcome = await runMovementFiring({
+      teamId: TEAM,
+      triggerId: 't-1',
+      triggerName: 'movement/intake_file/intake',
+      movementRow: movementRow() as never,
+      event,
+      recordingTriggerType: 'webhook',
+    });
+
+    expect(outcome).toEqual({
+      result: null,
+      error: 'run lease lost; another instance may hold the run',
+      leaseLost: true,
+    });
+    expect(recordMovementStep).not.toHaveBeenCalled();
+    expect(finish).not.toHaveBeenCalled();
+    expect(markParked).not.toHaveBeenCalled();
+    expect(noteFirstFiringLeaseLost).toHaveBeenCalledWith('run-1');
   });
 
   it('contains a thrown engine error: failed step recorded, error returned as a value', async () => {

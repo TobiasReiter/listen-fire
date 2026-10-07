@@ -25,7 +25,7 @@
 //   (#transform — transforms add ephemeral nodes to the source graph)
 
 import type { HandbookSection } from '../../../../lib/handbook_section';
-import type { CostEnvelope } from '../../../../lib/run_spend';
+import type { CostEnvelope } from '../../../../lib/run_cost';
 import type {
   EphemeralOriginRef,
   SourcePosition,
@@ -104,7 +104,7 @@ export type TransformOutput = {
   outcome?: string;
   /**
    * What this invocation cost, when the plugin prices its own work — the cost
-   * envelope documented in `lib/run_spend.ts`, the same one an external
+   * envelope documented in `lib/run_cost.ts`, the same one an external
    * function returns. The engine charges it to the run under the plugin's
    * name. Leave it unset for work already priced where it happens (a model
    * call, a paid service client that reports its own cost) — reporting it here

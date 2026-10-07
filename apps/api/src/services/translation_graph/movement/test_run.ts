@@ -19,10 +19,10 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { anthropicChat } from '../../../lib/anthropic';
+import { runCostCapFromEnv } from '../../../lib/run_spend';
 import { logger } from '../../logger';
 import { runMovement } from '../../movement_engine/run';
 import type { CapturedWrite } from '../engine/dry_run_adapter';
-import { isFileRef } from '../engine/files/retrieve';
 import { resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
 import type { TriggerEvent } from '../triggers/types';
@@ -169,48 +169,25 @@ export async function runMovementTestRun(
         : {}),
       event,
       teamId: input.teamId,
+      costCapMicrodollars: runCostCapFromEnv(),
       catalog: teamCatalog.snapshot,
+      credentialIds: teamCatalog.credentialIds,
       // A test run leaves nothing durable behind, its file text included, and
       // captures its writes rather than making them, so it takes no cross-run
       // lock a live firing could wait on.
       host: productionEngineHost({
         teamId: input.teamId,
-        credentialIds: teamCatalog.credentialIds,
         rawText: inMemoryRawTextStore(),
         locks: new InMemoryWriteLocks(),
+        writeSink: (w) => writes.push(w),
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
-  return { ok: true, event: payload, writes: writes.map(serializableWrite), notes: teamCatalog.notes };
-}
-
-/**
- * The result crosses the tRPC boundary to the UI, so it must serialize. A
- * captured `FileRef` field value carries a `retrieve()` closure (its byte
- * channel) that can't — strip it here, keeping the display metadata. The test
- * run never resolves bytes, so nothing downstream needs the closure. Deep
- * because a file field may nest FileRefs in an array/object.
- */
-function serializableWrite(write: MovementTestRunWrite): MovementTestRunWrite {
-  if (!write.fields) return write;
-  return { ...write, fields: stripClosures(write.fields) as Record<string, unknown> };
-}
-
-function stripClosures(value: unknown): unknown {
-  if (isFileRef(value)) {
-    const { name, contentType, size, source } = value;
-    return { __brand: 'FileRef' as const, name, contentType, size, source };
-  }
-  if (Array.isArray(value)) return value.map(stripClosures);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, stripClosures(v)]));
-  }
-  return value;
+  return { ok: true, event: payload, writes, notes: teamCatalog.notes };
 }
 
 // ── Source field descriptors ────────────────────────────────────────────────

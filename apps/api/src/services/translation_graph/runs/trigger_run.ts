@@ -37,6 +37,7 @@ import type { TriggerEventId } from '../../../generated/kysely/automations/Trigg
 import type { TriggerEvent } from '../triggers/types';
 import { markTriggerEventFailed } from '../triggers/event_store';
 import { settleUnresumableRun } from '../../interaction/run_failure';
+import { ORPHAN_AFTER, returnLeavesOfLapsedLeases, withRunLease } from '../../movement_engine/run_lease';
 import type { WorkHandler } from '../../work/kinds';
 import { registerWorkHandler } from '../../work/drain';
 
@@ -136,6 +137,9 @@ export class TriggerRunRecorder {
   private flushedSteps = 0;
   private finished = false;
   private opsRunId: string | null = null;
+  /** The run lease the segment settles under: its settle writes land only
+   *  while the run's lease is still this token's (`holdLease`). */
+  private leaseToken: string | undefined;
   /** True once a `running` row has been inserted (a parking firing creates
    *  the run row lazily at park time — §5.2). A non-parking firing never
    *  calls this, so `finish()` inserts the row once, exactly as before. */
@@ -283,13 +287,26 @@ export class TriggerRunRecorder {
    * state (§5.3). Call after `ensureStarted()` once the park rows are
    * written. Best-effort; never breaks the firing.
    */
+  /** Settle under the run lease: from here on the run's terminal status and
+   *  its `parked` flip are written only while the lease is still this one, so
+   *  a holder whose lease lapsed cannot settle the run under the instance
+   *  that took it over. */
+  holdLease(lease: { token: string }): void {
+    this.leaseToken = lease.token;
+  }
+
   async markParked(): Promise<void> {
     try {
-      await getAutomationsQb(['trigger_run'])
+      let park = getAutomationsQb(['trigger_run'])
         .updateTable('trigger_run')
         .set({ status: 'parked' })
-        .where('id', '=', this.id)
-        .execute();
+        .where('id', '=', this.id);
+      if (this.leaseToken !== undefined) park = park.where('lease_token', '=', this.leaseToken);
+      const parked = await park.executeTakeFirst();
+      if (this.leaseToken !== undefined && Number(parked.numUpdatedRows) === 0) {
+        logger.warn('[trigger_run] not marked parked: the run lease is no longer this segment\'s', { runId: this.id });
+        return;
+      }
       // Say so in the feed as well, or an answered-in-a-week run reads as
       // working the whole time and the "running now" tile counts it.
       if (this.opsRunId) {
@@ -660,8 +677,9 @@ export class TriggerRunRecorder {
     completedAt: Date | null;
     failedAt: Date | null;
     failureReason: string | null;
-  }): Promise<{ nodesWritten: number }> {
+  }): Promise<{ nodesWritten: number; settled: boolean }> {
     const pending = this.steps.slice(this.flushedSteps);
+    let settled = true;
     const segmentWrites = pending.reduce((sum, s) => sum + diagnosticWrites(s.diagnostics), 0);
     const segmentErrors = pending.flatMap((s) => s.errors.map((e) => ({ ...e, tgId: s.tgId })));
     let nodesWritten = segmentWrites;
@@ -709,7 +727,7 @@ export class TriggerRunRecorder {
         // A PARKING firing already inserted a `running` row at park time, so a
         // later resume reaching the end UPDATES it to its terminal status +
         // the accumulated step data. The conflict target is the primary key.
-        await trx
+        const written = await trx
           .insertInto('trigger_run')
           .values({
             id: this.id,
@@ -733,8 +751,8 @@ export class TriggerRunRecorder {
             failure_reason: terminal.failureReason,
             trigger_event_id: this.firing.triggerEventId ?? null,
           })
-          .onConflict((oc) =>
-            oc.column('id').doUpdateSet({
+          .onConflict((oc) => {
+            const update = oc.column('id').doUpdateSet({
               status: terminal.status,
               steps: jsonb(steps),
               diagnostics: jsonb(diagnostics),
@@ -743,12 +761,18 @@ export class TriggerRunRecorder {
               completed_at: terminal.completedAt,
               failed_at: terminal.failedAt,
               failure_reason: terminal.failureReason,
-            }),
-          )
-          .execute();
+            });
+            // The terminal fence: a run another instance now holds is not
+            // this segment's to settle.
+            const token = this.leaseToken;
+            return token !== undefined ? update.where('trigger_run.lease_token', '=', token) : update;
+          })
+          .returning('id')
+          .executeTakeFirst();
+        if (written === undefined) settled = false;
       });
-    if (landed) this.flushedSteps = this.steps.length;
-    return { nodesWritten };
+    if (landed && settled) this.flushedSteps = this.steps.length;
+    return { nodesWritten, settled };
   }
 
   /** Insert the trigger_run row + publish it live. Idempotent (no-op if already
@@ -790,12 +814,19 @@ export class TriggerRunRecorder {
       // own lattice, and a late answer still lands as data (F7); run death only
       // drops await correlations, via `failRunAndCancelRequests` on the
       // cancel/abort terminals.
-      ({ nodesWritten } = await this.persistSegment({
+      const persisted = await this.persistSegment({
         status,
         completedAt,
         failedAt,
         failureReason,
-      }));
+      });
+      nodesWritten = persisted.nodesWritten;
+      if (!persisted.settled) {
+        // The lease is another instance's now: it settles the run, revokes
+        // its callbacks and closes its feed run. Nothing here may.
+        logger.warn('[trigger_run] not settled: the run lease is no longer this segment\'s', { runId: this.id });
+        return;
+      }
 
       // Ruling (b), callback-primitive layer 1: a run that reaches its end with
       // un-fired callbacks REVOKES them. Callbacks are ephemeral by definition —
@@ -945,10 +976,6 @@ function movementStepDiagnostics(result: MovementRunResult): Record<string, unkn
   };
 }
 
-/** A segment beats every 5s (the recorder's live-trace tick); a minute of
- *  silence is a dead process, not a slow one. */
-export const ORPHAN_AFTER = 60 * SECOND;
-
 export type RunningSegment = 'orphaned' | 'live' | 'not_running';
 
 function lastSignOfLife(row: { started_at: Date; last_heartbeat_at: Date | null }): Date {
@@ -976,7 +1003,33 @@ export async function runningSegment(
   return stale ? 'orphaned' : 'live';
 }
 
+/**
+ * Why a run failed, as a reader reports it: the row's `failure_reason` once
+ * the run has failed, and nothing before. A first firing that lost its lease
+ * notes its reason on a row that is still `running` (`noteFirstFiringLeaseLost`)
+ * for the orphan sweep to settle with; until the run is settled that note is
+ * not a failure, and a run another instance went on to park or finish is not
+ * one at all.
+ */
+export function reportedFailureReason(row: { status: string; failure_reason: string | null }): string | null {
+  return row.status === 'failed' ? row.failure_reason : null;
+}
+
 const ORPHANED_SEGMENT = 'segment did not complete: process died or stalled';
+const LEASE_LOST_SEGMENT = 'segment did not complete: its run lease was lost to another instance';
+
+/** A first firing that lost its run lease stopped without settling its run,
+ *  which stays `running` for the orphan sweep: say why on the row, so the
+ *  sweep's settle does not claim the process died. */
+export async function noteFirstFiringLeaseLost(runId: TriggerRunId): Promise<void> {
+  await getAutomationsQb(['trigger_run'])
+    .updateTable('trigger_run')
+    .set({ failure_reason: LEASE_LOST_SEGMENT })
+    .where('id', '=', runId)
+    .where('status', '=', 'running')
+    .where('failure_reason', 'is', null)
+    .execute();
+}
 
 /**
  * Fail every `running` run whose segment has gone silent for ORPHAN_AFTER,
@@ -984,25 +1037,33 @@ const ORPHANED_SEGMENT = 'segment did not complete: process died or stalled';
  * (cron, poll, run-now, a KG mutation, chat doors): a process that dies
  * mid-segment leaves its run `running`, and only this notices.
  */
-export async function settleOrphanedRunningRuns(now: Date): Promise<void> {
-  const cutoff = new Date(now.getTime() - ORPHAN_AFTER);
+export async function settleOrphanedRunningRuns(): Promise<void> {
+  // The database clock, as the heartbeat and the lease are written with it.
+  const cutoff = sql<Date>`now() - ${ORPHAN_AFTER}::integer * interval '1 millisecond'`;
   const orphans = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('status', '=', 'running')
     .where((eb) => eb(eb.fn.coalesce('last_heartbeat_at', 'started_at'), '<', cutoff))
-    .select(['id', 'trigger_event_id'])
+    .select(['id', 'trigger_event_id', 'failure_reason'])
     .execute();
   for (const orphan of orphans) {
-    await settleUnresumableRun({ runId: orphan.id, reason: ORPHANED_SEGMENT });
-    if (orphan.trigger_event_id !== null) {
-      await markTriggerEventFailed(orphan.trigger_event_id, ORPHANED_SEGMENT);
+    // A segment that stopped for a lost lease said so on the row.
+    const reason = orphan.failure_reason ?? ORPHANED_SEGMENT;
+    // Under the run's lease, which a dead segment's has lapsed by now (the
+    // same silence). Held, the run is not orphaned after all: leave it.
+    const settled = await withRunLease(orphan.id, () => settleUnresumableRun({ runId: orphan.id, reason }));
+    if (settled.kind === 'held' && orphan.trigger_event_id !== null) {
+      await markTriggerEventFailed(orphan.trigger_event_id, reason);
     }
   }
 }
 
 export const runOrphanSweepHandler: WorkHandler = {
-  async run(_payload, ctx) {
-    await settleOrphanedRunningRuns(ctx.now);
+  async run() {
+    await settleOrphanedRunningRuns();
+    // A leaf claimed for resuming by a holder that died is parked again once
+    // that holder's lease has lapsed, so the run's next wake finds it.
+    await returnLeavesOfLapsedLeases();
   },
 };
 

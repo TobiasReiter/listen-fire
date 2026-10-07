@@ -30,7 +30,6 @@ import {
 } from '../adapters/slack';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
-import type { FileRef } from '../adapter';
 import type { SchemaTypeDescriptor, SourcePosition } from '../types';
 import { makeStablePosition, makeUnstablePosition } from '../types';
 import { parseSlackEvents } from '../../webhook_sync/providers/slack';
@@ -777,19 +776,18 @@ describe('SlackAdapter — webhook-event positions', () => {
       expect(await adapter.getFieldValue({ position, fieldId: 'Content Type' })).toBe('application/pdf');
       expect(await adapter.getFieldValue({ position, fieldId: 'URL' })).toBe(fileRecord.url);
       expect(await adapter.getFieldValue({ position, fieldId: 'Size' })).toBe(4096);
-      // The `File` field is the binary primitive — a FileRef with a working
-      // byte channel (`retrieve()`) and an owner handle (the raw Slack file id),
-      // so file bytes reach extraction / carry-forward via `files->.File`. This
-      // is the lossless replacement for the retired input-side `_resources`.
+      // The `File` field is the binary primitive — a FileRef descriptor naming
+      // this instance and the raw Slack file id as its handle, so file bytes
+      // reach extraction / carry-forward via `files->.File`. This is the
+      // lossless replacement for the retired input-side `_resources`.
       const file = await adapter.getFieldValue({ position, fieldId: 'File' });
       expect(file).toMatchObject({
         __brand: 'FileRef',
         name: 'briefing.pdf',
         contentType: 'application/pdf',
         size: 4096,
-        source: { ownerAdapterType: SLACK_ADAPTER_TYPE, handle: 'F100' },
+        source: { adapterType: SLACK_ADAPTER_TYPE, handle: 'F100' },
       });
-      expect(typeof (file as FileRef).retrieve).toBe('function');
     });
 
     it('getFieldValue reads slack:file fields off an external-record file position', async () => {

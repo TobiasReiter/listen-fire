@@ -34,7 +34,7 @@ import {
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000020' as TeamId;
 const KG = 'kg';
@@ -189,10 +189,10 @@ async function run(source: string, kg: ReturnType<typeof makeGraphFake>) {
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
     }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { result, writes };
 }
@@ -534,9 +534,10 @@ listen to runs {} fire cheapest
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: credentialIdsFor(catalog, () => 'cred-1'),
       host: makeTestHost({
+        writeSink: (w) => writes.push(w),
         adapters: {
-          credentialId: () => 'cred-1',
           resolve: makeResolver({
             manual: manualAdapter,
             attio: crm.adapter,
@@ -545,7 +546,6 @@ listen to runs {} fire cheapest
         },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     // 'keep' rows by name asc: Acme first; LIMIT 1 → exactly one value.
     expect(writes).toEqual([
@@ -593,10 +593,10 @@ listen to runs {} fire unsnooze
       teamId: TEAM_ID,
       catalog,
       host: makeTestHost({
+        writeSink: (w) => writes.push(w),
         adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     expect(writes.map((w) => w.fields?.text)).toEqual(['Acme', 'Globex', 'Hooli', 'Umbrella']);
   });

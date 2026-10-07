@@ -33,6 +33,8 @@ export default interface WorkTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 
   lease_token: ColumnType<string | null, string | null, string | null>;
+
+  deferrals: ColumnType<number, number | undefined, number>;
 }
 
 export type Work = Selectable<WorkTable>;

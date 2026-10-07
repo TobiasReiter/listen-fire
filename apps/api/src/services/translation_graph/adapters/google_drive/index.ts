@@ -45,6 +45,7 @@ import type {
   WriteResult,
   EdgesFromResult,
 } from '../../adapter';
+import { fileHandle, ownedFileSource } from '../../adapter';
 import type { TriggerType } from '../../triggers/types';
 import type {
   SchemaEntryPoint,
@@ -258,8 +259,8 @@ export class GoogleDriveAdapter extends BaseAdapter {
     }
   }
 
-  /** The file's binary primitive — retrieve() streams via the credential;
-   *  `source.handle` is the Drive file id (owner-side redemption). */
+  /** The file's binary primitive — a descriptor naming this instance (its
+   *  credential) and the Drive file id, redeemed by `resolveFileRef`. */
   private driveFileRef(item: DriveItem): FileRef | null {
     if (!item.id) return null;
     return {
@@ -267,16 +268,12 @@ export class GoogleDriveAdapter extends BaseAdapter {
       name: item.name || undefined,
       contentType: item.mimeType || undefined,
       size: item.size ?? undefined,
-      retrieve: async () => ({
-        stream: await (await this.getClient()).downloadFile({ fileId: item.id }),
-        contentType: item.mimeType || undefined,
-      }),
-      source: { ownerAdapterType: GOOGLE_DRIVE_ADAPTER_TYPE, handle: item.id },
+      source: ownedFileSource({ adapterType: GOOGLE_DRIVE_ADAPTER_TYPE, credentialsId: this.credentialsId, handle: item.id }),
     };
   }
 
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const handle = input.ref.source?.handle;
+    const handle = fileHandle(input.ref);
     if (!handle) {
       throw new Error('GoogleDriveAdapter.resolveFileRef: FileRef has no source handle.');
     }
@@ -291,7 +288,7 @@ export class GoogleDriveAdapter extends BaseAdapter {
 
   async createRecord(input: WriteInput): Promise<WriteResult> {
     const client = await this.getClient();
-    return writeCreateRecord({ client, write: await this.toInternalWrite(input) });
+    return writeCreateRecord({ client, teamId: this.teamId, write: await this.toInternalWrite(input) });
   }
 
   async updateRecord(input: UpdateInput): Promise<UpdateResult> {

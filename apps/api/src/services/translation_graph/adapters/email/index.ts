@@ -28,6 +28,7 @@ import type {
   RelatedResult,
   ResolveFileRefResult,
 } from '../../adapter';
+import { fileHandle, ownedFileSource } from '../../adapter';
 import { uniformWalk } from '../hop';
 import { INBOUND_EMAIL_ADDRESS_VAR, inboundRoutingAddress } from './address';
 import { fetchEmailAttachment } from './provider';
@@ -478,8 +479,8 @@ export class EmailAdapter extends BaseAdapter implements Adapter {
       // `name` is a friendly alias for `filename`.
       if (fieldId === 'name') return att.filename ?? null;
       // The `File` (`data`) field is the binary primitive — a `FileRef`
-      // carrying its own byte channel (`retrieve()`), the same FileRef the
-      // retired input-side `_resources` bundle built. This is what
+      // descriptor this adapter redeems (`resolveFileRef`), the same FileRef
+      // the retired input-side `_resources` bundle built. This is what
       // `msg-[:Attachments]->.\`File\`` evaluates so file bytes reach
       // extraction / carry-forward.
       if (fieldId === 'data') return emailAttachmentFileRef(att);
@@ -586,16 +587,14 @@ export class EmailAdapter extends BaseAdapter implements Adapter {
   }
 
   // ── 3c. Byte resolution (owner-side) ─────────────────────────────────────
-  // Email OWNS the FILE resources it emits (P4): the engine redeems their
-  // `fileRef.source.handle` here, while the originating action is in flight,
-  // via `/api/files/{token}`. The handle is the attachment `key` — the same
-  // stable storage URL the inbound layer uses to fetch the bytes (Mailgun's
-  // storage URL or a custom-email blob URL). We fetch it and hand the engine
-  // a Node stream; no caller-supplied target, no creds in the token.
+  // Email OWNS the FILE resources it emits (P4): the host redeems their
+  // handle here. The handle is the attachment `key` — the same stable storage
+  // URL the inbound layer uses to fetch the bytes (Mailgun's storage URL or a
+  // custom-email blob URL). We fetch it and hand back a Node stream.
   //
   // owners serve bytes
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const handle = input.ref.source?.handle;
+    const handle = fileHandle(input.ref);
     if (!handle) {
       throw new Error(
         `${EMAIL_ADAPTER_TYPE}.resolveFileRef: FileRef has no source handle to resolve.`,
@@ -734,11 +733,10 @@ function normalisedBody(payload: Partial<EmailPayload>): string {
 }
 
 /**
- * The `File` primitive for an email attachment — a branded `FileRef` whose
- * `retrieve()` re-fetches the bytes from the attachment's stable storage
- * handle (`key`). `source.handle` is that same key, so the engine can also
- * redeem bytes through the owner (`resolveFileRef`). Returns null when the
- * attachment carries no storage handle.
+ * The `File` primitive for an email attachment — a `FileRef` descriptor whose
+ * handle is the attachment's stable storage key, redeemed through the owner
+ * (`resolveFileRef`). Email takes no credential, so the descriptor names none.
+ * Returns null when the attachment carries no storage handle.
  */
 function emailAttachmentFileRef(att: Partial<EmailAttachment>): FileRef | null {
   if (!att.key || !att.filename) return null;
@@ -748,8 +746,7 @@ function emailAttachmentFileRef(att: Partial<EmailAttachment>): FileRef | null {
     name: att.filename,
     contentType: att.contentType,
     size: att.size,
-    retrieve: () => fetchEmailAttachment(key),
-    source: { ownerAdapterType: EMAIL_ADAPTER_TYPE, handle: key },
+    source: ownedFileSource({ adapterType: EMAIL_ADAPTER_TYPE, handle: key }),
   };
 }
 

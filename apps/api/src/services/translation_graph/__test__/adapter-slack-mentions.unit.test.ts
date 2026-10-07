@@ -15,6 +15,7 @@ import {
   finalizeMessageText,
   type RosterMember,
 } from '../adapters/slack/mentions';
+import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createUnifiedMessage } from '../adapters/slack/write';
 import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
 
@@ -144,6 +145,7 @@ describe('createUnifiedMessage — posts resolved text', () => {
     const { client, posts } = makeRosterClient();
     await createUnifiedMessage({
       client,
+      teamId: 'team-1' as TeamId,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'welcome @[Frank Smith]!' },
     });

@@ -16,9 +16,7 @@
 // uniqueness_constraints.ts) — that is a separate pipeline and is untouched.
 
 import { z } from 'zod';
-import { since } from 'movement-lang';
-
-import { currentLanguageVersion } from '../movement_engine/run_scope';
+import { since, type LanguageVersion } from 'movement-lang';
 
 /** One AND-tupled entry: a target field name, optionally fuzzy-matched. */
 export const uniquenessEntrySchema = z.object({
@@ -52,20 +50,25 @@ export function mergeUniqueness(
  * An identity key component that says nothing: absent, or text with nothing
  * in it. An empty key is no key — two records that both lack a name are not
  * thereby the same record — so such a component never matches and is never
- * matched on.
+ * matched on. Blank text is no key since language version 2: a version-1 run
+ * matches "" like any other value. Outside a run (the knowledge pipeline's own
+ * matcher) the caller passes the current version.
  */
-export function isBlankIdentityValue(value: unknown): boolean {
+export function isBlankIdentityValue(value: unknown, languageVersion: LanguageVersion): boolean {
   if (value == null) return true;
-  // Since language version 2. A version-1 run matches "" like any other value.
-  return (
-    since(currentLanguageVersion(), 2) && typeof value === 'string' && value.trim() === ''
-  );
+  return since(languageVersion, 2) && typeof value === 'string' && value.trim() === '';
 }
 
 /** Case-insensitive equality that treats a multi-value field as a match when
  *  the asserted scalar appears among the candidate's values. */
-function fieldValuesMatch(asserted: unknown, candidate: unknown): boolean {
-  if (isBlankIdentityValue(asserted) || isBlankIdentityValue(candidate)) return false;
+function fieldValuesMatch(
+  asserted: unknown,
+  candidate: unknown,
+  languageVersion: LanguageVersion,
+): boolean {
+  if (isBlankIdentityValue(asserted, languageVersion) || isBlankIdentityValue(candidate, languageVersion)) {
+    return false;
+  }
   const target = String(asserted).toLowerCase();
   const pool = Array.isArray(candidate) ? candidate : [candidate];
   return pool.some((v) => v != null && String(v).toLowerCase() === target);
@@ -81,14 +84,18 @@ function fieldValuesMatch(asserted: unknown, candidate: unknown): boolean {
  */
 export function candidateIsAllExact(
   constraints: UniquenessConstraints,
-  asserted: Record<string, unknown>,
-  candidateData: Record<string, unknown>,
+  match: {
+    asserted: Record<string, unknown>;
+    candidate: Record<string, unknown>;
+    languageVersion: LanguageVersion;
+  },
 ): boolean {
+  const { asserted, candidate, languageVersion } = match;
   return constraints.any.some(
     (branch) =>
       branch.all.length > 0 &&
       branch.all.every((entry) =>
-        fieldValuesMatch(asserted[entry.field], candidateData[entry.field]),
+        fieldValuesMatch(asserted[entry.field], candidate[entry.field], languageVersion),
       ),
   );
 }
@@ -123,10 +130,14 @@ export function arbitrateWithoutJudge(input: {
   asserted: Record<string, unknown>;
   candidates: ReadonlyArray<{ data: Record<string, unknown> }>;
   constraints: UniquenessConstraints;
+  languageVersion: LanguageVersion;
 }): number | null | undefined {
   if (input.candidates.length === 0) return null;
+  const { asserted, languageVersion } = input;
   const exactIdxs = input.candidates
-    .map((c, i) => (candidateIsAllExact(input.constraints, input.asserted, c.data) ? i : -1))
+    .map((c, i) =>
+      candidateIsAllExact(input.constraints, { asserted, candidate: c.data, languageVersion }) ? i : -1,
+    )
     .filter((i) => i >= 0);
   if (exactIdxs.length === 1) return exactIdxs[0];
   if (input.candidates.length === 1 && !constraintsHaveFuzzyEntry(input.constraints)) return 0;

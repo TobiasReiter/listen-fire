@@ -115,7 +115,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import { instanceSchemaFromDescriptors } from '../../translation_graph/movement/schema_projection';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 const KG_ADAPTER_TYPE = 'kg';
@@ -601,9 +601,9 @@ describe('the engine passes natural names; the adapter translates internally', (
       event,
       teamId: TEAM_ID,
       catalog: teamLikeCatalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolveAdapter({
             email: email.adapter,
             attio: attio.adapter,

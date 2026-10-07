@@ -10,14 +10,14 @@
 // Covers:
 //   1. A `_resources` hop off an Attio record position no longer resolves.
 //   2. createRecord/updateRecord detect `file`-kind field values (branded
-//      `FileRef`s carrying their own `retrieve()`), pull their bytes, and
+//      `FileRef` descriptors), redeem them for their bytes, and
 //      upload them via /v2/files/upload against the record's own id + object
 //      slug — keeping them out of the records values envelope. Non-file
 //      fields flow through untouched; a record with no file fields triggers
 //      no uploads.
 //
 // API client + linked_object queries are stubbed — no DB, no network; a
-// FileRef's `retrieve()` streams fixed bytes.
+// written FileRef's bytes sit in an in-memory document store.
 
 // The Attio adapter imports lib/credentials at module scope which reads
 // ENCRYPTION_MASTER_KEY. Stub it; the adapter's getApiClient is overridden
@@ -160,6 +160,7 @@ import type { SourcePosition } from '../types';
 import { ADAPTER_META_TYPE_ID, isStablePosition, makeMetaPosition, makeStablePosition, makeUnstablePosition, positionRecordId } from '../types';
 import type { FileRef, WriteInput } from '../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
 import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
 import { logger } from '../../logger';
 
@@ -292,24 +293,22 @@ function makeAdapter(input: {
 
 /**
  * A `file`-kind field value as the engine hands it to the target — a branded
- * `FileRef` carrying its own `retrieve()` byte channel, which streams fixed
- * bytes so we can assert what reaches `uploadFile`.
+ * `FileRef` descriptor of fixed bytes in the document store, so we can assert
+ * what reaches `uploadFile`.
  */
 const FILE_BYTES = new Uint8Array([1, 2, 3, 4, 5]);
+const fileStore = installMemoryDocumentStore();
 
-/** Bytes the fake `downloadFile` streams back — asserted on the read-side
- *  `retrieve()` so we know the FileRef pulls bytes through the Attio
+/** Bytes the fake `downloadFile` streams back — asserted on the read side's
+ *  `resolveFileRef`, so we know the FileRef is redeemed through the Attio
  *  download endpoint. */
 const DOWNLOAD_BYTES = new Uint8Array([9, 8, 7, 6]);
 
 function makeFileRef(overrides?: { name?: string; contentType?: string }): FileRef {
-  const contentType = overrides?.contentType ?? 'application/pdf';
-  return {
-    __brand: 'FileRef',
+  return fileStore.file(Buffer.from(FILE_BYTES), {
     name: overrides?.name ?? 'report.pdf',
-    contentType,
-    retrieve: async () => ({ stream: Readable.from(Buffer.from(FILE_BYTES)), contentType }),
-  };
+    contentType: overrides?.contentType ?? 'application/pdf',
+  });
 }
 
 const writeMutationContext = {
@@ -416,7 +415,7 @@ describe('AttioAdapter file read (`record-[:files]->.`File`)', () => {
     expect(related[0].position.recordType).toBe('File');
   });
 
-  it("the file position's `File` field returns a FileRef whose retrieve() streams the bytes", async () => {
+  it("the file position's `File` field returns a FileRef this instance redeems for the bytes", async () => {
     const downloadCalls: { fileId: string }[] = [];
     const adapter = makeAdapter({ teamId: 'team-files-fileref', downloadCalls });
     const [related] = await adapter.getRelated({
@@ -437,13 +436,14 @@ describe('AttioAdapter file read (`record-[:files]->.`File`)', () => {
     })) as FileRef;
     expect(fileRef).not.toBeNull();
     expect(fileRef.__brand).toBe('FileRef');
-    expect(typeof fileRef.retrieve).toBe('function');
-    // source.handle is the stable Attio file id (owner-redeemable).
-    expect(fileRef.source).toEqual({ ownerAdapterType: 'attio', handle: 'file-pitch-123' });
+    // The descriptor names this instance — its credential — and the stable
+    // Attio file id as the handle.
+    expect(fileRef.source).toEqual({ adapterType: 'attio', credentialId: 'creds-1', handle: 'file-pitch-123' });
+    expect(JSON.parse(JSON.stringify(fileRef))).toEqual(fileRef);
 
-    // retrieve() streams the bytes via the Attio download endpoint, with the
+    // The owner streams the bytes via the Attio download endpoint, with the
     // same credential the write path uploads with.
-    const resolved = await fileRef.retrieve!();
+    const resolved = await adapter.resolveFileRef({ ref: fileRef });
     const chunks: Buffer[] = [];
     for await (const chunk of resolved.stream) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -1218,8 +1218,7 @@ describe('AttioAdapter.getRelated — list entry → parent record', () => {
 // File-on-write (4d_resources.md): createRecord/updateRecord turn a
 // `file`-kind field's `FileRef` value into an Attio /v2/files/upload, instead
 // of passing the raw FileRef into the records values envelope (which the API
-// rejects). The FileRef carries its own `retrieve()`; the adapter pulls those
-// bytes and uploads them against the record's own id + object slug.
+// rejects). The adapter redeems the FileRef for its bytes and uploads them against the record's own id + object slug.
 // ---------------------------------------------------------------------------
 
 describe('AttioAdapter file-on-write', () => {
@@ -1350,7 +1349,7 @@ describe('AttioAdapter file-on-write', () => {
     expect(uploadCalls).toHaveLength(0);
   });
 
-  it('createRecord: a FileRef with no byte channel is a write error', async () => {
+  it('createRecord: a FileRef with no way back to its bytes is a write error', async () => {
     const adapter = makeAdapter({ teamId: 'team-fow-6' });
     await expect(
       adapter.createRecord({
@@ -1358,7 +1357,7 @@ describe('AttioAdapter file-on-write', () => {
         fields: { logo: { __brand: 'FileRef', name: 'x.png' } as FileRef },
         mutationContext: writeMutationContext,
       }),
-    ).rejects.toThrow(/byte channel/);
+    ).rejects.toThrow(/no handle to its bytes/);
   });
 
   it('createRecord: a failed byte retrieval surfaces as a write error', async () => {
@@ -1366,9 +1365,7 @@ describe('AttioAdapter file-on-write', () => {
     const failing: FileRef = {
       __brand: 'FileRef',
       name: 'deck.pdf',
-      retrieve: async () => {
-        throw new Error('retrieval boom');
-      },
+      source: { store: 'document', objectUri: 'mem://doc/gone' },
     };
     await expect(
       adapter.createRecord({
@@ -1376,7 +1373,7 @@ describe('AttioAdapter file-on-write', () => {
         fields: { deck: failing },
         mutationContext: writeMutationContext,
       }),
-    ).rejects.toThrow(/retrieval boom/);
+    ).rejects.toThrow(/no mem:\/\/doc\/gone/);
   });
 });
 

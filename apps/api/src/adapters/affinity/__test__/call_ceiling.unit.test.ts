@@ -19,7 +19,12 @@ jest.mock('../../../services/context', () => ({
 }));
 
 import { AffinityAPIClient } from '../apiClient';
-import { withRunCallLedger } from '../../../services/movement_engine/run_scope';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import { withSegment } from '../../../services/translation_graph/segment_scope';
+
+/** One run segment's host scope, as the engine opens it for a run. */
+const inARun = <T>(fn: () => Promise<T>) =>
+  withSegment({ teamId: '00000000-0000-0000-0000-000000000081' as TeamId }, fn);
 
 const BASE = 'https://affinity.test';
 const ENV_VAR = 'AFFINITY_MAX_CALLS_PER_RUN';
@@ -54,7 +59,7 @@ describe('AffinityAPIClient honours the run call ceiling', () => {
     const client = new AffinityAPIClient({ apiKey: 'k', baseUrl: BASE });
 
     const started = Date.now();
-    await withRunCallLedger(async () => {
+    await inARun(async () => {
       await get(client);
       await get(client);
       await get(client);

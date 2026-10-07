@@ -1,5 +1,5 @@
 // A run PAUSED at a limit — today the per-run cost cap (MOVEMENT_MAX_RUN_COST_USD,
-// lib/run_spend.ts). Everything about the pause that touches the database lives
+// lib/run_cost.ts). Everything about the pause that touches the database lives
 // here: marking the run paused, saying so (the `Run Paused` system event),
 // reading the pause back for a run's status, and resuming the run.
 //
@@ -30,7 +30,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { formatUsd, RUN_COST_CAP_ENV_VAR } from '../../lib/run_spend';
+import { formatUsd, RUN_COST_CAP_ENV_VAR } from '../../lib/run_cost';
 import { logger } from '../logger';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { MovementId } from '../../generated/kysely/automations/Movement';
@@ -42,10 +42,12 @@ import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
 import { runSpentMicrodollars, type TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
-import { clearJoins, runHasPendingJoins } from './join_pending';
+import { runHasPendingJoins } from './join_pending';
+import { dropRunLeaves } from './lease_fence';
 import type { RunLimitPause } from './run';
 import type { ParkedScopeState } from './serialize';
 import { MovementEngineError } from './errors';
+import { claimParkedLeaf, finishResumedLeaf, type HeldRunLease } from './run_lease';
 
 /** What `trigger_run.limit_pause` holds while the run is paused. */
 const StoredLimitPauseSchema = z.object({
@@ -153,7 +155,11 @@ async function recordRunPausedEvent(input: {
  * limit. The caller owns the run (team-scoped) and serialises it against the
  * run's other resumes.
  */
-export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resumed: number }> {
+export async function resumeLimitPausedRun(
+  runId: TriggerRunId,
+  /** The run lease the caller holds: each resumed segment watches it. */
+  lease?: HeldRunLease,
+): Promise<{ resumed: number }> {
   const run = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('id', '=', runId)
@@ -210,10 +216,16 @@ export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resum
 
   let resumed = 0;
   for (const leaf of leaves) {
+    // A lease lost since the last leaf: the run may be another instance's now.
+    if (lease?.isLost()) return { resumed };
     if (!leaf.state) {
       await deleteLeafIfUnchanged(runId, leaf.address, leaf.updated_at);
       continue;
     }
+    // Claimed before it is stepped: an earlier flow's step may have cancelled
+    // it (a race it lost), and then it is not parked any more.
+    const claimed = await claimParkedLeaf({ runId, address: leaf.address, parkReason: 'limit' });
+    if (claimed === null || !claimed.state) continue;
     const outcome = await resumeMovementFiring({
       teamId: run.team_id as TeamId,
       triggerId: run.trigger_id,
@@ -226,24 +238,27 @@ export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resum
       movementId: trigger.movementId,
       event,
       recordingTriggerType: run.trigger_type as TriggerRunTriggerType,
-      state: leaf.state as ParkedScopeState,
+      state: claimed.state as ParkedScopeState,
       // An engine suspension re-runs its statement: nothing to bind, and the
       // calls it had finished replay from its journal.
       reenter: true,
       settleBranchComplete: () => settleBranchComplete(runId, leaf.address),
+      ...(lease !== undefined ? { lease } : {}),
     });
     resumed += 1;
+    // The lease was lost mid-step: the run may be another instance's now, so
+    // this one leaves every row as it is.
+    if (outcome.leaseLost) return { resumed };
     if (outcome.error) {
       // An error in any branch fails the whole run (P14); its other branches go
       // with it. Prior writes stand.
-      await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-      await clearJoins(runId);
+      await dropRunLeaves(runId, lease);
       return { resumed };
     }
     // Completed, or parked somewhere else: this leaf is done. Suspended again
-    // at the same statement (it met the cap at once): its row was rewritten,
-    // and stays.
-    await deleteLeafIfUnchanged(runId, leaf.address, leaf.updated_at);
+    // at the same statement (it met the cap at once): its row was rewritten
+    // as `parked`, and stays.
+    await finishResumedLeaf(runId, leaf.address, lease);
     if (outcome.result?.parked && (await runIsLimitPaused(runId))) break;
   }
 
@@ -254,10 +269,7 @@ export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resum
       .where('status', '=', 'parked')
       .select('id')
       .executeTakeFirst();
-    if (remaining === undefined) {
-      await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-      await clearJoins(runId);
-    }
+    if (remaining === undefined) await dropRunLeaves(runId, lease);
   }
   return { resumed };
 }

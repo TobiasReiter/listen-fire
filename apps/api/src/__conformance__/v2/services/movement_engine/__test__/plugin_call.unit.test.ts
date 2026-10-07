@@ -94,10 +94,9 @@ import {
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
 
@@ -182,21 +181,12 @@ function stubInvoker(
 ): { invoker: MovementTransformInvoker; calls: Recorded[] } {
   const calls: Recorded[] = [];
   const invoker: MovementTransformInvoker = {
-    declaredOutput: (plugin) => realOutput(plugin),
     async invoke({ plugin, config }) {
       calls.push({ plugin, config });
       return answers[plugin] ?? {};
     },
   };
   return { invoker, calls };
-}
-
-/** The plugin's REAL declared output, off the registry the catalog itself
- *  reads. Stubbing it would let this test agree with itself about a shape the
- *  checker never typed. */
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
 }
 
 function run(source: string, invoker: MovementTransformInvoker, adapters: {
@@ -209,9 +199,9 @@ function run(source: string, invoker: MovementTransformInvoker, adapters: {
     event: webhookEvent({ subject: 'Acme', text: 'https://acme.example' }),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
           const found = adapterType === 'email' ? adapters.email : adapters.attio;
           if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);
@@ -367,7 +357,6 @@ describe('a plugin called plainly hands back its declared list of RECORDS', () =
     name: 'deck.pdf',
     contentType: 'application/pdf',
     source: { ownerAdapterType: 'document-store', handle: 's3://bucket/abc/deck.pdf' },
-    retrieve: async () => ({ stream: {} as never, contentType: 'application/pdf' }),
   };
 
   // The first record read field by field: its link, its text, and whether it

@@ -108,7 +108,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 /**
  * The error a rejected run really died of. A failure raised once the
@@ -283,9 +283,9 @@ describe('§G — _resources block → call with a synthesised node arg → drop
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
         },
       }),
@@ -378,9 +378,9 @@ describe('pass-through arguments and nested calls', () => {
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: email.adapter, attio: attio.adapter }),
         },
       }),
@@ -457,9 +457,9 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
       event: webhookEvent('email', { subject: 'Acme Corp', text: 'warm intro' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: email.adapter, attio: attio.adapter }),
         },
       }),
@@ -481,9 +481,9 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
       event: webhookEvent('email', { subject: 'Acme Corp', text: 'warm intro' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: email.adapter, attio: attio.adapter }),
         },
       }),
@@ -504,9 +504,9 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
         event: webhookEvent('email', { subject: 'Acme Corp' }),
         teamId: TEAM_ID,
         catalog,
+        credentialIds: CREDENTIAL_IDS,
         host: makeTestHost({
           adapters: {
-            credentialId: (name) => CREDENTIAL_IDS[name],
             resolve: makeResolver({
               email: makeFakeAdapter('email').adapter,
               attio: makeFakeAdapter('attio').adapter,
@@ -549,9 +549,9 @@ describe('lexical scoping — the callee sees file scope, not the caller', () =>
         event: webhookEvent('email', { subject: 'Acme Corp' }),
         teamId: TEAM_ID,
         catalog,
+        credentialIds: CREDENTIAL_IDS,
         host: makeTestHost({
           adapters: {
-            credentialId: (name) => CREDENTIAL_IDS[name],
             resolve: makeResolver({
               email: makeFakeAdapter('email').adapter,
               attio: makeFakeAdapter('attio').adapter,
@@ -596,9 +596,9 @@ describe('lexical scoping — the callee sees file scope, not the caller', () =>
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
             attio: attio.adapter,
@@ -633,9 +633,9 @@ describe('guards', () => {
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
             attio: makeFakeAdapter('attio').adapter,
@@ -733,14 +733,14 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
+        writeSink: (w) => captured.push(w),
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
         },
       }),
       // NB: no `dryRun` — the run is live; only the instance is dry.
-      writeSink: (w) => captured.push(w),
     });
 
     // The real adapter was never called — the post did not go out.
@@ -761,9 +761,9 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
         },
       }),
@@ -779,16 +779,16 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
+        writeSink: () => {},
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
             attio: makeFakeAdapter('attio').adapter,
           }),
         },
       }),
-      writeSink: () => {},
     });
     expect(dryResult.writes[0].committed).toBe(false);
 
@@ -798,9 +798,9 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
       event: webhookEvent('email', { subject: 'Acme Corp' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
             attio: makeFakeAdapter('attio').adapter,

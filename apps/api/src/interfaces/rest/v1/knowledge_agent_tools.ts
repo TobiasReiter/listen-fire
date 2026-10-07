@@ -103,6 +103,7 @@ import {
   inspectMovementRun,
 } from '../../../services/translation_graph/movement/run_now';
 import { abortRun, resumeRun } from '../../../services/interaction/operator';
+import { RunBusy } from '../../../services/movement_engine/run_lease';
 import { MovementEngineError } from '../../../services/movement_engine/errors';
 import { UserService } from '../../../services/user';
 import {
@@ -173,6 +174,12 @@ const NO_ACTING_USER = {
  * convention) — we map that to a 404/400 so the MCP caller sees a clean
  * status, exactly as a cross-team id is denied.
  */
+/** A handler's answer that the request lost a race and may be retried:
+ *  answered 409. */
+class Conflict {
+  constructor(readonly message: string) {}
+}
+
 function jsonHandler<I>(
   schema: z.ZodType<I>,
   source: 'body' | 'query' | 'params',
@@ -186,6 +193,7 @@ function jsonHandler<I>(
     }
     try {
       const result = await run(parsed.data);
+      if (result instanceof Conflict) return res.status(409).json({ error: result.message });
       if (result && typeof result === 'object' && 'error' in result && Object.keys(result).length <= 2) {
         const message = String((result as { error: unknown }).error);
         const status = /not found|no .*found|unknown|not exist/i.test(message) ? 404 : 400;
@@ -1490,6 +1498,7 @@ const resumeRunHandler: RequestHandler = jsonHandler(resumeRunSchema, 'body', as
     try {
       return await resumeRun({ runId: input.runId, teamId: team as TeamId });
     } catch (err) {
+      if (err instanceof RunBusy) return new Conflict(err.message);
       if (err instanceof MovementEngineError && /not found/i.test(err.message)) continue;
       if (err instanceof MovementEngineError) return { error: err.message.replace(/^MOVENG_RUNTIME: /, '') };
       throw err;

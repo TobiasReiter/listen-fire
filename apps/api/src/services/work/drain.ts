@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import type { WorkContext, WorkHandler, WorkKind, WorkRow } from './kinds';
 
 import { logger } from '../logger';
-import { claimDueWork, completeWork, heartbeatWork, releaseWork } from './store';
+import { claimDueWork, completeWork, deferWork, heartbeatWork, releaseWork } from './store';
 
 // One process is one owner: owner is only informational (the lease token fences),
 // so a stable name makes the lease column readable across passes.
@@ -26,8 +26,21 @@ export interface DrainResult {
   ran: number;
   recovered: number;
   failed: number;
+  /** Rows whose handler found the work not yet possible (`WorkDeferred`) and
+   *  were released to retry with backoff — neither done nor failed. */
+  deferred: number;
   /** The claim itself threw (the database is unreachable): nothing ran, and nothing could. */
   claimFailed: boolean;
+}
+
+/** Thrown by a handler whose work cannot happen yet (the run it would step is
+ *  held by another process): the row is released to retry with backoff, not
+ *  completed, and the pass is not marked failing. */
+export class WorkDeferred extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'WorkDeferred';
+  }
 }
 
 const handlers = new Map<WorkKind, WorkHandler>();
@@ -44,7 +57,7 @@ export function resetWorkHandlersForTests(): void {
 }
 
 function emptyResult(): DrainResult {
-  return { claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false };
+  return { claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false };
 }
 
 function addResults(a: DrainResult, b: DrainResult): DrainResult {
@@ -53,6 +66,7 @@ function addResults(a: DrainResult, b: DrainResult): DrainResult {
     ran: a.ran + b.ran,
     recovered: a.recovered + b.recovered,
     failed: a.failed + b.failed,
+    deferred: a.deferred + b.deferred,
     claimFailed: a.claimFailed || b.claimFailed,
   };
 }
@@ -64,7 +78,17 @@ export function drainPassFailing(result: DrainResult): boolean {
   return result.claimFailed || result.failed > 0;
 }
 
-type RowOutcome = 'ran' | 'recovered' | 'failed';
+type RowOutcome = 'ran' | 'recovered' | 'failed' | 'deferred';
+
+// A row whose run is busy elsewhere looks again soon, a little later each time,
+// never more than half a minute out: the run is alive, just held.
+const DEFER_STEP_MS = 2_000;
+const DEFER_CAP_MS = 30_000;
+
+/** When a row deferred for the `deferrals`-th time (1-based) is due again. */
+export function deferredDueMs(deferrals: number): number {
+  return Math.min(DEFER_STEP_MS * deferrals, DEFER_CAP_MS);
+}
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 300_000;
@@ -143,6 +167,26 @@ async function runRow(input: {
     const execute = isFirstAttempt ? handler.run : handler.recover ?? handler.run;
     await execute.call(handler, row.payload, ctx);
   } catch (error) {
+    if (error instanceof WorkDeferred) {
+      logger.info('[work] handler deferred; releasing for retry', {
+        kind: row.kind,
+        key: row.key,
+        attempts: row.attempts,
+        reason: error.message,
+      });
+      clearInterval(timer);
+      const dueAt = new Date(clock().getTime() + deferredDueMs(row.deferrals + 1));
+      try {
+        await deferWork({ id: row.id, leaseToken, claimedUpdatedAt, dueAt });
+      } catch (deferError) {
+        logger.warn('[work] defer failed; the lease will lapse instead', {
+          kind: row.kind,
+          key: row.key,
+          error: deferError,
+        });
+      }
+      return 'deferred';
+    }
     // Handlers own failure recording; the drain only makes the row retry at its due_at.
     logger.warn('[work] handler threw; releasing for retry', {
       kind: row.kind,
@@ -249,8 +293,8 @@ export interface WorkNotifier {
 }
 
 // The always-on loop of this process, when one runs. A door's notify only asks
-// it for an extra pass: a process without a loop (external mode, or one still
-// waiting for the automations lock) must not drain, or the lock guards nothing.
+// it for an extra pass: a process without a loop (external mode) leaves the
+// pass to its tick.
 let activeLoop: { kick(): void } | undefined;
 
 /** Default: kicks this process's drain loop when one runs; otherwise nothing. */

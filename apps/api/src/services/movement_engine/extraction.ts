@@ -28,10 +28,9 @@
 // engine runs one call per `#extract` site; this planner batches a
 // whole through-free region into one.
 //
-// `through` plugins are the TG transform registry's implementations,
-// invoked exactly like the TG engine's entity-enrichment cycle invokes
-// them (`kind: 'context-dependent'`, outputs projected from
-// `result.properties`) — injectable for tests.
+// `through` plugins are invoked through the host (`transforms.invoke`); what
+// the engine knows of each — the arguments a stage feeds it, the ones it must
+// be handed — comes from the run's catalog snapshot (`plugins`).
 //
 // Field types (incl. enum options) come from EXPLICIT annotations only —
 // a primitive name (`amount: number "…"`) or a BORROWED dotted path
@@ -60,27 +59,20 @@ import type {
   ExtractField,
   ExtractStage,
   FieldType,
+  LanguageVersion,
   PluginCall,
+  PluginSpec,
   ShapeNode,
 } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
-import {
-  assertRunBudget,
-  costEnvelopeMicrodollars,
-  reportRunCost,
-  type CostEnvelope,
-} from '../../lib/run_spend';
-import { currentLanguageVersion, runLogFields, throwIfCancelled } from './run_scope';
+import { languageVersionOf, runLogFields, throwIfCancelled, type RunFacts } from './run_context';
 import { matchOption } from '../../lib/utils/string';
 import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction';
 import { selectModel } from '../translation_graph/engine/batched_extraction/schema_synthesis';
 import { extractionCallSettings, type ExtractionCallSettings, type TierModel } from './ai_tiers';
-import { getTransform } from '../translation_graph/engine/transforms/registry';
-import type { TransformImpl } from '../translation_graph/engine/transforms/registry';
 import { logger } from '../logger';
-import type { TransformOutputShape } from '../translation_graph/types';
 import type { FileRef, Resource } from '../translation_graph/adapter';
-import { isFileRef } from '../translation_graph/engine/files/retrieve';
+import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import { stampResourceId } from '../translation_graph/engine/files/resources';
 import {
   isFileUnreadable,
@@ -120,7 +112,7 @@ export interface ExtractEmission {
   /**
    * The SOURCE CONTENT that fed this node's extraction (provenance) — the
    * `from [...]` data materialised as resources: one FILE resource per source
-   * `FileRef` (the byte channel preserved so a downstream write can carry the
+   * `FileRef` (the descriptor kept so a downstream write can carry the
    * file forward) and one TEXT resource per text segment. Every emission of one
    * `extract` shares the same `from` data, so the same list rides the root and
    * every descendant. This is what `extractedNode-[:_resources]->` walks and
@@ -434,68 +426,34 @@ export interface TransformInvocationResult {
    *  to the trace and nowhere else — an outcome is not enrichment, so a
    *  plugin that reports one and attaches nothing still counts as empty. */
   outcome?: string;
-  /** What the invocation cost, when the plugin prices its own work — the one
-   *  cost envelope (`lib/run_spend.ts`). The engine charges it to the run
-   *  (`invokePricedTransform`); nothing else reads it. */
-  cost?: CostEnvelope;
 }
+
+/** The plugins a run's catalog snapshot describes, by name. */
+export type PluginSpecs = Readonly<Record<string, PluginSpec>>;
 
 /** A plugin by either spelling: movement identifiers can't carry dashes, so a
- *  program writes `vc_url_retrieval` for a transform registered as
- *  `vc-url-retrieval`. */
-export function transformFor(plugin: string): TransformImpl | undefined {
-  return getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
+ *  program writes `vc_url_retrieval` for a plugin registered as
+ *  `vc-url-retrieval`; the snapshot keys the underscore spelling. */
+export function pluginSpecNamed(plugins: PluginSpecs, plugin: string): PluginSpec | undefined {
+  const spelled = plugin.replace(/-/g, '_');
+  return Object.hasOwn(plugins, spelled) ? plugins[spelled] : undefined;
 }
 
+/** One plugin invocation, as the engine asks for it. */
+export interface TransformInvokeInput {
+  plugin: string;
+  /** The author's named arguments, resolved per entity. */
+  config: Record<string, unknown>;
+  /** The entity's extracted fields so far (working fields included). */
+  extractedContext: Record<string, unknown>;
+}
+
+/** The plugin invoker an extraction calls — inside a run, the host's
+ *  invoker under the run's budget (`run_context.ts` `pricedCalls`), which
+ *  refuses a priced plugin once the run has spent its cap and charges what
+ *  every invocation spent. */
 export interface MovementTransformInvoker {
-  invoke(input: {
-    plugin: string;
-    /** The author's named arguments, resolved per entity. */
-    config: Record<string, unknown>;
-    /** The entity's extracted fields so far (working fields included). */
-    extractedContext: Record<string, unknown>;
-  }): Promise<TransformInvocationResult>;
-  /**
-   * What a PLAIN call to this plugin hands back — the plugin's own declaration,
-   * the same one the checker typed the call against. The engine asks because
-   * `invoke`'s two channels (the text it fetched, the properties it attached)
-   * carry everything a plugin can produce, and the declaration is what says
-   * which of them the bound name IS.
-   *
-   * Absent (or undefined for this plugin) ⇒ the plugin never declared one, so a
-   * plain call should not have got past the checker; the engine refuses rather
-   * than guessing. A `through [ … ]` stage never asks.
-   */
-  declaredOutput?(plugin: string): TransformOutputShape | undefined;
-  /**
-   * Whether invoking this plugin may cost money (a paid scrape, a paid search,
-   * its own priced work). A priced plugin is not started once the run has
-   * spent its cost cap. Absent ⇒ unpriced.
-   */
-  isPriced?(plugin: string): boolean;
-}
-
-/**
- * Invoke a plugin the way every engine call site must: a priced plugin is
- * refused before it starts if the run has spent its cap, and a cost the plugin
- * reports on its result is charged to the run under the plugin's name. Spend
- * the plugin's own model calls and service clients report themselves is
- * charged where it happens, under THEIR names — a plugin's envelope is for
- * what nothing else priced.
- */
-export async function invokePricedTransform(
-  invoker: MovementTransformInvoker,
-  input: Parameters<MovementTransformInvoker['invoke']>[0],
-): Promise<TransformInvocationResult> {
-  if (invoker.isPriced?.(input.plugin) === true) assertRunBudget();
-  const result = await invoker.invoke(input);
-  if (result.cost !== undefined) {
-    reportRunCost({
-      source: { kind: 'plugin', name: input.plugin },
-      microdollars: costEnvelopeMicrodollars(result.cost),
-    });
-  }
-  return result;
+  invoke(input: TransformInvokeInput): Promise<TransformInvocationResult>;
 }
 
 /** Ancestor fields handed to a nested node's plugin, nested under the
@@ -518,18 +476,22 @@ function namespaceContext(
  * `type`), plus the `url` it was fetched from. To the language the two are the
  * same thing: a file the record was extracted from, walked off `_resources`.
  */
-function pluginFileResources(result: TransformInvocationResult): Resource[] {
+function pluginFileResources(
+  result: TransformInvocationResult,
+  languageVersion: LanguageVersion,
+): Resource[] {
   // Version 1's `_resources` held the `from [ … ]` sources alone.
-  if (before(currentLanguageVersion(), 2)) return [];
+  if (before(languageVersion, 2)) return [];
   const resources: Resource[] = [];
   for (const record of result.records ?? []) {
     const file = record.file;
     if (!isFileRef(file)) continue;
     const name = typeof record.name === 'string' ? record.name : file.name;
     const url = typeof record.url === 'string' ? record.url : null;
+    const externalId = fileHandle(file);
     resources.push(
       stampResourceId({
-        ...(file.source?.handle !== undefined ? { externalId: file.source.handle } : {}),
+        ...(externalId !== undefined ? { externalId } : {}),
         type: 'FILE',
         ...(name !== undefined ? { name } : {}),
         url,
@@ -847,6 +809,10 @@ export {
 export interface ExtractRuntime {
   llm: LlmClient;
   transformInvoker: MovementTransformInvoker;
+  /** The plugins the run's catalog snapshot describes: what a stage feeds a
+   *  plugin from the extract source (its `fedArgs`) and which arguments it
+   *  must be handed (its `requiredArgs`). */
+  plugins: PluginSpecs;
   /** Evaluates an expression slot in the interpreter's current scope —
    *  `from` data and non-field plugin arguments resolve through this.
    *  Returns the value WITH its trail (E4): the `from` slots' origins
@@ -867,6 +833,10 @@ export interface ExtractRuntime {
    *  input size and per-alias yields (and the silent empty-source skip,
    *  which otherwise looks identical to "extracted nothing"). */
   trace?: MovementTraceEntry[];
+  /** The run this extraction is a statement of: its pin, its cancel gate,
+   *  its id for log lines. Absent ⇒ outside a run (a script, a test): the
+   *  current version, nothing to cancel. */
+  run?: RunFacts;
 }
 
 // ── Materialisation ─────────────────────────────────────────────────────────
@@ -902,14 +872,15 @@ export interface BoundedFileText {
  *  sentence cut mid-word as the end of the document. The stored copy
  *  (`rawTextId`) and the carry-forward FILE resource keep the whole text —
  *  only the prompt is bounded. */
-export function boundFileText(text: string, ref: FileRef): BoundedFileText {
+export function boundFileText(input: { text: string; ref: FileRef; run?: RunFacts }): BoundedFileText {
+  const { text, ref } = input;
   const ceiling = maxFileChars();
   if (text.length <= ceiling) return { content: text, chars: text.length };
   logger.warn('[movement:extract] truncating a source file for the prompt', {
     name: ref.name,
     chars: ceiling,
     of: text.length,
-    ...runLogFields(),
+    ...runLogFields(input.run),
   });
   return {
     content: `${text.slice(0, ceiling)}\n[… truncated: first ${ceiling} of ${text.length} characters]`,
@@ -1019,6 +990,20 @@ class Materializer {
 
   constructor(private readonly runtime: ExtractRuntime) {}
 
+  private get languageVersion(): LanguageVersion {
+    return languageVersionOf(this.runtime.run);
+  }
+
+  /** The files a stage's plugins fetched, joined onto the record they ran for. */
+  private addResources(
+    emission: WorkingEmission,
+    enrichments: Array<{ plugin: string; result: TransformInvocationResult }>,
+  ): void {
+    const fetched = enrichments.flatMap(({ result }) => pluginFileResources(result, this.languageVersion));
+    if (fetched.length === 0) return;
+    emission.resources = [...(emission.resources ?? []), ...fetched];
+  }
+
   async run(extract: ExtractExpression, spec: ExtractNodeSpec): Promise<ExtractEmission> {
     this.tier = extract.tier;
     const trace = TraceSink.root(this.runtime.trace);
@@ -1049,7 +1034,7 @@ class Materializer {
         // The same boundary the per-entity pipeline keeps (see `runPipeline`):
         // a bundle-level fetch is as long as any other, and an operator's
         // cancel must not wait for the whole fan before it means anything.
-        await throwIfCancelled();
+        await throwIfCancelled(this.runtime.run);
         return this.invokePlugin(plugin, {}, spec.name, fromBranches[i]);
       });
       fromPipeline.forEach((plugin, i) => {
@@ -1060,7 +1045,7 @@ class Materializer {
         if (result === SKIPPED) return;
         segments = segments.concat(transformResultSegments(plugin.plugin, result));
         baseSources.push({ kind: 'enrichment', plugin: plugin.plugin });
-        pipelineResources.push(...pluginFileResources(result));
+        pipelineResources.push(...pluginFileResources(result, this.languageVersion));
       });
     } finally {
       trace.absorb(fromBranches);
@@ -1078,7 +1063,10 @@ class Materializer {
         children: new Map(),
       } satisfies WorkingEmission);
     await this.resolveFences(root, { segments, baseSources, ancestorContext: {}, trace });
-    return exportEmission(root, [...fromData.resources, ...pipelineResources]);
+    return exportEmission(root, {
+      inherited: [...fromData.resources, ...pipelineResources],
+      languageVersion: this.languageVersion,
+    });
   }
 
   // ── `from` data → segments ──
@@ -1092,7 +1080,7 @@ class Materializer {
     const segments: Segment[] = [];
     const sources: ProvenanceOrigin[] = [];
     // The source content as resources (Layer 5 provenance) — one FILE resource
-    // per source `FileRef` (byte channel preserved), one TEXT resource per text
+    // per source `FileRef` (descriptor kept), one TEXT resource per text
     // datum. This is what an extracted node attaches to `WriteInput.resources`
     // and what `extractedNode-[:_resources]->` walks.
     const resources: Resource[] = [];
@@ -1150,7 +1138,7 @@ class Materializer {
 
   /**
    * Resolve a source `FileRef` to its Layer-5 contribution. The FILE `Resource`
-   * (carrying the SAME `FileRef` — the `retrieve()` byte channel preserved so a
+   * (carrying the SAME `FileRef` — the descriptor kept so a
    * downstream write carries the file forward) is built ALWAYS: a source file
    * qualifies as provenance by being a source, not by yielding text. The
    * extraction `text` (a `FILE` segment + a `file` evidence origin, the thing the
@@ -1162,7 +1150,8 @@ class Materializer {
    */
   private async fileSegment(ref: FileRef): Promise<FileResolution | undefined> {
     if (!this.runtime.resolveFileText) return undefined;
-    const cacheKey = ref.source?.handle ?? ref.name;
+    const handle = fileHandle(ref);
+    const cacheKey = handle ?? ref.name;
     if (cacheKey !== undefined) {
       const cached = this.fileTextCache.get(cacheKey);
       if (cached !== undefined) return cached ?? undefined;
@@ -1170,7 +1159,7 @@ class Materializer {
     const result = await this.runtime.resolveFileText(ref);
     const read = isFileUnreadable(result) ? undefined : result;
     const bounded =
-      read && read.text.trim().length > 0 ? boundFileText(read.text, ref) : undefined;
+      read && read.text.trim().length > 0 ? boundFileText({ text: read.text, ref, run: this.runtime.run }) : undefined;
     const text =
       read && bounded
         ? {
@@ -1178,7 +1167,7 @@ class Materializer {
             origin: {
               kind: 'file',
               ...(read.rawTextId !== undefined ? { rawTextId: read.rawTextId } : {}),
-              ...(ref.source?.handle !== undefined ? { handle: ref.source.handle } : {}),
+              ...(handle !== undefined ? { handle } : {}),
               ...(ref.name !== undefined ? { name: ref.name } : {}),
               ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
             } satisfies ProvenanceOrigin,
@@ -1436,7 +1425,7 @@ class Materializer {
         node: shape.node,
         inputChars: shape.inputChars,
         continuations,
-        ...runLogFields(),
+        ...runLogFields(this.runtime.run),
       },
     );
   }
@@ -1492,7 +1481,7 @@ class Materializer {
           site: region.siteId,
           stage: region.stageIndex,
           droppedEnrichments: kept.map((e) => e.plugin),
-          ...runLogFields(),
+          ...runLogFields(this.runtime.run),
         },
       );
       return cause;
@@ -1540,7 +1529,7 @@ class Materializer {
     // but that seam belongs to whichever client is wired, and the recursion
     // this method drives (one call per region, then one per entity per stage)
     // is the extraction's to gate. Both share the one debounced read.
-    await throwIfCancelled();
+    await throwIfCancelled(this.runtime.run);
     const started = Date.now();
     const first = await this.runtime.llm.call({
       system: opts.system,
@@ -1596,7 +1585,7 @@ class Materializer {
       );
       // A fetched file is this record's source whether or not the stage goes on
       // to read anything — a deck with no readable text still carries forward.
-      addResources(emission, enrichments);
+      this.addResources(emission, enrichments);
       // A stage fenced behind plugins that all came back with nothing has
       // nothing new for this entity to be read from: the prompt would carry
       // the same source text and the same fields the previous stage already
@@ -1703,7 +1692,7 @@ class Materializer {
         );
         // The child's stage ran once for all of its records, so each carries
         // what it fetched.
-        for (const extracted of children) addResources(extracted, enrichments);
+        for (const extracted of children) this.addResources(extracted, enrichments);
         return children;
       });
       specs.forEach((child, i) => emission.children.set(child.name, extracted[i]));
@@ -1726,7 +1715,7 @@ class Materializer {
     logger.info('[movement:extract] stage has no enrichment for this entity — skipping the call', {
       node,
       plugins: pipeline.map((p) => p.plugin),
-      ...runLogFields(),
+      ...runLogFields(this.runtime.run),
     });
     trace.push({
       kind: 'extraction',
@@ -1762,7 +1751,7 @@ class Materializer {
         // OUTSIDE `invokePlugin`, whose invoker swallows everything the plugin
         // throws as "no enrichment" — the signal must not be able to land in
         // there.
-        await throwIfCancelled();
+        await throwIfCancelled(this.runtime.run);
         return this.invokePlugin(plugin, context, node, branches[i]);
       });
       return pipeline.flatMap((plugin, i) => {
@@ -1801,10 +1790,8 @@ class Materializer {
     // Engine-injected `auto` params (e.g. vc_url_retrieval's `text`): fed
     // from the extract source text, not author-supplied. Done last so the
     // author can't override them.
-    const impl = transformFor(plugin.plugin);
-    for (const param of impl?.signature.params ?? []) {
-      if (param.auto) config[param.name] = this.sourceText;
-    }
+    const spec = pluginSpecNamed(this.runtime.plugins, plugin.plugin);
+    for (const fed of spec?.fedArgs ?? []) config[fed.name] = this.sourceText;
 
     // The URL the invocation was pointed at — the one argument worth naming
     // on the trace, because a fetch is what a slow run is usually waiting on
@@ -1812,26 +1799,25 @@ class Materializer {
     const url = typeof config.url === 'string' ? tracedUrl(config.url) : undefined;
     const started = Date.now();
 
-    for (const param of impl?.signature.params ?? []) {
-      if (!param.required || param.auto) continue;
-      if (!isBlank(config[param.name])) continue;
+    for (const param of spec?.requiredArgs ?? []) {
+      if (!isBlank(config[param])) continue;
       logger.info('[movement:transform] required argument is empty — skipping this entity', {
         plugin: plugin.plugin,
-        param: param.name,
-        written: plugin.args.some((a) => a.name === param.name),
-        ...runLogFields(),
+        param,
+        written: plugin.args.some((a) => a.name === param),
+        ...runLogFields(this.runtime.run),
       });
       trace.push({
         kind: 'plugin',
         plugin: plugin.plugin,
         node,
         durationMs: 0,
-        skippedParam: param.name,
+        skippedParam: param,
       });
       return SKIPPED;
     }
 
-    const result = await invokePricedTransform(this.runtime.transformInvoker, {
+    const result = await this.runtime.transformInvoker.invoke({
       plugin: plugin.plugin,
       config,
       extractedContext: { ...context },
@@ -2030,16 +2016,6 @@ function projectEmission(raw: Record<string, unknown>, site: CallSite): WorkingE
   };
 }
 
-/** The files a stage's plugins fetched, joined onto the record they ran for. */
-function addResources(
-  emission: WorkingEmission,
-  enrichments: Array<{ plugin: string; result: TransformInvocationResult }>,
-): void {
-  const fetched = enrichments.flatMap(({ result }) => pluginFileResources(result));
-  if (fetched.length === 0) return;
-  emission.resources = [...(emission.resources ?? []), ...fetched];
-}
-
 /**
  * The fields a program reads as PRESENT text: those declared plain text — the
  * inline `name: "…"` shortcut, or `<text>`, whether inline or from a node
@@ -2058,9 +2034,9 @@ function addResources(
  * extraction a blank is still absent, so an all-blank record is still dropped
  * and still counted empty.
  */
-function presentTextFields(spec: ExtractNodeSpec): Set<string> {
+function presentTextFields(spec: ExtractNodeSpec, languageVersion: LanguageVersion): Set<string> {
   // Version 1 hands an unfound text over absent, like every other field.
-  if (before(currentLanguageVersion(), 2)) return new Set();
+  if (before(languageVersion, 2)) return new Set();
   const declared = new Map<string, ExtractFieldSpec>();
   for (const stage of spec.stages) {
     for (const field of stage.fields) declared.set(field.name, field);
@@ -2077,12 +2053,16 @@ function presentTextFields(spec: ExtractNodeSpec): Set<string> {
  *  one `extract` — it rides the root and every descendant unchanged. A record
  *  whose own stage fetched files adds them, for itself and everything beneath
  *  it, since those records were read in the light of what it fetched. */
-function exportEmission(working: WorkingEmission, inherited: Resource[]): ExtractEmission {
+function exportEmission(
+  working: WorkingEmission,
+  exported: { inherited: Resource[]; languageVersion: LanguageVersion },
+): ExtractEmission {
+  const { inherited, languageVersion } = exported;
   const resources =
     working.resources !== undefined ? [...inherited, ...working.resources] : inherited;
   const fields: Record<string, unknown> = {};
   const provenance: Record<string, ProvenanceOrigin> = {};
-  const textFields = presentTextFields(working.spec);
+  const textFields = presentTextFields(working.spec, languageVersion);
   for (const name of working.spec.exported) {
     const value = working.context[name] ?? null;
     fields[name] = value === null && textFields.has(name) ? '' : value;
@@ -2093,7 +2073,7 @@ function exportEmission(working: WorkingEmission, inherited: Resource[]): Extrac
   for (const [name, list] of working.children) {
     children.set(
       name,
-      list.map((c) => exportEmission(c, resources)),
+      list.map((c) => exportEmission(c, { inherited: resources, languageVersion })),
     );
   }
   return {
@@ -2763,7 +2743,7 @@ function safeStringify(value: unknown): string {
 // ── Source content → resources (Layer 5 provenance) ──────────────────────────
 //
 // The `from [...]` data, captured as the source resources that fed extraction.
-// A FILE resource preserves the source `FileRef` (its `retrieve()` byte channel)
+// A FILE resource preserves the source `FileRef` (the descriptor of its bytes)
 // so the file can be carried forward to an output write; a TEXT resource carries
 // the text body inline. Mirrors the adapter resource currency
 // (`adapter.ts:Resource`) so `persistKgResources` / the file-write path consume
@@ -2774,14 +2754,15 @@ function safeStringify(value: unknown): string {
  *  resource is what a carry-forward write and the stored provenance read, so
  *  cutting it there would silently write a fragment of the document into a
  *  record. The ceiling is a prompt-cost bound and belongs only to the prompt.
- *  `data.file` exposes the byte channel a write reads (`r.\`file\`` → the FileRef
- *  → `streamFileRef` upload). Built for EVERY source file regardless of OCR; the
+ *  `data.file` exposes the file a write reads (`r.\`file\`` → the FileRef
+ *  → the target redeems it on the host for its upload). Built for EVERY source file regardless of OCR; the
  *  extracted `text`, when present, rides `content` (and `rawTextId` in metadata)
  *  so the resource is self-describing — a file with no OCR text still carries
  *  forward, just without inline text. */
 function fileResourceForRef(ref: FileRef, text: FileTextResult | undefined): Resource {
+  const externalId = fileHandle(ref);
   return {
-    ...(ref.source?.handle !== undefined ? { externalId: ref.source.handle } : {}),
+    ...(externalId !== undefined ? { externalId } : {}),
     type: 'FILE',
     ...(ref.name !== undefined ? { name: ref.name } : {}),
     url: null,

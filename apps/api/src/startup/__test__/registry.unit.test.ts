@@ -3,7 +3,7 @@
 // frees, so no worker of the unit is still running when another process takes it.
 
 import { acquireAdvisoryLock } from '../../lib/pg';
-import { holdsUnitLock, runRegistry, shutdownBackground } from '../registry';
+import { runRegistry, shutdownBackground } from '../registry';
 
 jest.mock('../../lib/pg', () => ({ acquireAdvisoryLock: jest.fn() }));
 
@@ -31,9 +31,8 @@ describe('runRegistry', () => {
       },
     });
 
-    expect(holdsUnitLock('automations')).toBe(false);
     runRegistry({
-      unit: 'automations',
+      unit: 'valuations',
       workers: [
         {
           id: 'automations.test',
@@ -49,24 +48,24 @@ describe('runRegistry', () => {
       ],
     });
     await settle();
-    expect(holdsUnitLock('automations')).toBe(true);
+    expect(acquire).toHaveBeenCalledTimes(1);
 
     const shutdown = shutdownBackground();
     await settle();
     expect(order).toEqual(['stop:begin']);
-    expect(holdsUnitLock('automations')).toBe(true);
 
     finishStop();
     await shutdown;
     expect(order).toEqual(['stop:begin', 'stop:end', 'release']);
-    expect(holdsUnitLock('automations')).toBe(false);
   });
 
-  it('a unit that takes no lock never reports holding one', async () => {
-    runRegistry({ unit: 'asks', workers: [], lock: false });
+  it('a unit that takes no lock starts its workers without one', async () => {
+    acquire.mockClear();
+    const started = jest.fn();
+    runRegistry({ unit: 'asks', workers: [{ id: 'asks.test', start: started }], lock: false });
     await settle();
 
     expect(acquire).not.toHaveBeenCalled();
-    expect(holdsUnitLock('asks')).toBe(false);
+    expect(started).toHaveBeenCalledTimes(1);
   });
 });

@@ -4,6 +4,7 @@ export const WORK_KINDS = [
   'fire_cron', // payload: { triggerId: string }
   'poll_source', // payload: { triggerId: string }
   'wake_await', // payload: { adapterType: string; teamId: string; correlationKey: string }
+  'fire_callback', // payload: { callbackId: string; teamId: string; callIndex: number } (callback_fire.ts)
   'linked_object_refresh', // payload: LinkedObjectRefresh (webhook_sync/linked_object_refresh.ts)
   'cron_reconcile', // periodic, payload {}
   'poll_reconcile', // periodic, payload {}
@@ -31,6 +32,8 @@ export interface WorkRow {
   dueAt: Date;
   intervalMs: number | null;
   attempts: number;
+  /** Releases because the row's run was busy elsewhere; never attempts. */
+  deferrals: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
   leaseToken: string | null;

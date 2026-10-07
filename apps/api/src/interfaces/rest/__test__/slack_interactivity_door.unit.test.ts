@@ -115,6 +115,16 @@ async function tap(action: Record<string, unknown>): Promise<void> {
 }
 
 describe('a tap that fires a callback', () => {
+  it('tells the tapper something went wrong when firing throws, rather than nothing', async () => {
+    fireCallback.mockRejectedValue(new Error('lease table unreachable'));
+
+    await tap({ type: 'button', action_id: 'ship', value: 'cb_abc' });
+
+    expect(acks).toEqual([
+      { response_type: 'ephemeral', replace_original: false, text: 'Something went wrong recording that.' },
+    ]);
+  });
+
   it('fires by id with no supplied value, and replaces the message on a single-use recorded fire', async () => {
     fireCallback.mockResolvedValue({ kind: 'recorded', callback: record({ singleUse: true }) });
 

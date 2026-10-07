@@ -12,8 +12,11 @@
 //     finishes the run: results correct, nothing done twice;
 //   · where nothing durable can hold the suspension, the cap still fails the run.
 //
-// The members' priced work is a plugin standing in for a model call: it asks
-// the run's account first and reports its cost, exactly as the model clients do.
+// The members' priced work is a plugin standing in for a model call, served as
+// the production host serves one: under the budget the engine hands it, asking
+// the meter first and reporting its cost, exactly as the model clients do. The
+// cap is read from the environment as each segment starts, as the run host
+// reads it, and handed to the run as data.
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -25,16 +28,16 @@ jest.mock('../../logger', () => ({
 }));
 
 import { resumeMovement, runMovement, runFailureCause, MovementRunFailed, type MovementRunResult, type ParkSink, type RunLimitPause } from '../run';
-import type { MovementTransformInvoker } from '../extraction';
 import type { ParkedScopeState } from '../serialize';
-import { assertRunBudget, reportRunCost, RunCostCapExceeded } from '../../../lib/run_spend';
+import { RunCostCapExceeded } from '../../../lib/run_cost';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import type { HostTransformInvoker } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000053' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -50,7 +53,29 @@ afterEach(() => {
   else process.env[ENV_VAR] = saved;
 });
 
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Named moments in a run (the run paused) that a fetch
+ *  can be held until, so the order members finish in is the test's, not the
+ *  scheduler's. */
+function milestones() {
+  const reached = new Map<string, () => void>();
+  const awaited = new Map<string, Promise<void>>();
+  const promiseOf = (name: string): Promise<void> => {
+    let promise = awaited.get(name);
+    if (promise === undefined) {
+      promise = new Promise<void>((resolve) => reached.set(name, resolve));
+      awaited.set(name, promise);
+    }
+    return promise;
+  };
+  return {
+    mark(name: string): void {
+      void promiseOf(name);
+      reached.get(name)?.();
+    },
+    when: promiseOf,
+  };
+}
+type Milestones = ReturnType<typeof milestones>;
 
 function makeFakeAdapter(adapterType: string) {
   const creates: Array<Record<string, unknown>> = [];
@@ -105,25 +130,24 @@ const PRELUDE = [
   '',
 ].join('\n');
 
-/** How long each url's fetch takes — fixes the order members finish in. */
-const DELAY_MS: Record<string, number> = { a: 30, b: 5, c: 20, d: 1, e: 10 };
-
 /** A `fetch_url` that costs one dollar: refused first if the run has spent its
- *  cap, then charged. Shared across segments, so `charged` is the whole run. */
-function pricedInvoker() {
+ *  cap, then charged. Shared across segments, so `charged` is the whole run.
+ *  A url in `holdUntil` finishes its fetch only once that milestone is
+ *  reached. */
+function pricedInvoker(moments: Milestones, holdUntil: Readonly<Record<string, string>>) {
   const charged: string[] = [];
-  const invoker: MovementTransformInvoker = {
-    declaredOutput: (plugin) => {
-      const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-      return impl?.signature.output as TransformOutputShape | undefined;
-    },
-    async invoke({ config }) {
+  const invoker: HostTransformInvoker = {
+    async invoke({ config, budget }) {
       const url = String(config.url);
-      assertRunBudget();
-      await wait(DELAY_MS[url] ?? 0);
-      reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
-      charged.push(url);
-      return { text: `got-${url}` };
+      const { value, cost } = await withSpendMeter(budget, async () => {
+        assertRunBudget();
+        const hold = holdUntil[url];
+        if (hold !== undefined) await moments.when(hold);
+        reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
+        charged.push(url);
+        return { text: `got-${url}` };
+      });
+      return { ...value, cost };
     },
   };
   return { invoker, charged };
@@ -133,7 +157,7 @@ type ParkKind = 'timer' | 'await' | 'suspension';
 
 /** An in-memory park sink with the durable join semantics of the real one —
  *  the same shape `resume_inside.unit.test.ts` drives — plus the pause. */
-function makeParkSink() {
+function makeParkSink(moments: Milestones) {
   const parks = new Map<string, { kind: ParkKind; state: ParkedScopeState }>();
   const joins = new Map<string, { pending: number; closedBy: string | null; decremented: Set<string> }>();
   const exports = new Map<string, Map<string, { branchIndex: number; exports: unknown }>>();
@@ -159,8 +183,9 @@ function makeParkSink() {
     async commitSuspension(input) {
       keep('suspension', input.address, input.state);
     },
-    async commitLimitPause(pause) {
-      pauses.push(pause);
+    async commitLimitPause({ limit, capMicrodollars, spentMicrodollars }) {
+      pauses.push({ limit, capMicrodollars, spentMicrodollars });
+      moments.mark('paused');
     },
     async decrementJoin(input) {
       const frame = joins.get(input.frameAddress);
@@ -201,11 +226,15 @@ function webhookEvent(): TriggerEvent {
 }
 
 /** One run: what it wrote is collected across every segment of it. */
-function harness(source: string, options: { parkSink?: boolean } = {}) {
+function harness(
+  source: string,
+  options: { parkSink?: boolean; holdUntil?: Readonly<Record<string, string>> } = {},
+) {
   const email = makeFakeAdapter('email');
   const attio = makeFakeAdapter('attio');
-  const plugin = pricedInvoker();
-  const parks = makeParkSink();
+  const moments = milestones();
+  const plugin = pricedInvoker(moments, options.holdUntil ?? {});
+  const parks = makeParkSink(moments);
   /** The run's whole spend so far — what the host reads back off the run row. */
   let spent = 0;
   const input = () => ({
@@ -214,9 +243,10 @@ function harness(source: string, options: { parkSink?: boolean } = {}) {
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    costCapMicrodollars: runCostCapFromEnv(),
+    credentialIds: credentialIdsFor(catalog, (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email.adapter : attio.adapter,
       },
@@ -288,10 +318,12 @@ describe('the cap met inside a MAP member running three at a time', () => {
   // a, b, c start together under the cap. b lands first ($1) and writes; its
   // slot starts d ($1 < $1.50, allowed), which lands ($2) and writes; that slot
   // starts e, which meets the cap before its fetch. c and a were already
-  // fetching: each finishes its fetch, then stops before its write.
+  // fetching: each is held until the run has paused, finishes its fetch, then
+  // stops before its write.
+  const holdUntil = { a: 'paused', c: 'paused' };
 
   it('suspends the member that met the cap before its priced statement, and the others after their current one', async () => {
-    const h = harness(source);
+    const h = harness(source, { holdUntil });
     const result = await h.start();
 
     expect(result.parked).toBe(true);
@@ -308,7 +340,7 @@ describe('the cap met inside a MAP member running three at a time', () => {
   });
 
   it('resuming the run resumes every member with its usage reset: right answer, nothing twice', async () => {
-    const h = harness(source);
+    const h = harness(source, { holdUntil });
     await h.start();
     const results = await h.resumeRun();
 
@@ -325,7 +357,7 @@ describe('the cap met inside a MAP member running three at a time', () => {
   });
 
   it('without the reset the resumed run would meet the cap again at once', async () => {
-    const h = harness(source);
+    const h = harness(source, { holdUntil });
     await h.start();
     const first = [...h.parks.parks.keys()].sort()[2]!; // e, before its fetch
     const again = await h.resumeLeaf(first);

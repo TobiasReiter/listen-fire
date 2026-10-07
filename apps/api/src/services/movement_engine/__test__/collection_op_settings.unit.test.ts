@@ -76,7 +76,8 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { runMovement } from '../run';
+import { runFailureCause, runMovement } from '../run';
+import { RunLeaseLost } from '../errors';
 import type { MovementTransformInvoker } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
 
@@ -88,10 +89,9 @@ import {
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000051' as TeamId;
 
@@ -183,7 +183,6 @@ function delayedInvoker(fail: ReadonlySet<string> = new Set()) {
   let inFlight = 0;
   let maxInFlight = 0;
   const invoker: MovementTransformInvoker = {
-    declaredOutput: (plugin) => realOutput(plugin),
     async invoke({ config }) {
       const url = String(config.url);
       inFlight += 1;
@@ -207,11 +206,6 @@ function delayedInvoker(fail: ReadonlySet<string> = new Set()) {
   };
 }
 
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
-}
-
 function webhookEvent(): TriggerEvent {
   return {
     pipelineInputId: 'pi-collection-settings',
@@ -230,9 +224,9 @@ async function run(source: string, invoker: MovementTransformInvoker, latencyMs 
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email.adapter : attio.adapter,
       },
@@ -386,6 +380,20 @@ describe('onError: what a member whose function failed does', () => {
       plugin.invoker,
     );
     expect(attio.creates[0]?.fields.summary).toBe('a,b,c,e');
+  });
+
+  it('a lost run lease inside a member is never forgiven: it stops the run, as a cancel does', async () => {
+    for (const onError of ['ignore', 'warn']) {
+      const invoker: MovementTransformInvoker = {
+        async invoke({ config }) {
+          // The host found the run is another instance's now.
+          if (String(config.url) === 'c') throw new RunLeaseLost('run-1');
+          return { text: `got-${String(config.url)}` };
+        },
+      };
+      const failed = await run(mapMovement(`{ onError: "${onError}" }`), invoker).catch((error: unknown) => error);
+      expect(runFailureCause(failed)).toBeInstanceOf(RunLeaseLost);
+    }
   });
 
   it('FILTER drops a member whose predicate failed', async () => {

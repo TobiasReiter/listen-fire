@@ -1,6 +1,7 @@
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
+import { reportedFailureReason } from '../translation_graph/runs/trigger_run';
 
 interface ListTriggerRunsArgs {
   teamId: TeamId;
@@ -59,7 +60,7 @@ export async function listTgRuns({
     startedAt: r.started_at,
     completedAt: r.completed_at,
     failedAt: r.failed_at,
-    failureReason: r.failure_reason,
+    failureReason: reportedFailureReason(r),
     createdAt: r.created_at,
   }));
 }
@@ -95,7 +96,7 @@ export async function getTgRun({ teamId, runId }: GetTriggerRunArgs) {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     failedAt: row.failed_at,
-    failureReason: row.failure_reason,
+    failureReason: reportedFailureReason(row),
     createdAt: row.created_at,
   };
 }

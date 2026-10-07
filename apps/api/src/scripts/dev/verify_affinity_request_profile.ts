@@ -46,14 +46,14 @@
  */
 import type { CatalogSnapshot } from 'movement-lang';
 import { runMovement } from '../../services/movement_engine/run';
-import { withRunCallLedger } from '../../services/movement_engine/run_scope';
+import { withSegment } from '../../services/translation_graph/segment_scope';
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { AffinityAdapter, AFFINITY_MANIFEST } from '../../services/translation_graph/adapters/affinity';
 import { makeWebBaseUrlResolver } from '../../services/translation_graph/adapters/affinity/shared';
 import { instanceSchemaFromDescriptors } from '../../services/translation_graph/movement/schema_projection';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
-import { probeEngineHost } from './lib/probe_host';
+import { everyCredential, probeEngineHost } from './lib/probe_host';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6412/affinity';
 const ADMIN = BASE.replace(/\/affinity$/, '/admin');
@@ -368,12 +368,10 @@ async function runOne(
     event,
     teamId: TEAM_ID,
     catalog,
+    credentialIds: everyCredential(catalog, 'creds-profile'),
     host: probeEngineHost({
       teamId: TEAM_ID,
-      adapters: {
-        resolve: ({ role }) => (role === 'source' ? source_ : target),
-        credentialId: () => 'creds-profile',
-      },
+      resolve: ({ role }) => (role === 'source' ? source_ : target),
     }),
   });
   return requests.slice(mark);
@@ -470,7 +468,7 @@ async function main() {
   const targetRole = adapterOn(bare);
 
   console.log('\n── (c) link, then read the entry back');
-  await withRunCallLedger(async () => {
+  await withSegment({ teamId: TEAM_ID }, async () => {
     const org = await targetRole.createRecord({
       recordType: 'Organization',
       fields: { Name: ORG_NAME, Domain: DOMAIN },

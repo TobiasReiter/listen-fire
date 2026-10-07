@@ -3,10 +3,10 @@
 // ways a parked run wakes up — is a row in one work table, run by one drain.
 //
 // Rows are claimed with SKIP LOCKED leases, and a lease that lapses with a dead
-// process is how its work is recovered. The unit still takes its advisory lock
-// this release: two processes may resume the same leaf (a deploy's overlap, or
-// two instances) until cross-process write locks exist, and the lock is the
-// switch that retires once they do.
+// process is how its work is recovered. Every entry into a run holds that
+// run's own lease (movement_engine/run_lease.ts), so two processes never step
+// one run at once: the unit takes no advisory lock, and any number of
+// instances may drain side by side, in either mode.
 
 import { neverAsAny } from '../lib/utils/types';
 import { claimLoopTick } from '../lib/worker';
@@ -71,7 +71,7 @@ const automationsWorkers: WorkerRegistry = {
   unit: 'automations',
   workers: [{ id: DRAIN_WORKER_ID, start: () => startDrain(process.env) }],
   wire: registerAutomationsWork,
-  lock: true,
+  lock: false,
 };
 
 export { DRAIN_MODE_VAR, automationsWorkers };

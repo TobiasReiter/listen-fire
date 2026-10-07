@@ -26,7 +26,7 @@ import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { snapshotOverManifests, staticCatalogFromManifests, staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { runMovement, fireCallbackBody, type ParkSink } from '../run';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
 const KG = 'kg';
@@ -110,7 +110,7 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
     params: Array<{ name: string; type: string }>;
     state: ParkedScopeState;
     singleUse: boolean;
-    expiresAt?: Date;
+    expiresAt?: string;
   }> = [];
   let n = 0;
   const sink: CallbackSink = {
@@ -119,7 +119,7 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
       mints.push({ id, ...input });
       return { id, url: `https://api.test/api/cb/${id}` };
     },
-    async calls(callbackId) {
+    async calls({ callbackId }) {
       return ledger[callbackId] ?? [];
     },
   };
@@ -246,7 +246,7 @@ listen to runs {} fire m
     expect(callbacks.mints.map((m) => m.singleUse)).toEqual([true, false]);
     expect(callbacks.mints[0].expiresAt).toBeUndefined();
     // 2d out, give or take the test's own clock.
-    const ttl = callbacks.mints[1].expiresAt!.getTime() - Date.now();
+    const ttl = new Date(callbacks.mints[1].expiresAt!).getTime() - Date.now();
     expect(ttl).toBeGreaterThan(47 * 60 * 60 * 1000);
     expect(ttl).toBeLessThan(49 * 60 * 60 * 1000);
   });

@@ -14,9 +14,10 @@
 // it is authorable, because none of it is a decision: getting any of it wrong
 // produces a message that lands outside the thread it was meant for.
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { logger } from '../../../logger';
 import type { FileRef, ParentLink, WriteResult } from '../../adapter';
-import { streamFileRef } from '../../engine/files/retrieve';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import {
   GmailApiError,
   gmailMethodOf,
@@ -87,6 +88,8 @@ export function replySubject(parentSubject: string | undefined): string {
  */
 export async function sendGmailMessage(input: {
   client: GmailApiClient;
+  /** The team whose run is sending — an attached file is redeemed for it. */
+  teamId: TeamId;
   fields: Record<string, unknown>;
   replyTo?: GmailReplyTarget;
   /** Injectable so a test can assert a whole message rather than one with a
@@ -100,7 +103,7 @@ export async function sendGmailMessage(input: {
   const cc = strings(fields['cc']);
   const bodyText = str(fields['body']);
   const bodyHtml = str(fields['bodyHtml']);
-  const attachments = await resolveAttachments(fields['files']);
+  const attachments = await resolveAttachments(fields['files'], input.teamId);
 
   if (to.length === 0) {
     throw new Error(
@@ -229,7 +232,7 @@ function asFileValue(raw: unknown): FileValue | null {
   return raw as FileValue;
 }
 
-async function resolveAttachments(raw: unknown): Promise<GmailOutboundAttachment[]> {
+async function resolveAttachments(raw: unknown, teamId: TeamId): Promise<GmailOutboundAttachment[]> {
   if (raw === undefined || raw === null) return [];
   const values = (Array.isArray(raw) ? raw : [raw])
     .map(asFileValue)
@@ -237,7 +240,7 @@ async function resolveAttachments(raw: unknown): Promise<GmailOutboundAttachment
 
   const attachments: GmailOutboundAttachment[] = [];
   for (const value of values) {
-    const bytes = await fileBytes(value);
+    const bytes = await fileBytes(value, teamId);
     if (bytes === null) {
       // Loud, and fatal: an email that silently goes out without the document
       // it was about is worse than one that does not go out at all.
@@ -257,9 +260,10 @@ async function resolveAttachments(raw: unknown): Promise<GmailOutboundAttachment
 
 async function fileBytes(
   value: FileValue,
+  teamId: TeamId,
 ): Promise<{ body: Buffer; contentType: string } | null> {
-  if (typeof value.retrieve === 'function') {
-    const resolved = await streamFileRef(value);
+  if (hasFileSource(value)) {
+    const resolved = await streamFileRef(value, { teamId });
     const body = await streamToBuffer(resolved.stream);
     return {
       body,

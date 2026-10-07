@@ -1,10 +1,12 @@
 // A file bound before a park is still READABLE after the run resumes.
 //
-// A FileRef's byte channel (`retrieve()`) is a function, so it cannot ride the
-// parked state. What rides is the producer's durable handle (`source`), and the
-// resume rebinds the channel through the owning adapter. These tests drive the
-// real interpreter through an ordinary timer park and through a cost-cap pause
-// inside a MAP member, and pin the loud warning a file with no handle gives.
+// A FileRef is a descriptor — JSON naming the adapter instance that owns its
+// bytes — so it parks as it stands and the resume rebinds nothing. When the
+// resumed run reads the file, the host resolves that instance, with the
+// credential the descriptor names, and asks it for the bytes. These tests drive
+// the real interpreter through an ordinary timer park and through a cost-cap
+// pause inside a MAP member, read a credentialed Attio file across a park, and
+// pin the loud warning a file with no handle gives.
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -16,19 +18,18 @@ jest.mock('../../logger', () => ({
 }));
 
 import { Readable } from 'node:stream';
-import { resumeMovement, runMovement, type MovementRunResult, type ParkSink, type RunLimitPause } from '../run';
 import type { FileTextResolution, MovementTraceEntry } from '../expression';
-import type { MovementTransformInvoker } from '../extraction';
+import { resumeMovement, runMovement, type MovementRunResult, type ParkSink, type RunLimitPause } from '../run';
 import type { ParkedScopeState } from '../serialize';
-import { assertRunBudget, reportRunCost } from '../../../lib/run_spend';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import type { Adapter, FileRef, RuntimeCapabilities } from '../../translation_graph/adapter';
-import { streamFileRef } from '../../translation_graph/engine/files/retrieve';
+import { fileHandle, type Adapter, type FileRef, type RuntimeCapabilities } from '../../translation_graph/adapter';
+import { streamFileRef, type ResolveFileOwner } from '../../translation_graph/engine/files/retrieve';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { makeUnstablePosition, positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import type { HostTransformInvoker } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000054' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -44,18 +45,20 @@ afterEach(() => {
   else process.env[ENV_VAR] = saved;
 });
 
-/** The bytes the attachment's storage holds, by its storage key. */
-const STORED: Record<string, string> = { 'att-key-1': 'Memo: Orbit Labs builds satellites.' };
+/** The bytes each owner's storage holds, by the file's handle. */
+const STORED: Record<string, string> = {
+  'att-key-1': 'Memo: Orbit Labs builds satellites.',
+  'file-pitch-9': 'Deck: Orbit Labs raises a seed round.',
+};
 
-/** An inbound email's attachment, as its producer makes it: a byte channel of
- *  its own, plus the durable handle the owner can redeem. */
+/** An inbound email's attachment, as its producer makes it: the owner (email
+ *  takes no credential) and the handle it redeems. */
 function attachmentFileRef(key: string): FileRef {
   return {
     __brand: 'FileRef',
     name: 'memo.pdf',
     contentType: 'application/pdf',
-    retrieve: async () => ({ stream: Readable.from([Buffer.from(STORED[key] ?? '')]) }),
-    source: { ownerAdapterType: 'email', handle: key },
+    source: { adapterType: 'email', handle: key },
   };
 }
 
@@ -89,7 +92,7 @@ function makeEmailAdapter() {
       }));
     },
     async resolveFileRef({ ref }) {
-      const key = ref.source?.handle ?? '';
+      const key = fileHandle(ref) ?? '';
       resolved.push(key);
       return { stream: Readable.from([Buffer.from(STORED[key] ?? '')]) };
     },
@@ -106,8 +109,12 @@ function makeEmailAdapter() {
   return { adapter, resolved };
 }
 
-function makeCrmAdapter() {
+/** The CRM: the write target, and — read as a source — a record whose files
+ *  it owns. Its descriptors name the credential it was resolved with, and its
+ *  `resolveFileRef` serves bytes only to an instance holding that credential. */
+function makeCrmAdapter(credentialsId: string | undefined) {
   const creates: Array<Record<string, unknown>> = [];
+  const resolved: string[] = [];
   const adapter: Adapter = {
     adapterType: 'attio',
     supportedTriggers: [] as never[],
@@ -124,11 +131,29 @@ function makeCrmAdapter() {
     async resolveEntity() {
       return { candidates: [] };
     },
-    async getFieldValue() {
-      return undefined;
+    async getFieldValue({ position, fieldId }) {
+      const data = positionData(position) as Record<string, unknown> | undefined;
+      if (fieldId === 'data' && typeof data?.id === 'string') {
+        return {
+          __brand: 'FileRef',
+          name: 'deck.pdf',
+          contentType: 'application/pdf',
+          source: { adapterType: 'attio', ...(credentialsId !== undefined ? { credentialId: credentialsId } : {}), handle: data.id },
+        } satisfies FileRef;
+      }
+      return data?.[fieldId];
     },
-    async getRelated() {
-      return [];
+    async getRelated({ position }) {
+      const data = positionData(position) as { files?: unknown[] } | undefined;
+      return (data?.files ?? []).map((file) => ({
+        position: makeUnstablePosition({ adapterType: 'attio', recordType: 'File', data: file }),
+      }));
+    },
+    async resolveFileRef({ ref }) {
+      if (credentialsId === undefined) throw new Error('test: attio cannot read a file without its credential');
+      const key = fileHandle(ref) ?? '';
+      resolved.push(key);
+      return { stream: Readable.from([Buffer.from(STORED[key] ?? '')]) };
     },
     async createRecord(input) {
       creates.push(input.fields);
@@ -141,38 +166,55 @@ function makeCrmAdapter() {
       return {};
     },
   };
-  return { adapter, creates };
+  return { adapter, creates, resolved };
 }
 
-/** The file→text seam as production builds it, minus OCR: the FileRef's own
- *  byte channel, read to text. A channel that is missing or fails is
- *  `bytes_unavailable`, exactly as `makeFileTextResolver` answers. */
-async function resolveFileText(ref: FileRef): Promise<FileTextResolution> {
-  try {
-    const { stream } = await streamFileRef(ref);
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk as Buffer));
-    return { text: Buffer.concat(chunks).toString('utf8') };
-  } catch (error) {
-    return { unreadable: 'bytes_unavailable', detail: error instanceof Error ? error.message : String(error) };
-  }
+/** The file→text seam as production builds it, minus OCR: the descriptor's
+ *  owner resolved on the host side and its bytes read to text. Bytes that
+ *  cannot be fetched are `bytes_unavailable`, exactly as
+ *  `makeFileTextResolver` answers. */
+function fileTextOn(resolveOwner: ResolveFileOwner) {
+  return async ({ file }: { file: FileRef }): Promise<FileTextResolution> => {
+    try {
+      const { stream } = await streamFileRef(file, { teamId: TEAM_ID, resolveOwner });
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(Buffer.from(chunk as Buffer));
+      return { text: Buffer.concat(chunks).toString('utf8') };
+    } catch (error) {
+      return { unreadable: 'bytes_unavailable', detail: error instanceof Error ? error.message : String(error) };
+    }
+  };
 }
 
 /** A `fetch_url` that costs one dollar, refused first once the cap is met. */
-const pricedInvoker: MovementTransformInvoker = {
-  declaredOutput: (plugin) => {
-    const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-    return impl?.signature.output as TransformOutputShape | undefined;
-  },
-  async invoke({ config }) {
-    assertRunBudget();
-    reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
-    return { text: `got-${String(config.url)}` };
+const pricedInvoker: HostTransformInvoker = {
+  async invoke({ config, budget }) {
+    const { value, cost } = await withSpendMeter(budget, async () => {
+      assertRunBudget();
+      reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
+      return { text: `got-${String(config.url)}` };
+    });
+    return { ...value, cost };
   },
 };
 
 const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
+});
+
+/** The CRM as a source whose companies carry files. */
+const attioFilesCatalog = staticCatalogSnapshot({
+  credentials: { acme_main: { adapters: ['attio'] } },
+  instanceSchemas: {
+    attio: {
+      positions: {
+        company: { properties: { name: 'text' }, edges: { files: { target: 'file' } } },
+        file: { properties: { name: 'text', data: 'file' }, edges: {} },
+      },
+      collections: { companies: { target: 'company' } },
+      writableRoots: { company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } } },
+    },
+  },
 });
 
 const PRELUDE = [
@@ -254,26 +296,43 @@ function emailEvent(): TriggerEvent {
   };
 }
 
-function harness(source: string) {
+function attioEvent(): TriggerEvent {
+  return {
+    pipelineInputId: 'pi-file-resume-attio',
+    adapterType: 'attio',
+    triggerType: 'webhook',
+    payload: { name: 'Orbit Labs', files: [{ id: 'file-pitch-9' }] },
+  };
+}
+
+function harness(source: string, from: { event: TriggerEvent; catalog: typeof catalog } = { event: emailEvent(), catalog }) {
   const email = makeEmailAdapter();
-  const crm = makeCrmAdapter();
+  const crm = makeCrmAdapter('cred-attio-1');
   const parks = makeParkSink();
+  /** Every instance the host resolved to read a file's bytes. */
+  const owners: Array<Parameters<ResolveFileOwner>[0]> = [];
+  const resolveOwner: ResolveFileOwner = (identity) => {
+    owners.push(identity);
+    if (identity.adapterType === 'email') return email.adapter;
+    return makeCrmAdapter(identity.credentialsId).adapter;
+  };
   let spent = 0;
   const input = () => ({
     source: PRELUDE + source,
     movementName: 'intake',
-    event: emailEvent(),
+    event: from.event,
     teamId: TEAM_ID,
-    catalog,
+    catalog: from.catalog,
+    costCapMicrodollars: runCostCapFromEnv(),
+    credentialIds: credentialIdsFor(from.catalog, (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email.adapter : crm.adapter,
       },
       llm: { transforms: pricedInvoker },
       park: { sink: parks.sink },
-      files: { resolveFileText },
+      files: { resolveFileText: fileTextOn(resolveOwner) },
     }),
     dryRun: false,
   });
@@ -285,6 +344,7 @@ function harness(source: string) {
     email,
     crm,
     parks,
+    owners,
     async start(extra: { priorSpentMicrodollars?: number } = {}) {
       if (extra.priorSpentMicrodollars !== undefined) spent = extra.priorSpentMicrodollars;
       return record(await runMovement({ ...input(), ...extra }));
@@ -333,13 +393,12 @@ describe('a file bound before an ordinary timer park', () => {
     expect(warnings(resumed.trace)).toEqual([]);
   });
 
-  it('parks the file in its wire form — the shape a park written before this fix also has', async () => {
+  it('parks the file as its descriptor', async () => {
     const h = harness(source);
     await h.start();
     const [park] = [...h.parks.parks.values()];
     const content = park?.state.scopeChain.flatMap((scope) => Object.entries(scope.bindings)).find(([name]) => name === 'content');
-    // Metadata and the owner's handle; the byte channel stayed behind. A state
-    // parked by the earlier writer holds exactly this, so it resumes readable.
+    // Metadata, the owner and its handle — the descriptor as the run held it.
     expect(content?.[1]).toMatchObject({
       kind: 'value',
       value: [
@@ -348,10 +407,26 @@ describe('a file bound before an ordinary timer park', () => {
           __brand: 'FileRef',
           name: 'memo.pdf',
           contentType: 'application/pdf',
-          source: { ownerAdapterType: 'email', handle: 'att-key-1' },
+          source: { adapterType: 'email', handle: 'att-key-1' },
         },
       ],
     });
+  });
+
+  it('parked in the spelling a run parked before this chunk holds, still resumes readable', async () => {
+    const h = harness(source);
+    await h.start();
+    const earlierSpelling = (state: ParkedScopeState): ParkedScopeState =>
+      JSON.parse(JSON.stringify(state), (key: string, value: unknown) =>
+        key === 'source' && typeof value === 'object' && value !== null && 'adapterType' in value && 'handle' in value
+          ? { ownerAdapterType: value.adapterType, handle: value.handle }
+          : value,
+      ) as ParkedScopeState;
+    const resumed = await h.resumeOnly(earlierSpelling);
+    expect(h.crm.creates).toEqual([
+      { name: 'Memo: Orbit Labs builds satellites.', summary: 'Memo: Orbit Labs builds satellites.' },
+    ]);
+    expect(warnings(resumed.trace)).toEqual([]);
   });
 
   it('with no durable handle is unreadable, and the run says so out loud', async () => {
@@ -368,7 +443,7 @@ describe('a file bound before an ordinary timer park', () => {
     // Once per file, however many reads of it failed.
     expect(found).toHaveLength(1);
     expect(found[0]?.message).toMatch(/memo\.pdf/);
-    expect(found[0]?.message).toMatch(/parked without a durable handle/);
+    expect(found[0]?.message).toMatch(/carries no handle to its bytes/);
   });
 });
 
@@ -393,6 +468,35 @@ describe('a file bound before a cost-cap pause inside a MAP member', () => {
     const resumed = await h.resumeOnly();
     expect(resumed.parked).toBeUndefined();
     expect(h.crm.creates).toEqual([{ name: 'Memo: Orbit Labs builds satellites.' }]);
+    expect(warnings(resumed.trace)).toEqual([]);
+  });
+});
+
+describe('a credentialed Attio file bound before a park', () => {
+  const source = [
+    'movement intake(r: <crm-[:company]->>) {',
+    '  files = COLLECT(r-[:files]->.data)',
+    '  await sleep(1h)',
+    '  write crm-[:companies]-> { name: COALESCE(READ(ONLY(files)), "unread") }',
+    '}',
+  ].join('\n');
+
+  it('parks naming its instance, and its text is read after the resume through that instance, with its credential', async () => {
+    const h = harness(source, { event: attioEvent(), catalog: attioFilesCatalog });
+    const first = await h.start();
+    expect(first.parked).toBe(true);
+    const [park] = [...h.parks.parks.values()];
+    const files = park?.state.scopeChain.flatMap((scope) => Object.entries(scope.bindings)).find(([name]) => name === 'files');
+    expect(JSON.stringify(files?.[1])).toContain(
+      JSON.stringify({ adapterType: 'attio', credentialId: 'cred-attio-1', handle: 'file-pitch-9' }),
+    );
+
+    const resumed = await h.resumeOnly();
+    expect(resumed.parked).toBeUndefined();
+    expect(h.crm.creates).toEqual([{ name: 'Deck: Orbit Labs raises a seed round.' }]);
+    // The host resolved the owner as the descriptor named it — the credential
+    // the file was read with — which is what lets Attio serve the bytes.
+    expect(h.owners).toEqual([{ adapterType: 'attio', teamId: TEAM_ID, credentialsId: 'cred-attio-1' }]);
     expect(warnings(resumed.trace)).toEqual([]);
   });
 });

@@ -12,6 +12,7 @@ jest.mock('../../../lib/kysely', () => ({
 }));
 
 import { makeDbCancelGate } from '../cancel_gate';
+import { RunLeaseLost } from '../run_lease';
 
 const RUN = 'run-1' as TriggerRunId;
 
@@ -86,4 +87,16 @@ it('discovers a cancel stamped after the run started', async () => {
   jest.advanceTimersByTime(3_500);
   expect(await gate.cancelled()).toBe(true);
   expect(gate.reason()).toBe('Cancelled by Ada');
+});
+
+it('stops the segment at the next boundary once its run lease is lost, before any read', async () => {
+  executeTakeFirst.mockResolvedValue({ cancel_requested_at: null, cancel_reason: null });
+  let lost = false;
+  const gate = makeDbCancelGate(RUN, { lease: { isLost: () => lost } });
+  expect(await gate.cancelled()).toBe(false);
+  lost = true;
+  // Within the debounce, and on the uncached read alike.
+  await expect(gate.cancelled()).rejects.toBeInstanceOf(RunLeaseLost);
+  await expect(gate.cancelledNow()).rejects.toThrow('run lease lost; another instance may hold the run');
+  expect(executeTakeFirst).toHaveBeenCalledTimes(1);
 });

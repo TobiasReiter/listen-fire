@@ -76,6 +76,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import { reportedFailureReason } from '../../../services/translation_graph/runs/trigger_run';
 import { UserService } from '../../../services/user';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
@@ -156,7 +157,7 @@ export async function movementRunsImpl(params: {
       startedAt: row.started_at,
       completedAt: row.completed_at,
       failedAt: row.failed_at,
-      failureReason: row.failure_reason,
+      failureReason: reportedFailureReason(row),
       nodesWritten: row.nodes_written,
       dryRun: row.dry_run,
       summary: summariseRun({
@@ -295,7 +296,7 @@ export async function latestRunsByTriggerId(params: {
       startedAt: row.started_at,
       completedAt: row.completed_at,
       failedAt: row.failed_at,
-      failureReason: row.failure_reason,
+      failureReason: reportedFailureReason(row),
       nodesWritten: row.nodes_written,
       dryRun: row.dry_run,
       summary: summariseRun({

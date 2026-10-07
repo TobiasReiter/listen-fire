@@ -54,6 +54,7 @@ import { UserId } from '../../../generated/kysely/core/User';
 import { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import { reportedFailureReason } from '../../../services/translation_graph/runs/trigger_run';
 
 function maybeFakeCreds<T extends Record<string, unknown>>(creds: T, serviceType: string): T {
   const ctx = currentContext();
@@ -677,6 +678,8 @@ const credentialsRouter = (procedure: typeof trpc.procedure) => {
         );
         return {
           ...row,
+          // A note on a run still going is not a failure (reportedFailureReason).
+          failure_reason: reportedFailureReason(row),
           appliedActionPlans: flattenTriggerRunPlans(row.steps),
           // Which saved version actually ran — a firing from before the
           // last save executed older logic than the editor is showing.

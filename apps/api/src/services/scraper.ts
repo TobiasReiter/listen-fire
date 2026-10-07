@@ -7,7 +7,8 @@ import { sendSlackNotification } from '../lib/slack';
 import { Queue } from '../lib/utils/queue';
 import { getEnvVar } from '../lib/utils/environment';
 import { looksLikeNonHtmlAddress } from '../lib/utils/url';
-import { assertRunBudget, reportRunCost, type CostSource } from '../lib/run_spend';
+import type { CostSource } from '../lib/run_cost';
+import { assertRunBudget, reportRunCost } from '../lib/run_spend';
 
 // Web Unlocker uses a dedicated zone, distinct from the LinkedIn Dataset API zone.
 // The zone must be provisioned in the Bright Data dashboard under Web Unlocker.

@@ -14,7 +14,7 @@ import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
 import { logger } from '../../../logger';
-import { isAdapterCallCeilingExceeded } from '../../../movement_engine/run_scope';
+import { isAdapterCallCeilingExceeded } from '../../segment_scope';
 import {
   AffinityAPIClient,
   getAffinityClient,
@@ -1375,7 +1375,7 @@ export class AffinityAdapter extends BaseAdapter {
       case 'note':
         return createNote({ operations, write: input });
       case 'file':
-        return createFile({ operations, write: input });
+        return createFile({ operations, teamId: this.teamId, write: input });
       case 'opportunity':
         // POST /opportunities exists but requires the target list (an
         // opportunity lives on exactly one list) — not wired; the entry says
@@ -1455,7 +1455,7 @@ export class AffinityAdapter extends BaseAdapter {
       case 'note':
         return { ...(await createNote({ operations, write: input })), association: 'made' };
       case 'file':
-        return { ...(await createFile({ operations, write: input })), association: 'made' };
+        return { ...(await createFile({ operations, teamId: this.teamId, write: input })), association: 'made' };
       case 'opportunity':
       case 'reminder':
       case 'interaction':

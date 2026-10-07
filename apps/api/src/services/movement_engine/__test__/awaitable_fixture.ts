@@ -5,14 +5,17 @@
 
 import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
 import type { AwaitResolution } from '../../translation_graph/awaitable';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { AwaitWakeRequest, EngineHost, Scoped } from '../host';
+import type { QueuedWake } from '../host_kit';
+
+import { containerAssociation } from '../../translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { positionData } from '../../translation_graph/types';
-import { makeTestHost, type AwaitWakeRequest } from '../host';
+import { makeTestHost } from '../test_host';
 import { runMovement, type ParkSink } from '../run';
 
 const AWAITING = 'ask';
@@ -122,9 +125,13 @@ export function runAwaiting(input: {
   adapter: Adapter;
   parkSink: ParkSink;
   /** The host's wake; absent ⇒ the test host's, which records into `wakes`. */
-  wake?: (request: AwaitWakeRequest) => Promise<void>;
-  wakes?: AwaitWakeRequest[];
+  wake?: (request: Scoped<AwaitWakeRequest>) => Promise<void>;
+  wakes?: QueuedWake[];
+  /** Wrap the test host before the run is handed it (the seam guard's JSON
+   *  round trip). */
+  wrapHost?: (host: EngineHost) => EngineHost;
 }) {
+  const wrap = input.wrapHost ?? ((host: EngineHost) => host);
   const manual = createManualAdapter({ teamId: input.teamId });
   const event: TriggerEvent = {
     pipelineInputId: 'trigger:manual-await',
@@ -138,7 +145,7 @@ export function runAwaiting(input: {
     event,
     teamId: input.teamId,
     catalog,
-    host: makeTestHost({
+    host: wrap(makeTestHost({
       adapters: {
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'manual') return manual;
@@ -148,7 +155,7 @@ export function runAwaiting(input: {
       },
       park: { sink: input.parkSink, ...(input.wake !== undefined ? { wake: input.wake } : {}) },
       ...(input.wakes !== undefined ? { wakes: input.wakes } : {}),
-    }),
+    })),
     dryRun: false,
   });
 }

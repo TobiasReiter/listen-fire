@@ -97,7 +97,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeFakeParkSink, makeTestHost } from '../host';
+import { makeFakeParkSink, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
 
@@ -271,9 +271,9 @@ function run(source: string, payload: Record<string, unknown>, adapters: RunAdap
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: makeResolver({
           email: adapters.email,
           ...(adapters.attio ? { attio: adapters.attio } : {}),
@@ -301,9 +301,9 @@ function resume(
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: makeResolver({
           email: adapters.email,
           ...(adapters.attio ? { attio: adapters.attio } : {}),
@@ -362,9 +362,6 @@ describe('the utility idiom — one movement shapes, another writes', () => {
         __brand: 'FileRef',
         name,
         contentType: 'application/pdf',
-        retrieve: async () => {
-          throw new Error('test: a call value must never pull the bytes');
-        },
       } as unknown as FileRef,
     };
   }

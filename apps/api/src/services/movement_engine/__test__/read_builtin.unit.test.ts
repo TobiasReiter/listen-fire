@@ -32,7 +32,7 @@ function fileRef(over: Partial<FileRef> = {}): FileRef {
     name: 'deck.pdf',
     contentType: 'application/pdf',
     size: 1234,
-    source: { ownerAdapterType: 'email', handle: 'attachment-1' },
+    source: { adapterType: 'email', handle: 'attachment-1' },
     ...over,
   };
 }
@@ -209,6 +209,7 @@ describe('extract from [READ(f)]', () => {
     const runtime: ExtractRuntime = {
       llm,
       transformInvoker: { async invoke() { return {}; } },
+      plugins: {},
       evalSlot: (s: ExprSlot) => evaluate(s.raw, { attachment: fileRef(), resolveFileText }),
       resolveFileText,
     };

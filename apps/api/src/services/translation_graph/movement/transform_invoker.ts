@@ -3,18 +3,22 @@
 // fetched files land in.
 
 import { runFields } from '../../../lib/llm_usage';
-import { isRunCostCapExceeded } from '../../../lib/run_spend';
+import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from '../../../lib/run_cost';
 import { DocumentService } from '../../document';
 import { logger } from '../../logger';
-import {
-  transformFor,
-  type MovementTransformInvoker,
-  type TransformInvocationResult,
-} from '../../movement_engine/extraction';
+import type { TransformInvocationResult, TransformInvokeInput } from '../../movement_engine/extraction';
+import type { Costed, Priced } from '../../movement_engine/host';
 import type { FileRef } from '../adapter';
 import { documentStoreFileRef } from '../engine/files/document_store';
-import type { TransformInput, TransformOutput } from '../engine/transforms/registry';
-import { makeEphemeralPosition, type TransformOutputShape } from '../types';
+import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
+import { makeEphemeralPosition } from '../types';
+
+/** A plugin by either spelling: movement identifiers can't carry dashes, so a
+ *  program writes `vc_url_retrieval` for a transform registered as
+ *  `vc-url-retrieval`. */
+function transformFor(plugin: string): TransformImpl | undefined {
+  return getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
+}
 
 /**
  * The production invoker — the TG transform registry, dispatched the same way
@@ -23,14 +27,15 @@ import { makeEphemeralPosition, type TransformOutputShape } from '../types';
  * the context data block). Movement identifiers can't carry dashes, so
  * the underscore spelling resolves too (`vc_url_retrieval`).
  */
-export const registryTransformInvoker: MovementTransformInvoker = {
-  declaredOutput(plugin): TransformOutputShape | undefined {
-    return transformFor(plugin)?.signature.output;
-  },
-  isPriced(plugin): boolean {
-    return transformFor(plugin)?.priced === true;
-  },
-  async invoke({ plugin, config, extractedContext }): Promise<TransformInvocationResult> {
+/** A plugin invoker as the host serves it, before the host meters it: a call
+ *  past the budget throws `BudgetExhausted` here, and the host turns that into
+ *  the refusal it answers the engine with. */
+export interface TransformInvoker {
+  invoke(input: Priced<TransformInvokeInput>): Promise<Costed<TransformInvocationResult>>;
+}
+
+export const registryTransformInvoker: TransformInvoker = {
+  async invoke({ plugin, config, extractedContext }): Promise<Costed<TransformInvocationResult>> {
     const impl = transformFor(plugin);
     if (!impl) {
       logger.warn('[movement:transform] no such plugin — skipping', { plugin, ...runFields() });
@@ -62,7 +67,7 @@ export const registryTransformInvoker: MovementTransformInvoker = {
     } catch (error) {
       // Out of money is not "no enrichment": the run stops, as it would at a
       // model call made outside a plugin.
-      if (isRunCostCapExceeded(error)) throw error;
+      if (isBudgetExhausted(error)) throw error;
       logger.warn('[movement:transform] plugin threw — no enrichment', {
         plugin,
         error,
@@ -79,12 +84,22 @@ export const registryTransformInvoker: MovementTransformInvoker = {
     const fetchedText = collectEmissionText(result.edges);
     const records = await emissionRecords(result.edges, plugin);
 
-    const out: TransformInvocationResult = {};
+    const out: Costed<TransformInvocationResult> = {};
     if (fetchedText) out.text = fetchedText;
     if (Object.keys(data).length > 0) out.data = data;
     if (records.length > 0) out.records = records;
     if (result.outcome) out.outcome = result.outcome;
-    if (result.cost !== undefined) out.cost = result.cost;
+    // What the plugin says its own work cost, under its own name. Spend its
+    // model calls and service clients report is metered where it happens,
+    // under THEIR names — the envelope is for what nothing else priced.
+    if (result.cost !== undefined) {
+      out.cost = [
+        {
+          source: costSourceKey({ kind: 'plugin', name: plugin }),
+          microdollars: costEnvelopeMicrodollars(result.cost),
+        },
+      ];
+    }
 
     logger.info('[movement:transform] ran', {
       plugin,

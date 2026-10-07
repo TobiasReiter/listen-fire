@@ -44,7 +44,8 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import type { WriteLockHolder } from '../write_locks/write_locks';
+import type { LanguageVersion } from 'movement-lang';
+
 
 import { MovementEngineError } from './errors';
 import { isBlankIdentityValue, type UniquenessConstraints } from '../translation_graph/uniqueness';
@@ -117,6 +118,14 @@ class Gate {
   }
 }
 
+/** The segment's cross-run locks, as the effects take them: an acquire of
+ *  some names answers a token, and releasing the token gives back exactly
+ *  those names. */
+export interface CrossRunLocks {
+  acquire(names: readonly string[]): Promise<string>;
+  release(token: string): Promise<void>;
+}
+
 /**
  * The run's locks. Every effect asks for all of its locks at once; they are
  * taken in name order, so two effects wanting the same locks in a different
@@ -128,10 +137,10 @@ export class EffectLocks {
   private readonly gates = new Map<string, Gate>();
   /** The locks the running flow holds, by name. */
   private readonly held = new AsyncLocalStorage<ReadonlyMap<string, LockMode>>();
-  private readonly holder: WriteLockHolder;
+  private readonly crossRun: CrossRunLocks;
 
-  constructor(deps: { holder: WriteLockHolder }) {
-    this.holder = deps.holder;
+  constructor(deps: { crossRun: CrossRunLocks }) {
+    this.crossRun = deps.crossRun;
   }
 
   async withLocks<T>(requests: readonly LockRequest[], effect: () => Promise<T>): Promise<T> {
@@ -149,7 +158,7 @@ export class EffectLocks {
     });
     if (wanted.length === 0) return effect();
     const taken: Gate[] = [];
-    let crossRunHeld: string[] = [];
+    let crossRunHeld: string | undefined;
     try {
       for (const request of wanted) {
         let gate = this.gates.get(request.name);
@@ -163,16 +172,13 @@ export class EffectLocks {
       // After the run's own gates, so the run's flows queue among themselves
       // first and only one of them at a time waits on another run.
       const crossRun = crossRunNames(wanted);
-      if (crossRun.length > 0) {
-        await this.holder.acquire(crossRun);
-        crossRunHeld = crossRun;
-      }
+      if (crossRun.length > 0) crossRunHeld = await this.crossRun.acquire(crossRun);
       const holding = new Map(held);
       for (const request of wanted) holding.set(request.name, request.mode);
       return await this.held.run(holding, effect);
     } finally {
       try {
-        if (crossRunHeld.length > 0) await this.holder.release(crossRunHeld);
+        if (crossRunHeld !== undefined) await this.crossRun.release(crossRunHeld);
       } finally {
         for (let index = taken.length - 1; index >= 0; index--) {
           const gate = taken[index]!;
@@ -255,6 +261,8 @@ export function identityLocks(input: {
   constraints: UniquenessConstraints;
   resolveRecord: Record<string, unknown>;
   fields: Record<string, unknown>;
+  /** The run's pin: whether a blank key part is a key. */
+  languageVersion: LanguageVersion;
 }): LockRequest[] {
   const { constraints } = input;
   if (constraints.any.length === 0) return [];
@@ -275,7 +283,7 @@ export function identityLocks(input: {
     for (const field of fields) {
       const values = new Set<string>();
       for (const raw of [input.resolveRecord[field], input.fields[field]]) {
-        if (isBlankIdentityValue(raw)) continue;
+        if (isBlankIdentityValue(raw, input.languageVersion)) continue;
         const folded = foldKeyValue(raw);
         if (folded === undefined) return wholeType;
         values.add(folded);

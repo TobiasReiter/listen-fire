@@ -133,9 +133,10 @@ import type {
   FileRef,
   Resource,
 } from '../translation_graph/adapter';
-import { isFileRef } from '../translation_graph/engine/files/retrieve';
+import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
-import type { EngineHost } from './host';
+import type { SegmentHost } from './run_context';
+import { hostInstanceOf } from './host_adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import {
   isStablePosition,
@@ -146,7 +147,6 @@ import {
 import { stampedPositionName } from './kg';
 import type { ExtractEmission } from './extraction';
 import type { CallbackParamSpec } from './callback_types';
-import { renderFileArtifact, type RenderFileArtifact } from './file_render';
 import {
   NO_PROVENANCE,
   fromOrigin,
@@ -922,11 +922,11 @@ export interface MovementExprContext {
    */
   fieldFunctions?: Record<string, (args: unknown[]) => Promise<unknown>>;
   /**
-   * The FILE() render seam — turns a composed string into a `FileRef`
-   * artifact (./file_render.ts is the default; tests may inject a
-   * deterministic stub the same way they inject `llm`).
+   * The FILE() render seam — the host's `files.render`: the host renders and
+   * stores the artifact and answers its descriptor. Wired by the interpreter;
+   * absent in ad-hoc evaluations, where FILE() fails loud.
    */
-  renderFile?: RenderFileArtifact;
+  renderFile?: SegmentHost['files']['render'];
   /**
    * The `READ(file)` seam — resolves a `FileRef` to its extracted text (the
    * same one the extraction's file sources go through, so a file read either
@@ -1282,8 +1282,9 @@ export interface MovementMetaContext {
   /** The per-dispatch bag (the frozen `ctx.meta`) — unknown keys read
    *  from it, null when absent. */
   bag: Record<string, unknown>;
-  /** The host's acting-user resolution (`EngineHost.lookup`). */
-  resolveActingUser: EngineHost['lookup']['resolveActingUser'];
+  /** The host's acting-user resolution (`EngineHost.lookup`), in the run's
+   *  segment. */
+  resolveActingUser: SegmentHost['lookup']['resolveActingUser'];
   /** `undefined` = not yet resolved; `null` = resolved to "none". */
   actingUserCache: { value?: ActingUser | null };
   actorCache: { value?: ActorIdentity | null };
@@ -2007,11 +2008,21 @@ async function resolveMovementActingUserUncached(
   const sourceAdapter = ctx.source?.adapter;
   if (!event || meta.teamId === undefined) return null;
   if (!sourceAdapter?.getActorCandidates) return null;
+  // The host asks the source instance for the event's actors itself, so the
+  // source must be one the host resolved: an adapter the engine implements
+  // itself has no instance there to ask.
+  const source = hostInstanceOf(sourceAdapter);
+  if (source === undefined) {
+    throw new MovementEngineError(
+      'MOVENG_UNSUPPORTED',
+      `the acting user cannot be looked up through the '${sourceAdapter.adapterType}' source: it is not an adapter instance the host resolved`,
+    );
+  }
   try {
     return await meta.resolveActingUser({
-      teamId: meta.teamId,
       ...(event.triggerEntryId ? { triggerId: event.triggerEntryId } : {}),
-      getCandidates: () => sourceAdapter.getActorCandidates!({ event }),
+      instance: source.instance,
+      event,
     });
   } catch {
     // Flaky adapter lookups shouldn't crash the whole run — `@user_*`
@@ -2145,14 +2156,13 @@ function blankIsAbsent(answer: string): string | null {
   return answer.trim() === '' ? null : answer;
 }
 
-// ── FILE() (the artifact built-in, on the file_render seam) ─────────────────
+// ── FILE() (the artifact built-in, on the host's files.render) ─────────────
 
 /**
- * `FILE(content, "pdf" | "text")` — evaluates the content, renders it
- * through the seam (default: ./file_render.ts — the Slack v3 preview
- * node's PDF machinery), and yields a `FileRef` carrying its own
- * `retrieve()` over the in-memory bytes: exactly the File-value currency
- * file-typed adapter fields consume. The bridge validated the call's static
+ * `FILE(content, "pdf" | "text")` — evaluates the content and hands it to
+ * the host's render (`files.render`), which stores the artifact and answers
+ * its descriptor: exactly the File-value currency file-typed adapter fields
+ * consume. The bytes stay on the host. The bridge validated the call's static
  * shape; the type literal is re-read here, not re-judged.
  */
 async function evaluateFileFunction(
@@ -2175,8 +2185,13 @@ async function evaluateFileFunction(
       `FILE()'s artifact type must be "pdf" or "text", got ${JSON.stringify(type)}`,
     );
   }
-  const render = ctx.renderFile ?? renderFileArtifact;
-  const ref = await render({
+  if (!ctx.renderFile) {
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      'FILE() has nothing in scope that can render a file — this expression is being evaluated outside a run',
+    );
+  }
+  const ref = await ctx.renderFile({
     content: content.value == null ? '' : String(content.value),
     type,
   });
@@ -2231,6 +2246,7 @@ async function evaluateReadFunction(
     );
   }
   const ref: FileRef = file.value;
+  const handle = fileHandle(ref);
   const named = {
     ...(ref.name !== undefined ? { name: ref.name } : {}),
     ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
@@ -2249,7 +2265,7 @@ async function evaluateReadFunction(
   const origin: ProvenanceOrigin = {
     kind: 'file',
     ...(result.rawTextId !== undefined ? { rawTextId: result.rawTextId } : {}),
-    ...(ref.source?.handle !== undefined ? { handle: ref.source.handle } : {}),
+    ...(handle !== undefined ? { handle } : {}),
     ...named,
   };
   return {

@@ -130,12 +130,10 @@ async function run(label: string, body: string): Promise<void> {
       credentials: { affinity_cred: { adapters: ['affinity'] } },
       instanceSchemas: { affinity: affinitySchema },
     }),
+    credentialIds: { affinity_cred: 'creds-verify' },
     host: probeEngineHost({
       teamId: TEAM_ID,
-      adapters: {
-        credentialId: () => 'creds-verify',
-        resolve: ({ adapterType }) => (adapterType === 'affinity' ? affinity : manual),
-      },
+      resolve: ({ adapterType }) => (adapterType === 'affinity' ? affinity : manual),
     }),
     dryRun: true,
   });

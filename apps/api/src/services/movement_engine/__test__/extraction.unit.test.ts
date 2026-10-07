@@ -109,6 +109,7 @@ jest.mock('../../document', () => ({
 }));
 
 import {
+  CURRENT_LANGUAGE_VERSION,
   mockCatalogSnapshot,
   type CatalogSnapshot,
   type ExtractExpression,
@@ -129,7 +130,6 @@ import { registryTransformInvoker } from '../../translation_graph/movement/trans
 import { NO_PROVENANCE } from '../provenance';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import { registerBundledTransforms } from '../../translation_graph/engine/transforms/register-bundled';
-import { DOCUMENT_STORE_OWNER } from '../../translation_graph/engine/files/document_store';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type {
   LlmCallInput,
@@ -147,7 +147,7 @@ import type { MutationContext } from '../../translation_graph/mutation_context';
 import { positionData } from '../../translation_graph/types';
 import { candidateIsAllExact } from '../../translation_graph/uniqueness';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
@@ -442,12 +442,12 @@ const movementCatalog = mockCatalogSnapshot({
     acme_workspace: { adapters: ['slack'] },
   },
   plugins: {
-    vc_fetch: { args: ['urls'] },
+    vc_fetch: { args: ['urls'], priced: false },
     // Real registered transform; `text` is an `auto` param, so it takes NO
     // author args (the engine auto-feeds the source content).
-    vc_url_retrieval: { args: [] },
+    vc_url_retrieval: { args: [], priced: true, fedArgs: [{ name: 'text', required: true }] },
     // The targeted twin: every argument is the author's, and `url` is required.
-    fetch_url: { args: ['url', 'email', 'password'], fedByExtraction: true },
+    fetch_url: { args: ['url', 'email', 'password'], priced: true, requiredArgs: ['url'], fedByExtraction: true },
   },
 });
 
@@ -543,6 +543,7 @@ describe('stage-0 extraction through runMovement', () => {
       teamId: TEAM_ID,
       catalog: parityCatalog,
       host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -553,7 +554,6 @@ describe('stage-0 extraction through runMovement', () => {
         llm: { client: llm.client },
       }),
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
     expect(runResult.movementName).toBe('log_dealflow');
 
@@ -606,6 +606,7 @@ describe('stage-0 extraction through runMovement', () => {
       teamId: TEAM_ID,
       catalog: parityCatalog,
       host: makeTestHost({
+        writeSink: () => {},
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -616,7 +617,6 @@ describe('stage-0 extraction through runMovement', () => {
         llm: { client: llm.client },
       }),
       dryRun: true,
-      writeSink: () => {},
     });
 
     const extractionEntry = runResult.trace.find((e) => e.kind === 'extraction');
@@ -647,6 +647,7 @@ describe('stage-0 extraction through runMovement', () => {
       teamId: TEAM_ID,
       catalog: parityCatalog,
       host: makeTestHost({
+        writeSink: () => {},
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -657,7 +658,6 @@ describe('stage-0 extraction through runMovement', () => {
         llm: { client: llm.client },
       }),
       dryRun: true,
-      writeSink: () => {},
     });
 
     const extractionEntry = runResult.trace.find((e) => e.kind === 'extraction');
@@ -745,6 +745,7 @@ describe('the extraction tier', () => {
       teamId: TEAM_ID,
       catalog: movementCatalog,
       host: makeTestHost({
+        writeSink: () => {},
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -755,7 +756,6 @@ describe('the extraction tier', () => {
         llm: { client: llm.client, transforms: transformInvoker },
       }),
       dryRun: true,
-      writeSink: () => {},
     });
     // Both calls: the stage-1 pass and the one behind the `through` fence.
     expect(llm.calls).toHaveLength(2);
@@ -891,6 +891,10 @@ describe('through-staged extraction', () => {
         plugin: 'vc_fetch',
         config: { urls: 'acme.com' },
         extractedContext: { name: 'Acme', urls: 'acme.com' },
+        // The run has no cap, so the plugin may spend without limit.
+        budget: { remainingMicrodollars: null },
+        // The host call names the segment it is made in.
+        segmentId: expect.any(String),
       },
     ]);
 
@@ -1554,6 +1558,7 @@ describe('a stage whose plugins contributed nothing', () => {
             throw new Error('test: a plugin-less stage must not invoke anything');
           },
         },
+        plugins: {},
         evalSlot: async () => ({
           value: 'Acme builds rockets.',
           provenance: NO_PROVENANCE,
@@ -2412,7 +2417,7 @@ const carryFileSchema = (): { catalog: CatalogSnapshot } => {
         dealflow_inbox: { adapters: ['email'] },
         acme_main: { adapters: ['attio'] },
       },
-      plugins: { vc_url_retrieval: { args: [] } },
+      plugins: { vc_url_retrieval: { args: [], priced: true, fedArgs: [{ name: 'text', required: true }] } },
     }),
   };
 };
@@ -2498,8 +2503,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'pitch.pdf',
       contentType: 'application/pdf',
       size: 4096,
-      source: { ownerAdapterType: 'email', handle: 'attachment-pitch' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'application/pdf', size: 4096 }),
+      source: { adapterType: 'email', handle: 'attachment-pitch' },
     };
 
     // The email adapter returns the deck FileRef for the `deck` field read.
@@ -2557,8 +2561,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'scan.png',
       contentType: 'image/png',
       size: 2048,
-      source: { ownerAdapterType: 'email', handle: 'attachment-scan' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'image/png', size: 2048 }),
+      source: { adapterType: 'email', handle: 'attachment-scan' },
     };
 
     const email = makeFakeAdapter('email');
@@ -2625,8 +2628,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'voice.ogg',
       contentType: 'audio/ogg',
       size: 2048,
-      source: { ownerAdapterType: 'email', handle: 'attachment-voice' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'audio/ogg', size: 2048 }),
+      source: { adapterType: 'email', handle: 'attachment-voice' },
     };
     const email = makeFakeAdapter('email');
     const emailWithFile: Adapter = {
@@ -2674,8 +2676,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'voice.ogg',
       contentType: 'audio/ogg',
       size: 2048,
-      source: { ownerAdapterType: 'email', handle: 'attachment-voice' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'audio/ogg', size: 2048 }),
+      source: { adapterType: 'email', handle: 'attachment-voice' },
     };
     const email = makeFakeAdapter('email');
     const emailWithFile: Adapter = {
@@ -2796,7 +2797,7 @@ describe('Layer 5 — files a `through` plugin fetched join `_resources`', () =>
     expect(fileResource.fileRef).toMatchObject({
       __brand: 'FileRef',
       name: 'Acme deck.pdf',
-      source: { ownerAdapterType: DOCUMENT_STORE_OWNER, handle: 's3://bucket/uuid-1/Acme deck.pdf' },
+      source: { store: 'document', objectUri: 's3://bucket/uuid-1/Acme deck.pdf' },
     });
     expect((fileResource.data as { file: unknown }).file).toBe(fileResource.fileRef);
 
@@ -3528,9 +3529,9 @@ describe('a unique-by key that came back empty matches nothing', () => {
 
   it('a candidate whose key is empty is never an exact match for an empty asserted key', () => {
     const constraints = { any: [{ all: [{ field: 'name' }] }] };
-    expect(candidateIsAllExact(constraints, { name: '' }, { name: '' })).toBe(false);
-    expect(candidateIsAllExact(constraints, { name: null }, { name: null })).toBe(false);
-    expect(candidateIsAllExact(constraints, { name: 'Acme' }, { name: 'acme' })).toBe(true);
+    expect(candidateIsAllExact(constraints, { asserted: { name: '' }, candidate: { name: '' }, languageVersion: CURRENT_LANGUAGE_VERSION })).toBe(false);
+    expect(candidateIsAllExact(constraints, { asserted: { name: null }, candidate: { name: null }, languageVersion: CURRENT_LANGUAGE_VERSION })).toBe(false);
+    expect(candidateIsAllExact(constraints, { asserted: { name: 'Acme' }, candidate: { name: 'acme' }, languageVersion: CURRENT_LANGUAGE_VERSION })).toBe(true);
   });
 });
 
@@ -4320,6 +4321,7 @@ describe('a field answered without a usable citation still answers', () => {
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({
           value: 'Flintt — fintech, London, Series A',
           provenance: NO_PROVENANCE,
@@ -4393,6 +4395,7 @@ describe('a field answered without a usable citation still answers', () => {
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({ value: 'Flintt — fintech', provenance: NO_PROVENANCE }),
       },
     });
@@ -4451,6 +4454,7 @@ describe('a reply that answered outside the envelope is re-wrapped, not rejected
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({
           value: 'Flintt — fintech, London, Series A',
           provenance: NO_PROVENANCE,
@@ -4593,6 +4597,7 @@ describe('a retry over a shape failure asks for the envelope, not for the values
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({ value: 'Flintt — fintech', provenance: NO_PROVENANCE }),
       },
     });
@@ -4832,6 +4837,7 @@ describe('an extract description interpolates in the firing environment', () => 
       teamId: TEAM_ID,
       catalog: movementCatalog,
       host: makeTestHost({
+        writeSink: (w) => writes.push(w),
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -4849,7 +4855,6 @@ describe('an extract description interpolates in the firing environment', () => 
         },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     return { calls: llm.calls, writes };
   }

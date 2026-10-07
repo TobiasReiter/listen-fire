@@ -53,7 +53,7 @@ function fileRef(over: Partial<FileRef> = {}): FileRef {
     name: 'deck.pdf',
     contentType: 'application/pdf',
     size: 1234,
-    source: { ownerAdapterType: 'email', handle: 'attachment-1' },
+    source: { adapterType: 'email', handle: 'attachment-1' },
     ...over,
   };
 }
@@ -86,6 +86,7 @@ function runtimeFor(opts: {
   return {
     llm: opts.llm,
     transformInvoker: { async invoke() { return {}; } },
+    plugins: {},
     evalSlot: async (s: ExprSlot) => {
       const value = opts.slots[s.raw];
       return { value, provenance: NO_PROVENANCE };

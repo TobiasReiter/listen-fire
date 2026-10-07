@@ -14,6 +14,7 @@ import { Router, type Request, type Response } from 'express';
 import { getCallback, type CallbackRecord } from '../../services/movement_engine/callback_store';
 import type { CallbackParamSpec } from '../../services/movement_engine/callback_types';
 import { fireCallback, type CallbackFireOutcome } from '../../services/movement_engine/callback_fire';
+import { logger } from '../../services/logger';
 
 export const callbacksRouter: ReturnType<typeof Router> = Router();
 
@@ -36,8 +37,22 @@ callbacksRouter.get('/:id', async (req: Request, res: Response) => {
 // POST — the only firing door. Values ride the JSON body, the urlencoded form,
 // or the query string, mirroring the ask door's tolerance.
 callbacksRouter.post('/:id', async (req: Request, res: Response) => {
-  const outcome = await fireCallback({ id: req.params.id, values: readValues(req) });
   const wantsHtml = prefersHtml(req);
+  let outcome: CallbackFireOutcome;
+  try {
+    outcome = await fireCallback({ id: req.params.id, values: readValues(req) });
+  } catch (err) {
+    // Express 4 does not catch a rejected handler: without this the caller
+    // waits forever. The call may already be on the ledger; say so plainly.
+    logger.error('[callbacks] firing failed', {
+      id: req.params.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    const message = 'Something went wrong recording that. Please try again in a moment.';
+    if (wantsHtml) res.status(500).type('html').send(messagePage('Something went wrong', message));
+    else res.status(500).json({ outcome: 'error', message });
+    return;
+  }
   const { status, message } = describeOutcome(outcome);
   if (wantsHtml) {
     res.status(status).type('html').send(
@@ -91,7 +106,11 @@ function outcomeTitle(outcome: CallbackFireOutcome): string {
 function describeOutcome(outcome: CallbackFireOutcome): { status: number; message: string } {
   switch (outcome.kind) {
     case 'recorded':
-      return { status: 200, message: 'Thanks — that has been recorded and the workflow is carrying on.' };
+      // Queued: recorded, and the workflow carries on as soon as it is free.
+      return {
+        status: outcome.queued ? 202 : 200,
+        message: 'Thanks — that has been recorded and the workflow is carrying on.',
+      };
     case 'not_found':
       return { status: 404, message: 'Nothing here — the link may have been mistyped.' };
     case 'closed':

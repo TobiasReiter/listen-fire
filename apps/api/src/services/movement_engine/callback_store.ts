@@ -19,11 +19,13 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { sql } from 'kysely';
+import { sql, type Kysely } from 'kysely';
+import { z } from 'zod';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { CallbackId } from '../../generated/kysely/automations/Callback';
+import type AutomationsSchema from '../../generated/kysely/automations/AutomationsSchema';
 import type { ParkedScopeState } from './serialize';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
@@ -66,6 +68,36 @@ export {
   type CallbackParamType,
 } from './callback_types';
 
+/** A call as the ledger keeps it: the call itself, and when its body started.
+ *  The mark is written BEFORE the body runs, so a body runs at most once
+ *  after it starts, across a crash too: a queued retry of a call whose body
+ *  started never runs it again. The trade-off is deliberate — a crash mid-body
+ *  leaves a callback whose body never completes rather than one whose writes
+ *  land twice. The mark is also when the call LANDS: until its body has
+ *  started, the call is on the ledger but no reader sees it (`readCallbackCalls`,
+ *  and the awaits it resolves), so an `await cb-[:Called]->` never runs ahead
+ *  of the body it fired. `bodyStartedAt` is the host's bookkeeping; the
+ *  engine's `Called` landing never sees it. */
+export interface LedgerCall extends CallbackCall {
+  bodyStartedAt?: string;
+}
+
+/** The ledger as the row holds it, checked where it is read: jsonb the
+ *  database hands back is not a type until it is validated. */
+const ledgerSchema = z.array(
+  z.object({
+    at: z.string(),
+    values: z.record(z.string(), z.unknown()),
+    bodyStartedAt: z.string().optional(),
+  }),
+);
+
+/** A call is seen (read as `Called`, resolving an await) once its body has
+ *  started. */
+function hasLanded(call: LedgerCall): boolean {
+  return call.bodyStartedAt !== undefined;
+}
+
 /** `live` is the only non-terminal state. `fired` is a single-use claim; a
  *  repeatable callback stays `live` and accumulates calls until revoked. */
 export type CallbackStatus = 'live' | 'fired' | 'revoked';
@@ -80,7 +112,7 @@ export interface CallbackRecord {
   params: CallbackParamSpec[];
   /** The captured closure, in the park machinery's own shape. */
   state: ParkedScopeState;
-  calls: CallbackCall[];
+  calls: LedgerCall[];
   singleUse: boolean;
   expiresAt: Date | null;
   status: CallbackStatus;
@@ -118,7 +150,7 @@ function toRecord(row: CallbackRow): CallbackRecord {
     address: row.address,
     params: (row.params as CallbackParamSpec[] | null) ?? [],
     state: row.state as ParkedScopeState,
-    calls: (row.calls as CallbackCall[] | null) ?? [],
+    calls: ledgerOf(row),
     singleUse: row.single_use,
     expiresAt: row.expires_at,
     status: row.status as CallbackStatus,
@@ -128,9 +160,26 @@ function toRecord(row: CallbackRow): CallbackRecord {
   };
 }
 
+function ledgerOf(row: CallbackRow): LedgerCall[] {
+  if (row.calls === null) return [];
+  const parsed = ledgerSchema.safeParse(row.calls);
+  if (!parsed.success) {
+    throw new Error(`callback ${row.id} has a malformed call ledger: ${parsed.error.message}`);
+  }
+  return parsed.data.map(({ at, values, bodyStartedAt }) => ({
+    at,
+    values,
+    ...(bodyStartedAt !== undefined ? { bodyStartedAt } : {}),
+  }));
+}
+
 function jsonb(value: unknown): unknown {
   return sql`${JSON.stringify(value)}::jsonb` as unknown;
 }
+
+/** The database's clock as an ISO 8601 instant, spelled as JavaScript spells
+ *  one, for the instants the ledger records. */
+const ISO_NOW = sql<string>`to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 // ── Mint ───────────────────────────────────────────────────────────────────
 
@@ -170,11 +219,14 @@ export async function mintCallback(input: MintCallbackInput): Promise<CallbackRe
 
 // ── Reads ──────────────────────────────────────────────────────────────────
 
-export async function getCallback(id: string): Promise<CallbackRecord | null> {
+/** What a callback query runs on: the pool, or a caller's transaction. */
+export type CallbackDb = Kysely<Pick<AutomationsSchema, 'callback'>>;
+
+export async function getCallback(id: string, opts: { db?: CallbackDb } = {}): Promise<CallbackRecord | null> {
   // The prefix guard keeps a foreign payload from ever reaching a query — the
   // doors hand us whatever the platform sent.
   if (!isCallbackId(id)) return null;
-  const row = await getAutomationsQb(['callback'])
+  const row = await (opts.db ?? getAutomationsQb(['callback']))
     .selectFrom('callback')
     .where('id', '=', id as CallbackId)
     .select([...COLUMNS])
@@ -184,10 +236,43 @@ export async function getCallback(id: string): Promise<CallbackRecord | null> {
 
 /** The LIVE ledger read — what `cb-[:Called]->` returns and what a re-entered
  *  `await cb-[:Called]->` re-checks. Never served from the parked scope blob:
- *  the calls arrive AFTER the scope was captured. */
+ *  the calls arrive AFTER the scope was captured. Only calls whose body has
+ *  started are seen (`LedgerCall`). */
 export async function readCallbackCalls(id: string): Promise<CallbackCall[]> {
   const record = await getCallback(id);
-  return record?.calls ?? [];
+  return (record?.calls ?? []).filter(hasLanded).map(({ at, values }) => ({ at, values }));
+}
+
+/** Record on the ledger that call `callIndex`'s body is starting. Given the
+ *  run lease the body runs under, only while the run is still leased to it:
+ *  false when it is not, and nothing was marked, so a holder whose lease
+ *  lapsed never marks a body it will not run. */
+export async function markCallbackBodyStarted(input: {
+  id: string;
+  callIndex: number;
+  lease?: { token: string };
+}): Promise<boolean> {
+  let mark = getAutomationsQb(['callback', 'trigger_run'])
+    .updateTable('callback')
+    .set({
+      calls: sql`jsonb_set(calls, ${`{${input.callIndex}}`}::text[], (calls -> ${input.callIndex}::int) || jsonb_build_object('bodyStartedAt', ${ISO_NOW}))`,
+      updated_at: new Date(),
+    })
+    .where('id', '=', input.id as CallbackId);
+  if (input.lease !== undefined) {
+    const { token } = input.lease;
+    mark = mark.where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('trigger_run')
+          .select('trigger_run.id')
+          .whereRef('trigger_run.id', '=', 'callback.run_id')
+          .where('trigger_run.lease_token', '=', token),
+      ),
+    );
+  }
+  const marked = await mark.executeTakeFirst();
+  return Number(marked.numUpdatedRows) > 0;
 }
 
 export async function listRunCallbacks(runId: TriggerRunId): Promise<CallbackRecord[]> {
@@ -235,37 +320,67 @@ export type CallbackClaim =
  * mismatch is a LOUD refusal BEFORE the claim, so a bad payload never consumes
  * a single-use callback.
  */
-export async function claimCallbackFire(input: {
-  id: string;
-  values: Record<string, unknown>;
-  now?: Date;
-}): Promise<CallbackClaim> {
+export async function claimCallbackFire(
+  input: { id: string; values: Record<string, unknown> },
+  /** Run the claim inside a caller's transaction: what the caller writes with
+   *  it commits or rolls back together with the call. */
+  opts: { db?: CallbackDb } = {},
+): Promise<CallbackClaim> {
   if (!isCallbackId(input.id)) return { kind: 'not_found' };
-  const at = input.now ?? new Date();
-  const call: CallbackCall = { at: at.toISOString(), values: input.values };
-  const claimed = await getAutomationsQb(['callback'])
+  const db = opts.db ?? getAutomationsQb(['callback']);
+  const id = input.id as CallbackId;
+  // One clock decides: expiry, `fired_at` and the call's `At` all read the
+  // database's, and so does the read-back that says which refusal it was.
+  const claimed = await db
     .updateTable('callback')
     .set({
-      status: sql`CASE WHEN single_use THEN 'fired' ELSE status END` as never,
-      fired_at: sql`CASE WHEN single_use THEN ${at} ELSE fired_at END` as never,
-      calls: sql`calls || ${JSON.stringify([call])}::jsonb` as never,
-      updated_at: at,
+      status: sql<string>`CASE WHEN single_use THEN 'fired' ELSE status END`,
+      fired_at: sql<Date | null>`CASE WHEN single_use THEN now() ELSE fired_at END`,
+      calls: sql`calls || jsonb_build_array(jsonb_build_object('at', ${ISO_NOW}, 'values', ${JSON.stringify(input.values)}::jsonb))`,
+      updated_at: sql<Date>`now()`,
     })
-    .where('id', '=', input.id as CallbackId)
+    .where('id', '=', id)
     .where('status', '=', 'live')
-    .where((eb) =>
-      eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', at)]),
-    )
+    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`now()`)]))
     .returning([...COLUMNS])
     .executeTakeFirst();
   if (claimed !== undefined) {
-    return { kind: 'recorded', callback: toRecord(claimed as unknown as CallbackRow), call };
+    const callback = toRecord(claimed as unknown as CallbackRow);
+    const recorded = callback.calls[callback.calls.length - 1];
+    if (recorded === undefined) throw new Error(`callback ${id} recorded a call its ledger does not hold`);
+    return { kind: 'recorded', callback, call: { at: recorded.at, values: recorded.values } };
   }
 
-  const existing = await getCallback(input.id);
-  if (existing === null) return { kind: 'not_found' };
-  if (existing.status === 'live') return { kind: 'expired', callback: existing };
-  return { kind: 'closed', callback: existing };
+  const existing = await db
+    .selectFrom('callback')
+    .where('id', '=', id)
+    .select([...COLUMNS, sql<Date>`now()`.as('database_now')])
+    .executeTakeFirst();
+  if (existing === undefined) return { kind: 'not_found' };
+  const callback = toRecord(existing as unknown as CallbackRow);
+  return {
+    kind: callbackRefusal(callback, { for: 'a new call', now: existing.database_now }) ?? 'closed',
+    callback,
+  };
+}
+
+/**
+ * Why a callback refuses, or null when it accepts — the ONE rule, shared by
+ * the door that records a new call and the queued body of a call already
+ * recorded. Revoked (its run ended, was cancelled, its movement deleted)
+ * refuses both. A new call is refused by a single-use callback that already
+ * fired, and by expiry; a recorded call is not: firing it is what made the
+ * callback `fired`, and it was recorded inside its window.
+ */
+export function callbackRefusal(
+  callback: CallbackRecord,
+  opts: { for: 'a new call' | 'a recorded call'; now: Date },
+): 'closed' | 'expired' | null {
+  if (callback.status === 'revoked') return 'closed';
+  if (opts.for === 'a recorded call') return null;
+  if (callback.status === 'fired') return 'closed';
+  if (callback.expiresAt !== null && callback.expiresAt <= opts.now) return 'expired';
+  return null;
 }
 
 // ── Revocation (the run's lifecycle drives it; there is no sweeper) ────────

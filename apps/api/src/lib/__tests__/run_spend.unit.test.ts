@@ -1,5 +1,7 @@
-// The optional per-run cost cap: what it reads, what a run is charged, and
-// when the next priced call is refused.
+// The host's half of the run cost cap: what the cap reads, and the meter one
+// priced host call runs under — what it charges, and when its next priced step
+// is refused. (The run's own account is the engine's:
+// movement_engine/__test__/run_context.unit.test.ts.)
 
 jest.mock('../../services/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 const insertInto = jest.fn();
@@ -7,18 +9,23 @@ jest.mock('../kysely', () => ({ getQb: () => ({ insertInto }) }));
 
 import { LlmUsageContext, recordLlmUsage } from '../llm_usage';
 import {
+  BudgetExhausted,
+  costEnvelopeMicrodollars,
+  formatUsd,
+  isBudgetExhausted,
+  NO_BUDGET_LIMIT,
+  RUN_COST_CAP_ENV_VAR,
+  type Budget,
+  type CostSource,
+} from '../run_cost';
+import {
   assertRunBudget,
   assertRunCostCapConfigured,
-  costEnvelopeMicrodollars,
-  currentRunSpend,
-  formatUsd,
-  isRunCostCapExceeded,
+  isInsideSpendMeter,
   parseRunCostCap,
   reportRunCost,
-  RUN_COST_CAP_ENV_VAR,
-  RunCostCapExceeded,
-  withRunSpendLedger,
-  type CostSource,
+  runCostCapFromEnv,
+  withSpendMeter,
 } from '../run_spend';
 
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -38,20 +45,21 @@ afterEach(() => {
 
 const SCRAPE: CostSource = { kind: 'service', name: 'brightdata.web_unlocker' };
 
-/** A priced call's charge, as any reporter makes it. */
+/** A priced step's charge, as any reporter makes it. */
 function charge(microdollars: number, source: CostSource = SCRAPE): void {
   reportRunCost({ source, microdollars });
 }
 
-const segmentSpend = () => currentRunSpend().segmentMicrodollars;
+const budget = (remainingMicrodollars: number | null): Budget => ({ remainingMicrodollars });
 
-function caught(fn: () => void): unknown {
+async function refusal(promise: Promise<unknown>): Promise<BudgetExhausted> {
   try {
-    fn();
+    await promise;
   } catch (err) {
-    return err;
+    if (isBudgetExhausted(err)) return err;
+    throw err;
   }
-  return undefined;
+  throw new Error('the call was not refused');
 }
 
 describe('the env var', () => {
@@ -70,6 +78,11 @@ describe('the env var', () => {
     expect(parseRunCostCap('0.25')).toBe(250_000);
   });
 
+  it('the run host reads it once, as the cap it hands the run', () => {
+    expect(runCostCapFromEnv({})).toBeUndefined();
+    expect(runCostCapFromEnv({ [ENV_VAR]: '2.5' })).toBe(2.5 * DOLLAR);
+  });
+
   it.each(['0', '-1', 'five', '5usd', 'Infinity', 'NaN'])('boot refuses %p, naming the variable', (raw) => {
     expect(() => assertRunCostCapConfigured({ [ENV_VAR]: raw })).toThrow(
       new RegExp(`^${ENV_VAR}="${raw}" is not a positive number of US dollars`),
@@ -77,141 +90,105 @@ describe('the env var', () => {
   });
 });
 
-describe('with no cap set', () => {
-  it('a run spends without limit, and still knows what it spent', async () => {
-    await withRunSpendLedger(async () => {
+describe("a priced call's meter", () => {
+  it('with no limit, spends without refusal and answers every line it spent', async () => {
+    const { value, cost } = await withSpendMeter(NO_BUDGET_LIMIT, async () => {
       for (let i = 0; i < 100; i++) {
         assertRunBudget();
         charge(DOLLAR);
       }
-      expect(segmentSpend()).toBe(100 * DOLLAR);
+      return 'done';
     });
-  });
-});
-
-describe('with a cap set', () => {
-  beforeEach(() => {
-    process.env[ENV_VAR] = '2.5';
+    expect(value).toBe('done');
+    expect(cost).toEqual([{ source: 'service:brightdata.web_unlocker', microdollars: 100 * DOLLAR }]);
   });
 
-  it('the call that crosses the cap goes through; the NEXT priced call is refused', async () => {
-    await withRunSpendLedger(async () => {
-      assertRunBudget();
-      charge(2 * DOLLAR);
-      assertRunBudget();
-      charge(1 * DOLLAR); // over now
-      const err = caught(assertRunBudget);
-      expect(isRunCostCapExceeded(err)).toBe(true);
-      expect(err).toBeInstanceOf(RunCostCapExceeded);
-      expect((err as RunCostCapExceeded).capMicrodollars).toBe(2.5 * DOLLAR);
-      expect((err as RunCostCapExceeded).spentMicrodollars).toBe(3 * DOLLAR);
-    });
-  });
-
-  it("its message is the author's whole failure surface: the cap, the spend, the knob, how to raise it", async () => {
-    await withRunSpendLedger(async () => {
-      charge(3 * DOLLAR);
-      expect(() => assertRunBudget()).toThrow(
-        'Run cost cap reached: this run has spent $3.00 on model calls and paid services, ' +
-          'and the limit set by MOVEMENT_MAX_RUN_COST_USD is $2.50. ' +
-          'The run was stopped before its next priced call in case something was looping. ' +
-          "If this run legitimately needs more, raise MOVEMENT_MAX_RUN_COST_USD in the server's environment " +
-          '(or unset it to remove the cap).',
-      );
-    });
-  });
-
-  it('a different run has its own account', async () => {
-    await withRunSpendLedger(async () => charge(3 * DOLLAR));
-    await withRunSpendLedger(async () => {
-      expect(segmentSpend()).toBe(0);
-      expect(() => assertRunBudget()).not.toThrow();
-    });
-  });
-
-  it('a resumed segment is seeded with what the run spent before it parked: the cap holds across parks', async () => {
-    // Segment one spends $2 — under the cap — and parks.
-    const first = await withRunSpendLedger(async () => {
-      assertRunBudget();
-      charge(2 * DOLLAR);
-      return currentRunSpend();
-    });
-    // Segment two resumes with the run's $2 behind it: one more dollar takes
-    // the RUN over, and its next priced call is refused.
-    await withRunSpendLedger(
-      async () => {
+  it('the step that crosses the budget goes through; the NEXT priced step is refused, carrying what was spent', async () => {
+    const err = await refusal(
+      withSpendMeter(budget(2.5 * DOLLAR), async () => {
         assertRunBudget();
-        charge(DOLLAR);
-        expect(currentRunSpend()).toEqual({
-          segmentMicrodollars: DOLLAR,
-          runMicrodollars: 3 * DOLLAR,
-          bySource: { 'service:brightdata.web_unlocker': DOLLAR },
-        });
-        const err = caught(assertRunBudget);
-        expect(err).toBeInstanceOf(RunCostCapExceeded);
-        expect((err as RunCostCapExceeded).spentMicrodollars).toBe(3 * DOLLAR);
-      },
-      { priorMicrodollars: first.runMicrodollars },
+        charge(2 * DOLLAR);
+        assertRunBudget();
+        charge(DOLLAR); // over now
+        assertRunBudget();
+      }),
     );
+    expect(err.cost).toEqual([{ source: 'service:brightdata.web_unlocker', microdollars: 3 * DOLLAR }]);
   });
 
-  it('a segment seeded at or over the cap refuses its first priced call', async () => {
-    await withRunSpendLedger(async () => expect(() => assertRunBudget()).toThrow(RunCostCapExceeded), {
-      priorMicrodollars: 2.5 * DOLLAR,
-    });
+  it('a budget already spent refuses the first priced step', async () => {
+    const err = await refusal(withSpendMeter(budget(0), async () => assertRunBudget()));
+    expect(err.cost).toEqual([]);
+    await refusal(withSpendMeter(budget(-DOLLAR), async () => assertRunBudget()));
   });
 
-  it('a run dispatched inline by another run keeps its own account', async () => {
-    await withRunSpendLedger(async () => {
-      charge(3 * DOLLAR);
-      await withRunSpendLedger(async () => {
-        expect(currentRunSpend().runMicrodollars).toBe(0);
-        expect(() => assertRunBudget()).not.toThrow();
+  it('a refusal caught and rethrown deep inside still carries every line the call spent', async () => {
+    const err = await refusal(
+      withSpendMeter(budget(DOLLAR), async () => {
         charge(DOLLAR);
+        charge(500, { kind: 'model', name: 'claude-sonnet-5' });
+        try {
+          assertRunBudget();
+        } catch (inner) {
+          charge(200, { kind: 'model', name: 'claude-sonnet-5' });
+          throw inner;
+        }
+      }),
+    );
+    expect(err.cost).toEqual([
+      { source: 'service:brightdata.web_unlocker', microdollars: DOLLAR },
+      { source: 'model:claude-sonnet-5', microdollars: 700 },
+    ]);
+  });
+
+  it('two calls in flight meter apart', async () => {
+    const call = (microdollars: number) =>
+      withSpendMeter(NO_BUDGET_LIMIT, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        charge(microdollars);
       });
-      expect(currentRunSpend().runMicrodollars).toBe(3 * DOLLAR);
-    });
+    const [a, b] = await Promise.all([call(1_000), call(2_000)]);
+    expect(a.cost).toEqual([{ source: 'service:brightdata.web_unlocker', microdollars: 1_000 }]);
+    expect(b.cost).toEqual([{ source: 'service:brightdata.web_unlocker', microdollars: 2_000 }]);
   });
 
-  it('outside a run nothing is charged and nothing is refused', () => {
+  it('concurrent steps of one call charge the one meter, and none of it is lost', async () => {
+    const err = await refusal(
+      withSpendMeter(budget(2.5 * DOLLAR), async () => {
+        await Promise.all(
+          Array.from({ length: 20 }, async (_, i) => {
+            await new Promise((resolve) => setTimeout(resolve, (i * 7) % 5));
+            charge(100_000);
+          }),
+        );
+        assertRunBudget();
+        charge(500_000);
+        assertRunBudget();
+      }),
+    );
+    expect(err.cost).toEqual([{ source: 'service:brightdata.web_unlocker', microdollars: 2.5 * DOLLAR }]);
+  });
+
+  it('outside a metered call nothing is charged and nothing is refused', () => {
+    expect(isInsideSpendMeter()).toBe(false);
     charge(100 * DOLLAR);
-    expect(segmentSpend()).toBe(0);
     expect(() => assertRunBudget()).not.toThrow();
-  });
-
-  it('concurrent members charge the one account, and none of it is lost', async () => {
-    await withRunSpendLedger(async () => {
-      await Promise.all(
-        Array.from({ length: 20 }, async (_, i) => {
-          await new Promise((resolve) => setTimeout(resolve, (i * 7) % 5));
-          charge(100_000);
-        }),
-      );
-      expect(segmentSpend()).toBe(2 * DOLLAR);
-      expect(() => assertRunBudget()).not.toThrow();
-      charge(500_000);
-      expect(() => assertRunBudget()).toThrow(RunCostCapExceeded);
-    });
   });
 });
 
 describe('one entry point for every price', () => {
   it('every charge is summed by where it went', async () => {
-    await withRunSpendLedger(async () => {
+    const { cost } = await withSpendMeter(NO_BUDGET_LIMIT, async () => {
       charge(1_500);
       charge(1_500);
       charge(2 * DOLLAR, { kind: 'model', name: 'claude-sonnet-5' });
       charge(700, { kind: 'plugin', name: 'fetch_url' });
-      expect(currentRunSpend()).toEqual({
-        segmentMicrodollars: 2 * DOLLAR + 3_700,
-        runMicrodollars: 2 * DOLLAR + 3_700,
-        bySource: {
-          'service:brightdata.web_unlocker': 3_000,
-          'model:claude-sonnet-5': 2 * DOLLAR,
-          'plugin:fetch_url': 700,
-        },
-      });
     });
+    expect(cost).toEqual([
+      { source: 'service:brightdata.web_unlocker', microdollars: 3_000 },
+      { source: 'model:claude-sonnet-5', microdollars: 2 * DOLLAR },
+      { source: 'plugin:fetch_url', microdollars: 700 },
+    ]);
   });
 
   it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('a cost of %p is refused, naming its source', (bad) => {
@@ -241,10 +218,10 @@ describe('the cost envelope', () => {
 });
 
 describe('what a model call charges', () => {
-  it('recordLlmUsage charges the run what it priced the call at — the same number as the usage row', async () => {
+  it('recordLlmUsage charges the call what it priced it at — the same number as the usage row', async () => {
     const values = jest.fn().mockReturnValue({ execute: async () => undefined });
     insertInto.mockReturnValue({ values });
-    await withRunSpendLedger(async () => {
+    const { cost } = await withSpendMeter(NO_BUDGET_LIMIT, async () => {
       await new LlmUsageContext({ teamId: 'team-1' }).runAsync(async () => {
         await recordLlmUsage({
           resolved: { preferred: 'claude-sonnet-5', provider: 'anthropic', wireModel: 'claude-sonnet-5' },
@@ -253,27 +230,28 @@ describe('what a model call charges', () => {
           outputTokens: 100_000,
         });
       });
-      // $2/M in + $10/M out, under the model's own name.
-      expect(segmentSpend()).toBe(3 * DOLLAR);
-      expect(currentRunSpend().bySource).toEqual({ 'model:claude-sonnet-5': 3 * DOLLAR });
-      expect(values.mock.calls[0]?.[0].cost_microdollars).toBe(3 * DOLLAR);
     });
+    // $2/M in + $10/M out, under the model's own name.
+    expect(cost).toEqual([{ source: 'model:claude-sonnet-5', microdollars: 3 * DOLLAR }]);
+    expect(values.mock.calls[0]?.[0].cost_microdollars).toBe(3 * DOLLAR);
   });
 
-  it('charges before its first await, so an unawaited record is already counted', async () => {
-    await withRunSpendLedger(async () => {
-      void recordLlmUsage({
-        resolved: { preferred: 'claude-sonnet-5', provider: 'anthropic', wireModel: 'claude-sonnet-5' },
-        callType: 'chat',
-        inputTokens: 1_000_000,
-        outputTokens: 0,
-      });
-      expect(segmentSpend()).toBe(2 * DOLLAR);
-    });
+  it('charges before its first await, so the next priced step already sees it', async () => {
+    await refusal(
+      withSpendMeter(budget(2 * DOLLAR), async () => {
+        void recordLlmUsage({
+          resolved: { preferred: 'claude-sonnet-5', provider: 'anthropic', wireModel: 'claude-sonnet-5' },
+          callType: 'chat',
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+        });
+        assertRunBudget();
+      }),
+    );
   });
 
-  it('a run with no team context is still charged; nothing is written', async () => {
-    await withRunSpendLedger(async () => {
+  it('a call with no team context is still charged; nothing is written', async () => {
+    const { cost } = await withSpendMeter(NO_BUDGET_LIMIT, async () => {
       await recordLlmUsage({
         resolved: { provider: 'jev', wireModel: 'jev-latest' },
         callType: 'structured',
@@ -286,8 +264,8 @@ describe('what a model call charges', () => {
         inputTokens: 500_000,
         outputTokens: 0,
       });
-      expect(segmentSpend()).toBe(DOLLAR);
     });
+    expect(cost.reduce((sum, line) => sum + line.microdollars, 0)).toBe(DOLLAR);
     expect(insertInto).not.toHaveBeenCalled();
   });
 });
@@ -299,13 +277,5 @@ describe('formatUsd — the dollars an author reads about the cap', () => {
     expect(formatUsd(16_000)).toBe('$0.016');
     expect(formatUsd(16_300)).toBe('$0.0163');
     expect(formatUsd(20_000)).toBe('$0.02');
-  });
-
-  it('a $0.016 cap no longer reads as a higher figure than a $0.03 spend rounds from', async () => {
-    process.env[ENV_VAR] = '0.016';
-    await withRunSpendLedger(async () => {
-      reportRunCost({ source: { kind: 'model', name: 'm' }, microdollars: 25_400 });
-      expect(() => assertRunBudget()).toThrow(/has spent \$0\.0254 .* is \$0\.016\./);
-    });
   });
 });

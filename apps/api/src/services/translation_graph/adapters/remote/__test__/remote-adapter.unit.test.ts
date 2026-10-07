@@ -4,7 +4,8 @@
 // re-wrapping of paged streams + manifest-gated optional methods. Names on the
 // wire are the caller's natural names, forwarded untranslated.
 
-import type { RuntimeCapabilities } from '../../../adapter';
+import type { FileRef, RuntimeCapabilities } from '../../../adapter';
+import { streamFileRef } from '../../../engine/files/retrieve';
 import type { RemoteAdapterConfig, RemoteManifest } from '../index';
 
 // Mock the transport. Every forwarder funnels through `postRpc`; we control its
@@ -607,10 +608,10 @@ describe('fetchRemoteManifest refuses an older server', () => {
 });
 
 describe('RemoteAdapter.resolveFileRef (url→stream)', () => {
-  const ref = {
-    __brand: 'FileRef' as const,
+  const ref: FileRef = {
+    __brand: 'FileRef',
     name: 'doc.pdf',
-    source: { ownerAdapterType: 'remote-email', handle: 'h-1' },
+    source: { adapterType: 'remote-email', credentialId: 'cred-1', handle: 'h-1' },
   };
 
   it('calls the wire resolveFileRef (→ {url}), fetches it, and yields a stream', async () => {
@@ -626,9 +627,15 @@ describe('RemoteAdapter.resolveFileRef (url→stream)', () => {
       const adapter = buildAdapter();
       const { stream, contentType } = await adapter.resolveFileRef!({ ref });
 
-      // Forwarded the FileRef over the wire as the resolveFileRef params.
+      // Forwarded the FileRef in its wire spelling — the owner type and its
+      // handle; the credential stays on this side.
       expect(postRpcMock).toHaveBeenCalledWith(
-        expect.objectContaining({ method: 'resolveFileRef', params: { ref } }),
+        expect.objectContaining({
+          method: 'resolveFileRef',
+          params: {
+            ref: { __brand: 'FileRef', name: 'doc.pdf', source: { ownerAdapterType: 'remote-email', handle: 'h-1' } },
+          },
+        }),
       );
       // Fetched the resolved url.
       expect(fetchMock).toHaveBeenCalledWith('https://owner.example/blob/abc');
@@ -649,10 +656,8 @@ describe('RemoteAdapter.resolveFileRef (url→stream)', () => {
   });
 });
 
-describe('RemoteAdapter FileRef revival on getFieldValue', () => {
-  it('re-binds retrieve() on a wire FileRef so it fetches via the wire resolveFileRef', async () => {
-    // A FileRef crosses the wire as plain JSON — no closure. getFieldValue
-    // returns it; the adapter must re-attach a working retrieve().
+describe('RemoteAdapter FileRefs read off the wire', () => {
+  it('names a wire FileRef as a file this install owns, which the host redeems through the wire resolveFileRef', async () => {
     enqueue({
       __brand: 'FileRef',
       name: 'deck.pdf',
@@ -664,11 +669,15 @@ describe('RemoteAdapter FileRef revival on getFieldValue', () => {
     const ref = (await adapter.getFieldValue({
       position: samplePosition,
       fieldId: 'from',
-    })) as { retrieve?: () => Promise<{ stream: AsyncIterable<unknown> }> };
+    })) as FileRef;
 
-    expect(typeof ref.retrieve).toBe('function');
+    expect(ref).toEqual({
+      __brand: 'FileRef',
+      name: 'deck.pdf',
+      contentType: 'application/pdf',
+      source: { adapterType: 'remote-email', credentialId: 'cred-1', handle: 'h-1' },
+    });
 
-    // retrieve() forwards to the wire resolveFileRef (→ {url}) then fetches it.
     enqueue({ url: 'https://owner.example/blob/h-1', contentType: 'application/pdf' });
     const realFetch = global.fetch;
     const fetchMock = jest.fn(async () =>
@@ -676,7 +685,15 @@ describe('RemoteAdapter FileRef revival on getFieldValue', () => {
     );
     global.fetch = fetchMock as unknown as typeof fetch;
     try {
-      const resolved = await ref.retrieve!();
+      const owners: unknown[] = [];
+      const resolved = await streamFileRef(ref, {
+        teamId: CONFIG_TEAM_ID,
+        resolveOwner: (input) => {
+          owners.push(input);
+          return adapter;
+        },
+      });
+      expect(owners).toEqual([{ adapterType: 'remote-email', teamId: CONFIG_TEAM_ID, credentialsId: 'cred-1' }]);
       expect(postRpcMock).toHaveBeenCalledWith(
         expect.objectContaining({ method: 'resolveFileRef' }),
       );
@@ -684,6 +701,38 @@ describe('RemoteAdapter FileRef revival on getFieldValue', () => {
       const chunks: Buffer[] = [];
       for await (const c of resolved.stream) chunks.push(Buffer.from(c as Buffer));
       expect(Buffer.concat(chunks).toString()).toBe('REMOTE-BYTES');
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  it('a wire file with only a url is named by that url, and the remote is asked for it by it', async () => {
+    const url = 'https://owner.example/blob/url-only';
+    enqueue({ __brand: 'FileRef', name: 'memo.pdf', url });
+
+    const adapter = buildAdapter();
+    const ref = (await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' })) as FileRef;
+    expect(ref.source).toEqual({ adapterType: 'remote-email', credentialId: 'cred-1', handle: url });
+
+    // The reference kit answers resolveFileRef with the ref's own url.
+    enqueue({ url });
+    const realFetch = global.fetch;
+    const fetchMock = jest.fn(async () => new Response('URL-BYTES', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const resolved = await streamFileRef(ref, { teamId: CONFIG_TEAM_ID, resolveOwner: () => adapter });
+      expect(postRpcMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          method: 'resolveFileRef',
+          params: {
+            ref: { __brand: 'FileRef', name: 'memo.pdf', url, source: { ownerAdapterType: 'remote-email', handle: url } },
+          },
+        }),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(url);
+      const chunks: Buffer[] = [];
+      for await (const c of resolved.stream) chunks.push(Buffer.from(c as Buffer));
+      expect(Buffer.concat(chunks).toString()).toBe('URL-BYTES');
     } finally {
       global.fetch = realFetch;
     }

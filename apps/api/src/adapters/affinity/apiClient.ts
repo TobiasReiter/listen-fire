@@ -14,7 +14,7 @@ import {
   forgetMemoisedReadsUnder,
   isAdapterCallCeilingExceeded,
   memoisedRead,
-} from '../../services/movement_engine/run_scope';
+} from '../../services/translation_graph/segment_scope';
 import { sendSlackNotification } from '../../lib/slack';
 
 const RETRY_LIMIT = 5;
@@ -378,7 +378,7 @@ class AffinityAPIClient {
     this.memoScope = `affinity:${baseUrl}:${apiKey}:`;
   }
 
-  // ── Per-run read memo (services/movement_engine/run_scope.ts) ─────────────
+  // ── Per-segment read memo (services/translation_graph/segment_scope.ts) ──
   // A record read once in a run is read again by the write that follows it,
   // and again by the second write to the same record. The keys below name the
   // QUESTION; the writes further down forget the ones they just answered
@@ -469,7 +469,7 @@ class AffinityAPIClient {
     // Bound HERE, not inside the job: this client is a process-wide singleton,
     // so the queue below dequeues a job in whichever other job's async context
     // happened to free a slot. Capturing the run at the point the call was
-    // ISSUED charges the run that asked for it (run_scope.ts).
+    // ISSUED charges the segment that asked for it (segment_scope.ts).
     const countCall = bindAdapterCallCounter('affinity');
 
     return this.rateLimitQueue.enqueue(async () => {

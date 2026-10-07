@@ -74,7 +74,7 @@ import { containerAssociation, type Adapter, type RuntimeCapabilities } from '..
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
 
@@ -191,9 +191,9 @@ async function run(body: string[]): Promise<unknown[]> {
     event: webhookEvent({ text: 'Acme raised a seed.' }),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'email') return email.adapter;
           if (adapterType === 'attio') return attio.adapter;

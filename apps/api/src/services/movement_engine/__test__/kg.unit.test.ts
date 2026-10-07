@@ -121,7 +121,7 @@ import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 /**
  * The error a rejected run really died of. A failure raised once the
@@ -553,13 +553,13 @@ async function runGoldenThroughMovementEngine(input: {
     teamId: TEAM_ID,
     catalog: makeCatalog(),
     host: makeTestHost({
+      ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
       adapters: {
         resolve: makeResolver({ email: makeFakeSource('email'), [KG]: input.kg.adapter }),
       },
       llm: { client: llm.client },
     }),
     ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
-    ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });
 }
 

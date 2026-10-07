@@ -16,7 +16,7 @@ const settled = jest.mocked(awaitTeamWorkSettled);
 
 beforeEach(() => {
   jest.clearAllMocks();
-  drain.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false });
+  drain.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false });
   settled.mockResolvedValue(true);
 });
 
@@ -25,7 +25,7 @@ describe('runHarnessDelivery', () => {
     const order: string[] = [];
     drain.mockImplementation(async (opts) => {
       order.push(`drain:${opts?.teamId}`);
-      return { claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false };
+      return { claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false };
     });
 
     const outcome = await runHarnessDelivery(async () => ({

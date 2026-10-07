@@ -209,6 +209,7 @@ describe('extract from [READ(f)]', () => {
     const runtime: ExtractRuntime = {
       llm,
       transformInvoker: { async invoke() { return {}; } },
+      plugins: {},
       evalSlot: (s: ExprSlot) => evaluate(s.raw, { attachment: fileRef(), resolveFileText }),
       resolveFileText,
     };

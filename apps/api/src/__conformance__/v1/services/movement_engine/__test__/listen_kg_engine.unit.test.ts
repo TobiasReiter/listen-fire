@@ -113,7 +113,7 @@ import {
 } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
-import { makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 const COMPANY_NODE_ID = '00000000-0000-0000-0000-00000000c001' as NodeId;
@@ -286,9 +286,9 @@ describe('kg-seeded movements (mutation listen) — runMovement', () => {
       event: mutationEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: credentialIdsFor(catalog, () => 'cred-attio-1'),
       host: makeTestHost({
         adapters: {
-          credentialId: () => 'cred-attio-1',
           resolve: ({ adapterType }) => {
             if (adapterType === 'kg') return kg;
             if (adapterType === 'attio') return target.adapter;
@@ -354,9 +354,9 @@ describe('kg-seeded movements (mutation listen) — runMovement', () => {
       event: mutationEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: credentialIdsFor(catalog, () => 'cred-attio-1'),
       host: makeTestHost({
         adapters: {
-          credentialId: () => 'cred-attio-1',
           resolve: ({ adapterType }) => {
             if (adapterType === 'kg') return kg;
             if (adapterType === 'attio') return target.adapter;
@@ -380,9 +380,9 @@ describe('kg-seeded movements (mutation listen) — runMovement', () => {
         event: mutationEvent({ recordId: undefined }),
         teamId: TEAM_ID,
         catalog,
+        credentialIds: credentialIdsFor(catalog, () => 'cred-attio-1'),
         host: makeTestHost({
           adapters: {
-            credentialId: () => 'cred-attio-1',
             resolve: ({ adapterType }) =>
               adapterType === 'kg' ? kg : target.adapter,
           },
