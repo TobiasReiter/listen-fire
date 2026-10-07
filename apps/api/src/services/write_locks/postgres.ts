@@ -23,6 +23,7 @@ import {
   type LockSession,
   ScopedHolder,
   type WriteLocks,
+  writeLockHolderClosed,
   writeLockSessionLost,
   writeLockTimeout,
 } from './write_locks';
@@ -36,8 +37,13 @@ const RETRY_JITTER = 0.2;
 const SERVER_KEEPALIVE =
   'SET tcp_keepalives_idle = 30; SET tcp_keepalives_interval = 10; SET tcp_keepalives_count = 3';
 const CLIENT_KEEPALIVE_DELAY_MS = 30_000;
+// Each lock query answers in milliseconds. One that does not is a half-open
+// connection: with a request outstanding keepalive never probes, and TCP
+// retransmission takes about fifteen minutes to give up, with every sibling's
+// query queued behind it and the segment's release waiting on them.
+const DEFAULT_QUERY_TIMEOUT_MS = 5_000;
 
-type PostgresOptions = { connectionString: string; timeoutMs: number };
+type PostgresOptions = { connectionString: string; timeoutMs: number; queryTimeoutMs: number };
 
 class PostgresSession implements LockSession {
   private client: Promise<Client> | undefined;
@@ -50,6 +56,9 @@ class PostgresSession implements LockSession {
   /** What was granted when the session dropped. Non-empty means a write may
    *  have run after its lock was gone, so the holder refuses until released. */
   private heldAtLoss: string[] = [];
+  /** The holder is closing: a polling acquire gives up rather than keep the
+   *  release waiting until its timeout. */
+  private abandoned = false;
 
   constructor(private readonly opts: PostgresOptions) {}
 
@@ -57,6 +66,7 @@ class PostgresSession implements LockSession {
     const deadline = Date.now() + this.opts.timeoutMs;
     let retryMs = FIRST_RETRY_MS;
     for (;;) {
+      if (this.abandoned) throw writeLockHolderClosed();
       const client = await this.connect(name);
       let granted: boolean;
       try {
@@ -72,6 +82,9 @@ class PostgresSession implements LockSession {
         }
         throw err;
       }
+      // The session can drop in the same socket read that carried the grant;
+      // a grant on a dead session holds nothing.
+      if (this.lost || client !== this.live) throw writeLockSessionLost(name);
       if (granted) {
         this.held.set(key, name);
         return;
@@ -85,12 +98,19 @@ class PostgresSession implements LockSession {
 
   async unlock(key: string): Promise<void> {
     // Not granted on the live session: the session dropped and took it along.
-    if (!this.held.delete(key)) return;
+    if (!this.held.has(key)) return;
     const client = this.live;
     if (!client || this.lost) return;
     try {
       await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [key]);
+      this.held.delete(key);
     } catch (err) {
+      // Still counted as held, so a drop found here is reported as one that
+      // took a lock with it.
+      if (isConnectionLoss(err)) {
+        this.markLost(client, err);
+        return;
+      }
       // The effect it guarded is done; failing it now would undo nothing. A
       // lock this left behind goes when the segment's session ends.
       logger.warn('[write_locks] unlock failed; the lock stays until the segment ends', { err });
@@ -122,6 +142,10 @@ class PostgresSession implements LockSession {
       this.heldAtLoss = [];
       this.lost = false;
     }
+  }
+
+  abandonWaits(): void {
+    this.abandoned = true;
   }
 
   assertIntact(): void {
@@ -161,6 +185,9 @@ class PostgresSession implements LockSession {
     if (this.heldAtLoss.length > 0) {
       logger.warn('[write_locks] lock session dropped', { err, names: this.heldAtLoss });
     }
+    // A timed-out query leaves the protocol mid-reply; nothing more can be
+    // read from this connection.
+    void client.end().catch(() => undefined);
   }
 
   private async open(): Promise<Client> {
@@ -171,6 +198,7 @@ class PostgresSession implements LockSession {
       connectionString: this.opts.connectionString,
       keepAlive: true,
       keepAliveInitialDelayMillis: CLIENT_KEEPALIVE_DELAY_MS,
+      query_timeout: this.opts.queryTimeoutMs,
     });
     // An unhandled 'error' on a pg Client crashes the process.
     client.on('error', (err) => this.markLost(client, err));
@@ -197,7 +225,7 @@ function isConnectionLoss(err: unknown): boolean {
   if ('code' in err && typeof err.code === 'string') {
     if (['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ECONNREFUSED'].includes(err.code)) return true;
   }
-  return /Connection terminated|not queryable/.test(err.message);
+  return /Connection terminated|not queryable|Query read timeout/.test(err.message);
 }
 
 function jittered(ms: number): number {
@@ -225,10 +253,11 @@ export class PostgresWriteLockHolder extends ScopedHolder {
 export class PostgresWriteLocks implements WriteLocks {
   private readonly opts: PostgresOptions;
 
-  constructor(opts: { connectionString: string; timeoutMs?: number }) {
+  constructor(opts: { connectionString: string; timeoutMs?: number; queryTimeoutMs?: number }) {
     this.opts = {
       connectionString: opts.connectionString,
       timeoutMs: opts.timeoutMs ?? DEFAULT_WRITE_LOCK_TIMEOUT_MS,
+      queryTimeoutMs: opts.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS,
     };
   }
 

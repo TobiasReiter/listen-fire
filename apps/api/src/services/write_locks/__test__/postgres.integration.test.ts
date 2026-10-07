@@ -255,23 +255,52 @@ describe('PostgresWriteLocks', () => {
     );
   });
 
-  it('release waits for an acquire still in flight on the same holder', async () => {
+  it('a drop first found by an unlock is reported as one that took the lock with it', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const a = holderOf(locks, randomUUID());
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+
+    await a.acquire(['record attio 1']);
+    await observer.query('SELECT pg_terminate_backend($1)', [await backendPidOf(a)]);
+    await a.release(['record attio 1']);
+
+    await expect(a.acquire(['record attio 2'])).rejects.toMatchObject({
+      message: expect.stringContaining('write lock session lost'),
+    });
+    await a.release();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('may have run unprotected'), {
+      names: ['record attio 1'],
+    });
+  });
+
+  it('releasing a holder stops its polling acquire instead of waiting out the timeout', async () => {
     const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
     const scope = randomUUID();
     const a = holderOf(locks, scope);
     const b = holderOf(locks, scope);
 
     await a.acquire(['record attio 1']);
-    const bAcquire = tracked(b.acquire(['record attio 1']));
-    const bRelease = tracked(b.release());
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(bAcquire.settled()).toBe(false);
-    expect(bRelease.settled()).toBe(false);
+    const waiting = b.acquire(['record attio 1']);
+    const rejection = expect(waiting).rejects.toMatchObject({
+      message: expect.stringContaining('write lock holder is closed'),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
-    await a.release();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(bAcquire.settled()).toBe(true);
-    expect(bRelease.settled()).toBe(true);
+    const started = Date.now();
+    await b.release();
+    await rejection;
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('release waits for an acquire still in flight, so a lock it is granted is not leaked', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 500 });
+    const scope = randomUUID();
+    const b = holderOf(locks, scope);
+
+    // The acquire's try-lock is on the wire when the release begins.
+    const bAcquire = b.acquire(['record attio 1']);
+    await b.release();
+    await Promise.allSettled([bAcquire]);
 
     const c = holderOf(locks, scope);
     await c.acquire(['record attio 1']);

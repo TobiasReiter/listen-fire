@@ -55,9 +55,10 @@ export interface WriteLockHolder {
    *
    * Without: release everything, drop the underlying session and close the
    * holder; any later acquire rejects MOVENG_RUNTIME 'write lock holder is
-   * closed'. Idempotent. Waits for any acquire still in flight on this
-   * holder, so a lock granted after the release began is released too rather
-   * than leaked.
+   * closed'. Idempotent. An acquire still polling for another holder's lock
+   * gives up with that same rejection (the in-memory gate waits it out); one
+   * whose query is in flight is waited for, so a lock granted after the
+   * release began is released too rather than leaked.
    */
   release(names?: readonly string[]): Promise<void>;
 }
@@ -92,6 +93,9 @@ export interface LockSession {
   lock(key: string, name: string): Promise<void>;
   unlock(key: string): Promise<void>;
   unlockAll(): Promise<void>;
+  /** The holder is closing: a wait still in progress may give up early,
+   *  rejecting 'write lock holder is closed'. */
+  abandonWaits(): void;
   /** Throws when the locks taken so far may no longer be held. */
   assertIntact(): void;
 }
@@ -164,6 +168,7 @@ export class ScopedHolder implements WriteLockHolder {
       return;
     }
     this.closed = true;
+    this.session.abandonWaits();
     await Promise.allSettled([...this.inFlight]);
     this.holdings.clear();
     await this.session.unlockAll();
@@ -232,6 +237,9 @@ class InMemorySession implements LockSession {
     for (const open of this.opens.values()) open();
     this.opens.clear();
   }
+
+  // A gate wait ends when the gate opens or times out; there is no poll to stop.
+  abandonWaits(): void {}
 
   assertIntact(): void {}
 }
