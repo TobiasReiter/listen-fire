@@ -1,9 +1,16 @@
-// Loads the movement artifact (crates/movement-engine, which links in
-// crates/movement-parser; built by scripts/build-movement-wasm.sh) and calls
-// its hand-written C ABI: UTF-8 bytes in, UTF-8 JSON bytes out, every buffer
-// freed by the side that did not allocate it. Node instantiates synchronously
-// when this module loads; a browser must `await initParser(…)` first, because
-// browsers refuse large synchronous compiles on the main thread.
+// Loads a movement artifact (built by scripts/build-movement-wasm.sh) and
+// calls its hand-written C ABI: UTF-8 bytes in, UTF-8 JSON bytes out, every
+// buffer freed by the side that did not allocate it. There are two artifacts,
+// and this one loader serves both:
+//
+//  - movement.wasm (crates/movement-engine, which links in crates/movement-
+//    parser): the parser and the engine. Node instantiates it synchronously
+//    when this module loads; the API runs movements on it.
+//  - movement_parser.wasm (crates/movement-parser alone): the parser, the
+//    lowering and the catalog. A browser loads it with `await initParser(url)`
+//    (browsers refuse large synchronous compiles on the main thread), and so
+//    never downloads the engine; `eval_expression` and the engine segments
+//    are then absent, and refused by name.
 //
 // One compiled module serves two kinds of instance: the parser's, long-lived
 // and replaced only after a trap, and one per engine segment

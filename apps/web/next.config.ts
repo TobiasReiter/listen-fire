@@ -5,14 +5,15 @@ import fs from 'fs';
 import path from 'path';
 import { apiProxyRewrites } from './src/lib/api-proxy';
 
-// The browser fetches the movement parser from public/ (src/lib/parser-provider.tsx).
+// The browser fetches the movement parser from public/ (src/lib/parser-provider.tsx):
+// the parser's own artifact, without the engine the API runs movements on.
 // Copied here, where `next dev` and `next build` both pass, rather than by a
 // webpack asset rule: the loader is CommonJS shared with the api, so it cannot
 // name the file through `new URL(…, import.meta.url)`. The copy is named by
 // its content hash so a long-cached old parser can never be served for a new
 // build; the URL reaches the client through `env` below, which both `next dev`
 // and `next build` inline from this one config evaluation.
-const parserBytes = fs.readFileSync(require.resolve('movement-lang/wasm/movement.wasm'));
+const parserBytes = fs.readFileSync(require.resolve('movement-lang/wasm/movement_parser.wasm'));
 const parserFile = `movement_parser.${createHash('sha256').update(parserBytes).digest('hex').slice(0, 12)}.wasm`;
 const publicDir = path.join(__dirname, 'public');
 for (const stale of fs.readdirSync(publicDir)) {

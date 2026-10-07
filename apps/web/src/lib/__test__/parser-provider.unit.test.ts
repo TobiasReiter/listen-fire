@@ -61,7 +61,7 @@ const PANEL_PROPS: ListenersPanelProps = {
 };
 
 function artifact(): Uint8Array {
-  return fs.readFileSync(path.join(__dirname, '../../../../../packages/movement-lang/wasm/movement.wasm'));
+  return fs.readFileSync(path.join(__dirname, '../../../../../packages/movement-lang/wasm/movement_parser.wasm'));
 }
 
 describe('the browser parser provider', () => {

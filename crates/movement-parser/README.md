@@ -37,28 +37,40 @@ No wasm-bindgen and no wasm-pack: the crate exports a hand-written C ABI.
 ## Building
 
 ```bash
-scripts/build-movement-wasm.sh  # release build of crates/movement-engine → packages/movement-lang/wasm/movement.wasm, prints sha256 and size
+scripts/build-movement-wasm.sh  # release builds of both artifacts (below), each one's sha256 and size
 cargo test -p movement-parser   # native unit tests
 ```
 
-The `.wasm` is committed so the pnpm dev loop needs no Rust. CI
-(`.github/workflows/movement-wasm.yml`) rebuilds it and fails when the bytes
-differ, so a change to the crate, `Cargo.lock`, the release profile or the
-toolchain ships with a rebuilt artifact.
+Two artifacts are committed in `packages/movement-lang/wasm/`, so the pnpm
+dev loop needs no Rust:
 
-The web app copies the artifact into `apps/web/public` (under a content-hashed
-name) when `next.config.ts` loads, so a running `next dev` keeps serving the old
-parser until it is restarted.
+- `movement_parser.wasm`: this crate alone (the parser, the lowering, the
+  catalog). The browser loads it.
+- `movement.wasm`: crates/movement-engine, which links this crate in. The API
+  loads it, and runs movements on it.
+
+CI (`.github/workflows/movement-wasm.yml`) rebuilds both and fails when
+either's bytes differ, so a change to the crate, `Cargo.lock`, the release
+profile or the toolchain ships with rebuilt artifacts.
+
+The web app copies the parser's artifact into `apps/web/public` (under a
+content-hashed name) when `next.config.ts` loads, so a running `next dev`
+keeps serving the old parser until it is restarted.
 
 ## Size budget
 
-Current (the whole artifact, engine included; 2026-10-07): 1,222,941 bytes
-raw, 336,866 gzipped, of which the parser is 1,182,582 raw and 321,745
-gzipped. CI measures the committed
-`.wasm` gzipped (`movement-wasm.yml`, "Size budget"): it warns above 600 KB
-(614,400 bytes) and fails above 1 MB (1,048,576 bytes), printing raw and
-gzipped sizes either way. Policy: if the budget is approached, the checker port
-replaces serde derives with hand readers, as the lowering already did.
+Current (2026-10-07, gzip -9): the parser's artifact is 1,182,906 bytes raw,
+321,899 gzipped; the engine's (this crate included) 1,994,270 raw, 559,928
+gzipped. CI measures each committed `.wasm` gzipped (`movement-wasm.yml`,
+"Size budgets"), printing raw and gzipped sizes either way:
+
+| artifact | who downloads it | warns above | fails above |
+|---|---|---|---|
+| `movement_parser.wasm` | every browser | 400 KB (409,600 bytes) | 600 KB (614,400 bytes) |
+| `movement.wasm` | the API only | 600 KB (614,400 bytes) | 1 MB (1,048,576 bytes) |
+
+Policy: if the parser's budget is approached, the checker port replaces serde
+derives with hand readers, as the lowering already did.
 
 ## Reproducibility
 

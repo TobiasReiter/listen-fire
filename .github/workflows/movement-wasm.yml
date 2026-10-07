@@ -1,9 +1,12 @@
 name: movement-wasm
-# A prod-safety check, not a lint gate: the repo ships movement.wasm (the
-# parser and the engine, built from crates/movement-engine) so the pnpm dev
-# loop needs no Rust, and the shipped bytes must be the crates'.
+# A prod-safety check, not a lint gate: the repo ships two artifacts so the
+# pnpm dev loop needs no Rust, and the shipped bytes must be the crates':
+# movement.wasm (the parser and the engine, built from crates/movement-engine;
+# the API's) and movement_parser.wasm (crates/movement-parser alone; the
+# browser's).
 #
-#  - rebuild-matches-committed rebuilds the artifact and fails if it differs.
+#  - rebuild-matches-committed rebuilds both artifacts and fails if either
+#    differs.
 #  - parser-tests runs both crates' tests (including the strict programs
 #    harness) and the movement-lang parser pins through the committed
 #    artifact: every corpus program and expression text parses as pinned;
@@ -81,13 +84,14 @@ jobs:
           key: cargo-registry-${{ hashFiles('Cargo.lock') }}
       - name: Rebuild and compare
         run: |
-          committed=$(sha256sum packages/movement-lang/wasm/movement.wasm | cut -d' ' -f1)
+          artifacts="packages/movement-lang/wasm/movement.wasm packages/movement-lang/wasm/movement_parser.wasm"
+          committed=$(sha256sum $artifacts)
           ./scripts/build-movement-wasm.sh
-          rebuilt=$(sha256sum packages/movement-lang/wasm/movement.wasm | cut -d' ' -f1)
-          echo "committed $committed"
-          echo "rebuilt   $rebuilt"
+          rebuilt=$(sha256sum $artifacts)
+          echo "committed:"; echo "$committed"
+          echo "rebuilt:"; echo "$rebuilt"
           if [ "$committed" != "$rebuilt" ]; then
-            echo "::error::movement.wasm differs from what the crates build. Run scripts/build-movement-wasm.sh and commit the rebuilt packages/movement-lang/wasm/movement.wasm. If it differs only on Linux, the build is not reproducible across platforms: see the reproducibility notes in crates/movement-parser/README.md."
+            echo "::error::a movement artifact differs from what the crates build. Run scripts/build-movement-wasm.sh and commit both rebuilt files in packages/movement-lang/wasm/. If it differs only on Linux, the build is not reproducible across platforms: see the reproducibility notes in crates/movement-parser/README.md."
             exit 1
           fi
 
@@ -130,7 +134,7 @@ jobs:
         run: pnpm run test --testPathPattern 'catalog_differential'
       - name: Engine shim, against a double and through the committed artifact
         working-directory: apps/api
-        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_e(ngine|val)|rust_run|program_check)'
+        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_e(ngine|val)|rust_run|rust_write|program_check)'
       # The oracle the crate tests hold the Rust engine to is the TypeScript's
       # own answers: a TypeScript change that moves one must move the oracle.
       - name: The Rust engine's oracle is current
@@ -163,17 +167,22 @@ jobs:
         run: |
           pnpm run test:conformance:v1
           pnpm run test:conformance:v2
-      # The artifact ships to browsers: keep its download size in view.
-      - name: Size budget
+      # Each artifact's download size in view: the parser's ships to every
+      # browser, the engine's to the API only.
+      - name: Size budgets
         run: |
-          f=packages/movement-lang/wasm/movement.wasm
-          raw=$(wc -c < "$f" | tr -d ' ')
-          gz=$(gzip -9 -c "$f" | wc -c | tr -d ' ')
-          echo "raw $raw bytes, gzipped $gz bytes"
-          if [ "$gz" -gt 1048576 ]; then
-            echo "::error::movement.wasm is $gz bytes gzipped, over the 1 MB budget."
-            exit 1
-          fi
-          if [ "$gz" -gt 614400 ]; then
-            echo "::warning::movement.wasm is $gz bytes gzipped, over the 600 KB warning line (fails at 1 MB)."
-          fi
+          budget() {
+            f="packages/movement-lang/wasm/$1"
+            raw=$(wc -c < "$f" | tr -d ' ')
+            gz=$(gzip -9 -c "$f" | wc -c | tr -d ' ')
+            echo "$1: raw $raw bytes, gzipped $gz bytes"
+            if [ "$gz" -gt "$3" ]; then
+              echo "::error::$1 is $gz bytes gzipped, over its $3-byte budget."
+              exit 1
+            fi
+            if [ "$gz" -gt "$2" ]; then
+              echo "::warning::$1 is $gz bytes gzipped, over its $2-byte warning line (fails at $3)."
+            fi
+          }
+          budget movement_parser.wasm 409600 614400
+          budget movement.wasm 614400 1048576
