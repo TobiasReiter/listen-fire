@@ -110,6 +110,19 @@ export async function listRemoteAdapters(input: {
     .execute();
 }
 
+/** Every team's install of one adapter type. Only a push door asks this: the
+ *  caller presents a credential, not a team, and the credential picks the row. */
+export async function listRemoteAdaptersOfType(input: {
+  adapterType: string;
+}): Promise<RemoteAdapterRow[]> {
+  return getAutomationsQb(['remote_adapter'])
+    .selectFrom('remote_adapter')
+    .where('adapter_type', '=', input.adapterType)
+    .selectAll()
+    .orderBy('created_at', 'asc')
+    .execute();
+}
+
 export async function deleteRemoteAdapter(input: {
   teamId: TeamId;
   adapterType: string;

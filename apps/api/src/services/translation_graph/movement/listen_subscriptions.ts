@@ -34,13 +34,12 @@ import type { ExternalServiceCredentialsId } from '../../../generated/kysely/aut
 import type { WebhookSubscriptionId } from '../../../generated/kysely/automations/WebhookSubscription';
 import { getQb, getAutomationsQb } from '../../../lib/kysely';
 import { logger } from '../../logger';
-import { buildWebhookTargetUrl } from '../../webhook_sync/urls';
-import {
-  getAdapterManifest,
-  listAdapterManifests,
-  resolveAdapterSlug,
-} from '../adapters/registry';
+import { buildWebhookTargetUrl, webhookProviderKey } from '../../webhook_sync/urls';
+import { UNREGISTERED_SECRET } from '../../webhook_sync/remote_inbound';
+import type { AdapterManifest } from '../adapter';
+import { resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
+import { teamAdapterManifests } from '../adapters/team_manifests';
 import { eventConfigList } from '../triggers/listen_config';
 import { canonicalAddress, resolvedAddressOfJson } from './listen_address';
 
@@ -123,21 +122,18 @@ function sameEventSet(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((e) => b.includes(e));
 }
 
-/** The provider key webhook_sync routes inbound deliveries by. */
-function providerKeyForSlug(slug: string): string {
-  const manifest = getAdapterManifest(slug);
-  return manifest?.triggerKinds?.[0] ?? slug.toUpperCase();
-}
-
 /**
  * The team's desired channels, read straight off the movement-derived
  * trigger rows (reconciliation has already saved them, so the trigger
  * table IS the desired state). Only adapters that genuinely implement the
  * subscription seam (manifest `methods` carries `ensureEventSubscription`)
- * and declare a subscribable vocabulary participate.
+ * participate — built-ins and the team's remote installs alike.
  */
-async function desiredChannels(teamId: TeamId, notes: string[]): Promise<DesiredChannel[]> {
-  const manifestBySlug = new Map(listAdapterManifests().map((m) => [m.adapterType, m]));
+async function desiredChannels(
+  teamId: TeamId,
+  manifestBySlug: ReadonlyMap<string, AdapterManifest>,
+  notes: string[],
+): Promise<DesiredChannel[]> {
 
   const rows = await getAutomationsQb(['trigger'])
     .selectFrom('trigger')
@@ -151,14 +147,13 @@ async function desiredChannels(teamId: TeamId, notes: string[]): Promise<Desired
     const slug = resolveAdapterSlug(row.kind);
     const manifest = manifestBySlug.get(slug);
     if (!manifest) continue;
+    if (!manifest.methods.includes('ensureEventSubscription')) continue;
+    // A remote install's manifest carries no vocabulary (its event names are
+    // the remote's own), so the listen's selection passes through unfiltered
+    // and an empty one means "everything it offers". Every built-in that
+    // subscribes declares a vocabulary.
     const vocabulary = manifest.subscribableEvents;
-    if (
-      vocabulary === undefined ||
-      vocabulary.length === 0 ||
-      !manifest.methods.includes('ensureEventSubscription')
-    ) {
-      continue;
-    }
+    if (vocabulary !== undefined && vocabulary.length === 0) continue;
     // Credential-free adapters (the cron intrinsic) hold their channel
     // under a null credential; adapters that REQUIRE one can't register
     // without it.
@@ -173,8 +168,10 @@ async function desiredChannels(teamId: TeamId, notes: string[]): Promise<Desired
     // `events` may be authored as a bare string or a list — normalise, then keep
     // only the ones in the adapter's vocabulary. An empty selection falls back to
     // the full vocabulary (subscribe to everything the adapter offers).
-    const requested = eventConfigList(config.events).filter((e) => vocabulary.includes(e));
-    const events = requested.length > 0 ? requested : [...vocabulary];
+    const authored = eventConfigList(config.events);
+    const requested =
+      vocabulary === undefined ? authored : authored.filter((e) => vocabulary.includes(e));
+    const events = requested.length > 0 || vocabulary === undefined ? requested : [...vocabulary];
 
     // Per-channel scope — CHANNEL IDENTITY IS THE RESOLVED ADDRESS. Each
     // `subscriptionScopeKeys` value comes from the trigger's `resolved_address`
@@ -214,7 +211,7 @@ async function desiredChannels(teamId: TeamId, notes: string[]): Promise<Desired
     } else {
       channels.set(key, {
         slug,
-        providerKey: providerKeyForSlug(slug),
+        providerKey: webhookProviderKey(manifest),
         credentialsId,
         events,
         scope,
@@ -251,7 +248,12 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
   notes: string[];
 }> {
   const notes: string[] = [];
-  const desired = await desiredChannels(input.teamId, notes);
+  const manifests = await teamAdapterManifests(input.teamId, notes);
+  const manifestBySlug = new Map(manifests.map((m) => [m.adapterType, m]));
+  // A remote install's provider key is not a registry alias, so teardown maps
+  // a row's key back to its slug through the same rule that minted it.
+  const slugByProviderKey = new Map(manifests.map((m) => [webhookProviderKey(m), m.adapterType]));
+  const desired = await desiredChannels(input.teamId, manifestBySlug, notes);
   const existing = await provisionedRows(input.teamId);
 
   const rowFor = (channel: DesiredChannel): SubscriptionRow | undefined =>
@@ -318,7 +320,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           team_id: input.teamId,
           provider: channel.providerKey,
           credentials_id: channel.credentialsId as ExternalServiceCredentialsId | null,
-          webhook_secret: 'pending',
+          webhook_secret: UNREGISTERED_SECRET,
           subscriptions: JSON.stringify(channel.events.map((e) => ({ event_type: e }))),
           ...(Object.keys(channel.scope).length > 0
             ? { scope: JSON.stringify(channel.scope) as never }
@@ -373,7 +375,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
         sameScope(c.scope, row.scope),
     );
     if (stillDesired) continue;
-    const slug = resolveAdapterSlug(row.provider);
+    const slug = slugByProviderKey.get(row.provider) ?? resolveAdapterSlug(row.provider);
     try {
       const adapter = await resolveAdapter({
         adapterType: slug,

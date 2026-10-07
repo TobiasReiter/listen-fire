@@ -74,7 +74,7 @@ import { connectMethodForType } from '../../credentials/connect_link';
 import { isLegacyApp } from '../../credentials/app_id';
 import { indexManifestsByName, listAdapterManifests } from '../adapters/registry';
 import { listRemoteAdapters } from '../adapters/remote/store';
-import { remoteAdapterManifest, RemoteAdapterManifestFile } from '../adapters/remote/manifest';
+import { teamAdapterManifests } from '../adapters/team_manifests';
 import { registerBundledTransforms } from '../engine/transforms/register-bundled';
 import { getTransform, listTransforms } from '../engine/transforms/registry';
 import { assembleMovementFileSources, resolverOverSources } from './files';
@@ -766,46 +766,6 @@ function introspectionPairs(input: {
     }
   }
   return pairs;
-}
-
-/**
- * The per-team manifest set: every static manifest plus the
- * team's installed REMOTE adapters, projected into the same `AdapterManifest`
- * shape. A remote slug colliding with a built-in is skipped (built-ins win —
- * resolution is local-first) with a note. All per-team catalog paths read
- * THIS, so remote installs get the same capability truth, catalog view, and
- * schemaShape advertising as built-ins.
- */
-async function teamAdapterManifests(
-  teamId: TeamId,
-  notes: string[],
-): Promise<AdapterManifest[]> {
-  const manifests = listAdapterManifests();
-  const staticSlugs = new Set(manifests.map((m) => m.adapterType));
-  let rows;
-  try {
-    rows = await listRemoteAdapters({ teamId });
-  } catch (err) {
-    notes.push(
-      `remote adapters: install listing failed (${err instanceof Error ? err.message : String(err)}) — remote installs absent from this catalog`,
-    );
-    return manifests;
-  }
-  for (const row of rows) {
-    const parsed = RemoteAdapterManifestFile.safeParse(row.manifest);
-    if (!parsed.success) {
-      notes.push(`${row.adapter_type}: stored remote manifest is malformed — install absent from this catalog`);
-      continue;
-    }
-    if (staticSlugs.has(parsed.data.adapterType)) {
-      notes.push(
-        `${parsed.data.adapterType}: a remote install collides with a built-in adapter — the built-in wins`,
-      );
-      continue;
-    }
-    manifests.push(remoteAdapterManifest(parsed.data));
-  }
-  return manifests;
 }
 
 /**

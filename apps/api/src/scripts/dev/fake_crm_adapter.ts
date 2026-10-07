@@ -13,6 +13,10 @@
 // (or the `dev:remote-verify` harness) can assert the write actually landed on
 // the other side of the wire.
 //
+// It also speaks the inbound half: a subscription (ensure/remove), a webhook body
+// (`FakeCrmDelivery`) it turns into events (preprocessInbound) and wake keys
+// (wakeKeys, one per thread comment), and the event-type union for them.
+//
 // The descriptor shapes mirror a real hardcoded writable adapter (see
 // `adapters/native_valuations.ts`, whose `commonFields()` / per-type descriptors
 // are the template), with `displayName === fieldId`.
@@ -20,10 +24,17 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+import { randomUUID } from 'node:crypto';
+
 import type {
   Adapter,
   DeleteInput,
   DeleteResult,
+  DiscriminableEvent,
+  EnsureEventSubscriptionInput,
+  EventSubscriptionRegistration,
+  EventType,
+  RemoveEventSubscriptionInput,
   GetFieldValueInput,
   GetRelatedInput,
   RelatedResult,
@@ -91,7 +102,7 @@ export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile
     description: 'A homespun CRM installed as a remote adapter for e2e verification.',
     baseUrl,
     authStrategy: { kind: 'bearer' },
-    supportedTriggers: [],
+    supportedTriggers: ['webhook'],
     runtimeCapabilities: {
       traversal: { incoming: false, edgeProperties: false },
       resources: false,
@@ -107,8 +118,42 @@ export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile
       'createRecord',
       'updateRecord',
       'deleteRecord',
+      'preprocessInbound',
+      'listEventTypes',
+      'wakeKeys',
+      'ensureEventSubscription',
+      'removeEventSubscription',
     ],
   };
+}
+
+/** The one event the CRM emits: a company was created. */
+export const FAKE_CRM_COMPANY_CREATED = 'company.created';
+
+/**
+ * The CRM's own webhook body (what it POSTs to a subscription's callback URL):
+ * created companies, and comments on threads. A comment wakes whatever is
+ * parked on its thread (`thread:<id>`).
+ */
+export interface FakeCrmDelivery {
+  companies?: Array<{ id: string; Name: string }>;
+  comments?: Array<{ thread: string; text: string }>;
+}
+
+export function fakeCrmThreadKey(thread: string): string {
+  return `thread:${thread}`;
+}
+
+function deliveryOf(raw: unknown): FakeCrmDelivery {
+  return raw !== null && typeof raw === 'object' ? (raw as FakeCrmDelivery) : {};
+}
+
+/** A subscription the CRM holds: where it POSTs, and the secret it signs with. */
+export interface FakeCrmSubscription {
+  externalId: string;
+  callbackUrl: string;
+  events: string[];
+  secret: string;
 }
 
 /** The `Company` type descriptor: a writable `Name` (required) + `Description`
@@ -130,8 +175,12 @@ export interface FakeCrmWrite {
   fields: Record<string, unknown>;
 }
 
-/** The in-process adapter plus its own write ledger, exposed for assertions. */
-export type FakeCrmAdapter = Adapter & { readonly writes: FakeCrmWrite[] };
+/** The in-process adapter plus its own write and subscription ledgers, exposed
+ *  for assertions. */
+export type FakeCrmAdapter = Adapter & {
+  readonly writes: FakeCrmWrite[];
+  readonly subscriptions: FakeCrmSubscription[];
+};
 
 /**
  * Build an in-process fake-CRM `Adapter`. Its `createRecord` / `updateRecord` /
@@ -140,12 +189,14 @@ export type FakeCrmAdapter = Adapter & { readonly writes: FakeCrmWrite[] };
  */
 export function createFakeCrmAdapter(): FakeCrmAdapter {
   const writes: FakeCrmWrite[] = [];
+  const subscriptions: FakeCrmSubscription[] = [];
   let seq = 0;
 
   const adapter: FakeCrmAdapter = {
     writes,
+    subscriptions,
     adapterType: FAKE_CRM_ADAPTER_TYPE,
-    supportedTriggers: [],
+    supportedTriggers: ['webhook'],
     runtimeCapabilities: (): RuntimeCapabilities => BASE_RUNTIME_CAPABILITIES,
 
     async listEntryPoints(): Promise<SchemaEntryPoint[]> {
@@ -209,6 +260,50 @@ export function createFakeCrmAdapter(): FakeCrmAdapter {
       if (i >= 0) writes.splice(i, 1);
       return {};
     },
+
+    async preprocessInbound(input: { raw: unknown }): Promise<{ events: DiscriminableEvent[] }> {
+      return {
+        events: (deliveryOf(input.raw).companies ?? []).map((company) => ({
+          payload: company,
+          externalId: company.id,
+          tag: FAKE_CRM_COMPANY_CREATED,
+          eventType: FAKE_CRM_COMPANY_CREATED,
+          changeType: 'create',
+          recordType: FAKE_CRM_COMPANY_TYPE,
+        })),
+      };
+    },
+
+    async listEventTypes(): Promise<EventType[]> {
+      return [{ tag: FAKE_CRM_COMPANY_CREATED, positionType: FAKE_CRM_COMPANY_TYPE }];
+    },
+
+    async wakeKeys(input: { raw: unknown }): Promise<string[]> {
+      return (deliveryOf(input.raw).comments ?? []).map((comment) => fakeCrmThreadKey(comment.thread));
+    },
+
+    async ensureEventSubscription(
+      input: EnsureEventSubscriptionInput,
+    ): Promise<EventSubscriptionRegistration> {
+      const existing = subscriptions.find((sub) => sub.callbackUrl === input.callbackUrl);
+      if (existing) {
+        existing.events = [...input.events];
+        return { externalId: existing.externalId, secret: existing.secret };
+      }
+      const subscription: FakeCrmSubscription = {
+        externalId: `crm-sub-${subscriptions.length + 1}`,
+        callbackUrl: input.callbackUrl,
+        events: [...input.events],
+        secret: randomUUID(),
+      };
+      subscriptions.push(subscription);
+      return { externalId: subscription.externalId, secret: subscription.secret };
+    },
+
+    async removeEventSubscription(input: RemoveEventSubscriptionInput): Promise<void> {
+      const i = subscriptions.findIndex((sub) => sub.callbackUrl === input.callbackUrl);
+      if (i >= 0) subscriptions.splice(i, 1);
+    },
   };
 
   return adapter;
@@ -220,6 +315,9 @@ export interface FakeCrmServer {
   baseUrl: string;
   /** The backing adapter's write ledger — assert the Company landed here. */
   writes: FakeCrmWrite[];
+  /** The subscriptions the host registered — where (and with what secret) the
+   *  CRM would deliver its webhooks. */
+  subscriptions: FakeCrmSubscription[];
   close: () => Promise<void>;
 }
 
@@ -256,6 +354,7 @@ export async function startFakeCrmServer(options: {
   return {
     baseUrl: `http://127.0.0.1:${port}/`,
     writes: adapter.writes,
+    subscriptions: adapter.subscriptions,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve())),

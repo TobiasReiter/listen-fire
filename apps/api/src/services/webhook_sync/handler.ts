@@ -7,7 +7,7 @@ import { logger } from '../logger';
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import { findTriggersByKind } from '../translation_graph/storage/tg_table';
-import type { DiscriminableEvent, EventType } from '../translation_graph/adapter';
+import type { Adapter, DiscriminableEvent, EventType } from '../translation_graph/adapter';
 import {
   captureDiscriminableEvent,
   enqueueCapturedEvents,
@@ -36,6 +36,10 @@ import {
 import { hasAdapter, resolveAdapterSlug } from '../translation_graph/adapters/registry';
 import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { isTestHarnessTeam } from '../../lib/recording';
+import type { WebhookProvider } from './providers';
+import { verifyRemoteSignature } from './remote_inbound';
+import { webhookProviderKey } from './urls';
+import { listRemoteAdapters } from '../translation_graph/adapters/remote/store';
 
 function jsonb(value: unknown): unknown {
   return sql`${JSON.stringify(value)}::jsonb` as unknown;
@@ -95,9 +99,6 @@ async function handleInboundWebhook(options: {
   const { provider: providerKey, subscriptionId, rawBody, signatureHeader } = options;
 
   const webhookProvider = getWebhookProvider(providerKey);
-  if (!webhookProvider) {
-    return { ok: false, eventsProcessed: 0, error: 'unknown_provider' };
-  }
 
   const subscription = await getAutomationsQb(['webhook_subscription'])
     .selectFrom('webhook_subscription')
@@ -116,11 +117,22 @@ async function handleInboundWebhook(options: {
     .executeTakeFirst();
 
   if (!subscription) {
-    return { ok: false, eventsProcessed: 0, error: 'subscription_not_found' };
+    return {
+      ok: false,
+      eventsProcessed: 0,
+      error: webhookProvider ? 'subscription_not_found' : 'unknown_provider',
+    };
   }
 
   if (subscription.provider !== providerKey) {
     return { ok: false, eventsProcessed: 0, error: 'provider_mismatch' };
+  }
+
+  const door = webhookProvider
+    ? localDoor(webhookProvider, subscription)
+    : await remoteDoor(subscription);
+  if (!door) {
+    return { ok: false, eventsProcessed: 0, error: 'unknown_provider' };
   }
 
   // Test-harness bypass: the dev-loop CLI fires synthetic webhooks at the
@@ -129,7 +141,7 @@ async function handleInboundWebhook(options: {
   const isHarnessTeam = isTestHarnessTeam(subscription.team_id);
   if (
     !isHarnessTeam &&
-    !webhookProvider.verifySignature(rawBody, signatureHeader, subscription.webhook_secret)
+    !door.verifySignature(rawBody, signatureHeader, subscription.webhook_secret)
   ) {
     logger.warn(`Webhook signature verification failed for subscription ${subscriptionId}`);
     return { ok: false, eventsProcessed: 0, error: 'signature_invalid' };
@@ -139,35 +151,20 @@ async function handleInboundWebhook(options: {
   }
 
   const body = JSON.parse(rawBody.toString('utf-8'));
-  const sub = requireSubscriptionCredentials(subscription);
-  // Provider keys are trigger-kind aliases (every provider key appears in its
-  // adapter's manifest `triggerKinds`), so the registry's own alias map is the
-  // resolver — NOT a naming convention. The old lowercase-hyphen convention
-  // silently broke INBOUND_WHATSAPP ('inbound-whatsapp' is not a registered slug),
-  // making that BYO door skip dispatch forever.
-  const adapterType = resolveAdapterSlug(sub.provider);
-
-  // Resolve the adapter once: it supplies `preprocessInbound` (the raw→events
-  // seam) and the `listEventTypes` union for discrimination.
-  const adapter = hasAdapter(adapterType)
-    ? await resolveAdapter({
-        adapterType,
-        teamId: sub.team_id as TeamId,
-        credentialsId: sub.credentials_id,
-      })
-    : null;
+  const opened = await door.open();
 
   // `Adapter.preprocessInbound` is THE raw→events seam — every provider's
   // adapter implements it (the legacy provider-side sync `parseEvents` is
   // retired). A delivery whose adapter can't preprocess is a wiring bug, and
   // the lockstep test (provider-adapter-lockstep.unit.test.ts) plus the
   // registry guarantee it can't ship — fail loudly rather than drop silently.
-  if (!adapter?.preprocessInbound) {
+  if (!opened?.adapter.preprocessInbound) {
     logger.error(
-      `[webhook] adapter for provider ${sub.provider} has no preprocessInbound — delivery dropped`,
+      `[webhook] adapter for provider ${subscription.provider} has no preprocessInbound — delivery dropped`,
     );
     return { ok: false, eventsProcessed: 0, error: 'adapter cannot preprocess inbound' };
   }
+  const { sub, adapterType, adapter } = opened;
 
   // A Telegram button tap arrives on the same webhook as every message, as a
   // `callback_query` rather than a `message`. It fires the callback it was wired
@@ -198,7 +195,7 @@ async function handleInboundWebhook(options: {
     });
   }
 
-  const extraction = await adapter.preprocessInbound({
+  const extraction = await opened.adapter.preprocessInbound({
     raw: body,
     checkpoint: sub.inbound_checkpoint ?? undefined,
   });
@@ -231,7 +228,7 @@ async function handleInboundWebhook(options: {
   const captureErrors: { event: DiscriminableEvent; error: string }[] = [];
   for (const event of events) {
     try {
-      captured.push(await captureInboundEvent({ event, subscription: sub, eventTypes }));
+      captured.push(await captureInboundEvent({ event, subscription: sub, adapterType, eventTypes }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`Webhook event capture failed:`, { event, err });
@@ -303,6 +300,83 @@ async function readDeliveryOutcome(input: {
   };
 }
 
+type SubscriptionRow = {
+  id: string;
+  team_id: string;
+  provider: string;
+  credentials_id: string | null;
+  webhook_secret: string;
+  inbound_checkpoint: unknown;
+};
+
+/** What a delivery is read with, once its subscription has named it: how its
+ *  signature is checked, and (after the check) whom it is for and the adapter
+ *  that turns it into events. */
+interface InboundDoor<S extends SubscriptionRow> {
+  verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean;
+  /** Null when no adapter can read the delivery. */
+  open(): Promise<{
+    sub: S & { credentials_id: string };
+    adapterType: string;
+    adapter: Adapter;
+  } | null>;
+}
+
+function localDoor<S extends SubscriptionRow>(provider: WebhookProvider, subscription: S): InboundDoor<S> {
+  return {
+    verifySignature: (rawBody, header, secret) => provider.verifySignature(rawBody, header, secret),
+    async open() {
+      const sub = requireSubscriptionCredentials(subscription);
+      // Provider keys are trigger-kind aliases (every provider key appears in its
+      // adapter's manifest `triggerKinds`), so the registry's own alias map is the
+      // resolver — NOT a naming convention. The old lowercase-hyphen convention
+      // silently broke INBOUND_WHATSAPP ('inbound-whatsapp' is not a registered slug),
+      // making that BYO door skip dispatch forever.
+      const adapterType = resolveAdapterSlug(sub.provider);
+      if (!hasAdapter(adapterType)) return null;
+      const adapter = await resolveAdapter({
+        adapterType,
+        teamId: sub.team_id as TeamId,
+        credentialsId: sub.credentials_id,
+      });
+      return { sub, adapterType, adapter };
+    },
+  };
+}
+
+/**
+ * A subscription a team's remote install provisioned, recognised by its
+ * provider key being the one that install mints (`webhookProviderKey`; a
+ * built-in of the same slug wins, as it does at resolution). Everything after
+ * is the ordinary path over the wire — preprocessInbound, listEventTypes and
+ * wakeKeys are RemoteAdapter forwarders. The row carries no credential of its
+ * own; the install's credential is the channel's.
+ */
+async function remoteDoor<S extends SubscriptionRow>(subscription: S): Promise<InboundDoor<S> | null> {
+  const installs = await listRemoteAdapters({ teamId: subscription.team_id as TeamId });
+  const install = installs.find(
+    (row) =>
+      !hasAdapter(row.adapter_type) &&
+      webhookProviderKey({ adapterType: row.adapter_type }) === subscription.provider,
+  );
+  if (!install) return null;
+  return {
+    verifySignature: verifyRemoteSignature,
+    async open() {
+      const credentialsId = install.credentials_id;
+      if (credentialsId === null) {
+        logger.error(`[webhook] remote adapter ${install.adapter_type} has no credential — delivery dropped`);
+        return null;
+      }
+      const adapter = await resolveAdapter({
+        adapterType: install.adapter_type,
+        teamId: subscription.team_id as TeamId,
+      });
+      return { sub: { ...subscription, credentials_id: credentialsId }, adapterType: install.adapter_type, adapter };
+    },
+  };
+}
+
 /** Inbound deliveries only exist for credentialed channels — a
  *  credential-free subscription row (the cron adapter's platform-internal
  *  registration) has no inbound URL traffic; reject loudly if one shows up. */
@@ -333,17 +407,10 @@ interface CapturedInboundEvent {
 async function captureInboundEvent(input: {
   event: DiscriminableEvent;
   subscription: { team_id: string; credentials_id: string; provider: string };
+  adapterType: string;
   eventTypes: readonly EventType[];
 }): Promise<CapturedInboundEvent> {
-  const { event, subscription, eventTypes } = input;
-  const adapterType = resolveAdapterSlug(subscription.provider);
-  if (!hasAdapter(adapterType)) {
-    logger.info(
-      `[WebhookTG] no TG adapter registered for provider ${subscription.provider}; skipping dispatch`,
-    );
-    return { event, adapterType, receipts: [] };
-  }
-
+  const { event, subscription, adapterType, eventTypes } = input;
   const receipts = await captureProviderTriggerEvents({
     event,
     subscription,
@@ -547,11 +614,13 @@ export async function captureProviderTriggerEvents(
   const { event, subscription, adapterType, matchAnyCredential } = input;
 
   // Provider key matches `automations.trigger.kind` directly (Setup writes
-  // the PipelineInputType enum value as the kind). The kinds list is
-  // single-element today; webhook subscriptions are 1:1 with a provider.
+  // the PipelineInputType enum value as the kind); webhook subscriptions are
+  // 1:1 with a provider. The adapter's own slug joins it because a remote
+  // install's listens carry its slug as their kind, and its provider key is no
+  // registry alias of that slug.
   const triggers = await findTriggersByKind({
     teamId: subscription.team_id,
-    kinds: [subscription.provider],
+    kinds: [...new Set([subscription.provider, adapterType])],
   });
   if (triggers.length === 0) return [];
 

@@ -14,3 +14,13 @@ import { apiBaseUrl } from '../../lib/api_base_url';
 export function buildWebhookTargetUrl(provider: string, subscriptionId: string): string {
   return `${apiBaseUrl()}/api/public/webhook-sync/${provider.toLowerCase()}/${subscriptionId}`;
 }
+
+/**
+ * The `webhook_subscription.provider` key an adapter's deliveries route by: its
+ * first trigger-kind alias, else its upper-cased slug. A remote install declares
+ * no aliases, so it always takes the second branch — and the webhook door finds
+ * the install again by the same rule.
+ */
+export function webhookProviderKey(manifest: { adapterType: string; triggerKinds?: readonly string[] }): string {
+  return manifest.triggerKinds?.[0] ?? manifest.adapterType.toUpperCase();
+}

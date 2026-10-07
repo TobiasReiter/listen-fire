@@ -65,6 +65,7 @@ import { startup as startBackgroundProcesses } from './startup';
 import { startEventLoopWatchdogIfEnabled } from './services/event_loop_watchdog';
 import { linkTrpcWsServer, trpcRouter } from './interfaces/trpc';
 import { webhookSyncRouter } from './interfaces/rest/webhookSync';
+import { adapterDoorsRouter } from './interfaces/rest/adapterDoors';
 import { telegramBuiltinRouter } from './interfaces/rest/telegramBuiltin';
 import { slackEventsRouter } from './interfaces/rest/slackEvents';
 import { slackInteractivityRouter } from './interfaces/rest/slackInteractivity';
@@ -146,6 +147,9 @@ async function main() {
   // parser.
   if (mounts('automations')) {
     app.use('/api/public/webhook-sync', express.raw({ type: 'application/json' }), webhookSyncRouter);
+    // A remote adapter's push doors (emit / wake) — the presented credential
+    // names the team, so they sit with the other self-authorising doors.
+    app.use('/api/public/adapter', adapterDoorsRouter);
     // Shared built-in Telegram bot — single global inbound entry, no per-team
     // subscription URL; routes by sender identity (raw body, no signature).
     app.use('/api/public/telegram', express.raw({ type: 'application/json' }), telegramBuiltinRouter);

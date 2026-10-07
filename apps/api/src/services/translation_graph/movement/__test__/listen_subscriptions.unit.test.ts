@@ -22,6 +22,7 @@ jest.mock('../../../../lib/kysely', () => {
   const tables: Record<string, Row[]> = {
     trigger: [],
     webhook_subscription: [],
+    remote_adapter: [],
   };
   const matches = (row: Row, wheres: Array<[string, string, unknown]>) =>
     wheres.every(([col, op, val]) => {
@@ -152,6 +153,7 @@ jest.mock('../../adapters/resolve', () => ({
 }));
 
 import { syncListenSubscriptions } from '../listen_subscriptions';
+import { resolveAdapter } from '../../adapters/resolve';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -298,5 +300,84 @@ describe('syncListenSubscriptions — channel identity is the resolved address',
     expect(subs[0].deleted_at).not.toBeNull();
     expect(removeCalls).toHaveLength(1);
     expect(removeCalls[0].scope).toEqual({ shelf: 'shf_north', crate: 'crt_apples' });
+  });
+});
+
+describe('syncListenSubscriptions — a remote install subscribes over the wire', () => {
+  function installRemote(): void {
+    kyselyMock.__tables.remote_adapter.push({
+      team_id: TEAM,
+      adapter_type: 'acme_crm',
+      credentials_id: 'cred-remote',
+      manifest: {
+        protocolVersion: 2,
+        adapterType: 'acme_crm',
+        baseUrl: 'http://127.0.0.1:1/',
+        authStrategy: { kind: 'bearer' },
+        supportedTriggers: ['webhook'],
+        runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
+        methods: ['preprocessInbound', 'ensureEventSubscription', 'removeEventSubscription'],
+      },
+    });
+  }
+
+  function remoteListen(events?: string[]): Record<string, unknown> {
+    return {
+      id: 'trg-remote',
+      team_id: TEAM,
+      name: 'crm listen',
+      kind: 'acme_crm',
+      credentials_id: null,
+      movement_id: 'mov-1',
+      config: events !== undefined ? { events } : {},
+      resolved_address: null,
+      run_mode: 'live',
+    };
+  }
+
+  it("provisions a channel under the install's provider key, passing the listen's events through", async () => {
+    installRemote();
+    kyselyMock.__tables.trigger.push(remoteListen(['company.created']));
+
+    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(notes).toEqual([]);
+    const [sub] = kyselyMock.__tables.webhook_subscription;
+    expect(sub).toMatchObject({
+      provider: 'ACME_CRM',
+      credentials_id: null,
+      status: 'active',
+      external_webhook_id: 'wh-1',
+      webhook_secret: 'secret-1',
+    });
+    expect(ensureCalls).toHaveLength(1);
+    expect(ensureCalls[0].events).toEqual(['company.created']);
+    expect(ensureCalls[0].callbackUrl).toMatch(/\/api\/public\/webhook-sync\/acme_crm\//);
+    expect(resolveAdapter).toHaveBeenCalledWith({ adapterType: 'acme_crm', teamId: TEAM });
+  });
+
+  it('a listen with no events selection subscribes to everything (an empty list)', async () => {
+    installRemote();
+    kyselyMock.__tables.trigger.push(remoteListen());
+
+    await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(ensureCalls).toHaveLength(1);
+    expect(ensureCalls[0].events).toEqual([]);
+  });
+
+  it("tears the channel down through the install, mapping its provider key back to the install's slug", async () => {
+    installRemote();
+    kyselyMock.__tables.trigger.push(remoteListen(['company.created']));
+    await syncListenSubscriptions({ teamId: TEAM });
+    (resolveAdapter as jest.Mock).mockClear();
+
+    kyselyMock.__tables.trigger.length = 0;
+    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(notes).toEqual([]);
+    expect(removeCalls).toHaveLength(1);
+    expect(resolveAdapter).toHaveBeenCalledWith({ adapterType: 'acme_crm', teamId: TEAM });
+    expect(kyselyMock.__tables.webhook_subscription[0].deleted_at).not.toBeNull();
   });
 });

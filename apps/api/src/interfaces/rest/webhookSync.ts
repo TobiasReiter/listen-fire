@@ -5,6 +5,7 @@ import { handleInboundWebhook } from '../../services/webhook_sync/handler';
 import { logger } from '../../services/logger';
 import { notifyWork } from '../../services/work/drain';
 import { runHarnessDelivery } from '../../services/work/harness';
+import { REMOTE_SIGNATURE_HEADER } from '../../services/webhook_sync/remote_inbound';
 
 const webhookSyncRouter: ReturnType<typeof Router> = Router();
 
@@ -45,7 +46,9 @@ webhookSyncRouter.post(
             (req.headers['x-signature'] as string) ??
             (req.headers['x-webhook-signature'] as string) ??
             '')
-          : ((req.headers['attio-signature'] as string) ??
+          : // A remote adapter's subscription signs in the protocol's own header.
+            ((req.headers[REMOTE_SIGNATURE_HEADER] as string) ??
+            (req.headers['attio-signature'] as string) ??
             (req.headers['x-attio-signature'] as string) ??
             // Airtable signs with `X-Airtable-Content-MAC: hmac-sha256=<hex>`.
             (req.headers['x-airtable-content-mac'] as string) ??
