@@ -61,7 +61,7 @@ pub unsafe extern "C" fn parse_program(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let parsed = unsafe { utf8(src_ptr, src_len) }.and_then(|src| crate::parse_program(src, version));
+    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_program(src, version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn parse_program_eager(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let parsed = unsafe { utf8(src_ptr, src_len) }.and_then(|src| crate::parse_program_eager(src, version));
+    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_program_eager(src, version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn parse_expression(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let parsed = unsafe { utf8(src_ptr, src_len) }.and_then(|src| crate::parse_expression(src, version));
+    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_expression(src, version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn parse_nested_call(
 ) -> u32 {
     install_panic_hook();
     let call = NestedCall { at_start, at_end, origin_line, origin_col, version };
-    let parsed = unsafe { utf8(raw_ptr, raw_len) }.and_then(|raw| crate::parse_nested_call(raw, &call));
+    let parsed = unsafe { utf8(raw_ptr, raw_len, "source") }.and_then(|raw| crate::parse_nested_call(raw, &call));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -161,7 +161,7 @@ unsafe fn lower(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let inputs = unsafe { utf8(tree.0, tree.1) }.and_then(|tree| Ok((tree, unsafe { utf8(src.0, src.1) }?)));
+    let inputs = unsafe { utf8(tree.0, tree.1, "the tree") }.and_then(|tree| Ok((tree, unsafe { utf8(src.0, src.1, "source") }?)));
     let (status, bytes) = match inputs {
         Ok((tree, source)) => match lowering::lower_json_bytes(tree, source, mode) {
             Ok(bytes) => (OK, bytes),
@@ -195,8 +195,8 @@ pub unsafe extern "C" fn catalog_query(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let inputs = unsafe { utf8(snapshot_ptr, snapshot_len) }
-        .and_then(|snapshot| Ok((snapshot, unsafe { utf8(query_ptr, query_len) }?)));
+    let inputs = unsafe { utf8(snapshot_ptr, snapshot_len, "the snapshot") }
+        .and_then(|snapshot| Ok((snapshot, unsafe { utf8(query_ptr, query_len, "the query") }?)));
     let (status, bytes) = match inputs {
         Ok((snapshot, query)) => match crate::catalog::query::query_json(snapshot, query) {
             Ok(bytes) => (OK, bytes),
@@ -267,10 +267,11 @@ pub unsafe extern "C" fn last_panic(out_ptr_ptr: *mut usize, out_len_ptr: *mut u
     }
 }
 
-unsafe fn utf8<'a>(ptr: *const u8, len: u32) -> Result<&'a str, serde_json::Value> {
+/// `what` names the input in the refusal, where an export takes more than one.
+unsafe fn utf8<'a>(ptr: *const u8, len: u32, what: &str) -> Result<&'a str, serde_json::Value> {
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
     std::str::from_utf8(bytes).map_err(|e| {
-        json!({ "message": "source is not valid UTF-8", "pos": e.valid_up_to() })
+        json!({ "message": format!("{what} is not valid UTF-8"), "pos": e.valid_up_to() })
     })
 }
 
@@ -428,7 +429,7 @@ mod tests {
         assert_eq!(status, ERROR);
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            r#"{"error":{"class":"MalformedTree","message":"source is not valid UTF-8","pos":1}}"#
+            r#"{"error":{"class":"MalformedTree","message":"the tree is not valid UTF-8","pos":1}}"#
         );
     }
 

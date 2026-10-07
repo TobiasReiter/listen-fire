@@ -331,3 +331,51 @@ fn a_query_answers_a_value_or_nothing() {
     let refused = query(&json!({ "adapters": {} }), json!({ "op": "adapter", "name": "x" })).unwrap_err();
     assert!(refused["error"]["message"].as_str().unwrap().starts_with("the snapshot does not read"));
 }
+
+// ── Depth ──
+
+/// A field type `n` levels of `list of` deep, as text.
+fn nested_list(n: usize) -> String {
+    format!("{}\"text\"{}", r#"{"kind":"list","of":"#.repeat(n), "}".repeat(n))
+}
+
+/// A snapshot whose one property is typed `nested_list(n)`; its JSON nests
+/// eight levels above the type.
+fn deep_snapshot(n: usize) -> String {
+    format!(
+        r#"{{"adapters":{{"a":{{"constructionArgs":[],"schemas":{{"":{{"positions":{{"p":{{"properties":{{"f":{}}},"edges":{{}}}}}},"collections":{{}},"writableRoots":{{}}}}}}}}}},"credentials":{{}},"plugins":{{}}}}"#,
+        nested_list(n)
+    )
+}
+
+#[test]
+fn catalog_json_is_bounded_well_inside_the_stack() {
+    use super::types::MAX_CATALOG_DEPTH;
+    let limit = MAX_CATALOG_DEPTH - 8;
+    assert!(CatalogSnapshot::load(&deep_snapshot(limit)).is_ok());
+    assert_eq!(
+        CatalogSnapshot::load(&deep_snapshot(limit + 1)).unwrap_err(),
+        format!("it nests deeper than {MAX_CATALOG_DEPTH} levels")
+    );
+    let describe = |n: usize| {
+        let q = format!(r#"{{"op":"helper","name":"describeFieldType","args":[{}]}}"#, nested_list(n));
+        query_json("", &q).map(|b| String::from_utf8(b).unwrap()).map_err(|b| String::from_utf8(b).unwrap())
+    };
+    assert!(describe(MAX_CATALOG_DEPTH).is_ok());
+    assert_eq!(
+        describe(MAX_CATALOG_DEPTH + 1).unwrap_err(),
+        format!(r#"{{"error":{{"message":"the type does not read: it nests deeper than {MAX_CATALOG_DEPTH} levels"}}}}"#)
+    );
+    // A refinement's filter is a lowered expression, held to the deeper bound.
+    let filter = format!("{}1{}", "[".repeat(1_000), "]".repeat(1_000));
+    let q = format!(r#"{{"op":"helper","name":"refinementKey","args":[{{"type":"T","filter":{filter}}}]}}"#);
+    assert!(query_json("", &q).is_ok());
+}
+
+#[test]
+fn either_credential_form_refuses_a_member_it_does_not_declare() {
+    for credential in [json!({ "adapters": ["a"], "extra": 1 }), json!({ "adapter": "a", "extra": 1 })] {
+        let snapshot = json!({ "adapters": {}, "credentials": { "c": credential }, "plugins": {} });
+        assert!(CatalogSnapshot::load(&snapshot.to_string()).is_err(), "{credential}");
+    }
+}

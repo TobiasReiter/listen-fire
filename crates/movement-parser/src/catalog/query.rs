@@ -13,7 +13,7 @@ use serde_json::value::RawValue;
 
 use super::helpers;
 use super::snapshot::{Args, instance_schema_key};
-use super::types::{CatalogSnapshot, ConstructionArg, FieldType, InstanceSchema};
+use super::types::{CatalogSnapshot, ConstructionArg, FieldType, InstanceSchema, read_catalog};
 use crate::util::json::from_json;
 
 #[derive(Deserialize)]
@@ -67,7 +67,14 @@ fn required<'q>(v: &'q Option<String>, key: &str) -> Result<&'q str, String> {
     v.as_deref().ok_or_else(|| format!("the query has no string `{key}`"))
 }
 
+/// A catalog argument from its text, bounded by `MAX_CATALOG_DEPTH`.
 fn decode<'a, T: Deserialize<'a>>(raw: &'a RawValue, what: &str) -> Result<T, String> {
+    read_catalog(raw.get()).map_err(|e| format!("{what} does not read: {e}"))
+}
+
+/// A refinement's filter: a lowered expression, as deep as a chain may make
+/// one, read as a `Value` (whose read a deeper bound suits).
+fn decode_value(raw: &RawValue, what: &str) -> Result<Value, String> {
     from_json(raw.get()).map_err(|e| format!("{what} does not read: {e}"))
 }
 
@@ -123,7 +130,8 @@ struct SchemaKeyInput {
 fn helper(query: &Query) -> Answer {
     let name = required(&query.name, "name")?;
     let raw = query.args.ok_or("a helper query has `args`")?;
-    let args: Vec<&RawValue> = decode(raw, "the helper's arguments")?;
+    // The list itself at the deeper bound: a refinement's filter rides in it.
+    let args: Vec<&RawValue> = from_json(raw.get()).map_err(|e| format!("the helper's arguments do not read: {e}"))?;
     let null = RawValue::NULL;
     let arg = |i: usize| args.get(i).copied().unwrap_or(null);
     let text = |i: usize| decode::<Option<String>>(arg(i), "a text argument");
@@ -132,8 +140,9 @@ fn helper(query: &Query) -> Answer {
         "describeFieldType" => Ok(Some(value(helpers::describe_field_type(&decode::<FieldType>(arg(0), "the type")?)?))),
         "variantOf" => Ok(Some(value(helpers::variant_of(&decode::<FieldType>(arg(0), "the type")?)))),
         "refinementKey" => {
-            let input: Refinement = decode(arg(0), "the refinement")?;
-            let filter: Value = decode(input.filter, "the filter")?;
+            let input: Refinement =
+                from_json(arg(0).get()).map_err(|e| format!("the refinement does not read: {e}"))?;
+            let filter = decode_value(input.filter, "the filter")?;
             Ok(Some(value(helpers::refinement_key(&input.type_, &filter))))
         }
         "borrowedTypeSegments" => some(helpers::borrowed_type_segments(text(0)?.as_deref())),
@@ -143,7 +152,7 @@ fn helper(query: &Query) -> Answer {
             some(helpers::resolve_borrowed_field(&schema, &root, &field))
         }
         "declaredTypesIn" => {
-            let program: Value = decode(arg(0), "the program")?;
+            let program = decode_value(arg(0), "the program")?;
             Ok(Some(value(helpers::declared_types_in(&program)?.into_iter().collect::<Vec<_>>())))
         }
         "credentialArgOf" => {

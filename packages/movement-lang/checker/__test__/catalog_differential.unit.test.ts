@@ -21,16 +21,29 @@ import { checkNow, loadChecks, SNAPSHOT_TABLE } from './checks_fixture';
 declare const process: { env: Record<string, string | undefined> };
 declare const console: { log(...args: unknown[]): void };
 
-/** A call's arguments or answer that cannot cross to Rust as JSON: a record
- *  type's position (the typing layer's, with sets and instance tokens) —
- *  describing one is the typing port's. Counted, not compared. */
-class Untransferable extends Error {}
+/** Why a call's arguments or answer cannot cross to Rust as JSON. */
+type Exclusion = 'a record carrying a position' | 'a Set' | 'a Map' | 'a function';
+
+/** The one exclusion expected: a record type's position is the typing
+ *  layer's `PositionTypeRef` (sets, instance tokens), and describing one is
+ *  the typing port's. Those calls are not covered here: they are covered by
+ *  the conformance corpus (checks.json) once the typing layer is in Rust.
+ *  Any other reason fails the test. */
+const EXPECTED_EXCLUSION: Exclusion = 'a record carrying a position';
+
+class Untransferable extends Error {
+  constructor(readonly reason: Exclusion) {
+    super(reason);
+  }
+}
 
 function transferable(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) => {
-    if (v instanceof Set || v instanceof Map || typeof v === 'function') throw new Untransferable();
+    if (v instanceof Set) throw new Untransferable('a Set');
+    if (v instanceof Map) throw new Untransferable('a Map');
+    if (typeof v === 'function') throw new Untransferable('a function');
     if (typeof v === 'object' && v !== null && 'kind' in v && v.kind === 'record' && 'position' in v && v.position !== undefined) {
-      throw new Untransferable();
+      throw new Untransferable(EXPECTED_EXCLUSION);
     }
     return v;
   }) ?? 'null';
@@ -50,6 +63,7 @@ interface Call {
   answer: string;
 }
 
+/** `untransferable`: excluded calls, by `helper: reason`. */
 const mockRecorder: { on: boolean; record(call: Call): void; untransferable: Map<string, number> } = {
   on: false,
   record: () => undefined,
@@ -63,7 +77,8 @@ function mockRecordHelper(name: string, args: unknown[], result: unknown): void 
     mockRecorder.record({ snapshot: '', query, answer: envelope(result) });
   } catch (e) {
     if (!(e instanceof Untransferable)) throw e;
-    mockRecorder.untransferable.set(name, (mockRecorder.untransferable.get(name) ?? 0) + 1);
+    const key = `${name}: ${e.reason}`;
+    mockRecorder.untransferable.set(key, (mockRecorder.untransferable.get(key) ?? 0) + 1);
   }
 }
 
@@ -143,6 +158,29 @@ function rustAnswer(snapshotJson: string, query: string): string {
   return ok ? JSON.stringify(json) : `REFUSED ${JSON.stringify(json)}`;
 }
 
+/** The fewest distinct calls compared, per lookup and helper (counts on
+ *  2026-10-07 in comments). `unionDisplay` is never called by the checker. */
+const COMPARED_AT_LEAST: Record<string, number> = {
+  instantiate: 250, // 299
+  adapter: 300, // 355
+  credential: 200, // 237
+  plugin: 60, // 75
+  credentialNames: 2, // 3
+  constructionArgOptions: 2, // 3
+  models: 1, // 1
+  'helper:declaredTypesIn': 2_000, // 2,697
+  'helper:resolveBorrowedField': 1_000, // 1,227
+  'helper:credentialArgOf': 150, // 207
+  'helper:entryPositionKeyOf': 150, // 194
+  'helper:variantOf': 150, // 193
+  'helper:describeFieldType': 40, // 51
+  'helper:parseFieldTypeName': 30, // 38
+  'helper:borrowedTypeSegments': 15, // 23
+  'helper:refinementKey': 15, // 19
+  'helper:unionVariants': 10, // 12
+  'helper:unionKey': 4, // 5
+};
+
 const differential = process.env.MOVEMENT_CATALOG_DIFFERENTIAL ? describe : describe.skip;
 
 differential('the Rust catalog, against the TypeScript one, over the checker corpus', () => {
@@ -212,12 +250,17 @@ differential('the Rust catalog, against the TypeScript one, over the checker cor
       const rsOrder = dataKeyOrders(rs).sort().join('\n');
       if (tsOrder !== rsOrder) diffs.push(`${name} ${call.query.slice(0, 200)}: key order ts ${tsOrder.slice(0, 300)} | rust ${rsOrder.slice(0, 300)}`);
     }
+    const excluded = [...mockRecorder.untransferable];
     console.log(
       `catalog differential: ${calls.size} distinct calls — ${[...counts].sort().map(([k, n]) => `${k} ${n}`).join(', ')}; ` +
-        `untransferable (typing-layer record positions): ${[...mockRecorder.untransferable].map(([k, n]) => `${k} ${n}`).join(', ') || 'none'}; ` +
+        `excluded: ${excluded.map(([k, n]) => `${k} ×${n}`).join(', ') || 'none'}; ` +
         `${diffs.length} diffs`,
     );
-    expect(counts.get('instantiate') ?? 0).toBeGreaterThan(0);
     expect(diffs.slice(0, 20)).toEqual([]);
+    expect(excluded.filter(([key]) => !key.endsWith(`: ${EXPECTED_EXCLUSION}`))).toEqual([]);
+    // Coverage floors, well under the counts of 2026-10-07: a collapse in what
+    // the corpus exercises fails here rather than passing on nothing.
+    const shortfalls = Object.entries(COMPARED_AT_LEAST).filter(([name, floor]) => (counts.get(name) ?? 0) < floor);
+    expect(shortfalls.map(([name, floor]) => `${name}: ${counts.get(name) ?? 0} < ${floor}`)).toEqual([]);
   });
 });

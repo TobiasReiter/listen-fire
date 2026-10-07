@@ -19,6 +19,18 @@ use serde_json::Value;
 use crate::tree::JsNumber;
 use crate::util::js::object_key_order;
 
+/// How deep catalog JSON may nest. The typed read tries a field type's
+/// variants one by one at every level, which costs far more stack per level
+/// than a `Value`'s read: about 1,800 levels of `list of` exhausted Node's
+/// stack in the WASM (measured 2026-10-07). Real catalog data is a dozen
+/// levels deep.
+pub const MAX_CATALOG_DEPTH: usize = 256;
+
+/// Catalog data from its text, its nesting bounded by `MAX_CATALOG_DEPTH`.
+pub fn read_catalog<'a, T: Deserialize<'a>>(json: &'a str) -> Result<T, String> {
+    crate::util::json::from_json_within(json, MAX_CATALOG_DEPTH)
+}
+
 /// An object keyed by data, in JavaScript's key order: array-index keys
 /// first, ascending, then the rest as written — the order `JSON.parse` gives
 /// the TypeScript and every `Object.keys`/`Object.entries` over it sees.
@@ -596,7 +608,7 @@ impl<'de> Deserialize<'de> for AdapterSnapshot {
         // Raw, so every member's maps keep the order the text has them in.
         let mut members = IndexMap::<String, Box<RawValue>>::deserialize(deserializer)?;
         fn read<T: serde::de::DeserializeOwned, E: Error>(raw: Box<RawValue>) -> Result<T, E> {
-            crate::util::json::from_json(raw.get()).map_err(E::custom)
+            read_catalog(raw.get()).map_err(E::custom)
         }
         let schemas = members.shift_remove("schemas").ok_or_else(|| D::Error::missing_field("schemas"))?;
         let schema_notes = members.shift_remove("schemaNotes");
@@ -609,18 +621,24 @@ impl<'de> Deserialize<'de> for AdapterSnapshot {
             schemas: read(schemas)?,
             schema_notes: schema_notes.map(read).transpose()?,
             construction_arg_options: construction_arg_options.map(read).transpose()?,
-            spec: crate::util::json::from_json(&format!("{{{}}}", spec.join(","))).map_err(D::Error::custom)?,
+            spec: read_catalog(&format!("{{{}}}", spec.join(","))).map_err(D::Error::custom)?,
         })
     }
 }
 
 /// A snapshot's credential: the multi-adapter form, or the legacy
-/// single-adapter one.
+/// single-adapter one. Each form refuses members it does not declare.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SnapshotCredential {
-    Adapters { adapters: Vec<String> },
-    Adapter { adapter: String },
+    Adapters(CredentialSpec),
+    Adapter(LegacyCredential),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LegacyCredential {
+    pub adapter: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

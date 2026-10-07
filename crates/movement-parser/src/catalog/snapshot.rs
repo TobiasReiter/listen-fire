@@ -11,7 +11,7 @@ impl CatalogSnapshot {
     /// member the TypeScript does not declare included, and a schema field
     /// typed with what only the checker's typing builds.
     pub fn load(json: &str) -> Result<CatalogSnapshot, String> {
-        let snapshot: CatalogSnapshot = crate::util::json::from_json(json)?;
+        let snapshot: CatalogSnapshot = super::types::read_catalog(json)?;
         snapshot.check_schema_types()?;
         Ok(snapshot)
     }
@@ -45,8 +45,8 @@ impl CatalogSnapshot {
     /// `credential(name)`, the legacy single-adapter form normalised.
     pub fn credential(&self, name: &str) -> Option<CredentialSpec> {
         Some(match self.credentials.get(name)? {
-            SnapshotCredential::Adapters { adapters } => CredentialSpec { adapters: adapters.clone() },
-            SnapshotCredential::Adapter { adapter } => CredentialSpec { adapters: vec![adapter.clone()] },
+            SnapshotCredential::Adapters(spec) => spec.clone(),
+            SnapshotCredential::Adapter(legacy) => CredentialSpec { adapters: vec![legacy.adapter.clone()] },
         })
     }
 

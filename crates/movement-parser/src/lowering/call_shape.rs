@@ -140,33 +140,41 @@ fn validate_options(fn_: &str, args: &[Expression]) -> Result<(), LoweringRefusa
         }
     }
 
-    if let Some(disagreement) = spec.agree.and_then(|rule| agree(rule, &literals)) {
+    if let Some(rule) = spec.agree
+        && let Some(disagreement) = agree(rule, &literals)?
+    {
         return refuse(format!("{}: {disagreement}", spec.signature));
     }
     Ok(())
 }
 
-/// The cross-option rules, by the name vocabulary.json gives each.
-fn agree(rule: &str, literals: &Literals) -> Option<String> {
+/// The cross-option rules, by the name lowering/vocabulary/data.rs gives
+/// each. A name it carries no rule for is refused, never a panic: the data is
+/// generated, and a rule added on the TypeScript side lands there first.
+fn agree(rule: &str, literals: &Literals) -> Result<Option<String>, LoweringRefusal> {
     match rule {
-        // CHUNKS: an overlap under the size, when both are written as numbers.
-        "chunks" => {
-            let number = |key| match literals.get(key) {
-                Some(StaticValue::Number(n)) => Some(n.0),
-                _ => None,
-            };
-            let (size, overlap) = (number("size")?, number("overlap")?);
-            if overlap < size {
-                return None;
-            }
-            Some(format!(
-                "an overlap of {} is not smaller than a size of {} — each piece would repeat the whole of the one before it and the text would never advance",
-                number_to_string(overlap),
-                number_to_string(size)
-            ))
-        }
-        other => panic!("vocabulary.json names a cross-option rule the lowering does not carry: {other}"),
+        "chunks" => Ok(chunks_overlap(literals)),
+        other => Err(LoweringRefusal::new(format!(
+            "lowering/vocabulary/data.rs names the cross-option rule `{other}`, which the lowering does not carry"
+        ))),
     }
+}
+
+/// CHUNKS: an overlap under the size, when both are written as numbers.
+fn chunks_overlap(literals: &Literals) -> Option<String> {
+    let number = |key| match literals.get(key) {
+        Some(StaticValue::Number(n)) => Some(n.0),
+        _ => None,
+    };
+    let (size, overlap) = (number("size")?, number("overlap")?);
+    if overlap < size {
+        return None;
+    }
+    Some(format!(
+        "an overlap of {} is not smaller than a size of {} — each piece would repeat the whole of the one before it and the text would never advance",
+        number_to_string(overlap),
+        number_to_string(size)
+    ))
 }
 
 fn validate_literal_option(spec: &OptionsContract, option: &OptionSpec, value: &Expression) -> Result<(), LoweringRefusal> {
@@ -229,6 +237,7 @@ fn edit_distance_at_most_one(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lowering::vocabulary::vocabulary;
 
     #[test]
     fn a_near_miss_is_named() {
@@ -237,5 +246,16 @@ mod tests {
         assert_eq!(did_you_mean("zzz", &["size", "overlap"]), "");
         assert!(edit_distance_at_most_one("size", "siz"));
         assert!(!edit_distance_at_most_one("size", "sz"));
+    }
+
+    #[test]
+    fn every_cross_option_rule_the_vocabulary_names_is_carried() {
+        for contract in vocabulary().options {
+            if let Some(rule) = contract.agree {
+                assert!(agree(rule, &Literals::new()).is_ok(), "{} names `{rule}`", contract.fn_);
+            }
+        }
+        let refused = agree("nope", &Literals::new()).unwrap_err();
+        assert!(refused.message.contains("lowering/vocabulary/data.rs") && refused.message.contains("`nope`"));
     }
 }

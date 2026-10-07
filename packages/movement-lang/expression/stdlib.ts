@@ -296,7 +296,7 @@ export interface BuiltinOptionsSpec {
    * it reads the LITERAL value of each key, absent where the author wrote an
    * expression, and answers with the sentence to refuse the call with.
    */
-  agree?: string;
+  agree?: 'chunks';
   /**
    * Options that are two answers to ONE question (`size` and `entities` both
    * say how big a piece is): exactly one of them is written, and neither

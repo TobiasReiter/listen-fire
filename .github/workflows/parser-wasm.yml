@@ -21,6 +21,7 @@ on:
       - "rust-toolchain.toml"
       - "scripts/build-parser-wasm.sh"
       - "packages/movement-lang/**"
+      - "packages/shared/expression/**"
       - ".github/workflows/parser-wasm.yml"
   push:
     branches:
@@ -32,6 +33,7 @@ on:
       - "rust-toolchain.toml"
       - "scripts/build-parser-wasm.sh"
       - "packages/movement-lang/**"
+      - "packages/shared/expression/**"
       - ".github/workflows/parser-wasm.yml"
 
 permissions:

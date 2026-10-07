@@ -23,8 +23,14 @@ pub fn read_bounded(json: &str) -> Result<Value, String> {
 
 /// `json` as a `T`, refused when it nests past `MAX_DEPTH`.
 pub fn from_json<'a, T: Deserialize<'a>>(json: &'a str) -> Result<T, String> {
-    if depth_exceeds(json.as_bytes(), MAX_DEPTH) {
-        return Err(format!("it nests deeper than {MAX_DEPTH} levels"));
+    from_json_within(json, MAX_DEPTH)
+}
+
+/// `json` as a `T`, refused when it nests past `limit`: a type whose read
+/// costs more stack per level than a `Value`'s needs a lower bound.
+pub fn from_json_within<'a, T: Deserialize<'a>>(json: &'a str, limit: usize) -> Result<T, String> {
+    if depth_exceeds(json.as_bytes(), limit) {
+        return Err(format!("it nests deeper than {limit} levels"));
     }
     let mut de = serde_json::Deserializer::from_str(json);
     de.disable_recursion_limit();
