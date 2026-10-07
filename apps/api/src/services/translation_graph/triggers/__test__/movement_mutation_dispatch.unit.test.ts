@@ -118,7 +118,7 @@ jest.mock('../../movement/store', () => ({
   getMovementRow: jest.fn(),
 }));
 jest.mock('../../movement/catalog', () => ({
-  movementCatalogSnapshotForTeam: jest.fn(),
+  runCatalogSnapshotForTeam: jest.fn(),
 }));
 
 // The team-Context seam a background firing runs inside — pass-through here;
@@ -153,8 +153,8 @@ const { findTriggersByKind } = jest.requireMock('../../storage/tg_table') as {
 const { getMovementRow } = jest.requireMock('../../movement/store') as {
   getMovementRow: jest.Mock;
 };
-const { movementCatalogSnapshotForTeam } = jest.requireMock('../../movement/catalog') as {
-  movementCatalogSnapshotForTeam: jest.Mock;
+const { runCatalogSnapshotForTeam } = jest.requireMock('../../movement/catalog') as {
+  runCatalogSnapshotForTeam: jest.Mock;
 };
 const { resolveAdapter } = jest.requireMock('../../adapters/resolve') as {
   resolveAdapter: jest.Mock;
@@ -417,7 +417,7 @@ describe('dispatchMutationEvent → movement firings (a graph listen, end to end
         updatedAt: new Date(),
       };
     });
-    movementCatalogSnapshotForTeam.mockResolvedValue({
+    runCatalogSnapshotForTeam.mockResolvedValue({
       snapshot: mockCatalogSnapshot({
         adapters: {
           attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }]},

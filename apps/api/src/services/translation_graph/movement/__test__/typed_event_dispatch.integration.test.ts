@@ -8,7 +8,7 @@
 // firing + recorder, read back exactly as the agent surface does.
 //
 // The two NETWORK seams a bare test DB can't stand up are mocked (and ONLY
-// those): the catalog's live adapter introspection (`movementCatalogSnapshotForTeam`)
+// those): the catalog's live adapter introspection (`runCatalogSnapshotForTeam`)
 // and adapter I/O (`resolveAdapter`). Everything else — dispatch gates, the
 // firing, the run recorder, the engine seed/narrow/traverse — runs for real.
 
@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 
 jest.mock('../catalog', () => {
   const actual = jest.requireActual('../catalog');
-  return { ...actual, movementCatalogSnapshotForTeam: jest.fn() };
+  return { ...actual, runCatalogSnapshotForTeam: jest.fn() };
 });
 jest.mock('../../adapters/resolve', () => {
   const actual = jest.requireActual('../../adapters/resolve');
@@ -34,7 +34,7 @@ import type { PipelineConfigurationId } from '../../../../generated/kysely/publi
 import { dispatchTriggerByIdEvent } from '../../triggers/router';
 import { inspectMovementRun, listMovementRuns } from '../run_now';
 import {
-  movementCatalogSnapshotForTeam,
+  runCatalogSnapshotForTeam,
   snapshotOverManifests,
   staticCatalogFromManifests,
 } from '../catalog';
@@ -49,7 +49,7 @@ import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'm
 import { eventAddressKey } from 'movement-lang';
 import type { TriggerEvent } from '../../triggers/types';
 
-const mockedCatalog = movementCatalogSnapshotForTeam as jest.Mock;
+const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
 
 const COMPANIES_OBJECT_ID = 'obj-companies';

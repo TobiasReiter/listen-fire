@@ -1045,12 +1045,6 @@ export interface TeamCatalogSnapshot {
      * identical in the diagnostics, which is why it must be said out loud.
      */
     gaps?: CatalogGap[];
-    /**
-     * Credential import name → `external_service_credentials.id`. Beside the
-     * snapshot, never in it: the snapshot is what the engine and the browser
-     * read, and credentials stay with the host that resolves adapters.
-     */
-    credentialIds: Record<string, string>;
 }
 export interface DescribedInstance {
     /** Null when the pair can't be introspected — the instance stays
@@ -10434,7 +10428,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 _input_out: typeof _trpc_server.unsetMarker;
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
-            }, Omit<TeamCatalogSnapshot, "credentialIds">>;
+            }, TeamCatalogSnapshot>;
             catalogForSource: _trpc_server.BuildProcedure<"mutation", {
                 _config: _trpc_server.RootConfig<{
                     ctx: {
@@ -10460,7 +10454,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 };
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
-            }, Omit<TeamCatalogSnapshot, "credentialIds">>;
+            }, TeamCatalogSnapshot>;
             describeInstance: _trpc_server.BuildProcedure<"query", {
                 _config: _trpc_server.RootConfig<{
                     ctx: {

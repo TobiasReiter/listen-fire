@@ -37,7 +37,7 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import { TriggerRunRecorder, type TriggerRunTriggerType } from '../runs/trigger_run';
 import type { TriggerEvent } from '../triggers/types';
-import { movementCatalogSnapshotForTeam } from './catalog';
+import { runCatalogSnapshotForTeam } from './catalog';
 import { getMovementRow, recordValidityOutcome, type MovementRow } from './store';
 import { assessMovementValidity, validateMovementForTeam } from './authoring';
 import { movementSourceHash } from './version_store';
@@ -82,7 +82,7 @@ async function interpretMovementFiring(input: {
    *  publish the trace WHILE the run is going, not only once it settles. */
   trace?: MovementTraceEntry[];
 }): Promise<MovementRunResult> {
-  const teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
+  const teamCatalog = await runCatalogSnapshotForTeam(input.teamId, {
     source: input.movementRow.source,
     languageVersion: input.movementRow.languageVersion,
   });
@@ -492,7 +492,7 @@ async function resumeMovementFiringInContext(
   const cancelGate = makeDbCancelGate(recorder.triggerRunId);
   try {
     const languageVersion = input.pinnedLanguageVersion;
-    const teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
+    const teamCatalog = await runCatalogSnapshotForTeam(input.teamId, {
       source: input.pinnedSource,
       languageVersion,
     });
@@ -708,7 +708,7 @@ async function fireCallbackFiringInContext(
   const cancelGate = makeDbCancelGate(recorder.triggerRunId);
   try {
     const languageVersion = input.pinnedLanguageVersion;
-    const teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
+    const teamCatalog = await runCatalogSnapshotForTeam(input.teamId, {
       source: input.pinnedSource,
       languageVersion,
     });

@@ -8,7 +8,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 
 jest.mock('../../translation_graph/movement/catalog', () => {
   const actual = jest.requireActual('../../translation_graph/movement/catalog');
-  return { ...actual, movementCatalogSnapshotForTeam: jest.fn() };
+  return { ...actual, runCatalogSnapshotForTeam: jest.fn() };
 });
 jest.mock('../../translation_graph/adapters/resolve', () => {
   const actual = jest.requireActual('../../translation_graph/adapters/resolve');
@@ -47,7 +47,7 @@ import type { PipelineConfigurationId } from '../../../generated/kysely/public/P
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
-import { movementCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { runCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { resumeMovementFiring } from '../../translation_graph/movement/execute';
 import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/router';
@@ -65,7 +65,7 @@ import { logger } from '../../logger';
 import { runHarnessDelivery } from '../../work/harness';
 import { claimDueWork, completeWork } from '../../work/store';
 
-const mockedCatalog = movementCatalogSnapshotForTeam as jest.Mock;
+const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
 const mockedResume = resumeMovementFiring as jest.Mock;
 const mockedDispatch = dispatchTriggerByIdEvent as jest.Mock;

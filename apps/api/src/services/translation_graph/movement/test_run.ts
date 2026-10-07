@@ -27,7 +27,7 @@ import { resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
 import type { TriggerEvent } from '../triggers/types';
 import { loadTriggerById } from '../storage/tg_table';
-import { movementCatalogSnapshotForTeam } from './catalog';
+import { runCatalogSnapshotForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';
 import { inMemoryRawTextStore } from './raw_text_store';
 import { InMemoryWriteLocks } from '../../write_locks/write_locks';
@@ -146,9 +146,9 @@ export async function runMovementTestRun(
     occurredAt: new Date().toISOString(),
   };
 
-  let teamCatalog: Awaited<ReturnType<typeof movementCatalogSnapshotForTeam>>;
+  let teamCatalog: Awaited<ReturnType<typeof runCatalogSnapshotForTeam>>;
   try {
-    teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
+    teamCatalog = await runCatalogSnapshotForTeam(input.teamId, {
       source: movementRow.source,
       languageVersion: movementRow.languageVersion,
     });

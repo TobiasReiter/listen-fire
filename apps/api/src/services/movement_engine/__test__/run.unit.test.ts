@@ -4406,6 +4406,26 @@ describe('sleep — durable timer park', () => {
       });
     });
 
+    it('fails the resume when the adapter is no longer installed', async () => {
+      const state = await parkedStateWith({ name: 'held', adapterSlug: 'retired_crm' });
+      const failure = await rejectionCause(resume(state));
+      expect(failure).toBeInstanceOf(MovementEngineError);
+      expect(failure).toMatchObject({
+        code: 'MOVENG_RUNTIME',
+        message: 'MOVENG_RUNTIME: instance retired_crm() is not in the catalog snapshot',
+      });
+    });
+
+    it('fails the resume when the credential now serves another adapter', async () => {
+      const state = await parkedStateWith({ name: 'held', adapterSlug: 'attio', credentialName: 'dev_slack' });
+      const failure = await rejectionCause(resume(state));
+      expect(failure).toBeInstanceOf(MovementEngineError);
+      expect(failure).toMatchObject({
+        code: 'MOVENG_RUNTIME',
+        message: 'MOVENG_RUNTIME: instance attio(credentials: dev_slack) is not in the catalog snapshot',
+      });
+    });
+
     it('resumes as before when the snapshot holds it', async () => {
       const state = await parkedStateWith({ name: 'held', adapterSlug: 'attio', credentialName: 'acme_main' });
       const result = await resume(state);

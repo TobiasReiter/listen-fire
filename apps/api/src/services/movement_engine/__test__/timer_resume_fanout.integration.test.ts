@@ -30,7 +30,7 @@ import { randomUUID } from 'node:crypto';
 
 jest.mock('../../translation_graph/movement/catalog', () => {
   const actual = jest.requireActual('../../translation_graph/movement/catalog');
-  return { ...actual, movementCatalogSnapshotForTeam: jest.fn() };
+  return { ...actual, runCatalogSnapshotForTeam: jest.fn() };
 });
 jest.mock('../../translation_graph/adapters/resolve', () => {
   const actual = jest.requireActual('../../translation_graph/adapters/resolve');
@@ -44,7 +44,7 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
 import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/router';
-import { movementCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { runCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { mintMovementVersionIfChanged } from '../../translation_graph/movement/version_store';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
@@ -56,7 +56,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { resumeTimerHandler } from '../timer_resume';
 import { testWorkContext } from '../../../test/harness/work';
 
-const mockedCatalog = movementCatalogSnapshotForTeam as jest.Mock;
+const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
 
 const FANOUT_N = 3;

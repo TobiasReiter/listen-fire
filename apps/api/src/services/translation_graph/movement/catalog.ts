@@ -879,26 +879,45 @@ function optionLabelOf(pos: Position): string | undefined {
 
 export async function movementCatalogForTeam(
   teamId: TeamId,
-  options: {
-    /** When given, introspect only the (adapter, credential) pairs this
-     *  program constructs instead of the whole workspace. */
-    source?: string;
-    /**
-     * Scope the source-less sweep's per-type describes. `[]` describes NOTHING
-     * — the entry lists still come back, which is all a caller needs when it
-     * cannot type-check anyway (the parse-error fallback in `authoring.ts`).
-     *
-     * Without this the only way to assemble a catalog for unparseable source
-     * was to fetch every type of every connected system, i.e. load the whole
-     * graph to report a missing bracket.
-     *
-     */
-    types?: readonly string[];
-    /** `source`'s language-version pin — absent means the current version, as
-     *  for an entry point given none. */
-    languageVersion?: LanguageVersion;
-  } = {},
+  options: TeamCatalogOptions = {},
 ): Promise<TeamMovementCatalog> {
+  return (await assembleTeamCatalog(teamId, options)).catalog;
+}
+
+interface TeamCatalogOptions {
+  /** When given, introspect only the (adapter, credential) pairs this
+   *  program constructs instead of the whole workspace. */
+  source?: string;
+  /**
+   * Scope the source-less sweep's per-type describes. `[]` describes NOTHING
+   * — the entry lists still come back, which is all a caller needs when it
+   * cannot type-check anyway (the parse-error fallback in `authoring.ts`).
+   *
+   * Without this the only way to assemble a catalog for unparseable source
+   * was to fetch every type of every connected system, i.e. load the whole
+   * graph to report a missing bracket.
+   *
+   */
+  types?: readonly string[];
+  /** `source`'s language-version pin — absent means the current version, as
+   *  for an entry point given none. */
+  languageVersion?: LanguageVersion;
+}
+
+/** The compile catalog plus the pieces it was assembled from, so the run-path
+ *  snapshot reuses them instead of loading them a second time. */
+interface AssembledTeamCatalog {
+  catalog: TeamMovementCatalog;
+  manifests: AdapterManifest[];
+  credentialRows: CredentialRow[];
+  /** The import closure of `options.source` (every saved file without one). */
+  fileSources: Map<string, string>;
+}
+
+async function assembleTeamCatalog(
+  teamId: TeamId,
+  options: TeamCatalogOptions,
+): Promise<AssembledTeamCatalog> {
   registerBundledTransforms();
   const notes: string[] = [];
   const gaps: CatalogGap[] = [];
@@ -1512,20 +1531,25 @@ export async function movementCatalogForTeam(
   }
 
   return {
-    catalog,
-    resolveCredentialId: (name) => credentialsByName[name]?.id,
-    credentialsByName,
-    resolveFile,
-    notes,
-    gaps,
-    instanceSchemas,
-    positionArgOptions,
-    cost: {
-      pairs: pairs.length,
-      positionedPairs: positionedTargets.size,
-      warmPairs,
-      demandRounds,
+    catalog: {
+      catalog,
+      resolveCredentialId: (name) => credentialsByName[name]?.id,
+      credentialsByName,
+      resolveFile,
+      notes,
+      gaps,
+      instanceSchemas,
+      positionArgOptions,
+      cost: {
+        pairs: pairs.length,
+        positionedPairs: positionedTargets.size,
+        warmPairs,
+        demandRounds,
+      },
     },
+    manifests,
+    credentialRows,
+    fileSources,
   };
 }
 
@@ -1664,12 +1688,20 @@ export interface TeamCatalogSnapshot {
    * identical in the diagnostics, which is why it must be said out loud.
    */
   gaps?: CatalogGap[];
+}
+
+/** What one engine run is handed: the snapshot it checks and runs against,
+ *  and the credential ids its host resolves adapters with. */
+export interface RunCatalogSnapshot {
+  snapshot: CatalogSnapshot;
   /**
    * Credential import name → `external_service_credentials.id`. Beside the
    * snapshot, never in it: the snapshot is what the engine and the browser
    * read, and credentials stay with the host that resolves adapters.
    */
   credentialIds: Record<string, string>;
+  /** Honest gaps hit while assembling, as on the editor's form. */
+  notes: string[];
 }
 
 /**
@@ -1729,46 +1761,16 @@ export function toAgentCatalogView(input: {
   };
 }
 
-/**
- * The per-team snapshot.
- *
- * WITHOUT a source: the SKELETON — DB + manifests only, no external service
- * touched, `schemas` empty for every adapter. This is the editor's first paint.
- *
- * WITH a source: the same skeleton, with `schemas` filled from
- * `movementCatalogForTeam` — the compile path itself. That means the editor
- * checks against demand-scoped, POSITIONED and NARROWING-REFINED schemas: the
- * compiler's own answer, serialized, rather than a thinner one the editor
- * assembled its own way.
- *
- * That divergence was a live bug class, not a theoretical one. The editor could
- * only ask about an (adapter, credential) pair, so a construction that pinned an
- * entry position (`google_sheets(…, spreadsheet: "LP Commitments")`) or narrowed
- * one (`-[s:Spreadsheet WHERE \`Title\` == "…"]->`) was introspected
- * unpositioned and unrefined — and the editor reported a correct program's own
- * table as an unknown edge while `save` compiled it fine.
- */
-export async function movementCatalogSnapshotForTeam(
-  teamId: TeamId,
-  options: {
-    /**
-     * The program being edited. Its constructions decide which instances are
-     * introspected, at which positions, and which types are described — so the
-     * cost is bounded by what the program actually names.
-     */
-    source?: string;
-    /** `source`'s language-version pin — absent means the current version. */
-    languageVersion?: LanguageVersion;
-  } = {},
-): Promise<TeamCatalogSnapshot> {
-  registerBundledTransforms();
-  const notes: string[] = [];
+type SnapshotAdapters = Parameters<typeof toCatalogSnapshot>[0]['adapters'];
 
-  const manifests = await teamAdapterManifests(teamId, notes);
-  const credentialRows = await loadCredentialRows(teamId);
-  const credentialsByName = credentialImportNames({ rows: credentialRows, manifests });
-
-  const adapters: Parameters<typeof toCatalogSnapshot>[0]['adapters'] = {};
+/** Every manifest's adapter entry with no schemas yet — DB + manifests only. */
+function skeletonAdapters(input: {
+  manifests: AdapterManifest[];
+  credentialRows: CredentialRow[];
+  notes: string[];
+}): SnapshotAdapters {
+  const { manifests, credentialRows, notes } = input;
+  const adapters: SnapshotAdapters = {};
   for (const manifest of manifests) {
     // Connect affordances are now `action` blocks in the manifest's
     // `construction` block list (config-blocks Phase 3). Project them into the
@@ -1815,7 +1817,115 @@ export async function movementCatalogSnapshotForTeam(
       adapters[manifest.adapterType].schemaNotes = { '': [note] };
     }
   }
+  return adapters;
+}
 
+/** Fill skeleton entries with the compile path's instance schemas and
+ *  position-arg options. */
+function fillCompiledSchemas(adapters: SnapshotAdapters, live: TeamMovementCatalog): void {
+  for (const instance of live.instanceSchemas) {
+    const adapter = adapters[instance.adapter];
+    if (!adapter) continue;
+    adapter.schemas[
+      instanceSchemaKey({
+        ...(instance.credentialName !== undefined
+          ? { credentialName: instance.credentialName }
+          : {}),
+        positionKey: instance.positionKey,
+      })
+    ] = instance.schema;
+  }
+  // What each `spreadsheet:`-style arg can actually be set to, so a value
+  // naming nothing WARNS instead of silently falling back to the
+  // unpositioned surface.
+  for (const [slug, byCredential] of Object.entries(live.positionArgOptions)) {
+    const adapter = adapters[slug];
+    if (adapter) adapter.constructionArgOptions = byCredential;
+  }
+}
+
+function credentialsOf(
+  credentialsByName: TeamMovementCatalog['credentialsByName'],
+): { credentials: Record<string, CredentialSpec>; credentialIds: Record<string, string> } {
+  const credentials: Record<string, CredentialSpec> = {};
+  const credentialIds: Record<string, string> = {};
+  for (const [name, row] of Object.entries(credentialsByName)) {
+    credentials[name] = { adapters: row.adapters };
+    credentialIds[name] = row.id;
+  }
+  return { credentials, credentialIds };
+}
+
+/**
+ * The snapshot one engine run checks and runs against: the editor's typed form
+ * built from a single compile-path assembly. `files` is the program's import
+ * closure, which is all a run can resolve; the editor's form also lists every
+ * saved movement for import completion, a cost that grows with the team and
+ * that a firing has no use for.
+ */
+export async function runCatalogSnapshotForTeam(
+  teamId: TeamId,
+  options: { source: string; languageVersion?: LanguageVersion },
+): Promise<RunCatalogSnapshot> {
+  const { catalog: live, manifests, credentialRows, fileSources } = await assembleTeamCatalog(
+    teamId,
+    options,
+  );
+  const notes = [...live.notes];
+  const adapters = skeletonAdapters({ manifests, credentialRows, notes });
+  fillCompiledSchemas(adapters, live);
+  const { credentials, credentialIds } = credentialsOf(live.credentialsByName);
+  return {
+    snapshot: {
+      ...toCatalogSnapshot({ adapters, credentials, plugins: registeredPluginSpecs() }),
+      files: Object.fromEntries([...fileSources].map(([name, source]) => [name, { source }])),
+      models: availableChatModels(),
+    },
+    credentialIds,
+    notes,
+  };
+}
+
+/**
+ * The per-team snapshot.
+ *
+ * WITHOUT a source: the SKELETON — DB + manifests only, no external service
+ * touched, `schemas` empty for every adapter. This is the editor's first paint.
+ *
+ * WITH a source: the same skeleton, with `schemas` filled from
+ * `movementCatalogForTeam` — the compile path itself. That means the editor
+ * checks against demand-scoped, POSITIONED and NARROWING-REFINED schemas: the
+ * compiler's own answer, serialized, rather than a thinner one the editor
+ * assembled its own way.
+ *
+ * That divergence was a live bug class, not a theoretical one. The editor could
+ * only ask about an (adapter, credential) pair, so a construction that pinned an
+ * entry position (`google_sheets(…, spreadsheet: "LP Commitments")`) or narrowed
+ * one (`-[s:Spreadsheet WHERE \`Title\` == "…"]->`) was introspected
+ * unpositioned and unrefined — and the editor reported a correct program's own
+ * table as an unknown edge while `save` compiled it fine.
+ */
+export async function movementCatalogSnapshotForTeam(
+  teamId: TeamId,
+  options: {
+    /**
+     * The program being edited. Its constructions decide which instances are
+     * introspected, at which positions, and which types are described — so the
+     * cost is bounded by what the program actually names.
+     */
+    source?: string;
+    /** `source`'s language-version pin — absent means the current version. */
+    languageVersion?: LanguageVersion;
+  } = {},
+): Promise<TeamCatalogSnapshot> {
+  registerBundledTransforms();
+  const notes: string[] = [];
+
+  const manifests = await teamAdapterManifests(teamId, notes);
+  const credentialRows = await loadCredentialRows(teamId);
+  const credentialsByName = credentialImportNames({ rows: credentialRows, manifests });
+
+  const adapters = skeletonAdapters({ manifests, credentialRows, notes });
   // WITH a source: fill the schemas from the compile path, so the editor reads
   // exactly what `save` will compute. One routine, two consumers — which is the
   // whole point; a second implementation here is what let them disagree.
@@ -1827,33 +1937,10 @@ export async function movementCatalogSnapshotForTeam(
     });
     notes.push(...live.notes);
     gaps = live.gaps;
-    for (const instance of live.instanceSchemas) {
-      const adapter = adapters[instance.adapter];
-      if (!adapter) continue;
-      adapter.schemas[
-        instanceSchemaKey({
-          ...(instance.credentialName !== undefined
-            ? { credentialName: instance.credentialName }
-            : {}),
-          positionKey: instance.positionKey,
-        })
-      ] = instance.schema;
-    }
-    // What each `spreadsheet:`-style arg can actually be set to, so a value
-    // naming nothing WARNS instead of silently falling back to the
-    // unpositioned surface.
-    for (const [slug, byCredential] of Object.entries(live.positionArgOptions)) {
-      const adapter = adapters[slug];
-      if (adapter) adapter.constructionArgOptions = byCredential;
-    }
+    fillCompiledSchemas(adapters, live);
   }
 
-  const credentials: Record<string, CredentialSpec> = {};
-  const credentialIds: Record<string, string> = {};
-  for (const [name, row] of Object.entries(credentialsByName)) {
-    credentials[name] = { adapters: row.adapters };
-    credentialIds[name] = row.id;
-  }
+  const { credentials } = credentialsOf(credentialsByName);
 
   const plugins = registeredPluginSpecs();
 
@@ -1885,7 +1972,6 @@ export async function movementCatalogSnapshotForTeam(
     notes,
     remoteConnections,
     ...(gaps.length > 0 ? { gaps } : {}),
-    credentialIds,
   };
 }
 

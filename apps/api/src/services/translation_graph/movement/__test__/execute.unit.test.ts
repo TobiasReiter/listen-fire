@@ -85,7 +85,7 @@ jest.mock('../../../movement_engine/run', () => {
 });
 
 jest.mock('../catalog', () => ({
-  movementCatalogSnapshotForTeam: jest.fn(),
+  runCatalogSnapshotForTeam: jest.fn(),
 }));
 
 jest.mock('../store', () => ({
@@ -125,8 +125,8 @@ const { runMovement, resumeMovement, MovementRunFailed } = jest.requireMock(
   resumeMovement: jest.Mock;
   MovementRunFailed: new (cause: unknown, partial: unknown) => Error;
 };
-const { movementCatalogSnapshotForTeam } = jest.requireMock('../catalog') as {
-  movementCatalogSnapshotForTeam: jest.Mock;
+const { runCatalogSnapshotForTeam } = jest.requireMock('../catalog') as {
+  runCatalogSnapshotForTeam: jest.Mock;
 };
 const { getMovementRow } = jest.requireMock('../store') as {
   getMovementRow: jest.Mock;
@@ -178,7 +178,7 @@ const teamCatalog = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  movementCatalogSnapshotForTeam.mockResolvedValue(teamCatalog);
+  runCatalogSnapshotForTeam.mockResolvedValue(teamCatalog);
 });
 
 describe('runMovementFiring', () => {
@@ -217,7 +217,7 @@ describe('runMovementFiring', () => {
     // movement the listen fires (name convention). Natural-name → internal-id
     // translation is the engine's adapter-layer concern now — no map rides
     // the runMovement input.
-    expect(movementCatalogSnapshotForTeam).toHaveBeenCalledWith(TEAM, { source: CLEAN_SOURCE });
+    expect(runCatalogSnapshotForTeam).toHaveBeenCalledWith(TEAM, { source: CLEAN_SOURCE });
     expect(runMovement).toHaveBeenCalledWith(
       expect.objectContaining({
         source: CLEAN_SOURCE,
