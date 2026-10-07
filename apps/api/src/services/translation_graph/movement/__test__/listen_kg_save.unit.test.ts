@@ -160,6 +160,7 @@ jest.mock('../../adapters/registry', () => {
     listAdapterManifests: () => manifests,
     getAdapterManifest: getManifest,
     resolveAdapterSlug: (kind: string) => aliasToSlug[kind] ?? kind,
+    hasAdapter: (kind: string) => manifests.some((m) => m.adapterType === (aliasToSlug[kind] ?? kind)),
     adapterInboundRoutingKey: (slug: string) =>
       (getManifest(slug)?.triggerConfig ?? []).find(
         (f: { routingKey?: boolean }) => f.routingKey === true,

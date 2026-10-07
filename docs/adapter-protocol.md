@@ -102,11 +102,12 @@ Listen-Fire sends your secret on every call. Your manifest picks how:
 - Check the header on every request; answer HTTP 401 when it is missing or wrong.
 - The secret is entered at install time and stored encrypted. It never goes in
   the manifest.
-- Every call also carries `x-listen-fire-team: <team id>`, the UUID of the team
-  whose install is calling. A server that serves several teams learns from it
-  which one. It is not a credential: authenticate by the secret.
-- When your server calls Listen-Fire (the push doors), it sends the same
-  header with the same secret. See [the doors](#the-two-doors-you-call).
+- Every call to your server carries `x-listen-fire-team: <team id>`, the UUID of
+  the team whose install is calling. A server that serves several teams learns
+  from it which one. It is not a credential: authenticate by the secret.
+- When your server calls Listen-Fire (the push doors), it sends the same secret.
+  The team header is optional there; send it only to disambiguate a secret
+  shared across teams. See [the doors](#the-two-doors-you-call).
 
 ## The manifest and installing
 
@@ -134,7 +135,7 @@ The manifest file registers your server with a team:
 }
 ```
 
-- `adapterType` is the slug an automation imports (`import { acme_crm } from adapters`). One install per slug per team.
+- `adapterType` is the slug an automation imports (`import { acme_crm } from adapters`). One install per slug per team. Charset: `^[a-z][a-z0-9_]*$` (ASCII lower case).
   It may not be a name a built-in adapter answers to (`slack`, `gmail`,
   `inbound_email`, `kg_mutation`, …, in any casing), nor `callback` or `ask`:
   the install is refused.

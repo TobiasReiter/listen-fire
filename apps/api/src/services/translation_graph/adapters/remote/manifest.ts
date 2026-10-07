@@ -21,7 +21,9 @@ export const RemoteAdapterManifestFile = z.object({
    *  without it predates protocol v2, whose wire currency differs. */
   protocolVersion: WireManifestProtocolVersion,
   /** Slug the engine routes on. One install per slug per team. */
-  adapterType: z.string().min(1),
+  adapterType: z
+    .string()
+    .regex(/^[a-z][a-z0-9_]*$/, 'adapterType must be ASCII lower case: a letter, then letters, digits or underscores'),
   /** Human-friendly name for the picker. Falls back to `adapterType`. */
   displayName: z.string().optional(),
   /** Human-friendly description for the picker. Optional. */

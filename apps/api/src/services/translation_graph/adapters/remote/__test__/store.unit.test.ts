@@ -189,7 +189,7 @@ const OTHER_TEAM = 'team-2' as TeamId;
 function makeManifest(overrides: Record<string, unknown> = {}) {
   return {
     protocolVersion: 2,
-    adapterType: 'remote-email',
+    adapterType: 'remote_email',
     baseUrl: 'https://adapter.example.com/rpc',
     authStrategy: { kind: 'bearer' as const },
     credentialsId: randomUUID(),
@@ -213,12 +213,12 @@ describe('remote_adapter store', () => {
     const { id } = await upsertRemoteAdapter({ teamId: TEAM_ID, manifest });
     expect(id).toBeTruthy();
 
-    const row = await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote-email' });
+    const row = await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote_email' });
     expect(row).not.toBeNull();
     if (!row) return;
 
     expect(row.team_id).toBe(TEAM_ID);
-    expect(row.adapter_type).toBe('remote-email');
+    expect(row.adapter_type).toBe('remote_email');
     expect(row.base_url).toBe(manifest.baseUrl);
     expect(row.auth_strategy).toEqual({ kind: 'bearer' });
     expect(row.credentials_id).toBe(manifest.credentialsId);
@@ -244,30 +244,30 @@ describe('remote_adapter store', () => {
     const all = await listRemoteAdapters({ teamId: TEAM_ID });
     expect(all).toHaveLength(1);
 
-    const row = await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote-email' });
+    const row = await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote_email' });
     expect(row?.base_url).toBe('https://v2.example.com/rpc');
     expect(row?.auth_strategy).toEqual({ kind: 'shared_secret', header: 'X-Token' });
     expect(rowToManifest(row!).methods).toContain('snapshot');
   });
 
   it('list is team-scoped and ordered', async () => {
-    await upsertRemoteAdapter({ teamId: TEAM_ID, manifest: makeManifest({ adapterType: 'remote-slack' }) });
-    await upsertRemoteAdapter({ teamId: TEAM_ID, manifest: makeManifest({ adapterType: 'remote-email' }) });
-    await upsertRemoteAdapter({ teamId: OTHER_TEAM, manifest: makeManifest({ adapterType: 'remote-attio' }) });
+    await upsertRemoteAdapter({ teamId: TEAM_ID, manifest: makeManifest({ adapterType: 'remote_slack' }) });
+    await upsertRemoteAdapter({ teamId: TEAM_ID, manifest: makeManifest({ adapterType: 'remote_email' }) });
+    await upsertRemoteAdapter({ teamId: OTHER_TEAM, manifest: makeManifest({ adapterType: 'remote_attio' }) });
 
     const mine = await listRemoteAdapters({ teamId: TEAM_ID });
-    expect(mine.map((r) => r.adapter_type)).toEqual(['remote-email', 'remote-slack']);
+    expect(mine.map((r) => r.adapter_type)).toEqual(['remote_email', 'remote_slack']);
 
     const theirs = await listRemoteAdapters({ teamId: OTHER_TEAM });
-    expect(theirs.map((r) => r.adapter_type)).toEqual(['remote-attio']);
+    expect(theirs.map((r) => r.adapter_type)).toEqual(['remote_attio']);
   });
 
   it('delete removes the install', async () => {
     await upsertRemoteAdapter({ teamId: TEAM_ID, manifest: makeManifest() });
-    expect(await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote-email' })).not.toBeNull();
+    expect(await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote_email' })).not.toBeNull();
 
-    await deleteRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote-email' });
-    expect(await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote-email' })).toBeNull();
+    await deleteRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote_email' });
+    expect(await getRemoteAdapter({ teamId: TEAM_ID, adapterType: 'remote_email' })).toBeNull();
   });
 
   it('rejects an invalid manifest via zod validation', async () => {

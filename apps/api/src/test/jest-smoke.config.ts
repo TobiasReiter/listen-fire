@@ -13,6 +13,8 @@ export default {
   testTimeout: 30000,
   rootDir: '../../',
   preset: 'ts-jest',
+  // Transpile only: types are owned by `pnpm code:type-check`.
+  transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }] },
   testEnvironment: 'node',
   // Inert env defaults so the suite loads env-reading modules (prisma, adapters)
   // without a real .env and without touching real systems. See the file header.

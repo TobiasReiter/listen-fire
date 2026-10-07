@@ -171,7 +171,11 @@ describe('installRemoteAdapterFromManifest with no credential to ask with', () =
 });
 
 describe('installRemoteAdapterFromManifest with a slug a built-in answers to', () => {
-  it.each(['slack', 'gmail', 'SLACK', 'callback'])(
+  it('refuses an upper-case slug at the manifest schema', () => {
+    expect(() => manifest('SLACK', v2Server.baseUrl)).toThrow(/ASCII lower case/);
+  });
+
+  it.each(['slack', 'gmail', 'callback'])(
     'refuses %s before asking the server or minting anything',
     async (slug) => {
       await expect(

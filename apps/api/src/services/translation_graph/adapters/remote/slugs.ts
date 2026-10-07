@@ -31,7 +31,11 @@ function takenNames(): ReadonlySet<string> {
  *  without case, so the install's upper-cased provider key can never be a
  *  built-in's trigger kind either. */
 export function remoteSlugRefusal(slug: string): string | null {
-  if (!takenNames().has(slug.toLowerCase())) return null;
+  const taken = takenNames();
+  // The provider key is the UPPER-cased slug, and some non-ASCII letters fold
+  // onto ASCII only that way ('ſlack' -> 'SLACK'), so compare that casing too.
+  const collides = taken.has(slug.toLowerCase()) || [...taken].some((name) => name.toUpperCase() === slug.toUpperCase());
+  if (!collides) return null;
   return `"${slug}" is a name a built-in adapter or the engine already answers to; a remote adapter needs a slug of its own`;
 }
 

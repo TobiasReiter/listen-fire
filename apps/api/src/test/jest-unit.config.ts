@@ -3,19 +3,15 @@ export default {
   // Automatically clear mock calls and instances between every test
   clearMocks: true,
 
-  // The maximum amount of workers used to run your tests. Can be specified as % or a number. E.g. maxWorkers: 10% will use 10% of your CPU amount + 1 as the maximum worker number. maxWorkers: 2 will use a maximum of 2 workers.
-  maxWorkers: 1,
+  // Half the cores. Each worker is recycled past the idle-memory bound so
+  // leaked module state (Prisma clients, compiled modules) cannot accumulate
+  // across hundreds of suites and walk a worker off the heap.
+  maxWorkers: '50%',
+  workerIdleMemoryLimit: '3GB',
 
-  // The one worker runs every suite in ONE process, and this package's
-  // ts-jest + Prisma footprint means a wide run walks off the heap partway
-  // through and dies with a V8 stack trace instead of results — so "did the
-  // suite pass" became unanswerable rather than answered wrongly.
-  //
-  // Recycling the worker when it crosses this bound changes neither
-  // parallelism (still one worker) nor ordering (still sequential); it only
-  // stops leaked module state from accumulating across hundreds of suites.
-  // Raising the heap was the alternative and it only moves the cliff.
-  workerIdleMemoryLimit: '1500MB',
+  // Open Prisma/Kysely handles otherwise keep a finished run alive (one
+  // worktree run sat >35 min after its last suite).
+  forceExit: true,
 
   rootDir: '../../',
 
@@ -31,7 +27,10 @@ export default {
   // Older language versions' corpora run under their own version, via
   // jest-conformance-v<n>.config.ts — never under the current one.
   testPathIgnorePatterns: ['/node_modules/', '/__conformance__/'],
-  // ts-jest required for Prisma >= 5.10.x
+  // ts-jest required for Prisma >= 5.10.x (babel-jest cannot load the client).
+  // Transpile only: types are owned by `pnpm code:type-check`, and per-worker
+  // type-checking was most of each suite's fixed cost.
   preset: 'ts-jest',
+  transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }] },
   testEnvironment: 'node',
 };

@@ -5,7 +5,7 @@
 import { mayBeRemoteSlug, remoteSlugRefusal } from '../slugs';
 
 describe('remote slugs', () => {
-  it.each(['slack', 'inbound_email', 'gmail', 'kg_mutation', 'web', 'callback', 'ask', 'SLACK', 'Attio', 'custom_email'])(
+  it.each(['slack', 'inbound_email', 'gmail', 'kg_mutation', 'web', 'callback', 'ask', 'SLACK', 'Attio', 'custom_email', 'ſlack', 'attıo', 'aﬃnity'])(
     'refuses %s',
     (slug) => {
       expect(mayBeRemoteSlug(slug)).toBe(false);

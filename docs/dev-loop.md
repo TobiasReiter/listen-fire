@@ -726,6 +726,10 @@ tail -F .dev-loop/loop.log | grep -E "WebhookTG|TGRouter"  # TG dispatch events
 This is your fastest "what just happened" view when an inject doesn't
 do what you expected.
 
+## Jest: no type-checking, half the cores
+
+Jest compiles each test file without type-checking (ts-jest with `isolatedModules` and `diagnostics: false`); types are owned by `pnpm code:type-check`, so a test run passing says nothing about types. Unit suites (apps/api and movement-lang) run on half the cores (`maxWorkers: '50%'`), each worker recycled past 3 GB, and the run force-exits once the last suite ends. Integration suites stay serial: they share one test database and some of them run scans across every team.
+
 ## Regenerating the handbook's adapter schema snapshot
 
 The movement handbook's examples are checked against

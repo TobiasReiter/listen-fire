@@ -45,6 +45,12 @@ describe('RemoteAdapterManifestFile', () => {
     expect(v1.error?.issues[0]?.message).toMatch(/^protocolVersion: expected 2, got 1/);
   });
 
+  it.each(['ſlack', 'attıo', 'aﬃnity', 'Acme', '1acme', 'acme-crm', ''])('refuses the adapterType %j', (adapterType) => {
+    const parsed = RemoteAdapterManifestFile.safeParse({ ...base, adapterType });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.path).toEqual(['adapterType']);
+  });
+
   it('projection advertises no requiredCredentialType (construction stays credential-free)', () => {
     const projected = remoteAdapterManifest(RemoteAdapterManifestFile.parse(base));
     expect(projected.requiredCredentialType).toBeUndefined();

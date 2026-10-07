@@ -24,7 +24,7 @@ const mockListAdapterTypes = jest.fn<string[], []>(() => ['kg', 'email']);
 // off the canonical slug, so the mock has to apply the same indirection.
 const SLUG_ALIASES: Record<string, string> = {
   ATTIO: 'attio',
-  ACME_CRM: 'acme-crm',
+  ACME_CRM: 'acme_crm',
 };
 jest.mock('../../registry', () => ({
   hasAdapter: (slug: string) => mockHasAdapter(slug),
@@ -126,14 +126,14 @@ describe('resolveAdapter — local first', () => {
 describe('resolveAdapter — remote fallback', () => {
   it('constructs a RemoteAdapter from a stored row + valid credential', async () => {
     mockHasAdapter.mockReturnValue(false);
-    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme-crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
-    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme-crm' });
+    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
+    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme_crm' });
     mockDecryptToken.mockResolvedValue(JSON.stringify({ secret: 'super-secret-token' }));
 
-    const fakeRemote = { adapterType: 'acme-crm' } as unknown as Adapter;
+    const fakeRemote = { adapterType: 'acme_crm' } as unknown as Adapter;
     mockCreateRemoteAdapter.mockReturnValue(fakeRemote);
 
-    const adapter = await resolveAdapter({ adapterType: 'acme-crm', teamId: TEAM });
+    const adapter = await resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM });
 
     expect(adapter).toBe(fakeRemote);
     expect(mockCreateRemoteAdapter).toHaveBeenCalledTimes(1);
@@ -143,8 +143,8 @@ describe('resolveAdapter — remote fallback', () => {
       cacheScopeId: string;
       manifest: { adapterType: string };
     };
-    expect(arg.manifest.adapterType).toBe('acme-crm');
-    expect(arg.config.adapterType).toBe('acme-crm');
+    expect(arg.manifest.adapterType).toBe('acme_crm');
+    expect(arg.config.adapterType).toBe('acme_crm');
     expect(arg.secret).toBe('super-secret-token');
     // A cacheScopeId was minted (uuid v4 shape) and threaded through.
     expect(arg.cacheScopeId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
@@ -162,9 +162,9 @@ describe('resolveAdapter — remote fallback', () => {
 
   it('throws when the remote row has no credential configured', async () => {
     mockHasAdapter.mockReturnValue(false);
-    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme-crm', null));
+    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', null));
 
-    await expect(resolveAdapter({ adapterType: 'acme-crm', teamId: TEAM })).rejects.toThrow(
+    await expect(resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM })).rejects.toThrow(
       /no credential configured/,
     );
     expect(mockDecryptToken).not.toHaveBeenCalled();
@@ -172,11 +172,11 @@ describe('resolveAdapter — remote fallback', () => {
 
   it('throws when the decrypted credential payload is malformed', async () => {
     mockHasAdapter.mockReturnValue(false);
-    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme-crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
-    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme-crm' });
+    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
+    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme_crm' });
     mockDecryptToken.mockResolvedValue(JSON.stringify({ nottheright: 'shape' }));
 
-    await expect(resolveAdapter({ adapterType: 'acme-crm', teamId: TEAM })).rejects.toThrow(
+    await expect(resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM })).rejects.toThrow(
       /payload is malformed/,
     );
     expect(mockCreateRemoteAdapter).not.toHaveBeenCalled();
@@ -184,11 +184,11 @@ describe('resolveAdapter — remote fallback', () => {
 
   it('throws when the credential app_id does not match the adapter (a secret minted for another adapter)', async () => {
     mockHasAdapter.mockReturnValue(false);
-    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme-crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
+    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
     // The credential belongs to a DIFFERENT remote adapter.
     mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'other-crm' });
 
-    await expect(resolveAdapter({ adapterType: 'acme-crm', teamId: TEAM })).rejects.toThrow(
+    await expect(resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM })).rejects.toThrow(
       /does not belong to adapter/,
     );
     expect(mockDecryptToken).not.toHaveBeenCalled();
@@ -215,23 +215,23 @@ describe('resolveAdapter — slug aliasing', () => {
 
   // The porting-critical path: an input still carries the uppercase kind
   // (`ACME_CRM`) but the team's remote install is stored under the canonical
-  // slug (`acme-crm`). The remote lookup must key off the slug — not the raw
+  // slug (`acme_crm`). The remote lookup must key off the slug — not the raw
   // type — so the existing input resolves without a bulk edit.
   it('resolves a kind-alias to a remote install keyed by the canonical slug', async () => {
     mockHasAdapter.mockReturnValue(false);
     mockGetRemoteAdapter.mockResolvedValue(
-      remoteRow('acme-crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'),
+      remoteRow('acme_crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'),
     );
-    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme-crm' });
+    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme_crm' });
     mockDecryptToken.mockResolvedValue(JSON.stringify({ secret: 'super-secret-token' }));
-    const fakeRemote = { adapterType: 'acme-crm' } as unknown as Adapter;
+    const fakeRemote = { adapterType: 'acme_crm' } as unknown as Adapter;
     mockCreateRemoteAdapter.mockReturnValue(fakeRemote);
 
     const adapter = await resolveAdapter({ adapterType: 'ACME_CRM', teamId: TEAM });
 
     expect(adapter).toBe(fakeRemote);
     // The remote store was queried with the canonical slug, not 'ACME_CRM'.
-    expect(mockGetRemoteAdapter).toHaveBeenCalledWith({ teamId: TEAM, adapterType: 'acme-crm' });
+    expect(mockGetRemoteAdapter).toHaveBeenCalledWith({ teamId: TEAM, adapterType: 'acme_crm' });
   });
 
   it('mentions the slug in the unknown-adapter error', async () => {
@@ -239,7 +239,7 @@ describe('resolveAdapter — slug aliasing', () => {
     mockGetRemoteAdapter.mockResolvedValue(null);
 
     await expect(resolveAdapter({ adapterType: 'ACME_CRM', teamId: TEAM })).rejects.toThrow(
-      /Unknown adapter type: ACME_CRM \(slug: acme-crm\)/,
+      /Unknown adapter type: ACME_CRM \(slug: acme_crm\)/,
     );
   });
 });
