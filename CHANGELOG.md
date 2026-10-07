@@ -13,6 +13,10 @@ Entries are written for two readers: an operator running a self-hosted installat
 - A resumed run whose adapter has been uninstalled, or whose credential is gone or now serves another system, fails naming the instance (`instance <system>(credentials: <name>) is not in the catalog snapshot`).
 - For embedders: the movement engine reaches everything outside the program through one `EngineHost`: adapters, model calls, parking (with record bindings), the trace, cancellation, files, acting-user lookup and write locks. A run takes a `CatalogSnapshot`, the team's catalog as plain JSON, rather than a live catalog. `makeTestHost` builds an in-memory host for tests. See [`docs/engine-host.md`](docs/engine-host.md).
 
+- The movement parser is implemented in Rust and loaded as WebAssembly; the TypeScript grammar is removed. Browser callers await `initParser()` before parsing. Two parses differ, under every language version:
+  - Nesting deeper than 128 levels is refused with "nesting too deep". Statements and expressions are bounded separately: statements count their own levels, and each expression counts its own from zero. It used to be accepted. Much deeper nesting would overflow the WebAssembly parser's stack; real automations nest a few levels.
+  - An expression error naming an unrecognised character outside the Basic Multilingual Plane (an emoji, say) now quotes the whole character. It used to quote half of it.
+
 <!-- add merged PRs here -->
 
 ## [v0.10.1] - 2026-10-06

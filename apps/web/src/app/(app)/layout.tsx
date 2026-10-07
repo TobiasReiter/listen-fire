@@ -17,7 +17,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="flex h-dvh flex-col">
         <ImpersonationBanner />
         <div className="flex-1 overflow-hidden">
-          <AppShell>{children}</AppShell>
+          <AppShell>
+            {children}
+          </AppShell>
         </div>
       </div>
     </ToastProvider>

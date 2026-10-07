@@ -502,5 +502,18 @@ describe('parseExpression', () => {
         expect((e as ExpressionSyntaxError).offset).toBe(4);
       }
     });
+
+    it('an unrecognised astral character is quoted whole, at its first code unit', () => {
+      const thrown = (() => {
+        try {
+          parseExpression('a + 🌍');
+        } catch (e) {
+          return e;
+        }
+        throw new Error('expected a syntax error');
+      })();
+      expect(thrown).toBeInstanceOf(ExpressionSyntaxError);
+      expect(thrown).toMatchObject({ message: "Unrecognised character '🌍'", offset: 4 });
+    });
   });
 });

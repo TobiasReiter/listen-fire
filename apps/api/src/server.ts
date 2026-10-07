@@ -41,6 +41,7 @@ import { assertRunCostCapConfigured } from './lib/run_spend';
 import { assertExtractionTiersConfigured } from './services/movement_engine/ai_tiers';
 import { assertMaxCallDepthConfigured } from './services/movement_engine/call_depth';
 import { assertWriteLockTimeoutConfigured } from './services/write_locks/write_locks';
+import { assertParserReady } from 'movement-lang';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';
 import { rootHandler } from './lib/middleware/root_handler';
 import { HEALTH_CHECK_ENDPOINT, WORKERS_HEALTH_ENDPOINT } from './constants';
@@ -108,6 +109,11 @@ assertMaxCallDepthConfigured();
 // A lock wait set to something that is not a positive whole number of
 // milliseconds would fail every contended write, or never let one give up.
 assertWriteLockTimeoutConfigured();
+// Node loads the movement parser from the .wasm beside movement-lang's
+// loader as that module loads, and records rather than throws a failure. A
+// build that left the artifact behind (tsc does not copy it) would otherwise
+// boot and then fail every validate and run at its first parse.
+assertParserReady();
 
 // A blocked event loop is the one failure this process cannot narrate: the
 // health check goes unanswered, the logs stop mid-sentence, and the platform

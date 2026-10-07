@@ -970,7 +970,7 @@ class Projection {
       if (statement.kind !== 'shape') continue;
       const symbol = file?.symbols.get(statement.name);
       const resolved =
-        symbol?.kind === 'shape' && symbol.span === statement.span ? symbol.declaration : undefined;
+        symbol?.kind === 'shape' && sameSpan(symbol.span, statement.span) ? symbol.declaration : undefined;
       shapes.push(shapeNodeOf((resolved ?? statement).root, statement.name));
     }
     return shapes;
@@ -2168,6 +2168,12 @@ class Projection {
     if (file !== undefined) return file.scope;
     throw new Error('projectStory: the recording has no scope frames');
   }
+}
+
+// By value: a span read back from the checker's scope need not be the very
+// object the parse produced.
+function sameSpan(a: Span, b: Span): boolean {
+  return a.start.line === b.start.line && a.start.col === b.start.col && a.end.line === b.end.line && a.end.col === b.end.col;
 }
 
 function contains(outer: Span, inner: Span): boolean {

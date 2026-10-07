@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["crates/movement-parser"]
+
+# The committed WASM artifact is built with this profile; the CI check
+# rebuilds it and compares bytes, so changing it means rebuilding and
+# committing the artifact in the same change.
+[profile.release]
+# "z" over "s": 9% smaller (442,538 vs 486,896 bytes; gzipped 144,698 vs
+# 154,904), parity and the shadow-stack band at the depth limit unchanged
+# (measured 2026-10-06). The browser downloads and compiles every byte.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

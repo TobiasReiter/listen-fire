@@ -1,7 +1,24 @@
 import type { NextConfig } from 'next';
 import { withSentryConfig } from '@sentry/nextjs';
+import { createHash } from 'crypto';
+import fs from 'fs';
 import path from 'path';
 import { apiProxyRewrites } from './src/lib/api-proxy';
+
+// The browser fetches the movement parser from public/ (src/lib/parser-provider.tsx).
+// Copied here, where `next dev` and `next build` both pass, rather than by a
+// webpack asset rule: the loader is CommonJS shared with the api, so it cannot
+// name the file through `new URL(…, import.meta.url)`. The copy is named by
+// its content hash so a long-cached old parser can never be served for a new
+// build; the URL reaches the client through `env` below, which both `next dev`
+// and `next build` inline from this one config evaluation.
+const parserBytes = fs.readFileSync(require.resolve('movement-lang/wasm/movement_parser.wasm'));
+const parserFile = `movement_parser.${createHash('sha256').update(parserBytes).digest('hex').slice(0, 12)}.wasm`;
+const publicDir = path.join(__dirname, 'public');
+for (const stale of fs.readdirSync(publicDir)) {
+  if (/^movement_parser(\..+)?\.wasm$/.test(stale) && stale !== parserFile) fs.unlinkSync(path.join(publicDir, stale));
+}
+fs.writeFileSync(path.join(publicDir, parserFile), parserBytes);
 
 // The SERVER-side rewrite target, read at run time: one prebuilt image runs
 // against any API. `NEXT_PUBLIC_API_URL` stays the escape hatch for a split
@@ -10,6 +27,7 @@ const apiUrl = process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  env: { NEXT_PUBLIC_PARSER_URL: `/${parserFile}` },
   // Without this Next guesses the trace root from the nearest lockfiles and can
   // land ABOVE the repo, which moves `server.js` inside the standalone output.
   // Pin it to the workspace root so the image's CMD path is the same everywhere.
