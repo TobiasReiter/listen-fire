@@ -13,6 +13,7 @@
  *   pnpm dev:inspect dealroom              → fake Dealroom entity counts, recent API requests + the dealroom poll trigger
  *   pnpm dev:inspect dealroom --clear-requests → wipe the Dealroom request log first (isolate one run's calls)
  *   pnpm dev:inspect gmail                 → the fake mailbox's change marker, its outbox, + the gmail poll trigger's checkpoint
+ *   pnpm dev:inspect crm                   → the fake CRM's companies, comments, subscriptions + parks on it
  *   pnpm dev:inspect callbacks             → minted callbacks + their call ledgers
  *   pnpm dev:inspect callbacks <runId>     → one run's callbacks
  *   pnpm dev:inspect tg-runs               → recent translation-graph runs
@@ -27,9 +28,14 @@
  * dev-loop team.
  */
 
+// First: the active profile's env (its DATABASE_URL) must be in place before
+// the query builders read it, or this reads apps/api/.env's database instead.
+import './_profile_loader';
+
 import { getQb, getAutomationsQb, getValuationsQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import { ensureDevLoopTeam } from './_lib';
+import { FAKE_CRM_ADAPTER_TYPE, fakeCrmBaseUrl } from './fake_crm_adapter';
 import { listAsksForTeam } from '../../services/translation_graph/adapters/ask/store';
 import {
   callbackUrl,
@@ -56,6 +62,7 @@ type Domain =
   | 'valuations'
   | 'asks'
   | 'callbacks'
+  | 'crm'
   | 'tg-runs'
   | 'all';
 
@@ -75,6 +82,7 @@ const ALL_DOMAINS: Exclude<Domain, 'all'>[] = [
   'valuations',
   'asks',
   'callbacks',
+  'crm',
   'tg-runs',
 ];
 
@@ -621,6 +629,26 @@ async function inspectGmail() {
   };
 }
 
+/** The fake CRM (the reference remote adapter): its own ledgers, read from
+ *  its dev route, plus the runs parked on it here. */
+async function inspectFakeCrm() {
+  const seed = await ensureDevLoopTeam();
+  let state: unknown = null;
+  try {
+    const res = await fetch(new URL('dev/state', fakeCrmBaseUrl()));
+    state = await res.json();
+  } catch (err) {
+    state = { unreachable: err instanceof Error ? err.message : String(err) };
+  }
+  const parks = await getAutomationsQb(['adapter_await'])
+    .selectFrom('adapter_await')
+    .where('team_id', '=', seed.teamId as TeamId)
+    .where('adapter_type', '=', FAKE_CRM_ADAPTER_TYPE)
+    .selectAll()
+    .execute();
+  return { service: 'crm', baseUrl: fakeCrmBaseUrl(), state, parks };
+}
+
 async function inspectGeneric(svc: 'sheets' | 'affinity') {
   // Dump the service's entities via the admin state route. The route is
   // `/admin/:service/state` and returns entities grouped by entity_type
@@ -684,6 +712,7 @@ async function main() {
     results.push(await inspectValuations());
     results.push(await inspectAsks());
     results.push(await inspectCallbacks());
+    results.push(await inspectFakeCrm());
     results.push(await inspectTgRuns());
   } else if (domain === 'email') {
     results.push(await inspectEmail());
@@ -701,6 +730,8 @@ async function main() {
     results.push(await inspectAsks());
   } else if (domain === 'callbacks') {
     results.push(await inspectCallbacks(sub));
+  } else if (domain === 'crm') {
+    results.push(await inspectFakeCrm());
   } else if (domain === 'tg-runs') {
     results.push(await inspectTgRuns(sub));
   } else if (domain === 'airtable') {

@@ -16,6 +16,8 @@
  *                          mailgun-email   - Mailgun inbound email payload
  *                          resend-email    - Resend inbound email (seed + signed webhook)
  *                          gmail-message   - a message into the fake Gmail mailbox, then its poll
+ *                          crm-company     - a company created in the fake CRM, which pushes `emit`
+ *                          crm-comment     - a comment on a fake-CRM company, which pushes `wake`
  *
  * The wrappers are intentionally thin so it's obvious how to add a new
  * one (`affinity-webhook`, `intercom-event`, etc.) — each is ~30 lines
@@ -64,6 +66,7 @@ import type { WebhookSubscriptionId } from '../../generated/kysely/automations/W
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { encryptToken } from '../../lib/credentials';
 import { ensureDevLoopTeam } from './_lib';
+import { fakeCrmBaseUrl } from './fake_crm_adapter';
 import { signMailgunPayload } from './lib/mailgun-sign';
 import { signResendWebhook } from './lib/resend-sign';
 import { userPrincipal } from '../../services/principal';
@@ -2266,6 +2269,22 @@ export {
   getApiBaseUrl,
 };
 
+/**
+ * A change in the fake CRM (the reference remote adapter), made through its
+ * own dev route. The CRM then pushes to the host's adapter door itself
+ * (`emit` for a company, `wake` for a comment), so this proves the push path a
+ * third party uses — nothing here talks to the API.
+ */
+async function injectFakeCrm(route: 'companies' | 'comments', body: unknown): Promise<unknown> {
+  const url = new URL(`dev/${route}`, fakeCrmBaseUrl()).toString();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { url, status: res.status, response: await res.json() };
+}
+
 function printResult(out: any, pretty: boolean) {
   if (pretty && out?.response) {
     console.log(`${out.method ?? 'POST'} ${out.target}`);
@@ -2747,9 +2766,33 @@ async function main() {
     return;
   }
 
+  if (subcommand === 'crm-company') {
+    if (!flags.name) {
+      console.error('Usage: pnpm dev:inject crm-company --name "<Name>" [--description "<text>"]');
+      process.exit(2);
+    }
+    printResult(
+      await injectFakeCrm('companies', {
+        Name: flags.name,
+        ...(flags.description !== undefined ? { Description: flags.description } : {}),
+      }),
+      PRETTY,
+    );
+    return;
+  }
+
+  if (subcommand === 'crm-comment') {
+    if (!flags.company || !flags.text) {
+      console.error('Usage: pnpm dev:inject crm-comment --company <company-N> --text "<comment>"');
+      process.exit(2);
+    }
+    printResult(await injectFakeCrm('comments', { company: flags.company, text: flags.text }), PRETTY);
+    return;
+  }
+
   console.error(`Unknown subcommand: ${subcommand}`);
   console.error(
-    'Available: raw, attio-webhook, airtable-webhook, slack-event, slack-interactivity, mailgun-email, resend-email, telegram-event, telegram-builtin, telegram-callback, telegram-start, whatsapp, cron, granola, evertrace, evertrace-list-entry, dealroom, gmail-message, kg-mutation, callback',
+    'Available: raw, attio-webhook, airtable-webhook, slack-event, slack-interactivity, mailgun-email, resend-email, telegram-event, telegram-builtin, telegram-callback, telegram-start, whatsapp, cron, granola, evertrace, evertrace-list-entry, dealroom, gmail-message, kg-mutation, callback, crm-company, crm-comment',
   );
   process.exit(2);
 }

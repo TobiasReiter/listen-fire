@@ -16,6 +16,9 @@
  *
  * The write ledger is in-memory and per-process: restarting the loop forgets
  * the Companies written to it, which is the same deal fake-channels offers.
+ *
+ * Its `/dev/` routes push `emit` / `wake` to this stack's API (`API_BASE_URL`),
+ * naming the dev-loop team (`TEST_HARNESS_TEAM_ID`) in the team header.
  */
 import './_profile_loader';
 
@@ -28,8 +31,16 @@ import {
 
 async function main(): Promise<void> {
   const port = fakeCrmPort();
-  const server = await startFakeCrmServer({ secret: FAKE_CRM_SECRET, port });
+  const apiBaseUrl = process.env.API_BASE_URL;
+  const teamId = process.env.TEST_HARNESS_TEAM_ID;
+  const host = apiBaseUrl ? { apiBaseUrl, ...(teamId ? { teamId } : {}) } : undefined;
+  const server = await startFakeCrmServer({ secret: FAKE_CRM_SECRET, port, ...(host ? { host } : {}) });
   console.log(`[fake-crm] '${FAKE_CRM_ADAPTER_TYPE}' listening at ${server.baseUrl}`);
+  console.log(
+    host
+      ? `[fake-crm] pushes emit/wake to ${host.apiBaseUrl}${host.teamId ? ` (team ${host.teamId})` : ''}`
+      : '[fake-crm] no API_BASE_URL — the /dev/ routes cannot push',
+  );
 
   const shutdown = () => {
     void server.close().finally(() => process.exit(0));

@@ -192,6 +192,24 @@ export async function ensureDevLoopSlackCredential(teamId: string): Promise<void
     .execute();
 }
 /**
+ * The install probes the server's own `manifest` answer for its protocol
+ * version, so the fixture has to be up first. A refused connection is named
+ * here, with the command that starts it, instead of surfacing as the install's
+ * bare `fetch failed`.
+ */
+async function requireFakeCrmRunning(baseUrl: string): Promise<void> {
+  try {
+    // Any HTTP answer (a 401 included) means something is listening.
+    await fetch(baseUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  } catch (err) {
+    throw new Error(
+      `The fake CRM (acme_crm) is not running at ${baseUrl} (${err instanceof Error ? err.message : String(err)}). ` +
+        'The dev loop starts it (`pnpm dev:loop:agent`); to start it on its own, run `cd apps/api && pnpm dev:fake-crm`, then re-run `pnpm dev:seed`.',
+    );
+  }
+}
+
+/**
  * The dev loop's one REMOTE adapter: install `acme_crm` pointing at the durable
  * fake-CRM fixture (`pnpm dev:fake-crm`, booted by `dev/loop.sh` on this
  * profile's `FAKE_REMOTE_ADAPTER_PORT`).
@@ -208,6 +226,7 @@ export async function ensureDevLoopRemoteAdapter(options: {
   userId: string;
 }): Promise<{ baseUrl: string }> {
   const baseUrl = fakeCrmBaseUrl();
+  await requireFakeCrmRunning(baseUrl);
   await installRemoteAdapterFromManifest({
     teamId: options.teamId as TeamId,
     userId: options.userId as UserId,
