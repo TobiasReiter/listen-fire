@@ -13180,7 +13180,22 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
                 _meta: object;
-            }, {
+            }, ({
+                kind: "invalid";
+                id: string;
+                adapterType: string;
+                reason: string;
+                displayName?: undefined;
+                description?: undefined;
+                supportedTriggers?: undefined;
+                methods?: undefined;
+                baseUrl?: undefined;
+                authStrategy?: undefined;
+                credentialsId?: undefined;
+                createdAt?: undefined;
+                updatedAt?: undefined;
+            } | {
+                kind: "valid";
                 id: string;
                 adapterType: string;
                 displayName: string | null;
@@ -13192,7 +13207,8 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 credentialsId: string | null;
                 createdAt: Date;
                 updatedAt: Date;
-            }[]>;
+                reason?: undefined;
+            })[]>;
             get: _trpc_server.BuildProcedure<"query", {
                 _config: _trpc_server.RootConfig<{
                     ctx: {

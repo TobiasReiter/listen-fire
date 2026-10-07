@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
 import { currentContext } from '../../../services/context';
@@ -7,7 +8,8 @@ import {
   deleteRemoteAdapter,
   getRemoteAdapter,
   listRemoteAdapters,
-  rowToManifest,
+  parseStoredManifest,
+  type RemoteAdapterRow,
 } from '../../../services/translation_graph/adapters/remote/store';
 import { installRemoteAdapterFromManifest } from '../../../services/translation_graph/adapters/remote/install';
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -29,6 +31,34 @@ import type { UserId } from '../../../generated/kysely/core/User';
  *
  * tRPC + UI
  */
+/**
+ * One list row. The display metadata + trigger/method capabilities live only in
+ * the manifest jsonb, so the row is re-parsed; a manifest that no longer parses
+ * becomes an `invalid` entry (still deletable) rather than failing the list.
+ */
+export function toListEntry(row: RemoteAdapterRow) {
+  const id = row.id as unknown as string;
+  const stored = parseStoredManifest(row);
+  if (!stored.ok) {
+    return { kind: 'invalid' as const, id, adapterType: row.adapter_type, reason: stored.reason };
+  }
+  const { manifest } = stored;
+  return {
+    kind: 'valid' as const,
+    id,
+    adapterType: row.adapter_type,
+    displayName: manifest.displayName ?? null,
+    description: manifest.description ?? null,
+    supportedTriggers: manifest.supportedTriggers,
+    methods: manifest.methods,
+    baseUrl: row.base_url,
+    authStrategy: row.auth_strategy,
+    credentialsId: (row.credentials_id as unknown as string | null) ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 const remoteAdapterRouter = (procedure: typeof trpc.procedure) => {
   return trpc.router({
     /**
@@ -42,27 +72,7 @@ const remoteAdapterRouter = (procedure: typeof trpc.procedure) => {
       const rows = await listRemoteAdapters({
         teamId: ctx.user.teamId as TeamId,
       });
-      return rows.map((row) => {
-        // The display metadata + trigger/method capabilities live only in the
-        // manifest jsonb, not the projected scalar columns. Reconstruct the
-        // manifest so the editor's picker can render a friendly name and gate
-        // source-vs-target eligibility on `supportedTriggers` / `methods`.
-        const manifest = rowToManifest(row);
-        return {
-          id: row.id as unknown as string,
-          adapterType: row.adapter_type,
-          displayName: manifest.displayName ?? null,
-          description: manifest.description ?? null,
-          supportedTriggers: manifest.supportedTriggers,
-          methods: manifest.methods,
-          baseUrl: row.base_url,
-          authStrategy: row.auth_strategy,
-          credentialsId:
-            (row.credentials_id as unknown as string | null) ?? null,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        };
-      });
+      return rows.map(toListEntry);
     }),
 
     /**
@@ -79,7 +89,14 @@ const remoteAdapterRouter = (procedure: typeof trpc.procedure) => {
           adapterType: input.adapterType,
         });
         if (!row) return null;
-        return rowToManifest(row);
+        const stored = parseStoredManifest(row);
+        if (!stored.ok) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `The stored manifest for "${input.adapterType}" is no longer valid: ${stored.reason}`,
+          });
+        }
+        return stored.manifest;
       }),
 
     /**

@@ -180,6 +180,7 @@ import {
   listRemoteAdapters,
   deleteRemoteAdapter,
   rowToManifest,
+  parseStoredManifest,
 } from '../store';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
@@ -274,5 +275,30 @@ describe('remote_adapter store', () => {
     await expect(
       upsertRemoteAdapter({ teamId: TEAM_ID, manifest: { adapterType: '', baseUrl: 'not-a-url' } }),
     ).rejects.toThrow();
+  });
+});
+
+describe('parseStoredManifest', () => {
+  const rowOf = (manifest: unknown) => ({ manifest }) as Parameters<typeof parseStoredManifest>[0];
+
+  it('answers ok for a current manifest', () => {
+    expect(parseStoredManifest(rowOf(makeManifest())).ok).toBe(true);
+  });
+
+  it('answers a one line reason for a manifest saved before protocolVersion', () => {
+    const { protocolVersion, ...old } = makeManifest();
+    void protocolVersion;
+    const result = parseStoredManifest(rowOf(old));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('protocolVersion');
+      expect(result.reason).not.toContain('\n');
+    }
+  });
+
+  it('answers a reason for a hyphenated slug', () => {
+    const result = parseStoredManifest(rowOf(makeManifest({ adapterType: 'my-crm' })));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('adapterType');
   });
 });

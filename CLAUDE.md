@@ -68,15 +68,19 @@ This project uses TypeScript strictly. Before submitting changes:
 
 ## Done vs shippable (two-tier verification)
 
-Verification is expensive here (a full `pnpm -r code:type-check` needs an 8GB
-heap and minutes; broad test runs likewise), so it does NOT block the inner
-loop:
+Unit test sets are now seconds (jest compiles without type-checking, on half
+the cores: the apps/api movement_engine unit set went from 1,048 s to 27 s) and
+a full `pnpm -r code:type-check` is about a minute with caches cleared. Broad
+runs still do not block the inner loop:
 
 - **Done** (subagent tier): the change should be right — reasoned through,
-  consistent with surrounding code, cheap signals only. A single scoped test
-  file (`pnpm test:unit --testPathPattern '<file-you-just-touched>'`, or
-  `--findRelatedTests <changed-file>` for a shared module) is the ceiling.
-  Nothing expensive blocks a subagent reporting done.
+  consistent with surrounding code. The ceiling is the scoped test SET for the
+  area you touched (`pnpm test:unit --testPathPattern '<area-dir-or-file>'`, or
+  `--findRelatedTests <changed-file>` for a shared module), plus the type-check
+  of the packages you touched. Integration tests stay on one worker and share
+  one test DB, so run them one job at a time.
+  Nothing broader blocks a subagent reporting done.
+
 - **Shippable** (top-level tier, batched): before pushing or releasing, run the
   ship gate once — full `pnpm -r code:type-check` and the chunk's test set, in
   parallel (independent processes). End-to-end dev-loop verification also lives

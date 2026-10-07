@@ -28,6 +28,23 @@ export function rowToManifest(row: RemoteAdapterRow): RemoteAdapterManifestFile 
 }
 
 /**
+ * Like `rowToManifest`, but a stored manifest that no longer parses (the schema
+ * has tightened since it was saved) is an answer, not a throw — so one stale row
+ * cannot take a whole list down with it.
+ */
+export function parseStoredManifest(
+  row: RemoteAdapterRow,
+): { ok: true; manifest: RemoteAdapterManifestFile } | { ok: false; reason: string } {
+  const parsed = RemoteAdapterManifestFile.safeParse(row.manifest);
+  if (parsed.success) return { ok: true, manifest: parsed.data };
+  const reason = parsed.error.issues
+    .map((issue) => (issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message))
+    .join('; ')
+    .replace(/\s*\n\s*/g, ' ');
+  return { ok: false, reason };
+}
+
+/**
  * Install or update a remote adapter from a manifest file. Upserts on the
  * `(team_id, adapter_type)` unique key — a second call with the same slug
  * updates the existing row rather than creating a duplicate. The full manifest

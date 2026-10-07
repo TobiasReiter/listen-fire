@@ -495,19 +495,29 @@ export default function RemoteAdaptersPage() {
                     <span className="text-[13px] font-medium text-gray-900">
                       {adapter.adapterType}
                     </span>
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                      {authLabel(adapter.authStrategy)}
-                    </span>
+                    {adapter.kind === "valid" && (
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                        {authLabel(adapter.authStrategy)}
+                      </span>
+                    )}
                   </div>
-                  <div className="mt-1.5">
-                    <code className="truncate rounded bg-gray-50 px-2 py-1 text-[11px] font-mono text-gray-600">
-                      {adapter.baseUrl}
-                    </code>
-                  </div>
-                  <div className="mt-0.5 text-[11px] text-gray-400">
-                    Updated{" "}
-                    {new Date(adapter.updatedAt).toLocaleDateString()}
-                  </div>
+                  {adapter.kind === "valid" ? (
+                    <>
+                      <div className="mt-1.5">
+                        <code className="truncate rounded bg-gray-50 px-2 py-1 text-[11px] font-mono text-gray-600">
+                          {adapter.baseUrl}
+                        </code>
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-gray-400">
+                        Updated{" "}
+                        {new Date(adapter.updatedAt).toLocaleDateString()}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="mt-1 text-[12px] text-red-600">
+                      invalid — {adapter.reason}
+                    </div>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100">
                   {confirmDeleteSlug === adapter.adapterType ? (
@@ -527,6 +537,7 @@ export default function RemoteAdaptersPage() {
                     </>
                   ) : (
                     <>
+                      {adapter.kind === "valid" && (
                       <button
                         onClick={() => void openEdit(adapter.adapterType)}
                         disabled={loadingSlug === adapter.adapterType}
@@ -536,6 +547,7 @@ export default function RemoteAdaptersPage() {
                           ? "Loading…"
                           : "Edit"}
                       </button>
+                      )}
                       <button
                         onClick={() =>
                           setConfirmDeleteSlug(adapter.adapterType)
