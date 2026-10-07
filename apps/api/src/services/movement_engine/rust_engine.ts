@@ -13,6 +13,7 @@
 
 import { openEngineSegment, type Program } from 'movement-lang';
 
+import { neverAsAny } from '../../lib/utils/types';
 import type { Adapter } from '../translation_graph/adapter';
 import type { EngineHost } from './host';
 import type { MovementRunResult, RunMovementInput } from './run';
@@ -62,6 +63,12 @@ export function engineChoice(env: Record<string, string | undefined> = process.e
   throw new Error(`MOVEMENT_ENGINE is "${value}": it must be "rust" or "ts"`);
 }
 
+/** For a process's boot: a bad `MOVEMENT_ENGINE` fails startup rather than
+ *  every run. */
+export function assertEngineChoiceConfigured(env: Record<string, string | undefined> = process.env): void {
+  engineChoice(env);
+}
+
 /** Whether the Rust engine can run `program`. Nothing yet: each slice adds
  *  the constructs its conformance cases prove. */
 export function rustCanRun(_program: Program): boolean {
@@ -71,9 +78,12 @@ export function rustCanRun(_program: Program): boolean {
 /** A segment of `input`'s run, in the Rust engine. */
 export async function runSegmentInRust(
   input: RunMovementInput,
-  engine: EngineProtocol = openWasmEngine(),
+  engine?: EngineProtocol,
 ): Promise<MovementRunResult> {
-  const done = await driveEngine(engine, segmentInput(input), input);
+  // Read before the instance opens: an input that cannot cross must not
+  // leave a segment open behind it.
+  const start = segmentInput(input);
+  const done = await driveEngine(engine ?? openWasmEngine(), start, input);
   return readRunResult(done);
 }
 
@@ -209,35 +219,43 @@ function errorAnswer(error: unknown): { message: string; name?: string } {
  */
 export function plainJson(value: unknown, method: string, at = ''): unknown {
   const where = at === '' ? '' : ` at ${at}`;
-  switch (typeof value) {
+  const kind = typeof value;
+  switch (kind) {
     case 'string':
     case 'boolean':
       return value;
     case 'number':
       if (Number.isFinite(value)) return value;
-      throw new RustShimError(`${method} returned ${value}${where}, which JSON cannot carry`);
-    case 'object': {
-      if (value === null) return value;
-      if (Array.isArray(value)) {
-        value.forEach((item, i) => plainJson(item, method, `${at}[${i}]`));
-        return value;
-      }
-      const proto: unknown = Object.getPrototypeOf(value);
-      if (proto !== Object.prototype && proto !== null) {
-        const kind = value.constructor?.name ?? 'an object with a prototype';
-        throw new RustShimError(`${method} returned a ${kind}${where}, which is not plain JSON`);
-      }
-      for (const [key, entry] of Object.entries(value)) {
-        if (entry !== undefined) plainJson(entry, method, at === '' ? key : `${at}.${key}`);
-      }
-      return value;
-    }
+      throw new RustShimError(`${method} returned ${String(value)}${where}, which JSON cannot carry`);
+    case 'object':
+      return plainJsonObject(value, method, at);
     case 'undefined':
     case 'function':
     case 'bigint':
     case 'symbol':
-      throw new RustShimError(`${method} returned a ${typeof value}${where}, which is not plain JSON`);
+      throw new RustShimError(`${method} returned a ${kind}${where}, which is not plain JSON`);
+    default:
+      return neverAsAny(kind);
   }
+}
+
+/** `plainJson` for a value whose `typeof` is `object`. */
+function plainJsonObject(value: unknown, method: string, at: string): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => plainJson(item, method, `${at}[${i}]`));
+    return value;
+  }
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    const kind = value.constructor?.name ?? 'an object with a prototype';
+    const where = at === '' ? '' : ` at ${at}`;
+    throw new RustShimError(`${method} returned a ${kind}${where}, which is not plain JSON`);
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) plainJson(entry, method, at === '' ? key : `${at}.${key}`);
+  }
+  return value;
 }
 
 function record(value: unknown, what: string): Record<string, unknown> {
@@ -327,7 +345,7 @@ function readStep(reply: { ok: boolean; json: unknown }, call: string): EngineSt
   const json = record(reply.json, `the Rust engine's ${call}`);
   if (!reply.ok) {
     const error = record(json.error, `the Rust engine's ${call} error`);
-    throw new Error(`the Rust engine refused ${call}: ${String(error.message)}`);
+    throw new RustShimError(`the Rust engine refused ${call}: ${String(error.message)}`);
   }
   if ('done' in json) return { done: json.done };
   if (!Array.isArray(json.pending)) throw new RustShimError(`the Rust engine's ${call} returned no step`);

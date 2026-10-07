@@ -8,7 +8,7 @@ import { openEngineSegment } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { makeTestHost } from '../host';
-import { driveEngine, openWasmEngine } from '../rust_engine';
+import { driveEngine, openWasmEngine, RustShimError } from '../rust_engine';
 
 describe('the Rust engine artifact', () => {
   it('round-trips start → two pending at once → answers out of order → done', () => {
@@ -92,5 +92,6 @@ describe('the Rust engine artifact', () => {
 
   it('refuses a protocol misuse loudly through the shim', () => {
     expect(() => openWasmEngine().start({ entry: 'nope' })).toThrow('the Rust engine refused start: no entry `nope`');
+    expect(() => openWasmEngine().start({ entry: 'nope' })).toThrow(RustShimError);
   });
 });

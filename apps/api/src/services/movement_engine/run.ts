@@ -689,12 +689,18 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // the engine's import structure — validation and execution consume one
   // resolution.
   const { program, prepared } = parseAndCheck(input);
-  if (engineChoice() === 'rust' && rustCanRun(program)) return runSegmentInRust(input);
   // Every way into the interpreter opens the same door: one segment, one
   // third-party call ceiling (run_scope.ts). A fifth entry point that
   // forgets `withRunCallLedger` loses the safeguard silently, so they all
-  // wrap here rather than deeper.
-  return withRunCallLedger(() => new Interpreter(input, prepared).run(program), runScopeOf(input));
+  // wrap here rather than deeper. The Rust engine's segment opens the same
+  // door: its host calls are the run's.
+  return withRunCallLedger(
+    () =>
+      engineChoice() === 'rust' && rustCanRun(program)
+        ? runSegmentInRust(input)
+        : new Interpreter(input, prepared).run(program),
+    runScopeOf(input),
+  );
 }
 
 /** The run context every entry point opens its segment under. */

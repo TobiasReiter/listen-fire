@@ -6,9 +6,11 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { makeTestHost, type TestHostOverrides } from '../host';
 import {
+  assertEngineChoiceConfigured,
   driveEngine,
   engineChoice,
   readRunResult,
+  runSegmentInRust,
   rustCanRun,
   RustShimError,
   type EngineProtocol,
@@ -262,12 +264,33 @@ describe('the Rust engine shim', () => {
   });
 });
 
+describe('the segment input', () => {
+  it('is read before the engine starts: one that cannot cross starts nothing', async () => {
+    const { engine, started, finished } = scriptedEngine(() => ({ done: {} }));
+    const input = {
+      source: '',
+      event: { occurredAt: new Date(0) },
+      teamId: TEAM,
+      catalog: {},
+      host: makeTestHost(),
+    } as unknown as Parameters<typeof runSegmentInRust>[0];
+    await expect(runSegmentInRust(input, engine)).rejects.toThrow(RustShimError);
+    expect(started).toEqual([]);
+    expect(finished()).toBe(false);
+  });
+});
+
 describe('choosing the engine', () => {
   it('reads MOVEMENT_ENGINE: unset or ts is the TypeScript engine, rust the Rust one, anything else refused', () => {
     expect(engineChoice({})).toBe('ts');
     expect(engineChoice({ MOVEMENT_ENGINE: 'ts' })).toBe('ts');
     expect(engineChoice({ MOVEMENT_ENGINE: 'rust' })).toBe('rust');
     expect(() => engineChoice({ MOVEMENT_ENGINE: 'Rust' })).toThrow('MOVEMENT_ENGINE is "Rust"');
+  });
+
+  it('refuses a bad MOVEMENT_ENGINE at boot', () => {
+    expect(() => assertEngineChoiceConfigured({ MOVEMENT_ENGINE: 'wasm' })).toThrow('MOVEMENT_ENGINE is "wasm"');
+    expect(() => assertEngineChoiceConfigured({})).not.toThrow();
   });
 
   it('lets no program through to the Rust engine yet', () => {
