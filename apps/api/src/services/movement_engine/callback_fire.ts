@@ -237,7 +237,11 @@ export const fireCallbackHandler: WorkHandler = {
           logger.info('[Callback] queued body not run', { callbackId, callIndex, reason: refusal });
           return;
         }
-        await executeFire(callback, callIndex, lease);
+        // Not started because the lease was lost before the body began: the
+        // row stays, deferred, for whoever holds the run next.
+        if ((await executeFire(callback, callIndex, lease)) === 'not_started') {
+          throw new WorkDeferred(`run ${queued.runId}'s lease was lost before the body started`);
+        }
       }),
     );
     if (fired.kind === 'busy') throw new WorkDeferred(`run ${queued.runId} is held by another process`);
@@ -364,7 +368,11 @@ export function callbackAckText(outcome: CallbackFireOutcome): string {
  * inspector. Drains awaits DIRECTLY rather than through the slot — we are
  * already inside it.
  */
-async function executeFire(callback: CallbackRecord, callIndex: number, lease: HeldRunLease): Promise<void> {
+async function executeFire(
+  callback: CallbackRecord,
+  callIndex: number,
+  lease: HeldRunLease,
+): Promise<'ran' | 'not_started'> {
   try {
     const context = await loadRunContext(callback.runId);
     if (context === null) {
@@ -376,15 +384,17 @@ async function executeFire(callback: CallbackRecord, callIndex: number, lease: H
       // Marked before the body starts: at most once after start, a crash
       // included (the ledger's own comment says what that trades away).
       // The lease lapsed before the body began: the run is another
-      // instance's, and so is this body. Neither marked nor run, its queued
-      // row runs it under the new holder.
-      if (lease.isLost()) return;
+      // instance's, and so is this body. Neither marked nor run, it is left
+      // to its `fire_callback` row, which runs it under the next holder: the
+      // door's row is still pending (due at the backstop), and a row already
+      // running defers itself (`fireCallbackHandler`).
+      if (lease.isLost()) return 'not_started';
       if (!(await markCallbackBodyStarted({ id: callback.id, callIndex, lease }))) {
         logger.warn('[Callback] body not started: the run lease is no longer this one', {
           callbackId: callback.id,
           callIndex,
         });
-        return;
+        return 'not_started';
       }
       const outcome = await fireCallbackFiring({
         teamId: callback.teamId,
@@ -405,7 +415,9 @@ async function executeFire(callback: CallbackRecord, callIndex: number, lease: H
         callIndex,
         lease,
       });
-      if (outcome.leaseLost) return;
+      // Lost mid-body: the body started, so it is never run again (at most
+      // once after start), and the run's awaiters are the new holder's.
+      if (outcome.leaseLost) return 'ran';
     }
   } catch (err) {
     // A failing side entry never kills the primary await — it is already
@@ -432,6 +444,7 @@ async function executeFire(callback: CallbackRecord, callIndex: number, lease: H
       error: err instanceof Error ? err.message : String(err),
     });
   }
+  return 'ran';
 }
 
 interface RunContext {
