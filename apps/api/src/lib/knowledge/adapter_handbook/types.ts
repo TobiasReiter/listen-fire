@@ -1,4 +1,4 @@
-export type ChapterId = 'overview' | 'protocol' | 'schema' | 'files' | 'reference';
+export type ChapterId = 'overview' | 'protocol' | 'schema' | 'events' | 'files' | 'reference';
 
 export interface Chapter {
   id: ChapterId;

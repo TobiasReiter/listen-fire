@@ -30,7 +30,10 @@ Listen-Fire calls your single endpoint to introspect your data model
 (\`describe\`, \`listEntryPoints\`), to match existing records against
 incoming ones so it updates rather than duplicates (\`resolveEntity\`),
 and to read and write records (\`getFieldValue\`, \`getRelated\`,
-\`createRecord\`, \`updateRecord\`, \`deleteRecord\`).
+\`createRecord\`, \`updateRecord\`, \`deleteRecord\`). In the other
+direction, your system tells Listen-Fire when something happens — a new
+record, or the thing an automation is waiting on — through two push doors
+or through webhooks Listen-Fire subscribes to.
 
 ### Speaking your natural names
 

@@ -116,10 +116,13 @@ enforces it). Two surfaces, both via `mintRemoteCredential`:
   secret" (its `requiresCredential` stays false to keep construction
   credential-free). Follow-up: a remote-aware connected-state derived from the
   install's `credentials_id`.
-- **Inbound webhook door not covered.** The fake CRM is a write-only target
-  (`listEntryPoints` → `readable: false`, no `supportedTriggers`). The remote
-  protocol supports `preprocessInbound` / `listEventTypes`, but this
-  scaffolding does not exercise an inbound event door for a remote adapter.
+- **Inbound is covered by the dev loop, not by this harness.** The fake CRM
+  is now the reference protocol-2 adapter (`docs/adapter-protocol.md`): a
+  `Company` comment thread an automation can `await`, and dev routes that
+  push `emit` / `wake` to the API (`pnpm dev:inject crm-company`,
+  `pnpm dev:inject crm-comment`, `pnpm dev:inspect crm`). The walkthrough is
+  the "Build your first adapter" section of that doc. This harness still
+  proves only the write path.
 - **Some web views are static-only.** The Adapters/integrations UI projects an
   installed remote manifest via `remoteAdapterManifest`, but this harness
   verifies only the engine + wire path, not the editor/catalogue rendering of a

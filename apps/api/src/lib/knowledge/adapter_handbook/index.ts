@@ -13,6 +13,7 @@ import type { Handbook, ChapterId, Chapter, IntentEntry } from './types';
 import { overview } from './chapters/overview';
 import { protocol } from './chapters/protocol';
 import { schema } from './chapters/schema';
+import { events } from './chapters/events';
 import { files } from './chapters/files';
 import { reference } from './chapters/reference';
 
@@ -23,8 +24,9 @@ write to your own system — a homespun CRM, an internal tool, any
 HTTP-reachable data store — as if it were a built-in integration. You do
 not need anything from Listen-Fire's codebase: the adapter just speaks a small
 JSON protocol, and any language works. These chapters cover what an
-adapter is, the wire protocol, how to describe your data model, and a
-runnable reference server with the manifest that registers it.`;
+adapter is, the wire protocol, how to describe your data model, how your
+system announces events and wakes waiting automations, and a runnable
+reference server with the manifest that registers it.`;
 
 const CONVENTIONS = `## Conventions (always in play)
 
@@ -48,6 +50,9 @@ const INTENT_INDEX: IntentEntry[] = [
   { intent: 'Prevent duplicate records when Listen-Fire pushes data in', chapter: 'protocol' },
   { intent: 'Describe your types, fields, and relationships to Listen-Fire', chapter: 'schema' },
   { intent: 'Get the listEntryPoints and describe shapes exactly right', chapter: 'schema' },
+  { intent: 'Run automations when something is created in your system', chapter: 'events' },
+  { intent: 'Let an automation wait for something to happen in your system', chapter: 'events' },
+  { intent: 'Push events or wakes to Listen-Fire, or receive webhooks through it', chapter: 'events' },
   { intent: 'Read files or attachments out of your system', chapter: 'files' },
   { intent: 'Expose a document to Listen-Fire via resolveFileRef', chapter: 'files' },
   { intent: 'Understand whether Listen-Fire can write a file into your system', chapter: 'files' },
@@ -60,6 +65,7 @@ const CHAPTERS: Record<ChapterId, Chapter> = {
   overview,
   protocol,
   schema,
+  events,
   files,
   reference,
 };

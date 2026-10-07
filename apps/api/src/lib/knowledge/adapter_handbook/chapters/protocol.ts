@@ -16,9 +16,10 @@ you may implement.
   The method name is in the request body, not the path.
 - **Request body** (\`application/json\`):
   \`\`\`json
-  { "protocolVersion": "1", "method": "describe", "cacheScopeId": "<opaque>", "params": { "typeId": "Company" } }
+  { "protocolVersion": "2", "method": "describe", "cacheScopeId": "<opaque>", "params": { "typeId": "Company" } }
   \`\`\`
-  \`protocolVersion\` is always \`"1"\`. \`cacheScopeId\` is an opaque
+  \`protocolVersion\` is the string \`"2"\`; answer any other version
+  with the error code \`protocol_version\`. \`cacheScopeId\` is an opaque
   string you may use to scope any per-call caching; you can ignore it.
 - **Response body** — always one of these two, and (importantly) **both
   use HTTP 200**:
@@ -40,11 +41,13 @@ and declare it in the manifest:
 
 - \`bearer\` → header \`Authorization: Bearer <secret>\`
 - \`shared_secret\` → a header of your choosing (default
-  \`X-Adapter-Secret\`), value \`<secret>\`
+  \`x-listen-fire-adapter-secret\`), value \`<secret>\`
 
 Your server checks that header and returns **401** if it is missing or
 wrong. The secret is entered into Listen-Fire separately (at install time) and
-stored encrypted — **it never lives in the manifest**.
+stored encrypted — **it never lives in the manifest**. When your server
+calls Listen-Fire (the push doors, events chapter), it sends the same header
+with the same secret.
 
 ### Methods to implement
 
@@ -70,26 +73,69 @@ sink), implement the writes, return \`null\` / \`[]\` from the read
 methods, and mark entry points \`readable: false\`.
 
 **Optional methods** (implement only if relevant; omit from
-\`manifest.methods\` and Listen-Fire will not call them): \`readRecord\`
-(enables no-op detection on updates — recommended), \`iterateRelated\`,
-\`getDedupRules\`, \`translateFilter\`, \`describeOpaqueId\`,
-\`invokeFieldFunction\`, and the inbound/event methods
-\`preprocessInbound\` / \`listEventTypes\` / \`getActorCandidates\` /
-\`extractActor\` / \`resolveFileRef\`.
+\`manifest.methods\` and Listen-Fire will not call them):
+
+- \`readRecord\` — enables no-op detection on updates (recommended).
+- \`iterateRelatedPage\` — paged traversal (below).
+- \`resolveFileRef\` — files out of your system (files chapter).
+- Events and waits: \`resolveAwait\`, \`wakeKeys\`,
+  \`preprocessInbound\`, \`listEventTypes\`,
+  \`ensureEventSubscription\`, \`removeEventSubscription\` (events
+  chapter).
+- \`linkRecords\` / \`unlinkRecords\`, \`getDedupRules\`,
+  \`translateFilter\`, \`describeOpaqueId\`, \`invokeFieldFunction\`,
+  \`getActorCandidates\`, \`extractActor\`, \`edgesFrom\` (schema
+  chapter).
 
 ### The manifest method result
 
 \`\`\`json
 {
+  "protocolVersion": 2,
   "adapterType": "acme_crm",
   "supportedTriggers": [],
   "runtimeCapabilities": { "traversal": { "incoming": false, "edgeProperties": false }, "resources": false },
-  "methods": ["listEntryPoints","describe","resolveEntity","getFieldValue","getRelated","createRecord","updateRecord","deleteRecord"],
-  "webhookEventTypeId": null
+  "methods": ["listEntryPoints","describe","resolveEntity","getFieldValue","getRelated","createRecord","updateRecord","deleteRecord"]
 }
 \`\`\`
-\`methods\` MUST list exactly the methods you implement — Listen-Fire prunes
-calls to anything absent.
+- \`protocolVersion\` is the number \`2\`. Installing calls your
+  \`manifest\` with the secret and refuses a server that answers anything
+  else.
+- \`methods\` MUST list exactly the methods you implement — Listen-Fire
+  prunes calls to anything absent.
+
+### Errors
+
+Inside the envelope (HTTP 200, \`ok: false\`):
+
+- \`method_not_implemented\` (not retryable) — an unknown method, or one you
+  do not implement.
+- \`adapter_error\` (retryable) — your code failed; Listen-Fire may retry.
+- \`bad_request\` (not retryable) — \`params\` did not match the method;
+  say which path (\`describe: typeId: expected string\`).
+- \`protocol_version\` (not retryable) — the request's
+  \`protocolVersion\` is not \`"2"\`.
+
+Listen-Fire validates every result you return; a wrong shape fails the call
+with a message naming the method and the path.
+
+### Paging large collections
+
+\`getRelated\` returns everything at once. For a collection that can be
+large, also implement \`iterateRelatedPage\` and list it in
+\`methods\`. It takes the \`getRelated\` params plus an optional
+\`cursor\` and returns one page:
+\`\`\`json
+{ "items": [ { "position": { } } ], "nextCursor": 4 }
+\`\`\`
+- The first call has no \`cursor\`. Return \`nextCursor\` while more
+  remain; omit it on the last page.
+- The cursor is any JSON value; Listen-Fire echoes it back unchanged.
+  Answering the cursor you were given again fails the walk, as does a walk
+  past 10,000 pages.
+- On the TypeScript reference kit, an in-process adapter that only streams
+  is served as one page capped at 1,000 items (with a warning); one with
+  neither method answers \`method_not_implemented\`.
 
 ### resolveEntity (matching / dedup)
 

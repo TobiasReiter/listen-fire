@@ -328,6 +328,10 @@ pnpm dev:inject dealroom [--round "SERIES A"] [--company <id|path|name>] \
 
 pnpm dev:inject gmail-message [--subject "<s>"] [--from <email>] [--body "<b>"] \
   [--expire-history]   # drop a message into the fake mailbox + fire the poll in-process; run `pnpm dev:gmail setup` first
+
+# The fake CRM (the reference remote adapter) changes itself, then pushes to the API's adapter doors
+pnpm dev:inject crm-company --name "Larch Bio"                     # a company created in the CRM; it pushes `emit`
+pnpm dev:inject crm-comment --company company-1 --text "approved"   # a comment on that company's thread; it pushes `wake`
 ```
 
 The **`raw`** primitive is the backbone — every wrapper builds a body and
@@ -649,6 +653,7 @@ pnpm dev:inspect evertrace   # signals + lists seeded into the fake Evertrace AP
 pnpm dev:inspect dealroom    # fake Dealroom entity counts + recent rounds + the calls the adapter last made + the dealroom poll trigger rows
 pnpm dev:inspect dealroom --clear-requests   # wipe the Dealroom request log first, to read one run's calls in isolation
 pnpm dev:inspect gmail       # the fake mailbox's change marker + its outbox + the gmail poll trigger's checkpoint
+pnpm dev:inspect crm         # the fake CRM's companies, comments and subscriptions + the runs waiting on it (adapter_await rows)
 pnpm dev:inspect valuations              # per-entity row counts + last 10 outbox entries
 pnpm dev:inspect valuations legal_entity # full rows for one Valuations entity
 pnpm dev:inspect --reset     # clear all fake state

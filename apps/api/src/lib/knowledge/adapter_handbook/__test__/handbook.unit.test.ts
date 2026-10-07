@@ -10,6 +10,7 @@ const MARKERS: Record<ChapterId, string> = {
   overview: 'reference server you can start from',
   protocol: 'retryable',
   schema: 'Keeping the two in sync',
+  events: 'The two ways are independent and unordered',
   files: 'Fetch and store their bytes exactly as above',
   reference: 'Do not put the secret in the manifest',
 };
@@ -24,6 +25,7 @@ describe('adapter_handbook on the Library shelf', () => {
       'overview',
       'protocol',
       'schema',
+      'events',
       'files',
       'reference',
     ]);

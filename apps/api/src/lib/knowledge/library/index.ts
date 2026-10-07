@@ -269,7 +269,7 @@ export function getLibraryShelf(): LibraryBook[] {
       bookId: 'adapter-authoring',
       title: 'Adapter authoring',
       description:
-        'How to build a remote adapter — an HTTP server that speaks Listen-Fire\'s small JSON protocol so a system you host reads and writes like a built-in integration: the wire contract, describing your data model, and a runnable reference server with its manifest.',
+        'How to build a remote adapter — an HTTP server that speaks Listen-Fire\'s small JSON protocol so a system you host reads and writes like a built-in integration: the wire contract, describing your data model, events and waits, and a runnable reference server with its manifest.',
       status: 'available',
     }),
     stub({

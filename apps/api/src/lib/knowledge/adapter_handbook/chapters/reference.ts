@@ -28,7 +28,7 @@ const COMPANY = {
 
 const handlers = {
   manifest: () => ({
-    adapterType: 'acme_crm', supportedTriggers: [],
+    protocolVersion: 2, adapterType: 'acme_crm', supportedTriggers: [],
     runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
     methods: ['listEntryPoints','describe','resolveEntity','getFieldValue','getRelated','createRecord','updateRecord','deleteRecord'],
   }),
@@ -56,7 +56,10 @@ app.post('/', async (req, res) => {
   if (req.headers.authorization !== \`Bearer \${SECRET}\`) {
     return res.status(401).json({ ok: false, error: { code: 'unauthorized', message: 'bad secret', retryable: false } });
   }
-  const { method, params } = req.body ?? {};
+  const { protocolVersion, method, params } = req.body ?? {};
+  if (protocolVersion !== '2') {
+    return res.json({ ok: false, error: { code: 'protocol_version', message: 'expected protocol version 2', retryable: false } });
+  }
   const fn = handlers[method];
   if (!fn) return res.json({ ok: false, error: { code: 'method_not_implemented', message: method, retryable: false } });
   try {
@@ -76,6 +79,7 @@ here.**
 
 \`\`\`json
 {
+  "protocolVersion": 2,
   "adapterType": "acme_crm",
   "displayName": "Acme CRM",
   "description": "Our internal CRM.",
@@ -91,11 +95,13 @@ here.**
 - \`authStrategy\` matches the auth section of the protocol chapter. For
   \`shared_secret\` add \`"header": "X-Your-Header"\`.
 - \`methods\` must equal what your server implements.
+- \`protocolVersion\` is \`2\`; installing asks your server's
+  \`manifest\` and refuses anything else.
 
 ### Installing it in Listen-Fire
 
 1. Host your server at a stable \`baseUrl\`.
-2. In Listen-Fire, open **Settings → Remote Adapters** and import the manifest
+2. In Listen-Fire, open the **Adapters** page and import the manifest
    JSON, entering your adapter's **secret** in the same step (stored
    encrypted, bound to this adapter). That is it — the adapter now
    appears in your automations.
@@ -131,6 +137,8 @@ bracketed parts for your deployment):
 >    \`updateRecord\` for a missing id.
 > 2. The \`manifest.json\`, filled in for our deployment (\`baseUrl\`,
 >    \`authStrategy\`, the exact \`methods\` you implemented).
+> If our CRM can tell us when records are created or change, also follow
+> the events chapter.
 > Confirm both \`ok:true\` and \`ok:false\` responses use HTTP 200, and
 > that the \`manifest.methods\` array matches the implemented handlers.
 > Do not put the secret in the manifest.`,
