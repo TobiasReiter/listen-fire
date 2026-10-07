@@ -26,7 +26,7 @@ import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000078' as TeamId;
 
@@ -130,9 +130,9 @@ function harness(source: string) {
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: credentialIdsFor(catalog, (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email.adapter : attio.adapter,
       },

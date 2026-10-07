@@ -11,7 +11,7 @@
 
 import { fromCatalogSnapshot, type InstanceSchema, type LanguageRelease } from 'movement-lang';
 import { runMovement } from '../run';
-import { currentLanguageVersion, hostSegments, segmentBoundAdapter } from '../../translation_graph/segment_scope';
+import { currentLanguageVersion, hostSegments, segmentScopedCalls } from '../../translation_graph/segment_scope';
 import { MovementEngineError } from '../errors';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { diagnoseMovementSource } from '../../translation_graph/movement/authoring';
@@ -135,9 +135,10 @@ function run(kg: ReturnType<typeof makeKgFake>, languageVersion?: number) {
     host: makeTestHost({
       segment: hostSegments,
       adapters: {
-        resolve: ({ adapterType, segmentId }) => {
-          if (adapterType === 'manual') return segmentBoundAdapter(manualAdapter, segmentId);
-          if (adapterType === KG) return segmentBoundAdapter(kg.adapter, segmentId);
+        ...segmentScopedCalls,
+        resolve: ({ adapterType }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
           throw new Error(`test: no fake adapter for '${adapterType}'`);
         },
       },

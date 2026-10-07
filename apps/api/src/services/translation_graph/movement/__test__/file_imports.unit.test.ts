@@ -344,9 +344,9 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
         },
         files: { resolveFile },
@@ -384,9 +384,9 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
         },
         files: { resolveFile },
@@ -436,9 +436,9 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
         },
         files: {

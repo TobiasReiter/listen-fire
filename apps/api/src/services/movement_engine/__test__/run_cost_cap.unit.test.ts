@@ -214,9 +214,9 @@ async function run(
       fetchUrlPriced === undefined
         ? catalog
         : { ...catalog, plugins: { ...catalog.plugins, fetch_url: { ...catalog.plugins.fetch_url!, priced: fetchUrlPriced } } },
+    credentialIds: { acme_main: 'cred-attio-1' },
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email.adapter : attio.adapter,
       },

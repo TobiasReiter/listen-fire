@@ -10,7 +10,7 @@ import { valueType, locationFieldValue } from '../../../../adapters/affinity/api
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { logger } from '../../../logger';
-import { isAdapterCallCeilingExceeded } from '../../../movement_engine/host';
+import { isAdapterCallCeilingExceeded } from '../../segment_scope';
 import type { ParentAssociation, ParentLink, WriteInput } from '../../adapter';
 import { writeParentLinks } from '../../adapter';
 import {

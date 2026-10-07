@@ -398,14 +398,14 @@ describe('meta-rooted backfill: runMovement over the collection fan-out', () => 
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ attio: sourceA.adapter, manual: manualAdapter, [KG]: makeFakeKg().adapter }),
         },
       }),
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
     expect(runResult.movementName).toBe('backfill');
     // The seed is the source instance's META position; the collection
@@ -440,9 +440,9 @@ describe('backfill live run — per-position isolation (no implicit bridge, 3b)'
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
         },
       }),
@@ -504,9 +504,9 @@ describe('backfill live run — per-position isolation (no implicit bridge, 3b)'
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
         },
       }),
@@ -537,9 +537,9 @@ describe('backfill streaming — the engine prefers iterateRelated', () => {
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
         },
       }),
@@ -589,9 +589,9 @@ describe('a local `=` binding resolves inside a hop WHERE', () => {
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
         },
       }),
@@ -641,9 +641,9 @@ describe('a local `=` binding resolves inside a hop WHERE', () => {
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog: datedCompanyCatalog,
+        credentialIds: CREDENTIAL_IDS,
         host: makeTestHost({
           adapters: {
-            credentialId: (name) => CREDENTIAL_IDS[name],
             resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
           },
         }),

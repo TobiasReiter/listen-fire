@@ -298,9 +298,10 @@ async function runDigest(artifactType: 'pdf' | 'text') {
     event: EVENT,
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
+      writeSink: (w) => captured.push(w),
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: makeResolver({
           slack: slackWithFiles(),
           affinity: makeFakeAdapter('affinity').adapter,
@@ -309,7 +310,6 @@ async function runDigest(artifactType: 'pdf' | 'text') {
       files: { render: renderFileArtifact },
     }),
     dryRun: true,
-    writeSink: (w) => captured.push(w),
   });
   return { captured, result };
 }
@@ -422,9 +422,9 @@ describe('unknown stdlib members fail checking with the family inventory', () =>
         event: EVENT,
         teamId: TEAM_ID,
         catalog,
+        credentialIds: CREDENTIAL_IDS,
         host: makeTestHost({
           adapters: {
-            credentialId: (name) => CREDENTIAL_IDS[name],
             resolve: makeResolver({
               slack: slackWithFiles(),
               affinity: makeFakeAdapter('affinity').adapter,
@@ -468,9 +468,9 @@ describe('DATE.TODAY / DATETIME.AT through runMovement', () => {
       teamId: TEAM_ID,
       catalog,
       firedAt,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolver({ slack: slackWithFiles(), affinity: affinity.adapter }),
         },
       }),

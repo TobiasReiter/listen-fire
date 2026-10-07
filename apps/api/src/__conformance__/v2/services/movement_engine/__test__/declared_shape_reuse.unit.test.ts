@@ -327,6 +327,7 @@ async function run(
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: {
         resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
       },
@@ -334,7 +335,6 @@ async function run(
     }),
     ...(movementName !== undefined ? { movementName } : {}),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { calls: llm.calls, writes };
 }
@@ -681,6 +681,7 @@ describe('a spread of a declared structure, or of a record built in memory', () 
       teamId: TEAM_ID,
       catalog,
       host: makeTestHost({
+        writeSink: (w) => writes.push(w),
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -691,7 +692,6 @@ describe('a spread of a declared structure, or of a record built in memory', () 
         files: { resolveFile: (path) => (path === 'lib/deals' ? { source: library } : undefined) },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     expect(writes).toEqual([
       expect.objectContaining({ kind: 'create', fields: { name: 'Acme', stage: 'Seed' } }),

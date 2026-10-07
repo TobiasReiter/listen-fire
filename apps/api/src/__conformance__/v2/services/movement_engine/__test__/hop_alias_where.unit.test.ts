@@ -124,6 +124,7 @@ listen to runs {} fire sweep
       instanceSchemas: { [KG]: schema },
     }),
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: {
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'manual') return manualAdapter;
@@ -133,7 +134,6 @@ listen to runs {} fire sweep
       },
     }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return writes.map((w) => w.fields?.text);
 }

@@ -104,7 +104,7 @@ import { positionData, type SchemaTypeDescriptor } from '../../translation_graph
 import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
-import { makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
 
@@ -301,9 +301,9 @@ async function run(
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email : crm.adapter,
       },

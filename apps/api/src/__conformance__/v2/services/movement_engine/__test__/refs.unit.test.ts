@@ -607,9 +607,9 @@ describe('the engine passes natural names; the adapter translates internally', (
       event,
       teamId: TEAM_ID,
       catalog: teamLikeCatalog,
+      credentialIds: CREDENTIAL_IDS,
       host: makeTestHost({
         adapters: {
-          credentialId: (name) => CREDENTIAL_IDS[name],
           resolve: makeResolveAdapter({
             email: email.adapter,
             attio: attio.adapter,

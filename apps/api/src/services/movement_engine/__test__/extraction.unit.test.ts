@@ -543,6 +543,7 @@ describe('stage-0 extraction through runMovement', () => {
       teamId: TEAM_ID,
       catalog: parityCatalog,
       host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -553,7 +554,6 @@ describe('stage-0 extraction through runMovement', () => {
         llm: { client: llm.client },
       }),
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
     expect(runResult.movementName).toBe('log_dealflow');
 
@@ -606,6 +606,7 @@ describe('stage-0 extraction through runMovement', () => {
       teamId: TEAM_ID,
       catalog: parityCatalog,
       host: makeTestHost({
+        writeSink: () => {},
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -616,7 +617,6 @@ describe('stage-0 extraction through runMovement', () => {
         llm: { client: llm.client },
       }),
       dryRun: true,
-      writeSink: () => {},
     });
 
     const extractionEntry = runResult.trace.find((e) => e.kind === 'extraction');
@@ -647,6 +647,7 @@ describe('stage-0 extraction through runMovement', () => {
       teamId: TEAM_ID,
       catalog: parityCatalog,
       host: makeTestHost({
+        writeSink: () => {},
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -657,7 +658,6 @@ describe('stage-0 extraction through runMovement', () => {
         llm: { client: llm.client },
       }),
       dryRun: true,
-      writeSink: () => {},
     });
 
     const extractionEntry = runResult.trace.find((e) => e.kind === 'extraction');
@@ -745,6 +745,7 @@ describe('the extraction tier', () => {
       teamId: TEAM_ID,
       catalog: movementCatalog,
       host: makeTestHost({
+        writeSink: () => {},
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -755,7 +756,6 @@ describe('the extraction tier', () => {
         llm: { client: llm.client, transforms: transformInvoker },
       }),
       dryRun: true,
-      writeSink: () => {},
     });
     // Both calls: the stage-1 pass and the one behind the `through` fence.
     expect(llm.calls).toHaveLength(2);
@@ -4835,6 +4835,7 @@ describe('an extract description interpolates in the firing environment', () => 
       teamId: TEAM_ID,
       catalog: movementCatalog,
       host: makeTestHost({
+        writeSink: (w) => writes.push(w),
         adapters: {
           resolve: makeResolver({
             email: makeFakeAdapter('email').adapter,
@@ -4852,7 +4853,6 @@ describe('an extract description interpolates in the firing environment', () => 
         },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     return { calls: llm.calls, writes };
   }

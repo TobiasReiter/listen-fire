@@ -9,7 +9,7 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { LlmUsageContext } from '../../../lib/llm_usage';
-import type { Budget, CostLine } from '../../../lib/run_cost';
+import { isBudgetExhausted, type Budget, type CostLine } from '../../../lib/run_cost';
 import { withSpendMeter } from '../../../lib/run_spend';
 import { enqueueAwaitWake } from '../../movement_engine/await_wake';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
@@ -22,6 +22,7 @@ import {
   type HostExtractCallClient,
   type HostLlmClient,
   type HostTransformInvoker,
+  type PricedAnswer,
   type ResolveActingUserInput,
   type ResolveFileText,
 } from '../../movement_engine/host';
@@ -36,20 +37,24 @@ import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
 import { resolveAdapter } from '../adapters/resolve';
 import type { LlmClient } from '../engine/batched_extraction';
 import { meteredArbitration } from '../engine/entity_match';
-import { hostSegments, segmentBoundAdapter } from '../segment_scope';
+import { adapterTable, type LiveAdapterResolver } from '../engine/adapter_table';
+import type { DryRunWriteSink } from '../engine/dry_run_adapter';
+import { hostSegments, segmentScopedCalls } from '../segment_scope';
 import type { TriggerRunRecorder } from '../runs/trigger_run';
 import { renderFileArtifact } from './file_render';
 import { makeFileTextResolver, type FileTextReader } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
 import { postgresRawTextStore, type RawTextStore } from './raw_text_store';
 import { postgresRecordBindings } from './record_bindings';
-import { registryTransformInvoker } from './transform_invoker';
+import { registryTransformInvoker, type TransformInvoker } from './transform_invoker';
 
 export function productionEngineHost(input: {
   teamId: TeamId;
-  /** Credential import name → credential id, from the team's catalog
-   *  snapshot. File imports need nothing here: the snapshot carries the files. */
-  credentialIds: Readonly<Record<string, string>>;
+  /** Where live adapter instances come from. Absent ⇒ the adapter registry
+   *  (a dev probe supplies a client pointed at its fake server). */
+  resolveLive?: LiveAdapterResolver;
+  /** Receives each write a rehearsed (`dryRun`) target captured. */
+  writeSink?: DryRunWriteSink;
   /** The run the host's model, plugin and file-text calls are billed to. Absent
    *  ⇒ they run under whatever llm-usage context the caller holds (a test run:
    *  none, so nothing is billed to the team). */
@@ -68,33 +73,37 @@ export function productionEngineHost(input: {
 }): EngineHost {
   const cancel = input.cancel ?? NEVER_CANCELLED;
   const usage = usageScope({ teamId: input.teamId, triggerRunId: input.triggerRunId, cancel });
+  // The live instances, per segment. Production resolution is per (type,
+  // credential, construction args); the role is a test seam. Each call runs
+  // inside the segment it was resolved for.
+  const adapters = adapterTable({
+    resolveLive:
+      input.resolveLive ??
+      (({ adapterType, teamId, credentialsId, constructionArgs }) =>
+        resolveAdapter({
+          adapterType,
+          teamId,
+          credentialsId,
+          ...(constructionArgs !== undefined ? { constructionArgs } : {}),
+        })),
+    ...segmentScopedCalls,
+    ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
+  });
   return {
-    segment: hostSegments,
-    adapters: {
-      // Production resolution is per (type, credential, construction args); the
-      // role is a test seam. The instance answers inside the segment it was
-      // resolved for.
-      resolve: async ({ adapterType, teamId, credentialsId, constructionArgs, segmentId }) =>
-        segmentBoundAdapter(
-          await resolveAdapter({
-            adapterType,
-            teamId,
-            credentialsId,
-            ...(constructionArgs !== undefined ? { constructionArgs } : {}),
-          }),
-          segmentId,
-        ),
-      credentialId: (credentialName) =>
-        Object.hasOwn(input.credentialIds, credentialName)
-          ? input.credentialIds[credentialName]
-          : undefined,
+    segment: {
+      open: hostSegments.open,
+      close: async (closing) => {
+        adapters.closeSegment(closing.segmentId);
+        return hostSegments.close(closing);
+      },
     },
+    adapters: { resolve: (resolution) => adapters.resolve(resolution), call: (call) => adapters.call(call) },
     llm: {
       client: billedLlmClient(makeAnthropicLlmClient({ cancel }), usage),
       extractCall: billedExtractCallClient(makeAnthropicExtractCallClient({ cancel }), usage),
       transforms: billedTransforms(registryTransformInvoker, usage),
       // The judge is a model call like any other.
-      arbitrateEntities: (arbitration) => usage(() => meteredArbitration(arbitration)),
+      arbitrateEntities: (arbitration) => usage(() => refusingPastBudget(() => meteredArbitration(arbitration))),
     },
     park: {
       ...(input.parksInto !== undefined
@@ -154,10 +163,25 @@ function usageScope(input: {
 async function metered<Request extends { budget: Budget }, Output extends object>(
   request: Request,
   call: (request: Request) => Promise<Costed<Output>>,
-): Promise<Costed<Output>> {
-  const { value, cost } = await withSpendMeter(request.budget, () => call(request));
-  const lines: CostLine[] = [...cost, ...(value.cost ?? [])];
-  return { ...value, cost: lines };
+): Promise<PricedAnswer<Output>> {
+  return refusingPastBudget(async () => {
+    const { value, cost } = await withSpendMeter(request.budget, () => call(request));
+    const lines: CostLine[] = [...cost, ...(value.cost ?? [])];
+    return { ...value, cost: lines };
+  });
+}
+
+/** A priced call refused past its budget answers the refusal, with what it
+ *  spent first, rather than throwing it across the boundary. */
+async function refusingPastBudget<Output extends object>(
+  call: () => Promise<Costed<Output>>,
+): Promise<PricedAnswer<Output>> {
+  try {
+    return await call();
+  } catch (error) {
+    if (!isBudgetExhausted(error)) throw error;
+    return { error: { kind: 'budget', message: error.message }, cost: error.cost };
+  }
 }
 
 function billedLlmClient(client: LlmClient, usage: UsageScope): HostLlmClient {
@@ -168,7 +192,7 @@ function billedExtractCallClient(client: ExtractCallLlmClient, usage: UsageScope
   return { call: (request) => usage(() => metered(request, (input) => client.call(input))) };
 }
 
-function billedTransforms(invoker: HostTransformInvoker, usage: UsageScope): HostTransformInvoker {
+function billedTransforms(invoker: TransformInvoker, usage: UsageScope): HostTransformInvoker {
   return { invoke: (request) => usage(() => metered(request, (input) => invoker.invoke(input))) };
 }
 

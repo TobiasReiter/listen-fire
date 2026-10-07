@@ -6,8 +6,8 @@ import { runFields } from '../../../lib/llm_usage';
 import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from '../../../lib/run_cost';
 import { DocumentService } from '../../document';
 import { logger } from '../../logger';
-import type { TransformInvocationResult } from '../../movement_engine/extraction';
-import type { Costed, HostTransformInvoker } from '../../movement_engine/host';
+import type { TransformInvocationResult, TransformInvokeInput } from '../../movement_engine/extraction';
+import type { Costed, Priced } from '../../movement_engine/host';
 import type { FileRef } from '../adapter';
 import { documentStoreFileRef } from '../engine/files/document_store';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
@@ -27,7 +27,14 @@ function transformFor(plugin: string): TransformImpl | undefined {
  * the context data block). Movement identifiers can't carry dashes, so
  * the underscore spelling resolves too (`vc_url_retrieval`).
  */
-export const registryTransformInvoker: HostTransformInvoker = {
+/** A plugin invoker as the host serves it, before the host meters it: a call
+ *  past the budget throws `BudgetExhausted` here, and the host turns that into
+ *  the refusal it answers the engine with. */
+export interface TransformInvoker {
+  invoke(input: Priced<TransformInvokeInput>): Promise<Costed<TransformInvocationResult>>;
+}
+
+export const registryTransformInvoker: TransformInvoker = {
   async invoke({ plugin, config, extractedContext }): Promise<Costed<TransformInvocationResult>> {
     const impl = transformFor(plugin);
     if (!impl) {

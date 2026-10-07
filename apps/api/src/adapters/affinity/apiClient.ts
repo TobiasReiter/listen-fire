@@ -7,12 +7,12 @@ import { Queue } from '../../lib/utils/queue';
 import { logger } from '../../services/logger';
 import { SECOND } from '../../constants';
 import { currentContext } from '../../services/context';
-import { isAdapterCallCeilingExceeded } from '../../services/movement_engine/host';
 import {
   bindAdapterCallCounter,
   fillMemoisedRead,
   forgetMemoisedReads,
   forgetMemoisedReadsUnder,
+  isAdapterCallCeilingExceeded,
   memoisedRead,
 } from '../../services/translation_graph/segment_scope';
 import { sendSlackNotification } from '../../lib/slack';

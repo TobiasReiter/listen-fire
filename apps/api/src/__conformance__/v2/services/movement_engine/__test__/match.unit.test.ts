@@ -245,11 +245,11 @@ function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       // The host's judge, over the mocked prompt.
       llm: { arbitrateEntities: meteredArbitration },
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'email') return adapters.email;
           if (adapterType === 'attio') return adapters.attio;

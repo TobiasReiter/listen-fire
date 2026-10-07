@@ -14,7 +14,7 @@ import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
 import { logger } from '../../../logger';
-import { isAdapterCallCeilingExceeded } from '../../../movement_engine/host';
+import { isAdapterCallCeilingExceeded } from '../../segment_scope';
 import {
   AffinityAPIClient,
   getAffinityClient,

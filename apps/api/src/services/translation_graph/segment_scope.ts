@@ -2,9 +2,8 @@
 // (the memo below), how many third-party calls they have made (the ceiling),
 // which language version they answer under, and what they spent on priced
 // work of their own. The engine opens a segment through the host's `segment`
-// family and names it on every adapter it resolves; the host binds each
-// resolved adapter to the segment (`segmentBoundAdapter`), so every call into
-// it runs inside the segment's scope.
+// family and names it on every adapter call; the host runs each call inside
+// the segment's scope (`segmentScopedCalls`).
 //
 // The scope is ambient INSIDE the host, on purpose: the API clients are
 // process-wide singletons shared by every run in the process, far below the
@@ -21,8 +20,8 @@
 // wasn't: a filter that didn't push down turns "the three organizations this
 // person works at" into a walk of the whole workspace, one page at a time,
 // forever. Nothing else notices — the run is not stuck, it is working, and it
-// is burning someone's API quota to do it. The ceiling stops it and says so,
-// with the typed error the engine contract names (`AdapterCallCeilingExceeded`).
+// is burning someone's API quota to do it. The ceiling stops it and says so:
+// the engine is answered with a `call_ceiling` error.
 //
 // One segment, one count. A run that parks on an `ask` and resumes hours later
 // starts fresh: a spiral happens inside a single segment, and carrying a count
@@ -34,11 +33,12 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { Adapter } from './adapter';
+import type { EngineHost, SegmentOpening } from '../movement_engine/host';
+import type { ClassifyHostError } from './engine/adapter_table';
 
-import { NO_BUDGET_LIMIT, type CostLine } from '../../lib/run_cost';
+import { isBudgetExhausted, NO_BUDGET_LIMIT, type CostLine } from '../../lib/run_cost';
 import { SpendMeter, underSpendMeter } from '../../lib/run_spend';
-import { AdapterCallCeilingExceeded, type EngineHost, type SegmentOpening } from '../movement_engine/host';
+import { getErrorMessage } from '../../lib/utils/error';
 
 /** The systems that count against a ceiling. One entry per system that has its
  *  own env var below; a system not listed here is simply not capped. */
@@ -62,6 +62,30 @@ const SYSTEM_LABEL: Record<AdapterCallSystem, string> = {
 function ceilingFor(system: AdapterCallSystem): number {
   const fromEnv = Number(process.env[CEILING_ENV_VAR[system]]);
   return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_CEILING[system];
+}
+
+/**
+ * An adapter call refused because its segment made as many calls to a
+ * third-party system as one segment may — raised by the call that would have
+ * gone one over, inside the host. The host answers the engine with it as a
+ * `call_ceiling` error (`segmentScopedCalls`); an adapter that catches its own
+ * failures lets this one through (`isAdapterCallCeilingExceeded`).
+ */
+export class AdapterCallCeilingExceeded extends Error {
+  readonly kind = 'call_ceiling';
+  constructor(
+    /** The system that counts, e.g. `affinity`. */
+    readonly system: string,
+    readonly calls: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AdapterCallCeilingExceeded';
+  }
+}
+
+export function isAdapterCallCeilingExceeded(err: unknown): err is AdapterCallCeilingExceeded {
+  return err instanceof AdapterCallCeilingExceeded;
 }
 
 /** The call that would have gone one over. Its message is the whole failure
@@ -157,12 +181,8 @@ class SegmentScope {
    *  call carries no budget, so the run's cap meets this spend when the
    *  segment closes and charges it. */
   readonly spend = new SpendMeter(NO_BUDGET_LIMIT);
-  /** Each adapter bound to this segment, once — the engine may resolve the
-   *  same instance more than once and compare what it got back. */
-  readonly bound = new WeakMap<Adapter, Adapter>();
 
   constructor(
-    readonly segmentId: string,
     readonly teamId: TeamId,
     readonly languageVersion: LanguageVersion,
     readonly runId: string | undefined,
@@ -175,7 +195,7 @@ const asyncLocalStorage = new AsyncLocalStorage<SegmentScope>();
 function segmentNamed(segmentId: string): SegmentScope {
   const scope = openSegments.get(segmentId);
   if (scope === undefined) {
-    throw new Error(`no open segment '${segmentId}': the engine resolved an adapter for a segment it never opened, or one it already closed`);
+    throw new Error(`no open segment '${segmentId}': an adapter call named a segment that was never opened, or one that has closed`);
   }
   return scope;
 }
@@ -183,7 +203,7 @@ function segmentNamed(segmentId: string): SegmentScope {
 /** Open a segment: a fresh memo, a fresh count. */
 export async function openSegment(input: SegmentOpening): Promise<{ segmentId: string }> {
   const segmentId = randomUUID();
-  openSegments.set(segmentId, new SegmentScope(segmentId, input.teamId, input.languageVersion, input.runId));
+  openSegments.set(segmentId, new SegmentScope(input.teamId, input.languageVersion, input.runId));
   return { segmentId };
 }
 
@@ -228,67 +248,23 @@ export async function withSegment<T>(
 }
 
 /**
- * `adapter`, answering inside the segment: every method call — and every step
- * of an iteration a method hands back — runs in the segment's scope. Plain
- * properties pass through, and the same adapter binds to the same object for
- * the life of the segment.
+ * How the production host runs an adapter call (`adapter_table.ts`): inside
+ * its segment's scope, so the call reads through the segment's memo, counts
+ * against its ceiling and answers under its pin; and with what it threw turned
+ * into the typed answer the engine contract names. A call into a segment that
+ * has closed fails, naming it.
  */
-export function segmentBoundAdapter(adapter: Adapter, segmentId: string): Adapter {
-  const scope = segmentNamed(segmentId);
-  const known = scope.bound.get(adapter);
-  if (known !== undefined) return known;
-  const bound = new Proxy(adapter, {
-    get(target, property, receiver) {
-      const value: unknown = Reflect.get(target, property, receiver);
-      if (typeof value !== 'function') return value;
-      // The segment is looked up at each call, so an adapter kept past its
-      // segment's close fails naming it rather than answering in a scope
-      // nothing will ever charge.
-      return (...args: unknown[]) => {
-        const open = segmentNamed(segmentId);
-        return boundIteration(
-          open,
-          inScope(open, () => Reflect.apply(value, target, args)),
-        );
-      };
-    },
-  });
-  scope.bound.set(adapter, bound);
-  return bound;
-}
-
-/** An async iteration's steps run in whichever context pulls them, so an
- *  iterable an adapter method hands back is bound step by step. Anything
- *  else comes back as it is. */
-function boundIteration(scope: SegmentScope, result: unknown): unknown {
-  if (!isAsyncIterable(result) || isThenable(result)) return result;
-  const live = (): SegmentScope => segmentNamed(scope.segmentId);
-  return {
-    [Symbol.asyncIterator]() {
-      const iterator = inScope(live(), () => result[Symbol.asyncIterator]());
-      const finish = iterator.return?.bind(iterator);
-      const fail = iterator.throw?.bind(iterator);
-      return {
-        next: (...args: [] | [undefined]) => inScope(live(), () => iterator.next(...args)),
-        ...(finish !== undefined ? { return: (value?: unknown) => inScope(live(), () => finish(value)) } : {}),
-        ...(fail !== undefined ? { throw: (error?: unknown) => inScope(live(), () => fail(error)) } : {}),
-      };
-    },
-  };
-}
-
-function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Symbol.asyncIterator in value &&
-    typeof value[Symbol.asyncIterator] === 'function'
-  );
-}
-
-function isThenable(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && 'then' in value && typeof value.then === 'function';
-}
+export const segmentScopedCalls: {
+  around: <T>(segmentId: string, call: () => Promise<T>) => Promise<T>;
+  classify: ClassifyHostError;
+} = {
+  around: (segmentId, call) => inSegment(segmentId, call),
+  classify: (error) => {
+    if (isAdapterCallCeilingExceeded(error)) return { kind: 'call_ceiling', message: error.message };
+    if (isBudgetExhausted(error)) return { kind: 'budget', message: error.message };
+    return { kind: 'adapter_error', message: getErrorMessage(error) };
+  },
+};
 
 // ── What an adapter reads off its segment ───────────────────────────────────
 

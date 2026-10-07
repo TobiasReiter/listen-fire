@@ -90,7 +90,7 @@ import {
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000051' as TeamId;
 
@@ -223,9 +223,9 @@ async function run(source: string, invoker: MovementTransformInvoker, latencyMs 
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email.adapter : attio.adapter,
       },

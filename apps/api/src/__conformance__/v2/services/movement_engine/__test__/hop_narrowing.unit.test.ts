@@ -247,6 +247,7 @@ async function runWith(input: {
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: {
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'manual') return manualAdapter;
@@ -256,7 +257,6 @@ async function runWith(input: {
       },
     }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { run, writes };
 }

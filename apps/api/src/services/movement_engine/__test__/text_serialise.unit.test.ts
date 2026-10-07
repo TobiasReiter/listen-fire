@@ -191,9 +191,9 @@ async function run(body: string[]): Promise<unknown[]> {
     event: webhookEvent({ text: 'Acme raised a seed.' }),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'email') return email.adapter;
           if (adapterType === 'attio') return attio.adapter;

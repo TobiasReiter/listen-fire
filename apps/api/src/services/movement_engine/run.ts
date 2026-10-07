@@ -215,19 +215,8 @@ import type {
   WriteResult,
 } from '../translation_graph/adapter';
 import { fileHandle, updateRecordSucceeded } from '../translation_graph/adapter';
-import {
-  isAdapterCallCeilingExceeded,
-  type AdapterResolution,
-  type BindingEndpoint,
-  type CallbackSink,
-  type EngineHost,
-} from './host';
-import {
-  newDryRunRehearsal,
-  wrapAdapterForDryRun,
-  type DryRunRehearsal,
-  type DryRunWriteSink,
-} from '../translation_graph/engine/dry_run_adapter';
+import type { AdapterResolution, BindingEndpoint, CallbackSink, EngineHost } from './host';
+import { hostAdapter, isAdapterCallCeilingReached } from './host_adapter';
 import { applicableRequiredFields } from '../translation_graph/required_fields';
 import type { MutationContext } from '../translation_graph/mutation_context';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
@@ -440,11 +429,16 @@ export interface RunMovementInput {
   /** The run this is (the host's trigger-run id), named on the engine's log
    *  lines. Absent ⇒ the lines carry none (a test run, a script). */
   runId?: string;
-  /** Wrap every target adapter so writes are captured, not performed. */
+  /** Rehearse every target: each is resolved `dryRun`, so the host captures
+   *  its writes (into the host's write sink) rather than performing them. */
   dryRun?: boolean;
-  /** Receives each would-be write under `dryRun` — same `CapturedWrite`
-   *  currency as the TG engine's dry runs. */
-  writeSink?: DryRunWriteSink;
+  /**
+   * Imported credential name → its credential id
+   * (`external_service_credentials.id`), as the run host read them with the
+   * catalog snapshot. Ids never go into the snapshot itself. A name absent
+   * here ⇒ the instance is constructed with no credential.
+   */
+  credentialIds?: Readonly<Record<string, string>>;
 }
 
 /** Why a run paused: the limit it met, with what it had spent against it and
@@ -1897,7 +1891,7 @@ function isMemberFailure(error: unknown): boolean {
     error instanceof RunParked
     || error instanceof ScopeEndedQuietly
     || error instanceof RunCancelledSignal
-    || isAdapterCallCeilingExceeded(error)
+    || isAdapterCallCeilingReached(error)
     || isRunCostCapExceeded(error)
     || isCallDepthExceeded(error)
   );
@@ -2337,7 +2331,11 @@ class Interpreter {
   private readonly targetAdapterCache = new Map<string, Adapter>();
   /** Source-role adapters for graph-rooted traversals (see graphReadFor). */
   private readonly sourceAdapterCache = new Map<string, Adapter>();
-  private readonly resolveAdapterFn: (input: AdapterResolution) => Adapter | Promise<Adapter>;
+  private readonly resolveAdapterFn: (input: AdapterResolution) => Promise<Adapter>;
+  /** The engine's stand-in for each host instance, by its id: the host
+   *  answers one id per instance, so an instance resolved twice is one
+   *  adapter here too. */
+  private readonly hostAdapters = new Map<string, Adapter>();
   /** Rebuilt in run() for snapshot seeds, where the event envelope's
    *  adapterType is a placeholder and the source instance is canonical. */
   private mutationContext: MutationContext;
@@ -2462,9 +2460,17 @@ class Interpreter {
     }
     this.pinnedNow = input.firedAt ?? new Date();
     // Every adapter is resolved for this segment, so it answers inside the
-    // segment's host scope.
-    this.resolveAdapterFn = (resolution) =>
-      input.host.adapters.resolve({ ...resolution, segmentId: prepared.context.segmentId });
+    // segment's host scope. What comes back is the instance as data; the
+    // engine holds a stand-in that calls it through the host.
+    this.resolveAdapterFn = async (resolution) => {
+      const { segmentId } = prepared.context;
+      const resolved = await input.host.adapters.resolve({ ...resolution, segmentId });
+      const known = this.hostAdapters.get(resolved.instance);
+      if (known !== undefined) return known;
+      const adapter = hostAdapter({ host: input.host, segmentId, resolved });
+      this.hostAdapters.set(resolved.instance, adapter);
+      return adapter;
+    };
     this.currentImports = prepared.link?.imports;
     // The firing that started this run rides along in the provenance of every
     // graph write it makes. `suppress_self` — the 2-way-sync flag — is answered
@@ -4250,8 +4256,10 @@ class Interpreter {
   }
 
   private credentialsIdFor(instance: Extract<Binding, { kind: 'instance' }>): string | undefined {
-    if (!instance.credentialName) return undefined;
-    return this.input.host.adapters.credentialId(instance.credentialName);
+    const name = instance.credentialName;
+    if (!name) return undefined;
+    const ids = this.input.credentialIds ?? {};
+    return Object.hasOwn(ids, name) ? ids[name] : undefined;
   }
 
   // ── Statement interpretation (movement body / if arms) ──
@@ -11326,8 +11334,8 @@ class Interpreter {
 
   /**
    * Per-instance target adapters, resolved through the shared seam with
-   * `role: 'target'` and dry-run-wrapped — cached per (slug, credential)
-   * exactly like the TG engine's `resolveTargetAdapter`.
+   * `role: 'target'` and, when rehearsed, `dryRun` — cached per (slug,
+   * credential) exactly like the TG engine's `resolveTargetAdapter`.
    */
   private async targetAdapterFor(
     instance: Extract<Binding, { kind: 'instance' }>,
@@ -11359,34 +11367,25 @@ class Interpreter {
     const cacheKey = `${dryRun ? 'dry ' : ''}${adapterType} ${credentialsId ?? ''} ${argsKey}`;
     const cached = this.targetAdapterCache.get(cacheKey);
     if (cached) return cached;
-    const real = await this.resolveAdapterFn({
+    // A rehearsed target is the host's to wrap: it captures the writes into
+    // its sink and remembers the ids it invented, for the whole segment.
+    const adapter = await this.resolveAdapterFn({
       adapterType,
       teamId: this.input.teamId,
       credentialsId,
       ...(constructionArgs && Object.keys(constructionArgs).length ? { constructionArgs } : {}),
       role: 'target',
+      ...(dryRun ? { dryRun: true } : {}),
     });
-    const wrapped = dryRun ? wrapAdapterForDryRun(real, this.rehearsal) : real;
-    if (dryRun) this.dryAdapters.add(wrapped);
-    this.targetAdapterCache.set(cacheKey, wrapped);
-    return wrapped;
+    if (dryRun) this.dryAdapters.add(adapter);
+    this.targetAdapterCache.set(cacheKey, adapter);
+    return adapter;
   }
 
-  /** The dry-run-wrapped target adapters — membership is the per-write
-   *  `committed` signal: a write through one of these was captured, not
-   *  committed (`resolveTargetAdapter` wraps + registers iff the target is
-   *  rehearsed). */
+  /** The rehearsed target adapters — membership is the per-write `committed`
+   *  signal: a write through one of these was captured, not committed
+   *  (`resolveTargetAdapter` registers iff the target is rehearsed). */
   private readonly dryAdapters = new WeakSet<Adapter>();
-
-  /** THIS run's rehearsal, shared by every target it wraps: one sink, and one
-   *  memory of the ids it invented. A write chained off a rehearsed parent
-   *  routinely crosses systems (the company in the CRM, the entry on its
-   *  list), so the memory of what is real belongs to the run rather than to
-   *  either adapter. */
-  private rehearsalState?: DryRunRehearsal;
-  private get rehearsal(): DryRunRehearsal {
-    return (this.rehearsalState ??= newDryRunRehearsal(this.input.writeSink));
-  }
 
   /** Whether a write through this resolved adapter actually committed —
    *  false when the adapter is a dry-run wrapper. */

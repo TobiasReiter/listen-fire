@@ -7,13 +7,26 @@
 // fakes, and a piece a test did not provide fails loudly when the run reaches
 // it, never by quietly reaching a real system.
 
-import type { FileArtifactType, LanguageVersion, ResolveFile } from 'movement-lang';
+import type { CatalogSnapshot, FileArtifactType, LanguageVersion, ResolveFile } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { Budget, CostLine } from '../../lib/run_cost';
-import type { ActingUser, ActorCandidate, Adapter, FileRef } from '../translation_graph/adapter';
+import type {
+  ActingUser,
+  ActorCandidate,
+  Adapter,
+  FileRef,
+  GetRelatedInput,
+  RelatedPage,
+  RuntimeCapabilities,
+} from '../translation_graph/adapter';
+import type { AwaitPoint, AwaitResolution } from '../translation_graph/awaitable';
+import type { DryRunWriteSink } from '../translation_graph/engine/dry_run_adapter';
+import type { MethodName } from '../translation_graph/protocol/schema';
+import type { SourcePosition } from '../translation_graph/types';
 import type { LlmCallInput, LlmCallResult } from '../translation_graph/engine/batched_extraction';
 import type { EntityArbitration } from '../translation_graph/engine/entity_match';
+import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
 import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import type { CallbackCall, CallbackParamSpec } from './callback_types';
 import type { MovementTraceEntry } from './expression';
@@ -25,8 +38,8 @@ import type { ParkedScopeState } from './serialize';
 // ── Priced calls ────────────────────────────────────────────────────────────
 //
 // Every host call that may cost money takes the run's remaining budget in and
-// answers what it spent. The host refuses priced work past the budget (throwing
-// `BudgetExhausted` with what it spent first); the engine keeps the run's
+// answers what it spent. The host refuses priced work past the budget with a
+// `budget` refusal carrying what it spent first; the engine keeps the run's
 // account and raises the cap from it (movement_engine/run_context.ts).
 
 /** A priced call's request: the engine's input and the run's remaining budget. */
@@ -35,6 +48,31 @@ export type Priced<Input> = Input & { budget: Budget };
 /** A priced call's answer and what the call spent, by source. Absent ⇒ it
  *  spent nothing. */
 export type Costed<Output> = Output & { cost?: CostLine[] };
+
+/**
+ * Why a host call did not answer, as data. The engine maps each kind onto its
+ * own control flow; nothing thrown on the host side is recognised by class on
+ * the engine side.
+ *
+ *  - `call_ceiling`: the segment made as many third-party calls as one segment
+ *    may. The engine fails the run with the message, and `onError` never
+ *    forgives it.
+ *  - `budget`: priced work refused because the run's budget is spent. The
+ *    engine charges what the call spent first and raises the run's cap.
+ *  - `adapter_error`: the adapter failed; the engine fails the statement with
+ *    the message, as it would any error.
+ */
+export interface HostCallError {
+  kind: 'call_ceiling' | 'adapter_error' | 'budget';
+  message: string;
+}
+
+/** A priced call refused past the budget, with what it spent before the
+ *  refusal. */
+export type BudgetRefusal = Costed<{ error: HostCallError & { kind: 'budget' } }>;
+
+/** A priced call's whole answer: what it was asked for, or the refusal. */
+export type PricedAnswer<Output> = Costed<Output> | BudgetRefusal;
 
 /** What the engine asks of an adapter instance. */
 export interface AdapterResolution {
@@ -45,65 +83,167 @@ export interface AdapterResolution {
    *  position (Sheets' `spreadsheet:`). Position-free adapters ignore it. */
   constructionArgs?: Record<string, string>;
   role: 'source' | 'target';
+  /** Rehearse its writes: the host wraps the instance so a create, update,
+   *  delete, link or unlink is captured (the host's write sink), never made,
+   *  and reads still answer from the live system. */
+  dryRun?: boolean;
+}
+
+/**
+ * The adapter protocol's methods the engine may call on an instance, by name
+ * (the protocol's own `METHODS`, translation_graph/protocol/schema.ts). Two
+ * are not here: `manifest`, which `adapters.resolve` answers as data, and
+ * `iterateRelated`, whose async iterable never crosses — the engine walks a
+ * traversal page by page with `iterateRelatedPage`.
+ */
+export const ADAPTER_METHODS = [
+  'listEntryPoints',
+  'describe',
+  'edgesFrom',
+  'resolveEntity',
+  'getFieldValue',
+  'getRelated',
+  'iterateRelatedPage',
+  'preprocessInbound',
+  'listEventTypes',
+  'createRecord',
+  'updateRecord',
+  'deleteRecord',
+  'linkRecords',
+  'unlinkRecords',
+  'ensureEventSubscription',
+  'removeEventSubscription',
+  'resolveAwait',
+  'wakeKeys',
+  'readRecord',
+  'translateFilter',
+  'getDedupRules',
+  'getActorCandidates',
+  'extractActor',
+  'describeOpaqueId',
+  'resolveFileRef',
+  'invokeFieldFunction',
+] as const satisfies readonly MethodName[];
+
+export type AdapterMethod = (typeof ADAPTER_METHODS)[number];
+
+type LiveMethod<K extends keyof Adapter> = NonNullable<Adapter[K]> extends (...args: never[]) => unknown
+  ? NonNullable<Adapter[K]>
+  : never;
+/** A method that takes one input object: that object is its args. */
+type OneInput<K extends keyof Adapter> = {
+  args: Parameters<LiveMethod<K>>[0];
+  result: Awaited<ReturnType<LiveMethod<K>>>;
+};
+type NoInput<K extends keyof Adapter> = {
+  args: Record<string, never>;
+  result: Awaited<ReturnType<LiveMethod<K>>>;
+};
+
+/** Each method's arguments, as one JSON object (the protocol's `params`),
+ *  and its answer. */
+export interface AdapterCallMap {
+  listEntryPoints: NoInput<'listEntryPoints'>;
+  describe: { args: { typeId: string }; result: Awaited<ReturnType<Adapter['describe']>> };
+  edgesFrom: { args: { position: SourcePosition; cursor?: unknown }; result: Awaited<ReturnType<LiveMethod<'edgesFrom'>>> };
+  resolveEntity: OneInput<'resolveEntity'>;
+  getFieldValue: OneInput<'getFieldValue'>;
+  getRelated: OneInput<'getRelated'>;
+  /** One page of a traversal; `cursor` is absent on the first page, then the
+   *  last page's `nextCursor`. */
+  iterateRelatedPage: { args: GetRelatedInput & { cursor?: unknown }; result: RelatedPage };
+  preprocessInbound: OneInput<'preprocessInbound'>;
+  listEventTypes: NoInput<'listEventTypes'>;
+  createRecord: OneInput<'createRecord'>;
+  updateRecord: OneInput<'updateRecord'>;
+  deleteRecord: OneInput<'deleteRecord'>;
+  linkRecords: OneInput<'linkRecords'>;
+  unlinkRecords: OneInput<'unlinkRecords'>;
+  ensureEventSubscription: OneInput<'ensureEventSubscription'>;
+  removeEventSubscription: { args: Parameters<LiveMethod<'removeEventSubscription'>>[0]; result: null };
+  /** The awaitable capability's live check. */
+  resolveAwait: { args: AwaitPoint; result: AwaitResolution };
+  wakeKeys: OneInput<'wakeKeys'>;
+  readRecord: OneInput<'readRecord'>;
+  translateFilter: OneInput<'translateFilter'>;
+  getDedupRules: OneInput<'getDedupRules'>;
+  getActorCandidates: OneInput<'getActorCandidates'>;
+  extractActor: OneInput<'extractActor'>;
+  describeOpaqueId: OneInput<'describeOpaqueId'>;
+  resolveFileRef: OneInput<'resolveFileRef'>;
+  invokeFieldFunction: OneInput<'invokeFieldFunction'>;
+}
+
+/** One call into an instance: the segment it is made for, the instance's
+ *  opaque id (from `adapters.resolve`), the method and its arguments. */
+export interface AdapterCall<M extends AdapterMethod = AdapterMethod> {
+  segmentId: string;
+  instance: string;
+  method: M;
+  args: AdapterCallMap[M]['args'];
+}
+
+/** What an adapter call answers: its result, or why there is none. */
+export type AdapterCallAnswer<M extends AdapterMethod = AdapterMethod> =
+  | { result: AdapterCallMap[M]['result'] }
+  | { error: HostCallError };
+
+/**
+ * An instance as `adapters.resolve` describes it: an opaque id the engine
+ * names on every call into it, and everything about it that is data — what it
+ * is, what it can do, which methods it implements.
+ */
+export interface ResolvedAdapter {
+  /** Opaque, and meaningful only within the segment it was resolved for. */
+  instance: string;
+  adapterType: string;
+  supportedTriggers: Adapter['supportedTriggers'];
+  capabilities: RuntimeCapabilities;
+  /** The methods the instance implements. `iterateRelated` means it streams
+   *  a traversal, which the engine walks with `iterateRelatedPage`; an
+   *  instance may stream, page, both or neither. */
+  methods: Array<AdapterMethod | 'iterateRelated'>;
+  walksContainers?: boolean;
+  webhookEventTypeId?: string;
+  metaRecordType?: string;
 }
 
 /** Adapter resolution — the SAME seam `evaluateTranslationGraph` and provision
- *  use: one adapter per (adapterType, credential, construction args, role).
- *  Every call names the segment it is made for: the instance answers inside
- *  that segment's host scope (what it already read, how many calls it made). */
-export type ResolveAdapter = (input: AdapterResolution & { segmentId: string }) => Adapter | Promise<Adapter>;
-
-/**
- * An adapter call refused because its segment made as many calls to a
- * third-party system as one segment may — the host's typed answer, raised by
- * the call that would have gone one over. Its message is the whole failure
- * surface an author sees (it lands verbatim in the run's failure reason): the
- * number, the knob, and why the run stopped. The engine fails the run with it,
- * and `onError` never forgives it.
- */
-export class AdapterCallCeilingExceeded extends Error {
-  readonly kind = 'call_ceiling';
-  constructor(
-    /** The system that counts, e.g. `affinity`. */
-    readonly system: string,
-    readonly calls: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'AdapterCallCeilingExceeded';
-  }
-}
-
-export function isAdapterCallCeilingExceeded(err: unknown): err is AdapterCallCeilingExceeded {
-  return err instanceof AdapterCallCeilingExceeded;
+ *  use: one instance per (adapterType, credential, construction args, role,
+ *  rehearsal). Every call names the segment it is made for: the instance
+ *  answers inside that segment's host scope (what it already read, how many
+ *  calls it made). */
+export interface HostAdapters {
+  resolve(input: AdapterResolution & { segmentId: string }): Promise<ResolvedAdapter>;
+  call<M extends AdapterMethod>(input: AdapterCall<M>): Promise<AdapterCallAnswer<M>>;
 }
 
 /** The extraction keyword's and `AI()`'s model call. */
 export interface HostLlmClient {
-  call(input: Priced<LlmCallInput>): Promise<Costed<LlmCallResult>>;
+  call(input: Priced<LlmCallInput>): Promise<PricedAnswer<LlmCallResult>>;
 }
 
 /** The extraction CALL's model call (`extract(content, Shape)`). */
 export interface HostExtractCallClient {
-  call(input: Priced<ExtractCallLlmInput>): Promise<Costed<ExtractCallLlmResult>>;
+  call(input: Priced<ExtractCallLlmInput>): Promise<PricedAnswer<ExtractCallLlmResult>>;
 }
 
 /** `through` stages and plugin calls. What the engine knows of a plugin —
  *  its arguments, its declared output, whether it is priced — is the run's
  *  catalog snapshot's (`plugins`); invoking it is the host's. */
 export interface HostTransformInvoker {
-  invoke(input: Priced<TransformInvokeInput>): Promise<Costed<TransformInvocationResult>>;
+  invoke(input: Priced<TransformInvokeInput>): Promise<PricedAnswer<TransformInvocationResult>>;
 }
 
 /** Which candidate an identity search's write IS: the index into
  *  `candidates`, or null to create. Asked only when the rules alone cannot
  *  decide (`arbitrateWithoutJudge`), so it is the judge's model call. */
-export type ArbitrateEntities = (input: Priced<EntityArbitration>) => Promise<Costed<{ index: number | null }>>;
+export type ArbitrateEntities = (input: Priced<EntityArbitration>) => Promise<PricedAnswer<{ index: number | null }>>;
 
 /** A file's extracted TEXT (the knowledge-pipeline parity path). The host
  *  redeems the descriptor's bytes and runs the extractor (transcription and
  *  OCR are priced); only text, or the reason there is none, comes back. */
-export type ResolveFileText = (input: Priced<{ file: FileRef }>) => Promise<Costed<FileTextResolution>>;
+export type ResolveFileText = (input: Priced<{ file: FileRef }>) => Promise<PricedAnswer<FileTextResolution>>;
 
 /** What a segment is opened for. */
 export interface SegmentOpening {
@@ -219,12 +359,9 @@ export interface EngineHost {
     open(input: SegmentOpening): Promise<{ segmentId: string }>;
     close(input: { segmentId: string }): Promise<{ cost?: CostLine[] }>;
   };
-  adapters: {
-    resolve: ResolveAdapter;
-    /** Imported credential name → `external_service_credentials.id`.
-     *  Undefined → the instance is constructed with no credential. */
-    credentialId: (credentialName: string) => string | undefined;
-  };
+  /** Adapter instances: resolved per segment, called by method. The engine
+   *  never holds a live adapter. */
+  adapters: HostAdapters;
   llm: {
     /** The extraction keyword's and `AI()`'s model client. */
     client: HostLlmClient;
@@ -302,7 +439,13 @@ export interface EngineHost {
 /** What a test supplies: any piece of any group, the rest defaulted. */
 export interface TestHostOverrides {
   segment?: Partial<EngineHost['segment']>;
-  adapters?: Partial<EngineHost['adapters']>;
+  /** The live adapters the test serves. They sit in the same in-process table
+   *  the production host keeps (`adapter_table.ts`), so the engine reaches
+   *  them by `adapters.call` as it reaches any. `around` and `classify` are
+   *  the table's: a test of the segment scope passes the production host's. */
+  adapters?: Partial<Pick<Parameters<typeof adapterTable>[0], 'around' | 'classify'>> & {
+    resolve?: LiveAdapterResolver;
+  };
   llm?: Partial<EngineHost['llm']>;
   park?: Partial<EngineHost['park']>;
   control?: Partial<EngineHost['control']>;
@@ -312,6 +455,8 @@ export interface TestHostOverrides {
   trace?: MovementTraceEntry[];
   /** Where the default `park.wake` records each wake the engine asks for. */
   wakes?: AwaitWakeRequest[];
+  /** Receives each write a rehearsed (`dryRun`) instance captured. */
+  writeSink?: DryRunWriteSink;
 }
 
 /** The gate of a run nothing can cancel. */
@@ -339,19 +484,26 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
   const { segment = {}, adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {}, wakes = [] } =
     overrides;
   let segments = 0;
+  const table = adapterTable({
+    resolveLive:
+      adapters.resolve ??
+      (() => {
+        throw notProvided('adapters.resolve');
+      }),
+    ...(adapters.around !== undefined ? { around: adapters.around } : {}),
+    ...(adapters.classify !== undefined ? { classify: adapters.classify } : {}),
+    ...(overrides.writeSink !== undefined ? { writeSink: overrides.writeSink } : {}),
+  });
+  const close = segment.close ?? (async () => ({}));
   return {
     segment: {
       open: segment.open ?? (async () => ({ segmentId: `test-segment-${++segments}` })),
-      close: segment.close ?? (async () => ({})),
+      close: async (input) => {
+        table.closeSegment(input.segmentId);
+        return close(input);
+      },
     },
-    adapters: {
-      resolve:
-        adapters.resolve ??
-        (() => {
-          throw notProvided('adapters.resolve');
-        }),
-      credentialId: adapters.credentialId ?? (() => undefined),
-    },
+    adapters: { resolve: (input) => table.resolve(input), call: (input) => table.call(input) },
     llm: {
       client: llm.client ?? {
         call: async () => {
@@ -413,6 +565,20 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     locks: overrides.locks ?? new InMemoryWriteLocks(),
     trace: overrides.trace ?? [],
   };
+}
+
+/** A test's run input `credentialIds`: each credential the catalog imports,
+ *  mapped through `idOf` (a name it answers nothing for has no id). */
+export function credentialIdsFor(
+  catalog: CatalogSnapshot,
+  idOf: (credentialName: string) => string | undefined,
+): Record<string, string> {
+  const ids: Record<string, string> = {};
+  for (const name of Object.keys(catalog.credentials)) {
+    const id = idOf(name);
+    if (id !== undefined) ids[name] = id;
+  }
+  return ids;
 }
 
 const RENDERED: Record<FileArtifactType, { name: string; contentType: string }> = {

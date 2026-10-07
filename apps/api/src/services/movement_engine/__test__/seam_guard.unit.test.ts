@@ -14,6 +14,7 @@ import path from 'node:path';
 import ts from 'typescript';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { Adapter } from '../../translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
@@ -44,6 +45,7 @@ const PURE_FILES = [
   'extraction.ts',
   'extraction_call.ts',
   'host.ts',
+  'host_adapter.ts',
   'interpretable.ts',
   'kg.ts',
   'local_edge_adapter.ts',
@@ -122,10 +124,9 @@ const ALLOWED: Array<(module: string) => boolean> = [
   under('lib/models'),
   under('lib/prompts'),
   under('services/logger'),
-  // Shared engine helpers that are pure computation over engine data: the
-  // dry-run write capture, resource stamping and filtering, the model choice
-  // for an extraction's size.
-  (m) => m === 'services/translation_graph/engine/dry_run_adapter',
+  // Shared engine helpers that are pure computation over engine data:
+  // resource stamping and filtering, the model choice for an extraction's
+  // size.
   (m) => m === 'services/translation_graph/engine/files/resources',
   (m) => m === 'services/translation_graph/engine/batched_extraction/schema_synthesis',
   under('services/translation_graph/uniqueness'),
@@ -135,6 +136,10 @@ const ALLOWED: Array<(module: string) => boolean> = [
   // The adapter protocol: the contract the engine calls adapters through, no
   // implementation.
   under('services/translation_graph/adapter'),
+  // The in-process table of live adapter instances `makeTestHost` serves its
+  // fakes from — the same one the production host keeps. It holds what the
+  // test hands it and reaches no system of its own.
+  (m) => m === 'services/translation_graph/engine/adapter_table',
   // The lock interface and the in-memory locks `makeTestHost` uses; the
   // Postgres implementation is a separate module.
   under('services/write_locks/write_locks'),
@@ -380,6 +385,86 @@ describe('the engine/host seam carries data', () => {
     for (const resolved of resolutions) {
       expect(resolved.input).toMatchObject({ segmentId: 'seg-1' });
     }
+    expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
+  });
+
+  // The engine never holds a live adapter: it resolves an instance to data
+  // and an opaque id, and calls it by method name with one JSON argument.
+  it('adapter instances are resolved and called with plain data only', async () => {
+    const teamId = '00000000-0000-0000-0000-000000000044' as TeamId;
+    const calls: Array<{ call: string; method?: string; input: unknown; output: unknown }> = [];
+    const manual = createManualAdapter({ teamId });
+    const kg: Adapter = {
+      adapterType: 'kg',
+      supportedTriggers: ['webhook'],
+      runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+      listEntryPoints: async () => [],
+      describe: async () => null,
+      resolveEntity: async () => ({ candidates: [] }),
+      getFieldValue: async () => null,
+      getRelated: async () => [],
+      createRecord: async () => ({ adapterType: 'kg', externalId: 'note-1', data: {} }),
+      updateRecord: async (input) => ({ adapterType: 'kg', externalId: input.externalId, data: {}, association: 'none' }),
+      deleteRecord: async () => ({}),
+    };
+    const inner = makeTestHost({
+      adapters: { resolve: ({ adapterType }) => (adapterType === 'kg' ? kg : manual) },
+    });
+    const host: EngineHost = {
+      ...inner,
+      adapters: {
+        resolve: async (input) => {
+          const output = await inner.adapters.resolve(input);
+          calls.push({ call: 'adapters.resolve', input, output });
+          return output;
+        },
+        call: async (input) => {
+          const output = await inner.adapters.call(input);
+          calls.push({ call: 'adapters.call', method: input.method, input, output });
+          return output;
+        },
+      },
+    };
+    const result = await runMovement({
+      source: [
+        'import { manual, kg } from adapters',
+        'import { kg_cred } from credentials',
+        'runs = manual()',
+        'graph = kg(credentials: kg_cred)',
+        '',
+        'movement m(go: <runs-[:Invocation]->>) {',
+        '  write graph-[:note]-> { unique by (`body`) body: "hello" }',
+        '}',
+        'listen to runs {} fire m',
+      ].join('\n'),
+      event: {
+        pipelineInputId: 'trigger:manual-adapters',
+        adapterType: 'manual',
+        triggerType: 'webhook',
+        payload: { firedAt: '2026-10-07T09:00:00.000Z' },
+        occurredAt: '2026-10-07T09:00:00.000Z',
+      },
+      teamId,
+      catalog: staticCatalogSnapshot({
+        credentials: { kg_cred: { adapters: ['kg'] } },
+        instanceSchemas: {
+          kg: {
+            positions: { note: { properties: { body: 'text' }, edges: {} } },
+            collections: { note: { target: 'note' } },
+            writableRoots: { note: { fields: { body: 'text' }, resultShape: { externalId: 'text' } } },
+          },
+        },
+      }),
+      credentialIds: { kg_cred: 'cred-kg' },
+      host,
+    });
+
+    expect(result.writes).toHaveLength(1);
+    const methods = calls.filter((c) => c.call === 'adapters.call').map((c) => c.method);
+    expect(methods).toEqual(expect.arrayContaining(['resolveEntity', 'createRecord']));
+    expect(calls.filter((c) => c.call === 'adapters.resolve').map((c) => c.input)).toContainEqual(
+      expect.objectContaining({ adapterType: 'kg', credentialsId: 'cred-kg', role: 'target' }),
+    );
     expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
   });
 });

@@ -53,7 +53,7 @@ import { makeWebBaseUrlResolver } from '../../services/translation_graph/adapter
 import { instanceSchemaFromDescriptors } from '../../services/translation_graph/movement/schema_projection';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
-import { probeEngineHost } from './lib/probe_host';
+import { everyCredential, probeEngineHost } from './lib/probe_host';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6412/affinity';
 const ADMIN = BASE.replace(/\/affinity$/, '/admin');
@@ -368,12 +368,10 @@ async function runOne(
     event,
     teamId: TEAM_ID,
     catalog,
+    credentialIds: everyCredential(catalog, 'creds-profile'),
     host: probeEngineHost({
       teamId: TEAM_ID,
-      adapters: {
-        resolve: ({ role }) => (role === 'source' ? source_ : target),
-        credentialId: () => 'creds-profile',
-      },
+      resolve: ({ role }) => (role === 'source' ? source_ : target),
     }),
   });
   return requests.slice(mark);

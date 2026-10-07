@@ -11,7 +11,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 
-import { BudgetExhausted, isRunCostCapExceeded, RunCostCapExceeded, type Budget } from '../../../lib/run_cost';
+import { isRunCostCapExceeded, RunCostCapExceeded, type Budget } from '../../../lib/run_cost';
 import { InMemoryWriteLocks, type WriteLockHolder, type WriteLocks } from '../../write_locks/write_locks';
 import { makeFakeParkSink, makeTestHost, NEVER_CANCELLED } from '../host';
 import { runMovement } from '../run';
@@ -159,9 +159,11 @@ describe('priced host calls under the run budget', () => {
   it("a call the host refused partway is charged what it spent, and raised as the run's cap", async () => {
     const host = makeTestHost({
       files: {
-        resolveFileText: async () => {
-          throw new BudgetExhausted([{ source: 'model:whisper', microdollars: 1_200_000 }]);
-        },
+        // The host answers the refusal as data, with what it spent first.
+        resolveFileText: async () => ({
+          error: { kind: 'budget', message: 'out of budget' },
+          cost: [{ source: 'model:whisper', microdollars: 1_200_000 }],
+        }),
       },
     });
     const ledger = new RunLedger({ capMicrodollars: DOLLAR });

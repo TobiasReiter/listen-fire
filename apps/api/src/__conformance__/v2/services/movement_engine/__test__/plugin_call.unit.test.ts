@@ -199,9 +199,9 @@ function run(source: string, invoker: MovementTransformInvoker, adapters: {
     event: webhookEvent({ subject: 'Acme', text: 'https://acme.example' }),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
           const found = adapterType === 'email' ? adapters.email : adapters.attio;
           if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);

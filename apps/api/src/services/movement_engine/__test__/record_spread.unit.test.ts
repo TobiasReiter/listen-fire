@@ -234,6 +234,7 @@ async function run(body: string[], replies: Reply[]) {
     teamId: TEAM_ID,
     catalog,
     host: makeTestHost({
+      writeSink: (w) => writes.push(w),
       adapters: { resolve: ({ adapterType }) => fakeAdapter(adapterType) },
       llm: { extractCall: llm.client },
       files: {
@@ -241,7 +242,6 @@ async function run(body: string[], replies: Reply[]) {
       },
     }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { calls: llm.calls, writes, result };
 }

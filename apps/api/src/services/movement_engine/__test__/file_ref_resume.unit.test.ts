@@ -28,7 +28,7 @@ import { streamFileRef, type ResolveFileOwner } from '../../translation_graph/en
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost, type HostTransformInvoker } from '../host';
+import { credentialIdsFor, makeTestHost, type HostTransformInvoker } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000054' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -323,9 +323,9 @@ function harness(source: string, from: { event: TriggerEvent; catalog: typeof ca
     teamId: TEAM_ID,
     catalog: from.catalog,
     costCapMicrodollars: runCostCapFromEnv(),
+    credentialIds: credentialIdsFor(from.catalog, (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
     host: makeTestHost({
       adapters: {
-        credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) =>
           adapterType === 'email' ? email.adapter : crm.adapter,
       },

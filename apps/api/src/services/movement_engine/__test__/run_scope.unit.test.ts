@@ -11,15 +11,17 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { Adapter } from '../../translation_graph/adapter';
-import { AdapterCallCeilingExceeded, isAdapterCallCeilingExceeded } from '../host';
+import { adapterTable } from '../../translation_graph/engine/adapter_table';
 import {
+  AdapterCallCeilingExceeded,
   bindAdapterCallCounter,
   closeSegment,
   countAdapterCall,
   currentSegmentCallCount,
   inSegment,
+  isAdapterCallCeilingExceeded,
   openSegment,
-  segmentBoundAdapter,
+  segmentScopedCalls,
   withSegment,
 } from '../../translation_graph/segment_scope';
 
@@ -144,12 +146,36 @@ describe('the per-segment Affinity call ceiling', () => {
     expect(() => inSegment(segmentId, () => undefined)).toThrow(/no open segment/);
   });
 
-  it('an adapter bound to a segment refuses to answer once the segment has closed', async () => {
+  it('the host answers the engine with the ceiling as data, and refuses a call into a closed segment', async () => {
+    process.env[ENV_VAR] = '1';
+    const counting: Adapter = {
+      adapterType: 'affinity',
+      supportedTriggers: [],
+      runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+      listEntryPoints: async () => [],
+      describe: async () => {
+        countAdapterCall('affinity');
+        return null;
+      },
+      resolveEntity: async () => ({ candidates: [] }),
+      getFieldValue: async () => null,
+      getRelated: async () => [],
+      createRecord: async () => ({ adapterType: 'affinity', externalId: 'x', data: {} }),
+      updateRecord: async (input) => ({ adapterType: 'affinity', externalId: input.externalId, data: {}, association: 'none' }),
+      deleteRecord: async () => ({}),
+    };
+    const table = adapterTable({ resolveLive: () => counting, ...segmentScopedCalls });
     const { segmentId } = await openSegment({ teamId: TEAM_ID, languageVersion: 2 });
-    const adapter = { adapterType: 'x', describe: async () => null } as unknown as Adapter;
-    const bound = segmentBoundAdapter(adapter, segmentId);
-    await expect(bound.describe('t')).resolves.toBeNull();
+    const { instance } = await table.resolve({ adapterType: 'affinity', teamId: TEAM_ID, role: 'source', segmentId });
+    const describe = () => table.call({ segmentId, instance, method: 'describe', args: { typeId: 't' } });
+
+    expect(await describe()).toEqual({ result: null });
+    expect(await describe()).toEqual({
+      error: { kind: 'call_ceiling', message: expect.stringContaining('Affinity call ceiling reached') },
+    });
     await closeSegment({ segmentId });
-    expect(() => bound.describe('t')).toThrow(/no open segment/);
+    expect(await describe()).toEqual({
+      error: { kind: 'adapter_error', message: expect.stringMatching(/no open segment/) },
+    });
   });
 });

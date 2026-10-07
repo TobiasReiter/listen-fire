@@ -234,10 +234,10 @@ function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       llm: { arbitrateEntities },
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: ({ adapterType }: { adapterType: string }) => {
           if (adapterType === 'email') return adapters.email;
           if (adapterType === 'attio') return adapters.attio;

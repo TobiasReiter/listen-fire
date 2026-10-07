@@ -98,10 +98,10 @@ async function interpretMovementFiring(input: {
     // The deployment's cost cap, read once as the run starts.
     costCapMicrodollars: runCostCapFromEnv(),
     catalog: teamCatalog.snapshot,
+    credentialIds: teamCatalog.credentialIds,
     runId: input.triggerRunId,
     host: productionEngineHost({
       teamId: input.teamId,
-      credentialIds: teamCatalog.credentialIds,
       triggerRunId: input.triggerRunId,
       ...(input.parksInto !== undefined ? { parksInto: input.parksInto } : {}),
       cancel: input.cancelGate,
@@ -520,11 +520,11 @@ async function resumeMovementFiringInContext(
       // event takes it, then suspends before its next statement.
       limitPaused: recorder.limitPaused,
       catalog: teamCatalog.snapshot,
+      credentialIds: teamCatalog.credentialIds,
       runId: input.runId,
       // A resumed run can re-park at a deeper ask — it gets live parks too.
       host: productionEngineHost({
         teamId: input.teamId,
-        credentialIds: teamCatalog.credentialIds,
         triggerRunId: input.runId,
         parksInto: recorder,
         cancel: cancelGate,
@@ -731,10 +731,10 @@ async function fireCallbackFiringInContext(
         priorSpentMicrodollars: recorder.priorSpentMicrodollars,
         capBaselineMicrodollars: recorder.capBaselineMicrodollars,
         catalog: teamCatalog.snapshot,
+        credentialIds: teamCatalog.credentialIds,
         runId: input.runId,
         host: productionEngineHost({
           teamId: input.teamId,
-          credentialIds: teamCatalog.credentialIds,
           triggerRunId: input.runId,
           parksInto: recorder,
           cancel: cancelGate,

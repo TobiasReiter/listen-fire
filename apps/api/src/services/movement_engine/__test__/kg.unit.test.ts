@@ -553,13 +553,13 @@ async function runGoldenThroughMovementEngine(input: {
     teamId: TEAM_ID,
     catalog: makeCatalog(),
     host: makeTestHost({
+      ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
       adapters: {
         resolve: makeResolver({ email: makeFakeSource('email'), [KG]: input.kg.adapter }),
       },
       llm: { client: llm.client },
     }),
     ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
-    ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });
 }
 

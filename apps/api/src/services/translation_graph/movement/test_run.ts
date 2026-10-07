@@ -171,17 +171,17 @@ export async function runMovementTestRun(
       teamId: input.teamId,
       costCapMicrodollars: runCostCapFromEnv(),
       catalog: teamCatalog.snapshot,
+      credentialIds: teamCatalog.credentialIds,
       // A test run leaves nothing durable behind, its file text included, and
       // captures its writes rather than making them, so it takes no cross-run
       // lock a live firing could wait on.
       host: productionEngineHost({
         teamId: input.teamId,
-        credentialIds: teamCatalog.credentialIds,
         rawText: inMemoryRawTextStore(),
         locks: new InMemoryWriteLocks(),
+        writeSink: (w) => writes.push(w),
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

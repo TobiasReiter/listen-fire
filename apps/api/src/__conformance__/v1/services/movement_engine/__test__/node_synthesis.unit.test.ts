@@ -276,9 +276,9 @@ function run(source: string, payload: Record<string, unknown>, adapters: RunAdap
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: makeResolver({
           email: adapters.email,
           ...(adapters.attio ? { attio: adapters.attio } : {}),
@@ -306,9 +306,9 @@ function resume(
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
+    credentialIds: CREDENTIAL_IDS,
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => CREDENTIAL_IDS[name],
         resolve: makeResolver({
           email: adapters.email,
           ...(adapters.attio ? { attio: adapters.attio } : {}),

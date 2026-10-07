@@ -10,7 +10,7 @@
 // under test too.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { AdapterCallCeilingExceeded, isAdapterCallCeilingExceeded } from '../host';
+import { AdapterCallCeilingExceeded, isAdapterCallCeilingExceeded } from '../../translation_graph/segment_scope';
 import {
   bindAdapterCallCounter,
   closeSegment,

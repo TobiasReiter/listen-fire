@@ -1,25 +1,30 @@
 // The host a dev probe runs the engine with: the production host — its locks,
 // model clients, stores and segment scope are what the probe exercises — with
 // the probe's own adapters (a client pointed at a fake server) in place of the
-// registry's, each answering inside the segment it was resolved for.
+// registry's, each call answering inside the segment it was resolved for.
+
+import type { CatalogSnapshot } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { EngineHost } from '../../../services/movement_engine/host';
+import type { LiveAdapterResolver } from '../../../services/translation_graph/engine/adapter_table';
+import type { DryRunWriteSink } from '../../../services/translation_graph/engine/dry_run_adapter';
 import { productionEngineHost } from '../../../services/translation_graph/movement/engine_host';
-import { segmentBoundAdapter } from '../../../services/translation_graph/segment_scope';
 
-export function probeEngineHost(input: { teamId: TeamId; adapters: EngineHost['adapters'] }): EngineHost {
-  const host = productionEngineHost({
+export function probeEngineHost(input: {
+  teamId: TeamId;
+  resolve: LiveAdapterResolver;
+  writeSink?: DryRunWriteSink;
+}): EngineHost {
+  return productionEngineHost({
     teamId: input.teamId,
-    // The probe's own adapters answer credential ids; these are never read.
-    credentialIds: {},
+    resolveLive: input.resolve,
+    ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });
-  return {
-    ...host,
-    adapters: {
-      ...input.adapters,
-      resolve: async (resolution) =>
-        segmentBoundAdapter(await input.adapters.resolve(resolution), resolution.segmentId),
-    },
-  };
+}
+
+/** Every credential the probe's catalog imports, answering to one id — the
+ *  probe's adapters ignore which. */
+export function everyCredential(catalog: CatalogSnapshot, credentialId: string): Record<string, string> {
+  return Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, credentialId]));
 }

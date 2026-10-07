@@ -35,14 +35,13 @@ import type { WriteLockHolder } from '../write_locks/write_locks';
 import type { FileTextResolution } from './expression';
 import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs } from './extraction';
 import type { ExtractCallLlmClient } from './extraction_call';
-import type { Costed, EngineHost } from './host';
+import type { BudgetRefusal, EngineHost, PricedAnswer } from './host';
 import type { CancelGate } from './run';
 
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import { RunCancelledSignal } from './errors';
 import {
-  isBudgetExhausted,
   RunCostCapExceeded,
   type Budget,
   type CostLine,
@@ -195,23 +194,27 @@ export class RunLedger {
 
 /**
  * One priced host call: handed the run's budget, its reported cost charged.
- * A call the host refused partway (`BudgetExhausted`) is charged what it spent
- * before the refusal and raised as the run's cap, from the run's figures.
+ * A call the host refused past the budget is charged what it spent before the
+ * refusal and raised as the run's cap, from the run's figures.
  */
 async function charged<Output extends object>(
   ledger: RunLedger,
-  call: (budget: Budget) => Promise<Costed<Output>>,
+  call: (budget: Budget) => Promise<PricedAnswer<Output>>,
 ): Promise<Output> {
-  let answer: Costed<Output>;
-  try {
-    answer = await call(ledger.budget());
-  } catch (err) {
-    if (!isBudgetExhausted(err)) throw err;
-    ledger.charge(err.cost);
-    throw ledger.exceeded() ?? err;
-  }
+  const answer = await call(ledger.budget());
   ledger.charge(answer.cost);
+  if (isBudgetRefusal(answer)) throw ledger.exceeded() ?? new Error(answer.error.message);
   return answer;
+}
+
+function isBudgetRefusal<Output extends object>(answer: PricedAnswer<Output>): answer is BudgetRefusal {
+  return (
+    'error' in answer &&
+    typeof answer.error === 'object' &&
+    answer.error !== null &&
+    'kind' in answer.error &&
+    answer.error.kind === 'budget'
+  );
 }
 
 /** The host's priced families as the interpreter calls them: the run's budget
