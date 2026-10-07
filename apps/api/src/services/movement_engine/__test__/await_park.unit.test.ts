@@ -6,7 +6,8 @@
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { AwaitResolution } from '../../translation_graph/awaitable';
 import type { ParkSink } from '../run';
-import { makeFakeParkSink, type AwaitWakeRequest } from '../host';
+import type { AwaitWakeRequest } from '../host';
+import { makeFakeParkSink } from '../test_host';
 import { logger } from '../../logger';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 

@@ -93,7 +93,7 @@ import {
 import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { InMemoryWriteLocks, type WriteLocks } from '../../write_locks/write_locks';
 import { PostgresWriteLocks, type PostgresWriteLockHolder } from '../../write_locks/postgres';
-import { credentialIdsFor, makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 

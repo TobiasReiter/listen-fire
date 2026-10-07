@@ -21,7 +21,7 @@ import { META_RECORD_TYPE, makeStablePosition } from '../../translation_graph/ty
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 // A release other than this one, so the deprecated path is reachable while
 // this release deprecates nothing. Only the ENGINE's view is redirected; the

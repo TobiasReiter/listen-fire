@@ -27,7 +27,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, positionRecordId } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
 const KG = 'kg';

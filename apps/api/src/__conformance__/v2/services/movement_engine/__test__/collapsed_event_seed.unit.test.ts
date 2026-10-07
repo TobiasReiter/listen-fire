@@ -104,7 +104,7 @@ import type { Adapter, ParentLink, RuntimeCapabilities } from '../../translation
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { credentialIdsFor, makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000011' as TeamId;
 const MESSAGE = 'Slack Message';

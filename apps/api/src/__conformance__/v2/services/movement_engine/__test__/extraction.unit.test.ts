@@ -161,7 +161,7 @@ import type { MutationContext } from '../../translation_graph/mutation_context';
 import { positionData } from '../../translation_graph/types';
 import { candidateIsAllExact } from '../../translation_graph/uniqueness';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 

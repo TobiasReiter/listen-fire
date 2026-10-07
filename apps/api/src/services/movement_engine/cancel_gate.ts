@@ -8,13 +8,21 @@
 // as not-cancelled, the same posture as the dispatch gates (a DB blip must not
 // kill healthy runs).
 
-import { getAutomationsQb, getQb } from '../../lib/kysely';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { CancelGate } from './run';
 
+import { getAutomationsQb, getQb } from '../../lib/kysely';
+
 const POLL_MS = 3_000;
 
-export function makeDbCancelGate(runId: TriggerRunId): CancelGate {
+/** The run's gate as its host holds it: what the engine checks, and the
+ *  stamped reason the host reports once the run stops cancelled. The reason
+ *  never crosses to the engine; it reads only whether to stop. */
+export interface DbCancelGate extends CancelGate {
+  reason(): string | null;
+}
+
+export function makeDbCancelGate(runId: TriggerRunId): DbCancelGate {
   let lastCheckedMs = -Infinity;
   let latchedCancelled = false;
   let latchedReason: string | null = null;

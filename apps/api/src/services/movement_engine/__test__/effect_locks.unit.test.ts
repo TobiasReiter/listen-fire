@@ -105,7 +105,7 @@ import { positionData, type SchemaTypeDescriptor } from '../../translation_graph
 import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
-import { credentialIdsFor, makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
 

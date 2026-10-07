@@ -577,8 +577,6 @@ export interface CancelGate {
    *  where a stale "no" is not a few seconds' latency but a cancel discarded
    *  forever, because there is no later boundary to notice it at. */
   cancelledNow(): Promise<boolean>;
-  /** The stamped human-readable reason, once cancelled. */
-  reason(): string | null;
 }
 
 // Re-exported for the engine's public surface, alongside `CancelGate`.

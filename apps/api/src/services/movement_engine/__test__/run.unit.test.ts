@@ -157,7 +157,9 @@ import type { LlmClient } from '../../translation_graph/engine/batched_extractio
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { credentialIdsFor, makeTestHost, type ActingUserLookup, type EngineHost } from '../host';
+import type { EngineHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
+import type { ActingUserLookup } from '../host_kit';
 import type { ActingUser } from '../../translation_graph/adapter';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
@@ -1307,10 +1309,18 @@ describe('MovementRunFailed — a failing write does not erase what already land
     '}',
   ].join('\n');
 
-  it('rethrows the write failure with the partial ledger, message and stack intact', async () => {
+  it('rethrows the write failure with the partial ledger, message, name, detail and stack intact', async () => {
     const attio = makeFakeAdapter('attio');
     const slack = makeFakeAdapter('slack');
-    const boom = new Error('slack: 422 Unprocessable Entity');
+    class SlackApiError extends Error {
+      readonly status = 422;
+      readonly code = 'invalid_blocks';
+      constructor(message: string) {
+        super(message);
+        this.name = 'SlackApiError';
+      }
+    }
+    const boom = new SlackApiError('slack: 422 Unprocessable Entity');
     slack.adapter.createRecord = async () => {
       throw boom;
     };
@@ -1332,11 +1342,15 @@ describe('MovementRunFailed — a failing write does not erase what already land
     // Transparent wrapper: the log line and the run's failure reason must
     // read exactly as they did before the ledger rode out with the error.
     expect(failure.message).toBe('slack: 422 Unprocessable Entity');
-    // The adapter's error stays on the host; what crosses is its message, and
-    // the engine raises that as the run's cause.
+    // The adapter's error stays on the host; what crosses is its message, its
+    // name and its particulars, and the engine raises those as the run's cause.
     const cause = failure.cause;
     expect(cause).toBeInstanceOf(Error);
-    expect(cause).toMatchObject({ message: boom.message });
+    expect(cause).toMatchObject({
+      message: boom.message,
+      name: 'SlackApiError',
+      detail: { status: 422, code: 'invalid_blocks' },
+    });
     expect(failure.stack).toBe(cause instanceof Error ? cause.stack : undefined);
     // The first write really landed — it must survive into the run record.
     expect(failure.partial.writes.map((w) => [w.adapterType, w.recordType])).toEqual([

@@ -186,7 +186,7 @@ import type { LlmClient } from '../../translation_graph/engine/batched_extractio
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { credentialIdsFor, makeTestHost } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 

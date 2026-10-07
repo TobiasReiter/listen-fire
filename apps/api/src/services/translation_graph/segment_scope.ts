@@ -34,11 +34,11 @@ import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { EngineHost, SegmentOpening } from '../movement_engine/host';
-import type { ClassifyHostError } from './engine/adapter_table';
 
-import { isBudgetExhausted, NO_BUDGET_LIMIT, type CostLine } from '../../lib/run_cost';
+import { NO_BUDGET_LIMIT, type CostLine } from '../../lib/run_cost';
 import { SpendMeter, underSpendMeter } from '../../lib/run_spend';
-import { getErrorMessage } from '../../lib/utils/error';
+import { logger } from '../logger';
+import { adapterErrorOf, type ClassifyHostError } from './engine/adapter_table';
 
 /** The systems that count against a ceiling. One entry per system that has its
  *  own env var below; a system not listed here is simply not capped. */
@@ -253,16 +253,25 @@ export async function withSegment<T>(
  * against its ceiling and answers under its pin; and with what it threw turned
  * into the typed answer the engine contract names. A call into a segment that
  * has closed fails, naming it.
+ *
+ * The engine is answered the failure's message, name and particulars; its
+ * class, stack and cause stay here, so the host logs the original as it
+ * classifies it. An adapter call carries no budget (its own priced work is
+ * charged as the segment closes), so it is never refused as `budget`.
  */
 export const segmentScopedCalls: {
   around: <T>(segmentId: string, call: () => Promise<T>) => Promise<T>;
   classify: ClassifyHostError;
 } = {
   around: (segmentId, call) => inSegment(segmentId, call),
-  classify: (error) => {
+  classify: (error, { segmentId }) => {
     if (isAdapterCallCeilingExceeded(error)) return { kind: 'call_ceiling', message: error.message };
-    if (isBudgetExhausted(error)) return { kind: 'budget', message: error.message };
-    return { kind: 'adapter_error', message: getErrorMessage(error) };
+    logger.warn('[segment_scope] adapter call failed', {
+      segmentId,
+      runId: openSegments.get(segmentId)?.runId,
+      err: error,
+    });
+    return adapterErrorOf(error);
   },
 };
 

@@ -28,7 +28,8 @@ import { streamFileRef, type ResolveFileOwner } from '../../translation_graph/en
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { credentialIdsFor, makeTestHost, type HostTransformInvoker } from '../host';
+import type { HostTransformInvoker } from '../host';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000054' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';

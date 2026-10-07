@@ -11,8 +11,9 @@
 // `AdapterCallCeilingReached` (which `onError` never forgives), anything else
 // is an ordinary failure carrying the host's message.
 
-import type { AdapterCallMap, AdapterMethod, EngineHost, HostCallError, ResolvedAdapter } from './host';
+import type { AdapterCallError, AdapterCallMap, AdapterMethod, EngineHost, HostErrorDetail, ResolvedAdapter } from './host';
 
+import { neverAsAny } from '../../lib/utils/types';
 import { iterateRelatedPages, type Adapter } from '../translation_graph/adapter';
 
 /** Where a stand-in's calls go: the instance's id within its segment. */
@@ -41,14 +42,26 @@ export function isAdapterCallCeilingReached(error: unknown): error is AdapterCal
   return error instanceof AdapterCallCeilingReached;
 }
 
-/** A host call's error, as the engine raises it. */
-export function hostCallFailure(error: HostCallError): Error {
+/** An adapter's failure as the engine raises it: the host's message, under
+ *  the failure's own name, with what the host knows of it. */
+export class AdapterCallFailed extends Error {
+  readonly detail?: HostErrorDetail;
+  constructor(error: AdapterCallError) {
+    super(error.message);
+    if (error.name !== undefined) this.name = error.name;
+    if (error.detail !== undefined) this.detail = error.detail;
+  }
+}
+
+/** An adapter call's error, as the engine raises it. */
+export function hostCallFailure(error: AdapterCallError): Error {
   switch (error.kind) {
     case 'call_ceiling':
       return new AdapterCallCeilingReached(error.message);
     case 'adapter_error':
-    case 'budget':
-      return new Error(error.message);
+      return new AdapterCallFailed(error);
+    default:
+      return neverAsAny(error.kind);
   }
 }
 

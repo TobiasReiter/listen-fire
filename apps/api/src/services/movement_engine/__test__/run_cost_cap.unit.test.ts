@@ -87,7 +87,8 @@ import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost, type HostTransformInvoker } from '../host';
+import type { HostTransformInvoker } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';

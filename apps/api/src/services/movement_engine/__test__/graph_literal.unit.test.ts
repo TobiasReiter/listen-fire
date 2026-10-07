@@ -94,7 +94,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeFakeParkSink, makeTestHost } from '../host';
+import { makeFakeParkSink, makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000020' as TeamId;
 

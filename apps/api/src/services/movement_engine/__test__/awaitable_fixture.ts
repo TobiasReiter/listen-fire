@@ -12,7 +12,8 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { positionData } from '../../translation_graph/types';
-import { makeTestHost, type AwaitWakeRequest } from '../host';
+import type { AwaitWakeRequest } from '../host';
+import { makeTestHost } from '../test_host';
 import { runMovement, type ParkSink } from '../run';
 
 const AWAITING = 'ask';

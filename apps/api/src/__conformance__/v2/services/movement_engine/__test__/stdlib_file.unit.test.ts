@@ -129,7 +129,7 @@ import { makeStablePosition, positionData } from '../../translation_graph/types'
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { Readable } from 'node:stream';
 import { services } from '../../../adapters/registry';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 import { streamFileRef } from '../../translation_graph/engine/files/retrieve';
 import { renderFileArtifact } from '../../translation_graph/movement/file_render';
 

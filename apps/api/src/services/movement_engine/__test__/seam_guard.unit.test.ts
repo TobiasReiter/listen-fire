@@ -19,14 +19,8 @@ import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
-import {
-  makeFakeParkSink,
-  makeTestHost,
-  type AwaitWakeRequest,
-  type EngineHost,
-  type RenderFile,
-  type ResolveFileText,
-} from '../host';
+import type { AwaitWakeRequest, EngineHost, RenderFile, ResolveFileText } from '../host';
+import { makeFakeParkSink, makeTestHost } from '../test_host';
 import { runMovement, type ParkSink } from '../run';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 
@@ -65,10 +59,12 @@ const HOST_SIDE_FILES = [
   'callback_sink.ts',
   'callback_store.ts',
   'cancel_gate.ts',
+  'host_kit.ts',
   'join_pending.ts',
   'limit_pause.ts',
   'park_sink.ts',
   'single_flight.ts',
+  'test_host.ts',
   'timer_resume.ts',
   'timer_wake.ts',
 ];
@@ -136,13 +132,6 @@ const ALLOWED: Array<(module: string) => boolean> = [
   // The adapter protocol: the contract the engine calls adapters through, no
   // implementation.
   under('services/translation_graph/adapter'),
-  // The in-process table of live adapter instances `makeTestHost` serves its
-  // fakes from — the same one the production host keeps. It holds what the
-  // test hands it and reaches no system of its own.
-  (m) => m === 'services/translation_graph/engine/adapter_table',
-  // The lock interface and the in-memory locks `makeTestHost` uses; the
-  // Postgres implementation is a separate module.
-  under('services/write_locks/write_locks'),
   (m) => PURE_FILES.some((f) => m === `services/movement_engine/${f.replace(/\.ts$/, '')}`),
 ];
 

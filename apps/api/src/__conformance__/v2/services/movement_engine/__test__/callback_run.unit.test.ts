@@ -26,7 +26,7 @@ import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { snapshotOverManifests, staticCatalogFromManifests, staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { runMovement, fireCallbackBody, type ParkSink } from '../run';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
 const KG = 'kg';

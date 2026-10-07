@@ -4,7 +4,7 @@
 // and gets a result or a typed error back as data.
 //
 // The production host (`translation_graph/movement/engine_host.ts`) and the
-// test host (`makeTestHost`) share it: they differ only in where the live
+// test host (`movement_engine/test_host.ts`) share it: they differ only in where the live
 // adapters come from and in the scope each call runs inside (the production
 // host enters the segment's read memo and call ceiling).
 //
@@ -18,13 +18,14 @@ import type { Adapter } from '../adapter';
 
 import {
   ADAPTER_METHODS,
+  type AdapterCallError,
   type AdapterCall,
   type AdapterCallAnswer,
   type AdapterCallMap,
   type AdapterMethod,
   type AdapterResolution,
   type HostAdapters,
-  type HostCallError,
+  type HostErrorDetail,
   type ResolvedAdapter,
 } from '../../movement_engine/host';
 import { newDryRunRehearsal, wrapAdapterForDryRun, type DryRunRehearsal, type DryRunWriteSink } from './dry_run_adapter';
@@ -159,11 +160,41 @@ class SegmentInstances {
   }
 }
 
-/** The answer a host call gives instead of throwing. */
-export type ClassifyHostError = (error: unknown) => HostCallError;
+/** The answer a host call gives instead of throwing, for the call that threw. */
+export type ClassifyHostError = (error: unknown, call: { segmentId: string }) => AdapterCallError;
 
-function asAdapterError(error: unknown): HostCallError {
-  return { kind: 'adapter_error', message: error instanceof Error ? error.message : String(error) };
+/** What an adapter threw, as an `adapter_error`: its message, its own name,
+ *  and the HTTP status and error code it carries, so a remote failure's
+ *  particulars survive the boundary. */
+export function adapterErrorOf(error: unknown): AdapterCallError {
+  if (!(error instanceof Error)) return { kind: 'adapter_error', message: String(error) };
+  const detail = errorDetail(error);
+  return {
+    kind: 'adapter_error',
+    message: error.message,
+    ...(error.name !== 'Error' ? { name: error.name } : {}),
+    ...(detail !== undefined ? { detail } : {}),
+  };
+}
+
+function errorDetail(error: Error): HostErrorDetail | undefined {
+  const status = numberField(error, 'status') ?? numberField(error, 'statusCode') ?? responseStatus(error);
+  const code: unknown = Reflect.get(error, 'code');
+  const detail: HostErrorDetail = {
+    ...(status !== undefined ? { status } : {}),
+    ...(typeof code === 'string' ? { code } : {}),
+  };
+  return Object.keys(detail).length > 0 ? detail : undefined;
+}
+
+function numberField(value: object, field: string): number | undefined {
+  const found: unknown = Reflect.get(value, field);
+  return typeof found === 'number' && Number.isFinite(found) ? found : undefined;
+}
+
+function responseStatus(error: Error): number | undefined {
+  const response: unknown = Reflect.get(error, 'response');
+  return typeof response === 'object' && response !== null ? numberField(response, 'status') : undefined;
 }
 
 export interface AdapterTable extends HostAdapters {
@@ -187,7 +218,7 @@ export function adapterTable(options: {
 }): AdapterTable {
   const segments = new Map<string, SegmentInstances>();
   const around = options.around ?? (<T>(_segmentId: string, call: () => Promise<T>) => call());
-  const classify = options.classify ?? asAdapterError;
+  const classify = options.classify ?? adapterErrorOf;
 
   const segmentNamed = (segmentId: string): SegmentInstances => {
     let segment = segments.get(segmentId);
@@ -209,7 +240,7 @@ export function adapterTable(options: {
       const result = await around(input.segmentId, () => dispatch(adapter, input.args));
       return { result };
     } catch (error) {
-      return { error: classify(error) };
+      return { error: classify(error, { segmentId: input.segmentId }) };
     }
   };
 

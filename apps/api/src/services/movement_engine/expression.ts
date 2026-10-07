@@ -2004,9 +2004,16 @@ async function resolveMovementActingUserUncached(
   const sourceAdapter = ctx.source?.adapter;
   if (!event || meta.teamId === undefined) return null;
   if (!sourceAdapter?.getActorCandidates) return null;
-  // The host asks the source instance for the event's actors itself.
+  // The host asks the source instance for the event's actors itself, so the
+  // source must be one the host resolved: an adapter the engine implements
+  // itself has no instance there to ask.
   const source = hostInstanceOf(sourceAdapter);
-  if (source === undefined) return null;
+  if (source === undefined) {
+    throw new MovementEngineError(
+      'MOVENG_UNSUPPORTED',
+      `the acting user cannot be looked up through the '${sourceAdapter.adapterType}' source: it is not an adapter instance the host resolved`,
+    );
+  }
   try {
     return await meta.resolveActingUser({
       teamId: meta.teamId,

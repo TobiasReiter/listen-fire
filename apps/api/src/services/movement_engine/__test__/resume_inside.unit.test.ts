@@ -34,7 +34,7 @@ import {
   type MovementRunResult,
   type ParkSink,
 } from '../run';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000077' as TeamId;
 const KG = 'kg';

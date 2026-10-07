@@ -13,7 +13,8 @@ import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog'
 
 import { isRunCostCapExceeded, RunCostCapExceeded, type Budget } from '../../../lib/run_cost';
 import { InMemoryWriteLocks, type WriteLockHolder, type WriteLocks } from '../../write_locks/write_locks';
-import { makeFakeParkSink, makeTestHost, NEVER_CANCELLED } from '../host';
+import { makeFakeParkSink, makeTestHost } from '../test_host';
+import { NEVER_CANCELLED } from '../host_kit';
 import { runMovement } from '../run';
 import { RunCancelledSignal } from '../errors';
 import {

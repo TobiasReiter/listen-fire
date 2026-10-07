@@ -115,7 +115,7 @@ import {
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { makeTestHost } from '../host';
+import { makeTestHost } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 const KG = 'kg';
