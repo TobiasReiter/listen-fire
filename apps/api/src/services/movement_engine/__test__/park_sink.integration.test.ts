@@ -1,9 +1,9 @@
 // Real-DB proof that `commitTimerPark` writes the durable timer-park row
 // correctly. Standing gate for §3 of plans/2026-07-01-movement-sleep/3_model.md:
 // a `parked_run` row with `park_reason='timer'` and `wake_at` set, and idempotent
-// UPSERT on `(run_id, address)`. And that `commitAwaitPark` writes the
-// correlation row itself, then re-checks once so an answer that landed while
-// it parked still wakes the run.
+// UPSERT on `(run_id, address)`. And that `commitAwaitPark` writes the park and
+// its correlation row, after which the engine re-checks once and, through the
+// host's `park.wake`, queues the wake for an answer that landed while it parked.
 
 import { randomUUID } from 'node:crypto';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
@@ -11,6 +11,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { makeRecorderParkSink } from '../park_sink';
+import { enqueueAwaitWake } from '../await_wake';
 import { loadCorrelatedParks } from '../../translation_graph/adapters/await_correlation';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 
@@ -146,7 +147,7 @@ async function awaitWakes() {
 }
 
 describe('commitAwaitPark', () => {
-  it('writes the correlation row from the key to the park, then the await park; no wake while still pending', async () => {
+  it('writes the await park and the correlation row from the key to it; no wake of its own', async () => {
     const sink = makeRecorderParkSink(makeStubRecorder({ teamId, runId }));
 
     await sink.commitAwaitPark({
@@ -154,7 +155,6 @@ describe('commitAwaitPark', () => {
       state: { scope: true },
       adapterType: 'slack',
       correlationKey: 'C123:1700000000.000100',
-      resolvesNow: async () => false,
     });
 
     expect(
@@ -167,23 +167,6 @@ describe('commitAwaitPark', () => {
       .where('address', '=', 's1')
       .executeTakeFirstOrThrow();
     expect(park).toEqual({ park_reason: 'await', status: 'parked' });
-    expect(await awaitWakes()).toEqual([]);
-  });
-
-  it('a failing re-check leaves the park as it was', async () => {
-    const sink = makeRecorderParkSink(makeStubRecorder({ teamId, runId }));
-
-    await sink.commitAwaitPark({
-      address: 's1',
-      state: {},
-      adapterType: 'slack',
-      correlationKey: 'C1:1.0',
-      resolvesNow: async () => {
-        throw new Error('slack is down');
-      },
-    });
-
-    expect(await loadCorrelatedParks({ adapterType: 'slack', teamId, correlationKey: 'C1:1.0' })).toHaveLength(1);
     expect(await awaitWakes()).toEqual([]);
   });
 
@@ -204,6 +187,8 @@ describe('commitAwaitPark', () => {
       source: awaitingSource(),
       adapter: awaiting.adapter,
       parkSink: makeRecorderParkSink(makeStubRecorder({ teamId, runId })),
+      // The production host's wake: a `wake_await` work row.
+      wake: (request) => enqueueAwaitWake(request),
     });
 
     expect(result.parked).toBe(true);

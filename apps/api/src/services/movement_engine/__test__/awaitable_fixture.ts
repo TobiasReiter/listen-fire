@@ -1,6 +1,6 @@
 // A movement that writes a request and awaits its `Response`, against a fake
 // awaitable adapter whose answers the test scripts one call at a time — enough
-// to drive the engine's await site (check, park, re-check after parking)
+// to drive the engine's await site (check, park, re-check after parking, wake)
 // without a real ask store or Slack.
 
 import type { InstanceSchema } from 'movement-lang';
@@ -12,7 +12,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { positionData } from '../../translation_graph/types';
-import { makeTestHost } from '../host';
+import { makeTestHost, type AwaitWakeRequest } from '../host';
 import { runMovement, type ParkSink } from '../run';
 
 const AWAITING = 'ask';
@@ -65,8 +65,9 @@ function caps(): RuntimeCapabilities {
 }
 
 /** The awaitable adapter: each `resolveAwait` answers the next scripted
- *  resolution, the last one repeating. */
-export function makeAwaitingAdapter(answers: AwaitResolution[]): { adapter: Adapter; checks: number } {
+ *  resolution, the last one repeating. A scripted `Error` is thrown instead
+ *  (the remote is down for that call). */
+export function makeAwaitingAdapter(answers: Array<AwaitResolution | Error>): { adapter: Adapter; checks: number } {
   const state = { checks: 0 };
   const adapter: Adapter = {
     adapterType: AWAITING,
@@ -77,6 +78,7 @@ export function makeAwaitingAdapter(answers: AwaitResolution[]): { adapter: Adap
         const answer = answers[Math.min(state.checks, answers.length - 1)];
         state.checks += 1;
         if (answer === undefined) throw new Error('test: no scripted resolution');
+        if (answer instanceof Error) throw answer;
         return answer;
       },
     },
@@ -119,6 +121,8 @@ export function runAwaiting(input: {
   source: string;
   adapter: Adapter;
   parkSink: ParkSink;
+  /** The host's wake; absent ⇒ the test host's, which throws when reached. */
+  wake?: (request: AwaitWakeRequest) => Promise<void>;
 }) {
   const manual = createManualAdapter({ teamId: input.teamId });
   const event: TriggerEvent = {
@@ -141,7 +145,7 @@ export function runAwaiting(input: {
           throw new Error(`test: no fake adapter for '${adapterType}'`);
         },
       },
-      park: { sink: input.parkSink },
+      park: { sink: input.parkSink, ...(input.wake !== undefined ? { wake: input.wake } : {}) },
     }),
     dryRun: false,
   });

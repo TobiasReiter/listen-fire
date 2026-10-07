@@ -122,6 +122,14 @@ export interface CallbackSink {
   calls(callbackId: string): Promise<CallbackCall[]>;
 }
 
+/** The key an await parked under, as `park.wake` takes it. */
+export interface AwaitWakeRequest {
+  /** The awaitable adapter's type, or the reserved callback identity. */
+  adapterType: string;
+  teamId: TeamId;
+  correlationKey: string;
+}
+
 export interface EngineHost {
   adapters: {
     resolve: ResolveAdapter;
@@ -148,6 +156,14 @@ export interface EngineHost {
      * raises, and a resumed join closes only its own leaf.
      */
     sink?: ParkSink;
+    /**
+     * Queue the wake for one correlation key: "resume whatever is parked on
+     * it". The engine calls it after an await park is durable, when its own
+     * re-check finds the await resolved (or cannot tell): a landing that
+     * arrived between the first check and the park woke nothing, because a
+     * wake for a key with no parked run is a no-op. Plain data in, nothing out.
+     */
+    wake(request: AwaitWakeRequest): Promise<void>;
     /** Minting `callback(…)`, reading its call ledger, correlating an
      *  `await cb-[:Called]->`. Absent ⇒ a callback raises MOVENG_UNSUPPORTED. */
     callbacks?: CallbackSink;
@@ -259,6 +275,11 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     park: {
       ...(park.sink !== undefined ? { sink: park.sink } : {}),
       ...(park.callbacks !== undefined ? { callbacks: park.callbacks } : {}),
+      wake:
+        park.wake ??
+        (async () => {
+          throw notProvided('park.wake');
+        }),
       bindings: park.bindings ?? {
         record: async () => {
           throw notProvided('park.bindings');

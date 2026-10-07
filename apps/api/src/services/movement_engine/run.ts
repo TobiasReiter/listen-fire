@@ -475,11 +475,12 @@ export interface ParkSink {
   commitTimerPark(input: { address: string; state: unknown; wakeAt: Date }): Promise<void>;
   /**
    * Record an AWAIT park (`await x-[:E]->` untilNonEmpty, asks-as-adapter §A):
-   * the correlation from `(adapterType, correlationKey)` to this park, then a
-   * `parked_run` row with `park_reason='await'` + the serialized scope. Unlike
+   * a `parked_run` row with `park_reason='await'` + the serialized scope, then
+   * the correlation from `(adapterType, correlationKey)` to this park. Unlike
    * `commitPark` there is NO `interaction_request` and NO token — a wake on the
    * key drives resume, which RE-ENTERS at the await (`reenter`) and re-checks
-   * live. Idempotent on `(run_id, address)`.
+   * live. Idempotent on `(run_id, address)`. The engine re-checks once after
+   * this returns and asks `park.wake` when the await already resolved.
    */
   commitAwaitPark(input: {
     address: string;
@@ -488,10 +489,6 @@ export interface ParkSink {
      *  identity. */
     adapterType: string;
     correlationKey: string;
-    /** The await's own check, WHERE included: true when it would resolve now.
-     *  Asked once more after the park is durable — a wake that landed between
-     *  the first check and the correlation row found nothing to wake. */
-    resolvesNow: () => Promise<boolean>;
   }): Promise<void>;
   /** Resume-unwind join decrement (§6.1). Returns { closed } — true for the unique
    *  branch that closes the frame (runs the post-join continuation). Crash-safe closer
@@ -6422,6 +6419,10 @@ class Interpreter {
       state,
       adapterType: adapter.adapterType,
       correlationKey: outcome.correlationKey,
+    });
+    await this.wakeIfResolvedWhileParking({
+      adapterType: adapter.adapterType,
+      correlationKey: outcome.correlationKey,
       resolvesNow: async () => (await check()).status !== 'wait',
     });
     this.trace.push({ kind: 'gate', outcome: false });
@@ -6489,10 +6490,58 @@ class Interpreter {
       state,
       adapterType: CALLBACK_AWAIT_TYPE,
       correlationKey: binding.callbackId,
+    });
+    await this.wakeIfResolvedWhileParking({
+      adapterType: CALLBACK_AWAIT_TYPE,
+      correlationKey: binding.callbackId,
       resolvesNow: async () => (await firstMatch()) !== undefined,
     });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
+  }
+
+  /**
+   * The lost-wake closure. The first check said "not yet", then the park went
+   * in; a landing between the two woke nothing, because a wake for a key with
+   * no parked run is a no-op. Asking the await's whole question once more
+   * (WHERE included) now that the park is durable covers that gap: anything
+   * landing after this is seen by its own wake.
+   *
+   * A re-check that cannot answer (the remote is down) wakes anyway, rather
+   * than risk the lost landing. The wake is idempotent: its resume re-enters
+   * the await and checks again, re-parking if it is still pending. A resume
+   * whose check fails again fails the run, as any adapter failure in a resumed
+   * segment does. A wake that cannot be queued leaves the park as durable as
+   * before, so it is logged, not raised.
+   */
+  private async wakeIfResolvedWhileParking(input: {
+    adapterType: string;
+    correlationKey: string;
+    resolvesNow: () => Promise<boolean>;
+  }): Promise<void> {
+    let resolved: boolean;
+    try {
+      resolved = await input.resolvesNow();
+    } catch (err) {
+      logger.warn('[MovementEngine] await re-check after parking failed; waking to re-check', {
+        adapterType: input.adapterType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      resolved = true;
+    }
+    if (!resolved) return;
+    try {
+      await this.input.host.park.wake({
+        adapterType: input.adapterType,
+        teamId: this.input.teamId,
+        correlationKey: input.correlationKey,
+      });
+    } catch (err) {
+      logger.error('[MovementEngine] await wake after parking could not be queued', {
+        adapterType: input.adapterType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**

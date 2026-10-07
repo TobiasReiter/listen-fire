@@ -1,7 +1,7 @@
 // The `wake_await` work row: "resume whatever is parked on this key". Its own
-// module so the doors that queue one (the inbound handler, the park sink's
-// re-check) never import the resume driver, which imports the engine that
-// imports the park sink.
+// module so the doors that queue one (the inbound handler, the push doors, the
+// production host's `park.wake`) never import the resume driver, which imports
+// the engine.
 
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -14,7 +14,7 @@ export const wakeAwaitPayloadSchema = z.object({
   correlationKey: z.string(),
 });
 
-type AwaitWake = z.infer<typeof wakeAwaitPayloadSchema>;
+export type AwaitWake = z.infer<typeof wakeAwaitPayloadSchema>;
 
 /** Queue the event-driven wake for one adapter identity. A signal's wake is
  *  never deduped: a second signal on the same identity while the first wake is
@@ -35,4 +35,19 @@ export async function enqueueAwaitWake(
     payload: wake,
     ...(opts.dueAt !== undefined ? { dueAt: opts.dueAt } : {}),
   });
+}
+
+/** Queue a wake per correlation key one signal named (a webhook delivery's
+ *  `wakeKeys`, a push door's `wake`). Team-scoped, so a signal only wakes its
+ *  own team's parks; a key nothing is parked on drains as a no-op. Throws on
+ *  the first row that cannot be queued, so the caller can refuse the signal
+ *  and have its sender retry. */
+export async function enqueueAwaitWakes(input: {
+  adapterType: string;
+  teamId: TeamId;
+  correlationKeys: readonly string[];
+}): Promise<void> {
+  for (const correlationKey of input.correlationKeys) {
+    await enqueueAwaitWake({ adapterType: input.adapterType, teamId: input.teamId, correlationKey });
+  }
 }

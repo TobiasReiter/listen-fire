@@ -4,7 +4,8 @@
 // the leaf's address + serialized scope; the sink ensures the run row exists as
 // `running` (lazy — via the firing's TriggerRunRecorder), records the
 // `parked_run` leaf, and flips the run to `parked`. An await park also writes
-// the correlation from the adapter's key to the park, and re-checks once.
+// the correlation from the adapter's key to the park; the engine re-checks it
+// once afterwards and asks the host's `park.wake` if it already resolved.
 //
 // This keeps every DB concern OUT of the pure interpreter (which takes the sink
 // as an injected dependency, exactly like `resolveAdapter`/`writeSink`).
@@ -14,7 +15,6 @@ import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { settleCancelledRun } from '../interaction/run_failure';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
-import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
 import type { ParkSink, RunLimitPause } from './run';
 import { markRunLimitPaused } from './limit_pause';
@@ -28,8 +28,6 @@ import {
   dropAwaitCorrelation,
   registerAwaitCorrelation,
 } from '../translation_graph/adapters/await_correlation';
-import { enqueueAwaitWake } from './await_wake';
-import { notifyWork } from '../work/drain';
 import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
 import { armTimerWake } from './timer_wake';
 
@@ -82,7 +80,6 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
       state: unknown;
       adapterType: string;
       correlationKey: string;
-      resolvesNow: () => Promise<boolean>;
     }): Promise<void> {
       // An await park (`await x-[:E]->`): the run row must exist before its
       // FK-bearing parked_run AND before the correlation row (which FKs the
@@ -90,14 +87,13 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
       // stayed pending) re-stamps the same row. NO interaction_request, NO
       // token: a wake on the correlation key drives resume, and resume
       // RE-ENTERS at the await to re-check live.
+      //
+      // The parked row first: it is the truth, the correlation only an index
+      // onto it. A wake that runs between the two writes either finds no
+      // correlation (a no-op the engine's re-check covers) or finds both —
+      // never a correlation without its park, which it would drop as "already
+      // drained" and leave the run deaf.
       await recorder.ensureStarted();
-      await registerAwaitCorrelation({
-        adapterType: input.adapterType,
-        correlationKey: input.correlationKey,
-        runId,
-        teamId: recorder.teamId,
-        address: input.address,
-      });
       await getAutomationsQb(['parked_run'])
         .insertInto('parked_run')
         .values({
@@ -114,9 +110,15 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
           }),
         )
         .execute();
+      await registerAwaitCorrelation({
+        adapterType: input.adapterType,
+        correlationKey: input.correlationKey,
+        runId,
+        teamId: recorder.teamId,
+        address: input.address,
+      });
       await recorder.markParked();
       await settleIfCancelledDuringPark(runId);
-      await wakeIfResolvedWhileParking({ ...input, runId, teamId: recorder.teamId });
     },
 
     async commitLimitPause(pause: RunLimitPause): Promise<void> {
@@ -302,39 +304,6 @@ async function cancelRaceSubtrees(
           .where('frame_address', 'in', deadFrames as never[])
           .execute();
       });
-  }
-}
-
-/**
- * The lost-wake closure. The first check said "not yet", then the correlation
- * row went in; a reply that landed between the two woke nothing, because a wake
- * for a key with no row is a no-op. Asking once more now that the row and the
- * park exist covers that gap: anything landing after this is seen by its own
- * wake. Best-effort, like the cancel check — the park is already durable, and a
- * failed re-check leaves the await exactly as parked as before it.
- */
-async function wakeIfResolvedWhileParking(input: {
-  runId: TriggerRunId;
-  teamId: TeamId;
-  adapterType: string;
-  correlationKey: string;
-  resolvesNow: () => Promise<boolean>;
-}): Promise<void> {
-  try {
-    if (await input.resolvesNow()) {
-      await enqueueAwaitWake({
-        adapterType: input.adapterType,
-        teamId: input.teamId,
-        correlationKey: input.correlationKey,
-      });
-      notifyWork();
-    }
-  } catch (err) {
-    logger.error('[ParkSink] await re-check after parking failed', {
-      runId: input.runId,
-      adapterType: input.adapterType,
-      error: err instanceof Error ? err.message : String(err),
-    });
   }
 }
 

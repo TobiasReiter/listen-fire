@@ -1,20 +1,28 @@
 // The engine's await site under protocol v2: the adapter only answers "resolved
-// yet, and if not, which key wakes it?"; the engine hands the park sink that key
-// and a re-check that asks the await's whole question again, WHERE included.
+// yet, and if not, which key wakes it?"; the engine hands the park sink that key,
+// then re-checks the await's whole question itself (WHERE included) and asks
+// the host's `park.wake` when it already resolved. Nothing but data crosses.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { AwaitResolution } from '../../translation_graph/awaitable';
 import type { ParkSink } from '../run';
-import { makeFakeParkSink } from '../host';
+import { makeFakeParkSink, type AwaitWakeRequest } from '../host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000042' as TeamId;
 
 type AwaitPark = Parameters<ParkSink['commitAwaitPark']>[0];
 
-/** The in-memory sink, keeping each await park's full input. */
-function recordingSink(): { sink: ParkSink; parks: AwaitPark[] } {
+/** The in-memory sink, keeping each await park's full input, and the host's
+ *  wake, keeping each request. */
+function recording(): {
+  sink: ParkSink;
+  parks: AwaitPark[];
+  wakes: AwaitWakeRequest[];
+  wake: (request: AwaitWakeRequest) => Promise<void>;
+} {
   const parks: AwaitPark[] = [];
+  const wakes: AwaitWakeRequest[] = [];
   const { sink } = makeFakeParkSink();
   return {
     sink: {
@@ -24,6 +32,10 @@ function recordingSink(): { sink: ParkSink; parks: AwaitPark[] } {
       },
     },
     parks,
+    wakes,
+    wake: async (request) => {
+      wakes.push(request);
+    },
   };
 }
 
@@ -34,45 +46,81 @@ const ANSWERED = (answer: boolean): AwaitResolution => ({
 });
 
 describe('await park — the adapter names the key, the engine keeps the correlation', () => {
-  it('pending parks under the adapter type and the key the answer named', async () => {
-    const { adapter } = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }]);
-    const { sink, parks } = recordingSink();
+  it('pending parks under the adapter type and the key the answer named, and wakes nothing', async () => {
+    const awaiting = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }]);
+    const { sink, parks, wakes, wake } = recording();
 
-    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter, parkSink: sink });
+    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wake });
 
     expect(result.parked).toBe(true);
     expect(parks).toHaveLength(1);
     expect(parks[0]).toMatchObject({ adapterType: 'ask', correlationKey: 'req-1' });
-    expect(await parks[0]!.resolvesNow()).toBe(false);
-  });
-
-  it('the re-check reports a landing that arrived after the first check', async () => {
-    const awaiting = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }, ANSWERED(true)]);
-    const { sink, parks } = recordingSink();
-
-    await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink });
-
-    expect(await parks[0]!.resolvesNow()).toBe(true);
     expect(awaiting.checks).toBe(2);
+    expect(wakes).toEqual([]);
   });
 
-  it('landings that all fail the WHERE park on the key the landed answer named, and do not count as resolved', async () => {
+  it('a landing that arrived after the first check is woken by the engine itself', async () => {
+    const awaiting = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }, ANSWERED(true)]);
+    const { sink, wakes, wake } = recording();
+
+    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wake });
+
+    expect(result.parked).toBe(true);
+    expect(awaiting.checks).toBe(2);
+    expect(wakes).toEqual([{ adapterType: 'ask', teamId: TEAM_ID, correlationKey: 'req-1' }]);
+  });
+
+  it('a re-check that throws (the remote is down) wakes anyway, so the resume re-checks under retry', async () => {
+    const awaiting = makeAwaitingAdapter([
+      { status: 'pending', correlationKey: 'req-1' },
+      new Error('remote is down'),
+      { status: 'pending', correlationKey: 'req-1' },
+    ]);
+    const { sink, parks, wakes, wake } = recording();
+
+    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wake });
+
+    expect(result.parked).toBe(true);
+    expect(parks).toHaveLength(1);
+    expect(wakes).toEqual([{ adapterType: 'ask', teamId: TEAM_ID, correlationKey: 'req-1' }]);
+  });
+
+  it('a wake that cannot be queued leaves the run parked', async () => {
+    const awaiting = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }, ANSWERED(true)]);
+    const { sink, parks } = recording();
+
+    const result = await runAwaiting({
+      teamId: TEAM_ID,
+      source: awaitingSource(),
+      adapter: awaiting.adapter,
+      parkSink: sink,
+      wake: async () => {
+        throw new Error('work table unavailable');
+      },
+    });
+
+    expect(result.parked).toBe(true);
+    expect(parks).toHaveLength(1);
+  });
+
+  it('landings that all fail the WHERE park on the key the landed answer named, and do not wake', async () => {
     const { adapter } = makeAwaitingAdapter([ANSWERED(false)]);
-    const { sink, parks } = recordingSink();
+    const { sink, parks, wakes, wake } = recording();
 
     const result = await runAwaiting({
       teamId: TEAM_ID,
       source: awaitingSource('r.Answer'),
       adapter,
       parkSink: sink,
+      wake,
     });
 
     expect(result.parked).toBe(true);
     expect(parks[0]).toMatchObject({ adapterType: 'ask', correlationKey: 'req-1' });
-    expect(await parks[0]!.resolvesNow()).toBe(false);
+    expect(wakes).toEqual([]);
   });
 
-  it('a landed-but-unmatched answer parks on the key it returned, and a later matching landing resolves the re-check', async () => {
+  it('a landed-but-unmatched answer parks on the key it returned, and a later matching landing wakes it', async () => {
     const unmatched: AwaitResolution = {
       status: 'landed',
       correlationKey: 'thread-9',
@@ -87,12 +135,12 @@ describe('await park — the adapter names the key, the engine keeps the correla
       ],
     };
     const { adapter } = makeAwaitingAdapter([unmatched, matched]);
-    const { sink, parks } = recordingSink();
+    const { sink, parks, wakes, wake } = recording();
 
-    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource('r.Answer'), adapter, parkSink: sink });
+    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource('r.Answer'), adapter, parkSink: sink, wake });
 
     expect(result.parked).toBe(true);
     expect(parks[0]).toMatchObject({ adapterType: 'ask', correlationKey: 'thread-9' });
-    expect(await parks[0]!.resolvesNow()).toBe(true);
+    expect(wakes).toEqual([{ adapterType: 'ask', teamId: TEAM_ID, correlationKey: 'thread-9' }]);
   });
 });

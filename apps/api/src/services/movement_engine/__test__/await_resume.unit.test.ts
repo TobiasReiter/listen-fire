@@ -306,3 +306,26 @@ describe('await-resume driver — a failing resume is retried by the work table'
     expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();
   });
 });
+
+describe('await-resume driver — a wake racing the park', () => {
+  // The park sink writes the parked row before the correlation (park_sink.unit),
+  // so a wake that finds the correlation always finds the park beside it.
+  it('a correlation with its parked row beside it resumes the run, and keeps the correlation until the leaf resolves', async () => {
+    resumeMovementFiringMock.mockResolvedValue(reparked(LEAF));
+
+    await fireCandidate();
+
+    expect(resumeMovementFiringMock).toHaveBeenCalledTimes(1);
+    expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();
+    expect(livePark.has(LEAF)).toBe(true);
+  });
+
+  it('a correlation with no parked row is dropped as already drained — why the park must come first', async () => {
+    livePark.clear();
+
+    await fireCandidate();
+
+    expect(resumeMovementFiringMock).not.toHaveBeenCalled();
+    expect(dropAwaitCorrelationMock).toHaveBeenCalledWith({ runId: RUN, address: LEAF });
+  });
+});

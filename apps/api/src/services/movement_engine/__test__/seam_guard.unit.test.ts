@@ -13,6 +13,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import { makeFakeParkSink, type AwaitWakeRequest } from '../host';
+import type { ParkSink } from '../run';
+import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+
 const ENGINE_DIR = path.resolve(__dirname, '..');
 const SRC_DIR = path.resolve(__dirname, '../../..');
 
@@ -43,6 +48,7 @@ const PURE_FILES = [
 const HOST_SIDE_FILES = [
   'await_description.ts',
   'await_resume.ts',
+  'await_wake.ts',
   'callback_fire.ts',
   'callback_sink.ts',
   'callback_store.ts',
@@ -244,5 +250,42 @@ describe('the engine/host seam', () => {
     expect(classify(`import '../../lib/kysely';`)).toBe(false);
     expect(moduleOf(probe, '../../lib/kysely')).toBe('lib/kysely');
     expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, './park_sink')))).toBe(true);
+  });
+});
+
+describe('the engine/host seam carries data', () => {
+  // DESIGN §6: every host call is request/response with JSON-serialisable
+  // arguments. The await park and its wake are the calls that used to carry a
+  // closure (the re-check); the engine now re-checks itself.
+  it('an await park and the wake after it pass plain data only', async () => {
+    const calls: unknown[] = [];
+    const { sink } = makeFakeParkSink();
+    const recording: ParkSink = {
+      ...sink,
+      async commitAwaitPark(input) {
+        calls.push(input);
+      },
+    };
+    const awaiting = makeAwaitingAdapter([
+      { status: 'pending', correlationKey: 'req-1' },
+      {
+        status: 'landed',
+        correlationKey: 'req-1',
+        landings: [{ recordId: 'req-1', recordType: 'Check Response', fields: { Answer: true } }],
+      },
+    ]);
+
+    await runAwaiting({
+      teamId: '00000000-0000-0000-0000-000000000042' as TeamId,
+      source: awaitingSource(),
+      adapter: awaiting.adapter,
+      parkSink: recording,
+      wake: async (request: AwaitWakeRequest) => {
+        calls.push(request);
+      },
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
   });
 });

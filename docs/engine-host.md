@@ -13,12 +13,14 @@ The movement engine (`apps/api/src/services/movement_engine/`) runs a program. E
 |---|---|
 | `adapters` | Construct an adapter instance; map a credential name to its id. |
 | `llm` | The extraction and `AI()` client, the `extract(…)` call client, `through` stages and plugins, and the judge for identity matches the engine's own rules cannot settle. |
-| `park` | Persist a timer, await or suspension (`sink`); mint and read callbacks (`callbacks`); record and find bound counterparts (`bindings`). With no `sink`, a run that reaches a park fails: that is a dry run. |
+| `park` | Persist a timer, await or suspension (`sink`); queue the wake for an await's key (`wake`); mint and read callbacks (`callbacks`); record and find bound counterparts (`bindings`). With no `sink`, a run that reaches a park fails: that is a dry run. |
 | `control` | The cancel gate, checked at each statement and model call. `suspendWhen` lets the host pause a run between statements; the cost cap uses it. |
 | `files` | Resolve a file import when the snapshot carries no files; turn a file into text. |
 | `lookup` | Map an event's actor to a team user (`@user_*`). |
 | `locks` | Cross-run write locks (below). |
 | `trace` | The array the run appends its decision trace to, so a caller can read it while the run goes. |
+
+After an await park is durable, the engine asks the await's question once more itself, its WHERE included. A landing that arrived between the first check and the park woke nothing, because a wake for a key with no parked run does nothing. So when the second check finds the await resolved, or cannot answer (the remote is down), the engine calls `park.wake({ adapterType, teamId, correlationKey })`. The production host queues a `wake_await` work row; the resume re-enters the await and checks again, re-parking if it is still pending. If that check fails too, the resumed run fails, as it would for any adapter failure in a resumed segment. A wake that cannot be queued is logged, and the park stands.
 
 The engine keeps its own cost ledger. Host code still reports into it ambiently rather than through call results (see "Recorded debts").
 
@@ -26,7 +28,7 @@ The engine keeps its own cost ledger. Host code still reports into it ambiently 
 
 - **Production:** `productionEngineHost` (`translation_graph/movement/engine_host.ts`). It wires each group to Postgres, the adapter registry and the model providers. Given a run id, it bills each model call to the run. Firings, resumes and callbacks build their snapshot with `runCatalogSnapshotForTeam`, which returns the snapshot and, beside it, the credential ids the host needs. Ids never go into the snapshot.
 - **Tests:** `makeTestHost(overrides)`. A test supplies only the pieces its program reaches. No default touches a network or a database. `makeFakeParkSink()` records parks in memory. A piece left out does one of three things:
-  - **Throws, naming itself, when the run reaches it:** `adapters.resolve`, every `llm.*` client, `park.bindings`, `files.resolveFileText`.
+  - **Throws, naming itself, when the run reaches it:** `adapters.resolve`, every `llm.*` client, `park.wake`, `park.bindings`, `files.resolveFileText`. A `park.wake` failure is logged, not raised, so a test that does not supply one still parks.
   - **Defaults quietly:** `adapters.credentialId` answers `undefined`; `lookup.resolveActingUser` answers `null` (no acting user); `control.cancel` never cancels; `trace` is a fresh `[]`; `locks` is a fresh `InMemoryWriteLocks`.
   - **Is absent, so the run takes its no-substrate path:** without `park.sink` a park fails (a dry run); without `park.callbacks` a `callback(…)` or an await on one fails as unsupported ("needs the durable trigger-run substrate"); without `files.resolveFile` an import resolves only from the snapshot's files, and fails ("no file resolver") when the snapshot carries none.
 - **Another embedder** supplies its own object of the same shape. The engine's inputs and outputs as a whole are plain data; several individual host calls still pass live objects or closures (see "Recorded debts").

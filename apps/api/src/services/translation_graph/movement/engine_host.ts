@@ -8,6 +8,7 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { LlmUsageContext } from '../../../lib/llm_usage';
+import { enqueueAwaitWake } from '../../movement_engine/await_wake';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
 import type { MovementTraceEntry } from '../../movement_engine/expression';
 import type { MovementTransformInvoker } from '../../movement_engine/extraction';
@@ -20,6 +21,7 @@ import {
 } from '../../movement_engine/host';
 import { makeRecorderParkSink } from '../../movement_engine/park_sink';
 import type { CancelGate } from '../../movement_engine/run';
+import { notifyWork } from '../../work/drain';
 import { PostgresWriteLocks } from '../../write_locks/postgres';
 import { parseWriteLockTimeoutMs, WRITE_LOCK_TIMEOUT_ENV_VAR, type WriteLocks } from '../../write_locks/write_locks';
 import type { ActingUser } from '../adapter';
@@ -88,6 +90,11 @@ export function productionEngineHost(input: {
             callbacks: makeRecorderCallbackSink(input.parksInto, input.teamId),
           }
         : {}),
+      // A `wake_await` work row, so the wake outlives this process.
+      wake: async (request) => {
+        await enqueueAwaitWake(request);
+        notifyWork();
+      },
       bindings: postgresRecordBindings,
     },
     control: { cancel },
