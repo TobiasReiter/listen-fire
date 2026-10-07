@@ -48,6 +48,14 @@ The web app copies the artifact into `apps/web/public` (under a content-hashed
 name) when `next.config.ts` loads, so a running `next dev` keeps serving the old
 parser until it is restarted.
 
+## Size budget
+
+Current: about 1.18 MB raw, about 322 KB gzipped. CI measures the committed
+`.wasm` gzipped (`parser-wasm.yml`, "Size budget"): it warns above 600 KB
+(614,400 bytes) and fails above 1 MB (1,048,576 bytes), printing raw and
+gzipped sizes either way. Policy: if the budget is approached, the checker port
+replaces serde derives with hand readers, as the lowering already did.
+
 ## Reproducibility
 
 The committed artifact is built on a laptop; `--remap-path-prefix` in the build
@@ -156,6 +164,9 @@ read text, so these are reproduced explicitly:
 - **Lone surrogates.** A source holding one reaches the WASM as U+FFFD
   (`TextEncoder`), so a slice of it differs from the JavaScript's. The parser
   has the same boundary.
+- **Prototype keys.** `constructor`, `__proto__` and the like are not
+  properties in Rust; the TypeScript leaked them off `Object.prototype`.
+  This is a recorded behaviour change (see the CHANGELOG).
 
 ## Chains
 
@@ -219,6 +230,9 @@ tokens) — describing one is refused here until the typing layer is ported.
   (`"0"`–`"4294967294"`) first, ascending, then the rest as written
   (`util::js::object_key_order`). `declaredTypesIn` is a `Map`, so it keeps
   plain insertion order.
+- **Nesting limits.** The parse is bounded at 128 levels; JSON reads at
+  2,048; typed catalog reads at 256. Past one the answer is a clean refusal
+  naming the limit. A chain over 1,024 members is refused as "chain too long".
 - **`<` on strings.** `unionVariants` and `refinementKey`'s key sort compare
   UTF-16 units (`util::js::cmp_utf16`), not code points: an astral character
   sorts before U+E000–U+FFFF.

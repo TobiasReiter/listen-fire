@@ -106,3 +106,17 @@ jobs:
         env:
           MOVEMENT_CATALOG_DIFFERENTIAL: "1"
         run: pnpm run test --testPathPattern 'catalog_differential'
+      # The artifact ships to browsers: keep its download size in view.
+      - name: Size budget
+        run: |
+          f=packages/movement-lang/wasm/movement_parser.wasm
+          raw=$(wc -c < "$f" | tr -d ' ')
+          gz=$(gzip -9 -c "$f" | wc -c | tr -d ' ')
+          echo "raw $raw bytes, gzipped $gz bytes"
+          if [ "$gz" -gt 1048576 ]; then
+            echo "::error::movement_parser.wasm is $gz bytes gzipped, over the 1 MB budget."
+            exit 1
+          fi
+          if [ "$gz" -gt 614400 ]; then
+            echo "::warning::movement_parser.wasm is $gz bytes gzipped, over the 600 KB warning line (fails at 1 MB)."
+          fi
