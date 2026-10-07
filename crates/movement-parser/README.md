@@ -72,7 +72,7 @@ Status 0 means the output is the tree; 1 means it is `{"error": {…}}`. The
 output is UTF-8 JSON the caller must `dealloc`. Every value is an i32 on
 wasm32. A lowering refusal's `class` is absent for a `LoweringError`,
 `"BridgeError"` for a built-in call's static shape (the TypeScript's
-expression/call_shape.ts, now ported, threw that class), and `"MalformedTree"` when the input was not a tree.
+expression/call_shape.ts, now ported, threw that class), and `"MalformedTree"` when the input was not a tree (not UTF-8, not JSON, nested past 2,048 levels, or not a tree's shape).
 
 A panic aborts (`panic = "abort"`), which traps the instance. A panic hook
 records the message first; the loader reads it through `last_panic` from the
@@ -142,7 +142,10 @@ read text, so these are reproduced explicitly:
 - **Case.** `toUpperCase`/`toLowerCase` are Rust's `to_uppercase`/
   `to_lowercase` — both the full Unicode mapping, final sigma included.
 - **Object keys.** `extra.__proto__ = v` set the TypeScript object's
-  prototype instead of adding a key, so the lowering drops that key. One
+  prototype instead of adding a key, so the lowering drops that key. A
+  JavaScript object lists array-index keys (`"0"` to `"4294967294"`,
+  canonical decimals) first, ascending, then the rest as inserted; `extra`
+  is reordered so (`js::object_key_order`). One
   TypeScript quirk is NOT reproduced: a `_resources` WHERE name looked up on
   a plain object found `constructor` (and `__proto__`) on Object.prototype and
   lowered to a `resource` read with no field; the lowering refuses it as an
@@ -151,11 +154,28 @@ read text, so these are reproduced explicitly:
   (`TextEncoder`), so a slice of it differs from the JavaScript's. The parser
   has the same boundary.
 
-## Depth
+## Chains
 
-The lowering recurses once per tree level, as the TypeScript did; the
-grammar bounds nesting (`MAX_DEPTH`), but not a chain (`a.b.c…`, `a + b +
-…`). Measured 2026-10-07: a chain of about 2,200 members or 2,400 operators
-exhausts the engine's stack (a `RangeError`, thrown as "movement parser
-crashed"), where the TypeScript lowering reached the parser's own limit of
-about 2,600.
+The grammar bounds nesting (`MAX_DEPTH`) but reads a chain (`a.b.c…`,
+`a + b + …`, `f(x).g(y)…`, a path's hops) with a loop, so a chain's depth in
+the tree is unbounded by it, and everything after the parse recurses once
+per level: the tree's JSON write, the lowering's JSON read and tree read,
+the lowering itself and its JSON write. Measured 2026-10-07: about 2,200
+levels exhausted the engine's stack in the lowering, 2,630 in the parser.
+
+So a tree may be at most `MAX_CHAIN` (1,024, in `src/tree.rs`) levels deep,
+a path's hops counting one level each (each is a level of the lowering) and
+a call taking at most 1,024 arguments. Past it:
+
+- the parser refuses the text with the syntax error `chain too long`, after
+  building the tree with its loops and checking it with a heap-stack walk;
+- the lowering refuses a tree it is handed with the `LoweringError` `chain
+  too long`; it first refuses, as a malformed tree, JSON nested deeper than
+  2,048 levels (`MAX_JSON_DEPTH`, twice the chain limit, which admits every
+  tree the parser builds), so it never recurses over one;
+- a tree is dropped level by level from a heap stack (`impl Drop for
+  MExpr`), so a refused chain, or a parse that fails after building one, is
+  freed without recursing.
+
+A chain continued through parentheses is one chain: the bound is the tree's
+depth, not one loop's count.

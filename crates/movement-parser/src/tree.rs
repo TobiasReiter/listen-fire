@@ -488,6 +488,250 @@ impl MExpr {
     }
 }
 
+/// The longest chain a tree may hold: members, calls and indexes on one
+/// object, operands of one operator run, a path's hops, a call's arguments.
+/// Each link is a level of the tree (a hop is a level of its lowering), and
+/// everything that walks a tree recurses per level — its JSON write and read,
+/// the lowering — on a stack the grammar's nesting limit does not bound, since
+/// a chain is read by a loop. About 2,200 levels exhausted the WASM's stack
+/// (measured 2026-10-07); this sits at half that.
+pub const MAX_CHAIN: usize = 1024;
+pub const CHAIN_TOO_LONG: &str = "chain too long";
+
+/// The sub-expressions directly inside a node, wherever they sit (a hop's
+/// WHERE, a type's hops, a declaration's descriptions), once per reference
+/// kind: `shared` for reading, `exclusive` for taking them out.
+macro_rules! sub_expressions {
+    ($module:ident $(, $m:tt)?) => {
+        pub(crate) mod $module {
+            use super::*;
+
+            type R<'a, T> = &'a $($m)? T;
+
+            pub fn expr<'a>(e: R<'a, MExpr>, f: &mut impl FnMut(R<'a, MExpr>)) {
+                match e {
+                    MExpr::Literal { .. } | MExpr::Name { .. } | MExpr::Special { .. } => {}
+                    MExpr::String { parts, .. } => {
+                        for part in parts {
+                            if let StringPart::Expr(x) = part {
+                                f(x);
+                            }
+                        }
+                    }
+                    MExpr::Paren { expr, .. } => f(expr),
+                    MExpr::List { elements, .. } => {
+                        for element in elements {
+                            match element {
+                                ListElement::Expr(x) => f(x),
+                                ListElement::Spread(Spread { expr, .. }) => f(expr),
+                            }
+                        }
+                    }
+                    MExpr::Map { entries, .. } => map(entries, f),
+                    MExpr::Member { object, .. } => f(object),
+                    MExpr::Index { object, index, .. } => {
+                        f(object);
+                        f(index);
+                    }
+                    MExpr::Call { callee, args, .. } => {
+                        f(callee);
+                        for CallArg { value, .. } in args {
+                            f(value);
+                        }
+                    }
+                    MExpr::Path { root, hops, .. } => {
+                        if let Some(root) = root {
+                            f(root);
+                        }
+                        for h in hops {
+                            hop(h, f);
+                        }
+                    }
+                    MExpr::Unary { operand, .. } | MExpr::Exists { operand, .. } | MExpr::Within { operand, .. } => {
+                        f(operand)
+                    }
+                    MExpr::Binary { left, right, .. } => {
+                        f(left);
+                        f(right);
+                    }
+                    MExpr::Where { source, predicate, .. } => {
+                        f(source);
+                        f(predicate);
+                    }
+                    MExpr::Is { subject, type_, .. } => {
+                        f(subject);
+                        type_expr(type_, f);
+                    }
+                    MExpr::If { condition, then, else_, .. } => {
+                        f(condition);
+                        f(then);
+                        if let Some(x) = else_ {
+                            f(x);
+                        }
+                    }
+                    MExpr::Type { type_, .. } => type_expr(type_, f),
+                    MExpr::Closure { params, body, .. } => {
+                        for Param { type_, .. } in params {
+                            if let Some(t) = type_ {
+                                type_expr(t, f);
+                            }
+                        }
+                        if let ClosureBody::Expr { expr } = &$($m)? **body {
+                            f(expr);
+                        }
+                    }
+                    MExpr::Node { entries, .. } => literal_entries(entries, f),
+                    MExpr::Graph { entries, spreads, .. } => {
+                        literal_entries(entries, f);
+                        for x in spreads {
+                            f(x);
+                        }
+                    }
+                    MExpr::Declaration { declaration, .. } => node_declaration(declaration, f),
+                    MExpr::Mapped { source, body, .. } => {
+                        f(source);
+                        f(body);
+                    }
+                    MExpr::Lazy { walk, .. } => f(walk),
+                }
+            }
+
+            fn map<'a>(entries: R<'a, Vec<MapMember>>, f: &mut impl FnMut(R<'a, MExpr>)) {
+                for entry in entries {
+                    match entry {
+                        MapMember::Entry { value, .. } => f(value),
+                        MapMember::Spread(Spread { expr, .. }) => f(expr),
+                    }
+                }
+            }
+
+            fn hop<'a>(h: R<'a, Hop>, f: &mut impl FnMut(R<'a, MExpr>)) {
+                let Hop { where_, config, order_by, .. } = h;
+                if let Some(x) = where_ {
+                    f(x);
+                }
+                if let Some(MapLiteral { entries, .. }) = config {
+                    map(entries, f);
+                }
+                if let Some(o) = order_by {
+                    let OrderBy { key, .. } = &$($m)? **o;
+                    f(key);
+                }
+            }
+
+            fn type_expr<'a>(t: R<'a, TypeExpr>, f: &mut impl FnMut(R<'a, MExpr>)) {
+                match t {
+                    TypeExpr::Named { hops, .. } => {
+                        for h in hops {
+                            hop(h, f);
+                        }
+                    }
+                    TypeExpr::Record { members, .. } => {
+                        for RecordMember { type_, .. } in members {
+                            type_expr(type_, f);
+                        }
+                    }
+                    TypeExpr::Union { members, .. } => {
+                        for member in members {
+                            type_expr(member, f);
+                        }
+                    }
+                    TypeExpr::Literal { .. } => {}
+                }
+            }
+
+            fn literal_entries<'a>(entries: R<'a, Vec<LiteralEntry>>, f: &mut impl FnMut(R<'a, MExpr>)) {
+                for LiteralEntry { value, .. } in entries {
+                    match value {
+                        EntryValue::Expr(x) => f(x),
+                        EntryValue::DeclaredEdge(DeclaredEdge { type_, .. }) => type_expr(type_, f),
+                    }
+                }
+            }
+
+            fn node_declaration<'a>(d: R<'a, NodeDeclaration>, f: &mut impl FnMut(R<'a, MExpr>)) {
+                let NodeDeclaration { description, members, .. } = d;
+                if let Some(x) = description {
+                    f(x);
+                }
+                for member in members {
+                    match member {
+                        DeclarationMember::Field { type_, description, .. } => {
+                            type_expr(type_, f);
+                            if let Some(x) = description {
+                                f(x);
+                            }
+                        }
+                        DeclarationMember::Node { declaration } => node_declaration(declaration, f),
+                    }
+                }
+            }
+        }
+    };
+}
+
+sub_expressions!(shared);
+sub_expressions!(exclusive, mut);
+
+/// What a taken-out sub-expression is replaced with: a leaf, so that the
+/// node it leaves behind drops without recursing.
+const LEAF: MExpr = MExpr::Literal { value: LiteralValue::Null(()), at: At { start: 0, end: 0 } };
+
+impl MExpr {
+    fn is_leaf(&self) -> bool {
+        matches!(self, MExpr::Literal { .. } | MExpr::Name { .. } | MExpr::Special { .. })
+    }
+
+    /// Where the tree holds a chain longer than `MAX_CHAIN`, if it does: the
+    /// start of the first node, in source order, that many levels down, or
+    /// of the argument past the limit. Walked with a heap stack, since the
+    /// tree it guards against is one too deep to recurse over.
+    pub fn chain_overrun(&self) -> Option<usize> {
+        fn weight(e: &MExpr) -> usize {
+            match e {
+                MExpr::Path { hops, .. } => hops.len().max(1),
+                _ => 1,
+            }
+        }
+        let mut stack = vec![(self, weight(self))];
+        while let Some((e, depth)) = stack.pop() {
+            if depth > MAX_CHAIN {
+                return Some(e.at().start);
+            }
+            if let MExpr::Call { args, .. } = e
+                && let Some(past) = args.get(MAX_CHAIN)
+            {
+                return Some(past.value.at().start);
+            }
+            let first = stack.len();
+            shared::expr(e, &mut |child| stack.push((child, depth + weight(child))));
+            stack[first..].reverse();
+        }
+        None
+    }
+}
+
+/// Dropped level by level from a heap stack: the derived drop recurses per
+/// level, and a tree is dropped before it is bounded (a refused chain, a
+/// parse that fails after building one).
+impl Drop for MExpr {
+    fn drop(&mut self) {
+        let mut taken = Vec::new();
+        take_sub_expressions(self, &mut taken);
+        while let Some(mut e) = taken.pop() {
+            take_sub_expressions(&mut e, &mut taken);
+        }
+    }
+}
+
+fn take_sub_expressions(e: &mut MExpr, taken: &mut Vec<MExpr>) {
+    exclusive::expr(e, &mut |child: &mut MExpr| {
+        if !child.is_leaf() {
+            taken.push(std::mem::replace(child, LEAF));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

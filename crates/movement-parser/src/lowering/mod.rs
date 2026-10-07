@@ -29,7 +29,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::tree::{
-    Arrow, BinaryOp, CallArg, Direction, Hop, LiteralValue, MExpr, MapLiteral, MapMember, Name, SortDirection,
+    Arrow, BinaryOp, CHAIN_TOO_LONG, CallArg, Direction, Hop, LiteralValue, MExpr, MapLiteral, MapMember, Name, SortDirection,
     StringPart, UnaryOp,
 };
 use crate::util::utf16::{self, Utf16};
@@ -118,7 +118,8 @@ pub enum Mode {
 /// (`Ok`), or `{"error": {message, code?, class?}}` (`Err`). The output keeps
 /// the TypeScript's key order rather than sorting. A tree that does not
 /// deserialise is the caller's fault, and says so with `class:
-/// "MalformedTree"`.
+/// "MalformedTree"`. A chain past `MAX_CHAIN` is refused before it is
+/// lowered, as the parser refuses it: the lowering recurses per level.
 pub fn lower_json_bytes(tree_json: &str, source: &str, mode: Mode) -> Result<Vec<u8>, Vec<u8>> {
     let tree = match read::read_tree(tree_json) {
         Ok(tree) => tree,
@@ -128,6 +129,10 @@ pub fn lower_json_bytes(tree_json: &str, source: &str, mode: Mode) -> Result<Vec
             return Err(serde_json::to_vec(&error).expect("a Value always serialises"));
         }
     };
+    if tree.chain_overrun().is_some() {
+        let refusal = LoweringRefusal::new(CHAIN_TOO_LONG);
+        return Err(serde_json::to_vec(&ErrorEnvelope { error: refusal }).expect("a refusal always serialises"));
+    }
     let written = match mode {
         Mode::Expression => lower_expression(&tree, source).map(|e| serde_json::to_vec(&e)),
         Mode::Condition => lower_condition(&tree, source).map(|c| serde_json::to_vec(&c)),
@@ -851,6 +856,9 @@ impl Lowering {
                     }
                 }
             }
+        }
+        if let Some(MetaSetting::Extra(extra)) = cfg.get_mut("extra") {
+            js::object_key_order(extra);
         }
         Ok(if cfg.is_empty() { None } else { Some(cfg) })
     }

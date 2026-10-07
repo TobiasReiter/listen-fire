@@ -12,23 +12,62 @@
 use serde_json::{Map, Value};
 
 use crate::tree::{
-    Arrow, At, BinaryOp, CallArg, ClosureBody, DeclarationMember, DeclaredEdge, Direction, Duration, EntryValue, Hop,
+    MAX_CHAIN, Arrow, At, BinaryOp, CallArg, ClosureBody, DeclarationMember, DeclaredEdge, Direction, Duration, EntryValue, Hop,
     JsNumber, ListElement, LiteralEntry, LiteralValue, MExpr, MapKey, MapLiteral, MapMember, Name, NodeDeclaration,
     OrderBy, Param, Quote, RecordMember, SortDirection, Spread, StringKey, StringPart, StringQuoted, TypeExpr, UnaryOp,
 };
 
 type Read<T> = Result<T, String>;
 
+/// How deep the JSON of a tree may nest. The parser's trees stay within
+/// `MAX_CHAIN` levels, each one to three JSON levels deep, the deeper ones
+/// only at the grammar's nesting (`MAX_DEPTH`); so twice the chain limit
+/// admits every tree the parser builds, and bounds the reads below, which
+/// recurse once per level.
+pub const MAX_JSON_DEPTH: usize = 2 * MAX_CHAIN;
+
 /// The tree in `json`. A tree at the grammar's depth limit nests deeper than
-/// serde_json's default bound of 128, so the bound is lifted; the grammar's
-/// own limit is what bounds it.
+/// serde_json's default bound of 128, which cannot be raised, only lifted;
+/// `MAX_JSON_DEPTH` is checked first instead.
 pub fn read_tree(json: &str) -> Read<MExpr> {
     use serde::Deserialize;
+    if json_depth_exceeds(json.as_bytes(), MAX_JSON_DEPTH) {
+        return Err(format!("it nests deeper than {MAX_JSON_DEPTH} levels"));
+    }
     let mut de = serde_json::Deserializer::from_str(json);
     de.disable_recursion_limit();
     let value = Value::deserialize(&mut de).map_err(|e| e.to_string())?;
     de.end().map_err(|e| e.to_string())?;
     expr(&value)
+}
+
+/// Whether `json`'s brackets nest past `limit`, outside its strings. Malformed
+/// JSON is left for the parse to refuse.
+fn json_depth_exceeds(json: &[u8], limit: usize) -> bool {
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for &b in json {
+        if in_string {
+            match b {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > limit {
+                    return true;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
 }
 
 fn object<'a>(v: &'a Value, what: &str) -> Read<&'a Map<String, Value>> {

@@ -235,6 +235,16 @@ fn a_transform_hop_keeps_its_settings_in_the_order_written() {
             r#""expression":{"type":"property","propertyTypeId":"o"}}"#
         )
     );
+    // A JavaScript object lists its array-index keys first, ascending.
+    assert_eq!(
+        exact(r#"x-[#transform { b: 1, "10": 2, "2": 3, "02": 4, "4294967295": 5, "4294967294": 6, a: 7 }]->.o"#),
+        concat!(
+            r#"{"type":"traverse","aliasRoot":"x","steps":[{"type":"meta_edge","metaEdge":"transform","config":{"extra":{"#,
+            r#""2":{"type":"static","value":3},"10":{"type":"static","value":2},"4294967294":{"type":"static","value":6},"#,
+            r#""b":{"type":"static","value":1},"02":{"type":"static","value":4},"4294967295":{"type":"static","value":5},"#,
+            r#""a":{"type":"static","value":7}}}}],"expression":{"type":"property","propertyTypeId":"o"}}"#
+        )
+    );
     assert_eq!(value("x-[#transform {}]->.o")["steps"][0], json!({ "type": "meta_edge", "metaEdge": "transform" }));
     assert_eq!(
         value("x-[#transform { enrich_with: [{ transform: a, argument: b }], data: [c] }]->.o")["steps"][0]["config"],
@@ -505,4 +515,45 @@ fn a_tree_and_its_json_lower_alike() {
         lower_expression_json(&serde_json::to_value(tree("x[0]")).unwrap(), "x[0]").unwrap_err(),
         json!({ "message": "an index read `x[i]` is written AT(x, i)" })
     );
+}
+
+/// A member chain's tree JSON, `links` deep, written by hand: a TypeScript
+/// caller can hand over a tree the parser would have refused.
+fn member_chain_json(links: usize) -> String {
+    let at = r#""at":{"start":0,"end":1}"#;
+    let name = format!(r#"{{"kind":"name","name":{{"text":"a","quoted":false,{at}}},{at}}}"#);
+    let open = r#"{"kind":"member","object":"#.repeat(links);
+    let close = format!(r#","property":{{"text":"b","quoted":false,{at}}},{at}}}"#).repeat(links);
+    format!("{open}{name}{close}")
+}
+
+fn lowered_on(stack: usize, json: String) -> Result<(), Value> {
+    std::thread::Builder::new()
+        .stack_size(stack)
+        .spawn(move || {
+            lower_json_bytes(&json, "a", Mode::Expression)
+                .map(drop)
+                .map_err(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap()["error"].take())
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+#[test]
+fn a_chain_handed_to_the_lowering_is_bounded_as_the_parser_bounds_it() {
+    use crate::lowering::read::MAX_JSON_DEPTH;
+    use crate::tree::MAX_CHAIN;
+    assert_eq!(lowered_on(256 << 20, member_chain_json(MAX_CHAIN - 1)), Ok(()));
+    assert_eq!(lowered_on(256 << 20, member_chain_json(MAX_CHAIN)), Err(json!({ "message": "chain too long" })));
+    // Past the JSON bound, the tree is not read at all, so not recursed over.
+    let refused = lowered_on(256 << 10, member_chain_json(1_000_000)).unwrap_err();
+    assert_eq!(refused["class"], "MalformedTree");
+    assert_eq!(
+        refused["message"],
+        format!("the lowering was handed a tree it cannot read: it nests deeper than {MAX_JSON_DEPTH} levels")
+    );
+    // Brackets inside strings are text, not nesting.
+    let quoted = format!(r#"{{"kind":"special","text":"{}","at":{{"start":0,"end":1}}}}"#, "[{\\\"".repeat(5_000));
+    assert_eq!(lowered_on(256 << 20, quoted), Ok(()));
 }

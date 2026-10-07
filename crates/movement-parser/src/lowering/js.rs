@@ -42,6 +42,23 @@ pub fn number_to_string(x: f64) -> String {
 
 /// `text.slice(start, end)` with UTF-16 offsets, as a tree's `at` indexes
 /// its source.
+/// A JavaScript object's own-key order: array-index keys (the canonical
+/// decimal of an integer below 2^32 - 1) first, ascending, then the rest in
+/// insertion order. `IndexMap` keeps only the second.
+pub fn object_key_order<V>(map: &mut indexmap::IndexMap<String, V>) {
+    fn array_index(key: &str) -> Option<u32> {
+        let n: u32 = key.parse().ok()?;
+        (n != u32::MAX && n.to_string() == key).then_some(n)
+    }
+    // A stable sort: the non-index keys tie, and keep their order.
+    map.sort_by(|a, _, b, _| match (array_index(a), array_index(b)) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+}
+
 pub fn slice(source: &Utf16, start: usize, end: usize) -> String {
     source.text(start, end)
 }

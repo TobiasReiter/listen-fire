@@ -167,7 +167,12 @@ unsafe fn lower(
             Ok(bytes) => (OK, bytes),
             Err(bytes) => (ERROR, bytes),
         },
-        Err(error) => (ERROR, to_sorted_json(&json!({ "error": error }))),
+        // Bytes that are not text are the caller's fault, as a tree that
+        // does not read is.
+        Err(mut error) => {
+            error["class"] = json!("MalformedTree");
+            (ERROR, to_sorted_json(&json!({ "error": error })))
+        }
     };
     unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
     status
@@ -374,6 +379,27 @@ mod tests {
         write!(message, "é🌍").unwrap();
         assert_eq!(message.len, PANIC_CAPACITY - 1);
         assert_eq!(&message.bytes[PANIC_CAPACITY - 3..PANIC_CAPACITY - 1], "é".as_bytes());
+    }
+
+    #[test]
+    fn a_lowering_handed_invalid_utf8_says_it_was_not_a_tree() {
+        let bytes = [b'"', 0xff, b'"'];
+        let tree = alloc(3);
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), tree, 3) };
+        let src = alloc(0);
+        let (mut out_ptr, mut out_len) = (0usize, 0usize);
+        let status = unsafe { lower_expression(tree, 3, src, 0, &mut out_ptr, &mut out_len) };
+        let out = unsafe { std::slice::from_raw_parts(out_ptr as *const u8, out_len) }.to_vec();
+        unsafe {
+            dealloc(tree, 3);
+            dealloc(src, 0);
+            dealloc(out_ptr as *mut u8, u32::try_from(out_len).unwrap());
+        }
+        assert_eq!(status, ERROR);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"{"error":{"class":"MalformedTree","message":"source is not valid UTF-8","pos":1}}"#
+        );
     }
 
     #[test]

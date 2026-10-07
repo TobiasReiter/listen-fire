@@ -26,7 +26,7 @@ use crate::lexer::{
 };
 use crate::scan::call_style_if_message;
 use crate::tree::{
-    Arrow, At, BinaryOp, CallArg, ClosureBody, DeclarationMember, DeclaredEdge, Direction, Duration, EntryValue, Hop,
+    Arrow, CHAIN_TOO_LONG, At, BinaryOp, CallArg, ClosureBody, DeclarationMember, DeclaredEdge, Direction, Duration, EntryValue, Hop,
     JsNumber, ListElement, LiteralEntry, LiteralValue, MExpr, MapKey, MapLiteral, MapMember, Name, NodeDeclaration,
     OrderBy, Param, Quote, RecordMember, SortDirection, Spread, StringKey, StringPart, StringQuoted, TypeExpr, UnaryOp,
 };
@@ -36,10 +36,16 @@ use crate::util::utf16::{
 };
 
 /// Parses one expression text. Offsets in the tree and the error are UTF-16
-/// indexes into `text`.
+/// indexes into `text`. A chain past `MAX_CHAIN` is refused once the tree is
+/// built: the loops that read chains build them without recursing, and the
+/// tree's drop does not recurse either.
 pub fn parse_expression(text: &str) -> Result<MExpr, SyntaxError> {
     let src = Utf16::new(text);
-    ExpressionParser::new(&src, 0, src.len(), 0).parse_whole()
+    let tree = ExpressionParser::new(&src, 0, src.len(), 0).parse_whole()?;
+    match tree.chain_overrun() {
+        Some(pos) => fail(CHAIN_TOO_LONG, pos),
+        None => Ok(tree),
+    }
 }
 
 /// Which literal body an entry list belongs to: the value grammar differs.
@@ -1485,6 +1491,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::tree::MAX_CHAIN;
 
     fn tree(text: &str) -> Value {
         match parse_expression(text) {
@@ -1751,5 +1758,63 @@ mod tests {
         assert_eq!(run(deep("IF a THEN 1 ELSE ", " END", 100_000)), Err(TOO_DEEP.to_string()));
         assert_eq!(run(format!("node X {{{}}}", "node Y {".repeat(100_000))), Err(TOO_DEEP.to_string()));
         assert_eq!(run(format!("graph {{{}}}", "a: {".repeat(100_000))), Err(TOO_DEEP.to_string()));
+    }
+
+    /// `text`'s parse, serialised as the ABI would, on a thread whose stack
+    /// is `stack` bytes.
+    fn parse_on(stack: usize, text: String) -> Result<(), (String, usize)> {
+        std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn(move || {
+                parse_expression(&text).map(|tree| drop(crate::to_sorted_json(&tree))).map_err(|e| (e.message, e.pos))
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    const ROOMY: usize = 256 << 20;
+    /// Far too small to recurse over a chain of a million: what refuses one
+    /// must walk, build and drop it with loops.
+    const TIGHT: usize = 256 << 10;
+
+    #[test]
+    fn a_chain_is_bounded_at_its_limit() {
+        let too_long = |pos| Err((CHAIN_TOO_LONG.to_string(), pos));
+        // The tree's height is what is bounded: a name and 1,023 links.
+        let members = |n: usize| format!("a{}", ".b".repeat(n));
+        assert_eq!(parse_on(ROOMY, members(MAX_CHAIN - 1)), Ok(()));
+        assert_eq!(parse_on(ROOMY, members(MAX_CHAIN)), too_long(0));
+        let operands = |n: usize| format!("a{}", " + a".repeat(n));
+        assert_eq!(parse_on(ROOMY, operands(MAX_CHAIN - 1)), Ok(()));
+        assert_eq!(parse_on(ROOMY, operands(MAX_CHAIN)), too_long(0));
+        let calls = |n: usize| format!("a{}", ".f()".repeat(n / 2));
+        assert_eq!(parse_on(ROOMY, calls(MAX_CHAIN - 1)), Ok(()));
+        assert_eq!(parse_on(ROOMY, calls(MAX_CHAIN + 1)), too_long(0));
+        // A hop is a level of its lowering.
+        let hops = |n: usize| format!("a{}", "-[:e]->".repeat(n));
+        assert_eq!(parse_on(ROOMY, hops(MAX_CHAIN - 1)), Ok(()));
+        assert_eq!(parse_on(ROOMY, hops(MAX_CHAIN)), too_long(0));
+        // Arguments are a width, refused at the first past the limit.
+        let args = |n: usize| format!("f({})", vec!["x"; n].join(", "));
+        assert_eq!(parse_on(ROOMY, args(MAX_CHAIN)), Ok(()));
+        assert_eq!(parse_on(ROOMY, args(MAX_CHAIN + 1)), too_long(2 + 3 * MAX_CHAIN));
+        // Chains continued through parentheses are one chain.
+        let stacked = format!("{}a{}", "(".repeat(4), ").b".repeat(4).replace(".b", &".b".repeat(300)));
+        assert_eq!(parse_on(ROOMY, stacked).map_err(|(message, _)| message), Err(CHAIN_TOO_LONG.to_string()));
+    }
+
+    #[test]
+    fn a_chain_far_past_the_limit_is_refused_without_recursing() {
+        let too_long = Err((CHAIN_TOO_LONG.to_string(), 0));
+        assert_eq!(parse_on(TIGHT, format!("a{}", ".b".repeat(1_000_000))), too_long);
+        assert_eq!(parse_on(TIGHT, format!("a{}", " + a".repeat(1_000_000))), too_long);
+        assert_eq!(parse_on(TIGHT, format!("a{}", "[0]".repeat(1_000_000))), too_long);
+        // Few parentheses: the grammar's own recursion is not what is tested.
+        let stacked = format!("{}a{}", "(".repeat(5), format!("){}", ".b".repeat(200_000)).repeat(5));
+        assert_eq!(parse_on(TIGHT, stacked).map_err(|(message, _)| message), Err(CHAIN_TOO_LONG.to_string()));
+        // A parse that fails after building the chain drops it as well.
+        let failed = parse_on(TIGHT, format!("a{} +", ".b".repeat(1_000_000)));
+        assert_eq!(failed.map_err(|(message, _)| message), Err("Unexpected end of input".to_string()));
     }
 }

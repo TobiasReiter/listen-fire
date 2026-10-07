@@ -57,7 +57,7 @@ ${spec.options
   .join('')}            ],
             exactly_one: &[${(spec.exactlyOne ?? []).map(c => `ExactlyOne { keys: ${strs(c.keys)}, what: ${str(c.what)} }`).join(', ')}],
             // The cross-option rule is code; this names the one call_shape::agree carries.
-            agree: ${spec.agree === undefined ? 'None' : `Some(${str(spec.fn)})`},
+            agree: ${spec.agree === undefined ? 'None' : `Some(${str(spec.agree)})`},
         },
 `,
   ).join('');
@@ -93,10 +93,35 @@ ${families}    ],
 }
 
 describe('the lowering vocabulary', () => {
-  const fs = require('fs') as { readFileSync(path: string, encoding: 'utf8'): string; writeFileSync(path: string, data: string): void };
-  if (process.env.UPDATE_LOWERING_VOCABULARY) fs.writeFileSync(DATA_PATH, vocabularyRust());
+  const fs = textFiles();
+  if (process.env.UPDATE_LOWERING_VOCABULARY) fs.write(DATA_PATH, vocabularyRust());
 
   it('the Rust copy is the TypeScript declarations', () => {
-    expect(fs.readFileSync(DATA_PATH, 'utf8')).toBe(vocabularyRust());
+    expect(fs.read(DATA_PATH)).toBe(vocabularyRust());
   });
 });
+
+function textFiles(): { read(path: string): string; write(path: string, data: string): void } {
+  const fs = require('fs');
+  if (
+    typeof fs !== 'object' ||
+    fs === null ||
+    !('readFileSync' in fs) ||
+    typeof fs.readFileSync !== 'function' ||
+    !('writeFileSync' in fs) ||
+    typeof fs.writeFileSync !== 'function'
+  ) {
+    throw new Error('no fs');
+  }
+  const { readFileSync, writeFileSync } = fs;
+  return {
+    read(path) {
+      const text: unknown = readFileSync(path, 'utf8');
+      if (typeof text !== 'string') throw new Error(`reading ${path} did not return text`);
+      return text;
+    },
+    write(path, data) {
+      writeFileSync(path, data);
+    },
+  };
+}
