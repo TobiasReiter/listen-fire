@@ -5,7 +5,7 @@
 import { appendFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { resetRustEvalStats, rustEvalStats } from '../services/movement_engine/rust_engine';
+import { resetRustEvalStats, rustEvalStats } from '../services/movement_engine/rust_stats';
 
 const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
 

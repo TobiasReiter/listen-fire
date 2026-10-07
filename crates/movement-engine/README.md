@@ -20,6 +20,7 @@ protocol's probes (`echo`, `panic`).
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
+| `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation, from the JavaScript runtime (WASM) or natively (below) |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
@@ -156,6 +157,24 @@ The evaluator switch counts what it did (`rustEvalStats` in rust_engine.ts:
 not admitted, admitted, answered, fallback by reason). Under
 `MOVEMENT_ENGINE=rust` the conformance runs print the totals and fail when Rust
 answered nothing.
+
+## The check
+
+The checker is still TypeScript, so a segment asks for it: `check.program
+{source, snapshot, languageVersion, upgradingFrom?}`, answered `{diagnostics,
+link?, stamps}` by apps/api's program_check.ts (the same check every
+TypeScript run passes). A program that fails it never gets an answer: the
+host ends the run with MOVENG_CHECK (or MOVENG_PARSE, MOVENG_LANGUAGE_VERSION),
+exactly as the TypeScript engine throws before it runs anything.
+
+The checker mutates the AST the engine then reads (a write spread's
+`fields`, a graph spread's `copy`), so those cross as stamps keyed by **AST
+path**: a JSON Pointer (RFC 6901) from the `Program` object through the
+program's JSON exactly as the parser emits it, e.g.
+`/statements/2/body/0/write/spreads/1`, with `file` naming the library for a
+stamp in an imported file. The link's declarations are paths too
+(`/statements/<i>` of their file). `program::join_check` re-parses, places
+each stamp and refuses one that does not land on a node of its kind.
 
 ## Environment services
 

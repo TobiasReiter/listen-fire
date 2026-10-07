@@ -3,7 +3,7 @@
 // program-less `echo` entry, raw and through the shim; and a trap's panic
 // message. Protocol only: no language semantics run here.
 
-import { openEngineSegment } from 'movement-lang';
+import { EMPTY_CATALOG_SNAPSHOT, openEngineSegment } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
@@ -84,6 +84,7 @@ describe('the Rust engine artifact', () => {
       },
       {
         teamId: 'team-1' as TeamId,
+        catalog: EMPTY_CATALOG_SNAPSHOT,
         host: makeTestHost({ adapters: { credentialId: (name) => (name === 'crm' ? 'cred-1' : undefined) } }),
       },
     );

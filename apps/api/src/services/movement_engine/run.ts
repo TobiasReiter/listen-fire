@@ -71,18 +71,13 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   BridgeError,
-  DiagnosticCodes,
   MovementParseError,
   readCollectionConfig,
   SEQUENTIAL_COLLECTION_SETTINGS,
   type CollectionRunSettings,
-  checkProgramWithLink,
-  fromCatalogSnapshot,
-  resolveFileFromSnapshot,
   before,
   CURRENT_LANGUAGE_VERSION,
   languageVersionDiagnostic,
-  diagnosticSeverity,
   credentialArgOf,
   aggregatedBarePath,
   bareName,
@@ -98,7 +93,6 @@ import {
   conditionOfSlot,
   expressionOfSlot,
   parseMovementExpression,
-  parseProgram,
   readExtractCallConfig,
   resolveBorrowedField,
   borrowedTypeSegments,
@@ -289,6 +283,7 @@ import {
   type SummarisedOrigin,
 } from './provenance';
 import { surfaceReadAdapter } from './kg';
+import { checkPinned, parsePinned, type CheckInput } from './program_check';
 import { localEdgeAdapter } from './local_edge_adapter';
 import {
   countShapeNodes,
@@ -688,19 +683,31 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // file resolver, the check RESOLVES file imports and the returned link is
   // the engine's import structure — validation and execution consume one
   // resolution.
-  const { program, prepared } = parseAndCheck(input);
+  //
+  // A program the Rust engine runs whole is only parsed here, to decide: the
+  // segment asks for its own check (the `check.program` host call), which
+  // throws exactly what parseAndCheck throws.
+  const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
+  if (parsed !== undefined && rustCanRun(parsed)) {
+    return withRunCallLedger(() => runSegmentInRust(input), runScopeOf(input));
+  }
+  const { program, prepared } = parseAndCheck(input, parsed);
   // Every way into the interpreter opens the same door: one segment, one
   // third-party call ceiling (run_scope.ts). A fifth entry point that
   // forgets `withRunCallLedger` loses the safeguard silently, so they all
   // wrap here rather than deeper. The Rust engine's segment opens the same
   // door: its host calls are the run's.
-  return withRunCallLedger(
-    () =>
-      engineChoice() === 'rust' && rustCanRun(program)
-        ? runSegmentInRust(input)
-        : new Interpreter(input, prepared).run(program),
-    runScopeOf(input),
-  );
+  return withRunCallLedger(() => new Interpreter(input, prepared).run(program), runScopeOf(input));
+}
+
+/** What the check reads of a run's input. */
+function checkInputOf(input: RunMovementInput): CheckInput {
+  return {
+    source: input.source,
+    catalog: input.catalog,
+    ...(input.languageVersion !== undefined ? { languageVersion: input.languageVersion } : {}),
+    ...(input.host.files.resolveFile !== undefined ? { hostResolveFile: input.host.files.resolveFile } : {}),
+  };
 }
 
 /** The run context every entry point opens its segment under. */
@@ -722,18 +729,6 @@ function runScopeOf(input: RunMovementInput): {
   };
 }
 
-/**
- * Diagnostics an author may no longer WRITE, but a saved program may still
- * RUN. A retirement refuses the construct where a program is authored; it must
- * not stop automations that were saved while the construct was legal, so the
- * run gate lets exactly these through and the engine still executes them.
- *
- * Empties out at the wave that deletes each construct's engine path — see the
- * deploy block in
- * plans/2026-06-10-data-movement-language/9_node_synthesis_build.md.
- */
-const RETIRED_BUT_STILL_RUNNABLE = new Set<string>([DiagnosticCodes.WRITE_SHAPE_RETIRED]);
-
 /** What every entry point hands its interpreter: the catalog rebuilt from the
  *  input's snapshot (once — the checker and the run's instantiations read the
  *  same one) and the program's import link. */
@@ -742,56 +737,12 @@ interface PreparedRun {
   link?: ProgramLink;
 }
 
-/** The resolver file imports read. The snapshot's own files win: they were
- *  captured with the catalog the program is checked against, so imports and
- *  instance schemas describe one moment of the workspace. The host's resolver
- *  serves a host that resolves imports dynamically and ships no files. */
-function fileResolverOf(input: RunMovementInput): ResolveFile | undefined {
-  return resolveFileFromSnapshot(input.catalog) ?? input.host.files.resolveFile;
-}
-
-/** Parse + check the program, throwing the same MOVENG_PARSE / MOVENG_CHECK
- *  errors `runMovement` does. Shared by run + resume so a resume re-validates
- *  the pinned source exactly as a fresh run did. */
-function parseAndCheck(input: RunMovementInput): { program: Program; prepared: PreparedRun } {
-  const languageVersion = input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
-  // The pin is answered before the source is read: a version this release
-  // cannot honour must fail as exactly that, not as whatever the current
-  // grammar makes of the text.
-  const versionDiagnostic = languageVersionDiagnostic(languageVersion);
-  if (versionDiagnostic !== undefined && diagnosticSeverity(versionDiagnostic) === 'error') {
-    throw new MovementEngineError('MOVENG_LANGUAGE_VERSION', versionDiagnostic.message, [
-      versionDiagnostic,
-    ]);
-  }
-  let program: Program;
-  try {
-    program = parseProgram(input.source, { languageVersion });
-  } catch (e) {
-    if (e instanceof MovementParseError) {
-      throw new MovementEngineError('MOVENG_PARSE', e.message);
-    }
-    throw e;
-  }
-  const catalog = fromCatalogSnapshot(input.catalog);
-  const resolveFile = fileResolverOf(input);
-  const { diagnostics: allDiagnostics, link } = checkProgramWithLink(program, catalog, {
-    languageVersion,
-    ...(resolveFile !== undefined ? { resolveFile } : {}),
-  });
-
-  const diagnostics = allDiagnostics.filter(
-    (d) => (d.severity ?? 'error') === 'error' && !RETIRED_BUT_STILL_RUNNABLE.has(d.code),
-  );
-  if (diagnostics.length > 0) {
-    throw new MovementEngineError(
-      'MOVENG_CHECK',
-      `the movement program failed checking:\n${diagnostics
-        .map((d) => `  ${d.code} (line ${d.span.start.line}): ${d.message}`)
-        .join('\n')}`,
-      diagnostics,
-    );
-  }
+/** Parse + check the program (program_check.ts), throwing the same
+ *  MOVENG_LANGUAGE_VERSION / MOVENG_PARSE / MOVENG_CHECK errors every entry
+ *  point does. Shared by run + resume so a resume re-validates the pinned
+ *  source exactly as a fresh run did. */
+function parseAndCheck(input: RunMovementInput, parsed?: Program): { program: Program; prepared: PreparedRun } {
+  const { program, catalog, link } = checkPinned(checkInputOf(input), parsed);
   return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
 }
 

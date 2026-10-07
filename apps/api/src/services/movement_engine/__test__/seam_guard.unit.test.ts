@@ -38,10 +38,12 @@ const PURE_FILES = [
   'interpretable.ts',
   'kg.ts',
   'local_edge_adapter.ts',
+  'program_check.ts',
   'provenance.ts',
   'run.ts',
   'run_scope.ts',
   'rust_engine.ts',
+  'rust_stats.ts',
   'serialize.ts',
 ];
 

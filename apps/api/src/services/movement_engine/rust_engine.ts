@@ -15,7 +15,7 @@
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import { callEvalExpression, openEngineSegment, type Program } from 'movement-lang';
+import { callEvalExpression, CURRENT_LANGUAGE_VERSION, openEngineSegment, type CatalogSnapshot, type Program } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
@@ -24,6 +24,8 @@ import type { Adapter } from '../translation_graph/adapter';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import { bindingOf, type Binding, type MovementEvalResult, type MovementExprContext } from './expression';
 import type { EngineHost } from './host';
+import { checkAnswer, checkPinned } from './program_check';
+import { rustEvalStats } from './rust_stats';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import type { MovementRunResult, RunMovementInput } from './run';
 
@@ -50,6 +52,15 @@ export interface EngineProtocol {
   answer(id: number, answer: HostAnswer): EngineStep;
   /** Ends the segment, dropping everything it held. */
   finish(): void;
+}
+
+/** The run ends with this host call's error rather than the engine hearing
+ *  it: what the TypeScript engine throws before it runs anything (the check),
+ *  the Rust engine must not be able to catch. */
+class RunAborted extends Error {
+  constructor(readonly abortedWith: unknown) {
+    super('the run was aborted by a host call');
+  }
 }
 
 /** A fault in the shim itself (a request it has no route for, a result it
@@ -104,12 +115,13 @@ export async function runSegmentInRust(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Pick<RunMovementInput, 'host' | 'teamId'>,
+  input: Pick<RunMovementInput, 'host' | 'teamId' | 'catalog'>,
 ): Promise<unknown> {
   const context: RouteContext = {
     host: input.host,
     teamId: input.teamId,
     instances: new Map(),
+    catalog: input.catalog,
   };
   const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
   try {
@@ -140,6 +152,7 @@ interface RouteContext {
   teamId: RunMovementInput['teamId'];
   /** The live adapters behind the handles the engine holds, numbered from 1. */
   instances: Map<number, Adapter>;
+  catalog: CatalogSnapshot;
 }
 
 type Route = (args: unknown, context: RouteContext) => Promise<unknown>;
@@ -150,6 +163,35 @@ type Route = (args: unknown, context: RouteContext) => Promise<unknown>;
  * each); a route reads its args at this boundary and answers plain data.
  */
 const ROUTES: Record<string, Record<string, Route> | undefined> = {
+  check: {
+    /** The TypeScript checker over the pinned source (program_check.ts):
+     *  every diagnostic, the import link and the checker's AST stamps as
+     *  data. A program that fails its check ends the run with the check's
+     *  error, exactly as parseAndCheck throws it. */
+    async program(args, context) {
+      const request = record(args, 'check.program');
+      const languageVersion = request.languageVersion;
+      if (typeof languageVersion !== 'number') throw new RustShimError('check.program languageVersion must be a number');
+      const upgradingFrom = request.upgradingFrom;
+      if (upgradingFrom !== undefined && typeof upgradingFrom !== 'number') {
+        throw new RustShimError('check.program upgradingFrom must be a number');
+      }
+      const resolveFile = context.host.files.resolveFile;
+      let checked;
+      try {
+        checked = checkPinned({
+          source: string(request.source, 'check.program source'),
+          catalog: snapshotOf(request.snapshot, context),
+          languageVersion,
+          ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
+          ...(resolveFile !== undefined ? { hostResolveFile: resolveFile } : {}),
+        });
+      } catch (error) {
+        throw new RunAborted(error);
+      }
+      return checkAnswer(checked);
+    },
+  },
   adapters: {
     async resolve(args, context) {
       const request = record(args, 'adapters.resolve');
@@ -202,6 +244,7 @@ async function serve(request: HostRequest, context: RouteContext): Promise<HostA
     value = await route(request.args, context);
   } catch (error) {
     if (error instanceof RustShimError) throw error;
+    if (error instanceof RunAborted) throw error.abortedWith;
     // The host's own failure: the engine decides what it means for the run.
     return { error: errorAnswer(error) };
   }
@@ -271,6 +314,29 @@ function plainJsonObject(value: unknown, method: string, at: string): unknown {
   return value;
 }
 
+/** The run's own snapshot, which the engine was handed in its input and
+ *  hands back to be checked against: any other is refused, so the check
+ *  can only ever be of the run's catalog. */
+function snapshotOf(value: unknown, context: RouteContext): CatalogSnapshot {
+  if (!sameJson(value, context.catalog)) {
+    throw new RustShimError('check.program was asked to check against a snapshot other than the run\'s');
+  }
+  return context.catalog;
+}
+
+/** Deep equality of two JSON values, object keys in any order (the engine
+ *  writes its objects' keys sorted). */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => sameJson(item, b[i]));
+  }
+  const aKeys = Object.keys(a).filter((k) => Reflect.get(a, k) !== undefined);
+  const bKeys = Object.keys(b).filter((k) => Reflect.get(b, k) !== undefined);
+  return aKeys.length === bKeys.length && aKeys.every((k) => sameJson(Reflect.get(a, k), Reflect.get(b, k)));
+}
+
 function record(value: unknown, what: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new RustShimError(`${what}: args must be an object`);
@@ -301,7 +367,9 @@ function segmentInput(input: RunMovementInput): unknown {
     {
       entry: 'segment',
       source: input.source,
-      ...(input.languageVersion !== undefined ? { languageVersion: input.languageVersion } : {}),
+      // The pin the run is under, written out: the engine cannot know this
+      // release's current version.
+      languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
       ...(input.movementName !== undefined ? { movementName: input.movementName } : {}),
       event: input.event,
       teamId: input.teamId,
@@ -432,26 +500,6 @@ export function rustCanEval(expr: Expression): boolean {
     default:
       return false;
   }
-}
-
-/**
- * What the evaluator switch did in this process: expressions it did not send
- * (`notAdmitted`), sent (`admitted`), had answered by Rust (`answered`, a
- * thrown error included) and had handed back, by Rust's reason (`fallback`).
- * The conformance runs print it and fail on a Rust run Rust answered nothing in.
- */
-export const rustEvalStats: {
-  notAdmitted: number;
-  admitted: number;
-  answered: number;
-  fallback: Record<string, number>;
-} = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
-
-export function resetRustEvalStats(): void {
-  rustEvalStats.notAdmitted = 0;
-  rustEvalStats.admitted = 0;
-  rustEvalStats.answered = 0;
-  rustEvalStats.fallback = {};
 }
 
 /**

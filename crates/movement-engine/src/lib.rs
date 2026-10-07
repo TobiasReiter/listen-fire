@@ -20,6 +20,7 @@ pub mod host;
 pub mod js;
 pub mod js_date;
 pub mod js_regex;
+pub mod program;
 pub mod stdlib;
 pub mod value;
 

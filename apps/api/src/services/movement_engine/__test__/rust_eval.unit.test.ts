@@ -8,7 +8,8 @@ import { parseMovementExpression } from 'movement-lang';
 import { MovementEngineError } from '../errors';
 import { Environment, evalMovementExpr, type Binding, type MovementExprContext } from '../expression';
 import type { Provenance } from '../provenance';
-import { evalInRust, resetRustEvalStats, rustCanEval, rustEvalStats } from '../rust_engine';
+import { evalInRust, rustCanEval } from '../rust_engine';
+import { resetRustEvalStats, rustEvalStats } from '../rust_stats';
 
 function contextOf(bindings: Record<string, unknown>, extra: Partial<MovementExprContext> = {}): MovementExprContext {
   const env = new Environment();

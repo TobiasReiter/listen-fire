@@ -8,7 +8,8 @@
 use serde::Serialize;
 use serde_json::{Value as Json, json};
 
-/// The `EngineHost` groups a request can address, plus `Echo`: the protocol's own
+/// The `EngineHost` groups a request can address, plus `Check` (the
+/// TypeScript checker, until the checker is Rust) and `Echo`: the protocol's own
 /// probe, served by no host (the `echo` entry's requests name it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
@@ -19,6 +20,7 @@ pub enum Family {
     Files,
     Lookup,
     Locks,
+    Check,
     Echo,
 }
 
@@ -32,6 +34,7 @@ impl Family {
             Family::Files => "files",
             Family::Lookup => "lookup",
             Family::Locks => "locks",
+            Family::Check => "check",
             Family::Echo => "echo",
         }
     }
@@ -45,6 +48,7 @@ impl Family {
             Family::Files,
             Family::Lookup,
             Family::Locks,
+            Family::Check,
             Family::Echo,
         ]
         .into_iter()
@@ -108,6 +112,22 @@ pub mod adapters {
     }
 }
 
+pub mod check {
+    use super::*;
+
+    /// The pinned source checked against the run's snapshot: answered
+    /// `{diagnostics, link?, stamps}` (crate::program reads it). A program
+    /// that fails its check never gets an answer: the host ends the run with
+    /// MOVENG_CHECK, as the TypeScript engine does before it runs anything.
+    pub fn program(source: &str, snapshot: &Json, language_version: u32, upgrading_from: Option<u32>) -> Request {
+        let mut args = json!({ "source": source, "snapshot": snapshot, "languageVersion": language_version });
+        if let Some(from) = upgrading_from {
+            args["upgradingFrom"] = json!(from);
+        }
+        Request { family: Family::Check, method: "program".into(), args }
+    }
+}
+
 /// The instance handle a `resolve` answer carries.
 pub fn instance_of(answer: &Json) -> Option<Instance> {
     answer.get("instance").and_then(Json::as_u64).map(Instance)
@@ -132,11 +152,14 @@ mod tests {
         assert_eq!(call.args, json!({ "instance": 3, "method": "readRecord", "args": ["person", "r1"] }));
         assert_eq!(instance_of(&json!({ "instance": 3 })), Some(Instance(3)));
         assert_eq!(adapters::credential_id("crm").args, json!({ "credentialName": "crm" }));
+        let check = check::program("src", &json!({ "adapters": {} }), 3, None);
+        assert_eq!((check.family.as_str(), check.method.as_str()), ("check", "program"));
+        assert_eq!(check.args, json!({ "source": "src", "snapshot": { "adapters": {} }, "languageVersion": 3 }));
     }
 
     #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "park", "control", "files", "lookup", "locks", "echo"] {
+        for name in ["adapters", "llm", "park", "control", "files", "lookup", "locks", "check", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);

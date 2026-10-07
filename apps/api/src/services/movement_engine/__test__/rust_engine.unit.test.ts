@@ -1,6 +1,8 @@
 // The shim's half of the request/answer protocol, against a scripted engine
 // double: no WASM. The real artifact's half is rust_engine_abi.unit.test.ts.
 
+import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot } from 'movement-lang';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
@@ -80,7 +82,7 @@ function fakeAdapter(methods: Partial<Adapter> = {}): Adapter {
 }
 
 function hostWith(overrides: TestHostOverrides) {
-  return { host: makeTestHost(overrides), teamId: TEAM };
+  return { host: makeTestHost(overrides), teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT };
 }
 
 const RESOLVE = { adapterType: 'fake', teamId: TEAM, role: 'source' };
@@ -260,6 +262,37 @@ describe('the Rust engine shim', () => {
     );
     expect(() => readRunResult({ movementName: 'm', writes: [], trace: [], parked: true })).toThrow(
       'the Rust engine result has parked, which this shim does not decode yet',
+    );
+  });
+});
+
+describe('the check host call', () => {
+  const catalog = mockCatalogSnapshot({
+    adapters: { manual: { constructionArgs: [] } },
+  });
+  const SOURCE = ['import { manual } from adapters', 'go = manual()', 'movement m(e: <go>) {', '  x = 1', '}'].join('\n');
+  const check = (source: string, snapshot: unknown = catalog) =>
+    request(1, 'check', 'program', { source, snapshot, languageVersion: 3 });
+
+  it("answers check.program with the TypeScript checker's diagnostics, link and stamps", async () => {
+    const { engine, answers } = scriptedEngine((seen) => (seen.length === 0 ? { pending: [check(SOURCE)] } : { done: {} }));
+    await driveEngine(engine, { entry: 'test' }, { host: makeTestHost(), teamId: TEAM, catalog });
+    expect(answers).toEqual([{ id: 1, answer: { value: { diagnostics: expect.any(Array), stamps: [] } } }]);
+  });
+
+  it('ends the run with MOVENG_CHECK, which the engine never hears', async () => {
+    const { engine, answers, finished } = scriptedEngine(() => ({ pending: [check(SOURCE.replace('x = 1', 'x = y'))] }));
+    await expect(driveEngine(engine, { entry: 'test' }, { host: makeTestHost(), teamId: TEAM, catalog })).rejects.toThrow(
+      /^MOVENG_CHECK: the movement program failed checking/,
+    );
+    expect(answers).toEqual([]);
+    expect(finished()).toBe(true);
+  });
+
+  it("refuses to check against any snapshot but the run's", async () => {
+    const { engine } = scriptedEngine(() => ({ pending: [check(SOURCE, EMPTY_CATALOG_SNAPSHOT)] }));
+    await expect(driveEngine(engine, { entry: 'test' }, { host: makeTestHost(), teamId: TEAM, catalog })).rejects.toThrow(
+      RustShimError,
     );
   });
 });
