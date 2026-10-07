@@ -276,8 +276,9 @@ export interface EngineHost {
     /**
      * Where the engine may suspend a flow of its own accord: asked before
      * every statement and before every call a statement makes; `true` parks
-     * the flow just before the statement, to re-run it on resume. The cost
-     * cap is the production caller. Absent ⇒ never.
+     * the flow just before the statement, to re-run it on resume. No
+     * production host supplies it (the cost cap suspends from the engine's
+     * own ledger); tests use it to suspend at a chosen point. Absent ⇒ never.
      */
     suspendWhen?: (point: SuspensionPoint) => boolean;
   };

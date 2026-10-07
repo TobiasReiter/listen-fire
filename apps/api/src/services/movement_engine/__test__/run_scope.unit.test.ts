@@ -10,6 +10,7 @@
 // under test too.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { Adapter } from '../../translation_graph/adapter';
 import { AdapterCallCeilingExceeded, isAdapterCallCeilingExceeded } from '../host';
 import {
   bindAdapterCallCounter,
@@ -18,6 +19,7 @@ import {
   currentSegmentCallCount,
   inSegment,
   openSegment,
+  segmentBoundAdapter,
   withSegment,
 } from '../../translation_graph/segment_scope';
 
@@ -140,5 +142,14 @@ describe('the per-segment Affinity call ceiling', () => {
     expect(inSegment(segmentId, () => currentSegmentCallCount('affinity'))).toBe(1);
     await closeSegment({ segmentId });
     expect(() => inSegment(segmentId, () => undefined)).toThrow(/no open segment/);
+  });
+
+  it('an adapter bound to a segment refuses to answer once the segment has closed', async () => {
+    const { segmentId } = await openSegment({ teamId: TEAM_ID, languageVersion: 2 });
+    const adapter = { adapterType: 'x', describe: async () => null } as unknown as Adapter;
+    const bound = segmentBoundAdapter(adapter, segmentId);
+    await expect(bound.describe('t')).resolves.toBeNull();
+    await closeSegment({ segmentId });
+    expect(() => bound.describe('t')).toThrow(/no open segment/);
   });
 });

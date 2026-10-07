@@ -381,8 +381,8 @@ export interface RunMovementInput {
   source: string;
   /**
    * The language version the movement is pinned to — the run compiles and
-   * executes under it, and it is the run context's `languageVersion` for every
-   * plugin and adapter the run calls (`currentLanguageVersion()`). Absent ⇒
+   * executes under it, it is the segment's pin (`RunContext.languageVersion`),
+   * and every adapter answers under it (the host segment opened with it). Absent ⇒
    * the current version. A version this release does not support is refused
    * (MOVENG_LANGUAGE_VERSION), never run as the current one.
    */

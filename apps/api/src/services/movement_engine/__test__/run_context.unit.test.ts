@@ -3,11 +3,18 @@
 // its cross-run lock holder). The cap is data here — the engine never reads
 // the environment.
 
+import type { InstanceSchema } from 'movement-lang';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { Adapter, WriteInput } from '../../translation_graph/adapter';
+import { containerAssociation } from '../../translation_graph/adapter';
+import { createManualAdapter } from '../../translation_graph/adapters/manual';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 
 import { BudgetExhausted, isRunCostCapExceeded, RunCostCapExceeded, type Budget } from '../../../lib/run_cost';
-import { InMemoryWriteLocks } from '../../write_locks/write_locks';
-import { makeTestHost, NEVER_CANCELLED } from '../host';
+import { InMemoryWriteLocks, type WriteLockHolder, type WriteLocks } from '../../write_locks/write_locks';
+import { makeFakeParkSink, makeTestHost, NEVER_CANCELLED } from '../host';
+import { runMovement } from '../run';
 import { RunCancelledSignal } from '../errors';
 import {
   closeRunContext,
@@ -240,6 +247,160 @@ describe("a segment's opening and closing", () => {
     const second = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 2, spend: {} });
     await second.writeLockHolder.acquire(['record attio 1']);
     await closeRunContext(second, host);
+  });
+});
+
+// ── A whole run's segment ───────────────────────────────────────────────────
+
+/** Locks that remember every name a holder took and how often a holder was
+ *  released whole (its session closed), over the real in-memory gate. */
+function recordingLocks(): { locks: WriteLocks; taken: Set<string>; closed: () => number; inner: InMemoryWriteLocks } {
+  const inner = new InMemoryWriteLocks({ timeoutMs: 100 });
+  const taken = new Set<string>();
+  let closed = 0;
+  const locks: WriteLocks = {
+    holder(scope): WriteLockHolder {
+      const holder = inner.holder(scope);
+      return {
+        acquire: async (names) => {
+          await holder.acquire(names);
+          for (const name of names) taken.add(name);
+        },
+        release: async (names) => {
+          if (names === undefined) closed += 1;
+          await holder.release(names);
+        },
+      };
+    },
+  };
+  return { locks, taken, closed: () => closed, inner };
+}
+
+const kgSchema: InstanceSchema = {
+  positions: { note: { properties: { body: 'text' }, edges: {} } },
+  collections: { note: { target: 'note' } },
+  writableRoots: { note: { fields: { body: 'text' }, resultShape: { externalId: 'text' } } },
+};
+
+function kgAdapter(onCreate: (write: WriteInput) => void): Adapter {
+  return {
+    adapterType: 'kg',
+    supportedTriggers: ['webhook'],
+    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+    listEntryPoints: async () => [],
+    describe: async () => null,
+    resolveEntity: async () => ({ candidates: [] }),
+    getFieldValue: async () => null,
+    getRelated: async () => [],
+    createRecord: async (write) => {
+      onCreate(write);
+      return { adapterType: 'kg', externalId: 'note-1', data: {} };
+    },
+    updateRecord: async (input) => ({
+      adapterType: 'kg',
+      externalId: input.externalId,
+      data: {},
+      association: containerAssociation(input),
+    }),
+    deleteRecord: async () => ({}),
+  };
+}
+
+function runOnce(input: { body: string; kg: Adapter; locks: WriteLocks; closes: string[] }) {
+  const manual = createManualAdapter({ teamId: TEAM_ID });
+  return runMovement({
+    source: [
+      'import { manual, kg } from adapters',
+      'import { kg_cred } from credentials',
+      'runs = manual()',
+      'graph = kg(credentials: kg_cred)',
+      'movement m(go: <runs-[:Invocation]->>) {',
+      '  write graph-[:note]-> { unique by (`body`) body: "one" }',
+      input.body,
+      '}',
+      'listen to runs {} fire m',
+    ].join('\n'),
+    event: {
+      pipelineInputId: 'trigger:manual-segment',
+      adapterType: 'manual',
+      triggerType: 'webhook',
+      payload: { firedAt: '2026-10-07T09:00:00.000Z' },
+      occurredAt: '2026-10-07T09:00:00.000Z',
+    },
+    teamId: TEAM_ID,
+    catalog: staticCatalogSnapshot({
+      credentials: { kg_cred: { adapters: ['kg'] } },
+      instanceSchemas: { kg: kgSchema },
+    }),
+    host: makeTestHost({
+      segment: {
+        close: async ({ segmentId }) => {
+          input.closes.push(segmentId);
+          return {};
+        },
+      },
+      adapters: { resolve: ({ adapterType }) => (adapterType === 'kg' ? input.kg : manual) },
+      park: { sink: makeFakeParkSink().sink },
+      locks: input.locks,
+    }),
+  });
+}
+
+describe("a run's segment ends exactly once, however the run ends", () => {
+  it('a run that throws closes its segment once and lets go of its locks', async () => {
+    const recorded = recordingLocks();
+    const closes: string[] = [];
+    const kg = kgAdapter(() => {
+      throw new Error('the write failed');
+    });
+    await expect(runOnce({ body: '', kg, locks: recorded.locks, closes })).rejects.toThrow('the write failed');
+    expect(closes).toHaveLength(1);
+    expect(recorded.closed()).toBe(1);
+    expect(recorded.taken.size).toBeGreaterThan(0);
+    const next = recorded.inner.holder(TEAM_ID);
+    await next.acquire([...recorded.taken]);
+    await next.release();
+  });
+
+  it('a run that parks closes its segment once and lets go of its locks', async () => {
+    const recorded = recordingLocks();
+    const closes: string[] = [];
+    const result = await runOnce({ body: '  await sleep(1d)', kg: kgAdapter(() => {}), locks: recorded.locks, closes });
+    expect(result.parked).toBe(true);
+    expect(closes).toHaveLength(1);
+    expect(recorded.closed()).toBe(1);
+    expect(recorded.taken.size).toBeGreaterThan(0);
+    const next = recorded.inner.holder(TEAM_ID);
+    await next.acquire([...recorded.taken]);
+    await next.release();
+  });
+
+  it('a host segment that fails to open leaves no lock holder open', async () => {
+    const recorded = recordingLocks();
+    const host = makeTestHost({
+      locks: recorded.locks,
+      segment: {
+        open: async () => {
+          throw new Error('no segment today');
+        },
+      },
+    });
+    await expect(openRunContext({ host, teamId: TEAM_ID, languageVersion: 2, spend: {} })).rejects.toThrow(
+      'no segment today',
+    );
+    expect(recorded.closed()).toBe(1);
+  });
+
+  it("a close that fails never replaces the run's own answer", async () => {
+    const host = makeTestHost({
+      segment: {
+        close: async () => {
+          throw new Error('close failed');
+        },
+      },
+    });
+    const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 2, spend: {} });
+    await expect(closeRunContext(context, host)).resolves.toBeUndefined();
   });
 });
 

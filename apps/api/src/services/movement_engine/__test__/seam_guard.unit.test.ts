@@ -377,7 +377,9 @@ describe('the engine/host seam carries data', () => {
     expect(result.spentBySource).toEqual({ 'model:ocr': 120 });
     expect(made[3]?.input).toEqual({ segmentId: 'seg-1' });
     // Every adapter is resolved for the segment, by its id.
-    for (const resolved of calls.filter((c) => c.call === 'adapters.resolve')) {
+    const resolutions = calls.filter((c) => c.call === 'adapters.resolve');
+    expect(resolutions.length).toBeGreaterThan(0);
+    for (const resolved of resolutions) {
       expect(resolved.input).toMatchObject({ segmentId: 'seg-1' });
     }
     expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);

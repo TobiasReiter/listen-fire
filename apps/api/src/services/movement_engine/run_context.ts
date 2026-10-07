@@ -38,6 +38,8 @@ import type { ExtractCallLlmClient } from './extraction_call';
 import type { Costed, EngineHost } from './host';
 import type { CancelGate } from './run';
 
+import { getErrorMessage } from '../../lib/utils/error';
+import { logger } from '../logger';
 import { RunCancelledSignal } from './errors';
 import {
   isBudgetExhausted,
@@ -252,8 +254,9 @@ export function pricedCalls(host: EngineHost, ledger: RunLedger): PricedCalls {
 
 // ── Opening and closing a segment ───────────────────────────────────────────
 
-/** Open one segment: its host segment, its cross-run lock holder, and the
- *  run's account seeded with what the run spent before it. */
+/** Open one segment: its cross-run lock holder, its host segment, and the
+ *  run's account seeded with what the run spent before it. The holder comes
+ *  first so a segment that fails to open leaves nothing open behind it. */
 export async function openRunContext(input: {
   host: EngineHost;
   teamId: TeamId;
@@ -262,30 +265,53 @@ export async function openRunContext(input: {
   spend: ConstructorParameters<typeof RunLedger>[0];
 }): Promise<RunContext> {
   const { host, teamId, runId, languageVersion } = input;
-  const { segmentId } = await host.segment.open({
-    teamId,
-    languageVersion,
-    ...(runId !== undefined ? { runId } : {}),
-  });
+  const writeLockHolder = host.locks.holder(teamId);
+  let segmentId: string;
+  try {
+    ({ segmentId } = await host.segment.open({
+      teamId,
+      languageVersion,
+      ...(runId !== undefined ? { runId } : {}),
+    }));
+  } catch (error) {
+    await writeLockHolder.release();
+    throw error;
+  }
   return {
     teamId,
     languageVersion,
     cancel: host.control.cancel,
     ...(runId !== undefined ? { runId } : {}),
     segmentId,
-    writeLockHolder: host.locks.holder(teamId),
+    writeLockHolder,
     ledger: new RunLedger(input.spend),
   };
 }
 
-/** End a segment however it ended: release its locks, close its host
- *  segment, and charge what the host says the segment's adapter calls spent
- *  (a model call an adapter makes to match a record). */
+/**
+ * End a segment however it ended: release its locks, close its host segment,
+ * and charge what the host says the segment's adapter calls spent (a model
+ * call an adapter makes to match a record). Every step is attempted, and none
+ * throws: this runs in the segment's `finally`, where a failure here would
+ * replace the run's own result or error. A step that fails is logged with the
+ * run it belongs to.
+ */
 export async function closeRunContext(context: RunContext, host: EngineHost): Promise<void> {
-  try {
-    await context.writeLockHolder.release();
-  } finally {
+  await settled('release its cross-run write locks', context, () => context.writeLockHolder.release());
+  await settled('close its host segment', context, async () => {
     const { cost } = await host.segment.close({ segmentId: context.segmentId });
     context.ledger.charge(cost);
+  });
+}
+
+async function settled(step: string, context: RunContext, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (error) {
+    logger.error(`[movement] a segment that ended could not ${step}`, {
+      segmentId: context.segmentId,
+      error: getErrorMessage(error),
+      ...runLogFields(context),
+    });
   }
 }

@@ -162,6 +162,7 @@ class SegmentScope {
   readonly bound = new WeakMap<Adapter, Adapter>();
 
   constructor(
+    readonly segmentId: string,
     readonly teamId: TeamId,
     readonly languageVersion: LanguageVersion,
     readonly runId: string | undefined,
@@ -182,7 +183,7 @@ function segmentNamed(segmentId: string): SegmentScope {
 /** Open a segment: a fresh memo, a fresh count. */
 export async function openSegment(input: SegmentOpening): Promise<{ segmentId: string }> {
   const segmentId = randomUUID();
-  openSegments.set(segmentId, new SegmentScope(input.teamId, input.languageVersion, input.runId));
+  openSegments.set(segmentId, new SegmentScope(segmentId, input.teamId, input.languageVersion, input.runId));
   return { segmentId };
 }
 
@@ -240,11 +241,16 @@ export function segmentBoundAdapter(adapter: Adapter, segmentId: string): Adapte
     get(target, property, receiver) {
       const value: unknown = Reflect.get(target, property, receiver);
       if (typeof value !== 'function') return value;
-      return (...args: unknown[]) =>
-        boundIteration(
-          scope,
-          inScope(scope, () => Reflect.apply(value, target, args)),
+      // The segment is looked up at each call, so an adapter kept past its
+      // segment's close fails naming it rather than answering in a scope
+      // nothing will ever charge.
+      return (...args: unknown[]) => {
+        const open = segmentNamed(segmentId);
+        return boundIteration(
+          open,
+          inScope(open, () => Reflect.apply(value, target, args)),
         );
+      };
     },
   });
   scope.bound.set(adapter, bound);
@@ -256,15 +262,16 @@ export function segmentBoundAdapter(adapter: Adapter, segmentId: string): Adapte
  *  else comes back as it is. */
 function boundIteration(scope: SegmentScope, result: unknown): unknown {
   if (!isAsyncIterable(result) || isThenable(result)) return result;
+  const live = (): SegmentScope => segmentNamed(scope.segmentId);
   return {
     [Symbol.asyncIterator]() {
-      const iterator = inScope(scope, () => result[Symbol.asyncIterator]());
+      const iterator = inScope(live(), () => result[Symbol.asyncIterator]());
       const finish = iterator.return?.bind(iterator);
       const fail = iterator.throw?.bind(iterator);
       return {
-        next: (...args: [] | [undefined]) => inScope(scope, () => iterator.next(...args)),
-        ...(finish !== undefined ? { return: (value?: unknown) => inScope(scope, () => finish(value)) } : {}),
-        ...(fail !== undefined ? { throw: (error?: unknown) => inScope(scope, () => fail(error)) } : {}),
+        next: (...args: [] | [undefined]) => inScope(live(), () => iterator.next(...args)),
+        ...(finish !== undefined ? { return: (value?: unknown) => inScope(live(), () => finish(value)) } : {}),
+        ...(fail !== undefined ? { throw: (error?: unknown) => inScope(live(), () => fail(error)) } : {}),
       };
     },
   };
