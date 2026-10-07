@@ -79,7 +79,7 @@ ${call}
 /** A plugin that has said everything a plain call needs: what running it does,
  *  and what it hands back. The fixtures below vary one of those at a time. */
 const FOUND_TEXT = {
-  args: ['url'],
+  args: ['url'], priced: false,
   effects: { reads: ['the web'], ai: true },
   output: { kind: 'value' as const, type: { kind: 'maybeAbsent' as const, of: 'text' as const } },
 };
@@ -117,7 +117,7 @@ describe('a plugin is a function whose row is declared', () => {
   }`),
       catalog: mockCatalog({
         adapters: { desk: { constructionArgs: [], schema: PUSHED } },
-        plugins: { scan_web: { args: ['url'] } },
+        plugins: { scan_web: { args: ['url'], priced: false } },
       }),
     });
     const movement = result.ok
@@ -128,7 +128,7 @@ describe('a plugin is a function whose row is declared', () => {
 
   it('an UNDECLARED row keeps the plugin to a through-stage, and says so', () => {
     const source = PLUGIN_PROGRAM('  found = scan_web(url: t.`Title`)');
-    const plugins = { scan_web: { args: ['url'] } };
+    const plugins = { scan_web: { args: ['url'], priced: false } };
     expect(errors(source, PUSHED, plugins)).toEqual([C.PLUGIN_ROW_UNDECLARED]);
     expect(messages(source, PUSHED, plugins)).toContain("through [scan_web]");
   });
@@ -137,10 +137,10 @@ describe('a plugin is a function whose row is declared', () => {
     const stage = `  m = extract from [t.\`Title\`] through [scan_web] {
     name: "the company"
   }`;
-    expect(errors(PLUGIN_PROGRAM(stage), PUSHED, { scan_web: { args: ['url'] } })).toEqual([]);
+    expect(errors(PLUGIN_PROGRAM(stage), PUSHED, { scan_web: { args: ['url'], priced: false } })).toEqual([]);
     expect(
       errors(PLUGIN_PROGRAM(stage), PUSHED, {
-        scan_web: { args: ['url'], effects: { reads: ['the web'] } },
+        scan_web: { args: ['url'], priced: false, effects: { reads: ['the web'] } },
       }),
     ).toEqual([]);
   });
@@ -194,7 +194,7 @@ describe('a plugin declares what it hands back, so a plain call is typed', () =>
   it('a declared RECORD output is read by name, and an undeclared field is not', () => {
     const plugins = {
       scan_web: {
-        args: ['name'],
+        args: ['name'], priced: false,
         effects: { reads: ['the web'], ai: true },
         output: {
           kind: 'record' as const,
@@ -217,7 +217,7 @@ describe('a plugin declares what it hands back, so a plain call is typed', () =>
   it('a declared RECORDS output is a list of records: read one, read across, and never as text', () => {
     const plugins = {
       scan_web: {
-        args: ['url'],
+        args: ['url'], priced: false,
         effects: { reads: ['the web'], ai: true },
         output: {
           kind: 'records' as const,
@@ -247,7 +247,7 @@ describe('a plugin declares what it hands back, so a plain call is typed', () =>
 
   it('declaring no output keeps the plugin to a stage, and says which fact is missing', () => {
     const source = PLUGIN_PROGRAM('  found = scan_web(url: t.`Title`)');
-    const plugins = { scan_web: { args: ['url'], effects: { reads: ['the web'] } } };
+    const plugins = { scan_web: { args: ['url'], priced: false, effects: { reads: ['the web'] } } };
     expect(errors(source, PUSHED, plugins)).toEqual([C.PLUGIN_OUTPUT_UNDECLARED]);
     expect(messages(source, PUSHED, plugins)).toContain('hands back');
     // …and the stage form, whose output goes to the extractor, stays legal.
@@ -259,7 +259,7 @@ describe('a plugin declares what it hands back, so a plain call is typed', () =>
 
   it('an undeclared ROW is reported instead of an undeclared output — one refusal per call', () => {
     const source = PLUGIN_PROGRAM('  found = scan_web(url: t.`Title`)');
-    expect(errors(source, PUSHED, { scan_web: { args: ['url'] } })).toEqual([
+    expect(errors(source, PUSHED, { scan_web: { args: ['url'], priced: false } })).toEqual([
       C.PLUGIN_ROW_UNDECLARED,
     ]);
   });
@@ -269,7 +269,7 @@ describe('a plugin declares what it hands back, so a plain call is typed', () =>
 
 describe('a fed argument is one parameter with two ways of being filled', () => {
   const FED = {
-    args: ['email'],
+    args: ['email'], priced: false,
     effects: { reads: ['the web'], ai: true },
     fedArgs: [{ name: 'text', required: true as const }],
     output: { kind: 'value' as const, type: { kind: 'maybeAbsent' as const, of: 'text' as const } },
