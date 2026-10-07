@@ -13284,7 +13284,6 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     authorise: () => Promise<void>;
                 };
                 _input_in: {
-                    protocolVersion: 2;
                     adapterType: string;
                     baseUrl: string;
                     authStrategy: {
@@ -13330,10 +13329,10 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     } | undefined;
                     credentialsId?: string | undefined;
                     webhookEventTypeId?: string | undefined;
+                    protocolVersion?: 2 | undefined;
                     secret?: string | undefined;
                 };
                 _input_out: {
-                    protocolVersion: 2;
                     adapterType: string;
                     baseUrl: string;
                     authStrategy: {
@@ -13379,6 +13378,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     } | undefined;
                     credentialsId?: string | undefined;
                     webhookEventTypeId?: string | undefined;
+                    protocolVersion?: 2 | undefined;
                     secret?: string | undefined;
                 };
                 _output_in: typeof _trpc_server.unsetMarker;
