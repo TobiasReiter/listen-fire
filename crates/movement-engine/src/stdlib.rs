@@ -2,11 +2,11 @@
 //! the flat set in apps/api/src/services/movement_engine/expression.ts's
 //! `applyMovementFunction`), argument for argument and quirk for quirk.
 //!
-//! `DATETIME.AT` is not here: it needs the IANA zone database, which this
-//! artifact does not carry, so the allow-list keeps it on TypeScript.
-//! `DATE.TODAY(zone)` is here, answered from the run's pinned instant by
-//! whoever drives the engine (`Clock`).
+//! What JavaScript's runtime knows — the zone database, WHATWG URLs,
+//! Unicode normalisation — the members ask of `EnvServices`; the run's
+//! pinned instant (`DATE.TODAY`'s now) comes with them in `Surroundings`.
 
+use crate::env_services::{EnvServices, NormalForm};
 use crate::eval::EvalError;
 use crate::js::{self, Js, JsObject};
 use crate::js_date::{self, Parsed};
@@ -19,7 +19,7 @@ pub const FLAT: [&str; 17] = [
     "multi", "split", "date", "datetime", "number",
 ];
 
-pub const NAMESPACED: [&str; 14] = [
+pub const NAMESPACED: [&str; 15] = [
     "currency.get_number_from_figure",
     "currency.get_code_from_figure",
     "currency.format_figure",
@@ -28,6 +28,7 @@ pub const NAMESPACED: [&str; 14] = [
     "date.format",
     "date.format_iso",
     "date.today",
+    "datetime.at",
     "text.regex_extract",
     "text.slug",
     "text.pairs",
@@ -46,11 +47,13 @@ pub fn whole_value_arg(id: &str) -> Option<usize> {
     (id == "text.serialise").then_some(0)
 }
 
-/// The run's pinned instant, as the one clock-reading member asks for it.
-pub trait Clock {
-    /// `DATE.TODAY(zone)` for `zone` as written: the date there, or the
-    /// message it throws (an unknown zone).
-    fn today(&self, zone: &str) -> Result<Js, EvalError>;
+/// What a member reads beyond its arguments: the environment's services,
+/// and the run's pinned instant (milliseconds), which only `DATE.TODAY`
+/// reads.
+#[derive(Clone, Copy)]
+pub struct Surroundings<'a> {
+    pub services: &'a dyn EnvServices,
+    pub now: Option<f64>,
 }
 
 fn arg(args: &[Js], i: usize) -> Js {
@@ -118,7 +121,7 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
 }
 
 /// One namespaced member.
-pub fn apply_namespaced(id: &str, args: &[Js], clock: &dyn Clock) -> Result<Js, EvalError> {
+pub fn apply_namespaced(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js, EvalError> {
     let a = arg(args, 0);
     let b = arg(args, 1);
     match id {
@@ -129,17 +132,13 @@ pub fn apply_namespaced(id: &str, args: &[Js], clock: &dyn Clock) -> Result<Js, 
         "date.add_days" => date_add_days(&a, &b),
         "date.format" => date_format(&a, &b),
         "date.format_iso" => Ok(date_format_iso(&a)?.map_or(Js::Null, |(iso, _)| Js::String(iso))),
-        "date.today" => {
-            if a.is_nullish() {
-                return Ok(Js::Null);
-            }
-            clock.today(&a.to_js_string())
-        }
+        "date.today" => date_today(&a, around),
+        "datetime.at" => datetime_at(args, around.services),
         "text.regex_extract" => text_regex_extract(args),
-        "text.slug" => text_slug(&a),
+        "text.slug" => text_slug(&a, around.services),
         "text.pairs" => Ok(text_pairs(&a, &b)),
         "text.serialise" => text_serialise(&a, &b),
-        "url.host" => url_host(&a),
+        "url.host" => url_host(&a, around.services),
         "number.format" => Ok(number_format(&a, &b)),
         other => Err(EvalError::Fallback(format!("{other} is not a member this engine runs"))),
     }
@@ -618,21 +617,19 @@ fn text_regex_extract(args: &[Js]) -> Result<Js, EvalError> {
     }
 }
 
-/// `TEXT.SLUG`. Its first step is Unicode NFKD, which this artifact does not
-/// carry; ASCII is its own NFKD, and anything else goes back to TypeScript.
-fn text_slug(value: &Js) -> Result<Js, EvalError> {
+/// `TEXT.SLUG`: `normalize('NFKD')`, the combining diacriticals
+/// (U+0300–U+036F) dropped, lower-cased, each run of anything but `a-z0-9`
+/// one dash, and none at either end.
+fn text_slug(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
     if value.is_nullish() {
         return Ok(Js::Null);
     }
     let text = value.to_js_string();
-    if !text.is_ascii() {
-        return Err(EvalError::Fallback("TEXT.SLUG of non-ASCII text needs NFKD".into()));
-    }
-    // Each run of anything else is one dash, and none at either end:
-    // `replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')`.
+    let decomposed = if text.is_ascii() { text } else { services.normalize(&text, NormalForm::Nfkd) };
+    let bare: String = decomposed.chars().filter(|c| !('\u{300}'..='\u{36f}').contains(c)).collect();
     let mut slug = String::new();
     let mut gap = false;
-    for c in text.to_ascii_lowercase().chars() {
+    for c in bare.to_lowercase().chars() {
         if c.is_ascii_lowercase() || c.is_ascii_digit() {
             if gap && !slug.is_empty() {
                 slug.push('-');
@@ -727,11 +724,9 @@ fn text_serialise(value: &Js, format: &Js) -> Result<Js, EvalError> {
 
 // ── URL ──────────────────────────────────────────────────────────────────────
 
-/// `URL.HOST`: the host WHATWG URL parsing finds, for the shapes whose
-/// parse is plain — a special scheme (http, https, ws, wss, ftp) with an
-/// ASCII host. IDNA, percent-decoding, IPv4 and IPv6 hosts, `file:` and
-/// non-special schemes go back to TypeScript.
-fn url_host(value: &Js) -> Result<Js, EvalError> {
+/// `URL.HOST`: the `hostname` WHATWG URL parsing finds (`new URL`, asked of
+/// the environment), after the TypeScript's own reading of what to parse.
+fn url_host(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
     if value.is_nullish() {
         return Ok(Js::Null);
     }
@@ -740,6 +735,8 @@ fn url_host(value: &Js) -> Result<Js, EvalError> {
     if raw.is_empty() {
         return Ok(Js::Null);
     }
+    // A scheme-less address parses under an assumed `http://`; a relative
+    // path or an opaque uri has no host either way.
     let attempt = if raw.contains("://") {
         raw.to_string()
     } else if raw.starts_with('/') || is_opaque_uri(raw) {
@@ -747,7 +744,11 @@ fn url_host(value: &Js) -> Result<Js, EvalError> {
     } else {
         format!("http://{raw}")
     };
-    Ok(parse_host(&attempt)?.map_or(Js::Null, Js::String))
+    // No host (`file:///x`), or userinfo: `joe@acme.com` is an email.
+    Ok(match services.url_parse(&attempt) {
+        Some(url) if !url.hostname.is_empty() && url.username.is_empty() => Js::String(url.hostname),
+        _ => Js::Null,
+    })
 }
 
 /// `/^[a-zA-Z][a-zA-Z0-9+-]*:(?!\/\/)/`
@@ -760,94 +761,114 @@ fn is_opaque_uri(raw: &str) -> bool {
     b.get(end) == Some(&b':') && !raw[end + 1..].starts_with("//")
 }
 
-/// What `new URL(input)` makes `hostname`, when its username is empty;
-/// `None` where it throws or has a username.
-fn parse_host(input: &str) -> Result<Option<String>, EvalError> {
-    let unsupported = |why: &str| Err(EvalError::Fallback(format!("URL.HOST: {why}")));
-    let trimmed = input.trim_matches(|c: char| c <= ' ');
-    if trimmed.chars().any(|c| (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || c == '\u{7f}') {
-        return unsupported("a control character");
+// ── DATE.TODAY and DATETIME.AT (packages/shared/timezone) ───────────────────
+
+/// cron's `cronTimezoneError`: `Intl` refuses the zone.
+fn zone_problem(zone: &str, services: &dyn EnvServices) -> Option<String> {
+    (zone.is_empty() || services.tz_convert("1970-01-01T00:00:00.000Z", zone).is_none()).then(|| {
+        format!("'{zone}' is not a recognised IANA time zone (e.g. \"Europe/London\", \"America/New_York\", \"UTC\")")
+    })
+}
+
+/// `Date.UTC(year, month - 1, day, hour, minute, second)`, two-digit years
+/// read as 19xx as it reads them.
+fn date_utc(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64) -> f64 {
+    let year = if (0..=99).contains(&year) { 1900 + year } else { year };
+    (js_date::days_from_civil(year, month, day) * 86_400_000 + hour * 3_600_000 + minute * 60_000 + second * 1000) as f64
+}
+
+/// `wallAsUTC(localFields(instant, zone))`: the instant's wall reading in
+/// `zone`, as a UTC epoch.
+fn wall_as_utc(instant: f64, zone: &str, services: &dyn EnvServices) -> f64 {
+    let f = services
+        .tz_convert(&js_date::to_iso_string(instant), zone)
+        .unwrap_or_else(|| panic!("{zone} was a zone a moment ago"));
+    date_utc(f.year, f.month, f.day, f.hour, f.minute, f.second)
+}
+
+/// `DATE.TODAY(zone)`: the calendar date the run's pinned instant falls on
+/// in `zone` (`zonedDateString`).
+fn date_today(zone: &Js, around: Surroundings<'_>) -> Result<Js, EvalError> {
+    if zone.is_nullish() {
+        return Ok(Js::Null);
     }
-    let cleaned: String = trimmed.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
-    let b = cleaned.as_bytes();
-    if !b.first().is_some_and(u8::is_ascii_alphabetic) {
-        return Ok(None);
+    let zone = zone.to_js_string();
+    if let Some(problem) = zone_problem(&zone, around.services) {
+        return Err(EvalError::error(format!("DATE.TODAY(zone) — {problem}")));
     }
-    let scheme_len = b.iter().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')).count();
-    if b.get(scheme_len) != Some(&b':') {
-        // No scheme, and no base to resolve against.
-        return Ok(None);
+    let now = around.now.ok_or_else(|| EvalError::error("DATE.TODAY(zone) was evaluated with no pinned instant".into()))?;
+    let f = around.services.tz_convert(&js_date::to_iso_string(now), &zone).expect("a zone just accepted");
+    Ok(Js::String(format!("{}-{:02}-{:02}", f.year, f.month, f.day)))
+}
+
+/// `DATETIME.AT(date, time, zone)`: `instantAtZonedWallTime`, answered
+/// through the zone's wall readings alone, as the TypeScript does.
+fn datetime_at(args: &[Js], services: &dyn EnvServices) -> Result<Js, EvalError> {
+    let (date, time, zone) = (arg(args, 0), arg(args, 1), arg(args, 2));
+    if date.is_nullish() || time.is_nullish() || zone.is_nullish() {
+        return Ok(Js::Null);
     }
-    let scheme = cleaned[..scheme_len].to_ascii_lowercase();
-    if !matches!(scheme.as_str(), "http" | "https" | "ws" | "wss" | "ftp") {
-        return unsupported("a scheme whose host is not a domain");
+    let Some(parts) = read_date_parts(&date) else {
+        return Err(EvalError::error(format!(
+            "DATETIME.AT(date, time, zone) — '{}' is not a calendar date. Its first argument is a day: DATE.TODAY(zone), a date field, DATE.ADD_DAYS(…) or DATE.PARSE(text).",
+            date.to_js_string()
+        )));
+    };
+    let time = time.to_js_string();
+    let Some((hour, minute)) = read_wall_clock_time(&time) else {
+        return Err(EvalError::error(format!(
+            "DATETIME.AT(date, time, zone) — '{time}' is not a time of day — write it as 24-hour HH:mm (e.g. \"07:00\", \"18:30\")"
+        )));
+    };
+    let zone = zone.to_js_string();
+    if let Some(problem) = zone_problem(&zone, services) {
+        return Err(EvalError::error(format!("DATETIME.AT(date, time, zone) — {problem}")));
     }
-    let rest = cleaned[scheme_len + 1..].trim_start_matches(['/', '\\']);
-    let authority_end = rest.find(['/', '\\', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    let host_port = match authority.rfind('@') {
-        Some(at) => {
-            let username = authority[..at].split(':').next().unwrap_or("");
-            if authority[at + 1..].is_empty() {
-                return Ok(None);
+    let wanted = date_utc(parts.y, parts.m, parts.d, hour, minute, 0);
+    let offset = |instant: f64| wall_as_utc(instant, &zone, services) - instant;
+    let seed = wanted - offset(wanted);
+    // A day either side straddles any one transition, so both offsets are
+    // seen; an ambiguous reading takes the earlier instant.
+    let guesses: Vec<f64> = [-86_400_000.0, 0.0, 86_400_000.0].iter().map(|d| wanted - offset(seed + d)).collect();
+    let real = guesses.iter().copied().filter(|g| wall_as_utc(*g, &zone, services) == wanted).reduce(f64::min);
+    let instant = match real {
+        Some(instant) => instant,
+        // A reading the clock skips: the first instant at or after it.
+        None => {
+            const SPAN: f64 = 26.0 * 3_600_000.0;
+            let mut before = guesses.iter().copied().reduce(f64::min).unwrap() - SPAN;
+            let mut after = guesses.iter().copied().reduce(f64::max).unwrap() + SPAN;
+            while after - before > 1.0 {
+                let mid = before + ((after - before) / 2.0).floor();
+                if wall_as_utc(mid, &zone, services) >= wanted { after = mid } else { before = mid }
             }
-            if !username.is_empty() {
-                return Ok(None);
-            }
-            &authority[at + 1..]
+            after
         }
-        None => authority,
     };
-    if host_port.starts_with('[') {
-        return unsupported("an IPv6 host");
-    }
-    let (host, port) = host_port.split_once(':').unwrap_or((host_port, ""));
-    // A port too long for a u64 is past 65535 all the same.
-    if !port.bytes().all(|c| c.is_ascii_digit()) || port.parse::<u64>().map_or(!port.is_empty(), |p| p > 65535) {
-        return Ok(None);
-    }
-    if host.is_empty() {
-        return Ok(None);
-    }
-    if host.contains('%') || !host.is_ascii() {
-        return unsupported("a host that is percent-encoded or not ASCII");
-    }
-    let forbidden = |c: char| c <= ' ' || "#%/:<>?@[\\]^|\u{7f}".contains(c);
-    if host.chars().any(forbidden) {
-        return Ok(None);
-    }
-    let host = host.to_ascii_lowercase();
-    let labels: Vec<&str> = host.split('.').collect();
-    if labels.iter().any(|l| l.starts_with("xn--")) {
-        return unsupported("a punycode label");
-    }
-    let last = match labels.as_slice() {
-        [.., second, ""] if labels.len() > 1 => *second,
-        [.., last] => *last,
-        [] => "",
-    };
-    let numeric = !last.is_empty()
-        && (last.bytes().all(|c| c.is_ascii_digit())
-            || last.strip_prefix("0x").is_some_and(|hex| hex.bytes().all(|c| c.is_ascii_hexdigit())));
-    if numeric {
-        return unsupported("an IPv4 host");
-    }
-    Ok(Some(host))
+    js_date::time_clip(instant)
+        .map(|ms| Js::String(js_date::to_iso_string(ms)))
+        .ok_or_else(|| EvalError::Thrown { class: crate::eval::ErrorClass::RangeError, message: "Invalid time value".into() })
+}
+
+/// `readWallClockTime`: `/^([01]\d|2[0-3]):([0-5]\d)$/` on the trimmed text.
+fn read_wall_clock_time(time: &str) -> Option<(i64, i64)> {
+    let t = js::trim(time).as_bytes();
+    let digit = |b: u8| b.is_ascii_digit().then(|| i64::from(b - b'0'));
+    let [h1, h2, b':', m1, m2] = t else { return None };
+    let (hour, minute) = (digit(*h1)? * 10 + digit(*h2)?, digit(*m1)? * 10 + digit(*m2)?);
+    (hour <= 23 && minute <= 59).then_some((hour, minute))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    struct NoClock;
-    impl Clock for NoClock {
-        fn today(&self, _zone: &str) -> Result<Js, EvalError> {
-            Err(EvalError::Fallback("no clock".into()))
-        }
+    fn around() -> Surroundings<'static> {
+        Surroundings { services: crate::env_services::current(), now: Some(0.0) }
     }
 
     fn call(id: &str, args: Vec<Js>) -> Js {
-        let result = if FLAT.contains(&id) { apply_flat(id, &args) } else { apply_namespaced(id, &args, &NoClock) };
+        let result = if FLAT.contains(&id) { apply_flat(id, &args) } else { apply_namespaced(id, &args, around()) };
         result.unwrap_or_else(|e| panic!("{id}: {e:?}"))
     }
 
@@ -922,7 +943,7 @@ mod tests {
         assert_eq!(add("2026-03-12", 7.0), "2026-03-19");
         assert_eq!(add("2026-03-12", -12.9), "2026-02-28");
         assert!(matches!(
-            apply_namespaced("date.add_days", &[s("2026-03-12"), Js::Number(1e9)], &NoClock),
+            apply_namespaced("date.add_days", &[s("2026-03-12"), Js::Number(1e9)], around()),
             Err(EvalError::Thrown { message, .. }) if message == "Invalid time value"
         ));
         let fmt = |v: Js, p: &str| text(call("date.format", vec![v, s(p)]));
@@ -935,7 +956,7 @@ mod tests {
         assert_eq!(iso(s("12 March 2026")), "2026-03-12T00:00:00.000Z");
         assert_eq!(iso(s("2026-03-12T09:30+01:00")), "2026-03-12T08:30:00.000Z");
         assert_eq!(iso(Js::Number(8.64e15 + 1.0)), "<null>");
-        assert!(matches!(apply_namespaced("date.format_iso", &[s("2026-03-12T09:30")], &NoClock), Err(EvalError::Fallback(_))));
+        assert!(matches!(apply_namespaced("date.format_iso", &[s("2026-03-12T09:30")], around()), Err(EvalError::Fallback(_))));
         assert_eq!(text(call("date", vec![s("2026-03-12T23:30-02:00")])), "2026-03-13");
         assert_eq!(text(call("datetime", vec![s("2026-03-12")])), "2026-03-12T00:00:00.000Z");
         assert_eq!(text(call("date", vec![Js::Bool(true)])), "<null>");
@@ -947,7 +968,8 @@ mod tests {
         assert_eq!(slug("Acme Corp Ltd."), "acme-corp-ltd");
         assert_eq!(slug("--Hello,  World!--"), "hello-world");
         assert_eq!(slug("!!!"), "");
-        assert!(matches!(apply_namespaced("text.slug", &[s("Café")], &NoClock), Err(EvalError::Fallback(_))));
+        assert_eq!(slug("Café Ünïcode ﬁ ½"), "cafe-unicode-fi-1-2");
+        assert_eq!(slug("ΣΑΣ"), "");
         let mut record = JsObject::new();
         record.set("name".into(), s("Acme"));
         record.set("n".into(), Js::Number(1.5));
@@ -972,7 +994,7 @@ mod tests {
         );
         assert_eq!(text(call("text.serialise", vec![Js::Undefined, s("JSON")])), "null");
         assert!(matches!(
-            apply_namespaced("text.serialise", &[Js::Null, s("YAML")], &NoClock),
+            apply_namespaced("text.serialise", &[Js::Null, s("YAML")], around()),
             Err(EvalError::Thrown { message, .. }) if message == "TEXT.SERIALISE: unknown format \"YAML\""
         ));
         let rx = |args: Vec<Js>| text(call("text.regex_extract", args));
@@ -982,6 +1004,23 @@ mod tests {
         assert_eq!(rx(vec![s("x"), s("(")]), "<null>");
         assert_eq!(rx(vec![s("b"), s("(a)|b"), Js::Number(1.0)]), "<null>");
         assert_eq!(rx(vec![s("abc"), s("b"), Js::Null]), "b");
+    }
+
+    #[test]
+    fn datetime_at_names_the_instant_on_the_zones_wall_clock() {
+        let at = |d: &str, t: &str, z: &str| apply_namespaced("datetime.at", &[s(d), s(t), s(z)], around());
+        let text_at = |d: &str, t: &str, z: &str| text(at(d, t, z).unwrap());
+        assert_eq!(text_at("2026-06-15", "07:00", "Europe/Berlin"), "2026-06-15T05:00:00.000Z");
+        // A fall-back reading happens twice: the earlier. A spring-forward
+        // gap: the transition itself.
+        assert_eq!(text_at("2026-10-25", "02:30", "Europe/Berlin"), "2026-10-25T00:30:00.000Z");
+        assert_eq!(text_at("2026-03-29", "02:30", "Europe/Berlin"), "2026-03-29T01:00:00.000Z");
+        assert_eq!(text_at("12 March 2026", " 23:59 ", "Pacific/Kiritimati"), "2026-03-12T09:59:00.000Z");
+        assert!(matches!(at("2026-06-15", "7:00", "UTC"), Err(EvalError::Thrown { message, .. }) if message.contains("'7:00' is not a time of day")));
+        assert!(matches!(at("someday", "07:00", "UTC"), Err(EvalError::Thrown { message, .. }) if message.contains("'someday' is not a calendar date")));
+        assert!(matches!(at("2026-06-15", "07:00", ""), Err(EvalError::Thrown { message, .. }) if message.contains("'' is not a recognised IANA time zone")));
+        assert!(matches!(at("2026-06-15", "07:00", "UTC"), Ok(Js::String(_))));
+        assert!(matches!(apply_namespaced("datetime.at", &[Js::Null, s("07:00"), s("UTC")], around()), Ok(Js::Null)));
     }
 
     #[test]
@@ -1010,9 +1049,13 @@ mod tests {
         assert_eq!(host("http://a_b*c.com."), "a_b*c.com.");
         assert_eq!(host("foo bar://x"), "<null>");
         assert_eq!(host(""), "<null>");
-        for t in ["http://127.0.0.1", "http://[::1]", "http://b\u{fc}cher.de", "file:///x", "git://Host/x", "http://xn--bcher-kva.de", "http://a%41.com"] {
-            assert!(matches!(apply_namespaced("url.host", &[s(t)], &NoClock), Err(EvalError::Fallback(_))), "{t}");
-        }
+        // The readings the environment's WHATWG parser owns.
+        assert_eq!(host("http://127.1"), "127.0.0.1");
+        assert_eq!(host("http://[::1]:80/"), "[::1]");
+        assert_eq!(host("http://B\u{dc}cher.de"), "xn--bcher-kva.de");
+        assert_eq!(host("file:///x"), "<null>");
+        assert_eq!(host("git://Host/x"), "Host");
+        assert_eq!(host("http://a%41.com"), "aa.com");
     }
 
     /// An accepted divergence (README): Rust's tables are Unicode 17,

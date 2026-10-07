@@ -8,6 +8,9 @@
 // One compiled module serves two kinds of instance: the parser's, long-lived
 // and replaced only after a trap, and one per engine segment
 // (`openEngineSegment`), which lives exactly as long as its segment.
+//
+// Every instance imports `movement_env.call`: the environment services the
+// engine asks JavaScript for mid-evaluation (env_services.ts).
 
 // Declared here rather than taken from a lib: this package compiles without
 // the DOM and Node libs, while apps/api and apps/web compile it with them.
@@ -29,6 +32,8 @@ declare const fetch: (url: string) => Promise<{
 declare const process: { versions?: { node?: string }; getBuiltinModule?(id: string): unknown } | undefined;
 declare const window: unknown;
 declare const __dirname: string;
+
+import { answerEnvRequest } from './env_services';
 
 interface WasmModule {
   readonly __wasmModule?: never;
@@ -306,7 +311,7 @@ export async function initEngine(bytesOrUrl?: Uint8Array | string): Promise<void
  *  with it. */
 export function openEngineSegment(): EngineSegment {
   if (!loaded) throw new MovementParserNotReady(loadFailure);
-  const exports = readEngineExports(new WebAssembly.Instance(loaded.module, {}).exports);
+  const exports = readEngineExports(newInstance(loaded.module));
   let state: 'open' | 'trapped' | 'finished' = 'open';
   const step = (fn: string, inputJson: string, invoke: (pairs: number[], slots: number) => number) => {
     if (state !== 'open') throw new Error(`the engine segment is ${state}: ${fn} cannot be called`);
@@ -359,9 +364,44 @@ function install(module: WasmModule): void {
 }
 
 function instantiate(module: WasmModule): ParserExports {
-  const exports = readExports(new WebAssembly.Instance(module, {}).exports);
+  const exports = readExports(newInstance(module));
   generation += 1;
   return exports;
+}
+
+/**
+ * A fresh instance of `module`, its `movement_env.call` import answering
+ * from this runtime: the request's JSON in, the `{value}` reply copied into
+ * a buffer of the instance's own `alloc` (the Rust side frees it), through
+ * the two out slots. Status 1 with `{error: {message}}` for a request it
+ * cannot read; nothing is thrown through the instance.
+ */
+function newInstance(module: WasmModule): Record<string, unknown> {
+  let raw: Record<string, unknown> | undefined;
+  let read: ReturnType<typeof exportReader> | undefined;
+  const call = (requestPtr: number, requestLen: number, outPtrPtr: number, outLenPtr: number): number => {
+    if (raw === undefined) throw new Error('the movement artifact called its environment while instantiating');
+    read ??= exportReader(raw, 'movement engine');
+    const exports = read;
+    let status = OK;
+    let reply: unknown;
+    try {
+      const request: unknown = JSON.parse(decoder.decode(memoryBytes(exports).slice(requestPtr, requestPtr + requestLen)));
+      reply = answerEnvRequest(request);
+    } catch (error) {
+      status = ERROR;
+      reply = { error: { message: error instanceof Error ? error.message : String(error) } };
+    }
+    const bytes = encoder.encode(JSON.stringify(reply));
+    const ptr = exports.buffers.alloc(bytes.length);
+    memoryBytes(exports).set(bytes, ptr);
+    const view = new DataView(memoryBuffer(exports));
+    view.setUint32(outPtrPtr, ptr, true);
+    view.setUint32(outLenPtr, bytes.length, true);
+    return status;
+  };
+  raw = new WebAssembly.Instance(module, { movement_env: { call } }).exports;
+  return raw;
 }
 
 function readExports(raw: Record<string, unknown>): ParserExports {

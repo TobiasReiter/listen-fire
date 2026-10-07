@@ -14,15 +14,13 @@ use movement_engine::env::{decode, encode};
 use movement_engine::eval::{ErrorClass, EvalError};
 use movement_engine::filter::compare_values;
 use movement_engine::js::Js;
-use movement_engine::stdlib::{self, Clock};
+use movement_engine::stdlib::{self, Surroundings};
 use movement_parser::lowering::expression::FilterOperator;
 use serde_json::{Value as Json, json};
 
-struct NoClock;
-impl Clock for NoClock {
-    fn today(&self, _zone: &str) -> Result<Js, EvalError> {
-        Err(EvalError::Fallback("no clock".into()))
-    }
+/// The generator pins `now` at the epoch.
+fn around() -> Surroundings<'static> {
+    Surroundings { services: movement_engine::env_services::current(), now: Some(0.0) }
 }
 
 /// The wire with object ids dropped (the two sides number them apart) and
@@ -62,7 +60,7 @@ fn run(fn_: &str, args: &[Js]) -> Result<Js, EvalError> {
         "coerce.datetime" => stdlib::coerce_to_datetime(&value()).map(|d| d.map_or(Js::Null, |(iso, _)| Js::String(iso))),
         "coerce.number" => Ok(stdlib::coerce_to_number(&value()).map_or(Js::Null, Js::Number)),
         flat if flat.starts_with("flat.") => stdlib::apply_flat(&flat["flat.".len()..], args),
-        id => stdlib::apply_namespaced(id, args, &NoClock),
+        id => stdlib::apply_namespaced(id, args, around()),
     }
 }
 
@@ -130,10 +128,6 @@ const FALLBACK_CEILINGS: &[(&str, f64)] = &[
     ("flat.split", 0.018),
     // A match that splits an astral character.
     ("text.regex_extract", 0.036),
-    // Non-ASCII text needs NFKD.
-    ("text.slug", 0.09),
-    // IPv4, IDNA, file: and non-special schemes.
-    ("url.host", 0.349),
 ];
 
 #[test]

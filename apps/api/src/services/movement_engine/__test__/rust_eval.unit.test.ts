@@ -69,7 +69,7 @@ describe('the Rust evaluator switch', () => {
     expect(() => inRust('DATE.ADD_DAYS("2026-01-01", 1000000000)', ctx)).toThrow(RangeError);
   });
 
-  it('answers DATE.TODAY from the run’s pinned instant', async () => {
+  it('reads zones, URLs and Unicode through this runtime, as TypeScript does', async () => {
     const ctx = contextOf({}, {
       meta: {
         now: new Date('2026-03-12T23:30:00Z'),
@@ -83,6 +83,17 @@ describe('the Rust evaluator switch', () => {
     expect(rust?.value).toBe('2026-03-13');
     expect(rust?.value).toBe(ts.value);
     expect(() => inRust('DATE.TODAY("Mars/Base")', ctx)).toThrow('DATE.TODAY(zone)');
+    for (const text of [
+      'DATETIME.AT(DATE.TODAY("Europe/Berlin"), "02:30", "Europe/Berlin")',
+      'DATETIME.AT("2026-03-29", "02:30", "Europe/Berlin")',
+      'URL.HOST("https://BÜCHER.de:8080/x")',
+      'URL.HOST("http://127.1/")',
+      'TEXT.SLUG("Café Ünïcode ﬁ ½")',
+    ]) {
+      const answered = await both(text, ctx);
+      expect(answered.rust).toBeDefined();
+      expect(answered.rust?.value).toEqual(answered.ts.value);
+    }
   });
 
   it('leaves to TypeScript what it does not run', () => {
@@ -92,9 +103,7 @@ describe('the Rust evaluator switch', () => {
     env.declare('when', { kind: 'value', value: new Date(0) });
     env.declare('t', { kind: 'value', value: '2026-03-12T09:30' });
     const ctx: MovementExprContext = { env };
-    expect(rustCanEval(parseMovementExpression('DATETIME.AT("2026-03-12", "07:00", "UTC")'))).toBe(false);
     expect(rustCanEval(parseMovementExpression('@current_date'))).toBe(false);
-    expect(rustCanEval(parseMovementExpression('DATE.TODAY(z)'))).toBe(false);
     expect(rustCanEval({ type: 'static', value: '\uD800' })).toBe(false);
     expect(inRust('e == null', ctx)).toBeUndefined();
     expect(inRust('when', ctx)).toBeUndefined();

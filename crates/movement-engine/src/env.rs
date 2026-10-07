@@ -70,9 +70,9 @@ pub struct Envelope {
     /// How many origin ids the caller assigned.
     pub origins: u32,
     pub language_version: Option<u32>,
-    /// `DATE.TODAY(zone)`'s answers by zone, which the caller worked out
-    /// from the run's pinned instant: the date, or the message it throws.
-    pub today: HashMap<String, Result<Json, String>>,
+    /// The run's pinned instant, in milliseconds (`now`, a `toISOString`
+    /// text on the wire): what `DATE.TODAY` reads.
+    pub now: Option<f64>,
 }
 
 pub fn read_envelope(text: &str) -> Result<Envelope, String> {
@@ -87,18 +87,15 @@ pub fn read_envelope(text: &str) -> Result<Envelope, String> {
     }
     let origins = json.get("origins").and_then(Json::as_u64).unwrap_or(0) as u32;
     let language_version = json.get("languageVersion").and_then(Json::as_u64).map(|v| v as u32);
-    let mut today = HashMap::new();
-    if let Some(answers) = json.pointer("/clock/today").and_then(Json::as_object) {
-        for (zone, answer) in answers {
-            let answer = match (answer.get("value"), answer.get("error").and_then(Json::as_str)) {
-                (Some(value), None) => Ok(value.clone()),
-                (None, Some(message)) => Err(message.to_string()),
-                _ => return Err(format!("DATE.TODAY's answer for {zone} is neither a value nor an error")),
-            };
-            today.insert(zone.clone(), answer);
-        }
-    }
-    Ok(Envelope { env, origins, language_version, today })
+    let now = match json.get("now") {
+        None => None,
+        Some(Json::String(iso)) => match crate::js_date::parse(iso) {
+            crate::js_date::Parsed::Valid(ms) => Some(ms),
+            _ => return Err(format!("the pinned instant {iso:?} is not a toISOString text")),
+        },
+        Some(other) => return Err(format!("the pinned instant is a text, not {other}")),
+    };
+    Ok(Envelope { env, origins, language_version, now })
 }
 
 fn read_trail(json: &Json) -> Result<Trail, String> {

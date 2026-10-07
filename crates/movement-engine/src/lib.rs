@@ -12,6 +12,7 @@
 
 pub mod abi;
 pub mod env;
+pub mod env_services;
 pub mod eval;
 pub mod executor;
 pub mod filter;
@@ -21,8 +22,6 @@ pub mod js_date;
 pub mod js_regex;
 pub mod stdlib;
 pub mod value;
-
-use std::collections::HashMap;
 
 use movement_parser::lowering::expression::Expression;
 
@@ -101,28 +100,12 @@ fn answer_envelope(answer: &Answer) -> Json {
     }
 }
 
-/// `DATE.TODAY(zone)` answered from what the caller worked out for each zone
-/// the expression names.
-struct AnsweredClock<'a>(&'a HashMap<String, Result<Json, String>>);
-
-impl stdlib::Clock for AnsweredClock<'_> {
-    fn today(&self, zone: &str) -> Result<js::Js, EvalError> {
-        match self.0.get(zone) {
-            Some(Ok(Json::String(date))) => Ok(js::Js::str(date.clone())),
-            Some(Ok(Json::Null)) => Ok(js::Js::Null),
-            Some(Ok(other)) => Err(EvalError::Fallback(format!("DATE.TODAY answered {other}"))),
-            Some(Err(message)) => Err(EvalError::error(message.clone())),
-            None => Err(EvalError::Fallback(format!("no DATE.TODAY answer for {zone}"))),
-        }
-    }
-}
-
 /// `eval_expression`'s reply, or a message for input it cannot read.
 pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
     let expr: Expression = serde_json::from_str(expr).map_err(|e| format!("the expression does not read: {e}"))?;
     let envelope = env::read_envelope(bindings)?;
-    let clock = AnsweredClock(&envelope.today);
-    let evaluator = Evaluator::new(&envelope.env, envelope.language_version, &clock, envelope.origins);
+    let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now };
+    let evaluator = Evaluator::new(&envelope.env, envelope.language_version, around, envelope.origins);
     Ok(match evaluator.eval(&expr) {
         Ok(result) => json!({
             "value": env::encode(&result.value),
@@ -283,17 +266,18 @@ mod tests {
     }
 
     #[test]
-    fn date_today_answers_from_the_callers_clock() {
-        let envelope = json!({ "bindings": {}, "clock": { "today": {
-            "Europe/Berlin": { "value": "2026-03-12" },
-            "Mars/Base": { "error": "DATE.TODAY(zone) — unknown zone" },
-        } } });
+    fn date_today_reads_the_pinned_instant_in_the_zone() {
+        let envelope = json!({ "bindings": {}, "now": "2026-03-11T23:30:00.000Z" });
         assert_eq!(eval_with("DATE.TODAY(\"Europe/Berlin\")", envelope.clone())["value"], "2026-03-12");
+        assert_eq!(eval_with("DATE.TODAY(\"UTC\")", envelope.clone())["value"], "2026-03-11");
         assert_eq!(
             eval_with("DATE.TODAY(\"Mars/Base\")", envelope.clone())["error"],
-            json!({ "class": "Error", "message": "DATE.TODAY(zone) — unknown zone" })
+            json!({ "class": "Error", "message": "DATE.TODAY(zone) — 'Mars/Base' is not a recognised IANA time zone (e.g. \"Europe/London\", \"America/New_York\", \"UTC\")" })
         );
-        assert!(eval_with("DATE.TODAY(\"UTC\")", envelope)["fallback"].is_string());
+        assert_eq!(
+            eval_with("DATETIME.AT(DATE.TODAY(\"Europe/Berlin\"), \"07:00\", \"Europe/Berlin\")", envelope)["value"],
+            "2026-03-12T06:00:00.000Z"
+        );
     }
 
     #[test]

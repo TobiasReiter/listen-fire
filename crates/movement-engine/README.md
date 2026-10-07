@@ -19,7 +19,8 @@ protocol's probes (`echo`, `panic`).
 | `value` | the value model (data, record, list, map, absent), its JSON the parked state's `ValueDescriptor` |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
-| `stdlib` | the 17 flat built-ins and 14 namespaced members (`DATETIME.AT` excepted) |
+| `stdlib` | the 17 flat built-ins and all 15 namespaced members |
+| `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation, from the JavaScript runtime (WASM) or natively (below) |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
 | `js`, `js_date`, `js_regex` | the JavaScript semantics the TypeScript leans on, written out (below) |
@@ -90,7 +91,7 @@ eval_expression(expr, bindings) → {value, provenance} | {error: {class, code?,
 - `expr` is the lowered `Expression` JSON, read back into the parser's own
   types (crates/movement-parser/src/lowering/expression.rs).
 - `bindings` is `{bindings: {name: {value, provenance?, many?}}, origins,
-  languageVersion?, clock?: {today: {zone: {value} | {error}}}}`.
+  languageVersion?, now?}`.
 - Synchronous, on the parser's long-lived instance: no segment.
 - The switch is one guarded line in `evalMovementExpr`
   (apps/api/src/services/movement_engine/expression.ts). The shim
@@ -102,10 +103,8 @@ eval_expression(expr, bindings) → {value, provenance} | {error: {class, code?,
   not reproduce stays exact (see the list below).
 - Errors carry the class the TypeScript throws (`MovementEngineError` with
   its code, `Error`, `RangeError`); the shim rebuilds them.
-- `DATE.TODAY(zone)` is answered from `clock`: the shim works the date out
-  from the run's pinned instant with the TypeScript member, because the
-  zone database is not in the artifact. A segment asks the same of the host
-  as `clock.now {zone}` (answered `{nowIso, zone, today}`).
+- `now` is the run's pinned instant (a `toISOString` text): `DATE.TODAY(zone)`
+  reads it in the zone through the environment services.
 
 The wire (env.rs has the details) carries what JSON cannot: `undefined`,
 `NaN`, `±Infinity`, `-0`, key order, and identity. Identity matters because
@@ -138,8 +137,9 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
 | `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) | `js_date::tests::iso_strings_outside_four_digit_years`, `js_date::tests::time_clip_bounds_and_truncates`, `tests::coalesce_short_circuits_from_version_three` |
 | regexes (TEXT.REGEX_EXTRACT) | a backtracking matcher over UTF-16 units with Annex B syntax: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators. Invalid patterns are null, as `new RegExp` throws; lookbehind, named groups, octal and `\c` escapes, an escape class at a range end, groups nested past 100, and a match past its step/depth budget go back to TypeScript | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them` (3,200 seeded cases) |
-| `URL` (URL.HOST) | WHATWG parsing for special schemes with ASCII hosts: slashes and backslashes, userinfo, ports (any too large for 65535, however long, fails), forbidden host code points, lower-casing. IDNA, percent-encoded hosts, IPv4/IPv6, `file:` and non-special schemes go back to TypeScript | `stdlib::tests::url_host_as_whatwg_reads_it` |
-| `normalize("NFKD")` (TEXT.SLUG) | ASCII is its own NFKD; non-ASCII text goes back to TypeScript | `stdlib::tests::text_members` |
+| `URL` (URL.HOST) | `new URL` itself, asked of the environment (`url_parse`); only the TypeScript's own pre-reading (trim, the assumed `http://`, opaque uris) is written here | `stdlib::tests::url_host_as_whatwg_reads_it`, `oracle::…` (`url.host`) |
+| `normalize("NFKD")` (TEXT.SLUG) | asked of the environment (`normalize`) | `stdlib::tests::text_members`, `oracle::…` (`text.slug`) |
+| `Intl.DateTimeFormat` (DATE.TODAY, DATETIME.AT) | the zone's wall reading asked of the environment (`tz_convert`); `instantAtZonedWallTime`'s search over those readings written out, `Date.UTC`'s 19xx years included | `stdlib::tests::datetime_at_names_the_instant_on_the_zones_wall_clock`, `oracle::…` (`date.today`, `datetime.at`) |
 | `JSON.stringify` (TEXT.SERIALISE) | its quoting and two-space layout; keys sorted by UTF-16 unit, then laid out in object order (index keys first) as `Object.fromEntries` does | `js::tests::json_stringify_indents_as_javascript_does`, `stdlib::tests::text_members` |
 | object-literal prototypes | `MAGNITUDE_SUFFIXES["constructor"]` is `Object`, so `"5 constructor"` is NaN; `MONTH_NAMES["constructor"]` fails `validParts` like no month | `stdlib::tests::figures_read_as_the_regex_reads_them` |
 | a dict whose `kind` names a binding kind | the TypeScript reads it as a record (`bindingOf`, whose `kind in describeBinding` walks the prototype chain, so `"toString"` and `"constructor"` count): its `==`, spreads and record arguments go back to TypeScript, and the shim sends no such value | `stdlib::tests::record_detection_walks_the_prototype_chain_as_in_does`, `tests::maps_keep_javascript_key_order` |
@@ -157,11 +157,53 @@ not admitted, admitted, answered, fallback by reason). Under
 `MOVEMENT_ENGINE=rust` the conformance runs print the totals and fail when Rust
 answered nothing.
 
+## Environment services
+
+What the language leans on JavaScript's runtime for — the zone database,
+WHATWG URL parsing, locale number formatting, Unicode normalisation — the
+engine asks of `EnvServices` (src/env_services.rs), four operations:
+
+| operation | answers | JavaScript |
+|---|---|---|
+| `tz_convert {instantIso, zone}` | `{year, month, day, hour, minute, second, millisecond, offsetMinutes, weekday}` or null (not a zone) | `Intl.DateTimeFormat('en-US', {timeZone, hourCycle: 'h23', …}).formatToParts` |
+| `url_parse {text}` | `{href, protocol, username, password, host, hostname, port, pathname, search, hash}` or null | `new URL(text)` |
+| `number_format {value, locale, options}` | text, or null | `Intl.NumberFormat` (decimal; `minimumFractionDigits`, `maximumFractionDigits`, `useGrouping`) |
+| `normalize {text, form}` | text | `String.prototype.normalize` |
+
+Two implementations:
+
+- **WASM** (`HostImports`): the import `movement_env.call`, a request's
+  JSON in and `{value}` out, which the loader gives every instance from
+  packages/movement-lang/wasm/env_services.ts. Synchronous, so the evaluator
+  calls it mid-expression. The TypeScript engine and the Rust one read zones,
+  URLs and text from the one runtime.
+- **Native** (`native::Native`, the default `native-env` feature, inert on
+  wasm32): `jiff` with its bundled zone data, the `url` crate, ICU4X's
+  normaliser and decimal formatter.
+
+tests/env_services.rs holds the native one to tests/env/fixture.json:
+6,323 requests answered by Node 22.20 through the very module the loader
+imports (generate.ts; seeded; every IANA zone at six instants including a
+daylight-saving week and one before the common era, aliases, offsets,
+invalid names; IDN, IPv4/IPv6, percent-encoded and opaque hosts; NFC/NFD/
+NFKC/NFKD over compatibility, Hangul and combining sequences; 14 locales).
+packages/movement-lang/wasm/__test__/env_services.unit.test.ts holds the
+JavaScript one to the same file. Where they differed, and what was done:
+
+| difference | handling |
+|---|---|
+| zone data: Node 22.20's ICU carries tzdata 2025b, current jiff 2026e (Morocco's and Moldova's rules, Tijuana 1974) | `jiff-tzdb` pinned to 0.1.4 (2025b), so `jiff` held at 0.2.16; `both_sides_read_one_zone_database` checks the pin against tests/env/versions.json |
+| `Factory` is an IANA file but not an ICU zone | refused natively |
+| Intl writes the year of its era (1 BC is 1), and the TypeScript derives the offset and the weekday from that reading through `Date.UTC` | the native fields are derived the same way |
+| the `url` crate reads a `\` in a non-special URL's authority into the path; WHATWG fails it | refused natively |
+| `de-CH` groups with ’ in ICU4C 77 and with ' in ICU4X 2.3's data | **accepted divergence**, not in the fixture; nothing formats locale numbers yet |
+| `-0` | not in the fixture (JSON writes it as `0`) |
+
 ## Building and testing
 
 ```bash
 scripts/build-movement-wasm.sh    # the artifact, its sha256 and size
-cargo test -p movement-engine     # the executor, builders, value model, evaluator and ABI, natively
+cargo test -p movement-engine     # the executor, builders, value model, evaluator, ABI and environment services, natively
 ```
 
 The TypeScript side: `apps/api/src/services/movement_engine/__test__/rust_engine.unit.test.ts`

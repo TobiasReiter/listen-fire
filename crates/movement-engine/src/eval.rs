@@ -19,7 +19,7 @@ use movement_parser::lowering::expression::{
 use crate::env::{Env, Trail};
 use crate::filter::{arithmetic, at_index, compare_to_null, compare_values, is_null_literal};
 use crate::js::{Js, JsObject};
-use crate::stdlib::{self, Clock};
+use crate::stdlib::{self, Surroundings};
 
 /// The class a thrown error has on the TypeScript side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,8 +35,8 @@ pub enum EvalError {
     /// What the TypeScript evaluator throws, constructed as it constructs it.
     Thrown { class: ErrorClass, message: String },
     /// A value or construct whose JavaScript reading this engine does not
-    /// reproduce (a text only V8's date parser reads, a regex feature, a
-    /// zone): the TypeScript evaluator answers it instead.
+    /// reproduce (a text only V8's date parser reads, a regex feature): the
+    /// TypeScript evaluator answers it instead.
     Fallback(String),
 }
 
@@ -83,7 +83,7 @@ pub fn static_value(value: &StaticValue) -> Js {
 pub struct Evaluator<'a> {
     env: &'a Env,
     language_version: Option<u32>,
-    clock: &'a dyn Clock,
+    around: Surroundings<'a>,
     next_literal: Cell<u32>,
 }
 
@@ -92,8 +92,8 @@ type Eval = Result<Evaluated, EvalError>;
 impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
-    pub fn new(env: &'a Env, language_version: Option<u32>, clock: &'a dyn Clock, first_literal: u32) -> Self {
-        Evaluator { env, language_version, clock, next_literal: Cell::new(first_literal) }
+    pub fn new(env: &'a Env, language_version: Option<u32>, around: Surroundings<'a>, first_literal: u32) -> Self {
+        Evaluator { env, language_version, around, next_literal: Cell::new(first_literal) }
     }
 
     pub fn eval(&self, expr: &Expression) -> Eval {
@@ -281,7 +281,7 @@ impl<'a> Evaluator<'a> {
                 values.push(result.value);
                 provs.push(result.prov);
             }
-            let value = stdlib::apply_namespaced(id, &values, self.clock)?;
+            let value = stdlib::apply_namespaced(id, &values, self.around)?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
         if !stdlib::FLAT.contains(&id) {

@@ -15,7 +15,7 @@
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import { applyStdlib, callEvalExpression, openEngineSegment, stdlibFunctionById, type Program } from 'movement-lang';
+import { callEvalExpression, openEngineSegment, type Program } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
@@ -104,13 +104,12 @@ export async function runSegmentInRust(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Pick<RunMovementInput, 'host' | 'teamId' | 'firedAt'>,
+  input: Pick<RunMovementInput, 'host' | 'teamId'>,
 ): Promise<unknown> {
   const context: RouteContext = {
     host: input.host,
     teamId: input.teamId,
     instances: new Map(),
-    now: input.firedAt ?? new Date(),
   };
   const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
   try {
@@ -141,8 +140,6 @@ interface RouteContext {
   teamId: RunMovementInput['teamId'];
   /** The live adapters behind the handles the engine holds, numbered from 1. */
   instances: Map<number, Adapter>;
-  /** The run's pinned instant (`firedAt`, else when the segment began). */
-  now: Date;
 }
 
 type Route = (args: unknown, context: RouteContext) => Promise<unknown>;
@@ -192,17 +189,6 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
       }
       if (!Array.isArray(request.args)) throw new RustShimError(`adapters.call ${method}: args must be an array`);
       return Reflect.apply(fn, adapter, request.args);
-    },
-  },
-  clock: {
-    /** The pinned instant, and `DATE.TODAY(zone)` from it: the zone database
-     *  is the host's, not the artifact's. A zone that is not one is the
-     *  member's own error, answered as an error. */
-    async now(args, context) {
-      const zone = string(record(args, 'clock.now').zone, 'clock.now zone');
-      const spec = stdlibFunctionById(DATE_TODAY);
-      if (spec === undefined) throw new RustShimError('the standard library has no DATE.TODAY');
-      return { nowIso: context.now.toISOString(), zone, today: applyStdlib(spec, [zone], context.now) };
     },
   },
 };
@@ -393,24 +379,21 @@ function readRequest(value: unknown, call: string): HostRequest {
 // ── The evaluator ─────────────────────────────────────────────────────────────
 
 /** The flat built-ins and namespaced members the Rust evaluator runs
- *  (crates/movement-engine/src/stdlib.rs). `DATETIME.AT` is not one: it
- *  needs the zone database, which the artifact does not carry. */
+ *  (crates/movement-engine/src/stdlib.rs): every one. Zones, URLs and
+ *  normalisation it asks of this runtime through the artifact's
+ *  environment import (movement-lang's wasm/env_services.ts). */
 const RUST_FUNCTIONS: ReadonlySet<string> = new Set([
   'isnull', 'coalesce', 'trim', 'lower', 'upper', 'length', 'abs', 'round', 'floor', 'ceil', 'tostring', 'tonumber',
   'multi', 'split', 'date', 'datetime', 'number',
   'currency.get_number_from_figure', 'currency.get_code_from_figure', 'currency.format_figure',
-  'date.parse', 'date.add_days', 'date.format', 'date.format_iso', 'date.today',
+  'date.parse', 'date.add_days', 'date.format', 'date.format_iso', 'date.today', 'datetime.at',
   'text.regex_extract', 'text.slug', 'text.pairs', 'text.serialise', 'url.host', 'number.format',
 ]);
-
-const DATE_TODAY = 'date.today';
 
 /**
  * Whether the Rust evaluator runs `expr`: every node a kind it evaluates (no
  * host reads, no model, no traversal), every function one of its built-ins,
- * `DATE.TODAY`'s zone written down (its answer is worked out here, from the
- * run's pinned instant), and every literal and name one JSON carries as
- * itself into a Rust string.
+ * and every literal and name one JSON carries as itself into a Rust string.
  */
 export function rustCanEval(expr: Expression): boolean {
   switch (expr.type) {
@@ -445,11 +428,7 @@ export function rustCanEval(expr: Expression): boolean {
     case 'arithmetic':
       return rustCanEval(expr.left) && rustCanEval(expr.right);
     case 'function':
-      return (
-        RUST_FUNCTIONS.has(expr.fn)
-        && (expr.fn !== DATE_TODAY || expr.args[0]?.type === 'static')
-        && expr.args.every(rustCanEval)
-      );
+      return RUST_FUNCTIONS.has(expr.fn) && expr.args.every(rustCanEval);
     default:
       return false;
   }
@@ -502,14 +481,13 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
       ...(binding.many === true ? { many: true } : {}),
     };
   }
-  const today = todayAnswers(expr, ctx.meta?.now ?? new Date());
-  if (today === undefined) return notAdmitted();
   rustEvalStats.admitted += 1;
   const envelope = {
     bindings,
     origins: wire.origins.length,
     ...(ctx.languageVersion !== undefined ? { languageVersion: ctx.languageVersion } : {}),
-    ...(Object.keys(today).length > 0 ? { clock: { today } } : {}),
+    // The run's pinned instant, which DATE.TODAY reads.
+    now: (ctx.meta?.now ?? new Date()).toISOString(),
   };
   const reply = callEvalExpression(JSON.stringify(expr), JSON.stringify(envelope));
   const answer = record(reply.json, 'the Rust evaluator reply');
@@ -597,59 +575,6 @@ function namesRead(expr: Expression, into: Set<string> = new Set()): Set<string>
       break;
   }
   return into;
-}
-
-/** `DATE.TODAY(zone)` for each zone `expr` writes down, worked out by the
- *  TypeScript member from the run's pinned instant: the date, or the message
- *  it throws. Undefined where it throws something other than an Error. */
-function todayAnswers(
-  expr: Expression,
-  now: Date,
-): Record<string, { value: unknown } | { error: string }> | undefined {
-  const spec = stdlibFunctionById(DATE_TODAY);
-  const answers: Record<string, { value: unknown } | { error: string }> = {};
-  const visit = (e: Expression): boolean => {
-    if (e.type === 'function' && e.fn === DATE_TODAY) {
-      const zone = e.args[0];
-      if (spec !== undefined && zone?.type === 'static' && zone.value !== null) {
-        try {
-          answers[String(zone.value)] = { value: applyStdlib(spec, [zone.value], now) };
-        } catch (error) {
-          if (!(error instanceof Error) || error.constructor !== Error) return false;
-          answers[String(zone.value)] = { error: error.message };
-        }
-      }
-    }
-    return childExpressions(e).every(visit);
-  };
-  return visit(expr) ? answers : undefined;
-}
-
-function childExpressions(expr: Expression): Expression[] {
-  switch (expr.type) {
-    case 'at':
-      return [expr.expression, expr.index];
-    case 'list':
-      return expr.elements.map(listElementExpression);
-    case 'object':
-      return expr.entries.map(objectMemberExpression);
-    case 'concat':
-      return expr.parts;
-    case 'conditional':
-      return [expr.condition, expr.then, expr.else];
-    case 'compare':
-    case 'arithmetic':
-      return [expr.left, expr.right];
-    case 'logical':
-      return expr.operands;
-    case 'not':
-    case 'negate':
-      return [expr.expression];
-    case 'function':
-      return expr.args;
-    default:
-      return [];
-  }
 }
 
 /** The error the TypeScript evaluator would have thrown. */

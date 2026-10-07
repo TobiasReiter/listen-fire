@@ -106,6 +106,24 @@ for (const id of [
   'currency.get_number_from_figure', 'currency.get_code_from_figure', 'date.parse', 'date.format_iso', 'text.slug',
   'url.host',
 ]) stdlib(id, one);
+// The members the environment answers (zones, WHATWG URLs, NFKD).
+const ZONES = ['Europe/Berlin', 'America/New_York', 'UTC', 'utc', 'Asia/Kolkata', 'Pacific/Kiritimati', 'Pacific/Pago_Pago',
+  'Australia/Lord_Howe', 'America/St_Johns', 'Africa/Casablanca', '+05:30', 'US/Eastern', 'Mars/Base', '', ' UTC', 7, null];
+stdlib('date.today', ZONES.map((zone) => [zone]));
+stdlib('datetime.at', [
+  ...cross(['2026-06-15', '2026-03-29', '2026-10-25', '2026-03-08', '2026-11-01', '12 March 2026', '2024-02-29', 'someday', '0100-01-01'],
+    ['07:00', '02:30', '00:00', '23:59', ' 01:30 ', '7:00', '24:00', 'noon'])
+    .flatMap(([date, time]) => ['Europe/Berlin', 'America/New_York', 'Australia/Lord_Howe', 'Asia/Kolkata', 'UTC', 'Nowhere/Land'].map((zone) => [date, time, zone])),
+  [null, '07:00', 'UTC'], ['2026-06-15', null, 'UTC'], ['2026-06-15', '07:00', null], ['2026-06-15', '07:00', ''],
+  [20260615, '07:00', 'UTC'], ['2026-06-15T23:30:00-05:00', '07:00', 'UTC'],
+]);
+const URL_HOSTS = ['bücher.de', 'BÜCHER.de', 'xn--bcher-kva.de', '例え.テスト', 'ﬁnance.io', '⒈.com', 'straße.de', 'пример.рф',
+  '😀.ws', '127.0.0.1', '127.1', '0x7f.1', '1.2.3.4.', '256.0.0.1', '[::1]', '[2001:db8::FFFF]', 'a%41.com', '%zz.com', 'a b.com',
+  'a_b.com', 'localhost', 'a..b', 'xn--a', 'A\u0301.com'];
+stdlib('url.host', ['http://', 'https://', 'ftp://', 'git://', 'file://', 'sc://', '', 'joe@', 'http://joe@'].flatMap((prefix) =>
+  URL_HOSTS.flatMap((host) => [[`${prefix}${host}`], [`${prefix}${host}:8080/x?q#f`]])));
+stdlib('text.slug', ['Café Ünïcode', 'ﬁnance ½ ①', 'Straße', 'ΣΑΣ Ελλάδα', 'Ångström', 'naïve—résumé', '日本語', 'Ǆemal', 'İstanbul',
+  'e\u0301\u0328', '㎞/h', 'Ⅻ', 'ｶﾞ', '😀 smile'].map((t) => [t]));
 stdlib('currency.format_figure', cross(SCALARS, ['EUR', ' usd ', 'CHF', 'XYZ', '', null, 7]));
 stdlib('number.format', cross(SCALARS, ['compact', 'grouped', 'other', null]));
 stdlib('date.add_days', cross(SCALARS, [7, -12.9, 0, -0, 1e9, NaN, '3', null]));

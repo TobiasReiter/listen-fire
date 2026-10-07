@@ -26,6 +26,8 @@ on:
       - "scripts/build-movement-wasm.sh"
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
+      - "packages/shared/timezone/**"
+      - "packages/shared/cron/**"
       - "apps/api/src/services/movement_engine/rust_engine*.ts"
       - "apps/api/src/services/movement_engine/expression.ts"
       - "apps/api/src/services/movement_engine/builtins.ts"
@@ -44,6 +46,8 @@ on:
       - "scripts/build-movement-wasm.sh"
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
+      - "packages/shared/timezone/**"
+      - "packages/shared/cron/**"
       - "apps/api/src/services/movement_engine/rust_engine*.ts"
       - "apps/api/src/services/movement_engine/expression.ts"
       - "apps/api/src/services/movement_engine/builtins.ts"
@@ -114,7 +118,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Parser pins through the committed artifact
         working-directory: packages/movement-lang
-        run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points|lowering_regression|lowering_vocabulary|checks_regression|catalog_depth|loader'
+        run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points|lowering_regression|lowering_vocabulary|checks_regression|catalog_depth|loader|env_services'
       # The TypeScript catalog stays in use until the checker is ported, so
       # the Rust one is held to it on every change to either.
       - name: Catalog differential through the committed artifact
@@ -133,6 +137,17 @@ jobs:
           TS_NODE_PROJECT=tsconfig.json npx ts-node --transpile-only ../../crates/movement-engine/tests/oracle/generate.ts
           git diff --exit-code -- ../../crates/movement-engine/tests/oracle || {
             echo "::error::crates/movement-engine/tests/oracle is stale: regenerate it (see generate.ts) and commit it, then make the crate tests pass."
+            exit 1
+          }
+      # The environment services' fixture is Node's own answers: the same
+      # Node regenerates the same bytes (env_services.unit.test.ts above
+      # already fails on a Node whose answers moved).
+      - name: The environment services' fixture is current
+        working-directory: apps/api
+        run: |
+          TS_NODE_PROJECT=tsconfig.json npx ts-node --transpile-only ../../crates/movement-engine/tests/env/generate.ts
+          git diff --exit-code -- ../../crates/movement-engine/tests/env || {
+            echo "::error::crates/movement-engine/tests/env is stale: regenerate it (see generate.ts) and commit it, then make the crate tests pass."
             exit 1
           }
       # The corpora's suites import the generated Prisma client's types.
