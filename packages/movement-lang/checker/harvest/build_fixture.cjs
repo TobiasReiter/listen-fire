@@ -16,35 +16,22 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { beats, canonical } = require('./dedupe.cjs');
 
 const OUT = path.resolve(__dirname, '../__test__/__fixtures__/checks.json');
 const SNAPSHOTS_OUT = path.resolve(__dirname, '../__test__/__fixtures__/checks.snapshots.json');
 
-// Must stay identical to `canonical` in parser/expression/__test__/lowering_fixture.ts.
-function canonical(value) {
-  return JSON.stringify(value, (_key, v) => {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      return Object.fromEntries(
-        Object.entries(v)
-          .filter(([, x]) => x !== undefined)
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-      );
-    }
-    return v;
-  });
-}
-
 const keyOf = (r) =>
   canonical({ source: r.source, snapshot: r.snapshot, version: r.version, parseVersion: r.parseVersion, upgradingFrom: r.upgradingFrom });
 
-const beats = (a, b) => {
-  if (Boolean(a.note) !== Boolean(b.note)) return Boolean(a.note);
-  return canonical(a) < canonical(b);
-};
-
 const byKey = new Map();
 const stats = {};
-for (const arg of process.argv.slice(2)) {
+const inputs = process.argv.slice(2);
+if (inputs.length === 0 || inputs.some((a) => !a.includes('=') || !fs.existsSync(a.split('=')[1]))) {
+  console.error('usage: node checker/harvest/build_fixture.cjs <corpus>=<harvest.jsonl>... (every file must exist); refusing to overwrite the fixture');
+  process.exit(1);
+}
+for (const arg of inputs) {
   const [corpus, file] = arg.split('=');
   const s = (stats[corpus] = { harvested: 0, skipped: 0, added: 0 });
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
@@ -72,6 +59,11 @@ for (const arg of process.argv.slice(2)) {
     // lowest canonical JSON.
     if (!seen || beats(candidate, seen)) byKey.set(key, candidate);
   }
+}
+
+if (byKey.size === 0) {
+  console.error(`no harvest records found in ${inputs.join(', ')}; refusing to overwrite ${path.relative(process.cwd(), OUT)}`);
+  process.exit(1);
 }
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
