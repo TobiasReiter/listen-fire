@@ -13,7 +13,10 @@
 import { mintRemoteCredential } from '../../../credentials/remote_credential';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { UserId } from '../../../../generated/kysely/core/User';
-import { RemoteAdapterManifestFile } from './manifest';
+import { MANIFEST_PROTOCOL_VERSION } from '../../protocol/schema';
+import { loadRemoteAdapterSecret } from '../resolve';
+import { fetchRemoteManifest } from './index';
+import { RemoteAdapterManifestFile, RemoteAdapterManifestInput } from './manifest';
 import { upsertRemoteAdapter } from './store';
 
 export interface InstallRemoteAdapterInput {
@@ -21,7 +24,7 @@ export interface InstallRemoteAdapterInput {
   /** The member installing; null for system/harness flows. */
   userId?: UserId | null;
   /** The parsed, validated manifest (no secret — that rides `secret`). */
-  manifest: RemoteAdapterManifestFile;
+  manifest: RemoteAdapterManifestInput;
   /** The adapter's auth secret. When present, minted into a REMOTE credential
    *  and linked; when absent, the install lands with a null credential FK. */
   secret?: string;
@@ -35,15 +38,7 @@ export interface InstallRemoteAdapterInput {
 export async function installRemoteAdapterFromManifest(
   input: InstallRemoteAdapterInput,
 ): Promise<{ id: string; credentialsId: string | null }> {
-  // Refused before a credential is minted, so an older adapter leaves nothing behind.
-  const version = RemoteAdapterManifestFile.shape.protocolVersion.safeParse(
-    input.manifest.protocolVersion,
-  );
-  if (!version.success) {
-    throw new Error(
-      `Remote adapter "${input.manifest.adapterType}" cannot be installed: ${version.error.issues[0]?.message ?? 'protocolVersion is not 2'}`,
-    );
-  }
+  const protocolVersion = await probeProtocolVersion(input);
 
   let credentialsId: string | null = input.manifest.credentialsId ?? null;
 
@@ -63,8 +58,36 @@ export async function installRemoteAdapterFromManifest(
 
   const { id } = await upsertRemoteAdapter({
     teamId: input.teamId,
-    manifest: { ...input.manifest, ...(credentialsId ? { credentialsId } : {}) },
+    manifest: { ...input.manifest, protocolVersion, ...(credentialsId ? { credentialsId } : {}) },
   });
 
   return { id, credentialsId };
+}
+
+/**
+ * The server's own answer to `manifest` decides the version, not the file: a
+ * hand-edited or form-built manifest can claim 2 for a server that speaks 1.
+ * Runs before a credential is minted, so a refused server leaves nothing behind.
+ */
+async function probeProtocolVersion(
+  input: InstallRemoteAdapterInput,
+): Promise<RemoteAdapterManifestFile['protocolVersion']> {
+  const { manifest } = input;
+  const secret =
+    input.secret ??
+    (manifest.credentialsId !== undefined
+      ? await loadRemoteAdapterSecret(manifest.credentialsId, input.teamId, manifest.adapterType)
+      : undefined);
+  if (secret === undefined) {
+    // Nothing to authenticate with until the connect link is submitted.
+    const claimed = RemoteAdapterManifestFile.shape.protocolVersion.safeParse(manifest.protocolVersion);
+    if (!claimed.success) {
+      throw new Error(
+        `Remote adapter "${manifest.adapterType}" cannot be installed without its secret: ${claimed.error.issues[0]?.message ?? 'protocolVersion is not 2'}`,
+      );
+    }
+    return claimed.data;
+  }
+  await fetchRemoteManifest(manifest, secret);
+  return MANIFEST_PROTOCOL_VERSION;
 }

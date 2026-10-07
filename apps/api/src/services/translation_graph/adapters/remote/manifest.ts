@@ -101,6 +101,15 @@ export const RemoteAdapterManifestFile = z.object({
 
 export type RemoteAdapterManifestFile = z.infer<typeof RemoteAdapterManifestFile>;
 
+/** What an install is handed. The version a file claims is not trusted: install
+ *  asks the server, and only a server answering version 2 is stored. The claim
+ *  stays the only evidence for an install with no credential to ask with. */
+export const RemoteAdapterManifestInput = RemoteAdapterManifestFile.extend({
+  protocolVersion: WireManifestProtocolVersion.optional(),
+});
+
+export type RemoteAdapterManifestInput = z.infer<typeof RemoteAdapterManifestInput>;
+
 /**
  * Decrypted payload of the remote adapter's credential row. The
  * `external_service_credentials` row stores `{ "secret": "<token>" }`

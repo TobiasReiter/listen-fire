@@ -156,12 +156,6 @@ export default function RemoteAdaptersPage() {
       return;
     }
     const m = parsed as Record<string, unknown>;
-    if (m.protocolVersion !== 2) {
-      setFormError(
-        `This manifest's protocolVersion is ${JSON.stringify(m.protocolVersion) ?? "missing"}; Listen-Fire needs adapters built for protocol version 2.`,
-      );
-      return;
-    }
     const auth =
       m.authStrategy && typeof m.authStrategy === "object"
         ? (m.authStrategy as Record<string, unknown>)
@@ -236,7 +230,6 @@ export default function RemoteAdaptersPage() {
     const trimmedSecret = editing.secret.trim();
     try {
       await upsertAdapter({
-        protocolVersion: 2,
         adapterType: editing.adapterType.trim(),
         baseUrl: editing.baseUrl.trim(),
         authStrategy,

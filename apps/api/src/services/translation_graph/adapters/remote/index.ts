@@ -142,7 +142,7 @@ export const OPTIONAL_REMOTE_METHODS = [
  * crossing back into branded types).
  */
 export async function fetchRemoteManifest(
-  config: RemoteAdapterConfig,
+  config: Pick<RemoteAdapterConfig, 'adapterType' | 'baseUrl' | 'authStrategy'>,
   secret: string,
 ): Promise<RemoteManifest> {
   const raw = await postRpc({
@@ -159,7 +159,7 @@ export async function fetchRemoteManifest(
   );
   if (!version.success) {
     throw new Error(
-      `Remote adapter "${config.adapterType}" refused: ${version.error.issues[0]?.message ?? 'protocolVersion is not 2'}`,
+      `Remote adapter "${config.adapterType}" at ${config.baseUrl} refused: ${version.error.issues[0]?.message ?? 'protocolVersion is not 2'}`,
     );
   }
   const result = parseWireResult(METHODS.manifest.result, raw, {

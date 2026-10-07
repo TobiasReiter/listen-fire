@@ -15,6 +15,7 @@ import { movementCatalogSnapshotForTeam, toAgentCatalogView } from '../catalog';
 import { installRemoteAdapterFromManifest } from '../../adapters/remote/install';
 import { RemoteAdapterManifestFile } from '../../adapters/remote/manifest';
 import { services } from '../../../../adapters/registry';
+import { startFakeCrmServer } from '../../../../scripts/dev/fake_crm_adapter';
 
 jest.mock('../../../credentials/credential_lifecycle', () => ({
   credentialLifecycle: () => undefined,
@@ -91,34 +92,40 @@ describe('catalog connect-method (real manifests)', () => {
   });
 
   it('surfaces a remote install as needs-secret until its secret is provisioned', async () => {
-    const manifest = RemoteAdapterManifestFile.parse({
-      protocolVersion: 2,
-      adapterType: 'acme_crm',
-      displayName: 'Acme CRM',
-      baseUrl: 'https://crm.example/adapter',
-      authStrategy: { kind: 'bearer' },
-      supportedTriggers: [],
-      runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
-      methods: ['describe', 'createRecord'],
-    });
+    // Provisioning the secret asks the server its protocol version, so one must answer.
+    const server = await startFakeCrmServer({ secret: 'crm-token' });
+    try {
+      const manifest = RemoteAdapterManifestFile.parse({
+        protocolVersion: 2,
+        adapterType: 'acme_crm',
+        displayName: 'Acme CRM',
+        baseUrl: server.baseUrl,
+        authStrategy: { kind: 'bearer' },
+        supportedTriggers: [],
+        runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
+        methods: ['describe', 'createRecord'],
+      });
 
-    // Installed without a secret → the author sees it needs connecting, via a
-    // key-entry link — and construction stays credential-free.
-    await installRemoteAdapterFromManifest({ teamId, manifest });
-    const needy = toAgentCatalogView(await movementCatalogSnapshotForTeam(teamId)).adapters as Record<
-      string,
-      { connect?: string; requiresCredential: boolean; remoteConnection?: string }
-    >;
-    expect(needy.acme_crm?.remoteConnection).toBe('needs-secret');
-    expect(needy.acme_crm?.connect).toBe('key-entry');
-    expect(needy.acme_crm?.requiresCredential).toBe(false);
+      // Installed without a secret → the author sees it needs connecting, via a
+      // key-entry link — and construction stays credential-free.
+      await installRemoteAdapterFromManifest({ teamId, manifest });
+      const needy = toAgentCatalogView(await movementCatalogSnapshotForTeam(teamId)).adapters as Record<
+        string,
+        { connect?: string; requiresCredential: boolean; remoteConnection?: string }
+      >;
+      expect(needy.acme_crm?.remoteConnection).toBe('needs-secret');
+      expect(needy.acme_crm?.connect).toBe('key-entry');
+      expect(needy.acme_crm?.requiresCredential).toBe(false);
 
-    // Provision the secret (one-step) → now connected.
-    await installRemoteAdapterFromManifest({ teamId, manifest, secret: 'crm-token' });
-    const connected = toAgentCatalogView(await movementCatalogSnapshotForTeam(teamId)).adapters as Record<
-      string,
-      { remoteConnection?: string }
-    >;
-    expect(connected.acme_crm?.remoteConnection).toBe('connected');
+      // Provision the secret (one-step) → now connected.
+      await installRemoteAdapterFromManifest({ teamId, manifest, secret: 'crm-token' });
+      const connected = toAgentCatalogView(await movementCatalogSnapshotForTeam(teamId)).adapters as Record<
+        string,
+        { remoteConnection?: string }
+      >;
+      expect(connected.acme_crm?.remoteConnection).toBe('connected');
+    } finally {
+      await server.close();
+    }
   });
 });

@@ -6,7 +6,8 @@
 // behind a guard that fails any call whose arguments carry one of those ids,
 // and driven through `createRemoteAdapter`. Every method must round-trip
 // natural names; a client that translated names to ids before sending would
-// trip the guard on each of them.
+// trip the guard on each of them. The edge is named "Employer" and lands on
+// "Company", so an edge name confused with its target type fails too.
 
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +17,7 @@ import type {
   DeleteResult,
   GetFieldValueInput,
   GetRelatedInput,
+  InvokeFieldFunctionInput,
   LinkRecordsInput,
   LinkRecordsResult,
   RelatedResult,
@@ -30,7 +32,8 @@ import type {
   DedupRules,
   FilterTranslationResult,
 } from '../../../adapter';
-import { unsupportedAssociation } from '../../../adapter';
+import { unsupportedAssociation, writeParentLinks } from '../../../adapter';
+import type { FieldEvidence } from '../../../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../../types';
 import type { TriggerType } from '../../../triggers/types';
 import type { Expression } from '#shared/expression/types';
@@ -69,7 +72,7 @@ const DESCRIPTORS: Record<string, SchemaTypeDescriptor> = {
     references: [
       {
         fieldId: WORKS_AT,
-        name: 'Company',
+        name: 'Employer',
         targetTypeId: COMPANY,
         cardinality: 'one',
         direction: 'outgoing',
@@ -87,6 +90,7 @@ const DESCRIPTORS: Record<string, SchemaTypeDescriptor> = {
 interface StoredRecord {
   typeId: string;
   fields: Record<string, unknown>;
+  evidence?: Record<string, FieldEvidence>;
 }
 
 /** Keys and stores everything by internal id; speaks names only at its
@@ -115,12 +119,9 @@ class SyntheticCrm extends BaseAdapter {
     return (await this.resolver()).typeId(naturalName(typeName));
   }
 
-  private async toInternalFields(
-    typeName: string,
-    fields: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  private async toInternalFields<V>(typeName: string, fields: Record<string, V>): Promise<Record<string, V>> {
     const resolver = await this.resolver({ types: [typeName] });
-    const out: Record<string, unknown> = {};
+    const out: Record<string, V> = {};
     for (const [name, value] of Object.entries(fields)) {
       out[resolver.fieldId(naturalName(typeName), naturalName(name))] = value;
     }
@@ -170,6 +171,10 @@ class SyntheticCrm extends BaseAdapter {
     return record.fields[fieldId] ?? null;
   }
 
+  async *iterateRelated(input: GetRelatedInput): AsyncIterable<RelatedResult> {
+    yield* await this.getRelated(input);
+  }
+
   async getRelated(input: GetRelatedInput): Promise<RelatedResult[]> {
     if (input.position.identity.kind !== 'stable') return [];
     const from = input.position.identity.recordId;
@@ -188,7 +193,21 @@ class SyntheticCrm extends BaseAdapter {
     const typeId = await this.typeIdOf(input.recordType);
     const externalId = `rec-${++this.seq}`;
     const fields = await this.toInternalFields(input.recordType, input.fields);
-    this.records.set(externalId, { typeId, fields });
+    const evidence = input.evidence && (await this.toInternalFields(input.recordType, input.evidence));
+    this.records.set(externalId, {
+      typeId,
+      fields,
+      ...(evidence ? { evidence } : {}),
+    });
+    for (const parent of writeParentLinks(input)) {
+      const resolver = await this.resolver({ types: [parent.recordType] });
+      const edgeId = resolver.edgeReadId(naturalName(parent.recordType), naturalName(parent.edgeName));
+      this.links.set(JSON.stringify([parent.externalId, edgeId, externalId]), {
+        from: parent.externalId,
+        edgeId,
+        to: externalId,
+      });
+    }
     return {
       adapterType: ADAPTER_TYPE,
       externalId,
@@ -234,6 +253,12 @@ class SyntheticCrm extends BaseAdapter {
 
   async unlinkRecords(input: UnlinkRecordsInput): Promise<UnlinkRecordsResult> {
     return { removed: this.links.delete((await this.link(input)).key) };
+  }
+
+  async invokeFieldFunction(input: InvokeFieldFunctionInput): Promise<unknown> {
+    const resolver = await this.resolver({ types: [input.recordType] });
+    resolver.fieldId(naturalName(input.recordType), naturalName(input.fieldId));
+    return `${input.functionName}(${input.fieldId}): ${input.args.instructions} ${JSON.stringify(input.args.data)}`;
   }
 
   async translateFilter(input: {
@@ -331,6 +356,7 @@ describe('remote parity with an adapter whose ids are not its names', () => {
     expect(typeof remote.unlinkRecords).toBe('function');
     expect(typeof remote.translateFilter).toBe('function');
     expect(typeof remote.getDedupRules).toBe('function');
+    expect(typeof remote.invokeFieldFunction).toBe('function');
     expect(remote.awaitable).toBeUndefined();
   });
 
@@ -338,7 +364,7 @@ describe('remote parity with an adapter whose ids are not its names', () => {
     const descriptor = await remote.describe('Contact');
     expect(descriptor?.displayName).toBe('Contact');
     expect(descriptor?.fields.map((f) => f.displayName)).toEqual(['Email', 'Name']);
-    expect(descriptor?.references.map((r) => r.name)).toEqual(['Company']);
+    expect(descriptor?.references.map((r) => [r.name, r.targetTypeId])).toEqual([['Employer', COMPANY]]);
   });
 
   it('listEntryPoints names both types', async () => {
@@ -402,7 +428,7 @@ describe('remote parity with an adapter whose ids are not its names', () => {
   it('linkRecords over the named edge, then getRelated walks it and lands a named type', async () => {
     const link = {
       from: { recordType: 'Contact', externalId: contactId },
-      edgeName: 'Company',
+      edgeName: 'Employer',
       to: { recordType: 'Company', externalId: companyId },
       mutationContext,
     };
@@ -411,7 +437,7 @@ describe('remote parity with an adapter whose ids are not its names', () => {
 
     const related = await remote.getRelated({
       position: { adapterType: ADAPTER_TYPE, recordType: 'Contact', identity: { kind: 'stable', recordId: contactId } },
-      fieldId: 'Company',
+      fieldId: 'Employer',
       direction: 'outgoing',
     });
     expect(related.map((r) => [r.position.recordType, r.position.identity])).toEqual([
@@ -420,6 +446,43 @@ describe('remote parity with an adapter whose ids are not its names', () => {
 
     expect(await remote.unlinkRecords!(link)).toEqual({ removed: true });
     expect(await remote.unlinkRecords!(link)).toEqual({ removed: false });
+  });
+
+  it('createRecord carries parentLinks over the named edge and evidence keyed by natural field names', async () => {
+    const company = await remote.createRecord({
+      recordType: 'Company',
+      fields: { Name: 'Difference Engines' },
+      evidence: { Name: { quote: 'founded Difference Engines' } },
+      parentLinks: [{ recordType: 'Contact', externalId: contactId, edgeName: 'Employer' }],
+      mutationContext,
+    });
+    expect(synthetic.records.get(company.externalId)?.evidence).toEqual({
+      [COMPANY_NAME]: { quote: 'founded Difference Engines' },
+    });
+    expect([...synthetic.links.values()]).toContainEqual({ from: contactId, edgeId: WORKS_AT, to: company.externalId });
+  });
+
+  it('iterateRelated pages over the named edge', async () => {
+    const landed: (string | null)[] = [];
+    for await (const r of remote.iterateRelated!({
+      position: { adapterType: ADAPTER_TYPE, recordType: 'Contact', identity: { kind: 'stable', recordId: contactId } },
+      fieldId: 'Employer',
+      direction: 'outgoing',
+    })) {
+      landed.push(r.position.recordType);
+    }
+    expect(landed).toEqual(['Company']);
+  });
+
+  it('invokeFieldFunction names the type and field naturally', async () => {
+    expect(
+      await remote.invokeFieldFunction!({
+        recordType: 'Contact',
+        fieldId: 'Email',
+        functionName: 'summarise',
+        args: { instructions: 'shorten', data: ['ada'] },
+      }),
+    ).toBe('summarise(Email): shorten ["ada"]');
   });
 
   it('updateRecord writes by natural field names', async () => {

@@ -559,7 +559,7 @@ describe('fetchRemoteManifest refuses an older server', () => {
     const v1 = { adapterType: 'remote-email', supportedTriggers: [], runtimeCapabilities, methods: [] };
     postRpcMock.mockResolvedValueOnce(v1);
     await expect(fetchRemoteManifest(config, 's3cr3t')).rejects.toThrow(
-      /Remote adapter "remote-email" refused: protocolVersion: expected 2, got nothing/,
+      new RegExp(`Remote adapter "remote-email" at ${config.baseUrl} refused: protocolVersion: expected 2, got nothing`),
     );
     postRpcMock.mockResolvedValueOnce({ ...v1, protocolVersion: 1 });
     await expect(fetchRemoteManifest(config, 's3cr3t')).rejects.toThrow(/protocolVersion: expected 2, got 1/);

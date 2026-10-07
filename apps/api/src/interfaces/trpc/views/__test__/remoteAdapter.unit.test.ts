@@ -11,7 +11,10 @@
  */
 
 import { remoteAdapterRouter } from '../remoteAdapter';
-import { RemoteAdapterManifestFile } from '../../../../services/translation_graph/adapters/remote/manifest';
+import {
+  RemoteAdapterManifestFile,
+  RemoteAdapterManifestInput,
+} from '../../../../services/translation_graph/adapters/remote/manifest';
 
 describe('remoteAdapter router — sanity', () => {
   it('exports the router factory', () => {
@@ -36,6 +39,13 @@ describe('upsertFromManifest input contract', () => {
 
   it('accepts a well-formed manifest', () => {
     expect(RemoteAdapterManifestFile.safeParse(validManifest).success).toBe(true);
+  });
+
+  it('accepts a manifest with no protocolVersion: install asks the server for it', () => {
+    const { protocolVersion, ...unversioned } = validManifest;
+    void protocolVersion;
+    expect(RemoteAdapterManifestInput.safeParse(unversioned).success).toBe(true);
+    expect(RemoteAdapterManifestFile.safeParse(unversioned).success).toBe(false);
   });
 
   it('rejects a manifest missing the adapterType slug', () => {

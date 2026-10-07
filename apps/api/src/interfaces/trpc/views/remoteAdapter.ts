@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
-import { RemoteAdapterManifestFile } from '../../../services/translation_graph/adapters/remote/manifest';
+import { RemoteAdapterManifestInput } from '../../../services/translation_graph/adapters/remote/manifest';
 import {
   deleteRemoteAdapter,
   getRemoteAdapter,
@@ -21,7 +21,7 @@ import type { UserId } from '../../../generated/kysely/core/User';
  * is never taken as untrusted input, so an install can only ever touch the
  * caller's own team. The manifest IS both the install artifact and the
  * editable record, so `upsertFromManifest` validates against the existing
- * `RemoteAdapterManifestFile` zod schema rather than redefining the shape.
+ * `RemoteAdapterManifestInput` zod schema rather than redefining the shape.
  *
  * The encrypted credential never travels through here — only the
  * `credentialsId` FK into `external_service_credentials`, which is safe to
@@ -86,15 +86,16 @@ const remoteAdapterRouter = (procedure: typeof trpc.procedure) => {
      * Install or update a remote adapter from a manifest file. Upserts on
      * `(team_id, adapter_type)` — re-importing the same slug edits the
      * existing install rather than creating a duplicate. The input is the
-     * manifest (canonical `RemoteAdapterManifestFile` schema) plus an OPTIONAL
+     * manifest (canonical `RemoteAdapterManifestInput` schema) plus an OPTIONAL
      * `secret`: when present, the adapter's auth secret is minted into an
      * encrypted `REMOTE` credential (bound to the slug) and linked in the same
      * step — install and connect are one felt action. The secret never enters
      * the stored manifest. Omit it to install now and connect the secret later
-     * via the connect link.
+     * via the connect link. The protocol version is asked of the server with
+     * the new secret, or the stored one on an edit; the form never claims it.
      */
     upsertFromManifest: procedure
-      .input(RemoteAdapterManifestFile.extend({ secret: z.string().min(1).optional() }))
+      .input(RemoteAdapterManifestInput.extend({ secret: z.string().min(1).optional() }))
       .mutation(async ({ input }) => {
         const ctx = currentContext();
         const { secret, ...manifest } = input;
