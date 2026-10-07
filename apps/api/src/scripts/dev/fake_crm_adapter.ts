@@ -37,6 +37,7 @@ import type {
   RemoveEventSubscriptionInput,
   GetFieldValueInput,
   GetRelatedInput,
+  RelatedPage,
   RelatedResult,
   ResolveEntityInput,
   ResolveEntityResult,
@@ -51,7 +52,7 @@ import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
 } from '../../services/translation_graph/types';
-import { positionData } from '../../services/translation_graph/types';
+import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../services/translation_graph/types';
 import { createAdapterProtocolHandler } from '../../services/translation_graph/protocol/server';
 import type { RemoteAdapterManifestFile } from '../../services/translation_graph/adapters/remote/manifest';
 
@@ -115,6 +116,7 @@ export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile
       'resolveEntity',
       'getFieldValue',
       'getRelated',
+      'iterateRelatedPage',
       'createRecord',
       'updateRecord',
       'deleteRecord',
@@ -126,6 +128,9 @@ export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile
     ],
   };
 }
+
+/** Companies per traversal page — small, so paging is exercised. */
+export const FAKE_CRM_PAGE_SIZE = 2;
 
 /** The one event the CRM emits: a company was created. */
 export const FAKE_CRM_COMPANY_CREATED = 'company.created';
@@ -192,6 +197,19 @@ export function createFakeCrmAdapter(): FakeCrmAdapter {
   const subscriptions: FakeCrmSubscription[] = [];
   let seq = 0;
 
+  const companiesFrom = (input: GetRelatedInput): FakeCrmWrite[] =>
+    input.position.recordType === META_RECORD_TYPE && input.fieldId === FAKE_CRM_COMPANY_TYPE
+      ? writes
+      : [];
+  const companyResult = (write: FakeCrmWrite): RelatedResult => ({
+    position: makeStablePosition({
+      adapterType: FAKE_CRM_ADAPTER_TYPE,
+      recordType: FAKE_CRM_COMPANY_TYPE,
+      recordId: write.externalId,
+      data: { ...write.fields },
+    }),
+  });
+
   const adapter: FakeCrmAdapter = {
     writes,
     subscriptions,
@@ -226,9 +244,20 @@ export function createFakeCrmAdapter(): FakeCrmAdapter {
       return data[input.fieldId] ?? null;
     },
 
-    // Write-only CRM: nothing to traverse.
-    async getRelated(_input: GetRelatedInput): Promise<RelatedResult[]> {
-      return [];
+    // The companies written so far, read back from the root — paged in
+    // small pages so a traversal crosses the wire in several round trips.
+    async getRelated(input: GetRelatedInput): Promise<RelatedResult[]> {
+      return companiesFrom(input).map(companyResult);
+    },
+
+    async iterateRelatedPage(input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage> {
+      const offset = typeof cursor === 'number' ? cursor : 0;
+      const companies = companiesFrom(input);
+      const next = offset + FAKE_CRM_PAGE_SIZE;
+      return {
+        items: companies.slice(offset, next).map(companyResult),
+        ...(next < companies.length ? { nextCursor: next } : {}),
+      };
     },
 
     async createRecord(input: WriteInput): Promise<WriteResult> {

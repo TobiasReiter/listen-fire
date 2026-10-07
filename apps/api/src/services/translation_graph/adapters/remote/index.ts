@@ -38,6 +38,7 @@ import type {
   InvokeFieldFunctionInput,
   DiscriminableEvent,
   EventType,
+  RelatedPage,
   RelatedResult,
   ResolveEntityInput,
   ResolveEntityResult,
@@ -82,7 +83,7 @@ import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
 import type { AuthStrategy } from '../../protocol/client';
 import { METHODS, WireManifestProtocolVersion } from '../../protocol/schema';
 import type { MethodName } from '../../protocol/schema';
-import { writeParentLinks, unsupportedAssociation } from '../../adapter';
+import { iterateRelatedPages, writeParentLinks, unsupportedAssociation } from '../../adapter';
 
 export interface RemoteAdapterConfig {
   /** Slug the engine routes on. */
@@ -108,8 +109,8 @@ export interface RemoteManifest {
  * Optional methods that round-trip cleanly over the protocol. The factory
  * deletes any of these the manifest didn't advertise so the engine's
  * `if (adapter.method)` capability gates see `undefined`. Two optional
- * surfaces are gated differently: `iterateRelated` stays while the server
- * advertises either paging method, and `awaitable` exists only when the
+ * surfaces are gated differently: `iterateRelated` and `iterateRelatedPage`
+ * stay while the server advertises either paging method, and `awaitable` exists only when the
  * server advertises `resolveAwait`.
  */
 export const OPTIONAL_REMOTE_METHODS = [
@@ -380,14 +381,20 @@ export class RemoteAdapter implements Adapter {
 
   // ── Streaming (paged) ──────────────────────────────────────────────────
 
-  async *iterateRelated(input: GetRelatedInput): AsyncIterable<RelatedResult> {
+  iterateRelated(input: GetRelatedInput): AsyncIterable<RelatedResult> {
+    return iterateRelatedPages((cursor) => this.iterateRelatedPage(input, cursor));
+  }
+
+  /** One page over the wire, so a remote fronted by another protocol server
+   *  is paged through rather than drained. A v1-only server pages under the
+   *  old `iterateRelated` name with the same shape. */
+  async iterateRelatedPage(input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage> {
     const method = this.advertised.has('iterateRelatedPage') ? 'iterateRelatedPage' : 'iterateRelated';
-    let cursor: unknown = undefined;
-    do {
-      const page = await this.call(method, { ...input, cursor });
-      yield* page.items as unknown as RelatedResult[];
-      cursor = page.nextCursor;
-    } while (cursor != null);
+    const page = await this.call(method, { ...input, cursor });
+    return {
+      items: page.items as unknown as RelatedResult[],
+      ...(page.nextCursor != null ? { nextCursor: page.nextCursor } : {}),
+    };
   }
 
   // ── Optional forwarders (pruned by the factory when unadvertised) ──────
@@ -513,6 +520,7 @@ export function createRemoteAdapter(input: RemoteAdapterInput): RemoteAdapter {
   }
   if (!advertised.has('iterateRelated') && !advertised.has('iterateRelatedPage')) {
     prune('iterateRelated');
+    prune('iterateRelatedPage');
   }
 
   return adapter;

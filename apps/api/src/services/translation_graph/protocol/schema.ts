@@ -690,7 +690,8 @@ export const METHODS = {
   },
   // One bounded page of a traversal: the server returns `nextCursor` while
   // more remain and the client echoes it back. Preferred over `iterateRelated`
-  // when advertised.
+  // when advertised. A server whose adapter can only stream answers one page
+  // with no `nextCursor` (the reference kit caps it at 1,000 items).
   iterateRelatedPage: {
     params: WireGetRelatedInput.extend({ cursor: z.unknown().optional() }),
     result: RelatedPage,
@@ -771,8 +772,9 @@ export const METHODS = {
   },
   resolveFileRef: {
     params: z.object({ ref: WireFileRef }),
-    // Owner-side resolution returns a URL the engine fetches into a stream;
-    // bytes never cross the RPC envelope directly.
+    // Remote adapters serve bytes by URL; the client fetches. The answer is a
+    // URL the client turns into a stream — bytes never cross the envelope. A
+    // file with no URL to give answers `method_not_implemented`.
     result: z.object({ url: z.string(), contentType: z.string().optional() }),
   },
   invokeFieldFunction: {

@@ -2300,6 +2300,49 @@ describe('AttioAdapter root collection reads (the wired category-3 reads)', () =
     expect(eager.length).toBeGreaterThan(0);
   });
 
+  it('iterateRelatedPage pages a root collection with Attio\'s offset as the cursor', async () => {
+    const adapter = makeRootReadAdapter('team-root-paged');
+    const PAGE = 500;
+    const TOTAL = PAGE + 3;
+    const offsets: number[] = [];
+    const inner = (adapter as unknown as { getApiClient: () => Promise<Record<string, unknown>> }).getApiClient;
+    (adapter as unknown as { getApiClient: () => Promise<Record<string, unknown>> }).getApiClient = async () => ({
+      ...(await inner()),
+      queryRecordsPage: async ({ offset, limit }: { objectId: string; limit: number; offset: number }) => {
+        offsets.push(offset);
+        return Array.from({ length: Math.max(0, Math.min(limit, TOTAL - offset)) }, (_, i) => ({
+          id: { record_id: `rec-${offset + i}` },
+          values: {},
+        }));
+      },
+    });
+    const input = { position: attioMeta, fieldId: 'Companies', direction: 'outgoing' as const };
+
+    const first = await adapter.iterateRelatedPage(input);
+    expect(first.items).toHaveLength(PAGE);
+    expect(first.nextCursor).toBe(PAGE);
+    const second = await adapter.iterateRelatedPage(input, first.nextCursor);
+    expect(second.items.map((r) => positionRecordId(r.position))).toEqual(['rec-500', 'rec-501', 'rec-502']);
+    expect(second.nextCursor).toBeUndefined();
+    expect(offsets).toEqual([0, PAGE]);
+
+    // The stream is the same pages walked to the end.
+    const streamed: string[] = [];
+    for await (const r of adapter.iterateRelated(input)) streamed.push(positionRecordId(r.position) ?? '');
+    expect(streamed).toHaveLength(TOTAL);
+    expect(streamed[TOTAL - 1]).toBe('rec-502');
+  });
+
+  it('iterateRelatedPage refuses a cursor it did not mint', async () => {
+    const adapter = makeRootReadAdapter('team-root-badcursor');
+    await expect(
+      adapter.iterateRelatedPage(
+        { position: attioMeta, fieldId: 'Hot Leads', direction: 'outgoing' },
+        'not-an-offset',
+      ),
+    ).rejects.toThrow(/unrecognised page cursor/);
+  });
+
   it('a READ over the parent-only Comment / File / List Entry types fails loudly at the root', async () => {
     const adapter = makeRootReadAdapter('team-root-writeonly');
     await expect(

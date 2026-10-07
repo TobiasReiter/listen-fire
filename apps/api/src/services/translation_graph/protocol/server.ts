@@ -17,13 +17,18 @@
 // the method's `METHODS` schema answer `bad_request` naming the method and the
 // offending path. Both are in-envelope (HTTP 200), non-retryable.
 //
-// Streaming methods (`iterateRelated`, `iterateRelatedPage`) return an `AsyncIterable`
-// from the adapter. The protocol pages them as `{ items, nextCursor }`. The
-// degenerate-but-correct implementation here drains the whole iterable into a
-// single page on the first (cursorless) call and returns no `nextCursor`; the
-// client's page loop terminates immediately. A production server would slice
-// the iterable into bounded pages and emit an opaque `nextCursor` — a single
-// page is a valid cursor implementation (one page, no continuation).
+// Paged methods (`iterateRelatedPage`, and its v1 spelling `iterateRelated`)
+// answer `{ items, nextCursor }`. An adapter that pages natively
+// (`Adapter.iterateRelatedPage`) is paged through as-is: its cursor rides the
+// wire opaque and comes back on the next call. An adapter with only a stream
+// (`Adapter.iterateRelated`) is drained into one page, capped at
+// `DRAINED_PAGE_LIMIT` items — past that the page is cut short with no
+// `nextCursor` and a warning names the adapter and method, because a stream
+// has no cursor to resume from.
+//
+// `resolveFileRef` answers by URL: bytes never ride the envelope, so a file
+// crosses the wire only when its ref carries a fetchable `url` (the client
+// fetches it). A ref without one answers `method_not_implemented`.
 //
 // Dependency-light by design: Node `http` types only, no express.
 
@@ -42,12 +47,16 @@ import type { MethodName, RpcResponseShape } from './schema';
  */
 const MANIFEST_METHOD = 'manifest' satisfies MethodName;
 
+/** Methods the protocol delivers as paged `{ items, nextCursor }` (see file
+ *  header). */
+const PAGED_METHODS = new Set<MethodName>(['iterateRelated', 'iterateRelatedPage']);
+
 /**
- * Methods the protocol delivers as paged `{ items, nextCursor }` even though
- * the underlying `Adapter` member returns an `AsyncIterable`. The server
- * drains the iterable into a single page (see file header).
+ * The most items one page carries when the adapter can only stream: a stream
+ * has no cursor to resume from, so everything past this is dropped (loudly).
+ * An adapter that needs more implements `iterateRelatedPage`.
  */
-const STREAMING_METHODS = new Set<MethodName>(['iterateRelated', 'iterateRelatedPage']);
+export const DRAINED_PAGE_LIMIT = 1_000;
 
 /**
  * A few `Adapter` members take a single POSITIONAL argument rather than an
@@ -82,9 +91,10 @@ function callArgs(method: MethodName, params: unknown): unknown[] {
 /**
  * The in-process member a protocol method dispatches to, as (receiver, member
  * name). Most methods are the adapter member of the same name; the exceptions
- * are the ones whose in-process home differs from their wire name.
- * `resolveFileRef` has none: its wire bridging (stream → hosted URL) is not
- * implemented by the generic server, so it is never advertised or dispatched.
+ * are the ones whose in-process home differs from their wire name. The paged
+ * methods (`servePage`) and `resolveFileRef` (answered by URL in the handler)
+ * don't forward their params verbatim, but still advertise and dispatch
+ * through the member named here.
  */
 function adapterMember(
   adapter: Adapter,
@@ -92,13 +102,15 @@ function adapterMember(
 ): { receiver: object; name: string } | undefined {
   switch (method) {
     case 'manifest':
-    case 'resolveFileRef':
       return undefined;
     case 'resolveAwait':
       return adapter.awaitable ? { receiver: adapter.awaitable, name: 'resolveAwait' } : undefined;
-    // Until in-process adapters page natively, a page is the drained iterable.
+    case 'iterateRelated':
     case 'iterateRelatedPage':
-      return { receiver: adapter, name: 'iterateRelated' };
+      return {
+        receiver: adapter,
+        name: adapter.iterateRelatedPage ? 'iterateRelatedPage' : 'iterateRelated',
+      };
     default:
       return { receiver: adapter, name: method };
   }
@@ -181,8 +193,13 @@ export function createAdapterProtocolHandler(opts: {
   adapter: Adapter;
   methods?: readonly string[];
   authenticate?: (headers: IncomingHttpHeaders) => boolean;
+  /** Where a served-but-degraded answer is reported (a drained page cut at
+   *  `DRAINED_PAGE_LIMIT`). Defaults to `console.warn`, keeping the kit free
+   *  of the host's logger. */
+  warn?: (message: string) => void;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { adapter, authenticate } = opts;
+  const warn = opts.warn ?? ((message: string) => console.warn(message));
   const advertisedMethods = opts.methods ?? implementedMethods(adapter);
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -261,28 +278,6 @@ export function createAdapterProtocolHandler(opts: {
       return;
     }
 
-    // `resolveFileRef` is the one method whose in-process return shape
-    // (`{ stream }`) does NOT match its wire result shape (`{ url }`): a Node
-    // stream can't ride the JSON envelope. A server fronting a file-owning
-    // adapter must host the bytes behind a URL and return that — which needs
-    // the registry/token + pass-through machinery on the server side. That
-    // wiring lands in a later slice, so the generic dispatch would
-    // mis-serialise the stream. Until then it is unimplemented here. The
-    // client (`RemoteAdapter.resolveFileRef`) is the consumer; it talks to a
-    // real owner server, not this generic bridge.
-    if (method === 'resolveFileRef') {
-      send(
-        res,
-        200,
-        errorEnvelope(
-          'method_not_implemented',
-          'resolveFileRef url-hosting is not yet implemented by the generic protocol server.',
-          false,
-        ),
-      );
-      return;
-    }
-
     const call = implementation(adapter, method);
     if (!call) {
       send(
@@ -297,14 +292,38 @@ export function createAdapterProtocolHandler(opts: {
       return;
     }
 
+    // `resolveFileRef`'s in-process answer is a stream, which can't ride the
+    // envelope; the wire answer is a URL the client fetches. Only a ref that
+    // already carries one is servable — the kit hosts no bytes itself.
+    if (method === 'resolveFileRef') {
+      const { ref } = METHODS.resolveFileRef.params.parse(params);
+      if (typeof ref.url === 'string') {
+        send(res, 200, {
+          ok: true,
+          result: { url: ref.url, ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}) },
+        });
+      } else {
+        send(
+          res,
+          200,
+          errorEnvelope(
+            'method_not_implemented',
+            'resolveFileRef: this file is not served by URL, and remote adapters serve bytes only by URL.',
+            false,
+          ),
+        );
+      }
+      return;
+    }
+
     // ── Dispatch ──────────────────────────────────────────────────────────
     // The adapter receives the request's own params, not zod's parsed copy:
     // the wire schemas are structural mirrors that drop keys they don't name,
     // and validation is the gate, not a transform.
     const args = callArgs(method, params);
     try {
-      if (STREAMING_METHODS.has(method)) {
-        const result = await drainStream(call(...args));
+      if (PAGED_METHODS.has(method)) {
+        const result = await servePage({ adapter, method, call, params, warn });
         send(res, 200, { ok: true, result });
         return;
       }
@@ -329,16 +348,40 @@ export function createAdapterProtocolHandler(opts: {
 }
 
 /**
- * Drain an `AsyncIterable` into a single protocol page. Real servers would
- * page; one page (no `nextCursor`) is the degenerate-but-correct
- * implementation — the client's page loop terminates after it.
+ * One page of a traversal: the adapter's own page when it pages natively
+ * (`call` is then its `iterateRelatedPage`), else its stream drained up to
+ * `DRAINED_PAGE_LIMIT`.
  */
-async function drainStream(iterable: unknown): Promise<{ items: unknown[] }> {
+async function servePage(input: {
+  adapter: Adapter;
+  method: MethodName;
+  call: (...args: unknown[]) => unknown;
+  params: unknown;
+  warn: (message: string) => void;
+}): Promise<unknown> {
+  const { adapter, method, call, warn } = input;
+  // The cursor rides beside the traversal input on the wire; in process it is
+  // `iterateRelatedPage`'s second argument, and a stream takes none.
+  const params: Record<string, unknown> =
+    input.params !== null && typeof input.params === 'object' ? { ...input.params } : {};
+  const { cursor, ...related } = params;
+
+  if (typeof adapter.iterateRelatedPage === 'function') {
+    return call(related, cursor);
+  }
+  const iterable = call(related);
   if (!isAsyncIterable(iterable)) {
-    throw new Error('a streaming adapter method did not return an AsyncIterable');
+    throw new Error(`${method}: the adapter's iterateRelated did not return an AsyncIterable`);
   }
   const items: unknown[] = [];
   for await (const item of iterable) {
+    if (items.length === DRAINED_PAGE_LIMIT) {
+      warn(
+        `[protocol] ${adapter.adapterType}.${method}: drained page cut at ${DRAINED_PAGE_LIMIT} items ` +
+          '(the adapter only streams, so the rest cannot be resumed; implement iterateRelatedPage to page)',
+      );
+      break;
+    }
     items.push(item);
   }
   return { items };

@@ -841,6 +841,20 @@ export interface Adapter {
    */
   iterateRelated?(input: GetRelatedInput): AsyncIterable<RelatedResult>;
 
+  /**
+   * One bounded page of `iterateRelated`, for adapters whose source pages
+   * natively (an offset, a continuation token). `cursor` is absent on the
+   * first call; the adapter answers `nextCursor` while more remain and the
+   * caller echoes it back. The cursor is opaque to everything but the adapter
+   * that minted it.
+   *
+   * This is what lets a traversal cross the wire in bounded pages: the
+   * protocol server serves `iterateRelatedPage` from it, where an adapter
+   * with only `iterateRelated` has to be drained into one page. An adapter
+   * implementing both keeps them one implementation (`iterateRelatedPages`).
+   */
+  iterateRelatedPage?(input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage>;
+
   // ── 4. Event seams ────────────────────────────────────────────────────
   // The adapter turns an UNSOLICITED inbound signal into a stream of
   // `DiscriminableEvent`s; the engine discriminates each against the declared
@@ -1644,6 +1658,29 @@ export interface RelatedResult {
    * id). Omitted by adapters without edge properties.
    */
   edgeProperties?: Record<string, unknown>;
+}
+
+/** One page of a traversal — see `Adapter.iterateRelatedPage`. */
+export interface RelatedPage {
+  items: RelatedResult[];
+  /** Absent on the last page. */
+  nextCursor?: unknown;
+}
+
+/**
+ * Walk a paged traversal to its end as a stream: the first page is fetched
+ * cursorless and each page's `nextCursor` is echoed back until a page
+ * carries none.
+ */
+export async function* iterateRelatedPages(
+  page: (cursor: unknown) => Promise<RelatedPage>,
+): AsyncIterable<RelatedResult> {
+  let cursor: unknown = undefined;
+  do {
+    const current = await page(cursor);
+    yield* current.items;
+    cursor = current.nextCursor;
+  } while (cursor != null);
 }
 
 // ── Capability declarations ───────────────────────────────────────────────

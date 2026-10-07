@@ -23,9 +23,11 @@ import {
   RemoteAdapter,
 } from '../../../services/translation_graph/adapters/remote';
 import type { RemoteAdapterConfig } from '../../../services/translation_graph/adapters/remote';
+import { makeMetaPosition, positionData } from '../../../services/translation_graph/types';
 import {
   FAKE_CRM_ADAPTER_TYPE,
   FAKE_CRM_COMPANY_TYPE,
+  FAKE_CRM_PAGE_SIZE,
   startFakeCrmServer,
 } from '../fake_crm_adapter';
 import type { FakeCrmServer } from '../fake_crm_adapter';
@@ -88,6 +90,53 @@ describe('Fake CRM RemoteAdapter round-trip (over real HTTP, no Postgres)', () =
     expect(server.writes).toHaveLength(1);
     expect(server.writes[0]?.fields).toMatchObject({ Name: 'Vireo Robotics' });
     expect(server.writes[0]?.externalId).toBe(result.externalId);
+  });
+});
+
+// The written companies read back from the root cross the wire in the fake
+// CRM's own small pages: the RemoteAdapter echoes each cursor until the last.
+describe('Fake CRM pages a traversal over the wire', () => {
+  let server: FakeCrmServer;
+  let remote: RemoteAdapter;
+
+  beforeAll(async () => {
+    server = await startFakeCrmServer({ secret: SECRET });
+    const config: RemoteAdapterConfig = {
+      adapterType: FAKE_CRM_ADAPTER_TYPE,
+      baseUrl: server.baseUrl,
+      authStrategy: { kind: 'bearer' },
+      credentialsId: 'test',
+    };
+    const manifest = await fetchRemoteManifest(config, SECRET);
+    remote = createRemoteAdapter({ config, secret: SECRET, cacheScopeId: 'fake-crm-paging', manifest });
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it('streams every company across ceil(n / page size) pages', async () => {
+    const names = ['Alder', 'Birch', 'Cedar', 'Dogwood', 'Elm'];
+    for (const Name of names) {
+      await remote.createRecord({
+        recordType: FAKE_CRM_COMPANY_TYPE,
+        fields: { Name },
+        mutationContext: MUTATION_CONTEXT,
+      });
+    }
+    const input = {
+      position: makeMetaPosition(FAKE_CRM_ADAPTER_TYPE),
+      fieldId: FAKE_CRM_COMPANY_TYPE,
+      direction: 'outgoing' as const,
+    };
+
+    const first = await remote.iterateRelatedPage!(input);
+    expect(first.items).toHaveLength(FAKE_CRM_PAGE_SIZE);
+    expect(first.nextCursor).toBe(FAKE_CRM_PAGE_SIZE);
+
+    const streamed: unknown[] = [];
+    for await (const r of remote.iterateRelated!(input)) streamed.push(positionData(r.position));
+    expect(streamed).toEqual(names.map((Name) => ({ Name })));
   });
 });
 

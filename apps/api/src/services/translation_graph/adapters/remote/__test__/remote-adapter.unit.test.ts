@@ -428,6 +428,52 @@ describe('RemoteAdapter streaming re-wrap', () => {
     expect(calledMethods()).toEqual(['iterateRelatedPage', 'iterateRelatedPage']);
     expect(postRpcMock.mock.calls[1][0].params).toMatchObject({ ...input, cursor: 'rc1' });
   });
+
+  it('loops the cursor through three pages and stops at the page with none', async () => {
+    const r3 = { position: samplePosition, edgeId: 'e3' };
+    enqueue(
+      { items: [r1], nextCursor: { page: 2 } },
+      { items: [r2], nextCursor: { page: 3 } },
+      { items: [r3] },
+    );
+    const adapter = buildAdapter(['listEntryPoints', 'describe', 'iterateRelatedPage']);
+    expect(await drain(adapter)).toEqual([r1, r2, r3]);
+    expect(postRpcMock.mock.calls.map((c) => (c[0].params as { cursor?: unknown }).cursor)).toEqual([
+      undefined,
+      { page: 2 },
+      { page: 3 },
+    ]);
+  });
+
+  it('a failing page surfaces through the stream after the pages before it', async () => {
+    const adapter = buildAdapter(['listEntryPoints', 'describe', 'iterateRelatedPage']);
+    postRpcMock
+      .mockImplementationOnce(async () => ({ items: [r1], nextCursor: 'rc1' }))
+      .mockImplementationOnce(async () => {
+        throw new Error('page 2 exploded');
+      });
+    const out: unknown[] = [];
+    await expect(
+      (async () => {
+        for await (const r of adapter.iterateRelated!(input)) out.push(r);
+      })(),
+    ).rejects.toThrow('page 2 exploded');
+    expect(out).toEqual([r1]);
+  });
+
+  it('exposes one page as iterateRelatedPage, so a remote behind a remote pages through', async () => {
+    enqueue({ items: [r2], nextCursor: 'rc2' });
+    const adapter = buildAdapter(['listEntryPoints', 'describe', 'iterateRelatedPage']);
+    expect(await adapter.iterateRelatedPage!(input, 'rc1')).toEqual({ items: [r2], nextCursor: 'rc2' });
+    expect(calledMethods()).toEqual(['iterateRelatedPage']);
+    expect(postRpcMock.mock.calls[0][0].params).toMatchObject({ ...input, cursor: 'rc1' });
+  });
+
+  it('prunes iterateRelatedPage with iterateRelated when neither paging method is advertised', () => {
+    const adapter = buildAdapter(['listEntryPoints', 'describe']);
+    expect(adapter.iterateRelatedPage).toBeUndefined();
+    expect(adapter.iterateRelated).toBeUndefined();
+  });
 });
 
 describe('RemoteAdapter manifest gating', () => {
