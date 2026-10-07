@@ -48,9 +48,9 @@ afterEach(() => {
 });
 
 describe('the automations registry', () => {
-  it('runs one drain worker, under the unit lock until cross-process write locks land', () => {
+  it('runs one drain worker on every instance: no unit lock, each run under its own lease', () => {
     expect(automationsWorkers.workers.map((each) => each.id)).toEqual(['automations.drain']);
-    expect(automationsWorkers.lock).toBe(true);
+    expect(automationsWorkers.lock).toBe(false);
   });
 
   it('hands the registry the loop stop, so shutdown can wind the drain down', () => {

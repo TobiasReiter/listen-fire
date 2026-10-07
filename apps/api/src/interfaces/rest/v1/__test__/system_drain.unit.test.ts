@@ -13,8 +13,6 @@ jest.mock('../../../../services/work/drain', () => ({
   drainUntilIdle: (opts: unknown) => drainUntilIdle(opts),
   recordExternalDrainPass: (result: unknown) => recordExternalDrainPass(result),
 }));
-const holdsUnitLock = jest.fn((_unit: string) => true);
-jest.mock('../../../../startup/registry', () => ({ holdsUnitLock: (unit: string) => holdsUnitLock(unit) }));
 jest.mock('../../../../services/context', () => ({ currentContext: jest.fn() }));
 jest.mock('../../../../services/system_debug', () => ({ listTgRuns: jest.fn(), getTgRun: jest.fn() }));
 jest.mock('../../../../lib/knowledge/orchestrator', () => ({ runConversationTurn: jest.fn() }));
@@ -49,7 +47,6 @@ afterAll((done) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  holdsUnitLock.mockReturnValue(true);
   scopes = ['system'];
 });
 
@@ -99,16 +96,23 @@ describe('POST /system/automations/drain', () => {
     expect(recordExternalDrainPass).not.toHaveBeenCalled();
   });
 
-  it('answers 503 without draining on an instance that does not hold the automations lock', async () => {
-    holdsUnitLock.mockReturnValue(false);
+  it('drains on any instance: two overlapping ticks both drain', async () => {
+    let finish: () => void = () => {};
+    drainUntilIdle.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ claimed: 1, ran: 1, recovered: 0, failed: 0, deferred: 0, claimFailed: false });
+        }),
+    );
+    drainUntilIdle.mockResolvedValueOnce({ claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false });
 
-    const res = await tick({});
+    const first = tick({});
+    const second = await tick({});
+    finish();
 
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'not_lock_holder' });
-    expect(holdsUnitLock).toHaveBeenCalledWith('automations');
-    expect(drainUntilIdle).not.toHaveBeenCalled();
-    expect(recordExternalDrainPass).not.toHaveBeenCalled();
+    expect(second.status).toBe(200);
+    expect((await first).status).toBe(200);
+    expect(drainUntilIdle).toHaveBeenCalledTimes(2);
   });
 
   it('caps a tick at 100 rows a pass and 50 passes', async () => {

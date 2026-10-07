@@ -12,7 +12,6 @@ import { LlmUsageContext } from '../../../lib/llm_usage';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
-import { holdsUnitLock } from '../../../startup/registry';
 import { mounts } from '../../../products';
 import { requireScope } from './require_scope';
 
@@ -238,13 +237,10 @@ const drainBodySchema = z
 
 /** The tick a scheduler calls when `AUTOMATIONS_DRAIN_MODE=external`. Each call
  *  drains until idle (bounded by `maxPasses`), records the drain worker's pulse
- *  as a loop pass would, and reports what it did. Only the instance holding the
- *  automations lock drains: that lock is what keeps two processes from resuming
- *  the same run until cross-process write locks exist. */
+ *  as a loop pass would, and reports what it did. Any instance answers it, and
+ *  ticks may overlap: each claims a disjoint set of rows, and each run is
+ *  stepped under its own lease. */
 const drainAutomationsHandler: RequestHandler = async (req, res) => {
-  if (!holdsUnitLock('automations')) {
-    return res.status(503).json({ error: 'not_lock_holder' });
-  }
   const body = drainBodySchema.safeParse(req.body ?? {});
   if (!body.success) {
     return res.status(400).json({ error: 'invalid_body', issues: body.error.issues });

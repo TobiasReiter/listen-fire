@@ -274,8 +274,8 @@ export interface WorkNotifier {
 }
 
 // The always-on loop of this process, when one runs. A door's notify only asks
-// it for an extra pass: a process without a loop (external mode, or one still
-// waiting for the automations lock) must not drain, or the lock guards nothing.
+// it for an extra pass: a process without a loop (external mode) leaves the
+// pass to its tick.
 let activeLoop: { kick(): void } | undefined;
 
 /** Default: kicks this process's drain loop when one runs; otherwise nothing. */

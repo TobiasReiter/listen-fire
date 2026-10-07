@@ -7,8 +7,9 @@
 // database and nothing else. A lock per unit keeps the guarantee that
 // mattered (no worker of a unit runs twice; none of the loops claim rows with
 // SKIP LOCKED, so they are not safe to double-run) and drops the one that
-// never did. A unit whose work is safe to run on every instance at once may
-// opt out (automations' leased drain will, once cross-process write locks land).
+// never did. A unit whose work is safe to run on every instance at once opts
+// out: automations' drain claims leased rows and steps each run under its own
+// lease, so it runs on every instance.
 
 import { ADVISORY_LOCK_SCOPES } from '../constants';
 import { acquireAdvisoryLock } from '../lib/pg';
@@ -80,15 +81,6 @@ interface WorkerRegistry {
 const shutdowns: Array<() => Promise<void>> = [];
 let signalsWired = false;
 
-// The units whose advisory lock this process holds right now. Work that must
-// run on exactly one instance (automations' external drain tick) asks here.
-const heldLocks = new Set<Unit>();
-
-/** Whether this process holds the unit's background lock. */
-function holdsUnitLock(unit: Unit): boolean {
-  return heldLocks.has(unit);
-}
-
 /** Stop every unit's workers, then release its lock. What SIGINT/SIGTERM run. */
 async function shutdownBackground(): Promise<void> {
   await Promise.all(shutdowns.map((each) => each()));
@@ -114,7 +106,6 @@ function shutdownUnit(input: { unit: Unit; stops: WorkerStop[]; release?: () => 
       ),
     );
     if (!input.release) return;
-    heldLocks.delete(input.unit);
     await input.release();
   };
   return () => (done ??= shutdown());
@@ -137,7 +128,6 @@ function runRegistry(registry: WorkerRegistry): void {
         ADVISORY_LOCK_SCOPES.LISTEN_FIRE_API_APPLICATION,
         BACKGROUND_LOCK_IDS[unit],
       ));
-      heldLocks.add(unit);
     }
 
     const stops: WorkerStop[] = [];
@@ -158,7 +148,6 @@ export {
   type RegisteredWorker,
   type WorkerStop,
   type WorkerRegistry,
-  holdsUnitLock,
   runRegistry,
   shutdownBackground,
 };
