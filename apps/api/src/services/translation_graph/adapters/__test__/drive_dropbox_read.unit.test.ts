@@ -88,8 +88,8 @@ describe('GoogleDriveAdapter read graph', () => {
     expect(await a.getFieldValue({ position: file.position, fieldId: 'Name' })).toBe('memo.txt');
     const ref = (await a.getFieldValue({ position: file.position, fieldId: 'File' })) as FileRef;
     expect(ref.__brand).toBe('FileRef');
-    expect(ref.source).toEqual({ ownerAdapterType: 'google_drive', handle: 'file-1' });
-    expect(await text((await ref.retrieve!()).stream as Readable)).toBe('memo bytes');
+    expect(ref.source).toEqual({ adapterType: 'google_drive', credentialId: 'cred-1', handle: 'file-1' });
+    expect(await text((await a.resolveFileRef({ ref })).stream as Readable)).toBe('memo bytes');
   });
 });
 
@@ -129,8 +129,8 @@ describe('DropboxAdapter read graph', () => {
     expect(file.position.recordType).toBe('File');
     expect(await a.getFieldValue({ position: file.position, fieldId: 'Name' })).toBe('notes.txt');
     const ref = (await a.getFieldValue({ position: file.position, fieldId: 'File' })) as FileRef;
-    expect(ref.source).toEqual({ ownerAdapterType: 'dropbox', handle: '/Deals/notes.txt' });
-    expect(await text((await ref.retrieve!()).stream as Readable)).toBe('notes bytes');
+    expect(ref.source).toEqual({ adapterType: 'dropbox', credentialId: 'cred-1', handle: '/Deals/notes.txt' });
+    expect(await text((await a.resolveFileRef({ ref })).stream as Readable)).toBe('notes bytes');
   });
 
   it('file → parent and sub-folder → parent hop up the tree (path-derived, no round trip)', async () => {

@@ -82,6 +82,7 @@ jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
 
 import { Readable } from 'node:stream';
 import { DropboxAdapter } from '../index';
+import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import {
   DISPLAY_NAME_BY_KIND,
   structuredIdFor,
@@ -323,23 +324,14 @@ describe('DropboxAdapter.createRecord — file', () => {
     expect(result.externalId).toBe('/Clients/notes.txt');
   });
 
-  it('streams a file through the FileRef\'s own retrieve() byte channel, name defaulting from the ref', async () => {
+  it('streams a file redeemed from its descriptor, name defaulting from the ref', async () => {
     const { adapter, calls } = makeAdapter();
+    const store = installMemoryDocumentStore();
 
     await adapter.createRecord({
       recordType: FILE_TYPE,
       fields: {
-        // The FileRef carries its own retriever (the producer owns byte
-        // resolution — plans/2026-06-18-fileref-resolution-rework).
-        file: {
-          __brand: 'FileRef',
-          name: 'report.pdf',
-          contentType: 'application/pdf',
-          retrieve: async () => ({
-            stream: Readable.from('file-bytes'),
-            contentType: 'application/pdf',
-          }),
-        },
+        file: store.file('file-bytes', { name: 'report.pdf', contentType: 'application/pdf' }),
       },
       mutationContext: {} as never,
       parentLinks: [{ recordType: FOLDER_TYPE, externalId: PARENT_FOLDER, edgeName: 'Files' }],

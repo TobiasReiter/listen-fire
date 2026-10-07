@@ -223,6 +223,7 @@ describe('createUnifiedMessage — post', () => {
     const { client, calls } = makeMockClient({ postTs: '111.222' });
     const result = await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'hello world' },
     });
@@ -237,6 +238,7 @@ describe('createUnifiedMessage — post', () => {
     const { client, calls } = makeMockClient({ isMember: false });
     await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'hi' },
     });
@@ -248,6 +250,7 @@ describe('createUnifiedMessage — post', () => {
     const { client, calls } = makeMockClient({ isMember: true });
     await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'hi' },
     });
@@ -262,6 +265,7 @@ describe('createUnifiedMessage — reply', () => {
     const { client, calls } = makeMockClient({ postTs: '333.444' });
     const result = await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'reply', channelId: 'C123', threadTs: '111.222' },
       fields: { text: 'a reply' },
     });
@@ -281,6 +285,7 @@ describe('createUnifiedMessage — file', () => {
     const { client, calls } = makeMockClient();
     const result = await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: {
         text: 'caption',
@@ -302,6 +307,7 @@ describe('createUnifiedMessage — file', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'reply', channelId: 'C123', threadTs: '111.222' },
       fields: {
         text: 'caption',
@@ -315,6 +321,7 @@ describe('createUnifiedMessage — file', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { file: { name: 'note.txt', contentType: 'text/plain', content: 'body' } },
     });
@@ -328,7 +335,7 @@ describe('createUnifiedMessage — at-least-one', () => {
   it('rejects a write with none of Message / File / Blocks', async () => {
     const { client } = makeMockClient();
     await expect(
-      createUnifiedMessage({ client, anchor: { kind: 'post', channelId: 'C123' }, fields: {} }),
+      createUnifiedMessage({ client, teamId: TEAM_ID, anchor: { kind: 'post', channelId: 'C123' }, fields: {} }),
     ).rejects.toThrow(/at least one of Message \/ File \/ Blocks/);
   });
 
@@ -337,6 +344,7 @@ describe('createUnifiedMessage — at-least-one', () => {
     await expect(
       createUnifiedMessage({
         client,
+        teamId: TEAM_ID,
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { blocks: [] },
       }),
@@ -444,6 +452,7 @@ describe('createUnifiedMessage — Blocks', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'New deal', blocks: EXAMPLE_BLOCKS },
     });
@@ -454,6 +463,7 @@ describe('createUnifiedMessage — Blocks', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'New deal', blocks: EXAMPLE_BLOCKS },
     });
@@ -464,6 +474,7 @@ describe('createUnifiedMessage — Blocks', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
+      teamId: TEAM_ID,
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { blocks: EXAMPLE_BLOCKS },
     });
@@ -476,6 +487,7 @@ describe('createUnifiedMessage — Blocks', () => {
     await expect(
       createUnifiedMessage({
         client,
+        teamId: TEAM_ID,
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { text: 'x', blocks: 'not a list' },
       }),
@@ -489,6 +501,7 @@ describe('createUnifiedMessage — Blocks', () => {
     return expect(
       createUnifiedMessage({
         client,
+        teamId: TEAM_ID,
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { text: 'x', blocks: [{ type: 'section' }, 'not a block'] },
       }),
@@ -500,6 +513,7 @@ describe('createUnifiedMessage — Blocks', () => {
     await expect(
       createUnifiedMessage({
         client,
+        teamId: TEAM_ID,
         anchor: { kind: 'post', channelId: 'C123' },
         fields: {
           file: { name: 'note.txt', contentType: 'text/plain', content: 'body' },
@@ -524,6 +538,7 @@ describe('createUnifiedMessage — Blocks', () => {
     await expect(
       createUnifiedMessage({
         client,
+        teamId: TEAM_ID,
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { blocks: EXAMPLE_BLOCKS },
       }),

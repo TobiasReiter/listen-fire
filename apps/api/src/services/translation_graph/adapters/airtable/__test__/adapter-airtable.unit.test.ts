@@ -90,7 +90,7 @@ jest.mock('../../../engine/files/expose', () => ({
   })),
 }));
 
-import { Readable } from 'node:stream';
+import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { AirtableAdapter } from '../index';
 import { coerceAirtableValue } from '../record';
 import { makeStablePosition, makeMetaPosition, makeUnstablePosition, positionData } from '../../../types';
@@ -503,18 +503,12 @@ describe('AirtableAdapter link-field write resolution', () => {
 describe('AirtableAdapter attachment write', () => {
   it('exposes a FileRef\'s bytes at a Listen-Fire URL and maps it to an Airtable attachment object', async () => {
     const { adapter, calls } = makeAdapter();
+    const store = installMemoryDocumentStore();
     await adapter.createRecord({
       recordType: DEALS_TYPE,
       fields: {
         Name: 'D',
-        Deck: [
-          {
-            __brand: 'FileRef',
-            name: 'deck.pdf',
-            contentType: 'application/pdf',
-            retrieve: async () => ({ stream: Readable.from('pdf-bytes'), contentType: 'application/pdf' }),
-          },
-        ],
+        Deck: [store.file('pdf-bytes', { name: 'deck.pdf', contentType: 'application/pdf' })],
       },
       mutationContext: {} as never,
     });

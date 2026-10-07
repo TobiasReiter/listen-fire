@@ -59,7 +59,7 @@ import type {
   WriteInput,
   WriteResult,
 } from '../adapter';
-import { iterateRelatedPages, writeParentLinks, type ParentAssociation } from '../adapter';
+import { fileHandle, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from '../adapter';
 import { BaseAdapter } from './base';
 import { stubTargetOf, type EdgesFromResult } from '../adapter';
 import { uniformWalk } from './hop';
@@ -220,8 +220,8 @@ export const ATTIO_COMMENT_TYPE_ID = 'attio:comment';
 export const ATTIO_LIST_ENTRY_TYPE_ID = 'attio:list_entry';
 /** Synthetic target type for the `files` reference — one position per
  *  file-shaped value scanned out of a record's attribute envelope. Each
- *  position's `File` field returns a `FileRef` whose `retrieve()` streams the
- *  bytes from Attio (symmetric with the file-on-write path). */
+ *  position's `File` field returns a `FileRef` descriptor `resolveFileRef`
+ *  redeems from Attio (symmetric with the file-on-write path). */
 export const ATTIO_FILE_TYPE_ID = 'attio:file';
 /** Outgoing reference name a record publishes for its attached files —
  *  `record-[:Files]->.\`File\``. The reference `fieldId` IS the read currency,
@@ -682,7 +682,7 @@ function describeCommentMeta(): SchemaTypeDescriptor {
 /**
  * Synthetic `attio:file` type — one position per file-shaped value on a
  * record. The `File` field is the binary primitive (`kind: 'file'`): a
- * `FileRef` whose `retrieve()` streams the bytes from Attio. The remaining
+ * `FileRef` descriptor `resolveFileRef` redeems from Attio. The remaining
  * fields surface the file metadata Attio carries on the value (id, name,
  * content type, the display URL). Mirrors the slack:file shape so
  * `record-[:Files]->.\`File\`` resolves to a FileRef symmetrically across
@@ -699,8 +699,8 @@ function describeFileMeta(): SchemaTypeDescriptor {
       { fieldId: 'name', displayName: 'Name', kind: 'string', writable: false, required: false },
       { fieldId: 'contentType', displayName: 'Content Type', kind: 'string', writable: false, required: false },
       { fieldId: 'url', displayName: 'URL', kind: 'string', writable: false, required: false },
-      // The binary primitive — a `FileRef` whose `retrieve()` streams the
-      // bytes via the Attio download endpoint. This is what
+      // The binary primitive — a `FileRef` descriptor `resolveFileRef`
+      // redeems via the Attio download endpoint. This is what
       // `record-[:Files]->.\`File\`` evaluates so file bytes reach
       // extraction / carry-forward. On the WRITE side it is the one input:
       // `write record-[:Files]-> { File: <file> }` uploads the bytes against
@@ -803,6 +803,7 @@ export const ATTIO_MANIFEST: AdapterManifest = {
     'getRelated', 'listEventTypes', 'preprocessInbound', 'createRecord', 'updateRecord', 'deleteRecord',
     'linkRecords', 'unlinkRecords', 'readRecord', 'describeOpaqueId', 'translateFilter',
     'getActorCandidates', 'extractActor', 'ensureEventSubscription', 'removeEventSubscription',
+    'resolveFileRef',
   ],
   requiredCredentialType: ExternalServiceType.ATTIO,
   triggerKinds: ['ATTIO'],
@@ -1581,8 +1582,8 @@ export class AttioAdapter extends BaseAdapter {
         {
           // Files (`record-[:Files]->`) — one `attio:file` position per
           // file-shaped value scanned out of the record's attribute envelope.
-          // Each carries a `File` field returning a `FileRef` whose
-          // `retrieve()` streams the bytes from Attio. Symmetric with the
+          // Each carries a `File` field returning a `FileRef` descriptor
+          // `resolveFileRef` redeems from Attio. Symmetric with the
           // file-on-write path, and mirrors the slack `Files` edge.
           fieldId: ATTIO_FILES_REFERENCE,
           targetTypeId: ATTIO_FILE_TYPE_ID,
@@ -1892,8 +1893,8 @@ export class AttioAdapter extends BaseAdapter {
       // parsed file record on `data`. The program names the field by its
       // NATURAL displayName (`File`, `Name`, `Content Type`); resolve it to
       // the internal field id the parsed record is keyed by, then read it.
-      // The `File` (`data`) field is the binary primitive — a `FileRef` whose
-      // `retrieve()` streams the bytes via the Attio download endpoint.
+      // The `File` (`data`) field is the binary primitive — a `FileRef`
+      // descriptor `resolveFileRef` redeems via the Attio download endpoint.
       const fileRecordType = input.position.recordType;
       // Naming the type is entries-only and free; describing it is not, so the
       // scoped resolve happens INSIDE the branch that actually reads a field.
@@ -3746,7 +3747,7 @@ export class AttioAdapter extends BaseAdapter {
     if (input.fileRefs.length === 0) return;
     const client = await this.getApiClient();
     for (const ref of input.fileRefs) {
-      const blob = await fileRefToBlob(ref);
+      const blob = await fileRefToBlob(ref, this.teamId);
       await client.uploadFile({
         file: blob.body,
         fileName: blob.fileName,
@@ -3840,7 +3841,7 @@ export class AttioAdapter extends BaseAdapter {
           `(an attachment's \`File\` read, or FILE(...)) — got ${typeof value}.`,
       );
     }
-    const blob = await fileRefToBlob(value);
+    const blob = await fileRefToBlob(value, this.teamId);
     const client = await this.getApiClient();
     const uploaded = await client.uploadFile({
       file: blob.body,
@@ -4393,11 +4394,10 @@ export class AttioAdapter extends BaseAdapter {
   }
 
   /**
-   * The `File` primitive for an Attio file record — a branded `FileRef` whose
-   * `retrieve()` streams the bytes via the Attio download endpoint
-   * (`streamAttioFileBytes`). `source.handle` is the raw Attio file id, so the
-   * engine can also redeem bytes through the owner. Returns null when the
-   * record carries no file id. Mirrors `slackFileRef` / `emailAttachmentFileRef`.
+   * The `File` primitive for an Attio file record — a `FileRef` descriptor
+   * naming this instance (its credential) as the owner and the raw Attio file
+   * id as the handle, redeemed through `resolveFileRef`. Returns null when the
+   * record carries no file id. Mirrors `slackFileRef`.
    */
   private attioFileRef(record: AttioFileRecord | null): FileRef | null {
     if (!record?.id) return null;
@@ -4407,17 +4407,25 @@ export class AttioAdapter extends BaseAdapter {
       __brand: 'FileRef',
       name: record.name ?? undefined,
       contentType,
-      retrieve: () => this.streamAttioFileBytes(id, contentType),
-      source: { ownerAdapterType: this.adapterType, handle: id },
+      source: ownedFileSource({ adapterType: this.adapterType, credentialsId: this.credentialsId, handle: id }),
     };
+  }
+
+  /** Bytes for a file this instance read, by its Attio file id — the download
+   *  endpoint serves any file id the credential can see. */
+  async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
+    const handle = fileHandle(input.ref);
+    if (!handle) {
+      throw new Error('AttioAdapter.resolveFileRef: FileRef has no source handle to resolve.');
+    }
+    return this.streamAttioFileBytes(handle, input.ref.contentType);
   }
 
   /**
    * The byte channel for an Attio file id. `GET /v2/files/{file_id}/download`
    * 302-redirects to a short-lived signed URL; `client.downloadFile` follows it
    * and streams the bytes — fetched WITH the same Bearer credential the upload
-   * path uses. Re-callable: a fresh round trip each call (a fresh signed URL),
-   * as the FileRef repeated-retrieval contract requires.
+   * path uses. A fresh round trip each call (a fresh signed URL).
    */
   private async streamAttioFileBytes(
     handle: string,
@@ -4440,7 +4448,7 @@ export class AttioAdapter extends BaseAdapter {
   // file kind, so detection is by value shape (`parseAttioFileEntry`), not
   // attribute type — keeping the adapter tolerant of file-bearing attributes
   // whose enum hasn't been wired through. Each file's `File` field returns a
-  // `FileRef` (`attioFileRef`) whose `retrieve()` streams the bytes via
+  // `FileRef` descriptor (`attioFileRef`) that `resolveFileRef` redeems via
   // `GET /v2/files/{file_id}/download` — the SAME credential the write path
   // uploads with.
   //
@@ -5293,8 +5301,8 @@ function isFileRef(value: unknown): value is FileRef {
  * Split a write's `fields` into the file values to upload and the rest to
  * pass through to Attio's record values envelope.
  *
- * A `file`-kind field's value is a branded `FileRef` carrying its own
- * `retrieve()` byte channel. Multi-cardinality file attributes arrive as an
+ * A `file`-kind field's value is a branded `FileRef` descriptor, redeemed
+ * for its bytes on this side. Multi-cardinality file attributes arrive as an
  * array of `FileRef`s. Detection is by the brand, not the type descriptor:
  * Attio's attribute catalogue doesn't enumerate a file kind, so the descriptor
  * can't be trusted to mark these — and a branded `FileRef` is unambiguous.
@@ -5375,15 +5383,16 @@ function partitionFileFields(fields: Record<string, unknown>): {
 }
 
 /**
- * Pull a `FileRef`'s bytes through its own `retrieve()` channel (`streamFileRef`)
+ * Redeem a `FileRef` descriptor for its bytes (`streamFileRef`, for this team)
  * and buffer them into a Blob ready for `client.uploadFile`. Throws on a missing
  * byte channel or a retrieval failure — a file the author mapped that can't be
  * retrieved is a write failure the engine should surface, not silently drop.
  */
 async function fileRefToBlob(
   ref: FileRef,
+  teamId: TeamId,
 ): Promise<{ body: Blob; fileName: string }> {
-  const resolved = await streamFileRef(ref);
+  const resolved = await streamFileRef(ref, { teamId });
   const bytes = await streamToBuffer(resolved.stream);
   const contentType =
     resolved.contentType ?? ref.contentType ?? 'application/octet-stream';

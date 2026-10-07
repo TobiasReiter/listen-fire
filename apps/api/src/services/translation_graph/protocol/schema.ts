@@ -172,10 +172,11 @@ export const WireLinkedObject = z
 export type WireLinkedObjectShape = z.infer<typeof WireLinkedObject>;
 
 /**
- * Mirror of `FileRef`. The `__brand` literal and the `retrieve()` closure are
- * not carried over the wire — `__brand` is a TS-side phantom and a closure can't
- * serialise. The remote adapter re-binds `retrieve()` on this side
- * (`reviveFileRefs`) using `source` as the handle it sends back to the server.
+ * The wire's spelling of a `FileRef`. `source` names the owner TYPE and the
+ * owner's handle — never a credential, which stays on Listen-Fire's side: the
+ * remote adapter translates between this and the descriptor that names the
+ * owning install (`RemoteAdapter`), and sends the handle back to the server
+ * in `resolveFileRef`.
  */
 export const WireFileRef = z.object({
   name: z.string().optional(),

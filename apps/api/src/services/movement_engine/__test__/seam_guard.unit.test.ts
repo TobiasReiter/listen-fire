@@ -14,8 +14,10 @@ import path from 'node:path';
 import ts from 'typescript';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeFakeParkSink, type AwaitWakeRequest } from '../host';
-import type { ParkSink } from '../run';
+import { createManualAdapter } from '../../translation_graph/adapters/manual';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
+import { makeFakeParkSink, makeTestHost, type AwaitWakeRequest, type RenderFile, type ResolveFileText } from '../host';
+import { runMovement, type ParkSink } from '../run';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 
 const ENGINE_DIR = path.resolve(__dirname, '..');
@@ -32,7 +34,6 @@ const PURE_FILES = [
   'expression.ts',
   'extraction.ts',
   'extraction_call.ts',
-  'file_render.ts',
   'host.ts',
   'interpretable.ts',
   'kg.ts',
@@ -61,6 +62,10 @@ const HOST_SIDE_FILES = [
   'timer_wake.ts',
 ];
 
+/** The host-side modules that turn a file descriptor into bytes, or bytes
+ *  into a URL. */
+const BYTE_READERS = ['retrieve', 'expose', 'fetch-stream'];
+
 /** Module paths are relative to apps/api/src, without extension. */
 const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }> = [
   { matches: under('lib/kysely'), reason: 'the database client (the host owns storage)' },
@@ -76,6 +81,10 @@ const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }>
   { matches: under('services/translation_graph/runs'), reason: 'run recording (the host supplies `trace`)' },
   { matches: under('services/translation_graph/movement'), reason: 'the production host itself' },
   { matches: under('services/document'), reason: 'document storage (the host supplies `files`)' },
+  {
+    matches: (m) => BYTE_READERS.some((reader) => m === `services/translation_graph/engine/files/${reader}`),
+    reason: 'a file byte reader (bytes stay on the host: the engine holds descriptors)',
+  },
   { matches: under('services/work'), reason: 'the work queue (the host supplies `park`)' },
   { matches: under('services/interaction'), reason: 'run failure reporting (host side)' },
   { matches: under('services/webhook_sync'), reason: 'inbound sync (host side)' },
@@ -95,9 +104,14 @@ const ALLOWED: Array<(module: string) => boolean> = [
   under('lib/models'),
   under('lib/prompts'),
   under('services/logger'),
-  // Recorded debt (DESIGN §9 item 6): file IO still reaches the shared engine
-  // helpers directly instead of through `host.files`.
-  under('services/translation_graph/engine'),
+  // Shared engine helpers that are pure computation over engine data: the
+  // dry-run write capture, resource stamping and filtering, the model choice
+  // for an extraction's size. The transform registry is the plugin-signature
+  // debt (DESIGN §9 item 8).
+  (m) => m === 'services/translation_graph/engine/dry_run_adapter',
+  (m) => m === 'services/translation_graph/engine/files/resources',
+  (m) => m === 'services/translation_graph/engine/batched_extraction/schema_synthesis',
+  (m) => m === 'services/translation_graph/engine/transforms/registry',
   under('services/translation_graph/uniqueness'),
   under('services/translation_graph/required_fields'),
   under('services/translation_graph/types'),
@@ -110,24 +124,6 @@ const ALLOWED: Array<(module: string) => boolean> = [
   under('services/write_locks/write_locks'),
   (m) => PURE_FILES.some((f) => m === `services/movement_engine/${f.replace(/\.ts$/, '')}`),
 ];
-
-/**
- * Host reaches that remain in a pure file, each named so it cannot spread and
- * so its removal also removes the exemption. All are file IO, the recorded
- * debt of DESIGN §9 item 6: rendered files belong behind `host.files`.
- */
-const RECORDED_DEBT: Array<{ file: string; specifier: string; reason: string }> = [
-  {
-    file: 'file_render.ts',
-    specifier: '../../adapters/registry',
-    reason: 'uploads a rendered file to the document store',
-  },
-  { file: 'file_render.ts', specifier: '../playwright', reason: 'renders HTML to PDF in a browser' },
-];
-
-function isRecordedDebt(file: string, specifier: string): boolean {
-  return RECORDED_DEBT.some((debt) => debt.file === file && debt.specifier === specifier);
-}
 
 function under(prefix: string): (module: string) => boolean {
   return (m) => m === prefix || m.startsWith(`${prefix}/`);
@@ -211,7 +207,6 @@ describe('the engine/host seam', () => {
     for (const file of PURE_FILES) {
       const filePath = path.join(ENGINE_DIR, file);
       for (const specifier of valueImports(filePath)) {
-        if (isRecordedDebt(file, specifier)) continue;
         const module = moduleOf(filePath, specifier);
         const forbidden = FORBIDDEN.find((rule) => rule.matches(module));
         if (forbidden !== undefined) {
@@ -224,13 +219,6 @@ describe('the engine/host seam', () => {
       }
     }
     expect(violations).toEqual([]);
-  });
-
-  it('every recorded debt is still present, so a paid-off one drops its exemption', () => {
-    const stale = RECORDED_DEBT.filter(
-      (debt) => !valueImports(path.join(ENGINE_DIR, debt.file)).includes(debt.specifier),
-    ).map((debt) => `${debt.file} no longer imports '${debt.specifier}'`);
-    expect(stale).toEqual([]);
   });
 
   it('flags a value import from host code and lets a type-only one through', () => {
@@ -250,6 +238,7 @@ describe('the engine/host seam', () => {
     expect(classify(`import '../../lib/kysely';`)).toBe(false);
     expect(moduleOf(probe, '../../lib/kysely')).toBe('lib/kysely');
     expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, './park_sink')))).toBe(true);
+    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../translation_graph/engine/files/retrieve')))).toBe(true);
   });
 });
 
@@ -286,6 +275,62 @@ describe('the engine/host seam carries data', () => {
     });
 
     expect(calls).toHaveLength(2);
+    expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
+  });
+
+  // A file crosses as its descriptor: FILE() asks the host to render and gets
+  // a descriptor back; READ() hands that descriptor over and gets text back.
+  // No bytes, and no closure, in either direction.
+  it('a file render and a file read pass plain data only', async () => {
+    const teamId = '00000000-0000-0000-0000-000000000043' as TeamId;
+    const calls: Array<{ call: string; input: unknown; output: unknown }> = [];
+    const render: RenderFile = async (input) => {
+      const output = {
+        __brand: 'FileRef' as const,
+        name: 'movement-artifact.txt',
+        contentType: 'text/plain',
+        source: { store: 'document' as const, objectUri: 'mem://rendered/1' },
+      };
+      calls.push({ call: 'render', input, output });
+      return output;
+    };
+    const resolveFileText: ResolveFileText = async (input) => {
+      const output = { text: 'the digest', rawTextId: 'rt-1' };
+      calls.push({ call: 'resolveFileText', input, output });
+      return output;
+    };
+    const manual = createManualAdapter({ teamId });
+    const result = await runMovement({
+      source: [
+        'import { manual } from adapters',
+        'runs = manual()',
+        '',
+        'movement m(go: <runs-[:Invocation]->>) {',
+        '  f = FILE("the digest", "text")',
+        '  t = READ(f)',
+        '}',
+        'listen to runs {} fire m',
+      ].join('\n'),
+      event: {
+        pipelineInputId: 'trigger:manual-files',
+        adapterType: 'manual',
+        triggerType: 'webhook',
+        payload: { firedAt: '2026-10-07T09:00:00.000Z' },
+        occurredAt: '2026-10-07T09:00:00.000Z',
+      },
+      teamId,
+      catalog: staticCatalogSnapshot({ credentials: {} }),
+      host: makeTestHost({
+        adapters: { resolve: () => manual },
+        files: { render, resolveFileText },
+      }),
+      dryRun: true,
+    });
+
+    expect(result.trace.filter((entry) => entry.kind === 'warning')).toEqual([]);
+    expect(calls.map((c) => c.call)).toEqual(['render', 'resolveFileText']);
+    expect(calls[0]?.input).toEqual({ content: 'the digest', type: 'text' });
+    expect(calls[1]?.input).toEqual({ file: calls[0]?.output });
     expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
   });
 });

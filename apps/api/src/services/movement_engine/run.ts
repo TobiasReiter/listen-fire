@@ -212,7 +212,7 @@ import type {
   WriteInput,
   WriteResult,
 } from '../translation_graph/adapter';
-import { updateRecordSucceeded } from '../translation_graph/adapter';
+import { fileHandle, updateRecordSucceeded } from '../translation_graph/adapter';
 import type { BindingEndpoint, CallbackSink, EngineHost, ResolveAdapter } from './host';
 import {
   newDryRunRehearsal,
@@ -246,7 +246,6 @@ import {
   matchesResourceFilter,
   resolvePositionResources,
 } from '../translation_graph/engine/files/resources';
-import { DOCUMENT_STORE_OWNER, documentStoreFileRef } from '../translation_graph/engine/files/document_store';
 import {
   Environment,
   MovementEngineError,
@@ -337,7 +336,6 @@ import {
   type ParkReader,
   type ParkWriter,
   type BindingDescriptor,
-  type FileRefDescriptor,
   type InstanceIdentityDescriptor,
   type ParkedScopeState,
   type RehydrationContext,
@@ -3565,8 +3563,9 @@ class Interpreter {
   /**
    * The rehydration seam (§4.1) backed by THIS interpreter's already-prepared
    * live context — the same registry / adapter resolution `prepareMovement`
-   * wired. Adapters re-resolve via `graphReadFor` / the catalog; FileRefs revive
-   * via the owner adapter; code refs come from the re-parsed file env.
+   * wired. Adapters re-resolve via `graphReadFor` / the catalog; code refs come
+   * from the re-parsed file env. A file needs nothing: its descriptor is what
+   * parked, and the host redeems it when something reads the bytes.
    */
   private rehydrationContext(): RehydrationContext {
     return {
@@ -3588,7 +3587,6 @@ class Interpreter {
         }
         return read.read;
       },
-      reviveFileRef: (descriptor) => this.reviveResumedFileRef(descriptor),
       resolveCodeRef: (name) => {
         const binding = this.fileEnv?.resolve(name);
         if (!binding) {
@@ -3644,61 +3642,6 @@ class Interpreter {
         : {}),
       schema,
     };
-  }
-
-  /**
-   * Rebind a parked FileRef's `retrieve()` from its `source` handle — the owner
-   * adapter's `resolveFileRef`, re-resolved live via `resolveAdapter` (the same
-   * cross-wire revive pattern, §4.1), or the document store for a file that
-   * lives in our own storage (`FILE()` artifacts, manual uploads' store).
-   *
-   * A FileRef with no `source` has no way back to its bytes. Every producer
-   * sets one, so only a state parked by an older writer can carry such a ref;
-   * its channel still exists, and says exactly why it cannot fetch — the read
-   * that reaches for it then lands on the run as a warning
-   * (`MOVENG_FILE_BYTES_UNAVAILABLE`), never as a silently thinner input.
-   */
-  private reviveResumedFileRef(descriptor: FileRefDescriptor): FileRef {
-    const ref: FileRef = {
-      __brand: 'FileRef',
-      ...(descriptor.name !== undefined ? { name: descriptor.name } : {}),
-      ...(descriptor.contentType !== undefined ? { contentType: descriptor.contentType } : {}),
-      ...(descriptor.size !== undefined ? { size: descriptor.size } : {}),
-      ...(descriptor.source !== undefined ? { source: descriptor.source } : {}),
-      ...(descriptor.url !== undefined ? { url: descriptor.url } : {}),
-    };
-    const source = descriptor.source;
-    if (!source) {
-      ref.retrieve = async () => {
-        throw new MovementEngineError(
-          'MOVENG_RUNTIME',
-          'it was parked without a durable handle, so its bytes cannot be fetched after the run resumed',
-        );
-      };
-    } else if (source.ownerAdapterType === DOCUMENT_STORE_OWNER) {
-      ref.retrieve = documentStoreFileRef({
-        objectUri: source.handle,
-        ...(ref.name !== undefined ? { name: ref.name } : {}),
-        ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
-        ...(ref.size !== undefined ? { size: ref.size } : {}),
-      }).retrieve;
-    } else {
-      ref.retrieve = async () => {
-        const owner = await this.resolveAdapterFn({
-          adapterType: source.ownerAdapterType,
-          teamId: this.input.teamId,
-          role: 'source',
-        });
-        if (!owner.resolveFileRef) {
-          throw new MovementEngineError(
-            'MOVENG_RUNTIME',
-            `resume: owner adapter '${source.ownerAdapterType}' cannot resolve a parked FileRef`,
-          );
-        }
-        return owner.resolveFileRef({ ref });
-      };
-    }
-    return ref;
   }
 
   /**
@@ -7462,8 +7405,8 @@ class Interpreter {
   /** The one file→text seam for the whole run — an `extract from [ … ]` file
    *  source and a `READ(file)` in an expression read a file the same way. */
   private fileTextResolver(): (ref: FileRef) => Promise<FileTextResolution> {
-    this.fileTextSeam ??= this.warnWhenBytesUnavailable(
-      this.input.host.files.resolveFileText,
+    this.fileTextSeam ??= this.warnWhenBytesUnavailable((file) =>
+      this.input.host.files.resolveFileText({ file }),
     );
     return this.fileTextSeam;
   }
@@ -7484,7 +7427,7 @@ class Interpreter {
     return async (ref) => {
       const result = await resolve(ref);
       if (!isFileUnreadable(result) || result.unreadable !== 'bytes_unavailable') return result;
-      const key = ref.source?.handle ?? ref.name ?? '';
+      const key = fileHandle(ref) ?? ref.name ?? '';
       if (!warned.has(key)) {
         warned.add(key);
         const name = ref.name !== undefined ? `'${ref.name}'` : 'a file';
@@ -11198,8 +11141,8 @@ class Interpreter {
         ...this.parentSummaries(input.parentLinks),
       };
     }
-    // Any `FileRef` in the fields carries its own `retrieve()` byte channel —
-    // the consuming adapter pulls the bytes itself (streamFileRef). The engine
+    // Any `FileRef` in the fields is a descriptor — the consuming adapter
+    // redeems it for the bytes on the host side (streamFileRef). The engine
     // just hands the fields through. Node-level resources ride alongside
     // (`WriteInput.resources`) — the adapter's resource sink persists them.
     const updated = await input.adapter.updateRecord({
@@ -11300,9 +11243,9 @@ class Interpreter {
           .join(', ')} have no value`,
       );
     }
-    // Any `FileRef` in the fields (an email attachment, a `#resources` file)
-    // carries its own `retrieve()` byte channel — the consuming adapter pulls the
-    // bytes itself (streamFileRef / exposeFile). The engine hands fields through.
+    // Any `FileRef` in the fields (an email attachment, a `#resources` file) is
+    // a descriptor — the consuming adapter redeems it for the bytes on the host
+    // side (streamFileRef / exposeFile). The engine hands fields through.
     const created = await input.adapter.createRecord({
       recordType: input.recordType,
       fields: input.fields,
@@ -11417,6 +11360,7 @@ class Interpreter {
         ),
       llm: this.llmClient(),
       resolveFileText: this.fileTextResolver(),
+      renderFile: (input) => this.input.host.files.render(input),
       trace: this.trace,
       // `@<key>` resolution — the dispatch context the frozen engine's
       // resolveMetaKey reads, with the run-wide actor caches. The bag

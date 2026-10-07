@@ -85,7 +85,7 @@ jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
   };
 });
 
-import { Readable } from 'node:stream';
+import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import {
   checkProgram,
   fromCatalogSnapshot,
@@ -1584,15 +1584,11 @@ describe('AffinityAdapter note replies + scoped note/file writes', () => {
 
   it('uploads a file to a person parent with the person_id key', async () => {
     const { adapter, calls } = makeAdapter();
+    const store = installMemoryDocumentStore();
     await adapter.createRecord({
       recordType: 'File',
       fields: {
-        File: {
-          __brand: 'FileRef',
-          name: 'notes.txt',
-          contentType: 'text/plain',
-          retrieve: async () => ({ stream: Readable.from('bytes'), contentType: 'text/plain' }),
-        },
+        File: store.file('bytes', { name: 'notes.txt', contentType: 'text/plain' }),
       },
       parentLinks: [{ recordType: 'Person', externalId: '7201', edgeName: 'Files' }],
       mutationContext: {} as never,
@@ -2359,22 +2355,13 @@ describe('AffinityAdapter person→organization association writes', () => {
 // ---------------------------------------------------------------------------
 
 describe('AffinityAdapter.createRecord(file)', () => {
-  it('pulls bytes through the FileRef\'s own retrieve() channel and uploads to the parent org', async () => {
+  it('redeems the FileRef for its bytes and uploads them to the parent org', async () => {
     const { adapter, calls } = makeAdapter();
+    const store = installMemoryDocumentStore();
     await adapter.createRecord({
       recordType: 'File',
       fields: {
-        // The FileRef carries its own retriever (the producer owns byte
-        // resolution — plans/2026-06-18-fileref-resolution-rework).
-        File: {
-          __brand: 'FileRef',
-          name: 'deck.pdf',
-          contentType: 'application/pdf',
-          retrieve: async () => ({
-            stream: Readable.from('pdf-bytes'),
-            contentType: 'application/pdf',
-          }),
-        },
+        File: store.file('pdf-bytes', { name: 'deck.pdf', contentType: 'application/pdf' }),
       },
       parentLinks: [{ recordType: 'Organization', externalId: '42', edgeName: 'People' }],
       mutationContext: {} as never,

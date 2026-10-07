@@ -20,9 +20,8 @@
 // position. The retired input-side `#resources` bundle is gone — body and
 // files are accessed via explicit fields/edges only. Files' bytes are stored
 // by the invocation service via `services.document.upload`, whose `objectUri`
-// rides as the file's owner-resolvable `FileRef.source.handle`; the engine
-// redeems it via
-// `resolveFileRef`, streaming bytes back out of document storage — the
+// rides as the handle of the file's `FileRef` descriptor; the host redeems it
+// via `resolveFileRef`, streaming bytes back out of document storage — the
 // identical mechanism the email / whatsapp attachment uses.
 //
 // Source-only and credential-free; no external subscription (nothing is
@@ -45,6 +44,7 @@ import type {
   ResolveFileRefResult,
   EdgesFromResult,
 } from '../../adapter';
+import { fileHandle, ownedFileSource } from '../../adapter';
 import { uniformWalk } from '../hop';
 import { MANUAL_HANDBOOK_SECTION } from './handbook_section';
 import type {
@@ -88,7 +88,7 @@ export const MANUAL_FILES_FIELD = 'files';
  * A file carried by a manual invocation. The invocation service streams the
  * bytes into document storage (`services.document.upload`) and records the
  * resulting internal `objectUri` here. The adapter surfaces `objectUri` as the
- * file resource's owner-resolvable byte handle (`FileRef.source.handle`) — the
+ * file resource's owner-resolvable byte handle (its `FileRef`'s handle) — the
  * same role the email attachment `key` plays.
  */
 export interface ManualFile {
@@ -322,8 +322,8 @@ export class ManualAdapter extends BaseAdapter implements Adapter {
       // `name` is a friendly alias for `filename`.
       if (fieldId === 'name') return file.filename ?? null;
       // The `File` (`data`) field is the binary primitive — a `FileRef`
-      // carrying its own byte channel (`retrieve()`), the same FileRef the
-      // retired input-side `_resources` bundle built. This is what
+      // descriptor, the same FileRef the retired input-side `_resources`
+      // bundle built. This is what
       // `go-[:Files]->.\`File\`` evaluates so file bytes reach extraction /
       // carry-forward; the owner redeems the handle in `resolveFileRef`.
       if (fieldId === 'data') return manualFileRef(file);
@@ -403,13 +403,13 @@ export class ManualAdapter extends BaseAdapter implements Adapter {
   }
 
   // ── Byte resolution (owner-side) ─────────────────────────────────────────
-  // Manual OWNS the FILE resources it emits: the engine redeems their
-  // `fileRef.source.handle` here. The handle is the file's storage `objectUri`
+  // Manual OWNS the FILE resources it emits: the host redeems their handle
+  // here. The handle is the file's storage `objectUri`
   // — the value the invocation service got back from `services.document.upload`.
   //
   // owners serve bytes
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const handle = input.ref.source?.handle;
+    const handle = fileHandle(input.ref);
     if (!handle) {
       throw new Error(
         `${MANUAL_ADAPTER_TYPE}.resolveFileRef: FileRef has no source handle to resolve.`,
@@ -425,11 +425,10 @@ export class ManualAdapter extends BaseAdapter implements Adapter {
 }
 
 /**
- * The `File` primitive for a manual upload — a branded `FileRef` whose
- * `retrieve()` streams the bytes back out of document storage by the file's
- * storage `objectUri`. `source.handle` is that same `objectUri`, so the engine
- * can also redeem bytes through the owner (`resolveFileRef`). Returns null when
- * the file row carries no storage handle.
+ * The `File` primitive for a manual upload — a `FileRef` descriptor whose
+ * handle is the file's storage `objectUri`, redeemed through the owner
+ * (`resolveFileRef`). Returns null when the file row carries no storage
+ * handle.
  */
 function manualFileRef(file: Partial<ManualFile>): FileRef | null {
   if (!file.objectUri || !file.filename) return null;
@@ -439,15 +438,7 @@ function manualFileRef(file: Partial<ManualFile>): FileRef | null {
     name: file.filename,
     contentType: file.contentType,
     size: file.size,
-    retrieve: async () => {
-      const stream = await services.document.getFileNodeStream({ objectUri });
-      return {
-        stream,
-        contentType: stream.contentType ?? file.contentType,
-        size: stream.size ?? file.size,
-      };
-    },
-    source: { ownerAdapterType: MANUAL_ADAPTER_TYPE, handle: objectUri },
+    source: ownedFileSource({ adapterType: MANUAL_ADAPTER_TYPE, handle: objectUri }),
   };
 }
 

@@ -129,7 +129,6 @@ import { registryTransformInvoker } from '../../translation_graph/movement/trans
 import { NO_PROVENANCE } from '../provenance';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import { registerBundledTransforms } from '../../translation_graph/engine/transforms/register-bundled';
-import { DOCUMENT_STORE_OWNER } from '../../translation_graph/engine/files/document_store';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type {
   LlmCallInput,
@@ -2498,8 +2497,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'pitch.pdf',
       contentType: 'application/pdf',
       size: 4096,
-      source: { ownerAdapterType: 'email', handle: 'attachment-pitch' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'application/pdf', size: 4096 }),
+      source: { adapterType: 'email', handle: 'attachment-pitch' },
     };
 
     // The email adapter returns the deck FileRef for the `deck` field read.
@@ -2557,8 +2555,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'scan.png',
       contentType: 'image/png',
       size: 2048,
-      source: { ownerAdapterType: 'email', handle: 'attachment-scan' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'image/png', size: 2048 }),
+      source: { adapterType: 'email', handle: 'attachment-scan' },
     };
 
     const email = makeFakeAdapter('email');
@@ -2625,8 +2622,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'voice.ogg',
       contentType: 'audio/ogg',
       size: 2048,
-      source: { ownerAdapterType: 'email', handle: 'attachment-voice' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'audio/ogg', size: 2048 }),
+      source: { adapterType: 'email', handle: 'attachment-voice' },
     };
     const email = makeFakeAdapter('email');
     const emailWithFile: Adapter = {
@@ -2674,8 +2670,7 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       name: 'voice.ogg',
       contentType: 'audio/ogg',
       size: 2048,
-      source: { ownerAdapterType: 'email', handle: 'attachment-voice' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'audio/ogg', size: 2048 }),
+      source: { adapterType: 'email', handle: 'attachment-voice' },
     };
     const email = makeFakeAdapter('email');
     const emailWithFile: Adapter = {
@@ -2796,7 +2791,7 @@ describe('Layer 5 — files a `through` plugin fetched join `_resources`', () =>
     expect(fileResource.fileRef).toMatchObject({
       __brand: 'FileRef',
       name: 'Acme deck.pdf',
-      source: { ownerAdapterType: DOCUMENT_STORE_OWNER, handle: 's3://bucket/uuid-1/Acme deck.pdf' },
+      source: { store: 'document', objectUri: 's3://bucket/uuid-1/Acme deck.pdf' },
     });
     expect((fileResource.data as { file: unknown }).file).toBe(fileResource.fileRef);
 

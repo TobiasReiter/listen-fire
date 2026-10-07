@@ -118,9 +118,6 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
             fileRef: {
               __brand: 'FileRef',
               name: 'deck.pdf',
-              retrieve: async () => {
-                throw new Error('not called in this test');
-              },
               source: { ownerAdapterType: 'dropbox', handle: 'h-deck' },
             },
             data: { name: 'deck.pdf', type: 'FILE' },
@@ -151,7 +148,11 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       // The source FILE resource survives — its fileRef is revived to a live
       // closure through the seam (Bucket 2).
       expect(out.emission.resources[0].name).toBe('deck.pdf');
-      expect(typeof out.emission.resources[0].fileRef?.retrieve).toBe('function');
+      expect(out.emission.resources[0].fileRef).toEqual({
+        __brand: 'FileRef',
+        name: 'deck.pdf',
+        source: { ownerAdapterType: 'dropbox', handle: 'h-deck' },
+      });
     });
 
     it('sourcePosition data half (position + edgeProperties) round-trips', async () => {

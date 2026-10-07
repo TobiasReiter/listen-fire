@@ -175,15 +175,14 @@ describe('ManualAdapter.getFieldValue', () => {
     });
     // `go-[:files]->.`File`` evaluates this — the file bytes that fed an
     // extraction now reach it explicitly (the `_resources` bundle used to be
-    // the only path). The FileRef carries its own byte channel + owner handle.
+    // the only path). The FileRef is a descriptor: its owner and its handle.
     const file = await adapter.getFieldValue({ position: filePos, fieldId: 'File' });
     expect(file).toMatchObject({
       __brand: 'FileRef',
       name: 'deck.pdf',
       contentType: 'application/pdf',
-      source: { ownerAdapterType: MANUAL_ADAPTER_TYPE, handle: 's3://docs/deck.pdf' },
+      source: { adapterType: MANUAL_ADAPTER_TYPE, handle: 's3://docs/deck.pdf' },
     });
-    expect(typeof (file as { retrieve?: unknown }).retrieve).toBe('function');
   });
 
   it('throws for a position from another adapter', async () => {
@@ -294,7 +293,7 @@ describe('ManualAdapter.resolveFileRef', () => {
     const result = await adapter.resolveFileRef({
       ref: {
         __brand: 'FileRef',
-        source: { ownerAdapterType: MANUAL_ADAPTER_TYPE, handle: 's3://docs/deck.pdf' },
+        source: { adapterType: MANUAL_ADAPTER_TYPE, handle: 's3://docs/deck.pdf' },
       },
     });
     expect(getFileNodeStream).toHaveBeenCalledWith({ objectUri: 's3://docs/deck.pdf' });

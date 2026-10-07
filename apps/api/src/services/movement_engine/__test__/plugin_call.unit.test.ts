@@ -360,8 +360,7 @@ describe('a plugin called plainly hands back its declared list of RECORDS', () =
     __brand: 'FileRef' as const,
     name: 'deck.pdf',
     contentType: 'application/pdf',
-    source: { ownerAdapterType: 'document-store', handle: 's3://bucket/abc/deck.pdf' },
-    retrieve: async () => ({ stream: {} as never, contentType: 'application/pdf' }),
+    source: { store: 'document' as const, objectUri: 's3://bucket/abc/deck.pdf' },
   };
 
   // The first record read field by field: its link, its text, and whether it

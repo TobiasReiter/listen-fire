@@ -504,7 +504,7 @@ describe('attachments', () => {
     expect(calls.attachments).toHaveLength(0);
 
     await adapter.resolveFileRef({
-      ref: { __brand: 'FileRef', source: { ownerAdapterType: 'gmail', handle: 'm1:att-1' } },
+      ref: { __brand: 'FileRef', source: { adapterType: 'gmail', handle: 'm1:att-1' } },
     });
     expect(calls.attachments).toEqual([{ messageId: 'm1', attachmentId: 'att-1' }]);
   });

@@ -1,7 +1,7 @@
 // The production `EngineHost`: the world a movement run reaches, wired to the
 // real systems — the adapter registry, Anthropic and the plugin registry, the
-// trigger-run recorder's durable parks, Postgres record bindings, raw text and
-// cross-run write locks, and Listen-Fire's acting-user resolution.
+// trigger-run recorder's durable parks, Postgres record bindings, file text and
+// rendering, cross-run write locks, and Listen-Fire's acting-user resolution.
 
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
@@ -31,6 +31,7 @@ import { resolveAdapter } from '../adapters/resolve';
 import type { LlmClient } from '../engine/batched_extraction';
 import { arbitrateEntityCandidates } from '../engine/entity_match';
 import type { TriggerRunRecorder } from '../runs/trigger_run';
+import { renderFileArtifact } from './file_render';
 import { makeFileTextResolver } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
 import { postgresRawTextStore, type RawTextStore } from './raw_text_store';
@@ -101,9 +102,10 @@ export function productionEngineHost(input: {
     files: {
       // OCR and transcription are model calls of their own.
       resolveFileText: billedFileText(
-        makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId)),
+        makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId), { teamId: input.teamId }),
         usage,
       ),
+      render: renderFileArtifact,
     },
     lookup: { resolveActingUser: resolveTeamActingUser },
     locks: input.locks ?? processWriteLocks(),
@@ -149,7 +151,7 @@ function billedTransforms(invoker: MovementTransformInvoker, usage: UsageScope):
 }
 
 function billedFileText(resolve: ResolveFileText, usage: UsageScope): ResolveFileText {
-  return (ref) => usage(() => resolve(ref));
+  return (request) => usage(() => resolve(request));
 }
 
 // ── Cross-run write locks ───────────────────────────────────────────────────

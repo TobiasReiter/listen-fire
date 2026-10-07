@@ -7,7 +7,7 @@
 // fakes, and a piece a test did not provide fails loudly when the run reaches
 // it, never by quietly reaching a real system.
 
-import type { ResolveFile } from 'movement-lang';
+import type { FileArtifactType, ResolveFile } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ActingUser, ActorCandidate, Adapter, FileRef } from '../translation_graph/adapter';
@@ -38,8 +38,14 @@ export type ResolveAdapter = (input: {
  *  decide (`arbitrateWithoutJudge`), so it is the judge's model call. */
 export type ArbitrateEntities = typeof arbitrateEntityCandidates;
 
-/** Source `FileRef` → extracted TEXT (the knowledge-pipeline parity path). */
-export type ResolveFileText = (ref: FileRef) => Promise<FileTextResolution>;
+/** A file's extracted TEXT (the knowledge-pipeline parity path). The host
+ *  redeems the descriptor's bytes and runs the extractor; only text, or the
+ *  reason there is none, comes back. */
+export type ResolveFileText = (input: { file: FileRef }) => Promise<FileTextResolution>;
+
+/** `FILE(content, type)`: the host renders the composed string, stores the
+ *  artifact, and answers the stored file's descriptor. */
+export type RenderFile = (input: { content: string; type: FileArtifactType }) => Promise<FileRef>;
 
 /**
  * One fully-qualified record position — a binding endpoint. NOT (system,
@@ -189,6 +195,7 @@ export interface EngineHost {
      *  raises MOVENG_UNSUPPORTED. */
     resolveFile?: ResolveFile;
     resolveFileText: ResolveFileText;
+    render: RenderFile;
   };
   lookup: {
     /**
@@ -306,6 +313,7 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
         (async () => {
           throw notProvided('files.resolveFileText');
         }),
+      render: files.render ?? renderIntoNowhere(),
     },
     lookup: {
       resolveActingUser: lookup.resolveActingUser ?? (async () => null),
@@ -313,6 +321,23 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     locks: overrides.locks ?? new InMemoryWriteLocks(),
     trace: overrides.trace ?? [],
   };
+}
+
+const RENDERED: Record<FileArtifactType, { name: string; contentType: string }> = {
+  pdf: { name: 'movement-artifact.pdf', contentType: 'application/pdf' },
+  text: { name: 'movement-artifact.txt', contentType: 'text/plain' },
+};
+
+/** A test's default `FILE()`: the descriptor of a document-store file that
+ *  holds nothing, so a run that renders can still be inspected. A test that
+ *  reads the bytes supplies a render that stores them. */
+function renderIntoNowhere(): RenderFile {
+  let rendered = 0;
+  return async ({ type }) => ({
+    __brand: 'FileRef',
+    ...RENDERED[type],
+    source: { store: 'document', objectUri: `test-render://${++rendered}` },
+  });
 }
 
 /** An in-memory park sink: timer and await parks and join counts are recorded

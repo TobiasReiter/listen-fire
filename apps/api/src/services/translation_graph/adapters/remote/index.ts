@@ -8,7 +8,9 @@
 // here. The remote server resolves names to its own internal ids exactly as an
 // in-process adapter does on the first line of each method. The only rewriting
 // is transport: FileRefs written into the remote are exposed at a fetchable
-// URL, and FileRefs read back get a `retrieve()` bound to `resolveFileRef`.
+// URL, and FileRefs read back are named as files this install owns, redeemed
+// through `resolveFileRef`. The wire keeps its own FileRef spelling
+// (`source: { ownerAdapterType, handle }`, no credential).
 //
 // Construction is synchronous: the manifest is fetched once at install time
 // (`fetchRemoteManifest`) and passed IN, so the engine can read
@@ -75,7 +77,8 @@ import type {
   SourcePosition,
 } from '../../types';
 import { exposeFile } from '../../engine/files/expose';
-import { streamFileRef, isFileRef, reviveFileRefs } from '../../engine/files/retrieve';
+import { fileOwner, hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import { DOCUMENT_STORE_OWNER } from '../../engine/files/document_store';
 import type { TriggerEvent, TriggerType } from '../../triggers/types';
 import type { Expression } from '#shared/expression/types';
 
@@ -84,7 +87,14 @@ import type { AuthStrategy } from '../../protocol/client';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { METHODS, WireManifestProtocolVersion } from '../../protocol/schema';
 import type { MethodName } from '../../protocol/schema';
-import { iterateRelatedPages, writeParentLinks, unsupportedAssociation } from '../../adapter';
+import {
+  isFileRef,
+  iterateRelatedPages,
+  ownedFileSource,
+  unsupportedAssociation,
+  writeParentLinks,
+  type FileSource,
+} from '../../adapter';
 
 export interface RemoteAdapterConfig {
   /** Slug the engine routes on. */
@@ -263,32 +273,30 @@ export class RemoteAdapter implements Adapter {
   }
 
   async getFieldValue(input: GetFieldValueInput): Promise<unknown> {
-    return this.reviveFileRefs(await this.call('getFieldValue', input));
+    return this.filesFromWire(await this.call('getFieldValue', input));
   }
 
   /**
-   * Re-attach a `retrieve()` to FileRefs that crossed the wire. A wire FileRef
-   * is plain JSON (`{ __brand, name, contentType, source }`) — closures don't
-   * serialize — so a consumer's `streamFileRef` would have no byte channel.
-   * Bind it back to the remote's own `resolveFileRef` (a wire call), so the
-   * FileRef is self-contained again on this side. A parked run's state is the
-   * same boundary and revives its files through the same walk.
+   * A FileRef read off the wire names its file by the remote's own handle
+   * (`{ ownerAdapterType, handle }`); this side's descriptor names the owning
+   * INSTANCE — this remote install, with its credential — so the host can
+   * resolve it again to redeem the handle through `resolveFileRef`. Deep,
+   * because a file can sit anywhere in a list or a record.
    */
-  private reviveFileRefs(value: unknown): unknown {
-    return reviveFileRefs(value, (ref) => {
-      const revived: FileRef = {
-        ...ref,
-        retrieve: () => {
-          if (!this.resolveFileRef) {
-            throw new Error(
-              `RemoteAdapter(${this.adapterType}): emitted a FileRef but does not ` +
-                'advertise resolveFileRef, so its bytes cannot be retrieved.',
-            );
-          }
-          return this.resolveFileRef({ ref: revived });
-        },
-      };
-      return revived;
+  private filesFromWire(value: unknown): unknown {
+    return mapFileRefs(value, (ref) => {
+      const { source, ...rest } = ref;
+      const handle = wireHandle(source);
+      return handle === undefined
+        ? rest
+        : {
+            ...rest,
+            source: ownedFileSource({
+              adapterType: this.adapterType,
+              credentialsId: this.config.credentialsId,
+              handle,
+            }),
+          };
     });
   }
 
@@ -338,9 +346,9 @@ export class RemoteAdapter implements Adapter {
   /**
    * Deep-walk a write value, replacing every FileRef with a WIRE FileRef whose
    * bytes are exposed at a short-lived Listen-Fire URL (`exposeFile` → S3). Raw bytes
-   * and the `retrieve()` closure can't cross the JSON envelope, so the remote
-   * server fetches the bytes from `url` instead. Non-FileRef values pass
-   * through; an already-exposed FileRef (carrying `url`, no closure) is kept.
+   * can't cross the JSON envelope, so the remote server fetches the bytes from
+   * `url` instead. Non-FileRef values pass through; an already-exposed FileRef
+   * (carrying `url`) keeps it.
    */
   private async exposeWriteFileRefs(value: unknown): Promise<unknown> {
     if (Array.isArray(value)) {
@@ -365,12 +373,13 @@ export class RemoteAdapter implements Adapter {
     if (ref.name !== undefined) wire.name = ref.name;
     if (ref.contentType !== undefined) wire.contentType = ref.contentType;
     if (ref.size !== undefined) wire.size = ref.size;
-    if (ref.source !== undefined) wire.source = ref.source;
+    const source = ref.source !== undefined ? wireSource(ref.source) : undefined;
+    if (source !== undefined) wire.source = source;
     if (typeof ref.url === 'string') {
       // Already exposed (e.g. re-sent off the wire) — keep its URL.
       wire.url = ref.url;
-    } else if (typeof ref.retrieve === 'function') {
-      const resolved = await streamFileRef(ref);
+    } else if (hasFileSource(ref)) {
+      const resolved = await streamFileRef(ref, { teamId: this.config.teamId });
       const exposed = await exposeFile({
         stream: resolved.stream,
         filename: ref.name,
@@ -492,7 +501,11 @@ export class RemoteAdapter implements Adapter {
    * location — Listen-Fire never holds the owner's credentials.
    */
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const { url, contentType } = await this.call('resolveFileRef', input);
+    const { source, ...ref } = input.ref;
+    const onWire = source !== undefined ? wireSource(source) : undefined;
+    const { url, contentType } = await this.call('resolveFileRef', {
+      ref: { ...ref, ...(onWire !== undefined ? { source: onWire } : {}) },
+    });
     const res = await fetch(url);
     if (!res.ok || !res.body) {
       throw new Error(
@@ -505,6 +518,34 @@ export class RemoteAdapter implements Adapter {
     };
   }
 
+}
+
+/** A descriptor's source as the wire spells it: the owner TYPE and its
+ *  handle. The credential stays on this side. */
+function wireSource(source: FileSource): { ownerAdapterType: string; handle: string } | undefined {
+  const owner = fileOwner(source);
+  if (owner === undefined) return undefined;
+  return owner.kind === 'document'
+    ? { ownerAdapterType: DOCUMENT_STORE_OWNER, handle: owner.objectUri }
+    : { ownerAdapterType: owner.adapterType, handle: owner.handle };
+}
+
+/** The handle a wire FileRef's `source` carries, when it carries one. */
+function wireHandle(source: unknown): string | undefined {
+  if (source === null || typeof source !== 'object' || !('handle' in source)) return undefined;
+  return typeof source.handle === 'string' ? source.handle : undefined;
+}
+
+/** Every FileRef inside a value replaced by `map`'s answer; a copy. */
+function mapFileRefs(value: unknown, map: (ref: FileRef) => FileRef): unknown {
+  if (Array.isArray(value)) return value.map((item) => mapFileRefs(item, map));
+  if (isFileRef(value)) return map(value);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) out[key] = mapFileRefs(entry, map);
+    return out;
+  }
+  return value;
 }
 
 /**

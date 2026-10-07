@@ -101,17 +101,17 @@ export interface ActorCandidate {
 }
 
 /**
- * A reference to a file's bytes that travels through the engine as a field
- * value — symmetric across the source→engine→target seam.
+ * A file as the engine holds it: a pure descriptor of where its bytes live,
+ * never the bytes and never a closure over them. Symmetric across the
+ * source→engine→target seam, and JSON as it stands, so it crosses the engine
+ * boundary, a remote adapter's wire and a parked run's state unchanged.
  *
- * Metadata (`name` / `contentType` / `size`) is always carried. The FileRef
- * carries its OWN byte channel via `retrieve()`, supplied by whatever produces
- * it; the consuming adapter calls it (`streamFileRef`). Byte resolution is not
- * an engine concern (plans/2026-06-18-fileref-resolution-rework).
+ * Metadata (`name` / `contentType` / `size`) is always carried. Bytes are a
+ * host concern: whatever needs them (a target adapter's write, file-to-text)
+ * redeems the descriptor's `source` on the host side (`streamFileRef`).
  *
  * Branded so a plain object can't masquerade as a FileRef in the deep field
  * walk (`isFileRef`).
- *
  */
 export interface FileRef {
   readonly __brand: 'FileRef';
@@ -121,45 +121,75 @@ export interface FileRef {
   contentType?: string;
   /** Byte length when known. */
   size?: number;
-  /**
-   * Produce the bytes — supplied by whatever EMITS the FileRef (a source
-   * adapter's `#resources`, the `FILE()` plugin, the remote adapter). The
-   * lazy-at-write byte channel: a consuming adapter calls it at the write to
-   * get the bytes, and does what its target API needs (upload them, or stash
-   * to S3 + hand over a URL for the cross-wire / Airtable cases — `exposeFile`).
-   * Always a FRESH stream and RE-CALLABLE — a consumer that needs the bytes
-   * twice calls again, so a producer MUST support repeated retrieval.
-   *
-   * Optional on the type because a FileRef deserialized off the wire arrives
-   * without its closure — the remote adapter re-binds it (`reviveFileRefs`)
-   * before it reaches a consumer. `streamFileRef` throws on a FileRef that
-   * still lacks it.
-   */
-  retrieve?(): Promise<ResolveFileRefResult>;
-  /**
-   * The producer's owner-resolvable handle. The remote adapter carries it ACROSS
-   * THE WIRE so its `resolveFileRef` (which `retrieve()` binds to) can name the
-   * file to the remote server. Local producers needn't set it — `retrieve()` is
-   * self-contained.
-   */
-  source?: { ownerAdapterType: string; handle: string };
+  /** Where the bytes live. Absent only for a file that has no way back to
+   *  them (a value that arrived with nothing but a display `url`). */
+  source?: FileSource;
   /**
    * A short-lived, fetchable Listen-Fire URL for the bytes. Set when a FileRef is
    * written INTO a remote adapter: the `RemoteAdapter` boundary buffers the
    * bytes to S3 (`exposeFile`) and puts the URL here so the remote server can
-   * fetch them (raw bytes can't ride the JSON wire). Absent for in-process
-   * writes, which use `retrieve()` directly. Nullable because adapter file
-   * VALUES (`FileValue extends FileRef`) carry a nullable `url` off raw JSON.
+   * fetch them (raw bytes can't ride the JSON wire). Nullable because adapter
+   * file VALUES carry a nullable `url` off raw JSON.
    */
   url?: string | null;
 }
 
 /**
- * Result of resolving a `FileRef` to its live bytes — owner-side. The engine
- * receives a Node `Readable` regardless of how the owner sourced it (local
- * adapters return the stream directly; `RemoteAdapter` converts a wire
- * `{ url }` to a stream via `fetch` + `Readable.fromWeb`).
- *
+ * Where a file's bytes live. An adapter-owned file names the INSTANCE that
+ * owns it — its type, credential and construction args — so the host resolves
+ * that same instance to redeem `handle` (`Adapter.resolveFileRef`), with the
+ * credentials the file was read with. A file in Listen-Fire's own document
+ * storage (a `FILE()` artifact, a plugin's output) names its store key.
+ */
+export type FileSource =
+  | {
+      adapterType: string;
+      credentialId?: string;
+      constructionArgs?: Record<string, string>;
+      /** Opaque to everyone but the owner. */
+      handle: string;
+    }
+  | { store: 'document'; objectUri: string };
+
+/** The source of a file an adapter instance owns, naming that instance as it
+ *  was constructed (the factory's credential and construction args). */
+export function ownedFileSource(input: {
+  adapterType: string;
+  credentialsId?: string;
+  constructionArgs?: Record<string, string>;
+  handle: string;
+}): FileSource {
+  return {
+    adapterType: input.adapterType,
+    ...(input.credentialsId !== undefined ? { credentialId: input.credentialsId } : {}),
+    ...(input.constructionArgs !== undefined ? { constructionArgs: input.constructionArgs } : {}),
+    handle: input.handle,
+  };
+}
+
+/** Structural guard for a branded `FileRef`. */
+export function isFileRef(value: unknown): value is FileRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { __brand?: unknown }).__brand === 'FileRef'
+  );
+}
+
+/** The file's durable identity within its owner: the owner's handle, or the
+ *  store key. What a file is memoised and cited by. */
+export function fileHandle(ref: FileRef): string | undefined {
+  const source = ref.source;
+  if (source === undefined) return undefined;
+  return 'store' in source ? source.objectUri : source.handle;
+}
+
+/**
+ * Result of resolving a `FileRef` to its live bytes — owner-side, and only
+ * ever on the host: the consumer receives a Node `Readable` regardless of how
+ * the owner sourced it (local adapters return the stream directly;
+ * `RemoteAdapter` converts a wire `{ url }` to a stream via `fetch` +
+ * `Readable.fromWeb`).
  */
 export interface ResolveFileRefResult {
   stream: Readable;
@@ -1039,14 +1069,12 @@ export interface Adapter {
   // target adapter persists them as part of the record's own create/update.
 
   /**
-   * Resolve a `FileRef` this adapter owns to its live bytes. Called by the
-   * `/api/files/{token}` pass-through while the originating action is still
-   * in flight (the engine keeps the `(ownerAdapter, ref)` pair registered for
-   * the duration of the target's write). The owner uses its OWN credentials to
-   * fetch — no caller-supplied target, no creds in the token.
+   * Resolve a `FileRef` this adapter owns to its live bytes. The host calls
+   * it (`streamFileRef`) on the instance the descriptor names — resolved with
+   * the descriptor's credential and construction args — so the owner fetches
+   * with its OWN credentials.
    *
-   * Optional — only adapters that EMIT `FileRef`s (carry `source` handles)
-   * implement it. `RemoteAdapter` implements it by calling the wire
+   * Optional — only adapters that EMIT `FileRef`s implement it. `RemoteAdapter` implements it by calling the wire
    * `resolveFileRef` (which returns `{ url }`) and converting url→stream.
    *
    */
@@ -1232,12 +1260,12 @@ export interface Resource {
   name?: string;
   /** Stable URL when one exists (URL/FILE resources; null for inline text).
    *  DISPLAY-ONLY per `3_model.md` — never the byte channel. Bytes for FILE
-   *  resources ride on `fileRef`; consumers that need the binary call its
-   *  `retrieve()` (`streamFileRef`), not `url`. */
+   *  resources are named by `fileRef`; consumers that need the binary redeem
+   *  it on the host (`streamFileRef`), not `url`. */
   url?: string | null;
-  /** Byte channel for FILE resources: a `FileRef` carrying its own `retrieve()`
-   *  (the producing source adapter closed over its credentials). Absent for
-   *  TEXT/URL resources whose payload rides `content` / `url`. */
+  /** The file behind a FILE resource: a descriptor naming the instance that
+   *  owns the bytes. Absent for TEXT/URL resources whose payload rides
+   *  `content` / `url`. */
   fileRef?: FileRef;
   /** MIME type when known. */
   contentType?: string | null;

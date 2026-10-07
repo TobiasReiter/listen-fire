@@ -80,7 +80,7 @@ import type { TransformImpl } from '../translation_graph/engine/transforms/regis
 import { logger } from '../logger';
 import type { TransformOutputShape } from '../translation_graph/types';
 import type { FileRef, Resource } from '../translation_graph/adapter';
-import { isFileRef } from '../translation_graph/engine/files/retrieve';
+import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import { stampResourceId } from '../translation_graph/engine/files/resources';
 import {
   isFileUnreadable,
@@ -120,7 +120,7 @@ export interface ExtractEmission {
   /**
    * The SOURCE CONTENT that fed this node's extraction (provenance) — the
    * `from [...]` data materialised as resources: one FILE resource per source
-   * `FileRef` (the byte channel preserved so a downstream write can carry the
+   * `FileRef` (the descriptor kept so a downstream write can carry the
    * file forward) and one TEXT resource per text segment. Every emission of one
    * `extract` shares the same `from` data, so the same list rides the root and
    * every descendant. This is what `extractedNode-[:_resources]->` walks and
@@ -527,9 +527,10 @@ function pluginFileResources(result: TransformInvocationResult): Resource[] {
     if (!isFileRef(file)) continue;
     const name = typeof record.name === 'string' ? record.name : file.name;
     const url = typeof record.url === 'string' ? record.url : null;
+    const externalId = fileHandle(file);
     resources.push(
       stampResourceId({
-        ...(file.source?.handle !== undefined ? { externalId: file.source.handle } : {}),
+        ...(externalId !== undefined ? { externalId } : {}),
         type: 'FILE',
         ...(name !== undefined ? { name } : {}),
         url,
@@ -1092,7 +1093,7 @@ class Materializer {
     const segments: Segment[] = [];
     const sources: ProvenanceOrigin[] = [];
     // The source content as resources (Layer 5 provenance) — one FILE resource
-    // per source `FileRef` (byte channel preserved), one TEXT resource per text
+    // per source `FileRef` (descriptor kept), one TEXT resource per text
     // datum. This is what an extracted node attaches to `WriteInput.resources`
     // and what `extractedNode-[:_resources]->` walks.
     const resources: Resource[] = [];
@@ -1150,7 +1151,7 @@ class Materializer {
 
   /**
    * Resolve a source `FileRef` to its Layer-5 contribution. The FILE `Resource`
-   * (carrying the SAME `FileRef` — the `retrieve()` byte channel preserved so a
+   * (carrying the SAME `FileRef` — the descriptor kept so a
    * downstream write carries the file forward) is built ALWAYS: a source file
    * qualifies as provenance by being a source, not by yielding text. The
    * extraction `text` (a `FILE` segment + a `file` evidence origin, the thing the
@@ -1162,7 +1163,8 @@ class Materializer {
    */
   private async fileSegment(ref: FileRef): Promise<FileResolution | undefined> {
     if (!this.runtime.resolveFileText) return undefined;
-    const cacheKey = ref.source?.handle ?? ref.name;
+    const handle = fileHandle(ref);
+    const cacheKey = handle ?? ref.name;
     if (cacheKey !== undefined) {
       const cached = this.fileTextCache.get(cacheKey);
       if (cached !== undefined) return cached ?? undefined;
@@ -1178,7 +1180,7 @@ class Materializer {
             origin: {
               kind: 'file',
               ...(read.rawTextId !== undefined ? { rawTextId: read.rawTextId } : {}),
-              ...(ref.source?.handle !== undefined ? { handle: ref.source.handle } : {}),
+              ...(handle !== undefined ? { handle } : {}),
               ...(ref.name !== undefined ? { name: ref.name } : {}),
               ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
             } satisfies ProvenanceOrigin,
@@ -2763,7 +2765,7 @@ function safeStringify(value: unknown): string {
 // ── Source content → resources (Layer 5 provenance) ──────────────────────────
 //
 // The `from [...]` data, captured as the source resources that fed extraction.
-// A FILE resource preserves the source `FileRef` (its `retrieve()` byte channel)
+// A FILE resource preserves the source `FileRef` (the descriptor of its bytes)
 // so the file can be carried forward to an output write; a TEXT resource carries
 // the text body inline. Mirrors the adapter resource currency
 // (`adapter.ts:Resource`) so `persistKgResources` / the file-write path consume
@@ -2774,14 +2776,15 @@ function safeStringify(value: unknown): string {
  *  resource is what a carry-forward write and the stored provenance read, so
  *  cutting it there would silently write a fragment of the document into a
  *  record. The ceiling is a prompt-cost bound and belongs only to the prompt.
- *  `data.file` exposes the byte channel a write reads (`r.\`file\`` → the FileRef
- *  → `streamFileRef` upload). Built for EVERY source file regardless of OCR; the
+ *  `data.file` exposes the file a write reads (`r.\`file\`` → the FileRef
+ *  → the target redeems it on the host for its upload). Built for EVERY source file regardless of OCR; the
  *  extracted `text`, when present, rides `content` (and `rawTextId` in metadata)
  *  so the resource is self-describing — a file with no OCR text still carries
  *  forward, just without inline text. */
 function fileResourceForRef(ref: FileRef, text: FileTextResult | undefined): Resource {
+  const externalId = fileHandle(ref);
   return {
-    ...(ref.source?.handle !== undefined ? { externalId: ref.source.handle } : {}),
+    ...(externalId !== undefined ? { externalId } : {}),
     type: 'FILE',
     ...(ref.name !== undefined ? { name: ref.name } : {}),
     url: null,

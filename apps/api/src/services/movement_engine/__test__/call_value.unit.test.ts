@@ -362,9 +362,6 @@ describe('the utility idiom — one movement shapes, another writes', () => {
         __brand: 'FileRef',
         name,
         contentType: 'application/pdf',
-        retrieve: async () => {
-          throw new Error('test: a call value must never pull the bytes');
-        },
       } as unknown as FileRef,
     };
   }

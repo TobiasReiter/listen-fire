@@ -12,7 +12,8 @@
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
 import type { FileRef, WriteInput, WriteResult } from '../../adapter';
 import { singleParentLink } from '../../adapter';
-import { streamFileRef } from '../../engine/files/retrieve';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { logger } from '../../../logger';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE } from './types';
 import { createNoopTracer } from './shared';
@@ -66,10 +67,9 @@ export async function createNote(input: {
 
 // ── File ─────────────────────────────────────────────────────────────────────
 
-/** The File-typed value the engine delivers — a branded `FileRef` (adapter.ts)
- *  carrying its own `retrieve()` byte channel
- *  (plans/2026-06-18-fileref-resolution-rework), with `name` / `contentType`
- *  metadata top-level. Inline `content` is the fallback for text composed in
+/** The File-typed value the engine delivers — a branded `FileRef` descriptor
+ *  (adapter.ts), redeemed for its bytes here on the host side, with `name` /
+ *  `contentType` metadata top-level. Inline `content` is the fallback for text composed in
  *  the program body. `url` is display-only — never the bytes. */
 interface FileValue extends FileRef {
   url?: string | null;
@@ -81,17 +81,13 @@ function asFileValue(raw: unknown): FileValue | null {
   return raw as FileValue;
 }
 
-/** A File-typed value carries bytes when it has the producer-supplied
- *  `retrieve()` channel. */
-function hasByteChannel(value: FileValue): boolean {
-  return typeof value.retrieve === 'function';
-}
-
 export async function createFile(input: {
   operations: AffinityOperations;
+  /** The team whose run is writing — the `File` value is redeemed for it. */
+  teamId: TeamId;
   write: WriteInput;
 }): Promise<WriteResult> {
-  const { operations, write } = input;
+  const { operations, teamId, write } = input;
   // A file belongs to a single owning record — the lone parent: an
   // organization, person, or opportunity (POST /entity-files takes exactly
   // one of organization_id / person_id / opportunity_id).
@@ -118,7 +114,7 @@ export async function createFile(input: {
     return { adapterType: AFFINITY_ADAPTER_TYPE, externalId: '', data: {} };
   }
 
-  const blob = await fetchFileBlob(fileValue);
+  const blob = await fetchFileBlob(fileValue, teamId);
   if (!blob) {
     logger.warn('[AffinityAdapter.createFile] could not retrieve file bytes — skipping upload', {
       name: fileValue.name,
@@ -142,12 +138,13 @@ export async function createFile(input: {
 
 async function fetchFileBlob(
   fileValue: FileValue,
+  teamId: TeamId,
 ): Promise<{ blob: Blob; contentType: string } | null> {
-  // The FileRef carries its own retriever — pull the bytes through it and
-  // buffer them into the Blob the Affinity upload needs.
-  if (hasByteChannel(fileValue)) {
+  // Redeem the descriptor for its bytes and buffer them into the Blob the
+  // Affinity upload needs.
+  if (hasFileSource(fileValue)) {
     try {
-      const resolved = await streamFileRef(fileValue);
+      const resolved = await streamFileRef(fileValue, { teamId });
       const bytes = await streamToBuffer(resolved.stream);
       const contentType =
         resolved.contentType ?? fileValue.contentType ?? 'application/octet-stream';

@@ -6,8 +6,8 @@
 //   • folder — `files.create` with the folder mimeType, after a by-name
 //              reuse search within the parent.
 //   • file   — ONE type, two byte channels, the write choosing by which
-//              field arrives: `File` (a FileRef with its own retrieve()
-//              channel, or inline text) uploads bytes as-is; `Content`
+//              field arrives: `File` (a FileRef descriptor, or inline
+//              text) uploads bytes as-is; `Content`
 //              (a string) imports text as a Google Doc. Exactly one of the
 //              two — both or neither is a loud error, never a guess.
 //
@@ -35,7 +35,8 @@ import type {
   WriteResult,
 } from '../../adapter';
 import { singleParentLink } from '../../adapter';
-import { streamFileRef } from '../../engine/files/retrieve';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
 import {
   GOOGLE_DRIVE_ADAPTER_TYPE,
@@ -47,6 +48,8 @@ import {
 
 export async function createRecord(input: {
   client: GoogleDriveClient;
+  /** The team whose run is writing — a `File` value is redeemed for it. */
+  teamId: TeamId;
   write: WriteInput;
 }): Promise<WriteResult> {
   // `recordType` is the pretty type name; recover the write kind from the static
@@ -118,9 +121,10 @@ async function createFolder(input: {
  *  guess (one value must not mean two facts). */
 async function createFile(input: {
   client: GoogleDriveClient;
+  teamId: TeamId;
   write: WriteInput;
 }): Promise<WriteResult> {
-  const { client, write } = input;
+  const { client, teamId, write } = input;
   const parentId = resolveParentId(write);
   if (!parentId) {
     throw new Error(
@@ -148,7 +152,7 @@ async function createFile(input: {
 
   return hasContent
     ? createDocument({ client, write, parentId })
-    : createUpload({ client, write, parentId });
+    : createUpload({ client, teamId, write, parentId });
 }
 
 /** The Google-Doc channel: import the PROVIDED text as a Doc (`files.create`
@@ -173,10 +177,9 @@ async function createDocument(input: {
 }
 
 /** The File-typed value the engine delivers for the `File` field — a
- *  branded `FileRef` (adapter.ts) carrying its own `retrieve()` byte channel
- *  (plans/2026-06-18-fileref-resolution-rework), with `name` / `contentType`
- *  metadata top-level. Inline `content` is the fallback for text composed in
- *  the program body. */
+ *  branded `FileRef` descriptor (adapter.ts), redeemed for its bytes here on
+ *  the host side, with `name` / `contentType` metadata top-level. Inline
+ *  `content` is the fallback for text composed in the program body. */
 interface FileValue extends FileRef {
   url?: string | null;
   content?: string;
@@ -188,18 +191,13 @@ function asFileValue(raw: unknown): FileValue | string | null {
   return raw as FileValue;
 }
 
-/** A File-typed value carries bytes when it has the producer-supplied
- *  `retrieve()` channel. */
-function hasByteChannel(value: FileValue): boolean {
-  return typeof value.retrieve === 'function';
-}
-
 /** The upload channel: the bytes arrive as the `File` field value (a
- *  File-typed value with its own retrieve() channel, or inline text), not
+ *  FileRef descriptor, or inline text), not
  *  from a context-node resource: in the TG model content is delivered as a
  *  field. */
 async function createUpload(input: {
   client: GoogleDriveClient;
+  teamId: TeamId;
   write: WriteInput;
   parentId: string;
 }): Promise<WriteResult> {
@@ -212,7 +210,7 @@ async function createUpload(input: {
     );
   }
 
-  const resolved = await resolveUploadStream(fileValue);
+  const resolved = await resolveUploadStream(fileValue, input.teamId);
   const name =
     String(write.fields.name ?? '') ||
     (typeof fileValue === 'object' ? fileValue.name : undefined) ||
@@ -233,17 +231,18 @@ async function createUpload(input: {
 }
 
 /** Resolve a `file` field value to a readable stream + mime type. Preferred:
- *  the FileRef's own `retrieve()` byte channel (`streamFileRef`, P5). Fallback:
+ *  the FileRef's bytes, redeemed for the team (`streamFileRef`, P5). Fallback:
  *  inline string content composed in the program body. */
 async function resolveUploadStream(
   fileValue: FileValue | string,
+  teamId: TeamId,
 ): Promise<{ stream: Readable; contentType: string | undefined }> {
   if (typeof fileValue === 'string') {
     return { stream: Readable.from(fileValue), contentType: 'text/plain' };
   }
 
-  if (hasByteChannel(fileValue)) {
-    const resolved = await streamFileRef(fileValue);
+  if (hasFileSource(fileValue)) {
+    const resolved = await streamFileRef(fileValue, { teamId });
     return {
       stream: resolved.stream,
       contentType: resolved.contentType ?? fileValue.contentType ?? undefined,

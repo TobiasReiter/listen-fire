@@ -130,13 +130,15 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import { Readable } from 'node:stream';
 import { services } from '../../../adapters/registry';
 import { makeTestHost } from '../host';
+import { streamFileRef } from '../../translation_graph/engine/files/retrieve';
+import { renderFileArtifact } from '../../translation_graph/movement/file_render';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
 // FILE() now persists its bytes to the document store on creation (the artifact
 // becomes a durable, source-backed FileRef — async user interaction §4.1), so
 // the run needs a document store. An in-memory one keeps the test hermetic; the
-// FileRef's retrieve() reads back through it, exactly as production does.
+// FileRef's bytes are read back through it, exactly as production does.
 const docStore = new Map<string, { bytes: Buffer; contentType?: string }>();
 beforeAll(() => {
   let n = 0;
@@ -310,6 +312,7 @@ async function runDigest(artifactType: 'pdf' | 'text') {
           affinity: makeFakeAdapter('affinity').adapter,
         }),
       },
+      files: { render: renderFileArtifact },
     }),
     dryRun: true,
     writeSink: (w) => captured.push(w),
@@ -318,8 +321,8 @@ async function runDigest(artifactType: 'pdf' | 'text') {
 }
 
 async function refBytes(ref: FileRef): Promise<Buffer> {
-  expect(typeof ref.retrieve).toBe('function');
-  const { stream } = await ref.retrieve!();
+  expect(ref.source).toMatchObject({ store: 'document' });
+  const { stream } = await streamFileRef(ref, { teamId: TEAM_ID });
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks);
@@ -350,7 +353,7 @@ describe('FILE(digest, "pdf") + namespaced stdlib fields through runMovement', (
       name: 'movement-artifact.pdf',
       contentType: 'application/pdf',
     });
-    expect(typeof ref.retrieve).toBe('function');
+    expect(ref.source).toMatchObject({ store: 'document' });
     expect(ref.size).toBeGreaterThan(0);
 
     // The rendered bytes (the seam's real path; Chromium stubbed at the

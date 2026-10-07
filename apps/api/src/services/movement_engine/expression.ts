@@ -136,9 +136,9 @@ import type {
   FileRef,
   Resource,
 } from '../translation_graph/adapter';
-import { isFileRef } from '../translation_graph/engine/files/retrieve';
+import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
-import type { EngineHost } from './host';
+import type { EngineHost, RenderFile } from './host';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import {
   isStablePosition,
@@ -149,7 +149,6 @@ import {
 import { stampedPositionName } from './kg';
 import type { ExtractEmission } from './extraction';
 import type { CallbackParamSpec } from './callback_types';
-import { renderFileArtifact, type RenderFileArtifact } from './file_render';
 import {
   NO_PROVENANCE,
   fromOrigin,
@@ -923,11 +922,11 @@ export interface MovementExprContext {
    */
   fieldFunctions?: Record<string, (args: unknown[]) => Promise<unknown>>;
   /**
-   * The FILE() render seam — turns a composed string into a `FileRef`
-   * artifact (./file_render.ts is the default; tests may inject a
-   * deterministic stub the same way they inject `llm`).
+   * The FILE() render seam — the host's `files.render`: the host renders and
+   * stores the artifact and answers its descriptor. Wired by the interpreter;
+   * absent in ad-hoc evaluations, where FILE() fails loud.
    */
-  renderFile?: RenderFileArtifact;
+  renderFile?: RenderFile;
   /**
    * The `READ(file)` seam — resolves a `FileRef` to its extracted text (the
    * same one the extraction's file sources go through, so a file read either
@@ -2142,14 +2141,13 @@ function blankIsAbsent(answer: string): string | null {
   return answer.trim() === '' ? null : answer;
 }
 
-// ── FILE() (the artifact built-in, on the file_render seam) ─────────────────
+// ── FILE() (the artifact built-in, on the host's files.render) ─────────────
 
 /**
- * `FILE(content, "pdf" | "text")` — evaluates the content, renders it
- * through the seam (default: ./file_render.ts — the Slack v3 preview
- * node's PDF machinery), and yields a `FileRef` carrying its own
- * `retrieve()` over the in-memory bytes: exactly the File-value currency
- * file-typed adapter fields consume. The bridge validated the call's static
+ * `FILE(content, "pdf" | "text")` — evaluates the content and hands it to
+ * the host's render (`files.render`), which stores the artifact and answers
+ * its descriptor: exactly the File-value currency file-typed adapter fields
+ * consume. The bytes stay on the host. The bridge validated the call's static
  * shape; the type literal is re-read here, not re-judged.
  */
 async function evaluateFileFunction(
@@ -2172,8 +2170,13 @@ async function evaluateFileFunction(
       `FILE()'s artifact type must be "pdf" or "text", got ${JSON.stringify(type)}`,
     );
   }
-  const render = ctx.renderFile ?? renderFileArtifact;
-  const ref = await render({
+  if (!ctx.renderFile) {
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      'FILE() has nothing in scope that can render a file — this expression is being evaluated outside a run',
+    );
+  }
+  const ref = await ctx.renderFile({
     content: content.value == null ? '' : String(content.value),
     type,
   });
@@ -2228,6 +2231,7 @@ async function evaluateReadFunction(
     );
   }
   const ref: FileRef = file.value;
+  const handle = fileHandle(ref);
   const named = {
     ...(ref.name !== undefined ? { name: ref.name } : {}),
     ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
@@ -2246,7 +2250,7 @@ async function evaluateReadFunction(
   const origin: ProvenanceOrigin = {
     kind: 'file',
     ...(result.rawTextId !== undefined ? { rawTextId: result.rawTextId } : {}),
-    ...(ref.source?.handle !== undefined ? { handle: ref.source.handle } : {}),
+    ...(handle !== undefined ? { handle } : {}),
     ...named,
   };
   return {

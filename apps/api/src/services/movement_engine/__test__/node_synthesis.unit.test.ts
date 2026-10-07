@@ -533,9 +533,6 @@ describe('values ride through untouched', () => {
       __brand: 'FileRef',
       name: 'pitch.pdf',
       contentType: 'application/pdf',
-      retrieve: async () => {
-        throw new Error('test: the synthesis must never pull the bytes');
-      },
     } as unknown as FileRef;
 
     const email = makeFakeAdapter('email', {
@@ -647,9 +644,6 @@ describe('the files-through-a-call gap, closed', () => {
         __brand: 'FileRef',
         name,
         contentType: 'application/pdf',
-        retrieve: async () => {
-          throw new Error('test: the pass-through must never pull the bytes');
-        },
       } as unknown as FileRef,
     };
   }
@@ -1155,9 +1149,6 @@ describe('the design example, end to end', () => {
         __brand: 'FileRef',
         name,
         contentType: 'application/pdf',
-        retrieve: async () => {
-          throw new Error('test: per-item synthesis must never pull the bytes');
-        },
       } as unknown as FileRef,
     };
   }

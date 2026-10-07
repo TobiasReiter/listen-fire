@@ -191,7 +191,7 @@ const DECK: FileRef = {
   name: 'deck.pdf',
   contentType: 'application/pdf',
   size: 1234,
-  source: { ownerAdapterType: 'email', handle: 'attachment-1' },
+  source: { adapterType: 'email', handle: 'attachment-1' },
 };
 
 function event(): TriggerEvent {

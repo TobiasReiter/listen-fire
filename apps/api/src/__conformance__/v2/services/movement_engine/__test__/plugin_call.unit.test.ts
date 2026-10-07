@@ -367,7 +367,6 @@ describe('a plugin called plainly hands back its declared list of RECORDS', () =
     name: 'deck.pdf',
     contentType: 'application/pdf',
     source: { ownerAdapterType: 'document-store', handle: 's3://bucket/abc/deck.pdf' },
-    retrieve: async () => ({ stream: {} as never, contentType: 'application/pdf' }),
   };
 
   // The first record read field by field: its link, its text, and whether it

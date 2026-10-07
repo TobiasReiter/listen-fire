@@ -24,7 +24,8 @@ import type {
   DeleteInput,
   DeleteResult,
 } from '../../adapter';
-import { streamFileRef } from '../../engine/files/retrieve';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { exposeFile } from '../../engine/files/expose';
 import { UPDATE_NOT_FOUND, isHttp404 } from '../not_found';
 import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
@@ -698,6 +699,7 @@ export async function readRecord(input: {
  */
 async function buildWritePayload(input: {
   client: AirtableAPIClient;
+  teamId: TeamId;
   ctx: TableContext;
   baseId: string;
   tables: AirtableTableMeta[];
@@ -729,7 +731,7 @@ async function buildWritePayload(input: {
     tables: input.tables,
   });
 
-  await resolveAttachmentFields({ fields, fieldMetaByKey: ctx.fieldMetaByKey });
+  await resolveAttachmentFields({ teamId: input.teamId, fields, fieldMetaByKey: ctx.fieldMetaByKey });
 
   // Parent linking: each edge name resolves to a multipleRecordLinks field on
   // this (child) table; set it to the parent's external record id. A linked
@@ -757,19 +759,20 @@ async function buildWritePayload(input: {
 }
 
 /** One Airtable attachment cell entry built from a FileRef. Airtable fetches
- *  `url` server-side, so we pull the FileRef's bytes (its own `retrieve()`) and
- *  expose them at a short-lived Listen-Fire URL (`exposeFile`). A value that carries
- *  only a plain display `url` (no byte channel) is used directly. Returns null
- *  when neither is available. */
+ *  `url` server-side, so we redeem the FileRef for its bytes and expose them
+ *  at a short-lived Listen-Fire URL (`exposeFile`). A value that carries only a
+ *  plain display `url` (no source) is used directly. Returns null when
+ *  neither is available. */
 async function toAttachmentObject(
   ref: unknown,
+  teamId: TeamId,
 ): Promise<{ url: string; filename?: string } | null> {
   if (ref == null || typeof ref !== 'object') return null;
   const fileRef = ref as FileRef & { url?: unknown };
 
   let url: string | null = null;
-  if (typeof fileRef.retrieve === 'function') {
-    const resolved = await streamFileRef(fileRef);
+  if (hasFileSource(fileRef)) {
+    const resolved = await streamFileRef(fileRef, { teamId });
     const exposed = await exposeFile({
       stream: resolved.stream,
       filename: fileRef.name,
@@ -796,13 +799,14 @@ async function toAttachmentObject(
  * still applies via the operators).
  */
 async function resolveAttachmentFields(input: {
+  teamId: TeamId;
   fields: Record<string, unknown>;
   fieldMetaByKey: Map<string, AirtableFieldMeta>;
 }): Promise<void> {
   for (const [fieldId, value] of Object.entries(input.fields)) {
     if (input.fieldMetaByKey.get(fieldId)?.type !== 'multipleAttachments') continue;
     const refs = Array.isArray(value) ? value : [value];
-    const resolved = await Promise.all(refs.map(toAttachmentObject));
+    const resolved = await Promise.all(refs.map((ref) => toAttachmentObject(ref, input.teamId)));
     const attachments = resolved.filter(
       (a): a is { url: string; filename?: string } => a !== null,
     );
@@ -827,7 +831,7 @@ function resolveParentLinkField(input: { ctx: TableContext; edgeName: string }):
 
 export async function createRecord(input: {
   client: AirtableAPIClient;
-  teamId: string;
+  teamId: TeamId;
   ids: AirtableTableId;
   write: WriteInput;
 }): Promise<WriteResult> {
@@ -849,6 +853,7 @@ export async function createRecord(input: {
 
   const { fields } = await buildWritePayload({
     client: input.client,
+    teamId: input.teamId,
     ctx,
     baseId,
     tables,
@@ -875,7 +880,7 @@ export async function createRecord(input: {
 
 export async function updateRecord(input: {
   client: AirtableAPIClient;
-  teamId: string;
+  teamId: TeamId;
   ids: AirtableTableId;
   update: UpdateInput;
 }): Promise<UpdateResult> {
@@ -897,6 +902,7 @@ export async function updateRecord(input: {
 
   const { fields, association } = await buildWritePayload({
     client: input.client,
+    teamId: input.teamId,
     ctx,
     baseId,
     tables,

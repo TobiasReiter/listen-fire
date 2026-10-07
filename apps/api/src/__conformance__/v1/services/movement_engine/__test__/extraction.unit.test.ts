@@ -2509,7 +2509,6 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       contentType: 'application/pdf',
       size: 4096,
       source: { ownerAdapterType: 'email', handle: 'attachment-pitch' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'application/pdf', size: 4096 }),
     };
 
     // The email adapter returns the deck FileRef for the `deck` field read.
@@ -2568,7 +2567,6 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       contentType: 'image/png',
       size: 2048,
       source: { ownerAdapterType: 'email', handle: 'attachment-scan' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'image/png', size: 2048 }),
     };
 
     const email = makeFakeAdapter('email');
@@ -2636,7 +2634,6 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       contentType: 'audio/ogg',
       size: 2048,
       source: { ownerAdapterType: 'email', handle: 'attachment-voice' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'audio/ogg', size: 2048 }),
     };
     const email = makeFakeAdapter('email');
     const emailWithFile: Adapter = {
@@ -2685,7 +2682,6 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
       contentType: 'audio/ogg',
       size: 2048,
       source: { ownerAdapterType: 'email', handle: 'attachment-voice' },
-      retrieve: async () => ({ stream: {} as never, contentType: 'audio/ogg', size: 2048 }),
     };
     const email = makeFakeAdapter('email');
     const emailWithFile: Adapter = {

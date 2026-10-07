@@ -6,8 +6,8 @@
 // plain-JSON descriptor (a tagged variant per binding kind); `rehydrateBinding`
 // rebuilds the live `Binding` from a descriptor + a rehydration context that
 // re-resolves the live refs. The two are inverse modulo live refs (an adapter is
-// re-resolved, a FileRef's `retrieve()` rebound, an instance schema re-fetched,
-// code refs taken from the re-parsed AST).
+// re-resolved, an instance schema re-fetched, code refs taken from the
+// re-parsed AST). A file is data: its descriptor parks as it stands.
 //
 // The three buckets (§4.1):
 //   1. Pure data — serialise as-is: `event`, `value`, `handle`,
@@ -17,8 +17,7 @@
 //   2. A live ref behind a serialisable identity — rebind on rehydrate: the
 //      adapter inside `instance` and `sourcePosition.read` (re-resolved by
 //      slug+creds via the registry; `edgeFieldId` re-derived; the instance schema
-//      RE-FETCHED live, never serialised), and the `retrieve()` closure inside a
-//      `resource`'s FileRef (rebound via the FileRef-revive pattern — `source`).
+//      RE-FETCHED live, never serialised).
 //   3. Code refs — NOT serialised, re-resolved from the re-parsed (version-pinned)
 //      program: `shape` declarations, `movement` callables, `opaque` imports. By
 //      name against the rehydration context's code resolver. `blockMeta` and
@@ -34,7 +33,7 @@
 // JSON-serialisable at the boundary, so a non-serialisable value fails LOUD at
 // park (never corrupts the parked scope).
 //
-// This module is pure: all DB / registry / FileRef access stays behind the
+// This module is pure: all DB / registry access stays behind the
 // injected `RehydrationContext`, exactly as the interpreter keeps `resolveAdapter`
 // / `parkSink` behind seams.
 
@@ -59,7 +58,7 @@ import type {
   WriteRecord,
 } from './expression';
 import { bindingOf, isDictValue } from './expression';
-import { isFileRef, reviveFileRefs } from '../translation_graph/engine/files/retrieve';
+import { isFileRef } from '../translation_graph/adapter';
 import type { Provenance } from './provenance';
 import { MovementEngineError } from './errors';
 
@@ -85,17 +84,6 @@ export interface SourceReadDescriptor {
   instanceName: string;
 }
 
-/** A wire FileRef — the remote adapter's wire form: metadata + the
- *  owner-resolvable `source` handle, no closure. Rehydrate rebinds `retrieve()`
- *  from `source` (the FileRef-revive pattern). */
-export interface FileRefDescriptor {
-  name?: string;
-  contentType?: string;
-  size?: number;
-  source?: { ownerAdapterType: string; handle: string };
-  url?: string | null;
-}
-
 /** A serialised `ExtractEmission` — its `children` Map flattened to a record of
  *  arrays (JSON has no Map). The emission is pure data (the extraction ran). */
 export interface ExtractEmissionDescriptor {
@@ -106,8 +94,8 @@ export interface ExtractEmissionDescriptor {
   fieldOrder?: string[];
   provenance: ExtractEmission['provenance'];
   origin?: ExtractEmission['origin'];
-  /** Layer-5 source resources — `fileRef` closures stripped to descriptors
-   *  (Bucket 2), revived through the seam on rehydrate. */
+  /** Layer-5 source resources (plain data; a FILE resource's `fileRef` is a
+   *  descriptor). */
   resources: ResourceDescriptor[];
   children: Record<string, ExtractEmissionDescriptor[]>;
 }
@@ -286,9 +274,11 @@ export type HandleGraphDescriptor = {
   instance: InstanceIdentityDescriptor;
 };
 
-/** A serialised `Resource` — every field is plain data except `fileRef`, whose
- *  closure is stripped to a `FileRefDescriptor` (Bucket 2). */
-export type ResourceDescriptor = Omit<Resource, 'fileRef'> & { fileRef?: FileRefDescriptor };
+/** A serialised `Resource` — plain data as it stands. A park written before
+ *  file refs were descriptors stored its `fileRef` without the brand. */
+export type ResourceDescriptor = Omit<Resource, 'fileRef'> & {
+  fileRef?: Omit<FileRef, '__brand'> & { __brand?: 'FileRef' };
+};
 
 // ── The rehydration context (chunk 5 passes this in) ──────────────────────────
 
@@ -310,12 +300,6 @@ export interface RehydrationContext {
    * re-derived `edgeFieldId`. Used to rebind `sourcePosition.read`.
    */
   resolveSourceRead(instanceName: string): Promise<SourceRead>;
-  /**
-   * Rebind a wire FileRef's `retrieve()` from its `source` handle — the owner
-   * adapter's `resolveFileRef`, or the document store for `FILE()` artifacts
-   * (the same pattern `reviveFileRefs` uses across the wire).
-   */
-  reviveFileRef(descriptor: FileRefDescriptor): FileRef;
   /**
    * Re-resolve a code ref (`shape` / `movement` / `opaque` import) by name
    * against the re-parsed program's environment — the version pin (P11) makes
@@ -394,17 +378,14 @@ export function assertParkRead(park: ParkReader): void {
  * Returns the round-tripped value (so the descriptor holds exactly what will
  * come back, not a richer in-memory form that drifts on rehydrate).
  *
- * A file inside the value travels in its wire form, exactly as it crosses to
- * a remote adapter: its byte channel is a closure and stays behind, its
- * durable handle (`source`) goes, and rehydrate rebinds the channel from it.
- * Any OTHER closure is an error — `JSON.stringify` would drop it in silence.
+ * A file inside the value is a descriptor — data, and parks as it stands. A
+ * closure is an error — `JSON.stringify` would drop it in silence.
  */
 export function assertJsonSerializable(value: unknown, where: string): unknown {
   let json: string;
   try {
-    json = JSON.stringify(value, function keepNoClosure(this: unknown, key: string, entry: unknown) {
+    json = JSON.stringify(value, (key: string, entry: unknown) => {
       if (typeof entry !== 'function') return entry;
-      if (key === 'retrieve' && isFileRef(this)) return undefined;
       throw new Error(`'${key}' is a function`);
     });
   } catch (e) {
@@ -459,22 +440,8 @@ function serializeEmission(emission: ExtractEmission): ExtractEmissionDescriptor
   };
 }
 
-function serializeFileRef(ref: FileRef): FileRefDescriptor {
-  return {
-    ...(ref.name !== undefined ? { name: ref.name } : {}),
-    ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
-    ...(ref.size !== undefined ? { size: ref.size } : {}),
-    ...(ref.source !== undefined ? { source: ref.source } : {}),
-    ...(ref.url !== undefined ? { url: ref.url } : {}),
-  };
-}
-
 function serializeResource(resource: Resource): ResourceDescriptor {
-  const { fileRef, ...rest } = resource;
-  return {
-    ...rest,
-    ...(fileRef !== undefined ? { fileRef: serializeFileRef(fileRef) } : {}),
-  };
+  return resource;
 }
 
 /**
@@ -626,20 +593,17 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
 
 // ── Rehydrate ─────────────────────────────────────────────────────────────────
 
-function rehydrateEmission(
-  descriptor: ExtractEmissionDescriptor,
-  ctx: RehydrationContext,
-): ExtractEmission {
+function rehydrateEmission(descriptor: ExtractEmissionDescriptor): ExtractEmission {
   const children = new Map<string, ExtractEmission[]>();
   for (const [edge, kids] of Object.entries(descriptor.children)) {
-    children.set(edge, kids.map((k) => rehydrateEmission(k, ctx)));
+    children.set(edge, kids.map(rehydrateEmission));
   }
   return {
     nodeName: descriptor.nodeName,
-    fields: withFiles(inOrder(descriptor.fields, descriptor.fieldOrder), ctx),
+    fields: inOrder(descriptor.fields, descriptor.fieldOrder),
     provenance: descriptor.provenance,
     ...(descriptor.origin !== undefined ? { origin: descriptor.origin } : {}),
-    resources: (descriptor.resources ?? []).map((r) => rehydrateResource(r, ctx)),
+    resources: (descriptor.resources ?? []).map(rehydrateResource),
     children,
   };
 }
@@ -651,22 +615,12 @@ async function rehydrateHandleGraph(
   return { kind: 'instance', instance: await ctx.resolveInstance(graph.instance) };
 }
 
-function rehydrateResource(descriptor: ResourceDescriptor, ctx: RehydrationContext): Resource {
+function rehydrateResource(descriptor: ResourceDescriptor): Resource {
   const { fileRef, ...rest } = descriptor;
   return {
     ...rest,
-    ...(fileRef !== undefined ? { fileRef: ctx.reviveFileRef(fileRef) } : {}),
+    ...(fileRef !== undefined ? { fileRef: { ...fileRef, __brand: 'FileRef' } } : {}),
   };
-}
-
-/** Stored fields with every file in them given its byte channel back — a
- *  record's field can hold a file, and it parked in its wire form. */
-function withFiles(fields: Record<string, unknown>, ctx: RehydrationContext): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(fields)) {
-    out[key] = reviveFileRefs(value, (ref) => ctx.reviveFileRef(ref));
-  }
-  return out;
 }
 
 function serializeDeferredWalk(walk: DeferredWalk, park: ParkWriter): DeferredWalkDescriptor {
@@ -696,7 +650,7 @@ async function rehydrateDeferredWalk(
 
 /**
  * Rebuild a live `Binding` from a descriptor. Bucket 1 returns the data as-is,
- * Bucket 2 rebinds the live ref through the context (registry / FileRef-revive),
+ * Bucket 2 rebinds the live ref through the context (the registry),
  * Bucket 3 takes the code ref from the re-parsed program. Async because Bucket-2
  * adapter re-resolution + live schema re-fetch hit the registry.
  */
@@ -731,9 +685,9 @@ async function rehydrateInPark(
         graph: await rehydrateHandleGraph(descriptor.graph, ctx),
       };
     case 'extractRoot':
-      return { kind: 'extractRoot', emission: rehydrateEmission(descriptor.emission, ctx) };
+      return { kind: 'extractRoot', emission: rehydrateEmission(descriptor.emission) };
     case 'extractPosition':
-      return { kind: 'extractPosition', emission: rehydrateEmission(descriptor.emission, ctx) };
+      return { kind: 'extractPosition', emission: rehydrateEmission(descriptor.emission) };
     case 'sourcePosition':
       return {
         kind: 'sourcePosition',
@@ -748,7 +702,7 @@ async function rehydrateInPark(
         kind: 'shapePosition',
         shape: descriptor.shape,
         node: descriptor.node,
-        fields: withFiles(descriptor.fields, ctx),
+        fields: descriptor.fields,
         fieldProvenance: descriptor.fieldProvenance,
       };
     case 'nodePosition': {
@@ -759,7 +713,7 @@ async function rehydrateInPark(
           ? nodeNumbered(park, descriptor.id)
           : { kind: 'nodePosition', fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} };
       if (descriptor.id !== undefined) park.unfilled.delete(descriptor.id);
-      node.fields = withFiles(inOrder(descriptor.fields, descriptor.fieldOrder), ctx);
+      node.fields = inOrder(descriptor.fields, descriptor.fieldOrder);
       node.fieldOrder = descriptor.fieldOrder ?? Object.keys(descriptor.fields);
       node.fieldProvenance = descriptor.fieldProvenance;
       const edges: Record<string, NodeEdge> = {};
@@ -783,7 +737,7 @@ async function rehydrateInPark(
     case 'value':
       return {
         kind: 'value',
-        value: reviveFileRefs(descriptor.value, (ref) => ctx.reviveFileRef(ref)),
+        value: descriptor.value,
         ...(descriptor.provenance !== undefined ? { provenance: descriptor.provenance } : {}),
         ...(descriptor.many === true ? { many: true } : {}),
       };
@@ -805,7 +759,7 @@ async function rehydrateInPark(
     case 'instance':
       return ctx.resolveInstance(descriptor.instance);
     case 'resource':
-      return { kind: 'resource', resource: rehydrateResource(descriptor.resource, ctx) };
+      return { kind: 'resource', resource: rehydrateResource(descriptor.resource) };
     // ── Bucket 3 — code refs from the re-parsed program ──
     case 'shape':
     case 'movement':
@@ -1021,7 +975,7 @@ function holdsRecords(value: unknown): boolean {
 function serializeValue(value: unknown, park: ParkWriter): ValueDescriptor {
   const record = bindingOf(value);
   if (record !== undefined) return { kind: 'record', binding: serializeBinding(record, park) };
-  // A file is a leaf: its wire form is data, and rehydrate revives it.
+  // A file is a leaf: its descriptor is data.
   if (isFileRef(value)) return { kind: 'data', value: assertJsonSerializable(value, 'value binding') };
   if (Array.isArray(value)) return { kind: 'list', of: value.map((entry) => serializeValue(entry, park)) };
   if (isDictValue(value)) {
@@ -1039,7 +993,7 @@ async function rehydrateValue(
 ): Promise<unknown> {
   switch (descriptor.kind) {
     case 'data':
-      return reviveFileRefs(descriptor.value, (ref) => ctx.reviveFileRef(ref));
+      return descriptor.value;
     case 'record':
       return rehydrateInPark(descriptor.binding, ctx, park);
     case 'list':

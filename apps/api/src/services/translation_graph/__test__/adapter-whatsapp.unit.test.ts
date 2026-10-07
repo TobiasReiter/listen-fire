@@ -64,6 +64,7 @@ import {
   type WhatsappPayload,
 } from '../adapters/whatsapp';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
 import { normalizeWhatsappPhone } from '../adapters/acting_user/phone';
 import { discriminateEvent } from '../engine/inbound/discriminate';
 import { parseWhatsappEvents } from '../../webhook_sync/providers/whatsapp';
@@ -410,20 +411,12 @@ describe('WhatsappAdapter.createRecord — reply (msg-[:Replies]->)', () => {
 
   it('a File field sends media with the Body as caption', async () => {
     sendMediaMessageMock.mockResolvedValue('wamid.MEDIA');
-    const { Readable } = await import('node:stream');
+    const store = installMemoryDocumentStore();
     const result = await adapter().createRecord({
       recordType: 'Message',
       fields: {
         Body: 'the report',
-        File: {
-          __brand: 'FileRef',
-          name: 'report.pdf',
-          contentType: 'application/pdf',
-          retrieve: async () => ({
-            stream: Readable.from([Buffer.from('PDFBYTES')]),
-            contentType: 'application/pdf',
-          }),
-        },
+        File: store.file('PDFBYTES', { name: 'report.pdf', contentType: 'application/pdf' }),
       },
       parentLinks: [inboundParent('Replies')],
       mutationContext,

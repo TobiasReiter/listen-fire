@@ -8,7 +8,15 @@ const UNSUPPORTED_SITES = 'services/movement_engine/__test__/interpretable_unsup
 const SOURCE_SCAN =
   "reads the engine's and checker's SOURCE files by a path relative to where the test sits, which inside the corpus names no file; it audits the code's own registry of unsupported sites, not anything a version-2 movement does";
 
+const FILE_DESCRIPTOR =
+  "asserts the parked FileRef's byte-channel closure is rebound on rehydrate; a FileRef is now a descriptor that parks and rehydrates as it stands, its bytes redeemed on the host when something reads them, so a resumed run reads the same file and no movement observes the difference";
+
 exports.triage = [
+  {
+    file: 'services/movement_engine/__test__/serialize.unit.test.ts',
+    test: "resource's FileRef has its retrieve() rebound (closure does not survive the wire)",
+    reason: FILE_DESCRIPTOR,
+  },
   { file: UNSUPPORTED_SITES, test: 'only the registered files throw it', reason: SOURCE_SCAN },
   { file: UNSUPPORTED_SITES, test: 'expression.ts: the registry lists exactly the call sites in the file', reason: SOURCE_SCAN },
   { file: UNSUPPORTED_SITES, test: 'run.ts: the registry lists exactly the call sites in the file', reason: SOURCE_SCAN },

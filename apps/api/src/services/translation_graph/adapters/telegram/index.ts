@@ -46,7 +46,7 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink } from '../../adapter';
+import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
@@ -676,15 +676,15 @@ export class TelegramAdapter extends BaseAdapter implements Adapter {
   }
 
   // ── 7. Byte resolution (owner-side) ───────────────────────────────────
-  // Telegram OWNS the attachments it emits: the engine redeems an attachment's
-  // `fileRef.source.handle` (the Bot API `file_id`) here. Telegram's download
+  // Telegram OWNS the attachments it emits: the host redeems an attachment's
+  // handle (the Bot API `file_id`) here, on the instance the descriptor names. Telegram's download
   // is two-step — `getFile(file_id)` returns a `file_path`, then the bytes live
   // at `<base>/file/bot<token>/<file_path>`. Both legs go through the
   // base-URL-aware client, so the fake server serves them under the dev loop.
   //
   // owners serve bytes
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {
-    const handle = input.ref.source?.handle;
+    const handle = fileHandle(input.ref);
     if (!handle) {
       throw new Error(
         `${TELEGRAM_ADAPTER_TYPE}.resolveFileRef: FileRef has no source handle to resolve.`,
@@ -693,9 +693,8 @@ export class TelegramAdapter extends BaseAdapter implements Adapter {
     return this.downloadFile(handle, input.ref.contentType);
   }
 
-  /** The two-leg Bot API download (`getFile` → file-path bytes) — shared by
-   *  owner-side redemption (`resolveFileRef`) and the attachment `data`
-   *  field's self-retrieving FileRef closure. */
+  /** The two-leg Bot API download (`getFile` → file-path bytes) behind
+   *  owner-side redemption (`resolveFileRef`). */
   private async downloadFile(
     fileId: string,
     fallbackContentType?: string,
@@ -726,9 +725,8 @@ export class TelegramAdapter extends BaseAdapter implements Adapter {
     };
   }
 
-  /** Mint the attachment's File primitive: a FileRef that fetches its own
-   *  bytes (closing over this adapter's credential-resolved client), plus the
-   *  owner handle so it survives the wire (fileref-resolution-rework). */
+  /** Mint the attachment's File primitive: a FileRef descriptor naming this
+   *  instance (its credential) as the owner and the `file_id` as the handle. */
   private telegramAttachmentFileRef(att: Partial<TelegramAttachment>): FileRef | null {
     const fileId = att.file_id;
     if (!fileId) return null;
@@ -738,8 +736,11 @@ export class TelegramAdapter extends BaseAdapter implements Adapter {
       name: att.name ?? fileId,
       contentType,
       size: att.size ?? undefined,
-      retrieve: () => this.downloadFile(fileId, contentType),
-      source: { ownerAdapterType: TELEGRAM_ADAPTER_TYPE, handle: fileId },
+      source: ownedFileSource({
+        adapterType: TELEGRAM_ADAPTER_TYPE,
+        ...(this.credentialsId !== undefined ? { credentialsId: this.credentialsId } : {}),
+        handle: fileId,
+      }),
     };
   }
 

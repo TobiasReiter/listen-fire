@@ -11,7 +11,7 @@
 //   - comment thread_id routing (reply vs new-thread-on-record),
 //   - the legacy generic list-entry type staying UNWRITABLE.
 
-import { Readable } from 'node:stream';
+import { installMemoryDocumentStore } from '../../engine/files/__test__/memory_document_store';
 
 import {
   createAttioAdapter,
@@ -314,13 +314,9 @@ describe('list membership create (`write <record>-[:Lists]-> { list: "…", … 
 });
 
 describe('file create (`write record-[:files]->` — upload against the parent record)', () => {
+  const store = installMemoryDocumentStore();
   function voiceRef(): FileRef {
-    return {
-      __brand: 'FileRef',
-      name: 'voice.ogg',
-      contentType: 'audio/ogg',
-      retrieve: async () => ({ stream: Readable.from([Buffer.from('OGGBYTES')]) }),
-    };
+    return store.file('OGGBYTES', { name: 'voice.ogg', contentType: 'audio/ogg' });
   }
 
   beforeEach(() => {

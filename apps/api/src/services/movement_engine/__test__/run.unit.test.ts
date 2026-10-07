@@ -5021,7 +5021,6 @@ describe('await landing — the bound sourcePosition round-trips via the FILE-SC
         schema: {} as never,
       }),
       resolveSourceRead: fileScopedResolveSourceRead(fileScope),
-      reviveFileRef: (d) => ({ __brand: 'FileRef', ...d, retrieve: async () => ({ stream: {} as never }) }),
       resolveCodeRef: (name) => ({ kind: 'opaque', what: name }),
     };
   }

@@ -38,7 +38,7 @@ import { z } from 'zod';
 import { neverAsAny } from '../../lib/utils/types';
 import type { LlmCallResult } from '../translation_graph/engine/batched_extraction';
 import type { FileRef } from '../translation_graph/adapter';
-import { isFileRef } from '../translation_graph/engine/files/retrieve';
+import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { Effort, ExtractionCallSettings, TierModel } from './ai_tiers';
 import {
   absentIfBlank,
@@ -552,7 +552,8 @@ async function contentFile(ref: FileRef, runtime: ExtractCallRuntime): Promise<C
     ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
   };
   if (runtime.resolveFileText === undefined) return { traced: { ...named, unreadable: 'bytes_unavailable' } };
-  const key = ref.source?.handle ?? ref.name;
+  const handle = fileHandle(ref);
+  const key = handle ?? ref.name;
   const read = async (): Promise<ContentFile> => {
     const result = await runtime.resolveFileText!(ref);
     if (isFileUnreadable(result)) {
@@ -571,7 +572,7 @@ async function contentFile(ref: FileRef, runtime: ExtractCallRuntime): Promise<C
       origin: {
         kind: 'file',
         ...(result.rawTextId !== undefined ? { rawTextId: result.rawTextId } : {}),
-        ...(ref.source?.handle !== undefined ? { handle: ref.source.handle } : {}),
+        ...(handle !== undefined ? { handle } : {}),
         ...named,
       },
       traced: {

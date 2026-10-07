@@ -5,8 +5,9 @@
 // the file's TEXT, not a stringified handle. This mirrors the knowledge
 // pipeline exactly:
 //
-//   FileRef
-//     → resolveFileRef  (owner adapter fetches bytes → Readable, OWN creds)
+//   FileRef (a descriptor)
+//     → resolveFileRef  (the owning instance, re-resolved with the descriptor's
+//                        credential, fetches bytes → Readable)
 //     → OCR/text extractor  (the PDF's own text layer first, then
 //                            services.ocr.extractPdf for scanned PDFs;
 //                            getPptxText / getXlsxContent for decks/sheets)
@@ -14,10 +15,9 @@
 //       production the Context-free Kysely twin of RawTextService —
 //       raw_text_store.ts)
 //
-// Byte resolution goes through the FileRef's own `retrieve()` (`streamFileRef`):
-// the producing source adapter closed over its credentials when it emitted the
-// FileRef, so there's no owner-adapter to re-resolve here — the FileRef fetches
-// itself (plans/2026-06-18-fileref-resolution-rework).
+// Byte resolution is `streamFileRef`'s: the descriptor names the instance
+// that owns the bytes, and that instance is resolved on this side of the
+// engine boundary — the engine hands over a descriptor and gets text back.
 //
 // Audio (voice notes / audio attachments) is the fourth kind: the bytes are
 // transcribed (Whisper's registry name, wherever the model map sends it) and the TRANSCRIPT is the file's
@@ -45,7 +45,7 @@ import { logger } from '../../logger';
 import type { FileUnreadable } from '../../movement_engine/extraction';
 import type { ResolveFileText } from '../../movement_engine/host';
 import type { FileRef, ResolveFileRefResult } from '../adapter';
-import { streamFileRef } from '../engine/files/retrieve';
+import { streamFileRef, type StreamFileRefOptions } from '../engine/files/retrieve';
 import type { RawTextStore } from './raw_text_store';
 
 type FileKind = 'pdf' | 'pptx' | 'xlsx' | 'audio';
@@ -245,11 +245,11 @@ async function extractTextFromStream(
 
 /**
  * The production `files.resolveFileText` the host hands the engine: byte
- * resolution (the FileRef's own `retrieve()`) → text extraction → the raw-text
- * store, which is a parameter so tests need no database.
+ * resolution (`streamFileRef`, for the run's team) → text extraction → the
+ * raw-text store, which is a parameter so tests need no database.
  */
-export function makeFileTextResolver(rawText: RawTextStore): ResolveFileText {
-  return async (ref) => {
+export function makeFileTextResolver(rawText: RawTextStore, bytes: StreamFileRefOptions): ResolveFileText {
+  return async ({ file: ref }) => {
     const kind = fileKind(ref);
     if (!kind) {
       logger.debug('[movement:file-text] unsupported file type — skipping', {
@@ -263,7 +263,7 @@ export function makeFileTextResolver(rawText: RawTextStore): ResolveFileText {
     }
     let resolved: ResolveFileRefResult;
     try {
-      resolved = await streamFileRef(ref);
+      resolved = await streamFileRef(ref, bytes);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn('[movement:file-text] failed to resolve file bytes', {

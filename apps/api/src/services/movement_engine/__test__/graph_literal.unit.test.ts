@@ -369,9 +369,6 @@ function attachment(filename: string, contentType: string) {
       __brand: 'FileRef',
       name: filename,
       contentType,
-      retrieve: async () => {
-        throw new Error('test: building a graph must never pull the bytes');
-      },
     } as unknown as FileRef,
   };
 }
