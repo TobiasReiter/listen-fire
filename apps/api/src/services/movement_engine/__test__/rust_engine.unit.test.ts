@@ -1,6 +1,9 @@
 // The shim's half of the request/answer protocol, against a scripted engine
 // double: no WASM. The real artifact's half is rust_engine_abi.unit.test.ts.
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -284,6 +287,13 @@ describe('the Rust engine shim', () => {
       expect({ path, routed: host.has(path) || Object.hasOwn(ENGINE_OWN_ROUTES, path) }).toEqual({ path, routed: true });
     }
     for (const path of Object.keys(ENGINE_OWN_ROUTES)) expect(host.has(path)).toBe(false);
+  });
+
+  it('documents its own requests in docs/engine-host.md, exactly', () => {
+    const doc = fs.readFileSync(path.resolve(__dirname, '../../../../../../docs/engine-host.md'), 'utf8');
+    const section = doc.slice(doc.indexOf("## The Rust engine's requests"), doc.indexOf('## Changes since chunk 3'));
+    const documented = [...section.matchAll(/^\| `([a-z]+\.[A-Za-z]+) \{/gm)].map((match) => match[1]);
+    expect(documented.sort()).toEqual(Object.keys(ENGINE_OWN_ROUTES).sort());
   });
 
   it('reads a result, a failure and a decline, charges the cost it reports, and refuses what it does not decode yet', async () => {

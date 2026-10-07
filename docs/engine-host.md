@@ -748,11 +748,29 @@ The engine keeps two writes from colliding at two levels.
 
 ## Remaining non-JSON
 
-Nothing on the request/answer path. Three things stay outside it, by design:
+Nothing on the request/answer path. Four things stay outside it, by design:
 
 - **Thrown failures carry only their message.** A host call that fails outright (a park that cannot be persisted, a lock timeout) throws; over a wire that is an error response with a message. The engine never branches on a thrown failure's class.
 - **The stand-in is engine-local.** The engine wraps each resolved instance in an in-process stand-in `Adapter` (`movement_engine/host_adapter.ts`) whose every method is one `adapters.call`. It never crosses.
+- **The Rust engine's eval wire is engine-local.** Between the Rust engine and its shim, adapter arguments, results and park states cross on the eval wire, so the in-process host is handed what the TypeScript engine hands it (see "The Rust engine's requests"). It never reaches a host.
 - **The test host's conveniences are host side.** `makeTestHost` takes live fakes, a lookup handed `getCandidates`, a `WriteLocks` and a trace array, and serves each as the JSON family. None of those crosses either.
+
+## The Rust engine's requests
+
+The Rust engine (`crates/movement-engine`, behind `MOVEMENT_ENGINE=rust`) is an engine, not a host: it runs a segment the run host opened (`inRunContext` in `movement_engine/run.ts`), and its shim (`movement_engine/rust_host.ts`) forwards each request it makes to the run's `EngineHost`. Every request that names an `EngineHost` method is that method's request, in the shape above, with the segment's id; the engine's slice reaches `segment` only through the run host, and `adapters.resolve`, `adapters.call`, `llm.arbitrateEntities`, `park.sink.commitTimerPark`, `control.cancel.*`, `locks.*` and `trace.append` itself.
+
+- **The values on the eval wire.** In process, the shim hands the host the very JavaScript values the TypeScript engine would (key order, `undefined`), so `adapters.call`'s `args` and `result` and a park's `state` cross between the engine and its shim on the eval wire (`wire: true`; `crates/movement-engine/src/env.rs`) and reach the host as plain objects. A remote host serves the JSON shapes above.
+- **The budget is the engine's.** The engine keeps the run's account for its segment, sends the budget with each priced call and charges the cost each answers; the segment's charges reach the run's account as the segment ends. A run with a cost cap whose program can make a priced call stays on the TypeScript engine, which can suspend at the cap.
+
+Three requests are the Rust engine's own: they are not `EngineHost` methods, and no embedder serves them. The shim answers them in process, and a test holds every request it routes to the manifest above or to this list (`ENGINE_OWN_ROUTES`):
+
+| request | answer | why it is not on the host |
+|---|---|---|
+| `check.program { source, languageVersion, upgradingFrom? }` | `{ diagnostics, link?, stamps }`, the checker's AST stamps by path; a program that fails its check gets no answer, and the run fails with `MOVENG_CHECK` (or `MOVENG_PARSE`, `MOVENG_LANGUAGE_VERSION`) as the TypeScript engine's does | the checker is TypeScript until it is ported |
+| `builtins.function { id, args, now, languageVersion }` | `{ value }` or `{ threw: { class, code?, message } }`, values on the eval wire | a standard-library reading the Rust engine does not reproduce (V8's date parser, local time, some regex features), answered by the TypeScript member |
+| `builtins.compare { op, left, right }` | the same two shapes, for the shared comparator | `WITHIN` and the comparator's other readings, likewise |
+
+The engine reads two clocks, neither a host call. Every clock read a program makes (`DATE.TODAY`, a write's mutation context) answers from the run's pinned instant (`firedAt`, in the segment's input). A timer park's `wakeAt` is the engine's own wall clock plus the sleep, as the TypeScript engine reads `Date.now()`: an environment service (`now`, beside the zone, URL and normalisation services the engine asks its runtime for synchronously), not part of this contract.
 
 ## Changes since chunk 3
 

@@ -1,8 +1,10 @@
 # movement-engine
 
 The movement engine in Rust. A segment of a run executes inside one WASM
-instance and asks its TypeScript host for everything outside the program;
-`apps/api/src/services/movement_engine/rust_engine.ts` is the host side.
+instance and asks for everything outside the program in the host contract's
+own shapes (docs/engine-host.md); `apps/api/src/services/movement_engine/
+rust_engine.ts` drives it, and `rust_host.ts` forwards each request to the
+run's `EngineHost`.
 
 Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 
@@ -21,7 +23,8 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | module | what |
 |---|---|
 | `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight |
-| `host` | one request builder per host call, named after the `EngineHost` groups (`adapters`, `llm`, `park`, `control`, `files`, `lookup`, `locks`) |
+| `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `park.sink`, `control.cancel`, `locks`, `trace`), plus the engine's own (`check`, `builtins`); every host request names the segment |
+| `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the charges handed back with `done` |
 | `value` | the value model (data, record, list, map, absent), its JSON the parked state's `ValueDescriptor` |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
@@ -34,19 +37,25 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`) |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
-| `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation, from the JavaScript runtime (WASM) or natively (below) |
+| `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation and the wall clock, from the JavaScript runtime (WASM) or natively (below) |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
 | `js`, `js_date`, `js_regex` | the JavaScript semantics the TypeScript leans on, written out (below) |
 
-## One artifact
+## Two artifacts
 
-This crate's `.wasm` is the only movement artifact
-(`packages/movement-lang/wasm/movement.wasm`): it links in crates/movement-parser,
-whose `#[no_mangle]` exports (the parses, the lowering, the catalog query,
-`alloc`, `dealloc`, `last_panic`) come through unchanged. The loader
-(`packages/movement-lang/wasm/loader.ts`) compiles it once; the parser keeps
-one long-lived instance of it, and each engine segment gets a fresh one.
+This crate's `.wasm` (`packages/movement-lang/wasm/movement.wasm`) is the
+API's artifact: it links in crates/movement-parser, whose `#[no_mangle]`
+exports (the parses, the lowering, the catalog query, `alloc`, `dealloc`,
+`last_panic`) come through unchanged. The browser never runs a movement, so it
+loads crates/movement-parser's own artifact (`movement_parser.wasm`) and never
+downloads the engine. Both are built by `scripts/build-movement-wasm.sh`,
+compared byte for byte in CI, and budgeted separately (crates/movement-parser's
+README has the budgets). One loader (`packages/movement-lang/wasm/loader.ts`)
+serves both: it compiles an artifact once, the parser keeps one long-lived
+instance of it, and each engine segment gets a fresh one; on the parser's
+artifact `eval_expression` and the engine segments are absent, and refused by
+name.
 
 Measured 2026-10-07 (gzip -9):
 
@@ -61,12 +70,14 @@ Measured 2026-10-07 (gzip -9):
 | slice 2b, the writes (writes, nodes) | 1,945,584 | 542,520 |
 | slice 2b, the parks | 1,991,568 | 557,094 |
 | slice 2b, fix round 1 | 1,978,540 | 555,330 |
+| the chunk 4A host contract (segments, the ledger, the clock) | 1,994,270 | 559,928 |
+| **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
 back, the standard library, the regex matcher, Unicode case tables); slice
-2b about 68 KB more (the writes 54 KB, the parks 15 KB). The total is under
-the 600 KB warning line with about 43 KB to spare: the browser needs only the parser, so the next slice that
-grows it should split the browser's parser into an artifact of its own.
+2b about 68 KB more (the writes 54 KB, the parks 15 KB). With the split the
+browser downloads 322 KB instead of 560 KB, and the engine's growth no longer
+reaches it.
 
 ## The protocol
 
@@ -185,18 +196,22 @@ TypeScript takes through its host is a host request here:
 | request | when | answered by the shim from |
 |---|---|---|
 | `check.program` | first | program_check.ts (below) |
-| `adapters.credentialId`, `adapters.resolve` | the source instance (`prepareMovement`); each write's target, once per instance (`targetAdapterFor`) | `host.adapters`; the answer carries the handle and the adapter's `adapterType`; a rehearsed target is wrapped in the run's one dry-run capture |
-| `adapters.call` (`wire: true`) `listEntryPoints` | a discriminated event (`naturalRootTypeName`) | the live adapter |
-| `trace.append` | each trace entry, as it lands | pushed onto `host.trace` (the run's trace) |
-| `control.cancelled` | before each statement | `host.control.cancel.cancelled()` |
-| `adapters.call` (`wire: true`) `getFieldValue` | each read of an event field, in evaluation order | the live adapter, through the surface-read wrapper's restamp (done here) |
-| `adapters.call` (`wire: true`) `describe`, `resolveEntity`, `readRecord`, `createRecord`, `updateRecord` | a write, in run.ts's order (below) | the live (or dry-run wrapped) adapter |
-| `adapters.has` | before an optional member (`readRecord`) | whether the adapter implements it |
-| `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`; what its `onJudgeUnavailable` heard rides back |
-| `locks.acquire`, `locks.release` | around an identity search and an update by id | the segment's cross-run write-lock holder |
+| `adapters.resolve` | the source instance (`prepareMovement`); each write's target, once per instance (`targetAdapterFor`) | `host.adapters.resolve`: the instance as data (its opaque id, its `adapterType`, the `methods` it implements); a rehearsed target is resolved `dryRun`, and the host captures its writes. The credential id is the run's input (`credentialIds`), by the import's credential name |
+| `adapters.call` `listEntryPoints` | a discriminated event (`naturalRootTypeName`) | `host.adapters.call` |
+| `trace.append` | each trace entry, as it lands | the segment's trace (the result's), handed on to `host.trace` |
+| `control.cancel.cancelled` | before each statement | `host.control.cancel.cancelled` |
+| `adapters.call` `getFieldValue` | each read of an event field, in evaluation order | `host.adapters.call`, through the surface-read wrapper's restamp (done here) |
+| `adapters.call` `describe`, `resolveEntity`, `readRecord`, `createRecord`, `updateRecord` | a write, in run.ts's order (below); `readRecord` only when the instance's `methods` list it | `host.adapters.call` |
+| `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`, with the run's budget (`ledger`); its cost is charged |
+| `locks.acquire`, `locks.release` | around an identity search and an update by id | `host.locks`: a token per acquire, released by token |
 | `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature, `WITHIN`) | the TypeScript member itself |
-| `park.commitTimerPark` | a `sleep` in a run that is not a rehearsal | `host.park.sink`, woken `wakeAfterMs` from the host's clock |
-| `control.cancelledNow` | the last check (not after a park) | `host.control.cancel.cancelledNow()` |
+| `park.sink.commitTimerPark` | a `sleep` in a run that is not a rehearsal | `host.park.sink`; `wakeAt` is this engine's wall clock plus the sleep |
+| `control.cancel.cancelledNow` | the last check (not after a park) | `host.control.cancel.cancelledNow` |
+
+**A lost run lease** is the run host's (docs/engine-host.md "Failure"): the
+cancel gate, or a park the lease fence refuses, throws `RunLeaseLost`; that
+host error fails the run with the very object, and the run host's settle
+recognises it. The engine never asks whether the lease is lost.
 
 ### Writes
 
@@ -304,7 +319,12 @@ fails); none produces a different answer.
 - A record compared by identity (`a == b` where either is binding-shaped):
   MOVENG_UNSUPPORTED. TypeScript compares two records by identity.
 
-None of these is a built-in's reading, so none can be handed to the
+- A priced call refused as `budget`: the statement fails with the host's
+  message, where the TypeScript engine would suspend the run at its cap. It
+  cannot happen with no cap (the budget is unlimited), and a capped run whose
+  program can make a priced call is declined by the shim's allow-list.
+
+None of the first four is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
 brings.
 
@@ -322,7 +342,11 @@ one value. `["i", id]` (one of the caller's own objects) appears only in
 writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
-movementName?, event, teamId, now, catalog, dryRun?, resume?}`. `dryRun` is a
+movementName?, event, segmentId, credentialIds?, spend?, now, catalog, dryRun?,
+resume?}`. `segmentId` is the segment the run host opened (`segment.open`),
+named on every host request; `credentialIds` maps an import's credential name
+to its id; `spend` is the run's account as the segment starts
+(`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
 rehearsal (writes captured, `sleep` fast-forwarded); `resume` is `{state,
 reenter?}`, a `ParkedScopeState` (on the eval wire) to resume rather than a
 run to start. `languageVersion` is the pin,
@@ -335,21 +359,25 @@ a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
 `{error: {message, name?, ref?}}`; `ref` numbers the very error object the
 host keeps, so a run that fails with it can name it.
 
+Every request but `check`'s and `builtins`' carries `segmentId`, and is the
+`EngineHost` method's request of the same path, in docs/engine-host.md's
+shape. Where `wire: true`, the values named cross on the eval wire.
+
 | request (family.method, args) | answer |
 |---|---|
 | `check.program {source, languageVersion, upgradingFrom?}` | `{diagnostics, link?, stamps}` (below); a program that fails its check gets no answer: the host ends the run with the check's error |
-| `adapters.credentialId {credentialName}` | the credential's id, or `undefined` |
-| `adapters.resolve {adapterType, teamId, credentialsId?, constructionArgs?, role: "source" \| "target", dryRun?: true}` | `{instance, adapterType}`: the handle, and the live adapter's own `adapterType`; `dryRun` wraps it in the run's one rehearsal |
-| `adapters.has {instance, method}` | whether the adapter implements `method` |
-| `llm.arbitrateEntities {asserted, candidates, recordType, constraints}` (values on the eval wire) | `{index: number \| null, judgeUnavailable?: message}` |
-| `locks.acquire {names}` / `locks.release {names}` | `undefined` once held / let go |
-| `park.commitTimerPark {address, state, wakeAfterMs}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
-| `adapters.call {instance, method, args}` | the method's result as plain JSON (anything else fails the run in the shim) |
-| `adapters.call {instance, method, args, wire: true}` | `args` on the eval wire, the result too |
-| `control.cancelled {}` / `control.cancelledNow {}` | a boolean: the cancel gate, debounced / not |
-| `trace.append {entry}` | `undefined`; `entry` is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
+| `adapters.resolve {segmentId, adapterType, credentialsId?, constructionArgs?, role: "source" \| "target", dryRun?: true}` | the instance as data: `{instance, adapterType, methods, capabilities, …}` |
+| `adapters.call {segmentId, instance, method, args, wire: true}` | `{result}` (on the eval wire) or `{error: {kind: "call_ceiling" \| "adapter_error", message, name?, detail?, ref}}`; `ref` numbers the very error the engine's TypeScript twin raises for it |
+| `llm.arbitrateEntities {segmentId, asserted, candidates, recordType, constraints, languageVersion, budget}` (the first four on the eval wire) | `{index: number \| null, judgeUnavailable?, cost?}`, or a budget refusal `{error: {kind: "budget", message}, cost?}` |
+| `locks.acquire {segmentId, names}` / `locks.release {segmentId, token}` | `{token}` once held / `undefined` once let go |
+| `park.sink.commitTimerPark {segmentId, address, state, wakeAt, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
+| `control.cancel.cancelled {segmentId}` / `control.cancel.cancelledNow {segmentId}` | a boolean: the cancel gate, debounced / not |
+| `trace.append {segmentId, entries}` | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
 | `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
 | `builtins.compare {op, left, right}` | the same two shapes, for `compareValues(left, op, right)`; `op` a `FilterOperator` |
+
+A host answer is `{value}`, `{}` for `undefined`, or `{error: {message,
+name?, ref?}}` for a call the host threw on.
 
 **`done`**:
 
@@ -361,10 +389,34 @@ host keeps, so a run that fails with it can name it.
 - `{declined: reason}`: nothing the host can see has happened; run the
   program another way.
 
+Beside any of the first three, `cost: [{source, microdollars}]` is what the
+segment's priced calls spent, by source, for the run's account.
+
 `error` is `{class: "MovementEngineError", code, message}` (`message` without
 the `CODE: ` the TypeScript constructor adds), `{class: "Error" |
 "RangeError", message}`, or `{hostError: ref}`: the error a host call failed
 with, by the `ref` its answer carried.
+
+## Spec the tail, mirror the cheap core
+
+The rule for what this engine reproduces of JavaScript:
+
+- **The cheap core is mirrored exactly.** Numbers (`Number(text)`,
+  `String(number)` through `ryu-js`, `Math.round`, `toFixed`, `%`), strict
+  equality, truthiness, key order, UTF-16 lengths and comparisons. Each is
+  pinned by the test the table above names.
+- **The expensive tail is specified, not mirrored.** The regex dialect,
+  permissive date parsing (V8's legacy parser, local time), Unicode case
+  tables and prototype-key quirks get the language's own semantics. Until
+  then this engine answers only what it reproduces and hands the rest back
+  (`fallback`, `builtins.*`), so no reading differs.
+- **The specification lands as a language-version change.** A version
+  conditional at the point of difference, and a checker diagnostic under the
+  new version for any construct whose meaning changes. Saved movements keep
+  their pin, and with it JavaScript's behaviour, on the TypeScript engine
+  until that version is deprecated. **Deferred:** the next language-version
+  bump carries the regex and date decisions. The hand-written regex matcher
+  (`js_regex`) is a transition artefact that the bump retires.
 
 ## The check
 
@@ -406,7 +458,7 @@ among the diagnostics.
 
 What the language leans on JavaScript's runtime for — the zone database,
 WHATWG URL parsing, locale number formatting, Unicode normalisation — the
-engine asks of `EnvServices` (src/env_services.rs), four operations:
+engine asks of `EnvServices` (src/env_services.rs), five operations:
 
 | operation | answers | JavaScript |
 |---|---|---|
@@ -414,6 +466,7 @@ engine asks of `EnvServices` (src/env_services.rs), four operations:
 | `url_parse {text}` | `{href, protocol, username, password, host, hostname, port, pathname, search, hash}` or null | `new URL(text)` |
 | `number_format {value, locale, options}` | text, or null | `Intl.NumberFormat` (decimal; `minimumFractionDigits`, `maximumFractionDigits`, `useGrouping`) |
 | `normalize {text, form}` | text | `String.prototype.normalize` |
+| `now {}` | milliseconds since the epoch | `Date.now()`: the wall clock, read only for a timer park's `wakeAt` (every clock read a program makes answers from the run's pinned instant) |
 
 Two implementations:
 
@@ -426,7 +479,8 @@ Two implementations:
   wasm32): `jiff` with its bundled zone data, the `url` crate, ICU4X's
   normaliser and decimal formatter.
 
-tests/env_services.rs holds the native one to tests/env/fixture.json:
+tests/env_services.rs holds the native one to tests/env/fixture.json (every
+operation but `now`, whose answer is the moment it is asked):
 8,457 requests answered by Node 22.20 through the very module the loader
 imports (generate.ts; seeded; every IANA zone at seven instants including a
 European daylight-saving week and one before the common era; every half
@@ -454,7 +508,25 @@ cargo test -p movement-engine     # the executor, builders, value model, evaluat
 ```
 
 The TypeScript side: `apps/api/src/services/movement_engine/__test__/rust_engine.unit.test.ts`
-(the shim against a scripted double), `rust_engine_abi.unit.test.ts` and
-`rust_eval.unit.test.ts` (the committed artifact). The oracle for the
-evaluator is the conformance corpora run with `MOVEMENT_ENGINE=rust`
-(`pnpm test:conformance:v1` / `v2` in apps/api).
+(the shim against a scripted double, and its routes against the host
+manifest), `rust_engine_abi.unit.test.ts` and `rust_eval.unit.test.ts` (the
+committed artifact), `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
+(whole runs on both engines, compared). The oracle for the evaluator and the
+runs is the conformance corpora run with `MOVEMENT_ENGINE=rust`.
+
+**Running a corpus case on Rust.** In apps/api, after
+`scripts/build-movement-wasm.sh` if a crate changed:
+
+```bash
+MOVEMENT_ENGINE=rust pnpm test:conformance:v2                       # the whole corpus: routing floors apply
+MOVEMENT_ENGINE=rust pnpm test:conformance:v2 --testPathPattern refs  # one file: no floor, every other check
+MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # per-file routed counts
+```
+
+The teardown prints `Rust evaluator: {…}` (expressions not admitted,
+admitted, answered, fallbacks by reason) and `Rust runs: {runsRouted,
+ranWhole, shimFaults, declined, hostCalls}`, and fails a run in which Rust
+answered nothing, any decline or shim fault, or a whole-corpus run under its
+routing floor (v1 60, v2 70). Any filter (a path or name pattern, related or
+changed files, a shard, positional paths) makes a run partial, and the floor
+does not apply to it.
