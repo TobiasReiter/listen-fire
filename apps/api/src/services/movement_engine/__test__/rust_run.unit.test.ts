@@ -16,7 +16,9 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 
 import { containerAssociation } from '../../translation_graph/adapter';
 import { positionData } from '../../translation_graph/types';
-import { makeTestHost, type TestHostOverrides } from '../host';
+import { openRunContext } from '../run_context';
+import { credentialIdsFor, makeTestHost, type TestHostOverrides } from '../test_host';
+import { AdapterCallFailed } from '../host_adapter';
 import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
 import { rustCanRun, runSegmentInRust } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
@@ -101,7 +103,7 @@ interface Case {
   source: string;
   event: TriggerEvent;
   movementName?: string;
-  firedAt?: Date;
+  firedAt?: string;
   email?: Parameters<typeof fakeEmail>[0];
   /** Per run: each engine gets fakes of its own. */
   host?: () => TestHostOverrides;
@@ -120,11 +122,11 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
     event: c.event,
     teamId: TEAM_ID,
     catalog,
+    credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
     ...(c.movementName !== undefined ? { movementName: c.movementName } : {}),
     ...(c.firedAt !== undefined ? { firedAt: c.firedAt } : {}),
     host: makeTestHost({
       adapters: {
-        credentialId: (name) => `cred-${name}`,
         resolve: (request) => {
           resolved.push(request);
           if (request.adapterType !== 'email') throw new Error(`test: no fake for ${request.adapterType}`);
@@ -194,20 +196,16 @@ const BINDINGS_AND_IF = [
 
 describe('a whole run in the Rust engine', () => {
   it('is admitted for reads, bindings, if and return, and refused for anything more', () => {
-    const host = makeTestHost();
+    const host = {};
     const program = (body: string) => parseProgram(`${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, { languageVersion: 3 });
-    expect(rustCanRun(parseProgram(PRELUDE + BINDINGS_AND_IF, { languageVersion: 3 }), { host })).toBe(true);
-    expect(rustCanRun(program('  write crm-[:companies]-> { name: msg.`subject` }'), { host })).toBe(true);
-    expect(rustCanRun(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'), { host })).toBe(false);
-    expect(rustCanRun(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'), { host })).toBe(false);
-    expect(rustCanRun(program('  x = msg'), { host })).toBe(false);
-    expect(rustCanRun(program('  x = AI("why?")'), { host })).toBe(false);
-    expect(rustCanRun(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), { host })).toBe(false);
-    expect(rustCanRun(program('  x = crm.`name`'), { host })).toBe(false);
-    // A caller's trace already holding entries: its field misses are the
-    // TypeScript engine's to see.
-    const seeded = makeTestHost({ trace: [{ kind: 'gate', outcome: true }] });
-    expect(rustCanRun(parseProgram(PRELUDE + BINDINGS_AND_IF, { languageVersion: 3 }), { host: seeded })).toBe(false);
+    expect(rustCanRun(parseProgram(PRELUDE + BINDINGS_AND_IF, { languageVersion: 3 }), host)).toBe(true);
+    expect(rustCanRun(program('  write crm-[:companies]-> { name: msg.`subject` }'), host)).toBe(true);
+    expect(rustCanRun(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'), host)).toBe(false);
+    expect(rustCanRun(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'), host)).toBe(false);
+    expect(rustCanRun(program('  x = msg'), host)).toBe(false);
+    expect(rustCanRun(program('  x = AI("why?")'), host)).toBe(false);
+    expect(rustCanRun(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), host)).toBe(false);
+    expect(rustCanRun(program('  x = crm.`name`'), host)).toBe(false);
   });
 
   it('reads the event, binds, interpolates and branches as the TypeScript engine does', async () => {
@@ -274,7 +272,7 @@ describe('a whole run in the Rust engine', () => {
         '}',
       ].join('\n'),
       event: webhook({ text: 'https://BÜCHER.de/x' }),
-      firedAt: new Date('2026-03-29T12:00:00Z'),
+      firedAt: '2026-03-29T12:00:00.000Z',
     });
   });
 
@@ -299,14 +297,18 @@ describe('a whole run in the Rust engine', () => {
   it('fails as the TypeScript engine fails: before the body, in it, and at the check', async () => {
     await agree({ source: BINDINGS_AND_IF, event: webhook({}), movementName: 'nope' });
     const { rust } = await agree({ source: BINDINGS_AND_IF, event: webhook({ subject: 'x', text: 'y' }), email: { failOn: 'text' } });
-    expect('error' in rust && runFailureCause(rust.error)).toBeInstanceOf(FakeAdapterError);
+    // The adapter's failure crosses the host boundary as data and is raised
+    // under its own name, as the TypeScript engine raises it.
+    const cause = 'error' in rust ? runFailureCause(rust.error) : undefined;
+    expect(cause).toBeInstanceOf(AdapterCallFailed);
+    expect(cause).toMatchObject({ name: 'FakeAdapterError', message: 'no text today' });
     await agree({ source: BINDINGS_AND_IF.replace('msg.`subject`', 'msg.`nope`'), event: webhook({}) });
   });
 
   it('stops at the cancel gate, keeping what it traced', async () => {
     const gate = (cancelAt: number, finally_: boolean) => () => {
       let asked = 0;
-      return { control: { cancel: { cancelled: async () => ++asked >= cancelAt, cancelledNow: async () => finally_, reason: () => null } } };
+      return { control: { cancel: { cancelled: async () => ++asked >= cancelAt, cancelledNow: async () => finally_ } } };
     };
     const { result } = await agree({ source: BINDINGS_AND_IF, event: webhook({ subject: 'Acme', text: 'deal' }), host: gate(4, false) });
     expect(result).toMatchObject({ cancelled: true, trace: [{ kind: 'gate', outcome: true }] });
@@ -318,13 +320,18 @@ describe('a whole run in the Rust engine', () => {
   it('declines, before it touches an adapter, what it does not run', async () => {
     resetRustRunStats();
     const resolved: unknown[] = [];
-    const outcome = await runSegmentInRust({
-      source: `${PRELUDE}type Stage = <"a" | "b">\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
-      event: webhook({}),
-      teamId: TEAM_ID,
-      catalog,
-      host: makeTestHost({ adapters: { resolve: (r) => (resolved.push(r), fakeEmail().adapter) } }),
-    });
+    const host = makeTestHost({ adapters: { resolve: (r) => (resolved.push(r), fakeEmail().adapter) } });
+    const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
+    const outcome = await runSegmentInRust(
+      {
+        source: `${PRELUDE}type Stage = <"a" | "b">\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
+        event: webhook({}),
+        teamId: TEAM_ID,
+        catalog,
+        host,
+      },
+      context,
+    );
     expect(outcome).toEqual({ declined: 'a file-level statement this engine does not run' });
     expect(resolved).toEqual([]);
     expect(rustRunStats.declined).toEqual({ 'a file-level statement this engine does not run': 1 });

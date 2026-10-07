@@ -316,13 +316,13 @@ fn query(snapshot: &Value, q: Value) -> Result<Value, Value> {
 fn a_query_answers_a_value_or_nothing() {
     let snapshot = json!({
         "adapters": { "email": { "constructionArgs": [], "schemas": { "": schema_with("messages") } } },
-        "credentials": { "c": { "adapters": ["email"] } }, "plugins": { "p": { "args": ["x"] } },
+        "credentials": { "c": { "adapters": ["email"] } }, "plugins": { "p": { "args": ["x"], "priced": false } },
     });
     let schema = query(&snapshot, json!({ "op": "instantiate", "adapter": "email", "args": {} })).unwrap();
     assert_eq!(schema["value"]["collections"], json!({ "messages": { "target": "Row" } }));
     assert_eq!(query(&snapshot, json!({ "op": "instantiate", "adapter": "x", "args": {} })), Ok(json!({})));
     assert_eq!(query(&snapshot, json!({ "op": "credentialNames" })), Ok(json!({ "value": ["c"] })));
-    assert_eq!(query(&snapshot, json!({ "op": "plugin", "name": "p" })), Ok(json!({ "value": { "args": ["x"] } })));
+    assert_eq!(query(&snapshot, json!({ "op": "plugin", "name": "p" })), Ok(json!({ "value": { "args": ["x"], "priced": false } })));
     assert_eq!(query(&snapshot, json!({ "op": "models" })), Ok(json!({})));
     let helper = json!({ "op": "helper", "name": "unionVariants", "args": [["b", "a"]] });
     assert_eq!(query(&json!(null), helper), Ok(json!({ "value": ["a", "b"] })));

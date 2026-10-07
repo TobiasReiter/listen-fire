@@ -73,7 +73,16 @@ pub struct SegmentInput {
     /// The trigger event, on the eval wire (its payload's key order is the
     /// JavaScript's).
     pub event: Json,
-    pub team_id: String,
+    /// The segment the run host opened for this entry (`segment.open`):
+    /// every host request names it.
+    pub segment_id: String,
+    /// The credential ids the run's imports name, by credential name
+    /// (`RunMovementInput.credentialIds`).
+    #[serde(default)]
+    pub credential_ids: std::collections::BTreeMap<String, String>,
+    /// The run's spend account as this segment starts (crate::ledger).
+    #[serde(default)]
+    pub spend: crate::ledger::Spend,
     /// The run's pinned instant (`firedAt`, else when the run began).
     pub now: String,
     /// Kept as text: the catalog's maps are ordered.
@@ -89,13 +98,21 @@ pub struct SegmentInput {
 
 /// The segment entry: the run, and its `done`.
 pub async fn segment(host: Host, input: SegmentInput) -> Json {
-    match run(&host, &input).await {
+    let ledger = crate::ledger::Ledger::new(&input.spend);
+    let mut done = match run(&host, &input, &ledger).await {
         Ok(result) => json!({ "result": result }),
-        Err(Stop::Declined(reason)) => json!({ "declined": reason }),
+        Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
         Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
         Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
         Err(Stop::Cancelled | Stop::Parked(_)) => unreachable!("a cancel or a park ends the body, and the run returns its result"),
+    };
+    // What this segment's priced calls spent, by source, for the run host's
+    // account (the run's figures are the run host's to report).
+    let cost = ledger.cost_lines();
+    if !cost.is_empty() {
+        done["cost"] = json!(cost);
     }
+    done
 }
 
 /// How a run stops early.
@@ -184,6 +201,7 @@ impl Address {
 pub(crate) struct Run<'a> {
     pub(crate) host: &'a Host,
     pub(crate) input: &'a SegmentInput,
+    pub(crate) ledger: &'a crate::ledger::Ledger,
     pub(crate) event: Js,
     pub(crate) now_ms: f64,
     pub(crate) catalog: CatalogSnapshot,
@@ -207,7 +225,7 @@ pub(crate) struct Run<'a> {
     pub(crate) mutation_context: RefCell<Js>,
 }
 
-async fn run(host: &Host, input: &SegmentInput) -> Result<Json, Stop> {
+async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
     let version = input.language_version;
     let catalog = CatalogSnapshot::load(input.catalog.get())
         .map_err(|e| Stop::Declined(format!("the catalog snapshot does not load: {e}")))?;
@@ -227,6 +245,7 @@ async fn run(host: &Host, input: &SegmentInput) -> Result<Json, Stop> {
     let run = Run {
         host,
         input,
+        ledger,
         event: event.clone(),
         now_ms,
         catalog,
@@ -269,6 +288,16 @@ impl Run<'_> {
         self.input.language_version
     }
 
+    /// The segment every host request names.
+    pub(crate) fn segment(&self) -> &str {
+        &self.input.segment_id
+    }
+
+    /// The credential id the run was handed for `name`, if any.
+    pub(crate) fn credential_id(&self, name: &str) -> Option<String> {
+        self.input.credential_ids.get(name).cloned()
+    }
+
     /// `assembleResult`: the writes cross on the eval wire, as the records
     /// the TypeScript builds.
     fn result(&self, cancelled: bool, parked: Option<&str>) -> Json {
@@ -303,7 +332,7 @@ impl Run<'_> {
         // the park sink's to settle.
         let cancelled = cancelled
             || (parked.is_none()
-                && self.ask_bool(host::control::cancelled_now()).await.map_err(|f| Stop::Failed(f, self.result(false, None)))?);
+                && self.ask_bool(host::control::cancelled_now(self.segment())).await.map_err(|f| Stop::Failed(f, self.result(false, None)))?);
         Ok(self.result(cancelled, parked.as_deref()))
     }
 
@@ -526,14 +555,10 @@ impl Run<'_> {
     /// The source adapter resolved and the event seeded (`prepareMovement`'s
     /// instance branch).
     async fn seed(&self, instance: &InstanceBinding, type_ref: &ast::TypeRef) -> Result<(), Failure> {
-        let credentials_id = match &instance.credential_name {
-            Some(name) => self.ask(host::adapters::credential_id(name)).await?.and_then(|id| id.as_str().map(String::from)),
-            None => None,
-        };
+        let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let resolved = self
-            .ask(host::adapters::resolve(&ResolveAdapter {
+            .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
                 adapter_type: instance.adapter_slug.clone(),
-                team_id: self.input.team_id.clone(),
                 credentials_id,
                 construction_args: None,
                 role: Role::Source,
@@ -545,7 +570,7 @@ impl Run<'_> {
         let adapter_type = resolved.get("adapterType").and_then(Json::as_str).unwrap_or(&instance.adapter_slug).to_string();
         let schema = instance.schema.as_ref();
         let root_record_type = event_text(&self.event, "rootRecordType");
-        let root_surface_type = match self.natural_root_type_name(handle, root_record_type.as_deref()).await {
+        let root_surface_type = match self.natural_root_type_name(&handle, root_record_type.as_deref()).await {
             Some(name) => Some(name),
             None if event_text(&self.event, "triggerType").as_deref() == Some("mutation") => {
                 sole_event_position(schema).or_else(|| type_ref.position.clone())
@@ -566,12 +591,14 @@ impl Run<'_> {
 
     /// `naturalRootTypeName`: the discriminated root's machine type id named
     /// as the adapter's entry points name it, falling back to the id.
-    async fn natural_root_type_name(&self, handle: Instance, root_record_type: Option<&str>) -> Option<String> {
+    async fn natural_root_type_name(&self, handle: &Instance, root_record_type: Option<&str>) -> Option<String> {
         let root = root_record_type?;
-        let Ok(answer) = self.host.request(host::adapters::call_wire(handle, "listEntryPoints", vec![])).await else {
+        // A failed listing names the root by its id, as the TypeScript's
+        // catch does.
+        let Ok(listed) = self.call_adapter(handle, "listEntryPoints", Js::object(JsObject::new())).await else {
             return Some(root.to_string());
         };
-        let entries = answer.map(|wire| env::decode(&wire)).transpose().ok().flatten();
+        let entries = Some(listed);
         let named = match entries {
             Some(Js::Array(list)) => list.items.iter().find_map(|entry| {
                 let Js::Object(entry) = entry else { return None };
@@ -601,7 +628,7 @@ impl Run<'_> {
                 let at = address.stmt(index);
                 // The cancel gate: a requested cancel stops the run at the
                 // next statement boundary, never mid-statement.
-                if self.ask_bool(host::control::cancelled()).await.map_err(Stop::Thrown)? {
+                if self.ask_bool(host::control::cancelled(self.segment())).await.map_err(Stop::Thrown)? {
                     return Err(Stop::Cancelled);
                 }
                 if let Flow::Returned = self.statement(statement, scope, &at, &format!("{path}/{index}")).await? {
@@ -827,11 +854,7 @@ impl Run<'_> {
         let mut read = JsObject::new();
         read.set("position".into(), position.to_js());
         read.set("fieldId".into(), Js::str(field));
-        let answer = self.ask(host::adapters::call_wire(source.instance, "getFieldValue", vec![env::encode_plain(&Js::object(read))])).await?;
-        let value = match answer {
-            Some(wire) => env::decode(&wire).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?,
-            None => Js::Undefined,
-        };
+        let value = self.call_adapter(&source.instance, "getFieldValue", Js::object(read)).await?;
         if value.is_nullish() && !seed.is_stable() {
             self.trace_miss(&source, field).await?;
         }
@@ -880,7 +903,11 @@ impl Run<'_> {
                 message: format!("invalid duration literal '{}' — use unit-suffixed literals like 4h, 2d, 90m, 1h30m", duration.raw),
             })
         })?;
-        let answer = self.ask(host::park::commit_timer_park(&address, env::encode_plain(&state), ms)).await.map_err(Stop::Thrown)?;
+        // When to wake, by the engine's own wall clock, as the TypeScript
+        // reads `Date.now()` (an environment service, not a host call).
+        let wake_at = js_date::to_iso_string(env_services::current().now_ms() + ms);
+        let request = host::park::commit_timer_park(self.segment(), &address, env::encode_plain(&state), &wake_at);
+        let answer = self.ask(request).await.map_err(Stop::Thrown)?;
         if answer.as_ref().and_then(|a| a.get("noSink")).is_some() {
             return Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
@@ -914,7 +941,7 @@ impl Run<'_> {
     // ── Host calls ──
 
     async fn trace(&self, entry: TraceEntry) -> Result<(), Failure> {
-        self.ask(host::trace::append(&entry)).await.map(|_| ())
+        self.ask(host::trace::append(self.segment(), &[entry])).await.map(|_| ())
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
@@ -1266,7 +1293,7 @@ mod tests {
     /// requests in the order they came.
     fn drive(source: &str, payload: Json, serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "teamId": "t1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
             "now": "2026-03-12T12:00:00.000Z",
             "event": env::encode_plain(&env::decode(&json!(["o", 0, [
                 ["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload],
@@ -1294,16 +1321,16 @@ mod tests {
     fn plain_host(payload: Json) -> impl Fn(&PendingRequest) -> Json {
         move |request| match (request.family, request.method.as_str()) {
             ("check", "program") => json!({ "value": { "diagnostics": [], "stamps": [] } }),
-            ("adapters", "resolve") => json!({ "value": { "instance": 1, "adapterType": "email" } }),
-            ("control", _) => json!({ "value": false }),
+            ("adapters", "resolve") => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": [] } }),
+            ("control.cancel", _) => json!({ "value": false }),
             ("trace", "append") => json!({}),
             ("adapters", "call") => {
-                let read = env::decode(&request.args["args"][0]).unwrap();
+                let read = env::decode(&request.args["args"]).unwrap();
                 let Js::Object(read) = read else { panic!("a read") };
                 let Some(Js::String(field)) = read.get("fieldId") else { panic!("a field") };
                 match payload.get(field) {
-                    Some(value) => json!({ "value": value }),
-                    None => json!({}),
+                    Some(value) => json!({ "value": { "result": value } }),
+                    None => json!({ "value": {} }),
                 }
             }
             other => panic!("unexpected {other:?}"),
@@ -1320,14 +1347,16 @@ mod tests {
         assert_eq!(
             calls,
             [
-                "check.program", "adapters.resolve", "control.cancelled", "adapters.call", "control.cancelled", "trace.append",
-                "control.cancelled", "control.cancelled", "control.cancelledNow",
+                "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.call", "control.cancel.cancelled",
+                "trace.append", "control.cancel.cancelled", "control.cancel.cancelled", "control.cancel.cancelledNow",
             ]
         );
-        assert_eq!(seen[5].args, json!({ "entry": { "kind": "gate", "outcome": true } }));
+        assert_eq!(seen[5].args, json!({ "entries": [{ "kind": "gate", "outcome": true }], "segmentId": "g1" }));
+        // Every request the host serves names the segment.
+        assert!(seen.iter().filter(|r| r.family != "check").all(|r| r.args["segmentId"] == json!("g1")));
         // The source adapter reads the payload under the parameter's
         // declared position.
-        let read = env::decode(&seen[3].args["args"][0]).unwrap();
+        let read = env::decode(&seen[3].args["args"]).unwrap();
         let Js::Object(read) = read else { panic!("a read") };
         let Some(Js::Object(position)) = read.get("position") else { panic!("a position") };
         assert!(matches!(position.get("recordType"), Some(Js::String(t)) if t == "message"));
@@ -1339,7 +1368,7 @@ mod tests {
         let payload = json!({});
         let host = plain_host(payload);
         let (done, _) = drive(source, json!(["o", 1, []]), move |request| match (request.family, request.method.as_str()) {
-            ("adapters", "call") => json!({ "error": { "message": "down", "ref": 4 } }),
+            ("adapters", "call") => json!({ "value": { "error": { "kind": "adapter_error", "message": "down", "ref": 4 } } }),
             _ => host(request),
         });
         assert_eq!(done, json!({ "failed": { "error": { "hostError": 4 }, "result": { "movementName": "m", "writes": ["l", 0, []] } } }));
@@ -1367,7 +1396,7 @@ mod tests {
         });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (`name`)\n    name: msg.`subject`\n  }\n}";
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "teamId": "t1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
             "catalog": catalog,
@@ -1383,15 +1412,18 @@ mod tests {
                     let method = request.args.get("method").and_then(Json::as_str).unwrap_or("").to_string();
                     let answer = match (request.family, request.method.as_str()) {
                         ("check", _) => json!({ "value": { "diagnostics": [], "stamps": [] } }),
-                        ("adapters", "resolve") => json!({ "value": { "instance": seen.len() + 1, "adapterType": request.args["adapterType"] } }),
-                        ("adapters", "call") => match method.as_str() {
-                            "getFieldValue" => json!({ "value": "Acme" }),
-                            "describe" => json!({ "value": null }),
-                            "resolveEntity" => json!({ "value": ["o", 0, [["candidates", ["l", 1, []]]]] }),
-                            "createRecord" => json!({ "value": ["o", 0, [["externalId", "co-1"], ["data", ["o", 1, []]]]] }),
+                        ("adapters", "resolve") => json!({ "value": {
+                            "instance": format!("i{}", seen.len() + 1), "adapterType": request.args["adapterType"], "methods": [],
+                        } }),
+                        ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
+                            "getFieldValue" => json!("Acme"),
+                            "describe" => json!(null),
+                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, []]]]]),
+                            "createRecord" => json!(["o", 0, [["externalId", "co-1"], ["data", ["o", 1, []]]]]),
                             other => panic!("unexpected call {other}"),
-                        },
-                        ("control", _) => json!({ "value": false }),
+                        } } }),
+                        ("locks", "acquire") => json!({ "value": { "token": "k1" } }),
+                        ("control.cancel", _) => json!({ "value": false }),
                         _ => json!({}),
                     };
                     seen.push(if method.is_empty() { format!("{}.{}", request.family, request.method) } else { method });
@@ -1402,8 +1434,8 @@ mod tests {
         assert_eq!(
             seen,
             [
-                "check.program", "adapters.resolve", "control.cancelled", "adapters.resolve", "describe", "getFieldValue",
-                "locks.acquire", "resolveEntity", "createRecord", "locks.release", "control.cancelledNow",
+                "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.resolve", "describe", "getFieldValue",
+                "locks.acquire", "resolveEntity", "createRecord", "locks.release", "control.cancel.cancelledNow",
             ]
         );
         let writes = env::decode(&done["result"]["writes"]).unwrap();
@@ -1440,7 +1472,7 @@ mod tests {
             "credentials": {}, "plugins": {},
         });
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "teamId": "t1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, []]]]],
             "catalog": catalog,

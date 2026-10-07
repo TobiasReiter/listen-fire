@@ -26,6 +26,7 @@ use serde_json::Value as Json;
 use crate::bindings::{Binding, Handle, InstanceBinding, Scope};
 use crate::env::{self, Trail};
 use crate::eval::{EvalError, Evaluated, Prov};
+use crate::executor::HostError;
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
 use crate::program::Stamp;
@@ -306,10 +307,7 @@ impl Run<'_> {
     async fn target_adapter(&self, instance: &InstanceBinding) -> Result<Rc<TargetAdapter>, Stop> {
         let dry = self.input.dry_run
             || instance.construction_config.iter().any(|(k, v)| k == "dry_run" && js::trim(v).to_lowercase() == "true");
-        let credentials_id = match &instance.credential_name {
-            Some(name) => self.ask(host::adapters::credential_id(name)).await.map_err(thrown)?.and_then(|id| id.as_str().map(String::from)),
-            None => None,
-        };
+        let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let construction_args: std::collections::BTreeMap<String, String> = instance
             .construction_config
             .iter()
@@ -321,9 +319,8 @@ impl Run<'_> {
             return Ok(cached.clone());
         }
         let resolved = self
-            .ask(host::adapters::resolve(&ResolveAdapter {
+            .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
                 adapter_type: instance.adapter_slug.clone(),
-                team_id: self.input.team_id.clone(),
                 credentials_id,
                 construction_args: (!construction_args.is_empty()).then_some(construction_args),
                 role: Role::Target,
@@ -342,7 +339,7 @@ impl Run<'_> {
 
     /// `evaluateWriteFields`: `describe`, then each line in order.
     async fn write_fields(&self, lines: &[Line], adapter: &TargetAdapter, record_type: &str, scope: &Rc<Scope>) -> Result<Fields, Stop> {
-        let descriptor = self.call_adapter(adapter.instance, "describe", vec![Js::str(record_type)]).await.map_err(thrown)?;
+        let descriptor = self.call_adapter(&adapter.instance, "describe", env::object_of(vec![("typeId", Js::str(record_type))])).await.map_err(thrown)?;
         let described: Vec<Js> = match unique::get(&descriptor, "fields") {
             Js::Array(list) => list.items.clone(),
             _ => Vec::new(),
@@ -475,7 +472,7 @@ impl Run<'_> {
         search.set("recordType".into(), Js::str(target.record_type.clone()));
         search.set("candidates".into(), Js::array(vec![]));
         search.set("constraints".into(), constraints.clone());
-        let found = self.call_adapter(target.adapter.instance, "resolveEntity", vec![Js::object(search)]).await.map_err(thrown)?;
+        let found = self.call_adapter(&target.adapter.instance, "resolveEntity", Js::object(search)).await.map_err(thrown)?;
         Ok(match unique::get(&found, "candidates") {
             Js::Array(list) => list.items.clone(),
             _ => Vec::new(),
@@ -496,11 +493,11 @@ impl Run<'_> {
                 _ => JsObject::new(),
             };
             let lacks = fields.iter().any(|f| data.get(f).is_none() && !crate::stdlib::is_object_prototype_name(f));
-            if lacks && self.adapter_has(target.adapter.instance, "readRecord").await.map_err(thrown)? {
+            if lacks && target.adapter.instance.has("readRecord") {
                 let mut read = JsObject::new();
                 read.set("recordType".into(), Js::str(target.record_type.clone()));
                 read.set("externalId".into(), unique::get(&candidate, "externalId"));
-                if let Js::Object(current) = self.call_adapter(target.adapter.instance, "readRecord", vec![Js::object(read)]).await.map_err(thrown)? {
+                if let Js::Object(current) = self.call_adapter(&target.adapter.instance, "readRecord", Js::object(read)).await.map_err(thrown)? {
                     for (k, v) in current.entries() {
                         data.set(k.clone(), v.clone());
                     }
@@ -608,12 +605,26 @@ impl Run<'_> {
             Some(decided) => decided,
             None => {
                 let request = host::llm::arbitrate_entities(
-                    env::encode_plain(&fields.fields),
-                    env::encode_plain(&Js::array(candidates.clone())),
-                    &target.record_type,
-                    env::encode_plain(constraints),
+                    self.segment(),
+                    host::llm::Arbitration {
+                        asserted: env::encode_plain(&fields.fields),
+                        candidates: env::encode_plain(&Js::array(candidates.clone())),
+                        record_type: &target.record_type,
+                        constraints: env::encode_plain(constraints),
+                        language_version: self.version(),
+                    },
+                    self.ledger.budget(),
                 );
                 let answer = self.ask(request).await.map_err(thrown)?.unwrap_or(Json::Null);
+                // A priced call: what it spent is charged, a refusal included,
+                // before the answer is read (run_context.ts `charged`).
+                self.ledger
+                    .charge(answer.get("cost"))
+                    .map_err(|message| thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }))?;
+                if let Some(error) = answer.get("error") {
+                    let message = error.get("message").and_then(Json::as_str).unwrap_or_default().to_string();
+                    return Err(thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }));
+                }
                 judge_unavailable = answer.get("judgeUnavailable").and_then(Json::as_str).map(String::from);
                 // `candidates[chosen]`: anything but an index into the list
                 // (negative, fractional, past the end) finds nothing, and the
@@ -647,12 +658,12 @@ impl Run<'_> {
             Js::Object(object) => object.entries().iter().map(|(k, _)| Js::str(k.clone())).collect(),
             _ => Vec::new(),
         };
-        let current = if self.adapter_has(adapter.instance, "readRecord").await.map_err(thrown)? {
+        let current = if adapter.instance.has("readRecord") {
             let mut read = JsObject::new();
             read.set("recordType".into(), Js::str(target.record_type.clone()));
             read.set("externalId".into(), external_id.clone());
             read.set("fieldIds".into(), Js::array(keys));
-            self.call_adapter(adapter.instance, "readRecord", vec![Js::object(read)]).await.map_err(thrown)?
+            self.call_adapter(&adapter.instance, "readRecord", Js::object(read)).await.map_err(thrown)?
         } else {
             Js::Null
         };
@@ -713,7 +724,7 @@ impl Run<'_> {
         update.set("evidence".into(), Js::Undefined);
         update.set("mutationContext".into(), self.mutation_context.borrow().clone());
         update.set("parentLinks".into(), Js::array(parent_links.to_vec()));
-        let updated = self.call_adapter(adapter.instance, "updateRecord", vec![Js::object(update)]).await.map_err(thrown)?;
+        let updated = self.call_adapter(&adapter.instance, "updateRecord", Js::object(update)).await.map_err(thrown)?;
         if let Js::Object(object) = &updated
             && object.get("notFound").is_some()
         {
@@ -791,7 +802,7 @@ impl Run<'_> {
         create.set("mutationContext".into(), self.mutation_context.borrow().clone());
         create.set("parentLinks".into(), Js::array(parent_links.to_vec()));
         create.set("bridgeToExternal".into(), Js::Undefined);
-        let created = self.call_adapter(adapter.instance, "createRecord", vec![Js::object(create)]).await.map_err(thrown)?;
+        let created = self.call_adapter(&adapter.instance, "createRecord", Js::object(create)).await.map_err(thrown)?;
         let mut record = record_head(adapter, &target.record_type, true, !adapter.dry, unique::get(&created, "externalId"));
         record.set("writtenValues".into(), fields.fields.clone());
         record.set("resultData".into(), write_result_data(&created));
@@ -902,19 +913,17 @@ impl Run<'_> {
         Ok(Evaluated { value, prov: Prov::Built(trail) })
     }
 
-    /// An adapter method with its arguments, on the eval wire both ways.
-    pub(crate) async fn call_adapter(&self, instance: Instance, method: &str, args: Vec<Js>) -> Result<Js, Failure> {
-        let args = args.iter().map(env::encode_plain).collect();
-        match self.ask(host::adapters::call_wire(instance, method, args)).await? {
-            Some(wire) => env::decode(&wire).map_err(|e| Failure::engine("MOVENG_RUNTIME", e)),
-            None => Ok(Js::Undefined),
+    /// An adapter method with its one argument object, on the eval wire both
+    /// ways. The host's error as data fails the statement as the
+    /// TypeScript's stand-in raises it (host_adapter.ts `hostCallFailure`):
+    /// the shim holds that very error, under the `ref` the error carries.
+    pub(crate) async fn call_adapter(&self, instance: &Instance, method: &str, args: Js) -> Result<Js, Failure> {
+        let answer = self.ask(host::adapters::call(self.segment(), instance, method, env::encode_plain(&args))).await?;
+        match host::call_answer(answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))? {
+            host::CallAnswer::Result(Some(wire)) => env::decode(&wire).map_err(|e| Failure::engine("MOVENG_RUNTIME", e)),
+            host::CallAnswer::Result(None) => Ok(Js::Undefined),
+            host::CallAnswer::Error(error) => Err(Failure::Host(HostError { detail: error })),
         }
-    }
-
-    /// Whether the live adapter implements `method` (an optional member, as
-    /// `adapter.readRecord ? … : …` asks).
-    async fn adapter_has(&self, instance: Instance, method: &str) -> Result<bool, Failure> {
-        Ok(self.ask(host::adapters::has(instance, method)).await?.is_some_and(|v| v.as_bool() == Some(true)))
     }
 
     /// An effect run holding the cross-run locks it needs, let go however it
@@ -927,9 +936,15 @@ impl Run<'_> {
         if names.is_empty() {
             return effect.await;
         }
-        self.ask(host::locks::acquire(&names)).await.map_err(thrown)?;
+        let held = self.ask(host::locks::acquire(self.segment(), &names)).await.map_err(thrown)?;
+        let token = held
+            .as_ref()
+            .and_then(|answer| answer.get("token"))
+            .and_then(Json::as_str)
+            .map(String::from)
+            .ok_or_else(|| thrown(Failure::engine("MOVENG_RUNTIME", format!("locks.acquire answered {held:?}, not {{token}}"))))?;
         let outcome = effect.await;
-        let released = self.ask(host::locks::release(&names)).await.map_err(thrown);
+        let released = self.ask(host::locks::release(self.segment(), &token)).await.map_err(thrown);
         let value = outcome?;
         released?;
         Ok(value)

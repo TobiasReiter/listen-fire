@@ -15,7 +15,7 @@ import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapt
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import { positionData } from '../../translation_graph/types';
-import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../host';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
 import {
   MovementRunFailed,
   resumeMovement,
@@ -160,7 +160,7 @@ interface Outcome {
   trace: unknown[];
   captured: CapturedWrite[];
   asked: unknown[];
-  parks: Array<{ address: string; state: unknown; wakeAt: Date }>;
+  parks: Array<{ address: string; state: unknown; wakeAt: string }>;
 }
 
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
@@ -178,11 +178,12 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     event: c.event,
     teamId: TEAM_ID,
     catalog,
-    firedAt: new Date('2026-05-01T09:00:00Z'),
-    ...(c.dryRun === true ? { dryRun: true, writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
+    credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+    firedAt: '2026-05-01T09:00:00.000Z',
+    ...(c.dryRun === true ? { dryRun: true } : {}),
     host: makeTestHost({
+      ...(c.dryRun === true ? { writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
       adapters: {
-        credentialId: (name) => `cred-${name}`,
         resolve: (request) => {
           resolved.push(request);
           if (request.adapterType === 'email') return email.adapter;
@@ -347,12 +348,21 @@ describe('writes in the Rust engine', () => {
     ];
     const picks = (index: number | null, unavailable?: string) => (asked: unknown[]) =>
       async (input: Parameters<NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>>[0]) => {
-        asked.push({ asserted: input.asserted, candidates: input.candidates, recordType: input.recordType, constraints: input.constraints });
-        if (unavailable !== undefined) input.onJudgeUnavailable?.(unavailable);
-        return index;
+        asked.push({
+          asserted: input.asserted,
+          candidates: input.candidates,
+          recordType: input.recordType,
+          constraints: input.constraints,
+          languageVersion: input.languageVersion,
+          budget: input.budget,
+        });
+        // What the judge's model call spent, charged to the run by either engine.
+        return { index, ...(unavailable !== undefined ? { judgeUnavailable: unavailable } : {}), cost: [{ source: 'model:judge', microdollars: 7 }] };
       };
     const merged = await agree({ source, event: webhook({ subject: 'Acme' }), attio: { candidates: two }, judge: picks(1) });
     expect(merged.rust.result?.writes[0]).toMatchObject({ externalId: 'co-2', outcome: 'update' });
+    expect(merged.rust.result).toMatchObject({ spentMicrodollars: 7, spentBySource: { 'model:judge': 7 } });
+    expect(merged.rust.asked).toEqual([expect.objectContaining({ budget: { remainingMicrodollars: null } })]);
     const created = await agree({
       source,
       event: webhook({ subject: 'Acme' }),
@@ -488,7 +498,7 @@ describe('parks in the Rust engine', () => {
     const [fromTs, fromRust] = [await parkedBy('ts'), await parkedBy('rust')];
     expect(fromRust).toEqual(fromTs);
     const parsed = parsePinned({ source: PRELUDE + PARKS });
-    expect(rustCanResume(parsed, { host: makeTestHost(), state: fromTs })).toBe(true);
+    expect(rustCanResume(parsed, { state: fromTs })).toBe(true);
     // A state parked by the TypeScript engine, resumed by the Rust one, and
     // the reverse: each resume agrees with the TypeScript engine's own.
     for (const state of [fromTs, fromRust]) {
@@ -527,8 +537,15 @@ describe('parks in the Rust engine', () => {
   it('leaves to the TypeScript engine a state it does not resume', () => {
     const parsed = parsePinned({ source: PRELUDE + PARKS });
     const state: ParkedScopeState = { version: 1, address: 's2.b0.s0', bindingName: null, scopeChain: [], journal: [] };
-    expect(rustCanResume(parsed, { host: makeTestHost(), state })).toBe(false);
-    expect(rustCanResume(parsed, { host: makeTestHost(), state: { ...state, journal: undefined, address: 's1.i0.s0' } })).toBe(false);
-    expect(rustCanRun(parsed, { host: makeTestHost() })).toBe(true);
+    expect(rustCanResume(parsed, { state })).toBe(false);
+    expect(rustCanResume(parsed, { state: { ...state, journal: undefined, address: 's1.i0.s0' } })).toBe(false);
+    expect(rustCanRun(parsed, {})).toBe(true);
+    // The judge is a priced call: with a cost cap, a `unique by` write stays
+    // on the TypeScript engine, which can suspend at the cap.
+    const identity = parsePinned({
+      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { unique by (\`name\`) name: "a" }\n}`,
+    });
+    expect(rustCanRun(identity, {})).toBe(true);
+    expect(rustCanRun(identity, { costCapMicrodollars: 1_000 })).toBe(false);
   });
 });

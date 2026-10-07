@@ -40,7 +40,9 @@ export type EnvRequest =
   | { op: 'tz_convert'; instantIso: string; zone: string }
   | { op: 'url_parse'; text: string }
   | { op: 'number_format'; value: number; locale: string; options: NumberOptions }
-  | { op: 'normalize'; text: string; form: NormalForm };
+  | { op: 'normalize'; text: string; form: NormalForm }
+  /** `Date.now()`: the wall clock, which only a park's wake time reads. */
+  | { op: 'now' };
 
 export interface NumberOptions {
   minimumFractionDigits?: number;
@@ -138,6 +140,8 @@ export function answerEnvRequest(request: unknown): { value: unknown } {
       return { value: numberFormat(r.value, r.locale, r.options) };
     case 'normalize':
       return { value: r.text.normalize(r.form) };
+    case 'now':
+      return { value: Date.now() };
     default: {
       const unread: never = r;
       throw new Error(`no environment service ${JSON.stringify(unread)}`);
@@ -172,6 +176,8 @@ function readRequest(request: unknown): EnvRequest {
       }
       return { op, text: text('text'), form };
     }
+    case 'now':
+      return { op };
     default:
       throw new Error(`no environment service ${op}`);
   }

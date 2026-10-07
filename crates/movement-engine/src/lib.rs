@@ -21,6 +21,7 @@ pub mod host;
 pub mod js;
 pub mod js_date;
 pub mod js_regex;
+pub mod ledger;
 pub mod node;
 pub mod park;
 pub mod program;

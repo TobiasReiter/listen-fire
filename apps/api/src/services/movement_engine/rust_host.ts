@@ -1,28 +1,34 @@
 // The Rust engine's host dispatch: every request a segment makes, by family
-// and method, answered from the run's `EngineHost` (and the live adapters
-// behind the instance handles the segment holds). This is the one module that
+// and method, answered from the run's `EngineHost`. This is the one module that
 // knows the host's shapes, so a change to the host boundary
 // (docs/engine-host.md) is adapted here and in the Rust request builders
 // (crates/movement-engine/src/host.rs) and nowhere between.
+//
+// A request whose family and method are an `EngineHost` method's
+// (`HOST_FAMILIES`) is that method's request, in the contract's shape, and is
+// forwarded as it is: the engine names the segment the run host opened. Two
+// families are the engine's own and never reach an `EngineHost`
+// (`ENGINE_OWN_ROUTES`): `check`, the TypeScript checker until the checker is
+// Rust, and `builtins`, the TypeScript standard library for the readings the
+// Rust engine hands back.
+//
+// One encoding is this shim's own: a request marked `wire: true` carries its
+// values on the eval wire (rust_wire.ts), not as plain JSON, so the host is
+// handed exactly the JavaScript values (key order, `undefined`) the TypeScript
+// engine hands it in process, and an adapter's result comes back the same way.
 
 import { applyStdlib, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
-import type { Adapter } from '../translation_graph/adapter';
-import {
-  newDryRunRehearsal,
-  wrapAdapterForDryRun,
-  type DryRunRehearsal,
-  type DryRunWriteSink,
-} from '../translation_graph/engine/dry_run_adapter';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
 import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
-import type { EngineHost } from './host';
+import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost } from './host';
+import { hostCallFailure } from './host_adapter';
 import { checkAnswer, checkPinned } from './program_check';
-import type { MovementRunResult, RunMovementInput } from './run';
-import { segmentWriteLockHolder } from './run_scope';
+import type { MovementRunResult } from './run';
+import { publishTrace, type RunContext } from './run_context';
 import type { HostAnswer, HostRequest } from './rust_engine';
 import { rustRunStats } from './rust_stats';
 import {
@@ -41,212 +47,217 @@ import {
 
 export interface RouteContext {
   host: EngineHost;
-  teamId: RunMovementInput['teamId'];
-  /** The live adapters behind the handles the engine holds, numbered from 1. */
-  instances: Map<number, Adapter>;
+  /** The segment the run host opened, with the run's trace and account. */
+  context: RunContext;
   catalog: CatalogSnapshot;
-  trace: MovementRunResult['trace'];
   hostErrors: unknown[];
-  /** Where a rehearsal's captured writes go (`RunMovementInput.writeSink`). */
-  writeSink?: DryRunWriteSink;
-  /** The run's one rehearsal, made when its first target is wrapped. */
-  rehearsal?: DryRunRehearsal;
 }
 
-type Route = (args: unknown, context: RouteContext) => Promise<unknown>;
+type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
+
+/** The routes that are the Rust engine's own, not `EngineHost` methods, and
+ *  why each is not on the host boundary. */
+export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
+  'check.program': 'the TypeScript checker, which the Rust engine asks for until the checker is Rust',
+  'builtins.function': 'a TypeScript standard-library member, for a reading the Rust engine hands back',
+  'builtins.compare': "the shared comparator, for a reading the Rust engine hands back",
+};
 
 /**
- * Every host call the engine can make, by family and method. The request
- * shapes are the engine's (crates/movement-engine/src/host.rs, one builder
- * each); a route reads its args at this boundary and answers plain data.
+ * Every host call the engine can make, by its path (`park.sink.commitTimerPark`).
+ * The request shapes are the engine's (crates/movement-engine/src/host.rs, one
+ * builder each); a route reads its args at this boundary and answers plain
+ * data.
  */
-const ROUTES: Record<string, Record<string, Route> | undefined> = {
-  check: {
-    /** The TypeScript checker over the pinned source (program_check.ts):
-     *  every diagnostic, the import link and the checker's AST stamps as
-     *  data. A program that fails its check ends the run with the check's
-     *  error, exactly as parseAndCheck throws it. */
-    async program(args, context) {
-      const request = record(args, 'check.program');
-      const languageVersion = request.languageVersion;
-      if (typeof languageVersion !== 'number') throw new RustShimError('check.program languageVersion must be a number');
-      const upgradingFrom = request.upgradingFrom;
-      if (upgradingFrom !== undefined && typeof upgradingFrom !== 'number') {
-        throw new RustShimError('check.program upgradingFrom must be a number');
-      }
-      const resolveFile = context.host.files.resolveFile;
-      let checked;
-      try {
-        checked = checkPinned({
-          source: string(request.source, 'check.program source'),
-          catalog: context.catalog,
-          languageVersion,
-          ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
-          ...(resolveFile !== undefined ? { hostResolveFile: resolveFile } : {}),
-        });
-      } catch (error) {
-        throw new RunAborted(error);
-      }
-      return checkAnswer(checked);
-    },
-  },
-  adapters: {
-    async resolve(args, context) {
-      const request = record(args, 'adapters.resolve');
-      if (request.teamId !== context.teamId) {
-        throw new RustShimError(`adapters.resolve asked for team ${String(request.teamId)} in a run of another team`);
-      }
-      const role = request.role;
-      if (role !== 'source' && role !== 'target') {
-        throw new RustShimError(`adapters.resolve role must be "source" or "target", not ${JSON.stringify(role)}`);
-      }
-      const credentialsId = optionalString(request.credentialsId, 'adapters.resolve credentialsId');
-      const constructionArgs = optionalStringRecord(request.constructionArgs, 'adapters.resolve constructionArgs');
-      if (request.dryRun !== undefined && request.dryRun !== true) throw new RustShimError('adapters.resolve dryRun is true or absent');
-      const live = await context.host.adapters.resolve({
-        adapterType: string(request.adapterType, 'adapters.resolve adapterType'),
-        teamId: context.teamId,
-        credentialsId,
-        ...(constructionArgs !== undefined ? { constructionArgs } : {}),
-        role,
+const ROUTES: Record<string, Route> = {
+  /** The TypeScript checker over the pinned source (program_check.ts):
+   *  every diagnostic, the import link and the checker's AST stamps as
+   *  data. A program that fails its check ends the run with the check's
+   *  error, exactly as parseAndCheck throws it. */
+  async 'check.program'(request, context) {
+    const languageVersion = request.languageVersion;
+    if (typeof languageVersion !== 'number') throw new RustShimError('check.program languageVersion must be a number');
+    const upgradingFrom = request.upgradingFrom;
+    if (upgradingFrom !== undefined && typeof upgradingFrom !== 'number') {
+      throw new RustShimError('check.program upgradingFrom must be a number');
+    }
+    let checked;
+    try {
+      checked = checkPinned({
+        source: string(request.source, 'check.program source'),
+        catalog: context.catalog,
+        languageVersion,
+        ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
       });
-      // A rehearsed target: the run's one dry-run capture wraps it, as the
-      // interpreter's `resolveTargetAdapter` wraps it.
-      const adapter = request.dryRun === true
-        ? wrapAdapterForDryRun(live, (context.rehearsal ??= newDryRunRehearsal(context.writeSink)))
-        : live;
-      const instance = context.instances.size + 1;
-      context.instances.set(instance, adapter);
-      return { instance, adapterType: adapter.adapterType };
-    },
-    /** Whether the adapter implements an optional member (`readRecord`). */
-    async has(args, context) {
-      const request = record(args, 'adapters.has');
-      const method = string(request.method, 'adapters.has method');
-      return typeof Reflect.get(adapterOf(request.instance, method, context), method) === 'function';
-    },
-    async credentialId(args, context) {
-      const request = record(args, 'adapters.credentialId');
-      return context.host.adapters.credentialId(string(request.credentialName, 'adapters.credentialId credentialName'));
-    },
-    async call(args, context) {
-      const request = record(args, 'adapters.call');
-      const method = string(request.method, 'adapters.call method');
-      const adapter = adapterOf(request.instance, method, context);
-      const fn: unknown = Reflect.get(adapter, method);
-      if (typeof fn !== 'function') {
-        throw new RustShimError(`adapters.call: the ${adapter.adapterType} adapter has no method ${method}`);
-      }
-      if (!Array.isArray(request.args)) throw new RustShimError(`adapters.call ${method}: args must be an array`);
-      if (request.wire !== true) return Reflect.apply(fn, adapter, request.args);
-      // On the eval wire both ways: the JavaScript's key order, `undefined`
-      // and the numbers JSON cannot say cross as they are.
-      const values = request.args.map((arg) => new WireOut().read(arg));
-      return new Wired(await Reflect.apply(fn, adapter, values), `adapters.call ${method}`);
-    },
+    } catch (error) {
+      throw new RunAborted(error);
+    }
+    return checkAnswer(checked);
   },
-  llm: {
-    /** The identity judge over a write's candidates. What the host's
-     *  `onJudgeUnavailable` heard rides back beside the index. */
-    async arbitrateEntities(args, context) {
-      const request = record(args, 'llm.arbitrateEntities');
-      const asserted = wiredRecord(request.asserted, 'llm.arbitrateEntities asserted');
-      const candidates = new WireOut().read(request.candidates);
-      if (!Array.isArray(candidates)) throw new RustShimError('llm.arbitrateEntities candidates is a list');
-      const constraints = new WireOut().read(request.constraints);
-      if (!isUniquenessConstraints(constraints)) throw new RustShimError('llm.arbitrateEntities constraints are {any: [{all}]}');
-      let judgeUnavailable: string | undefined;
-      const index = await context.host.llm.arbitrateEntities({
-        asserted,
-        candidates,
-        recordType: string(request.recordType, 'llm.arbitrateEntities recordType'),
-        constraints,
-        onJudgeUnavailable: (message) => {
-          judgeUnavailable = message;
-        },
-      });
-      // `candidates[index]` finds nothing for anything but an integer (NaN,
-      // a fraction, `undefined`), exactly as for null: the write creates.
-      const chosen = typeof index === 'number' && Number.isInteger(index) ? index : null;
-      return { index: chosen, ...(judgeUnavailable !== undefined ? { judgeUnavailable } : {}) };
-    },
+  async 'adapters.resolve'(request, { host }) {
+    const role = request.role;
+    if (role !== 'source' && role !== 'target') {
+      throw new RustShimError(`adapters.resolve role must be "source" or "target", not ${JSON.stringify(role)}`);
+    }
+    const credentialsId = optionalString(request.credentialsId, 'adapters.resolve credentialsId');
+    const constructionArgs = optionalStringRecord(request.constructionArgs, 'adapters.resolve constructionArgs');
+    if (request.dryRun !== undefined && request.dryRun !== true) throw new RustShimError('adapters.resolve dryRun is true or absent');
+    return host.adapters.resolve({
+      segmentId: segmentOf(request),
+      adapterType: string(request.adapterType, 'adapters.resolve adapterType'),
+      ...(credentialsId !== undefined ? { credentialsId } : {}),
+      ...(constructionArgs !== undefined ? { constructionArgs } : {}),
+      role,
+      ...(request.dryRun === true ? { dryRun: true } : {}),
+    });
   },
-  locks: {
-    /** The segment's cross-run write locks, by name (the segment's holder,
-     *  `segmentWriteLockHolder`, as the effect locks take them). */
-    async acquire(args) {
-      await segmentWriteLockHolder().acquire(lockNames(args, 'locks.acquire'));
-      return undefined;
-    },
-    async release(args) {
-      await segmentWriteLockHolder().release(lockNames(args, 'locks.release'));
-      return undefined;
-    },
+  /** `{result}` or `{error}`, as data. A host error is held here as the very
+   *  error the TypeScript's stand-in raises for it (host_adapter.ts), under
+   *  the `ref` its answer carries, so a run that fails with it fails with an
+   *  equal error. */
+  async 'adapters.call'(request, { host, hostErrors }) {
+    const method = adapterMethod(request.method);
+    if (request.wire !== true) throw new RustShimError('adapters.call carries its args on the eval wire');
+    const args = new WireOut().read(request.args);
+    if (!isCallArgs(args)) throw new RustShimError(`adapters.call ${method}: args are one object`);
+    const answer = await host.adapters.call({
+      segmentId: segmentOf(request),
+      instance: string(request.instance, 'adapters.call instance'),
+      method,
+      args,
+    });
+    if ('error' in answer) {
+      hostErrors.push(hostCallFailure(answer.error));
+      return new Plain(plainJson({ error: { ...answer.error, ref: hostErrors.length - 1 } }, `adapters.call ${method} error`));
+    }
+    const result = new WireOut().value(answer.result);
+    if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
+    return new Plain({ result });
   },
-  park: {
-    /** A timer park: woken `wakeAfterMs` from now by this host's clock. A run
-     *  with no park sink is told so, and fails as the interpreter fails it. */
-    async commitTimerPark(args, context) {
-      const request = record(args, 'park.commitTimerPark');
-      const sink = context.host.park.sink;
-      if (sink === undefined) return { noSink: true };
-      const wakeAfterMs = request.wakeAfterMs;
-      if (typeof wakeAfterMs !== 'number') throw new RustShimError('park.commitTimerPark wakeAfterMs is a number');
-      await sink.commitTimerPark({
-        address: string(request.address, 'park.commitTimerPark address'),
-        // On the eval wire: the state's objects in the order the engine wrote them.
-        state: new WireOut().read(request.state),
-        wakeAt: new Date(Date.now() + wakeAfterMs),
-      });
-      return undefined;
-    },
+  /** The identity judge over a write's candidates, a priced call: the
+   *  engine's budget goes in, the answer (its cost, or a budget refusal)
+   *  comes back as data for the engine's ledger. */
+  async 'llm.arbitrateEntities'(request, { host }) {
+    const asserted = wiredRecord(request.asserted, 'llm.arbitrateEntities asserted');
+    const candidates = new WireOut().read(request.candidates);
+    if (!Array.isArray(candidates)) throw new RustShimError('llm.arbitrateEntities candidates is a list');
+    const constraints = new WireOut().read(request.constraints);
+    if (!isUniquenessConstraints(constraints)) throw new RustShimError('llm.arbitrateEntities constraints are {any: [{all}]}');
+    const languageVersion = request.languageVersion;
+    if (typeof languageVersion !== 'number') throw new RustShimError('llm.arbitrateEntities languageVersion is a number');
+    const answer = await host.llm.arbitrateEntities({
+      segmentId: segmentOf(request),
+      asserted,
+      candidates,
+      recordType: string(request.recordType, 'llm.arbitrateEntities recordType'),
+      constraints,
+      languageVersion,
+      budget: budgetOf(request.budget),
+    });
+    if ('error' in answer) return answer;
+    // `candidates[index]` finds nothing for anything but an integer (NaN,
+    // a fraction, `undefined`), exactly as for null: the write creates.
+    const { index, ...rest } = answer;
+    return { ...rest, index: typeof index === 'number' && Number.isInteger(index) ? index : null };
   },
-  control: {
-    /** The cancel gate at a statement boundary. */
-    async cancelled(_args, context) {
-      return context.host.control.cancel.cancelled();
-    },
-    /** The run's last, undebounced, cancel check. */
-    async cancelledNow(_args, context) {
-      return context.host.control.cancel.cancelledNow();
-    },
+  /** The segment's cross-run write locks: a token per acquire. */
+  async 'locks.acquire'(request, { host }) {
+    return host.locks.acquire({ segmentId: segmentOf(request), names: lockNames(request) });
   },
-  trace: {
-    /** One entry on the run's trace, as it lands. */
-    async append(args, context) {
-      const entry = traceEntry(record(args, 'trace.append').entry);
-      context.trace.push(entry);
-      return undefined;
-    },
+  async 'locks.release'(request, { host }) {
+    await host.locks.release({ segmentId: segmentOf(request), token: string(request.token, 'locks.release token') });
+    return undefined;
   },
-  builtins: {
-    /** A built-in the Rust engine hands back for these arguments, answered by
-     *  the TypeScript member: its value, or what it throws. */
-    async function(args) {
-      const request = record(args, 'builtins.function');
-      const id = string(request.id, 'builtins.function id');
-      if (!Array.isArray(request.args)) throw new RustShimError('builtins.function args must be an array');
-      const values = request.args.map((arg) => new WireOut().read(arg));
-      const now = new Date(string(request.now, 'builtins.function now'));
-      const spec = stdlibFunctionById(id);
-      return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
-    },
-    /** The shared comparator, likewise. */
-    async compare(args) {
-      const request = record(args, 'builtins.compare');
-      const op = filterOperator(request.op);
-      const left = new WireOut().read(request.left);
-      const right = new WireOut().read(request.right);
-      return builtinAnswer(() => compareValues(left, op, right));
-    },
+  /** A timer park. A run with no park sink is told so, and fails as the
+   *  interpreter fails it. */
+  async 'park.sink.commitTimerPark'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink === undefined) return { noSink: true };
+    if (request.wire !== true) throw new RustShimError('park.sink.commitTimerPark carries its state on the eval wire');
+    await sink.commitTimerPark({
+      segmentId: segmentOf(request),
+      address: string(request.address, 'park.sink.commitTimerPark address'),
+      // On the eval wire: the state's objects in the order the engine wrote them.
+      state: new WireOut().read(request.state),
+      wakeAt: instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt'),
+    });
+    return undefined;
+  },
+  /** The cancel gate at a statement boundary. */
+  async 'control.cancel.cancelled'(request, { host }) {
+    return host.control.cancel.cancelled({ segmentId: segmentOf(request) });
+  },
+  /** The run's last, undebounced, cancel check. */
+  async 'control.cancel.cancelledNow'(request, { host }) {
+    return host.control.cancel.cancelledNow({ segmentId: segmentOf(request) });
+  },
+  /** Entries on the run's trace, as they land: the segment's own trace (the
+   *  result's), handed on to the host's. */
+  async 'trace.append'(request, { host, context }) {
+    segmentOf(request);
+    const entries = request.entries;
+    if (!Array.isArray(entries)) throw new RustShimError('trace.append entries are a list');
+    context.trace.entries.push(...entries.map(traceEntry));
+    await publishTrace(context, host);
+    return undefined;
+  },
+  /** A built-in the Rust engine hands back for these arguments, answered by
+   *  the TypeScript member: its value, or what it throws. */
+  async 'builtins.function'(request) {
+    const id = string(request.id, 'builtins.function id');
+    if (!Array.isArray(request.args)) throw new RustShimError('builtins.function args must be an array');
+    const values = request.args.map((arg) => new WireOut().read(arg));
+    const now = new Date(string(request.now, 'builtins.function now'));
+    const spec = stdlibFunctionById(id);
+    return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
+  },
+  /** The shared comparator, likewise. */
+  async 'builtins.compare'(request) {
+    const op = filterOperator(request.op);
+    const left = new WireOut().read(request.left);
+    const right = new WireOut().read(request.right);
+    return builtinAnswer(() => compareValues(left, op, right));
   },
 };
 
-/** The live adapter behind an instance handle. */
-function adapterOf(instance: unknown, method: string, context: RouteContext): Adapter {
-  const adapter = typeof instance === 'number' ? context.instances.get(instance) : undefined;
-  if (adapter === undefined) throw new RustShimError(`adapters.call ${method}: no adapter instance ${String(instance)}`);
-  return adapter;
+/** Every route's path: each an `EngineHost` method or one of
+ *  `ENGINE_OWN_ROUTES`, which the seam guard holds. */
+export function shimRoutePaths(): string[] {
+  return Object.keys(ROUTES);
+}
+
+/** The segment a forwarded request names (`serve` has held it to the one
+ *  the run host opened). */
+function segmentOf(request: Record<string, unknown>): string {
+  return string(request.segmentId, 'a host request segmentId');
+}
+
+/** An adapter call's one argument object. The engine builds each method's
+ *  (crates/movement-engine/src/write.rs, run.rs) as the TypeScript engine
+ *  does; what the shim can hold it to here is that it is one object, and the
+ *  host's adapter reads it as its protocol `params`. */
+function isCallArgs(value: unknown): value is AdapterCall['args'] {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function adapterMethod(value: unknown): AdapterMethod {
+  const method = ADAPTER_METHODS.find((m) => m === value);
+  if (method === undefined) throw new RustShimError(`adapters.call method ${JSON.stringify(value)} is not an adapter method`);
+  return method;
+}
+
+function budgetOf(value: unknown): { remainingMicrodollars: number | null } {
+  const remaining = record(value, 'a priced call budget').remainingMicrodollars;
+  if (remaining !== null && (typeof remaining !== 'number' || !Number.isFinite(remaining))) {
+    throw new RustShimError('a budget is {remainingMicrodollars: number | null}');
+  }
+  return { remainingMicrodollars: remaining };
+}
+
+function instant(value: unknown, what: string): string {
+  const text = string(value, what);
+  if (Number.isNaN(new Date(text).getTime())) throw new RustShimError(`${what} is not an ISO 8601 instant`);
+  return text;
 }
 
 function wiredRecord(value: unknown, what: string): Record<string, unknown> {
@@ -261,22 +272,28 @@ function isUniquenessConstraints(value: unknown): value is UniquenessConstraints
   return Array.isArray(any) && any.every((branch) => typeof branch === 'object' && branch !== null && Array.isArray(Reflect.get(branch, 'all')));
 }
 
-function lockNames(args: unknown, what: string): string[] {
-  const names = record(args, what).names;
+function lockNames(request: Record<string, unknown>): string[] {
+  const names = request.names;
   if (!Array.isArray(names) || !names.every((name) => typeof name === 'string')) {
-    throw new RustShimError(`${what} names are a list of texts`);
+    throw new RustShimError('locks.acquire names are a list of texts');
   }
   return names;
 }
 
 export async function serve(request: HostRequest, context: RouteContext): Promise<HostAnswer> {
-  const route = ROUTES[request.family]?.[request.method];
   const label = `${request.family}.${request.method}`;
+  const route = Object.hasOwn(ROUTES, label) ? ROUTES[label] : undefined;
   if (route === undefined) throw new RustShimError(`the shim has no route for ${label}`);
   rustRunStats.hostCalls[label] = (rustRunStats.hostCalls[label] ?? 0) + 1;
+  const args = record(request.args, label);
+  // Every request bound for the host names the segment the run host opened
+  // for this engine: it has no other.
+  if (!Object.hasOwn(ENGINE_OWN_ROUTES, label) && args.segmentId !== context.context.segmentId) {
+    throw new RustShimError(`${label} named segment ${String(args.segmentId)}, not this engine's ${context.context.segmentId}`);
+  }
   let value: unknown;
   try {
-    value = await route(request.args, context);
+    value = await route(args, context);
   } catch (error) {
     if (error instanceof RustShimError) throw error;
     if (error instanceof RunAborted) throw error.abortedWith;
@@ -286,21 +303,14 @@ export async function serve(request: HostRequest, context: RouteContext): Promis
     context.hostErrors.push(error);
     return { error: { ...errorAnswer(error), ref: context.hostErrors.length - 1 } };
   }
-  const named = adapterCallName(request) ?? label;
-  if (value instanceof Wired) {
-    const wire = new WireOut().value(value.value);
-    if (wire === REFUSED) throw new RustShimError(`${value.what} returned a value the eval wire cannot carry as itself`);
-    return { value: wire };
-  }
-  return value === undefined ? {} : { value: plainJson(value, named) };
+  if (value instanceof Plain) return { value: value.json };
+  return value === undefined ? {} : { value: plainJson(value, adapterCallName(request) ?? label) };
 }
 
-/** A route's value to send on the eval wire rather than as JSON. */
-class Wired {
-  constructor(
-    readonly value: unknown,
-    readonly what: string,
-  ) {}
+/** A route's answer that is already the JSON to send (an eval-wire value
+ *  inside it). */
+class Plain {
+  constructor(readonly json: unknown) {}
 }
 
 /** `{value: wire}` or `{threw: {class, code?, message}}`. */

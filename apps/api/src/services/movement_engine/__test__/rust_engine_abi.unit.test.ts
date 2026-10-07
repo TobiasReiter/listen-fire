@@ -7,8 +7,9 @@ import { EMPTY_CATALOG_SNAPSHOT, openEngineSegment } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
-import { makeTestHost } from '../host';
+import { openRunContext } from '../run_context';
 import { driveEngine, openWasmEngine, RustShimError } from '../rust_engine';
+import { makeTestHost } from '../test_host';
 
 describe('the Rust engine artifact', () => {
   it('round-trips start → two pending at once → answers out of order → done', () => {
@@ -73,22 +74,21 @@ describe('the Rust engine artifact', () => {
   });
 
   it('is driven by the shim against a host', async () => {
+    const host = makeTestHost({ control: { cancel: { cancelled: async () => true, cancelledNow: async () => false } } });
+    const context = await openRunContext({ host, teamId: 'team-1' as TeamId, languageVersion: 3, spend: {} });
+    const { segmentId } = context;
     const done = await driveEngine(
       openWasmEngine(),
       {
         entry: 'echo',
         requests: [
-          { family: 'adapters', method: 'credentialId', args: { credentialName: 'crm' } },
-          { family: 'adapters', method: 'credentialId', args: { credentialName: 'none' } },
+          { family: 'control.cancel', method: 'cancelled', args: { segmentId } },
+          { family: 'trace', method: 'append', args: { segmentId, entries: [] } },
         ],
       },
-      {
-        teamId: 'team-1' as TeamId,
-        catalog: EMPTY_CATALOG_SNAPSHOT,
-        host: makeTestHost({ adapters: { credentialId: (name) => (name === 'crm' ? 'cred-1' : undefined) } }),
-      },
+      { host, context, catalog: EMPTY_CATALOG_SNAPSHOT },
     );
-    expect(done).toEqual({ answers: [{ value: 'cred-1' }, {}] });
+    expect(done).toEqual({ answers: [{ value: true }, {}] });
   });
 
   it('refuses a protocol misuse loudly through the shim', () => {

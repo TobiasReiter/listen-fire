@@ -2,9 +2,10 @@
 // runs inside its own WASM instance; whatever it needs from the world it asks
 // for as `{id, family, method, args}` requests, and this shim serves each one
 // from the run's `EngineHost`, several at once when the engine issues several,
-// answering each by id as it settles. The live objects the host deals in stay
-// here: an adapter the engine resolves becomes a numeric instance handle, and
-// the engine calls its methods by that handle.
+// answering each by id as it settles. The segment is the run host's
+// (`inRunContext` opened it): every request the engine makes of the host names
+// it, in the shapes docs/engine-host.md freezes, and the shim forwards each one
+// to the run's `EngineHost` (rust_host.ts).
 //
 // Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`)
 // and by `rustCanRun`, the allow-list of what the Rust engine can already run
@@ -42,12 +43,12 @@ import {
 import { isPurePredicate } from '#shared/expression/filter';
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
-import { currentRunSpend } from '../../lib/run_spend';
 import { neverAsAny } from '../../lib/utils/types';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
+import type { RunContext } from './run_context';
 import type { BindingDescriptor } from './serialize';
 import { serve, type RouteContext } from './rust_host';
 import { rustEvalStats, rustRunStats } from './rust_stats';
@@ -105,9 +106,10 @@ export function assertEngineChoiceConfigured(env: Record<string, string | undefi
  *  engine to run. */
 export async function runSegmentInRust(
   input: RunMovementInput,
+  context: RunContext,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  return segmentInRust(input, undefined, engine);
+  return segmentInRust({ input, context }, undefined, engine);
 }
 
 /** A parked run resumed in the Rust engine (`rustCanResume` admits its
@@ -115,27 +117,31 @@ export async function runSegmentInRust(
  *  adapter. */
 export async function resumeSegmentInRust(
   input: ResumeMovementInput,
+  context: RunContext,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  return segmentInRust(input, { state: input.state, ...(input.reenter === true ? { reenter: true } : {}) }, engine);
+  return segmentInRust(
+    { input, context },
+    { state: input.state, ...(input.reenter === true ? { reenter: true } : {}) },
+    engine,
+  );
 }
 
 async function segmentInRust(
-  input: RunMovementInput,
+  { input, context }: { input: RunMovementInput; context: RunContext },
   resume: { state: unknown; reenter?: true } | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
   // Read before the instance opens: an input that cannot cross must not
-  // leave a segment open behind it.
-  const start = segmentInput(input, resume);
+  // leave an engine instance open behind it.
+  const start = segmentInput(input, context, resume);
   if (start === undefined) throw new RustShimError('this run cannot cross to the Rust engine (rustCanRun admits none such)');
-  const trace = input.host.trace ?? [];
   const hostErrors: unknown[] = [];
   rustRunStats.routed += 1;
   let outcome: { ran: MovementRunResult } | { declined: string };
   try {
-    const done = await driveEngine(engine ?? openWasmEngine(), start, { ...input, trace, hostErrors });
-    outcome = readRunResult(done, { trace, hostErrors });
+    const done = await driveEngine(engine ?? openWasmEngine(), start, { host: input.host, context, catalog: input.catalog, hostErrors });
+    outcome = readRunResult(done, { context, hostErrors });
   } catch (error) {
     // The run's own failure, which the Rust engine ran to as the TypeScript
     // engine would have; a shim fault is not one.
@@ -156,22 +162,12 @@ async function segmentInRust(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Pick<RunMovementInput, 'host' | 'teamId' | 'catalog' | 'writeSink'> & {
-    /** Where the engine's trace entries land (`host.trace`, else the run's own). */
-    trace?: MovementRunResult['trace'];
+  input: Omit<RouteContext, 'hostErrors'> & {
     /** The errors host calls failed with, by the `ref` their answers carry. */
     hostErrors?: unknown[];
   },
 ): Promise<unknown> {
-  const context: RouteContext = {
-    host: input.host,
-    teamId: input.teamId,
-    instances: new Map(),
-    catalog: input.catalog,
-    trace: input.trace ?? [],
-    hostErrors: input.hostErrors ?? [],
-    ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
-  };
+  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [] };
   const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
   try {
     let step = engine.start(start);
@@ -202,7 +198,7 @@ export async function driveEngine(
  *  resumed state, on the eval wire, so their objects keep their key order
  *  (a stored state's is the order it was stored in). Undefined for an input
  *  that cannot cross as itself. */
-function segmentInput(input: RunMovementInput, resume?: { state: unknown; reenter?: true }): unknown {
+function segmentInput(input: RunMovementInput, context: RunContext, resume?: { state: unknown; reenter?: true }): unknown {
   const event = new WireOut().value(input.event);
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
   const state = resume !== undefined ? new WireOut({ asData: true }).value(resume.state) : undefined;
@@ -218,9 +214,17 @@ function segmentInput(input: RunMovementInput, resume?: { state: unknown; reente
       languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
       ...(input.movementName !== undefined ? { movementName: input.movementName } : {}),
       event,
-      teamId: input.teamId,
+      // The segment the run host opened: every host request names it.
+      segmentId: context.segmentId,
+      ...(input.credentialIds !== undefined ? { credentialIds: input.credentialIds } : {}),
+      // The run's account as this segment starts (crates/movement-engine/src/ledger.rs).
+      spend: {
+        priorMicrodollars: input.priorSpentMicrodollars ?? 0,
+        capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
+        ...(input.costCapMicrodollars !== undefined ? { capMicrodollars: input.costCapMicrodollars } : {}),
+      },
       // The run's pinned instant, as the TypeScript interpreter pins it.
-      now: (input.firedAt ?? new Date()).toISOString(),
+      now: input.firedAt ?? new Date().toISOString(),
       catalog: input.catalog,
     },
     'the segment input',
@@ -235,16 +239,23 @@ function segmentInput(input: RunMovementInput, resume?: { state: unknown; reente
  */
 export function readRunResult(
   done: unknown,
-  run: { trace: MovementRunResult['trace']; hostErrors: unknown[] },
+  run: { context: Pick<RunContext, 'trace' | 'ledger'>; hostErrors: unknown[] },
 ): { ran: MovementRunResult } | { declined: string } {
   const outcome = record(done, 'the Rust engine result');
   if ('declined' in outcome) return { declined: string(outcome.declined, 'the Rust engine declined') };
+  // What the segment's priced calls spent goes on the run's account, which
+  // the run host reports on the result as the segment closes.
+  if (outcome.cost !== undefined) {
+    if (!Array.isArray(outcome.cost)) throw new RustShimError('the Rust engine cost is a list of cost lines');
+    run.context.ledger.charge(outcome.cost);
+  }
+  const trace = run.context.trace.entries;
   if ('thrown' in outcome) throw failureOf(outcome.thrown, run.hostErrors);
   if ('failed' in outcome) {
     const failed = record(outcome.failed, 'the Rust engine failure');
-    throw new MovementRunFailed(failureOf(failed.error, run.hostErrors), resultOf(failed.result, run.trace));
+    throw new MovementRunFailed(failureOf(failed.error, run.hostErrors), resultOf(failed.result, trace));
   }
-  if ('result' in outcome) return { ran: resultOf(outcome.result, run.trace) };
+  if ('result' in outcome) return { ran: resultOf(outcome.result, trace) };
   throw new RustShimError(`the Rust engine finished with ${Object.keys(outcome).join(', ') || 'nothing'}, which this shim does not decode`);
 }
 
@@ -260,9 +271,8 @@ function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRu
   if (result.parked !== undefined && result.parked !== true) throw new RustShimError('a parked result says true');
   const writes = new WireOut().read(result.writes ?? ['l', 0, []]);
   if (!Array.isArray(writes) || !writes.every(isWriteRecord)) throw new RustShimError('the Rust engine result writes are write records');
-  // The run spent nothing itself; what the run had spent before rides along,
-  // as the interpreter's `spendFields` reports it.
-  const spend = currentRunSpend();
+  // The spend fields are the run host's to add, read off the run's account
+  // once the segment closes (run.ts `inRunContext`).
   return {
     movementName: string(result.movementName, 'the Rust engine result movementName'),
     writes,
@@ -270,10 +280,6 @@ function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRu
     trace,
     ...(result.parked === true ? { parked: true, parkedAddress: string(result.parkedAddress, 'the parked address') } : {}),
     ...(result.cancelled === true ? { cancelled: true } : {}),
-    ...(spend.segmentMicrodollars > 0
-      ? { spentMicrodollars: spend.segmentMicrodollars, spentBySource: spend.bySource }
-      : {}),
-    ...(spend.runMicrodollars > 0 ? { runSpentMicrodollars: spend.runMicrodollars } : {}),
   };
 }
 
@@ -327,17 +333,16 @@ function failureOf(value: unknown, hostErrors: unknown[]): unknown {
  * - every expression one `rustCanEval` admits, where a name read is a value
  *   the bodies bind, plus `p.field` with no hops on the movement's event
  *   parameter, on such a value, or on a write's handle;
- * - a run that cannot suspend (no `limitPaused`, no `suspendWhen`), whose
- *   trace starts empty, and whose event and source cross as themselves.
+ * - a run that cannot suspend (no `limitPaused`, no `suspendAt`), and whose
+ *   event and source cross as themselves;
+ * - with a cost cap, no `unique by` write: the judge is a priced call, and a
+ *   run that meets its cap there suspends, which this engine cannot.
  */
 export function rustCanRun(
   program: Program,
-  input: Pick<RunMovementInput, 'host' | 'limitPaused' | 'languageVersion'>,
+  input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'languageVersion'>,
 ): boolean {
-  if (input.limitPaused === true || input.host.control.suspendWhen !== undefined) return false;
-  // A trace the caller already wrote into: the TypeScript engine reads it
-  // when it decides whether a `field_miss` is new, and the Rust one does not.
-  if ((input.host.trace?.length ?? 0) > 0) return false;
+  if (input.limitPaused === true || (input.suspendAt?.length ?? 0) > 0) return false;
   const fileNames = new Set<string>();
   const instances = new Set<string>();
   const movements: Extract<Statement, { kind: 'movement' }>[] = [];
@@ -383,6 +388,7 @@ export function rustCanRun(
       nodes,
       instances: new Set([...instances, ...bodyInstances]),
       movements: new Set(functions),
+      capped: input.costCapMicrodollars !== undefined,
       languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
       scope: {
         binds: bound,
@@ -405,6 +411,8 @@ interface RunNames {
   instances: ReadonlySet<string>;
   /** The file's movements: a construction spelled with one is a call. */
   movements: ReadonlySet<string>;
+  /** The run has a cost cap, so no priced call may be reached. */
+  capped: boolean;
   languageVersion: LanguageVersion;
   /** What a call's callee resolves against: every name the file and the
    *  body bind (a superset of any one point's scope), the file's functions. */
@@ -481,6 +489,7 @@ function writeRuns(write: WriteExpression, names: RunNames): boolean {
       return neverAsAny(target);
   }
   if (!write.uniqueBy.every((clause) => keyOnly(clause.predicate.raw))) return false;
+  if (names.capped && write.uniqueBy.length > 0) return false;
   const spreadsRun = (write.spreads ?? []).every(
     (spread) =>
       names.values.has(spread.source) || names.handles.has(spread.source) || names.nodes.has(spread.source) || names.events.has(spread.source),
@@ -615,7 +624,10 @@ function runExpressionRuns(expr: Expression, names: RunNames): boolean {
  */
 export function rustCanResume(
   program: Program,
-  input: Pick<ResumeMovementInput, 'host' | 'limitPaused' | 'languageVersion' | 'state' | 'answer' | 'deferRaceSettlement'>,
+  input: Pick<
+    ResumeMovementInput,
+    'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'languageVersion' | 'state' | 'answer' | 'deferRaceSettlement'
+  >,
 ): boolean {
   const state = input.state;
   if (input.answer !== undefined || input.deferRaceSettlement === true) return false;

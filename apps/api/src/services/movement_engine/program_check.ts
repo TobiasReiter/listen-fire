@@ -65,8 +65,6 @@ export interface CheckInput {
   languageVersion?: LanguageVersion;
   /** Checking for a move up from this version (`CheckOptions.upgradingFrom`). */
   upgradingFrom?: LanguageVersion;
-  /** The host's resolver, for a snapshot that ships no files. */
-  hostResolveFile?: ResolveFile;
 }
 
 export interface CheckedProgram {
@@ -78,12 +76,12 @@ export interface CheckedProgram {
   resolveFile?: ResolveFile;
 }
 
-/** The resolver file imports read. The snapshot's own files win: they were
- *  captured with the catalog the program is checked against, so imports and
- *  instance schemas describe one moment of the workspace. The host's resolver
- *  serves a host that resolves imports dynamically and ships no files. */
-export function fileResolverOf(input: Pick<CheckInput, 'catalog' | 'hostResolveFile'>): ResolveFile | undefined {
-  return resolveFileFromSnapshot(input.catalog) ?? input.hostResolveFile;
+/** The resolver file imports read: the snapshot's own files, captured with
+ *  the catalog the program is checked against, so imports and instance
+ *  schemas describe one moment of the workspace. A snapshot with no files
+ *  resolves no import. */
+export function fileResolverOf(input: Pick<CheckInput, 'catalog'>): ResolveFile | undefined {
+  return resolveFileFromSnapshot(input.catalog);
 }
 
 /** The pin, the parse: MOVENG_LANGUAGE_VERSION or MOVENG_PARSE. */

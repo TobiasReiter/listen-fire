@@ -5,22 +5,23 @@
 //! reading them, and the TypeScript shim routes on the same pair, so a shape
 //! change touches a builder and its route and nothing between.
 
+use std::rc::Rc;
+
 use serde::Serialize;
 use serde_json::{Value as Json, json};
 
-/// The `EngineHost` groups a request can address (`Trace` is its `trace`
-/// array), plus `Check` (the TypeScript checker, until the checker is Rust),
-/// `Builtins` (the TypeScript standard library, for the readings this engine
-/// hands back) and `Echo`: the protocol's own
-/// probe, served by no host (the `echo` entry's requests name it).
+/// The `EngineHost` families a request can address (docs/engine-host.md;
+/// host.ts `HOST_FAMILIES`), spelled as the manifest spells them, plus three
+/// that are this engine's own and never reach an `EngineHost`: `Check` (the
+/// TypeScript checker, until the checker is Rust), `Builtins` (the
+/// TypeScript standard library, for the readings this engine hands back) and
+/// `Echo` (the protocol's own probe, served by no host).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     Adapters,
     Llm,
-    Park,
-    Control,
-    Files,
-    Lookup,
+    ParkSink,
+    ControlCancel,
     Locks,
     Trace,
     Check,
@@ -28,15 +29,25 @@ pub enum Family {
     Echo,
 }
 
+const FAMILIES: [Family; 9] = [
+    Family::Adapters,
+    Family::Llm,
+    Family::ParkSink,
+    Family::ControlCancel,
+    Family::Locks,
+    Family::Trace,
+    Family::Check,
+    Family::Builtins,
+    Family::Echo,
+];
+
 impl Family {
     pub fn as_str(self) -> &'static str {
         match self {
             Family::Adapters => "adapters",
             Family::Llm => "llm",
-            Family::Park => "park",
-            Family::Control => "control",
-            Family::Files => "files",
-            Family::Lookup => "lookup",
+            Family::ParkSink => "park.sink",
+            Family::ControlCancel => "control.cancel",
             Family::Locks => "locks",
             Family::Trace => "trace",
             Family::Check => "check",
@@ -46,21 +57,7 @@ impl Family {
     }
 
     pub fn parse(name: &str) -> Option<Family> {
-        [
-            Family::Adapters,
-            Family::Llm,
-            Family::Park,
-            Family::Control,
-            Family::Files,
-            Family::Lookup,
-            Family::Locks,
-            Family::Trace,
-            Family::Check,
-            Family::Builtins,
-            Family::Echo,
-        ]
-        .into_iter()
-        .find(|family| family.as_str() == name)
+        FAMILIES.into_iter().find(|family| family.as_str() == name)
     }
 }
 
@@ -71,24 +68,34 @@ pub struct Request {
     pub args: Json,
 }
 
-/// The adapter instance a segment holds: the shim keeps the live `Adapter`
-/// and hands the engine this number for it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Instance(pub u64);
+/// An adapter instance as `adapters.resolve` answered it: its opaque id,
+/// meaningful only within the segment, and the methods it implements (an
+/// optional member such as `readRecord` is asked of this list, never of the
+/// host).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instance {
+    pub id: String,
+    pub methods: Rc<Vec<String>>,
+}
 
-/// `ResolveAdapter`'s input, as host.ts types it.
+impl Instance {
+    pub fn has(&self, method: &str) -> bool {
+        self.methods.iter().any(|m| m == method)
+    }
+}
+
+/// `adapters.resolve`'s request, as docs/engine-host.md writes it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveAdapter {
     pub adapter_type: String,
-    pub team_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credentials_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub construction_args: Option<std::collections::BTreeMap<String, String>>,
     pub role: Role,
-    /// A target whose writes are rehearsed: the host wraps the live adapter
-    /// in the run's dry-run capture (`wrapAdapterForDryRun`).
+    /// A target whose writes are rehearsed: the host captures them into its
+    /// write sink and never makes them.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub dry_run: bool,
 }
@@ -100,43 +107,36 @@ pub enum Role {
     Target,
 }
 
+/// Every request but `check`'s and `builtins`' names the segment it is made
+/// in: the id the run host's `segment.open` answered, handed to this engine
+/// in its input.
+fn in_segment(segment: &str, mut args: Json) -> Json {
+    if let Some(object) = args.as_object_mut() {
+        object.insert("segmentId".into(), json!(segment));
+    }
+    args
+}
+
 pub mod adapters {
     use super::*;
 
-    /// Answered with `{instance}`, the handle `call` names.
-    pub fn resolve(input: &ResolveAdapter) -> Request {
+    /// Answered with the instance as data (crate::host::instance_of).
+    pub fn resolve(segment: &str, input: &ResolveAdapter) -> Request {
         let args = serde_json::to_value(input).expect("a ResolveAdapter is always JSON");
-        Request { family: Family::Adapters, method: "resolve".into(), args }
+        Request { family: Family::Adapters, method: "resolve".into(), args: in_segment(segment, args) }
     }
 
-    /// Answered with the credential's id, or `undefined` for none.
-    pub fn credential_id(credential_name: &str) -> Request {
-        Request { family: Family::Adapters, method: "credentialId".into(), args: json!({ "credentialName": credential_name }) }
-    }
-
-    /// One of the live `Adapter`'s methods, with its positional arguments.
-    pub fn call(instance: Instance, method: &str, args: Vec<Json>) -> Request {
+    /// One call into an instance: the method and its one argument object
+    /// (the adapter protocol's `params`), answered `{result}` or `{error:
+    /// {kind, message, name?, detail?}}`. `args` and `result` cross on the
+    /// eval wire (crate::env, `wire: true`): key order, `undefined` and the
+    /// numbers JSON cannot say cross as the JavaScript has them, so the host
+    /// is handed exactly what the TypeScript engine hands it.
+    pub fn call(segment: &str, instance: &Instance, method: &str, args: Json) -> Request {
         Request {
             family: Family::Adapters,
             method: "call".into(),
-            args: json!({ "instance": instance.0, "method": method, "args": args }),
-        }
-    }
-
-    /// Whether the live adapter implements an optional member (`readRecord`):
-    /// answered a boolean.
-    pub fn has(instance: Instance, method: &str) -> Request {
-        Request { family: Family::Adapters, method: "has".into(), args: json!({ "instance": instance.0, "method": method }) }
-    }
-
-    /// `call` with its arguments, and its answer, on the eval wire
-    /// (crate::env): key order, `undefined` and the numbers JSON cannot say
-    /// cross as the JavaScript has them.
-    pub fn call_wire(instance: Instance, method: &str, args: Vec<Json>) -> Request {
-        Request {
-            family: Family::Adapters,
-            method: "call".into(),
-            args: json!({ "instance": instance.0, "method": method, "args": args, "wire": true }),
+            args: in_segment(segment, json!({ "instance": instance.id, "method": method, "args": args, "wire": true })),
         }
     }
 }
@@ -144,46 +144,65 @@ pub mod adapters {
 pub mod llm {
     use super::*;
 
-    /// The identity judge over a write's candidates (`arbitrateEntities`),
-    /// values on the eval wire: answered `{index: number | null,
-    /// judgeUnavailable?: message}`, the message being what the host's
-    /// `onJudgeUnavailable` heard.
-    pub fn arbitrate_entities(asserted: Json, candidates: Json, record_type: &str, constraints: Json) -> Request {
+    /// The identity judge over a write's candidates (`arbitrateEntities`), a
+    /// priced call: the run's `budget` goes in, values on the eval wire;
+    /// answered `{index: number | null, judgeUnavailable?, cost?}` or a
+    /// budget refusal `{error: {kind: "budget", message}, cost?}`.
+    pub fn arbitrate_entities(segment: &str, arbitration: Arbitration, budget: Json) -> Request {
+        let Arbitration { asserted, candidates, record_type, constraints, language_version } = arbitration;
         Request {
             family: Family::Llm,
             method: "arbitrateEntities".into(),
-            args: json!({ "asserted": asserted, "candidates": candidates, "recordType": record_type, "constraints": constraints }),
+            args: in_segment(
+                segment,
+                json!({
+                    "asserted": asserted,
+                    "candidates": candidates,
+                    "recordType": record_type,
+                    "constraints": constraints,
+                    "languageVersion": language_version,
+                    "budget": budget,
+                }),
+            ),
         }
+    }
+
+    /// What the judge is asked.
+    pub struct Arbitration<'a> {
+        pub asserted: Json,
+        pub candidates: Json,
+        pub record_type: &'a str,
+        pub constraints: Json,
+        pub language_version: u32,
     }
 }
 
 pub mod locks {
     use super::*;
 
-    /// The segment's cross-run write locks, taken by name (sorted, each once):
-    /// answered `undefined` once held.
-    pub fn acquire(names: &[String]) -> Request {
-        Request { family: Family::Locks, method: "acquire".into(), args: json!({ "names": names }) }
+    /// The segment's cross-run write locks, taken by name (sorted, each
+    /// once): answered `{token}` once held.
+    pub fn acquire(segment: &str, names: &[String]) -> Request {
+        Request { family: Family::Locks, method: "acquire".into(), args: in_segment(segment, json!({ "names": names })) }
     }
 
-    /// The same names let go, as one earlier `acquire` took them.
-    pub fn release(names: &[String]) -> Request {
-        Request { family: Family::Locks, method: "release".into(), args: json!({ "names": names }) }
+    /// What one earlier `acquire` took, given back by its token.
+    pub fn release(segment: &str, token: &str) -> Request {
+        Request { family: Family::Locks, method: "release".into(), args: in_segment(segment, json!({ "token": token })) }
     }
 }
 
 pub mod park {
     use super::*;
 
-    /// A timer park (`sleep`): the leaf's address and its `ParkedScopeState`
-    /// (on the eval wire, so its objects keep their key order),
-    /// to wake `wakeAfterMs` from the host's own clock (`Date.now()`, as the
-    /// TypeScript reads it).
-    pub fn commit_timer_park(address: &str, state: Json, wake_after_ms: f64) -> Request {
+    /// A timer park (`sleep`): the leaf's address, its `ParkedScopeState`
+    /// (on the eval wire, so its objects keep their key order, `wire:
+    /// true`), and when to wake it, an ISO 8601 instant.
+    pub fn commit_timer_park(segment: &str, address: &str, state: Json, wake_at: &str) -> Request {
         Request {
-            family: Family::Park,
+            family: Family::ParkSink,
             method: "commitTimerPark".into(),
-            args: json!({ "address": address, "state": state, "wakeAfterMs": wake_after_ms }),
+            args: in_segment(segment, json!({ "address": address, "state": state, "wakeAt": wake_at, "wire": true })),
         }
     }
 }
@@ -191,24 +210,24 @@ pub mod park {
 pub mod control {
     use super::*;
 
-    /// The cancel gate at a statement boundary (`cancel.cancelled()`):
-    /// answered true once a cancel is requested.
-    pub fn cancelled() -> Request {
-        Request { family: Family::Control, method: "cancelled".into(), args: json!({}) }
+    /// The cancel gate at a statement boundary: answered true once a cancel
+    /// is requested.
+    pub fn cancelled(segment: &str) -> Request {
+        Request { family: Family::ControlCancel, method: "cancelled".into(), args: in_segment(segment, json!({})) }
     }
 
-    /// The run's last cancel check, undebounced (`cancel.cancelledNow()`).
-    pub fn cancelled_now() -> Request {
-        Request { family: Family::Control, method: "cancelledNow".into(), args: json!({}) }
+    /// The run's last cancel check, undebounced.
+    pub fn cancelled_now(segment: &str) -> Request {
+        Request { family: Family::ControlCancel, method: "cancelledNow".into(), args: in_segment(segment, json!({})) }
     }
 }
 
 pub mod trace {
     use super::*;
 
-    /// One entry appended to the run's trace as it lands.
-    pub fn append(entry: &crate::trace::TraceEntry) -> Request {
-        Request { family: Family::Trace, method: "append".into(), args: json!({ "entry": entry }) }
+    /// Entries appended to the run's trace as they land.
+    pub fn append(segment: &str, entries: &[crate::trace::TraceEntry]) -> Request {
+        Request { family: Family::Trace, method: "append".into(), args: in_segment(segment, json!({ "entries": entries })) }
     }
 }
 
@@ -249,9 +268,34 @@ pub mod check {
     }
 }
 
-/// The instance handle a `resolve` answer carries.
+/// The instance a `resolve` answer describes.
 pub fn instance_of(answer: &Json) -> Option<Instance> {
-    answer.get("instance").and_then(Json::as_u64).map(Instance)
+    let id = answer.get("instance").and_then(Json::as_str)?.to_string();
+    let methods = answer
+        .get("methods")
+        .and_then(Json::as_array)?
+        .iter()
+        .map(|m| m.as_str().map(String::from))
+        .collect::<Option<Vec<_>>>()?;
+    Some(Instance { id, methods: Rc::new(methods) })
+}
+
+/// An `adapters.call` answer read: the result (still on the eval wire), or
+/// the host's error as data.
+pub enum CallAnswer {
+    Result(Option<Json>),
+    Error(Json),
+}
+
+pub fn call_answer(answer: Option<Json>) -> Result<CallAnswer, String> {
+    let Some(Json::Object(mut envelope)) = answer else {
+        return Err("an adapters.call answer is {result} or {error}".into());
+    };
+    match (envelope.remove("result"), envelope.remove("error")) {
+        (result, None) if envelope.is_empty() => Ok(CallAnswer::Result(result)),
+        (None, Some(error)) if error.get("message").is_some_and(Json::is_string) => Ok(CallAnswer::Error(error)),
+        _ => Err("an adapters.call answer is {result} or {error: {kind, message}}".into()),
+    }
 }
 
 #[cfg(test)]
@@ -259,29 +303,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builders_write_the_shapes_the_shim_routes_on() {
-        let resolve = adapters::resolve(&ResolveAdapter {
-            adapter_type: "attio".into(),
-            team_id: "t1".into(),
-            credentials_id: None,
-            construction_args: None,
-            role: Role::Target,
-            dry_run: false,
-        });
+    fn builders_write_the_shapes_the_host_contract_names() {
+        let resolve = adapters::resolve(
+            "g1",
+            &ResolveAdapter { adapter_type: "attio".into(), credentials_id: None, construction_args: None, role: Role::Target, dry_run: false },
+        );
         assert_eq!((resolve.family.as_str(), resolve.method.as_str()), ("adapters", "resolve"));
-        assert_eq!(resolve.args, json!({ "adapterType": "attio", "teamId": "t1", "role": "target" }));
-        let call = adapters::call(Instance(3), "readRecord", vec![json!("person"), json!("r1")]);
-        assert_eq!(call.args, json!({ "instance": 3, "method": "readRecord", "args": ["person", "r1"] }));
-        assert_eq!(instance_of(&json!({ "instance": 3 })), Some(Instance(3)));
-        assert_eq!(adapters::credential_id("crm").args, json!({ "credentialName": "crm" }));
+        assert_eq!(resolve.args, json!({ "segmentId": "g1", "adapterType": "attio", "role": "target" }));
+        let instance = instance_of(&json!({ "instance": "i3", "methods": ["readRecord"] })).unwrap();
+        assert!(instance.has("readRecord") && !instance.has("linkRecords"));
+        let call = adapters::call("g1", &instance, "readRecord", json!({ "recordId": "r1" }));
+        assert_eq!(
+            call.args,
+            json!({ "segmentId": "g1", "instance": "i3", "method": "readRecord", "args": { "recordId": "r1" }, "wire": true })
+        );
+        assert_eq!(locks::acquire("g1", &["a".into()]).args, json!({ "segmentId": "g1", "names": ["a"] }));
+        assert_eq!(locks::release("g1", "t1").args, json!({ "segmentId": "g1", "token": "t1" }));
+        let cancel = control::cancelled("g1");
+        assert_eq!((cancel.family.as_str(), cancel.args.clone()), ("control.cancel", json!({ "segmentId": "g1" })));
+        assert_eq!(park::commit_timer_park("g1", "s0", json!(null), "2026-01-01T00:00:00.000Z").family.as_str(), "park.sink");
         let check = check::program("src", 3, None);
         assert_eq!((check.family.as_str(), check.method.as_str()), ("check", "program"));
         assert_eq!(check.args, json!({ "source": "src", "languageVersion": 3 }));
     }
 
     #[test]
+    fn an_adapter_call_answers_a_result_or_an_error() {
+        assert!(matches!(call_answer(Some(json!({ "result": 1 }))), Ok(CallAnswer::Result(Some(_)))));
+        assert!(matches!(call_answer(Some(json!({}))), Ok(CallAnswer::Result(None))));
+        assert!(matches!(call_answer(Some(json!({ "error": { "kind": "adapter_error", "message": "m" } }))), Ok(CallAnswer::Error(_))));
+        assert!(call_answer(Some(json!({ "error": {} }))).is_err());
+        assert!(call_answer(None).is_err());
+    }
+
+    #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "park", "control", "files", "lookup", "locks", "trace", "check", "builtins", "echo"] {
+        for name in ["adapters", "llm", "park.sink", "control.cancel", "locks", "trace", "check", "builtins", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);

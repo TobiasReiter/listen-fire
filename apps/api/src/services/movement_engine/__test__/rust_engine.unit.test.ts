@@ -1,13 +1,18 @@
 // The shim's half of the request/answer protocol, against a scripted engine
 // double: no WASM. The real artifact's half is rust_engine_abi.unit.test.ts.
 
-import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot } from 'movement-lang';
+import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
-import { makeTestHost, type TestHostOverrides } from '../host';
+import { hostMethodPaths } from '../host';
+import { AdapterCallFailed } from '../host_adapter';
 import { MovementRunFailed, runFailureCause } from '../run';
+import { openRunContext, RunLedger } from '../run_context';
+import { ENGINE_OWN_ROUTES, shimRoutePaths } from '../rust_host';
+import { WireOut } from '../rust_wire';
+import { makeTestHost, type TestHostOverrides } from '../test_host';
 import {
   assertEngineChoiceConfigured,
   driveEngine,
@@ -82,50 +87,86 @@ function fakeAdapter(methods: Partial<Adapter> = {}): Adapter {
   };
 }
 
-function hostWith(overrides: TestHostOverrides) {
-  return { host: makeTestHost(overrides), teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT };
+/** The driver's input: a test host, and a segment opened on it as the run
+ *  host opens one. */
+async function hostWith(overrides: TestHostOverrides, catalog: CatalogSnapshot = EMPTY_CATALOG_SNAPSHOT) {
+  const host = makeTestHost(overrides);
+  const context = await openRunContext({ host, teamId: TEAM, languageVersion: 3, spend: {} });
+  return { host, context, catalog };
 }
 
-const RESOLVE = { adapterType: 'fake', teamId: TEAM, role: 'source' };
+/** A request bound for the host names the segment the driver serves. */
+function inSegment(segmentId: string, args: Record<string, unknown>): Record<string, unknown> {
+  return { segmentId, ...args };
+}
+
+const RESOLVE = { adapterType: 'fake', role: 'source' };
 
 describe('the Rust engine shim', () => {
-  it('answers adapters.resolve with an instance handle, then calls that live adapter by it', async () => {
+  it('forwards adapters.resolve and adapters.call, naming the segment, and answers the instance as data', async () => {
     const resolved: unknown[] = [];
+    const served = await hostWith({
+      adapters: {
+        resolve: (input) => {
+          resolved.push(input);
+          return fakeAdapter();
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
+    let instance = '';
     const { engine, answers, finished } = scriptedEngine((seen) => {
-      if (seen.length === 0) return { pending: [request(1, 'adapters', 'resolve', RESOLVE)] };
+      if (seen.length === 0) return { pending: [request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE))] };
       if (seen.length === 1) {
+        const answer = seen[0]?.answer;
+        instance = answer !== undefined && 'value' in answer ? String(Reflect.get(Object(answer.value), 'instance')) : '';
         return {
           pending: [
-            request(2, 'adapters', 'call', {
-              instance: 1,
+            request(2, 'adapters', 'call', inSegment(segmentId, {
+              instance,
               method: 'getFieldValue',
-              args: [{ position: {}, fieldId: 'Name' }],
-            }),
+              args: new WireOut().value({ position: {}, fieldId: 'Name' }),
+              wire: true,
+            })),
           ],
         };
       }
       return { done: { ok: true } };
     });
-    const adapter = fakeAdapter();
-    const done = await driveEngine(
-      engine,
-      { entry: 'test' },
-      hostWith({
-        adapters: {
-          resolve: (input) => {
-            resolved.push(input);
-            return adapter;
-          },
-        },
-      }),
-    );
+    const done = await driveEngine(engine, { entry: 'test' }, served);
     expect(done).toEqual({ ok: true });
-    expect(resolved).toEqual([{ adapterType: 'fake', teamId: TEAM, role: 'source' }]);
+    expect(resolved).toEqual([expect.objectContaining({ adapterType: 'fake', role: 'source', segmentId, teamId: TEAM })]);
     expect(answers).toEqual([
-      { id: 1, answer: { value: { instance: 1, adapterType: 'fake' } } },
-      { id: 2, answer: { value: 'value of Name' } },
+      { id: 1, answer: { value: expect.objectContaining({ instance: expect.any(String), adapterType: 'fake', methods: expect.any(Array) }) } },
+      { id: 2, answer: { value: { result: new WireOut().value('value of Name') } } },
     ]);
     expect(finished()).toBe(true);
+  });
+
+  it("answers an adapter's failure as data, holding the error the TypeScript engine raises for it", async () => {
+    const served = await hostWith({
+      adapters: { resolve: () => fakeAdapter({ getFieldValue: async () => { throw new TypeError('remote down'); } }) },
+    });
+    const segmentId = served.context.segmentId;
+    const hostErrors: unknown[] = [];
+    const { engine, answers } = scriptedEngine((seen) => {
+      if (seen.length === 0) return { pending: [request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE))] };
+      if (seen.length === 1) {
+        const answer = seen[0]?.answer;
+        const instance = answer !== undefined && 'value' in answer ? String(Reflect.get(Object(answer.value), 'instance')) : '';
+        return {
+          pending: [request(2, 'adapters', 'call', inSegment(segmentId, { instance, method: 'getFieldValue', args: new WireOut().value({}), wire: true }))],
+        };
+      }
+      return { done: null };
+    });
+    await driveEngine(engine, {}, { ...served, hostErrors });
+    expect(answers[1]).toEqual({
+      id: 2,
+      answer: { value: { error: expect.objectContaining({ kind: 'adapter_error', message: 'remote down', name: 'TypeError', ref: 0 }) } },
+    });
+    expect(hostErrors[0]).toBeInstanceOf(AdapterCallFailed);
+    expect(hostErrors[0]).toMatchObject({ name: 'TypeError', message: 'remote down' });
   });
 
   it('serves requests pending at once concurrently and answers each as it settles', async () => {
@@ -135,65 +176,63 @@ describe('the Rust engine shim', () => {
     const gate = new Promise<void>((resolve) => {
       openGate = resolve;
     });
+    const served = await hostWith({
+      adapters: {
+        resolve: async () => {
+          await gate;
+          return fakeAdapter();
+        },
+      },
+      control: {
+        cancel: {
+          cancelled: async () => {
+            openGate();
+            return false;
+          },
+          cancelledNow: async () => false,
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
     const { engine, answers } = scriptedEngine((seen) => {
       if (seen.length === 0) {
         return {
           pending: [
-            request(1, 'adapters', 'resolve', RESOLVE),
-            request(2, 'adapters', 'credentialId', { credentialName: 'crm' }),
+            request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE)),
+            request(2, 'control.cancel', 'cancelled', inSegment(segmentId, {})),
           ],
         };
       }
       return seen.length < 2 ? { pending: [] } : { done: seen.map((a) => a.id) };
     });
-    const done = await driveEngine(
-      engine,
-      {},
-      hostWith({
-        adapters: {
-          resolve: async () => {
-            await gate;
-            return fakeAdapter();
-          },
-          credentialId: () => {
-            openGate();
-            return 'cred-1';
-          },
-        },
-      }),
-    );
+    const done = await driveEngine(engine, {}, served);
     expect(done).toEqual([2, 1]);
-    expect(answers).toEqual([
-      { id: 2, answer: { value: 'cred-1' } },
-      { id: 1, answer: { value: { instance: 1, adapterType: 'fake' } } },
-    ]);
+    expect(answers[0]).toEqual({ id: 2, answer: { value: false } });
   });
 
-  it("hands the host's failure to the engine as an error answer, and undefined as {}", async () => {
+  it("hands the host's thrown failure to the engine as an error answer, and undefined as {}", async () => {
+    const served = await hostWith({
+      adapters: {
+        resolve: () => {
+          throw new TypeError('registry down');
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
     const { engine, answers } = scriptedEngine((seen) =>
       seen.length < 2
         ? {
             pending:
               seen.length === 0
                 ? [
-                    request(1, 'adapters', 'resolve', RESOLVE),
-                    request(2, 'adapters', 'credentialId', { credentialName: 'none' }),
+                    request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE)),
+                    request(2, 'trace', 'append', inSegment(segmentId, { entries: [] })),
                   ]
                 : [],
           }
         : { done: null },
     );
-    await driveEngine(
-      engine,
-      {},
-      hostWith({
-        adapters: {
-          resolve: () => {
-            throw new TypeError('registry down');
-          },
-        },
-      }),
-    );
+    await driveEngine(engine, {}, served);
     expect(answers).toEqual(
       expect.arrayContaining([
         { id: 1, answer: { error: { message: 'registry down', name: 'TypeError', ref: 0 } } },
@@ -202,72 +241,75 @@ describe('the Rust engine shim', () => {
     );
   });
 
-  it('fails the run, naming the method, when an adapter returns something JSON cannot carry', async () => {
-    const { engine, finished } = scriptedEngine((seen) =>
-      seen.length === 0
-        ? { pending: [request(1, 'adapters', 'resolve', RESOLVE)] }
-        : { pending: [request(2, 'adapters', 'call', { instance: 1, method: 'getFieldValue', args: [{}] })] },
-    );
-    const adapter = fakeAdapter({ getFieldValue: async () => () => 'a closure' });
-    await expect(driveEngine(engine, {}, hostWith({ adapters: { resolve: () => adapter } }))).rejects.toThrow(
-      new RustShimError('adapters.call getFieldValue returned a function, which is not plain JSON'),
+  it('fails the run, naming the method, when an adapter returns something the eval wire cannot carry', async () => {
+    const served = await hostWith({ adapters: { resolve: () => fakeAdapter({ getFieldValue: async () => () => 'a closure' }) } });
+    const segmentId = served.context.segmentId;
+    const { engine, finished } = scriptedEngine((seen) => {
+      if (seen.length === 0) return { pending: [request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE))] };
+      const answer = seen[0]?.answer;
+      const instance = answer !== undefined && 'value' in answer ? String(Reflect.get(Object(answer.value), 'instance')) : '';
+      return { pending: [request(2, 'adapters', 'call', inSegment(segmentId, { instance, method: 'getFieldValue', args: new WireOut().value({}), wire: true }))] };
+    });
+    await expect(driveEngine(engine, {}, served)).rejects.toThrow(
+      new RustShimError('adapters.call getFieldValue returned a value the eval wire cannot carry as itself'),
     );
     expect(finished()).toBe(true);
   });
 
-  it('names where in the result the unrepresentable value sits', async () => {
-    const { engine } = scriptedEngine((seen) =>
-      seen.length === 0
-        ? { pending: [request(1, 'adapters', 'resolve', RESOLVE)] }
-        : { pending: [request(2, 'adapters', 'call', { instance: 1, method: 'getFieldValue', args: [{}] })] },
-    );
-    const adapter = fakeAdapter({ getFieldValue: async () => ({ when: [{ at: new Date(0) }] }) });
-    await expect(driveEngine(engine, {}, hostWith({ adapters: { resolve: () => adapter } }))).rejects.toThrow(
-      'adapters.call getFieldValue returned a Date at when[0].at, which is not plain JSON',
-    );
-  });
-
-  it('refuses a request it has no route for, an unknown instance and a missing method', async () => {
+  it('refuses a request it has no route for, another segment, and a method no adapter has', async () => {
+    const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
+    const segmentId = served.context.segmentId;
     const run = (pending: HostRequest[]) =>
-      driveEngine(
-        scriptedEngine((seen) => (seen.length === 0 ? { pending } : { done: null })).engine,
-        {},
-        hostWith({ adapters: { resolve: () => fakeAdapter() } }),
-      );
+      driveEngine(scriptedEngine((seen) => (seen.length === 0 ? { pending } : { done: null })).engine, {}, served);
     await expect(run([request(1, 'llm', 'client', {})])).rejects.toThrow('the shim has no route for llm.client');
-    await expect(run([request(1, 'adapters', 'call', { instance: 4, method: 'describe', args: [] })])).rejects.toThrow(
-      'adapters.call describe: no adapter instance 4',
+    await expect(run([request(1, 'adapters', 'resolve', inSegment('another', RESOLVE))])).rejects.toThrow(
+      `adapters.resolve named segment another, not this engine's ${segmentId}`,
     );
-    await expect(run([request(1, 'adapters', 'resolve', { ...RESOLVE, teamId: 'other' })])).rejects.toThrow(
-      'adapters.resolve asked for team other in a run of another team',
-    );
+    await expect(
+      run([request(1, 'adapters', 'call', inSegment(segmentId, { instance: 'i', method: 'manifest', args: {}, wire: true }))]),
+    ).rejects.toThrow('adapters.call method "manifest" is not an adapter method');
   });
 
   it('refuses an engine that waits with nothing in flight', async () => {
     const { engine, finished } = scriptedEngine(() => ({ pending: [] }));
-    await expect(driveEngine(engine, {}, hostWith({}))).rejects.toThrow(
+    await expect(driveEngine(engine, {}, await hostWith({}))).rejects.toThrow(
       'the Rust engine is waiting with no request in flight',
     );
     expect(finished()).toBe(true);
   });
 
-  it('reads a result, a failure and a decline, and refuses what it does not decode yet', () => {
+  it('routes only host methods the manifest names, and the engine-own families it exempts', () => {
+    const host = new Set(hostMethodPaths());
+    for (const path of shimRoutePaths()) {
+      expect({ path, routed: host.has(path) || Object.hasOwn(ENGINE_OWN_ROUTES, path) }).toEqual({ path, routed: true });
+    }
+    for (const path of Object.keys(ENGINE_OWN_ROUTES)) expect(host.has(path)).toBe(false);
+  });
+
+  it('reads a result, a failure and a decline, charges the cost it reports, and refuses what it does not decode yet', async () => {
     const trace = [{ kind: 'gate' as const, outcome: true }];
-    expect(readRunResult({ result: { movementName: 'm' } }, { trace, hostErrors: [] })).toEqual({
+    const context = (entries: typeof trace = []) => ({ trace: { entries, published: 0 }, ledger: new RunLedger({}) });
+    expect(readRunResult({ result: { movementName: 'm' } }, { context: context(trace), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [], trace, extractionSites: {} },
     });
-    expect(readRunResult({ result: { movementName: 'm', cancelled: true } }, { trace: [], hostErrors: [] })).toEqual({
+    expect(readRunResult({ result: { movementName: 'm', cancelled: true } }, { context: context(), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [], trace: [], extractionSites: {}, cancelled: true },
     });
-    expect(readRunResult({ declined: 'a shape' }, { trace: [], hostErrors: [] })).toEqual({ declined: 'a shape' });
+    const charged = context();
+    readRunResult({ result: { movementName: 'm' }, cost: [{ source: 'model:judge', microdollars: 12 }] }, { context: charged, hostErrors: [] });
+    expect(charged.ledger.spend).toEqual({ segmentMicrodollars: 12, runMicrodollars: 12, bySource: { 'model:judge': 12 } });
+    expect(readRunResult({ declined: 'a shape' }, { context: context(), hostErrors: [] })).toEqual({ declined: 'a shape' });
     const original = new TypeError('the adapter broke');
-    expect(() => readRunResult({ thrown: { hostError: 0 } }, { trace: [], hostErrors: [original] })).toThrow(original);
+    expect(() => readRunResult({ thrown: { hostError: 0 } }, { context: context(), hostErrors: [original] })).toThrow(original);
     expect(() =>
-      readRunResult({ thrown: { class: 'MovementEngineError', code: 'MOVENG_NOT_FOUND', message: 'no movement' } }, { trace: [], hostErrors: [] }),
+      readRunResult(
+        { thrown: { class: 'MovementEngineError', code: 'MOVENG_NOT_FOUND', message: 'no movement' } },
+        { context: context(), hostErrors: [] },
+      ),
     ).toThrow('MOVENG_NOT_FOUND: no movement');
     let failed: unknown;
     try {
-      readRunResult({ failed: { error: { hostError: 0 }, result: { movementName: 'm' } } }, { trace, hostErrors: [original] });
+      readRunResult({ failed: { error: { hostError: 0 }, result: { movementName: 'm' } } }, { context: context(trace), hostErrors: [original] });
     } catch (error) {
       failed = error;
     }
@@ -280,14 +322,14 @@ describe('the Rust engine shim', () => {
       writtenValues: { name: 'Acme' }, outcome: 'create', provenance: { name: [] },
     };
     const wired = ['l', 0, [['o', 1, Object.entries(write).map(([k, v]) => [k, typeof v === 'object' ? ['o', 2, Object.entries(v).map(([a, b]) => [a, Array.isArray(b) ? ['l', 3, []] : b])] : v])]]];
-    expect(readRunResult({ result: { movementName: 'm', writes: wired, parked: true, parkedAddress: 's0' } }, { trace: [], hostErrors: [] })).toEqual({
+    expect(readRunResult({ result: { movementName: 'm', writes: wired, parked: true, parkedAddress: 's0' } }, { context: context(), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [write], trace: [], extractionSites: {}, parked: true, parkedAddress: 's0' },
     });
-    expect(() => readRunResult({ result: { movementName: 'm', extractionSites: {} } }, { trace: [], hostErrors: [] })).toThrow(
+    expect(() => readRunResult({ result: { movementName: 'm', extractionSites: {} } }, { context: context(), hostErrors: [] })).toThrow(
       'the Rust engine result has extractionSites, which this shim does not decode yet',
     );
-    expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', 0, [1]] } }, { trace: [], hostErrors: [] })).toThrow(RustShimError);
-    expect(() => readRunResult({ parked: true }, { trace: [], hostErrors: [] })).toThrow(RustShimError);
+    expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', 0, [1]] } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
+    expect(() => readRunResult({ parked: true }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
   });
 });
 
@@ -300,13 +342,13 @@ describe('the check host call', () => {
 
   it("answers check.program with the TypeScript checker's diagnostics, link and stamps", async () => {
     const { engine, answers } = scriptedEngine((seen) => (seen.length === 0 ? { pending: [check(SOURCE)] } : { done: {} }));
-    await driveEngine(engine, { entry: 'test' }, { host: makeTestHost(), teamId: TEAM, catalog });
+    await driveEngine(engine, { entry: 'test' }, await hostWith({}, catalog));
     expect(answers).toEqual([{ id: 1, answer: { value: { diagnostics: expect.any(Array), stamps: [] } } }]);
   });
 
   it('ends the run with MOVENG_CHECK, which the engine never hears', async () => {
     const { engine, answers, finished } = scriptedEngine(() => ({ pending: [check(SOURCE.replace('x = 1', 'x = y'))] }));
-    await expect(driveEngine(engine, { entry: 'test' }, { host: makeTestHost(), teamId: TEAM, catalog })).rejects.toThrow(
+    await expect(driveEngine(engine, { entry: 'test' }, await hostWith({}, catalog))).rejects.toThrow(
       /^MOVENG_CHECK: the movement program failed checking/,
     );
     expect(answers).toEqual([]);
@@ -325,7 +367,8 @@ describe('the segment input', () => {
       catalog: {},
       host: makeTestHost(),
     } as unknown as Parameters<typeof runSegmentInRust>[0];
-    await expect(runSegmentInRust(input, engine)).rejects.toThrow(RustShimError);
+    const { context } = await hostWith({});
+    await expect(runSegmentInRust(input, context, engine)).rejects.toThrow(RustShimError);
     expect(started).toEqual([]);
     expect(finished()).toBe(false);
   });
@@ -345,8 +388,8 @@ describe('choosing the engine', () => {
   });
 
   it('admits no run that could suspend', () => {
-    expect(rustCanRun({ statements: [] }, { host: makeTestHost() })).toBe(true);
-    expect(rustCanRun({ statements: [] }, { host: makeTestHost(), limitPaused: true })).toBe(false);
-    expect(rustCanRun({ statements: [] }, { host: makeTestHost({ control: { suspendWhen: () => false } }) })).toBe(false);
+    expect(rustCanRun({ statements: [] }, {})).toBe(true);
+    expect(rustCanRun({ statements: [] }, { limitPaused: true })).toBe(false);
+    expect(rustCanRun({ statements: [] }, { suspendAt: ['s0'] })).toBe(false);
   });
 });
