@@ -400,9 +400,80 @@ describe('the doors refuse a caller who is not the install', () => {
     ]);
   });
 
-  it('an adapter type nobody installed is 404', async () => {
+  it('an adapter type nobody installed is the same 401', async () => {
     const res = await post(`/api/public/adapter/nobody_${randomUUID().slice(0, 8)}/wake`, { keys: ['k'] }, BEARER());
 
-    expect(res).toEqual({ status: 404, body: { error: 'unknown_adapter' } });
+    expect(res).toEqual({ status: 401, body: { error: 'unauthorized' } });
+  });
+
+  it('two teams sharing one secret for a type: 409 until the team is named, then only that team', async () => {
+    const shared = `shared-${randomUUID()}`;
+    const sharedType = `shared_crm_${randomUUID().slice(0, 8)}`;
+    const sharedCrm = await startFakeCrmServer({ secret: shared });
+    try {
+      const install = (team: TeamId, secret: string) =>
+        installRemoteAdapterFromManifest({
+          teamId: team,
+          manifest: RemoteAdapterManifestInput.parse({ ...fakeCrmManifest(sharedCrm.baseUrl), adapterType: sharedType }),
+          secret,
+        });
+      // The probe asks the server with the presented secret; this one answers to `shared`.
+      await install(teamId, shared);
+      await install(otherTeamId, shared);
+      const wake = (headers: Record<string, string>) =>
+        post(`/api/public/adapter/${sharedType}/wake`, { keys: ['k'] }, headers);
+
+      const ambiguous = await wake({ authorization: `Bearer ${shared}` });
+      expect(ambiguous.status).toBe(409);
+      expect(await workRows(teamId)).toEqual([]);
+      expect(await workRows(otherTeamId)).toEqual([]);
+
+      const named = await wake({ authorization: `Bearer ${shared}`, 'x-listen-fire-team': otherTeamId });
+      expect(named.status).toBe(202);
+      expect(await workRows(teamId)).toEqual([]);
+      expect((await workRows(otherTeamId, 'wake_await')).map((w) => w.payload)).toEqual([
+        { adapterType: sharedType, teamId: otherTeamId, correlationKey: 'k' },
+      ]);
+    } finally {
+      await sharedCrm.close();
+    }
+  });
+
+  it('two teams with different secrets for one type: each secret reaches its own team only, and naming the other team is 401', async () => {
+    const typeName = `twin_crm_${randomUUID().slice(0, 8)}`;
+    const secretA = `twin-a-${randomUUID()}`;
+    const secretB = `twin-b-${randomUUID()}`;
+    const crmA = await startFakeCrmServer({ secret: secretA });
+    const crmB = await startFakeCrmServer({ secret: secretB });
+    try {
+      await installRemoteAdapterFromManifest({
+        teamId,
+        manifest: RemoteAdapterManifestInput.parse({ ...fakeCrmManifest(crmA.baseUrl), adapterType: typeName }),
+        secret: secretA,
+      });
+      await installRemoteAdapterFromManifest({
+        teamId: otherTeamId,
+        manifest: RemoteAdapterManifestInput.parse({ ...fakeCrmManifest(crmB.baseUrl), adapterType: typeName }),
+        secret: secretB,
+      });
+      const wake = (key: string, headers: Record<string, string>) =>
+        post(`/api/public/adapter/${typeName}/wake`, { keys: [key] }, headers);
+
+      expect((await wake('from-a', { authorization: `Bearer ${secretA}` })).status).toBe(202);
+      expect((await wake('from-b', { authorization: `Bearer ${secretB}` })).status).toBe(202);
+      expect(
+        (await wake('a-as-b', { authorization: `Bearer ${secretA}`, 'x-listen-fire-team': otherTeamId })).status,
+      ).toBe(401);
+
+      expect((await workRows(teamId, 'wake_await')).map((w) => w.payload)).toEqual([
+        { adapterType: typeName, teamId, correlationKey: 'from-a' },
+      ]);
+      expect((await workRows(otherTeamId, 'wake_await')).map((w) => w.payload)).toEqual([
+        { adapterType: typeName, teamId: otherTeamId, correlationKey: 'from-b' },
+      ]);
+    } finally {
+      await crmA.close();
+      await crmB.close();
+    }
   });
 });

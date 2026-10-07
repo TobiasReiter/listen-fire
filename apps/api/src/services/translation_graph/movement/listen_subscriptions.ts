@@ -36,10 +36,10 @@ import { getQb, getAutomationsQb } from '../../../lib/kysely';
 import { logger } from '../../logger';
 import { buildWebhookTargetUrl, webhookProviderKey } from '../../webhook_sync/urls';
 import { UNREGISTERED_SECRET } from '../../webhook_sync/remote_inbound';
-import type { AdapterManifest } from '../adapter';
-import { resolveAdapterSlug } from '../adapters/registry';
+import type { Adapter, AdapterManifest, EventSubscriptionRegistration } from '../adapter';
+import { hasAdapter, resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
-import { teamAdapterManifests } from '../adapters/team_manifests';
+import { teamAdapterManifestSet } from '../adapters/team_manifests';
 import { eventConfigList } from '../triggers/listen_config';
 import { canonicalAddress, resolvedAddressOfJson } from './listen_address';
 
@@ -240,6 +240,35 @@ async function provisionedRows(teamId: TeamId): Promise<SubscriptionRow[]> {
 }
 
 /**
+ * A remote's deliveries are verified only by the secret its registration
+ * returns (webhook_sync/remote_inbound.ts), so a registration without one is
+ * refused — and withdrawn, so no unverifiable subscription is left on the
+ * remote. Built-ins are not held to this: some legitimately issue no secret.
+ */
+async function requireRemoteSecret(input: {
+  adapter: Adapter;
+  registration: EventSubscriptionRegistration | undefined;
+  callbackUrl: string;
+  scope: Record<string, string>;
+}): Promise<void> {
+  const { adapter, registration } = input;
+  if (registration?.secret !== undefined && registration.secret.length > 0) return;
+  try {
+    await adapter.removeEventSubscription?.({
+      callbackUrl: input.callbackUrl,
+      ...(registration?.externalId !== undefined ? { externalId: registration.externalId } : {}),
+      ...(Object.keys(input.scope).length > 0 ? { scope: input.scope } : {}),
+    });
+  } catch (err) {
+    logger.warn('[ListenSubscriptions] withdrawing a secretless remote subscription failed', {
+      callbackUrl: input.callbackUrl,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  throw new Error('remote adapter returned no secret; deliveries cannot be verified');
+}
+
+/**
  * Bring the team's external event subscriptions in line with its listens.
  * Idempotent; every failure is contained per channel and surfaced as a
  * note (a save never fails on a flaky source API — the next save retries).
@@ -248,7 +277,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
   notes: string[];
 }> {
   const notes: string[] = [];
-  const manifests = await teamAdapterManifests(input.teamId, notes);
+  const { manifests, remoteSlugs, remoteDegraded } = await teamAdapterManifestSet(input.teamId, notes);
   const manifestBySlug = new Map(manifests.map((m) => [m.adapterType, m]));
   // A remote install's provider key is not a registry alias, so teardown maps
   // a row's key back to its slug through the same rule that minted it.
@@ -291,6 +320,14 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           },
           ...(Object.keys(channel.scope).length > 0 ? { scope: channel.scope } : {}),
         });
+        if (remoteSlugs.has(channel.slug)) {
+          await requireRemoteSecret({
+            adapter,
+            registration,
+            callbackUrl: buildWebhookTargetUrl(channel.providerKey, row.id),
+            scope: channel.scope,
+          });
+        }
         await getAutomationsQb(['webhook_subscription'])
           .updateTable('webhook_subscription')
           .set({
@@ -335,6 +372,14 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           callbackUrl: buildWebhookTargetUrl(channel.providerKey, subscriptionId),
           ...(Object.keys(channel.scope).length > 0 ? { scope: channel.scope } : {}),
         });
+        if (remoteSlugs.has(channel.slug)) {
+          await requireRemoteSecret({
+            adapter,
+            registration,
+            callbackUrl: buildWebhookTargetUrl(channel.providerKey, subscriptionId),
+            scope: channel.scope,
+          });
+        }
         await getAutomationsQb(['webhook_subscription'])
           .updateTable('webhook_subscription')
           .set({
@@ -375,6 +420,14 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
         sameScope(c.scope, row.scope),
     );
     if (stillDesired) continue;
+    // With the remote installs only partly read, a row no built-in owns may be a
+    // live remote channel whose manifest simply went unread — keep it.
+    if (remoteDegraded && !hasAdapter(resolveAdapterSlug(row.provider))) {
+      notes.push(
+        `${row.provider}: remote installs could not all be read — its event subscription is left in place`,
+      );
+      continue;
+    }
     const slug = slugByProviderKey.get(row.provider) ?? resolveAdapterSlug(row.provider);
     try {
       const adapter = await resolveAdapter({

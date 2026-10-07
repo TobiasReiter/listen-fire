@@ -118,6 +118,7 @@ jest.mock('../../adapters/registry', () => {
     listAdapterManifests: () => manifests,
     getAdapterManifest: (slug: string) => manifests.find((m) => m.adapterType === slug) ?? null,
     resolveAdapterSlug: (kind: string) => (kind === 'PANTRY' ? 'pantry' : kind),
+    hasAdapter: (kind: string) => kind === 'pantry' || kind === 'PANTRY',
     adapterInboundRoutingKey: () => null,
     inboundAddressFor: () => null,
   };
@@ -379,5 +380,88 @@ describe('syncListenSubscriptions — a remote install subscribes over the wire'
     expect(removeCalls).toHaveLength(1);
     expect(resolveAdapter).toHaveBeenCalledWith({ adapterType: 'acme_crm', teamId: TEAM });
     expect(kyselyMock.__tables.webhook_subscription[0].deleted_at).not.toBeNull();
+  });
+  /** Seed what an earlier healthy sync left: a live remote channel. */
+  async function liveRemoteChannel(): Promise<void> {
+    installRemote();
+    kyselyMock.__tables.trigger.push(remoteListen(['company.created']));
+    await syncListenSubscriptions({ teamId: TEAM });
+    expect(kyselyMock.__tables.webhook_subscription).toHaveLength(1);
+    removeCalls.length = 0;
+  }
+
+  it('a failed install listing never tears a remote channel down', async () => {
+    await liveRemoteChannel();
+    const installs = kyselyMock.__tables.remote_adapter;
+    delete (kyselyMock.__tables as Partial<typeof kyselyMock.__tables>).remote_adapter;
+    try {
+      const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+      expect(notes).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/install listing failed/),
+          expect.stringMatching(/ACME_CRM: remote installs could not all be read/),
+        ]),
+      );
+    } finally {
+      kyselyMock.__tables.remote_adapter = installs;
+    }
+    expect(removeCalls).toEqual([]);
+    const [sub] = kyselyMock.__tables.webhook_subscription;
+    expect(sub.deleted_at ?? null).toBeNull();
+    expect(sub.status).toBe('active');
+  });
+
+  it('an unreadable stored manifest never tears a remote channel down', async () => {
+    await liveRemoteChannel();
+    kyselyMock.__tables.remote_adapter[0].manifest = { adapterType: 'acme_crm' };
+
+    await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(removeCalls).toEqual([]);
+    expect(kyselyMock.__tables.webhook_subscription[0].deleted_at ?? null).toBeNull();
+  });
+
+  function secretlessRemote(): void {
+    (resolveAdapter as jest.Mock).mockResolvedValueOnce({
+      ensureEventSubscription: async (input: { events: string[]; callbackUrl: string }) => {
+        ensureCalls.push(input);
+        return { externalId: `wh-${ensureCalls.length}` };
+      },
+      removeEventSubscription: async (input: { callbackUrl: string; externalId?: string }) => {
+        removeCalls.push(input);
+      },
+    });
+  }
+
+  it('a new remote channel whose registration returns no secret is refused and withdrawn', async () => {
+    installRemote();
+    kyselyMock.__tables.trigger.push(remoteListen(['company.created']));
+    secretlessRemote();
+
+    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(notes).toEqual([
+      'acme_crm: event-subscription provisioning failed (remote adapter returned no secret; deliveries cannot be verified)',
+    ]);
+    expect(kyselyMock.__tables.webhook_subscription).toEqual([]);
+    expect(removeCalls).toHaveLength(1);
+    expect(removeCalls[0]).toMatchObject({ externalId: 'wh-1' });
+    expect(removeCalls[0].callbackUrl).toBe(ensureCalls[0].callbackUrl);
+  });
+
+  it('an updated remote channel whose registration returns no secret keeps its old secret and is withdrawn', async () => {
+    await liveRemoteChannel();
+    kyselyMock.__tables.trigger[0].config = { events: ['company.created', 'company.deleted'] };
+    secretlessRemote();
+
+    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(notes).toEqual([
+      'acme_crm: event-subscription provisioning failed (remote adapter returned no secret; deliveries cannot be verified)',
+    ]);
+    expect(removeCalls).toHaveLength(1);
+    const [sub] = kyselyMock.__tables.webhook_subscription;
+    expect(sub.webhook_secret).toBe('secret-1');
   });
 });

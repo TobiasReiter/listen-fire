@@ -72,8 +72,9 @@ const SECRETS: Record<string, string> = { 'cred-a': 'secret-a', 'cred-b': 'secre
 
 beforeEach(() => {
   jest.clearAllMocks();
-  listRemoteAdaptersOfType.mockImplementation(async ({ adapterType }: { adapterType: string }) =>
-    adapterType === 'acme_crm' ? [TEAM_A, TEAM_B] : [],
+  listRemoteAdaptersOfType.mockImplementation(
+    async ({ adapterType, teamId }: { adapterType: string; teamId?: string }) =>
+      (adapterType === 'acme_crm' ? [TEAM_A, TEAM_B] : []).filter((row) => teamId === undefined || row.team_id === teamId),
   );
   loadRemoteAdapterSecret.mockImplementation(async (credentialsId: string) => SECRETS[credentialsId]);
   resolveAdapter.mockResolvedValue({ listEventTypes: async () => [{ tag: 'company.created', positionType: 'Company' }] });
@@ -143,10 +144,66 @@ describe('authentication — the credential picks the install, the install is th
     expect(enqueueAwaitWake).not.toHaveBeenCalled();
   });
 
-  it('an adapter type no team installed is 404', async () => {
+  it('an adapter type no team installed is the same 401, so the door reveals nothing', async () => {
     const res = await post('/nobody_crm/emit', { events: [EVENT] }, BEARER_A);
 
-    expect(res).toEqual({ status: 404, body: { error: 'unknown_adapter' } });
+    expect(res).toEqual({ status: 401, body: { error: 'unauthorized' } });
+  });
+
+  it('every install is checked, even after a match', async () => {
+    await post('/acme_crm/wake', { keys: ['thread:1'] }, BEARER_A);
+
+    expect(loadRemoteAdapterSecret).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a credential shared by several teams', () => {
+    const TEAM_A_ID = '00000000-0000-4000-8000-00000000000a';
+    const TEAM_C_ID = '00000000-0000-4000-8000-00000000000c';
+    beforeEach(() => {
+      const rows = [
+        { ...TEAM_A, team_id: TEAM_A_ID },
+        { ...TEAM_A, team_id: TEAM_C_ID, credentials_id: 'cred-c' },
+      ];
+      SECRETS['cred-c'] = 'secret-a';
+      listRemoteAdaptersOfType.mockImplementation(async ({ teamId }: { teamId?: string }) =>
+        rows.filter((row) => teamId === undefined || row.team_id === teamId),
+      );
+    });
+
+    it('is 409 without a team named, and nothing is queued', async () => {
+      const res = await post('/acme_crm/wake', { keys: ['thread:1'] }, BEARER_A);
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('ambiguous_credential');
+      expect(res.body.message).toMatch(/x-listen-fire-team/);
+      expect(enqueueAwaitWake).not.toHaveBeenCalled();
+    });
+
+    it("reaches only the team named in x-listen-fire-team, decrypting only that team's install", async () => {
+      const res = await post('/acme_crm/wake', { keys: ['thread:1'] }, { ...BEARER_A, 'x-listen-fire-team': TEAM_C_ID });
+
+      expect(res.status).toBe(202);
+      expect(listRemoteAdaptersOfType).toHaveBeenCalledWith({ adapterType: 'acme_crm', teamId: TEAM_C_ID });
+      expect(loadRemoteAdapterSecret).toHaveBeenCalledTimes(1);
+      expect(enqueueAwaitWake).toHaveBeenCalledWith(expect.objectContaining({ teamId: TEAM_C_ID }));
+    });
+
+    it('a named team with no install of the type is 401', async () => {
+      const res = await post(
+        '/acme_crm/wake',
+        { keys: ['thread:1'] },
+        { ...BEARER_A, 'x-listen-fire-team': '00000000-0000-4000-8000-0000000000ff' },
+      );
+
+      expect(res).toEqual({ status: 401, body: { error: 'unauthorized' } });
+    });
+
+    it('a team header that is not a team id is 401, and nothing is looked up', async () => {
+      const res = await post('/acme_crm/wake', { keys: ['thread:1'] }, { ...BEARER_A, 'x-listen-fire-team': 'nope' });
+
+      expect(res.status).toBe(401);
+      expect(listRemoteAdaptersOfType).not.toHaveBeenCalled();
+    });
   });
 
   it('an install with no credential, or an unreadable secret, is skipped rather than fatal', async () => {

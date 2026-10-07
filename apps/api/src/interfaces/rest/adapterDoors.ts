@@ -3,9 +3,11 @@
 //   POST /api/public/adapter/:adapterType/emit  { events: WireDiscriminableEvent[] }
 //   POST /api/public/adapter/:adapterType/wake  { keys: string[] }
 //
-// Both answer 202 `{ accepted }` once the work rows are queued. 404 when no team
-// has installed the adapter type, 401 (no detail) when the presented credential
-// matches none of its installs, 400 for a malformed body.
+// Both answer 202 `{ accepted }` once the work rows are queued; 401 (no detail)
+// when the presented credential matches no install — whether or not anyone
+// installed the type, so the door says nothing about who did; 409 when it
+// matches installs on several teams and no `x-listen-fire-team` names one; 400
+// for a malformed body.
 
 import express, { Router } from 'express';
 import type { Request, Response } from 'express';
@@ -17,8 +19,10 @@ import {
   authenticateAdapterDoor,
   emitAdapterEvents,
   wakeAdapterKeys,
+  ADAPTER_TEAM_HEADER,
   type AdapterDoorCaller,
 } from '../../services/webhook_sync/adapter_doors';
+import { neverAsAny } from '../../lib/utils/types';
 import { logger } from '../../services/logger';
 
 const MAX_BATCH = 1000;
@@ -41,12 +45,17 @@ async function callerOf(req: Request, res: Response): Promise<AdapterDoorCaller 
   switch (auth.kind) {
     case 'authenticated':
       return auth.caller;
-    case 'unknown_adapter':
-      res.status(404).json({ error: 'unknown_adapter' });
-      return null;
     case 'unauthorized':
       res.status(401).json({ error: 'unauthorized' });
       return null;
+    case 'ambiguous':
+      res.status(409).json({
+        error: 'ambiguous_credential',
+        message: `this credential belongs to more than one team's install; name the team in the ${ADAPTER_TEAM_HEADER} header`,
+      });
+      return null;
+    default:
+      return neverAsAny(auth);
   }
 }
 
@@ -68,9 +77,7 @@ adapterDoorsRouter.post('/:adapterType/emit', async (req: Request, res: Response
       badRequest(res, body.error);
       return;
     }
-    // zod reads `payload: unknown` as optional; an event always has one.
-    const events = body.data.events.map((event) => ({ ...event, payload: event.payload }));
-    const { accepted, failed } = await emitAdapterEvents({ caller, events });
+    const { accepted, failed } = await emitAdapterEvents({ caller, events: body.data.events });
     if (failed > 0) {
       res.status(500).json({ error: 'capture_failed', accepted, failed });
       return;

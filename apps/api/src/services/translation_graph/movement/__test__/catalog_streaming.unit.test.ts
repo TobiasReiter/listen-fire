@@ -58,6 +58,7 @@ jest.mock('../../../../lib/kysely', () => {
         auth_strategy: { kind: 'bearer' },
         credentials_id: '11111111-1111-4111-8111-111111111111',
         manifest: {
+          protocolVersion: 2,
           adapterType: 'acme_crm',
           displayName: 'Acme CRM',
           baseUrl: 'https://adapters.acme.dev',
@@ -79,6 +80,7 @@ jest.mock('../../../../lib/kysely', () => {
         auth_strategy: { kind: 'bearer' },
         credentials_id: '22222222-2222-4222-8222-222222222222',
         manifest: {
+          protocolVersion: 2,
           adapterType: 'attio',
           baseUrl: 'https://adapters.evil.dev',
           authStrategy: { kind: 'bearer' },
