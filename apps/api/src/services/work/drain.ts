@@ -26,8 +26,21 @@ export interface DrainResult {
   ran: number;
   recovered: number;
   failed: number;
+  /** Rows whose handler found the work not yet possible (`WorkDeferred`) and
+   *  were released to retry with backoff — neither done nor failed. */
+  deferred: number;
   /** The claim itself threw (the database is unreachable): nothing ran, and nothing could. */
   claimFailed: boolean;
+}
+
+/** Thrown by a handler whose work cannot happen yet (the run it would step is
+ *  held by another process): the row is released to retry with backoff, not
+ *  completed, and the pass is not marked failing. */
+export class WorkDeferred extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'WorkDeferred';
+  }
 }
 
 const handlers = new Map<WorkKind, WorkHandler>();
@@ -44,7 +57,7 @@ export function resetWorkHandlersForTests(): void {
 }
 
 function emptyResult(): DrainResult {
-  return { claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false };
+  return { claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false };
 }
 
 function addResults(a: DrainResult, b: DrainResult): DrainResult {
@@ -53,6 +66,7 @@ function addResults(a: DrainResult, b: DrainResult): DrainResult {
     ran: a.ran + b.ran,
     recovered: a.recovered + b.recovered,
     failed: a.failed + b.failed,
+    deferred: a.deferred + b.deferred,
     claimFailed: a.claimFailed || b.claimFailed,
   };
 }
@@ -64,7 +78,7 @@ export function drainPassFailing(result: DrainResult): boolean {
   return result.claimFailed || result.failed > 0;
 }
 
-type RowOutcome = 'ran' | 'recovered' | 'failed';
+type RowOutcome = 'ran' | 'recovered' | 'failed' | 'deferred';
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 300_000;
@@ -143,6 +157,17 @@ async function runRow(input: {
     const execute = isFirstAttempt ? handler.run : handler.recover ?? handler.run;
     await execute.call(handler, row.payload, ctx);
   } catch (error) {
+    if (error instanceof WorkDeferred) {
+      logger.info('[work] handler deferred; releasing for retry', {
+        kind: row.kind,
+        key: row.key,
+        attempts: row.attempts,
+        reason: error.message,
+      });
+      clearInterval(timer);
+      await releaseWithBackoff({ row, leaseToken, clock });
+      return 'deferred';
+    }
     // Handlers own failure recording; the drain only makes the row retry at its due_at.
     logger.warn('[work] handler threw; releasing for retry', {
       kind: row.kind,

@@ -29,7 +29,8 @@ import {
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import { ORPHAN_AFTER, runningSegment } from '../runs/trigger_run';
+import { runningSegment } from '../runs/trigger_run';
+import { ORPHAN_AFTER } from '../../movement_engine/run_lease';
 import { neverAsAny } from '../../../lib/utils/types';
 import { settleUnresumableRun } from '../../interaction/run_failure';
 import type { SettleReport } from '../../work/harness';

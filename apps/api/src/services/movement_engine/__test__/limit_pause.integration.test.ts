@@ -41,6 +41,7 @@ jest.mock('../../translation_graph/movement/transform_invoker', () => {
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
 import { resumeRun } from '../../interaction/operator';
+import { claimRunLease, releaseRunLease, RunBusy } from '../run_lease';
 import { getMovementRunStatus } from '../../translation_graph/movement/run_now';
 
 import { cleanupTeam } from '../../../test/harness/cleanup';
@@ -331,6 +332,13 @@ describe('a run paused at its cost cap (real DB)', () => {
 
     const status = await getMovementRunStatus({ teamId, runId: run.id });
     expect(status).toMatchObject({ status: 'parked', paused: { spentUsd: 1, capUsd: 1 } });
+
+    // Another process stepping the run: the resume is refused as busy, and
+    // nothing moves.
+    const elsewhere = await claimRunLease(run.id, { owner: 'another-instance', ttlMs: 60_000 });
+    await expect(resumeRun({ runId: run.id, teamId })).rejects.toBeInstanceOf(RunBusy);
+    expect(mockFetched).toEqual(['a']);
+    await releaseRunLease(run.id, elsewhere!.token);
 
     const resumed = await resumeRun({ runId: run.id, teamId });
     expect(resumed).toEqual({ runId: run.id, resumed: 1 });

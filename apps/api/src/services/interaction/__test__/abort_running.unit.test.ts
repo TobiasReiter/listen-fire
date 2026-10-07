@@ -55,6 +55,10 @@ jest.mock('../../../lib/kysely', () => ({
 }));
 
 const failRunAndCancelRequests = jest.fn();
+// The run's lease: always free here, so a parked run is failed under it.
+jest.mock('../../movement_engine/run_lease', () => ({
+  withRunLease: async (_runId: string, fn: () => Promise<unknown>) => ({ kind: 'held', value: await fn() }),
+}));
 jest.mock('../run_failure', () => ({
   failRunAndCancelRequests: (...args: unknown[]) => failRunAndCancelRequests(...args),
 }));

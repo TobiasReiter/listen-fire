@@ -91,7 +91,11 @@ function outcomeTitle(outcome: CallbackFireOutcome): string {
 function describeOutcome(outcome: CallbackFireOutcome): { status: number; message: string } {
   switch (outcome.kind) {
     case 'recorded':
-      return { status: 200, message: 'Thanks — that has been recorded and the workflow is carrying on.' };
+      // Queued: recorded, and the workflow carries on as soon as it is free.
+      return {
+        status: outcome.queued ? 202 : 200,
+        message: 'Thanks — that has been recorded and the workflow is carrying on.',
+      };
     case 'not_found':
       return { status: 404, message: 'Nothing here — the link may have been mistyped.' };
     case 'closed':

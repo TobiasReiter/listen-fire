@@ -65,6 +65,9 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
         .onConflict((oc) =>
           oc.columns(['run_id', 'address']).doUpdateSet({
             state: jsonb(input.state),
+            // A leaf re-parked by its own resume is parked again, not the
+            // claimed row its driver deletes once the step is over.
+            status: 'parked',
             park_reason: 'timer',
             wake_at: wakeAt,
           }),
@@ -107,6 +110,7 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
         .onConflict((oc) =>
           oc.columns(['run_id', 'address']).doUpdateSet({
             state: jsonb(input.state),
+            status: 'parked',
             park_reason: 'await',
           }),
         )

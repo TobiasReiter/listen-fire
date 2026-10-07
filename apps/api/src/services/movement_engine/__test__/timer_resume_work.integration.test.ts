@@ -36,6 +36,7 @@ import { registerTimerWork, settleCancelledTimersHandler, timerWorkKey } from '.
 import { testWorkContext } from '../../../test/harness/work';
 import { makeRecorderParkSink } from '../park_sink';
 import { drainUntilIdle, drainWork, resetWorkHandlersForTests } from '../../work/drain';
+import { claimRunLease, releaseRunLease } from '../run_lease';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -436,6 +437,39 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     expect(slackCreates).toEqual([{ channel: '#alerts', text: 'awake after sleep' }]);
     expect((await runRow(runId)).status).toBe('success');
     expect(await workRows(runId)).toHaveLength(0);
+  });
+
+  it('a run another process is stepping re-arms its row a few seconds on and resumes nothing, then resumes once free', async () => {
+    const { triggerId } = await seedMovementWithTrigger(teamId);
+    await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
+    const { runId } = await parkedRun(teamId);
+    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    expect(elsewhere).not.toBeNull();
+
+    await backdateLeafAndRow(runId);
+    const before = Date.now();
+    const held = await drainWork({ owner: 't' });
+
+    expect(held).toMatchObject({ claimed: 1, failed: 0 });
+    expect(slackCreates).toHaveLength(0);
+    expect((await runRow(runId)).status).toBe('parked');
+    const parked = await getAutomationsQb(['parked_run'])
+      .selectFrom('parked_run')
+      .where('run_id', '=', runId)
+      .select('status')
+      .execute();
+    expect(parked.map((row) => row.status)).toEqual(['parked']);
+    const [rearmed] = await workRows(runId);
+    expect(rearmed.lease_until).toBeNull();
+    const dueIn = new Date(rearmed.due_at).getTime() - before;
+    expect(dueIn).toBeGreaterThan(1_000);
+    expect(dueIn).toBeLessThan(30_000);
+
+    await releaseRunLease(runId, elsewhere!.token);
+    await backdateLeafAndRow(runId);
+    await drainUntilIdle({ owner: 't' });
+    expect(slackCreates).toEqual([{ channel: '#alerts', text: 'awake after sleep' }]);
+    expect((await runRow(runId)).status).toBe('success');
   });
 
   it('a lapsed lease on a run left running with a stale heartbeat fails the run', async () => {

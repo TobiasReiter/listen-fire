@@ -99,6 +99,7 @@ const HOST_SIDE_FILES = [
   'join_pending.ts',
   'limit_pause.ts',
   'park_sink.ts',
+  'run_lease.ts',
   'single_flight.ts',
   'test_host.ts',
   'timer_resume.ts',

@@ -6,11 +6,16 @@
 // CAPTURE, RESPOND, THEN RUN. `fireCallback` validates + CLAIMS synchronously
 // so the caller gets a true outcome to ack with, and returns. Execution — the
 // body segment and the wake of whoever awaits `Called` — happens OFF-REQUEST,
-// under the SAME per-run single-flight slot the await-resume worker uses, so a
-// fire and a resume of one run never overlap.
+// under the run's lease (taken before the ack) and the SAME per-run
+// single-flight slot the await-resume worker uses, so a fire and a resume of
+// one run never overlap, in this process or across processes. A run another
+// process is stepping queues the body as a `fire_callback` row instead, which
+// runs it once the run is free.
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
+
+import { z } from 'zod';
 
 import { getQb, getAutomationsQb } from '../../lib/kysely';
 import { SECOND } from '../../constants';
@@ -22,6 +27,10 @@ import { triggerEventSchema, type TriggerEvent } from '../translation_graph/trig
 import { fireCallbackFiring } from '../translation_graph/movement/execute';
 import { loadCorrelatedParks } from '../translation_graph/adapters/await_correlation';
 import { drainRunAwaits, runResumeSlot } from './await_resume';
+import { takeRunLease, withRunLease } from './run_lease';
+import type { WorkHandler } from '../work/kinds';
+import { notifyWork, registerWorkHandler, WorkDeferred } from '../work/drain';
+import { enqueueWork } from '../work/store';
 import { enqueueAwaitWake } from './await_wake';
 import { CALLBACK_AWAIT_TYPE } from './callback_types';
 import { claimCallbackFire, coerceCallbackValues, getCallback, type CallbackRecord } from './callback_store';
@@ -30,7 +39,9 @@ import type { CallbackParamSpec } from './callback_types';
 /** What the caller acks with. Every non-`recorded` outcome is a REFUSAL the door
  *  reports as such — never a silent no-op. */
 export type CallbackFireOutcome =
-  | { kind: 'recorded'; callback: CallbackRecord }
+  /** `queued`: the run was being stepped elsewhere, so the body waits on a
+   *  `fire_callback` row rather than starting now (the HTTP door answers 202). */
+  | { kind: 'recorded'; callback: CallbackRecord; queued?: true }
   | { kind: 'not_found' }
   /** Revoked (its run ended, was cancelled, or its movement was deleted) or
    *  already fired (single-use). The closed-request-wins ack. */
@@ -77,20 +88,74 @@ export async function fireCallback(input: {
       // from here on sees it. The index is the body's own address frame.
       const callIndex = claim.callback.calls.length - 1;
       await queueWakeBackstop(claim.callback);
+      const lease = await takeRunLease(claim.callback.runId);
+      if (lease === null) {
+        await queueCallbackFire({ callback: claim.callback, callIndex });
+        return { kind: 'recorded', callback: claim.callback, queued: true };
+      }
       // EXCLUSIVE, never coalesced: this body belongs to THIS recorded call. The
       // slot's coalescing entry replays its task whenever an arrival lands
       // mid-flight (that is what makes the await drain re-gather), and a replayed
       // body applies its writes a second time under a ledger that still shows one
       // call — exactly the double-write this entry point exists to make
       // structurally impossible.
-      const execution = runResumeSlot.exclusive(claim.callback.runId, () =>
-        executeFire(claim.callback, callIndex),
-      );
+      const execution = runResumeSlot.exclusive(claim.callback.runId, async () => {
+        try {
+          await executeFire(claim.callback, callIndex);
+        } finally {
+          await lease.release();
+        }
+      });
       if (input.awaitExecution) await execution;
       else void execution.catch(() => {}); // logged inside; never breaks the ack
       return { kind: 'recorded', callback: claim.callback };
     }
   }
+}
+
+const fireCallbackPayloadSchema = z.object({
+  callbackId: z.string(),
+  teamId: z.string(),
+  callIndex: z.number().int().nonnegative(),
+});
+
+/** Queue one recorded call's body for when the run is free. Keyed by the call,
+ *  so a call is queued once however often this is reached. */
+async function queueCallbackFire(input: { callback: CallbackRecord; callIndex: number }): Promise<void> {
+  const payload: z.infer<typeof fireCallbackPayloadSchema> = {
+    callbackId: input.callback.id,
+    teamId: input.callback.teamId,
+    callIndex: input.callIndex,
+  };
+  await enqueueWork({
+    kind: 'fire_callback',
+    key: `fire_callback:${input.callback.id}:${input.callIndex}`,
+    teamId: input.callback.teamId,
+    payload,
+  });
+  notifyWork();
+}
+
+/** A queued body: run it under the run's lease, or defer while the run is
+ *  still held. A call whose callback is gone (its run was deleted) has
+ *  nothing left to do. */
+export const fireCallbackHandler: WorkHandler = {
+  async run(payload) {
+    const { callbackId, callIndex } = fireCallbackPayloadSchema.parse(payload);
+    const callback = await getCallback(callbackId);
+    if (callback === null || callback.calls[callIndex] === undefined) return;
+    // The lease first, as `fireCallback` takes it: an entry of this very
+    // process stepping the run holds it too, so the row defers rather than
+    // queueing in the slot behind a segment that may run for hours.
+    const fired = await withRunLease(callback.runId, () =>
+      runResumeSlot.exclusive(callback.runId, () => executeFire(callback, callIndex)),
+    );
+    if (fired.kind === 'busy') throw new WorkDeferred(`run ${callback.runId} is held by another process`);
+  },
+};
+
+export function registerCallbackFireWork(): void {
+  registerWorkHandler('fire_callback', fireCallbackHandler);
 }
 
 /** How long after a fire the durable wake runs. The body and the prompt wake
@@ -206,7 +271,7 @@ export function callbackAckText(outcome: CallbackFireOutcome): string {
 }
 
 /**
- * The off-request half, under the run's single-flight slot: run the body, then
+ * The off-request half, under the run's lease and single-flight slot: run the body, then
  * wake whoever awaits `Called`. A body-less `callback()` is not special-cased —
  * it runs an EMPTY body, which is exactly the recorded call plus the wake, and
  * still leaves its segment on the step channel so the tap is visible in the run

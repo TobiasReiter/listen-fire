@@ -15,6 +15,7 @@
  *
  */
 
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
 import { currentContext } from '../../../services/context';
@@ -27,6 +28,7 @@ import {
   type TeamRunSummary,
 } from '../../../services/interaction/observability';
 import { abortRun, resumeRun } from '../../../services/interaction/operator';
+import { RunBusy } from '../../../services/movement_engine/run_lease';
 import {
   listAskRecordsForTeam,
   answerAskRecordForTeam,
@@ -87,7 +89,12 @@ const controlTowerRouter = (procedure: typeof trpc.procedure) => {
       .input(z.object({ runId: z.string().min(1) }))
       .mutation(async ({ input }): Promise<{ runId: string; resumed: number }> => {
         const ctx = currentContext();
-        return resumeRun({ runId: input.runId, teamId: ctx.user.teamId as TeamId });
+        try {
+          return await resumeRun({ runId: input.runId, teamId: ctx.user.teamId as TeamId });
+        } catch (err) {
+          if (err instanceof RunBusy) throw new TRPCError({ code: 'CONFLICT', message: err.message });
+          throw err;
+        }
       }),
 
     /** Every running/parked run for the team, newest first — the runs view

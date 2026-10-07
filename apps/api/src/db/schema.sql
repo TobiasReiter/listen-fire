@@ -3760,7 +3760,14 @@ CREATE TABLE automations.trigger_run (
     -- The stored inbound receipt this run was dispatched from, when there was
     -- one. Lets a re-claimed dispatch find the run its first attempt started.
     -- FK declared after automations.trigger_event below.
-    trigger_event_id uuid
+    trigger_event_id uuid,
+    -- The per-run lease (services/movement_engine/run_lease.ts): whoever holds
+    -- it is the one process stepping this run. Claimed with one UPDATE while
+    -- free or expired, renewed with the segment heartbeat, released when the
+    -- segment ends; a crashed holder's lease lapses by its expiry.
+    lease_owner text,
+    lease_until timestamptz,
+    lease_token uuid
 );
 
 ALTER TABLE ONLY automations.trigger_run
@@ -3914,7 +3921,7 @@ CREATE TABLE automations.parked_run (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     run_id uuid NOT NULL,                  -- the trigger_run this park belongs to
     address text NOT NULL,                 -- the parked leaf's canonical lexical address (engine §4.3)
-    status text NOT NULL DEFAULT 'parked', -- parked | completed (§5.2)
+    status text NOT NULL DEFAULT 'parked', -- parked | resuming (claimed under the run lease) | completed (§5.2)
     state jsonb,                           -- the branch's serialized frame + local scope (parked); null when completed
     result jsonb,                          -- the branch's bindings (completed, awaiting its join); null when parked
     -- Which resume driver owns the leaf, so drivers don't cross-drain. 'limit' = an
@@ -3924,7 +3931,7 @@ CREATE TABLE automations.parked_run (
     wake_at timestamptz NULL,              -- absolute wake instant for timer parks; null for all other park_reason values
     created_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    CONSTRAINT parked_run_status_check CHECK (status IN ('parked', 'completed'))
+    CONSTRAINT parked_run_status_check CHECK (status IN ('parked', 'resuming', 'completed'))
 );
 
 ALTER TABLE ONLY automations.parked_run

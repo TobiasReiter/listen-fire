@@ -40,6 +40,9 @@ import { cleanupTeam } from '../../../test/harness/cleanup';
 import { fireCallback } from '../callback_fire';
 import { runResumeSlot } from '../await_resume';
 import { getCallback, mintCallback } from '../callback_store';
+import { registerCallbackFireWork } from '../callback_fire';
+import { drainWork, resetWorkHandlersForTests } from '../../work/drain';
+import { enqueueWork } from '../../work/store';
 
 const SOURCE = 'go = manual()';
 
@@ -126,7 +129,9 @@ afterAll(async () => {
 
 /** A live run with a live single-use callback taking one `day` — the incident's
  *  shape exactly. */
-async function seedFiredRun(): Promise<{ runId: TriggerRunId; callbackId: string }> {
+async function seedFiredRun(
+  options: { singleUse?: boolean } = {},
+): Promise<{ runId: TriggerRunId; callbackId: string }> {
   const recorder = new TriggerRunRecorder({
     teamId,
     triggerId,
@@ -141,7 +146,7 @@ async function seedFiredRun(): Promise<{ runId: TriggerRunId; callbackId: string
     address: 's0',
     params: [{ name: 'day', type: 'date' }],
     state: STATE,
-    singleUse: true,
+    singleUse: options.singleUse ?? true,
   });
   return { runId: recorder.triggerRunId, callbackId: callback.id };
 }
@@ -234,5 +239,111 @@ describe('a fired callback body runs once per recorded call, even under a mid-bo
     expect(rows[0].payload).toEqual({ adapterType: 'callback', teamId, correlationKey: callbackId });
     // Deferred well past the in-process wake, so it only matters if that was lost.
     expect(rows[0].due_at.getTime()).toBeGreaterThan(before + 10_000);
+  });
+});
+
+type CallbackFireModule = typeof import('../callback_fire');
+
+/** The router loaded afresh: its own slot, its own lease owner and its own
+ *  database pool, the way a second API instance holds them. */
+function secondProcess(): CallbackFireModule {
+  let loaded: CallbackFireModule | undefined;
+  jest.isolateModules(() => {
+    loaded = jest.requireActual<CallbackFireModule>('../callback_fire');
+  });
+  if (loaded === undefined) throw new Error('test: the second process did not load');
+  return loaded;
+}
+
+describe('two processes fire one run at once', () => {
+  beforeEach(async () => {
+    fireCallbackFiringMock.mockReset();
+    resetWorkHandlersForTests();
+    registerCallbackFireWork();
+    // Only this describe's rows: the earlier tests' wake backstops are not ours to drain.
+    await getAutomationsQb(['work']).deleteFrom('work').where('team_id', '=', teamId).execute();
+  });
+
+  it('exactly one runs its body now; the other queues it, and the queued row runs it once the run is free', async () => {
+    const { runId, callbackId } = await seedFiredRun({ singleUse: false });
+    const other = secondProcess();
+
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started: () => void = () => {};
+    const bodyStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const bodies: number[] = [];
+    fireCallbackFiringMock.mockImplementation(async (input: { callIndex: number }) => {
+      bodies.push(input.callIndex);
+      started();
+      if (bodies.length === 1) await held;
+      return { result: { movementName: 'book_it' } };
+    });
+
+    const here = fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20', awaitExecution: true });
+    const there = other.fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-21', awaitExecution: true });
+    await bodyStarted;
+    // Whichever took the run's lease is mid-body; the other has answered.
+    const answered = await Promise.race([here, there]);
+    expect(answered).toMatchObject({ kind: 'recorded', queued: true });
+    expect(bodies).toHaveLength(1);
+    const queuedRows = await getAutomationsQb(['work'])
+      .selectFrom('work')
+      .where('kind', '=', 'fire_callback')
+      .where('team_id', '=', teamId)
+      .select(['key', 'payload'])
+      .execute();
+    expect(queuedRows).toHaveLength(1);
+
+    // While the body runs, the queued row finds the run held and defers.
+    const whileHeld = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(whileHeld).toMatchObject({ claimed: 1, deferred: 1 });
+    expect(bodies).toHaveLength(1);
+
+    release();
+    const outcomes = await Promise.all([here, there]);
+    expect(outcomes.filter((outcome) => outcome.kind === 'recorded' && outcome.queued)).toHaveLength(1);
+    const lease = await getAutomationsQb(['trigger_run'])
+      .selectFrom('trigger_run')
+      .where('id', '=', runId)
+      .select('lease_token')
+      .executeTakeFirstOrThrow();
+    expect(lease.lease_token).toBeNull();
+
+    // The deferral backed the row off; make it due now, as the clock would.
+    await getAutomationsQb(['work'])
+      .updateTable('work')
+      .set({ due_at: new Date(Date.now() - 1_000) })
+      .where('kind', '=', 'fire_callback')
+      .where('team_id', '=', teamId)
+      .execute();
+    const freed = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    // A deferred row's re-claim is its second attempt (the backoff counts them).
+    expect(freed).toMatchObject({ claimed: 1, failed: 0, deferred: 0 });
+    expect(freed.ran + freed.recovered).toBe(1);
+    // Two calls on the ledger, two bodies, each at its own call's frame.
+    expect((await getCallback(callbackId))?.calls).toHaveLength(2);
+    expect([...bodies].sort()).toEqual([0, 1]);
+
+    // The row is spent: a later pass finds nothing to do.
+    const after = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(after.claimed).toBe(0);
+    expect(bodies).toHaveLength(2);
+  });
+
+  it('a queued body whose callback is gone finds nothing to do', async () => {
+    await enqueueWork({
+      kind: 'fire_callback',
+      key: `fire_callback:cb_gone:0`,
+      teamId,
+      payload: { callbackId: 'cb_gone', teamId, callIndex: 0 },
+    });
+    const result = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(result).toMatchObject({ claimed: 1, ran: 1 });
+    expect(fireCallbackFiringMock).not.toHaveBeenCalled();
   });
 });

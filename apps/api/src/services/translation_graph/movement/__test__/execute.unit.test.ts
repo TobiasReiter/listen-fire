@@ -42,6 +42,11 @@ jest.mock('../../runs/trigger_run', () => ({
 
 // The production engine host wires the DB, the adapter registry and the model
 // clients; the engine is stubbed below, so the host it is handed is inert.
+// The run's lease: always free here (a second process is the integration
+// tests' business).
+jest.mock('../../../movement_engine/run_lease', () => ({
+  takeRunLease: async () => ({ release: async () => {} }),
+}));
 jest.mock('../engine_host', () => ({
   productionEngineHost: jest.fn(() => ({})),
 }));

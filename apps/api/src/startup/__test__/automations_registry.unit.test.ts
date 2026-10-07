@@ -36,7 +36,7 @@ const PERIODIC_KINDS = [
   'run_orphan_sweep',
 ] as const;
 
-const PASS = { claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false };
+const PASS = { claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false };
 
 const originalMode = process.env.AUTOMATIONS_DRAIN_MODE;
 

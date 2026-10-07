@@ -11,16 +11,18 @@
 // rather than injecting an answer.
 //
 // F21 (batched resume, one movement instance at a time): the single-flight
-// per-run slot resumes one run at a time; each of a run's resolvable leaves is
-// stepped forward in turn, so a multi-winner tie (F18) settles in one batch. A
-// crash mid-drain leaves the `adapter_await` rows and the leased wake row, which
-// is re-claimed (idempotent — a resolved leaf has no parked_run left).
+// per-run slot orders this process's entries into a run and the run's lease
+// (run_lease.ts) orders processes; each of a run's resolvable leaves is
+// claimed and stepped forward in turn, so a multi-winner tie (F18) settles in
+// one batch. A crash mid-drain leaves the `adapter_await` rows, the claimed
+// leaf (`resuming`, parked again once the lease lapses) and the leased wake
+// row, which is re-claimed (idempotent — a resolved leaf has no parked_run left).
 
 import { getQb, getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
 import type { WorkHandler } from '../work/kinds';
-import { registerWorkHandler } from '../work/drain';
+import { registerWorkHandler, WorkDeferred } from '../work/drain';
 import { wakeAwaitPayloadSchema } from './await_wake';
 import { settleCancelledRun } from '../interaction/run_failure';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
@@ -36,6 +38,7 @@ import {
 } from '../translation_graph/adapters/await_correlation';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import { createSingleFlight } from './single_flight';
+import { claimParkedLeaf, finishResumedLeaf, withRunLease } from './run_lease';
 import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
@@ -77,14 +80,25 @@ export async function resumeAwaitsForCorrelation(input: {
     list.push(park);
     byRun.set(park.runId, list);
   }
-  await Promise.all(
+  // The in-process slot first (this process's own wakes of the run collapse
+  // onto one pass), then the run's lease (no other process steps it meanwhile).
+  // A run held elsewhere is not lost: the wake row retries with backoff, and
+  // its re-gather finds whatever is still resolvable then.
+  const busy: TriggerRunId[] = [];
+  const outcomes = await Promise.allSettled(
     [...byRun.entries()].map(([runId, extra]) =>
-      runResumeSlot.coalesce(runId, () => drainRunAwaits(runId, extra)),
+      runResumeSlot.coalesce(runId, async () => {
+        const drained = await withRunLease(runId, () => drainRunAwaits(runId, extra));
+        if (drained.kind === 'busy') busy.push(runId);
+      }),
     ),
   );
+  const failed = outcomes.find((outcome) => outcome.status === 'rejected');
+  if (failed !== undefined) throw failed.reason;
+  if (busy.length > 0) throw new WorkDeferred(`run ${busy.join(', ')} is held by another process`);
 }
 
-/** The per-run drain body run under the single-flight slot: gather ALL of the
+/** The per-run drain body, run under the run's lease: gather ALL of the
  *  run's currently-resolvable leaves fresh (one batch) and step them forward.
  *  Ask + callback leaves come from their own resolvability reads; `extraLeaves`
  *  are the event-driven ones the caller already knows are resolvable (Slack, and
@@ -173,13 +187,9 @@ async function resumeAwaitRun(runId: TriggerRunId, leaves: ResolvableAwait[]): P
   const deferredFrames = new Map<string, ParkedScopeState>();
 
   for (const leaf of leaves) {
-    const parked = await getAutomationsQb(['parked_run'])
-      .selectFrom('parked_run')
-      .where('run_id', '=', runId)
-      .where('address', '=', leaf.address)
-      .where('status', '=', 'parked')
-      .select(['id', 'state'])
-      .executeTakeFirst();
+    // Claimed before it is stepped: a leaf another entry already took (or a
+    // race cancelled) is not parked any more.
+    const parked = await claimParkedLeaf({ runId, address: leaf.address });
     if (!parked || !parked.state) {
       // Already drained in a prior pass (or cancelled as a race loser) — clear
       // its correlation so later wakes do not re-drive it.
@@ -234,7 +244,8 @@ async function resumeAwaitRun(runId: TriggerRunId, leaves: ResolvableAwait[]): P
       //     don't match (B.1), or a still-pending edge. `commitAwaitPark` just
       //     re-registered the correlation and re-upserted the parked_run at THIS
       //     address; deleting them would strand the run parked forever, deaf to
-      //     the later matching candidate. Leave everything intact.
+      //     the later matching candidate. Leave everything intact (the re-park
+      //     wrote the row back as `parked`).
       if (outcome.result.parkedAddress !== leaf.address) {
         await resolveAwaitLeaf(runId, leaf.address);
       }
@@ -309,18 +320,13 @@ async function settleBranchComplete(
   return { runComplete: otherParked === undefined };
 }
 
-/** Drop one resolved await leaf: its correlation entry + its parked row —
- *  while that row is still an await's. An await woken while its run was paused
- *  at a limit suspended at this same address instead of re-checking, and the
- *  row is then the run's to resume (limit_pause.ts). */
+/** Drop one resolved await leaf: its correlation entry + its claimed row.
+ *  An await woken while its run was paused at a limit suspended at this same
+ *  address instead of re-checking: that row was written back as `parked`, and
+ *  is the run's to resume (limit_pause.ts). */
 async function resolveAwaitLeaf(runId: TriggerRunId, address: string): Promise<void> {
   await dropAwaitCorrelation({ runId, address });
-  await getAutomationsQb(['parked_run'])
-    .deleteFrom('parked_run')
-    .where('run_id', '=', runId)
-    .where('address', '=', address)
-    .where('park_reason', '=', 'await')
-    .execute();
+  await finishResumedLeaf(runId, address);
 }
 
 async function settleFailure(runId: TriggerRunId): Promise<void> {

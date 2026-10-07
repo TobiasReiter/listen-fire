@@ -133,6 +133,20 @@ jest.mock('../../translation_graph/triggers/types', () => ({
   triggerEventSchema: { parse: (x: unknown) => x },
 }));
 
+// The run's lease and its leaf claims, in memory: `leaseHeldElsewhere` is
+// another process stepping the run.
+let leaseHeldElsewhere = false;
+jest.mock('../run_lease', () => ({
+  withRunLease: async (_runId: string, fn: () => Promise<unknown>) =>
+    leaseHeldElsewhere ? { kind: 'busy' } : { kind: 'held', value: await fn() },
+  claimParkedLeaf: async ({ address }: { address: string }) =>
+    livePark.has(address) ? { state: { address } } : null,
+  finishResumedLeaf: async (_runId: string, address: string) => {
+    deletedAddresses.push(address);
+    livePark.delete(address);
+  },
+}));
+
 // The work table, in memory: what the drain claims, completes and releases.
 const claimDueWorkMock = jest.fn();
 const completeWorkMock = jest.fn();
@@ -173,6 +187,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   livePark.clear();
   deletedAddresses.length = 0;
+  leaseHeldElsewhere = false;
   sweepDeleted = false;
   // The correlation lookup yields one park (the WHERE-narrowed await leaf).
   loadCorrelatedParksMock.mockResolvedValue([{ runId: RUN, teamId: TEAM, address: LEAF }]);
@@ -327,5 +342,44 @@ describe('await-resume driver — a wake racing the park', () => {
 
     expect(resumeMovementFiringMock).not.toHaveBeenCalled();
     expect(dropAwaitCorrelationMock).toHaveBeenCalledWith({ runId: RUN, address: LEAF });
+  });
+});
+
+describe('await-resume driver — a run another process is stepping', () => {
+  it('releases the wake row with backoff, resumes nothing, and completes nothing', async () => {
+    resetWorkHandlersForTests();
+    registerAwaitWork();
+    livePark.add(LEAF);
+    leaseHeldElsewhere = true;
+    const claimedAt = new Date('2001-01-01T00:00:00.000Z');
+    claimDueWorkMock.mockResolvedValueOnce([
+      {
+        id: 'w-2',
+        teamId: TEAM,
+        kind: 'wake_await',
+        key: 'wake_await:k2',
+        payload: { adapterType: 'slack', teamId: TEAM, correlationKey: 'C123:1700000000.000100' },
+        dueAt: claimedAt,
+        intervalMs: null,
+        attempts: 1,
+        leaseOwner: 'me',
+        leaseUntil: claimedAt,
+        leaseToken: 'token-2',
+        updatedAt: claimedAt,
+      },
+    ]);
+    const before = Date.now();
+
+    const result = await drainWork({ owner: 'me', heartbeatMs: false });
+
+    expect(result).toMatchObject({ claimed: 1, deferred: 1, failed: 0 });
+    expect(resumeMovementFiringMock).not.toHaveBeenCalled();
+    expect(completeWorkMock).not.toHaveBeenCalled();
+    const released = releaseWorkMock.mock.calls[0]?.[0] as { id: string; dueAt?: Date };
+    expect(released.id).toBe('w-2');
+    expect(released.dueAt?.getTime()).toBeGreaterThanOrEqual(before + 1_000);
+    // The leaf and its correlation are left for the retry.
+    expect(livePark.has(LEAF)).toBe(true);
+    expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();
   });
 });

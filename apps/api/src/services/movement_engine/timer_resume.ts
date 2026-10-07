@@ -20,8 +20,8 @@
 // statement AFTER the sleep. Using `reenter=true` would re-run the sleep and
 // re-park forever — so we omit it.
 //
-// One run is handled by one claim of its work row at a time (the lease), and
-// idempotent: a crash mid-drain leaves the timer-parked rows for the re-claim to
+// One run is stepped by one process at a time (the run lease; a run held
+// elsewhere re-arms its row a few seconds on), and idempotent: a crash mid-drain leaves the timer-parked rows for the re-claim to
 // re-process; a completed leaf's `parked_run` is deleted, so it's skipped. A
 // not-yet-due sibling leaf (fan-out sleep) stays parked and holds the join —
 // verified separately (§9), not broken here.
@@ -33,7 +33,8 @@ import { getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
 import { settleCancelledRun, settleUnresumableRun } from '../interaction/run_failure';
-import { ORPHAN_AFTER, runningSegment } from '../translation_graph/runs/trigger_run';
+import { runningSegment } from '../translation_graph/runs/trigger_run';
+import { claimParkedLeaf, finishResumedLeaf, ORPHAN_AFTER, withRunLease } from './run_lease';
 import { neverAsAny } from '../../lib/utils/types';
 import type { WorkHandler } from '../work/kinds';
 import { registerWorkHandler } from '../work/drain';
@@ -52,6 +53,9 @@ export { timerWorkKey } from './timer_wake';
 // A leaf still due after its run was handled could not be resumed (its trigger
 // or pinned version is gone); retry it at the old scan's cadence, not every drain.
 const UNRESUMED_RETRY = 30 * SECOND;
+
+// A run held by another process is looked at again this soon.
+const BUSY_RETRY = 5 * SECOND;
 
 interface TimerParkedRunRow {
   runId: TriggerRunId;
@@ -72,15 +76,22 @@ export const resumeTimerHandler: WorkHandler = {
       .select(['team_id', 'cancel_requested_at'])
       .executeTakeFirst();
     if (!run) return;
-    if (run.cancel_requested_at !== null) {
-      await settleCancelledRun(runId);
-      return;
-    }
     // `trigger_run.team_id` is an opaque tenant uuid (D3 dropped the FK, and
     // with it the brand); naming it as core's team id is the boundary conversion.
     const teamId = run.team_id as TeamId;
-    await resumeTimerParkedRun({ runId, teamId }, ctx.now);
-    await rearmForNextLeaf({ runId, teamId, now: ctx.now });
+    const stepped = await withRunLease(runId, async () => {
+      if (run.cancel_requested_at !== null) {
+        await settleCancelledRun(runId);
+        return;
+      }
+      await resumeTimerParkedRun({ runId, teamId }, ctx.now);
+      await rearmForNextLeaf({ runId, teamId, now: ctx.now });
+    });
+    // Another process is stepping the run (its first firing, a wake): look
+    // again shortly. The leaves stay parked and due.
+    if (stepped.kind === 'busy') {
+      await armTimerWake({ runId, teamId, wakeAt: new Date(ctx.now.getTime() + BUSY_RETRY) });
+    }
   },
 
   // Any re-claim lands here: a lapsed lease, or a retry after a throw. Only a run
@@ -282,7 +293,11 @@ export async function resumeTimerParkedRun(run: TimerParkedRunRow, now: Date): P
       await deleteLeaf(runId, leaf.address);
       continue;
     }
-    const state = leaf.state as ParkedScopeState;
+    // Claimed before it is stepped: a leaf an earlier step of this batch
+    // cancelled (a race loser) is not parked any more.
+    const claimed = await claimParkedLeaf({ runId, address: leaf.address, parkReason: 'timer' });
+    if (claimed === null || !claimed.state) continue;
+    const state = claimed.state as ParkedScopeState;
     // An `await until(…)` park (chunk D, F12) RE-ENTERS to re-evaluate its
     // condition rather than stepping past like a `sleep`. Unmet ⇒ it re-parks at
     // the SAME address with a fresh (future) `wake_at`; met ⇒ it binds + continues.
@@ -331,16 +346,16 @@ export async function resumeTimerParkedRun(run: TimerParkedRunRow, now: Date): P
       // Re-parked deeper (a met `until`'s continuation hit a later await/sleep, a
       // slept branch parked again, or the run's cost limit). The new park rows
       // were written by the resumed interpreter; drop THIS leaf's superseded
-      // timer row. Only while it is still a timer row: an `until` woken while its
-      // run was paused at a limit suspended AT this same address, and its row is
-      // now the run's to resume. No join decrement (the branch did not
+      // timer row. Only while it is still the claimed row: an `until` woken while
+      // its run was paused at a limit suspended AT this same address, rewriting
+      // the row as `parked`, and it is now the run's to resume. No join decrement (the branch did not
       // complete). The run stays parked.
-      await deleteTimerLeaf(runId, leaf.address);
+      await finishResumedLeaf(runId, leaf.address);
       continue;
     }
 
     // The branch completed — `settleBranchComplete` already decremented the join.
-    await deleteLeaf(runId, leaf.address);
+    await finishResumedLeaf(runId, leaf.address);
   }
 
   // Fully settled (no pending join, no parked leaf left) ⇒ sweep residual live
@@ -413,15 +428,6 @@ async function deleteLeaf(runId: TriggerRunId, address: string): Promise<void> {
     .deleteFrom('parked_run')
     .where('run_id', '=', runId)
     .where('address', '=', address)
-    .execute();
-}
-
-async function deleteTimerLeaf(runId: TriggerRunId, address: string): Promise<void> {
-  await getAutomationsQb(['parked_run'])
-    .deleteFrom('parked_run')
-    .where('run_id', '=', runId)
-    .where('address', '=', address)
-    .where('park_reason', '=', 'timer')
     .execute();
 }
 

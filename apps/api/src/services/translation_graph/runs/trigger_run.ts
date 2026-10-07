@@ -37,6 +37,7 @@ import type { TriggerEventId } from '../../../generated/kysely/automations/Trigg
 import type { TriggerEvent } from '../triggers/types';
 import { markTriggerEventFailed } from '../triggers/event_store';
 import { settleUnresumableRun } from '../../interaction/run_failure';
+import { ORPHAN_AFTER, returnLeavesOfLapsedLeases } from '../../movement_engine/run_lease';
 import type { WorkHandler } from '../../work/kinds';
 import { registerWorkHandler } from '../../work/drain';
 
@@ -945,10 +946,6 @@ function movementStepDiagnostics(result: MovementRunResult): Record<string, unkn
   };
 }
 
-/** A segment beats every 5s (the recorder's live-trace tick); a minute of
- *  silence is a dead process, not a slow one. */
-export const ORPHAN_AFTER = 60 * SECOND;
-
 export type RunningSegment = 'orphaned' | 'live' | 'not_running';
 
 function lastSignOfLife(row: { started_at: Date; last_heartbeat_at: Date | null }): Date {
@@ -1003,6 +1000,9 @@ export async function settleOrphanedRunningRuns(now: Date): Promise<void> {
 export const runOrphanSweepHandler: WorkHandler = {
   async run(_payload, ctx) {
     await settleOrphanedRunningRuns(ctx.now);
+    // A leaf claimed for resuming by a holder that died is parked again once
+    // that holder's lease has lapsed, so the run's next wake finds it.
+    await returnLeavesOfLapsedLeases();
   },
 };
 

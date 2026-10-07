@@ -46,6 +46,7 @@ import { clearJoins, runHasPendingJoins } from './join_pending';
 import type { RunLimitPause } from './run';
 import type { ParkedScopeState } from './serialize';
 import { MovementEngineError } from './errors';
+import { claimParkedLeaf, finishResumedLeaf } from './run_lease';
 
 /** What `trigger_run.limit_pause` holds while the run is paused. */
 const StoredLimitPauseSchema = z.object({
@@ -214,6 +215,10 @@ export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resum
       await deleteLeafIfUnchanged(runId, leaf.address, leaf.updated_at);
       continue;
     }
+    // Claimed before it is stepped: an earlier flow's step may have cancelled
+    // it (a race it lost), and then it is not parked any more.
+    const claimed = await claimParkedLeaf({ runId, address: leaf.address, parkReason: 'limit' });
+    if (claimed === null || !claimed.state) continue;
     const outcome = await resumeMovementFiring({
       teamId: run.team_id as TeamId,
       triggerId: run.trigger_id,
@@ -226,7 +231,7 @@ export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resum
       movementId: trigger.movementId,
       event,
       recordingTriggerType: run.trigger_type as TriggerRunTriggerType,
-      state: leaf.state as ParkedScopeState,
+      state: claimed.state as ParkedScopeState,
       // An engine suspension re-runs its statement: nothing to bind, and the
       // calls it had finished replay from its journal.
       reenter: true,
@@ -241,9 +246,9 @@ export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resum
       return { resumed };
     }
     // Completed, or parked somewhere else: this leaf is done. Suspended again
-    // at the same statement (it met the cap at once): its row was rewritten,
-    // and stays.
-    await deleteLeafIfUnchanged(runId, leaf.address, leaf.updated_at);
+    // at the same statement (it met the cap at once): its row was rewritten
+    // as `parked`, and stays.
+    await finishResumedLeaf(runId, leaf.address);
     if (outcome.result?.parked && (await runIsLimitPaused(runId))) break;
   }
 

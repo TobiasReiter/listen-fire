@@ -8,6 +8,7 @@ import {
 } from '../airtable_webhook_refresh/worker';
 import { EXPOSED_FILE_SWEEP_INTERVAL, registerExposedFileWork } from '../exposed_file/worker';
 import { registerAwaitWork } from '../movement_engine/await_resume';
+import { registerCallbackFireWork } from '../movement_engine/callback_fire';
 import { registerTimerWork } from '../movement_engine/timer_resume';
 import { registerCronWork } from '../movement_scheduler/worker';
 import { registerPollWork } from '../poll_source/worker';
@@ -50,6 +51,7 @@ async function registerAutomationsWork(): Promise<void> {
   registerPollWork();
   registerDispatchWork();
   registerAwaitWork();
+  registerCallbackFireWork();
   registerAskClosedSweepWork();
   registerLinkedObjectWork();
   registerExposedFileWork();

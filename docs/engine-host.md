@@ -661,4 +661,5 @@ Nothing on the request/answer path. Three things stay outside it, by design:
 
 ## Recorded debts
 
-- **Resumed segments do not heartbeat.** A timer, await or ask resume keeps the run `parked` and stamps no heartbeat. A crash mid-resume re-runs the parked step: at least once, as before.
+- **A crash mid-resume re-runs the parked step.** Every entry into a run holds the run's lease, which renews (and stamps the run's heartbeat) every 20 seconds, resumes included. A resumed leaf is claimed (`resuming`) before it steps; a holder that dies leaves it claimed, and it is parked again once the lease lapses, so the next wake steps it again: at least once, as before.
+- **Write locks hold a connection each.** `PostgresWriteLocks` keeps a dedicated session per segment, as the run lease no longer does. Before 10^4 concurrent segments they need the same treatment: a row lease, or Redis.

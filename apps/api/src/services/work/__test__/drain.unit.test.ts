@@ -2,6 +2,7 @@ import type { WorkKind, WorkRow } from '../kinds';
 
 import { logger } from '../../logger';
 import {
+  drainPassFailing,
   drainWork,
   notifyWork,
   registerWorkHandler,
@@ -10,6 +11,7 @@ import {
   inProcessNotifier,
   startDrainLoop,
   type StopDrainLoop,
+  WorkDeferred,
 } from '../drain';
 import { claimDueWork, completeWork, heartbeatWork, releaseWork } from '../store';
 
@@ -82,7 +84,7 @@ describe('drainWork', () => {
       claimedUpdatedAt: UPDATED_AT,
     });
     expect(release).not.toHaveBeenCalled();
-    expect(result).toEqual({ claimed: 1, ran: 1, recovered: 0, failed: 0, claimFailed: false });
+    expect(result).toEqual({ claimed: 1, ran: 1, recovered: 0, failed: 0, deferred: 0, claimFailed: false });
   });
 
   it('a second attempt calls recover when defined, else run', async () => {
@@ -98,7 +100,7 @@ describe('drainWork', () => {
     expect(recover).toHaveBeenCalledWith({ runId: 'r' }, expect.objectContaining({ attempts: 2 }));
     expect(run).not.toHaveBeenCalled();
     expect(fallback).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ claimed: 2, ran: 0, recovered: 2, failed: 0, claimFailed: false });
+    expect(result).toEqual({ claimed: 2, ran: 0, recovered: 2, failed: 0, deferred: 0, claimFailed: false });
   });
 
   it('a handler that throws releases the row and the drain resolves', async () => {
@@ -119,7 +121,28 @@ describe('drainWork', () => {
       expect.any(String),
       expect.objectContaining({ kind: 'resume_timer', key: 'a', attempts: 1 }),
     );
-    expect(result).toEqual({ claimed: 1, ran: 0, recovered: 0, failed: 1, claimFailed: false });
+    expect(result).toEqual({ claimed: 1, ran: 0, recovered: 0, failed: 1, deferred: 0, claimFailed: false });
+  });
+
+  it('a handler that defers releases the row with backoff, uncompleted, and is not a failure', async () => {
+    registerWorkHandler('wake_await', {
+      run: async () => {
+        throw new WorkDeferred('run busy');
+      },
+    });
+    pending = [row({ kind: 'wake_await', attempts: 2 })];
+    const before = Date.now();
+
+    const result = await drainWork({ owner: 'me' });
+
+    expect(complete).not.toHaveBeenCalled();
+    const released = release.mock.calls[0]?.[0];
+    expect(released).toMatchObject({ id: 'id-a', leaseToken: 'token-a' });
+    // The second attempt waits twice the base backoff.
+    expect(released?.dueAt?.getTime()).toBeGreaterThanOrEqual(before + 2_000);
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(result).toEqual({ claimed: 1, ran: 0, recovered: 0, failed: 0, deferred: 1, claimFailed: false });
+    expect(drainPassFailing(result)).toBe(false);
   });
 
   it('a known kind with no registered handler is released with a warning', async () => {
@@ -225,6 +248,7 @@ describe('drainWork', () => {
       ran: 0,
       recovered: 0,
       failed: 0,
+      deferred: 0,
       claimFailed: true,
     });
   });

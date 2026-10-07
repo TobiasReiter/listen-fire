@@ -46,6 +46,7 @@ import { recordMovementFailureIssue, resolveMovementIssues } from './issues';
 import { clearIntrospectionCache } from './instance_cache';
 import { withFiringContext } from './firing_context';
 import { productionEngineHost } from './engine_host';
+import { takeRunLease, type HeldRunLease } from '../../movement_engine/run_lease';
 
 // ── The shared engine invocation (catalog assembly + runMovement) ───────────
 
@@ -254,12 +255,20 @@ async function runMovementFiringInContext(
   // going. Without this the trace reached the row only at settle, so the one
   // run anybody needs to inspect — the slow one — was the one showing nothing.
   const trace: MovementTraceEntry[] = [];
+  // The run's lease, for the life of the firing: a wake for a branch this
+  // firing has already parked must not resume the run while its other
+  // branches are still running here. The wake retries once the firing ends.
+  let lease: HeldRunLease | null = null;
   try {
     if (!input.dryRun) {
       // A non-parking firing used to create no row at all until it settled, so
       // there was nothing to inspect and nothing for a restart sweep to find.
       // The row now exists as `running` for the life of the firing.
       await recorder.ensureStarted();
+      lease = await takeRunLease(recorder.triggerRunId);
+      if (lease === null) {
+        throw new Error(`run ${recorder.triggerRunId} is already being stepped by another process`);
+      }
       recorder.beginLiveTrace(trace);
     }
     const runFiring = () =>
@@ -395,6 +404,7 @@ async function runMovementFiringInContext(
     // path that reaches neither must not leave a timer republishing the trace
     // of a firing that is over.
     recorder.endLiveTrace();
+    await lease?.release();
   }
 }
 

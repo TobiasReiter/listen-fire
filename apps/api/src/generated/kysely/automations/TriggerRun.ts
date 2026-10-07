@@ -61,6 +61,12 @@ export default interface TriggerRunTable {
   last_heartbeat_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 
   trigger_event_id: ColumnType<TriggerEventId | null, TriggerEventId | null, TriggerEventId | null>;
+
+  lease_owner: ColumnType<string | null, string | null, string | null>;
+
+  lease_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+
+  lease_token: ColumnType<string | null, string | null, string | null>;
 }
 
 export type TriggerRun = Selectable<TriggerRunTable>;

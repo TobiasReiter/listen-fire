@@ -70,7 +70,7 @@ describe('POST /system/automations/drain', () => {
   });
 
   it('drains with the body limit and answers with the drain result', async () => {
-    const result = { claimed: 3, ran: 2, recovered: 1, failed: 0, claimFailed: false };
+    const result = { claimed: 3, ran: 2, recovered: 1, failed: 0, deferred: 0, claimFailed: false };
     drainUntilIdle.mockResolvedValue(result);
 
     const res = await tick({ limit: 5, maxPasses: 2 });
@@ -86,7 +86,7 @@ describe('POST /system/automations/drain', () => {
   });
 
   it('drains with the defaults when no body is sent', async () => {
-    drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false });
+    drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false });
     const res = await tick();
     expect(res.status).toBe(200);
     expect(drainUntilIdle).toHaveBeenCalledWith({ owner: expect.stringMatching(/^http:/) });
@@ -112,7 +112,7 @@ describe('POST /system/automations/drain', () => {
   });
 
   it('caps a tick at 100 rows a pass and 50 passes', async () => {
-    drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, claimFailed: false });
+    drainUntilIdle.mockResolvedValue({ claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false });
 
     expect((await tick({ limit: 101 })).status).toBe(400);
     expect((await tick({ maxPasses: 51 })).status).toBe(400);
