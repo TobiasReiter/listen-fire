@@ -8,6 +8,7 @@ import type { AdapterManifest } from '../adapter';
 import { listAdapterManifests } from './registry';
 import { listRemoteAdapters } from './remote/store';
 import { remoteAdapterManifest, RemoteAdapterManifestFile } from './remote/manifest';
+import { mayBeRemoteSlug } from './remote/slugs';
 
 /** The per-team manifests, and whether the remote half is complete. */
 export interface TeamManifestSet {
@@ -21,13 +22,12 @@ export interface TeamManifestSet {
 }
 
 /**
- * A remote slug colliding with a built-in is skipped (built-ins win —
- * resolution is local-first) with a note. A listing failure degrades to the
+ * A remote slug colliding with any name a built-in answers to (`remote/slugs`)
+ * is skipped (built-ins win — resolution is local-first) with a note. A listing failure degrades to the
  * static set, also with a note, and is reported as `remoteDegraded`.
  */
 export async function teamAdapterManifestSet(teamId: TeamId, notes: string[]): Promise<TeamManifestSet> {
   const manifests = [...listAdapterManifests()];
-  const staticSlugs = new Set(manifests.map((m) => m.adapterType));
   const remoteSlugs = new Set<string>();
   let rows;
   try {
@@ -46,9 +46,9 @@ export async function teamAdapterManifestSet(teamId: TeamId, notes: string[]): P
       remoteDegraded = true;
       continue;
     }
-    if (staticSlugs.has(parsed.data.adapterType)) {
+    if (!mayBeRemoteSlug(parsed.data.adapterType)) {
       notes.push(
-        `${parsed.data.adapterType}: a remote install collides with a built-in adapter — the built-in wins`,
+        `${parsed.data.adapterType}: a remote install collides with a name a built-in adapter answers to — the built-in wins`,
       );
       continue;
     }

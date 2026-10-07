@@ -91,6 +91,7 @@ export async function resolveAdapter(input: {
 
   const config: RemoteAdapterConfig = {
     adapterType: manifestFile.adapterType,
+    teamId: input.teamId,
     baseUrl: manifestFile.baseUrl,
     authStrategy: manifestFile.authStrategy,
     credentialsId: row.credentials_id,

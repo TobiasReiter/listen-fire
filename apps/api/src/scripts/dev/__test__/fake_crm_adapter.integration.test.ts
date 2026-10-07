@@ -35,6 +35,10 @@ import {
   startFakeCrmServer,
 } from '../fake_crm_adapter';
 import type { FakeCrmServer } from '../fake_crm_adapter';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
+/** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
+const CONFIG_TEAM_ID = '00000000-0000-4000-8000-0000000000c1' as TeamId;
 
 const SECRET = 'fake-crm-secret';
 
@@ -52,6 +56,7 @@ describe('Fake CRM RemoteAdapter round-trip (over real HTTP, no Postgres)', () =
     server = await startFakeCrmServer({ secret: SECRET });
 
     const config: RemoteAdapterConfig = {
+      teamId: CONFIG_TEAM_ID,
       adapterType: FAKE_CRM_ADAPTER_TYPE,
       baseUrl: server.baseUrl,
       authStrategy: { kind: 'bearer' },
@@ -106,6 +111,7 @@ describe('Fake CRM pages a traversal over the wire', () => {
   beforeAll(async () => {
     server = await startFakeCrmServer({ secret: SECRET });
     const config: RemoteAdapterConfig = {
+      teamId: CONFIG_TEAM_ID,
       adapterType: FAKE_CRM_ADAPTER_TYPE,
       baseUrl: server.baseUrl,
       authStrategy: { kind: 'bearer' },
@@ -214,6 +220,7 @@ describe('resolveEntity bare-array tolerance (over real HTTP)', () => {
     const { port } = server.address() as AddressInfo;
 
     const config: RemoteAdapterConfig = {
+      teamId: CONFIG_TEAM_ID,
       adapterType: FAKE_CRM_ADAPTER_TYPE,
       baseUrl: `http://127.0.0.1:${port}`,
       authStrategy: { kind: 'bearer' },
@@ -242,6 +249,7 @@ describe('resolveEntity bare-array tolerance (over real HTTP)', () => {
 
 async function remoteFor(server: FakeCrmServer, cacheScopeId: string): Promise<RemoteAdapter> {
   const config: RemoteAdapterConfig = {
+    teamId: CONFIG_TEAM_ID,
     adapterType: FAKE_CRM_ADAPTER_TYPE,
     baseUrl: server.baseUrl,
     authStrategy: { kind: 'bearer' },

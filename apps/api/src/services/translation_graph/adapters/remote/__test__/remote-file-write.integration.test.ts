@@ -24,6 +24,10 @@ jest.mock('../../../engine/files/expose', () => ({
 }));
 // eslint-disable-next-line import/first
 import { exposeFile } from '../../../engine/files/expose';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
+/** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
+const CONFIG_TEAM_ID = '00000000-0000-4000-8000-0000000000c1' as TeamId;
 
 const SECRET = 'test-secret';
 
@@ -86,6 +90,7 @@ describe('RemoteAdapter write with a FileRef exposes bytes to a URL (over real H
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
     const config: RemoteAdapterConfig = {
+      teamId: CONFIG_TEAM_ID,
       adapterType: 'doc_store',
       baseUrl: `http://127.0.0.1:${port}/`,
       authStrategy: { kind: 'bearer' },

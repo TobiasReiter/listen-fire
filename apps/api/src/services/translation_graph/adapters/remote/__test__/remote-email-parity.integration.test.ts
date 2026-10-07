@@ -132,6 +132,7 @@ describe('RemoteAdapter ⟷ in-process email adapter parity (over real HTTP)', (
     baseUrl = `http://127.0.0.1:${port}/`;
 
     const config: RemoteAdapterConfig = {
+      teamId: TEST_TEAM_ID,
       adapterType: EMAIL_ADAPTER_TYPE,
       baseUrl,
       authStrategy: { kind: 'bearer' },
@@ -286,6 +287,7 @@ describe('RemoteAdapter ⟷ in-process email adapter parity (over real HTTP)', (
 
   it('a bad secret is rejected at the transport layer (401 → transport error)', async () => {
     const badConfig: RemoteAdapterConfig = {
+      teamId: TEST_TEAM_ID,
       adapterType: EMAIL_ADAPTER_TYPE,
       baseUrl,
       authStrategy: { kind: 'bearer' },
@@ -364,6 +366,7 @@ describe('RemoteAdapter buildability for a webhook adapter (static manifest conf
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
     const config: RemoteAdapterConfig = {
+      teamId: TEST_TEAM_ID,
       adapterType: POLY_ADAPTER_TYPE,
       baseUrl: `http://127.0.0.1:${port}/`,
       authStrategy: { kind: 'bearer' },

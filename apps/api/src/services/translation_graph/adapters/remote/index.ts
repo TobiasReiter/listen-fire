@@ -81,6 +81,7 @@ import type { Expression } from '#shared/expression/types';
 
 import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
 import type { AuthStrategy } from '../../protocol/client';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { METHODS, WireManifestProtocolVersion } from '../../protocol/schema';
 import type { MethodName } from '../../protocol/schema';
 import { iterateRelatedPages, writeParentLinks, unsupportedAssociation } from '../../adapter';
@@ -88,6 +89,8 @@ import { iterateRelatedPages, writeParentLinks, unsupportedAssociation } from '.
 export interface RemoteAdapterConfig {
   /** Slug the engine routes on. */
   adapterType: string;
+  /** The team whose install this is — sent with every call. */
+  teamId: TeamId;
   baseUrl: string;
   authStrategy: AuthStrategy;
   credentialsId: string;
@@ -139,12 +142,13 @@ export const OPTIONAL_REMOTE_METHODS = [
  * crossing back into branded types).
  */
 export async function fetchRemoteManifest(
-  config: Pick<RemoteAdapterConfig, 'adapterType' | 'baseUrl' | 'authStrategy'>,
+  config: Pick<RemoteAdapterConfig, 'adapterType' | 'teamId' | 'baseUrl' | 'authStrategy'>,
   secret: string,
 ): Promise<RemoteManifest> {
   const raw = await postRpc({
     baseUrl: config.baseUrl,
     auth: authHeader(config.authStrategy, secret),
+    teamId: config.teamId,
     method: 'manifest',
     cacheScopeId: '<none>',
     params: {},
@@ -224,6 +228,7 @@ export class RemoteAdapter implements Adapter {
     const result = await postRpc({
       baseUrl: this.config.baseUrl,
       auth: authHeader(this.config.authStrategy, this.secret),
+      teamId: this.config.teamId,
       method,
       cacheScopeId: this.cacheScopeId,
       params,

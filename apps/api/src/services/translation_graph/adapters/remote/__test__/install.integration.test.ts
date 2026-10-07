@@ -169,3 +169,27 @@ describe('installRemoteAdapterFromManifest with no credential to ask with', () =
     ).rejects.toThrow(/cannot be installed without its secret: protocolVersion: expected 2, got nothing/);
   });
 });
+
+describe('installRemoteAdapterFromManifest with a slug a built-in answers to', () => {
+  it.each(['slack', 'gmail', 'SLACK', 'callback'])(
+    'refuses %s before asking the server or minting anything',
+    async (slug) => {
+      await expect(
+        installRemoteAdapterFromManifest({ teamId, manifest: manifest(slug, v2Server.baseUrl), secret: SECRET }),
+      ).rejects.toThrow(/Remote adapter cannot be installed: .* a remote adapter needs a slug of its own/);
+
+      const rows = await getAutomationsQb(['remote_adapter'])
+        .selectFrom('remote_adapter')
+        .where('team_id', '=', teamId)
+        .select(['id'])
+        .execute();
+      expect(rows).toEqual([]);
+      const creds = await getAutomationsQb(['external_service_credentials'])
+        .selectFrom('external_service_credentials')
+        .where('team_id', '=', teamId)
+        .select(['id'])
+        .execute();
+      expect(creds).toEqual([]);
+    },
+  );
+});

@@ -5,6 +5,7 @@ import {
   RemoteProtocolError,
 } from '../client';
 import { PROTOCOL_VERSION } from '../schema';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 function mockFetchOnce(impl: (url: string, init: RequestInit) => Response | Promise<Response>) {
   const fn = jest.fn(impl);
@@ -46,6 +47,8 @@ describe('authHeader', () => {
   });
 });
 
+const TEAM = '00000000-0000-4000-8000-0000000000a1' as TeamId;
+
 describe('postRpc', () => {
   it('POSTs the canonical envelope + auth header and returns result on ok:true', async () => {
     const fetchMock = mockFetchOnce(() =>
@@ -55,6 +58,7 @@ describe('postRpc', () => {
     const result = await postRpc({
       baseUrl: 'https://adapter.example/rpc',
       auth: authHeader({ kind: 'bearer' }, 'tok'),
+      teamId: TEAM,
       method: 'describe',
       cacheScopeId: 'scope-1',
       params: { typeId: 'email:message' },
@@ -67,6 +71,8 @@ describe('postRpc', () => {
     expect(url).toBe('https://adapter.example/rpc');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+    // Every call names the team whose install is calling.
+    expect((init.headers as Record<string, string>)['x-listen-fire-team']).toBe(TEAM);
     expect(PROTOCOL_VERSION).toBe('2');
     expect(JSON.parse(init.body as string)).toEqual({
       protocolVersion: PROTOCOL_VERSION,
@@ -88,6 +94,7 @@ describe('postRpc', () => {
       postRpc({
         baseUrl: 'https://x/rpc',
         auth: {},
+        teamId: TEAM,
         method: 'snapshot',
         cacheScopeId: 's',
         params: {},
@@ -105,7 +112,7 @@ describe('postRpc', () => {
           error: { code: 'boom', message: 'no', retryable: false },
         }),
       );
-      await postRpc({ baseUrl: 'https://x/rpc', auth: {}, method: 'm', cacheScopeId: 's', params: {} });
+      await postRpc({ baseUrl: 'https://x/rpc', auth: {}, teamId: TEAM, method: 'm', cacheScopeId: 's', params: {} });
     } catch (e) {
       expect(e).toBeInstanceOf(RemoteProtocolError);
       expect((e as RemoteProtocolError).error.code).toBe('boom');
@@ -119,6 +126,7 @@ describe('postRpc', () => {
       await postRpc({
         baseUrl: 'https://x/rpc',
         auth: authHeader({ kind: 'shared_secret' }, 'k'),
+        teamId: TEAM,
         method: 'poll',
         cacheScopeId: 's',
         params: {},
@@ -136,7 +144,7 @@ describe('postRpc', () => {
   it('throws when the response envelope is malformed', async () => {
     mockFetchOnce(() => jsonResponse({ garbage: 1 }));
     await expect(
-      postRpc({ baseUrl: 'https://x/rpc', auth: {}, method: 'm', cacheScopeId: 's', params: {} }),
+      postRpc({ baseUrl: 'https://x/rpc', auth: {}, teamId: TEAM, method: 'm', cacheScopeId: 's', params: {} }),
     ).rejects.toThrow();
   });
 
@@ -149,6 +157,7 @@ describe('postRpc', () => {
       postRpc({
         baseUrl: 'https://x/rpc',
         auth: {},
+        teamId: TEAM,
         method: 'resolveEntity',
         cacheScopeId: 's',
         params: {},

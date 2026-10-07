@@ -17,6 +17,7 @@ import { MANIFEST_PROTOCOL_VERSION } from '../../protocol/schema';
 import { loadRemoteAdapterSecret } from '../resolve';
 import { fetchRemoteManifest } from './index';
 import { RemoteAdapterManifestFile, RemoteAdapterManifestInput } from './manifest';
+import { remoteSlugRefusal } from './slugs';
 import { upsertRemoteAdapter } from './store';
 
 export interface InstallRemoteAdapterInput {
@@ -38,6 +39,10 @@ export interface InstallRemoteAdapterInput {
 export async function installRemoteAdapterFromManifest(
   input: InstallRemoteAdapterInput,
 ): Promise<{ id: string; credentialsId: string | null }> {
+  // Refused before anything is asked of the server or minted, so a colliding
+  // install leaves nothing behind.
+  const refusal = remoteSlugRefusal(input.manifest.adapterType);
+  if (refusal !== null) throw new Error(`Remote adapter cannot be installed: ${refusal}`);
   const protocolVersion = await probeProtocolVersion(input);
 
   let credentialsId: string | null = input.manifest.credentialsId ?? null;
@@ -89,6 +94,6 @@ export async function probeProtocolVersion(
     }
     return claimed.data;
   }
-  await fetchRemoteManifest(manifest, secret);
+  await fetchRemoteManifest({ ...manifest, teamId: input.teamId }, secret);
   return MANIFEST_PROTOCOL_VERSION;
 }

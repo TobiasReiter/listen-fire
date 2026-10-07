@@ -258,7 +258,7 @@ describe('movementCatalogSnapshotForTeam (skeleton)', () => {
     expect(snapshot.adapters.kg).toBeDefined();
     expect('kg' in snapshot).toBe(false);
     expect(notes).toEqual([
-      'attio: a remote install collides with a built-in adapter — the built-in wins',
+      'attio: a remote install collides with a name a built-in adapter answers to — the built-in wins',
       'hubspot: no HUBSPOT credential on this team — instance untyped',
     ]);
   });

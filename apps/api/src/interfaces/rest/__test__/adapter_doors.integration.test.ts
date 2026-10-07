@@ -44,6 +44,8 @@ import {
 } from '../../../scripts/dev/fake_crm_adapter';
 import { RemoteAdapterManifestInput } from '../../../services/translation_graph/adapters/remote/manifest';
 import { installRemoteAdapterFromManifest } from '../../../services/translation_graph/adapters/remote/install';
+import { upsertRemoteAdapter } from '../../../services/translation_graph/adapters/remote/store';
+import { mintRemoteCredential } from '../../../services/credentials/remote_credential';
 import { loadCorrelatedParks, registerAwaitCorrelation } from '../../../services/translation_graph/adapters/await_correlation';
 import { syncListenSubscriptions } from '../../../services/translation_graph/movement/listen_subscriptions';
 import { mintMovementVersionIfChanged } from '../../../services/translation_graph/movement/version_store';
@@ -376,6 +378,28 @@ describe('the doors refuse a caller who is not the install', () => {
     expect(wake).toEqual({ status: 401, body: { error: 'unauthorized' } });
     expect(await workRows(teamId)).toEqual([]);
     expect(await workRows(otherTeamId)).toEqual([]);
+  });
+
+  it('a row whose slug a built-in answers to (written past install) is 401 even with its own valid secret', async () => {
+    const { credentialsId } = await mintRemoteCredential({
+      teamId,
+      userId: null,
+      adapterType: 'slack',
+      displayName: 'Shadow Slack',
+      secret: SECRET,
+      replaceExisting: true,
+    });
+    await upsertRemoteAdapter({
+      teamId,
+      manifest: { ...fakeCrmManifest(crm.baseUrl), adapterType: 'slack', protocolVersion: 2, credentialsId },
+    });
+
+    const wake = await post('/api/public/adapter/slack/wake', { keys: ['k'] }, BEARER());
+    const emit = await post('/api/public/adapter/slack/emit', { events: [{ payload: {} }] }, BEARER());
+
+    expect(wake).toEqual({ status: 401, body: { error: 'unauthorized' } });
+    expect(emit).toEqual({ status: 401, body: { error: 'unauthorized' } });
+    expect(await workRows(teamId)).toEqual([]);
   });
 
   it("one team's credential at another team's adapter type is 401, and neither team gets a row", async () => {

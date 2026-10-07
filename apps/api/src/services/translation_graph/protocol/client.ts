@@ -8,8 +8,17 @@
 
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
 import { PROTOCOL_VERSION, RpcResponse } from './schema';
 import type { RpcErrorShape } from './schema';
+
+/**
+ * The header naming a team, both ways: the host sends it on every call to a
+ * remote adapter, so a vendor serving several teams learns which install is
+ * calling, and a vendor names its team in it at the push doors when one
+ * credential is shared by several teams' installs.
+ */
+export const ADAPTER_TEAM_HEADER = 'x-listen-fire-team';
 
 /**
  * A protocol response that didn't match the schema for its method — the
@@ -106,13 +115,15 @@ export function authHeader(strategy: AuthStrategy, secret: string): Record<strin
 export async function postRpc(opts: {
   baseUrl: string;
   auth: Record<string, string>;
+  /** The team whose install is calling, sent as `x-listen-fire-team`. */
+  teamId: TeamId;
   method: string;
   cacheScopeId: string;
   params: unknown;
 }): Promise<unknown> {
   const res = await fetch(opts.baseUrl, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...opts.auth },
+    headers: { 'content-type': 'application/json', [ADAPTER_TEAM_HEADER]: opts.teamId, ...opts.auth },
     body: JSON.stringify({
       protocolVersion: PROTOCOL_VERSION,
       method: opts.method,

@@ -42,6 +42,10 @@ import { naturalName } from '../../name_resolution';
 import { createAdapterProtocolHandler } from '../../../protocol/server';
 import { createRemoteAdapter, fetchRemoteManifest } from '../index';
 import type { RemoteAdapter, RemoteAdapterConfig } from '../index';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
+/** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
+const CONFIG_TEAM_ID = '00000000-0000-4000-8000-0000000000c1' as TeamId;
 
 const ADAPTER_TYPE = 'synthetic_crm';
 const SECRET = 'synthetic-secret';
@@ -333,6 +337,7 @@ beforeAll(async () => {
   if (address === null || typeof address === 'string') throw new Error('server has no port');
 
   const config: RemoteAdapterConfig = {
+    teamId: CONFIG_TEAM_ID,
     adapterType: ADAPTER_TYPE,
     baseUrl: `http://127.0.0.1:${address.port}/`,
     authStrategy: { kind: 'bearer' },

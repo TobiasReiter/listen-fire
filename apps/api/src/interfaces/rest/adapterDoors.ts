@@ -5,9 +5,10 @@
 //
 // Both answer 202 `{ accepted }` once the work rows are queued; 401 (no detail)
 // when the presented credential matches no install — whether or not anyone
-// installed the type, so the door says nothing about who did; 409 when it
-// matches installs on several teams and no `x-listen-fire-team` names one; 400
-// for a malformed body.
+// installed the type, so the door says nothing about who did, and always for a
+// type whose slug a built-in answers to; 409 when it matches installs on
+// several teams and no `x-listen-fire-team` names one; 400 for a malformed
+// body; 413 for a body over 1 MB.
 
 import express, { Router } from 'express';
 import type { Request, Response } from 'express';
@@ -19,9 +20,9 @@ import {
   authenticateAdapterDoor,
   emitAdapterEvents,
   wakeAdapterKeys,
-  ADAPTER_TEAM_HEADER,
   type AdapterDoorCaller,
 } from '../../services/webhook_sync/adapter_doors';
+import { ADAPTER_TEAM_HEADER } from '../../services/translation_graph/protocol/client';
 import { neverAsAny } from '../../lib/utils/types';
 import { logger } from '../../services/logger';
 
@@ -33,8 +34,10 @@ const WakeBody = z.object({ keys: z.array(z.string().min(1)).min(1).max(MAX_BATC
 const adapterDoorsRouter: ReturnType<typeof Router> = Router();
 
 // The doors are self-authorising (the presented credential is the auth), so they
-// mount before the app's JSON parser and bring their own.
-adapterDoorsRouter.use(express.json({ type: 'application/json', limit: 25 * MB }));
+// mount before the app's JSON parser and bring their own. A body over the limit
+// is refused 413 before anything is authenticated or read; a batch that large
+// is split by its sender.
+adapterDoorsRouter.use(express.json({ type: 'application/json', limit: MB }));
 
 /** Authenticate, or answer the refusal. */
 async function callerOf(req: Request, res: Response): Promise<AdapterDoorCaller | null> {

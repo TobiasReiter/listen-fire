@@ -16,6 +16,10 @@ jest.mock('../../../protocol/client', () => {
 
 import { postRpc } from '../../../protocol/client';
 import { RemoteAdapter, createRemoteAdapter, fetchRemoteManifest } from '../index';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
+/** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
+const CONFIG_TEAM_ID = '00000000-0000-4000-8000-0000000000c1' as TeamId;
 
 const postRpcMock = postRpc as jest.MockedFunction<typeof postRpc>;
 
@@ -25,6 +29,7 @@ const runtimeCapabilities: RuntimeCapabilities = {
 };
 
 const config: RemoteAdapterConfig = {
+  teamId: CONFIG_TEAM_ID,
   adapterType: 'remote-email',
   baseUrl: 'https://adapter.example/rpc',
   authStrategy: { kind: 'bearer' },
