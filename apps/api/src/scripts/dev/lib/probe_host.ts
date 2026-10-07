@@ -9,8 +9,8 @@ import { productionEngineHost } from '../../../services/translation_graph/moveme
 export function probeEngineHost(input: { teamId: TeamId; adapters: EngineHost['adapters'] }): EngineHost {
   const host = productionEngineHost({
     teamId: input.teamId,
-    // A probe's movement imports no files: every import is not found.
-    catalog: { resolveCredentialId: input.adapters.credentialId, resolveFile: () => undefined },
+    // The probe's own adapters answer credential ids; these are never read.
+    credentialIds: {},
   });
   return { ...host, adapters: input.adapters };
 }

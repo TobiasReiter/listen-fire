@@ -27,7 +27,7 @@ import { resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
 import type { TriggerEvent } from '../triggers/types';
 import { loadTriggerById } from '../storage/tg_table';
-import { movementCatalogForTeam } from './catalog';
+import { movementCatalogSnapshotForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';
 import { inMemoryRawTextStore } from './raw_text_store';
 import { InMemoryWriteLocks } from '../../write_locks/write_locks';
@@ -146,9 +146,9 @@ export async function runMovementTestRun(
     occurredAt: new Date().toISOString(),
   };
 
-  let teamCatalog: Awaited<ReturnType<typeof movementCatalogForTeam>>;
+  let teamCatalog: Awaited<ReturnType<typeof movementCatalogSnapshotForTeam>>;
   try {
-    teamCatalog = await movementCatalogForTeam(input.teamId, {
+    teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
       source: movementRow.source,
       languageVersion: movementRow.languageVersion,
     });
@@ -169,13 +169,13 @@ export async function runMovementTestRun(
         : {}),
       event,
       teamId: input.teamId,
-      catalog: teamCatalog.catalog,
+      catalog: teamCatalog.snapshot,
       // A test run leaves nothing durable behind, its file text included, and
       // captures its writes rather than making them, so it takes no cross-run
       // lock a live firing could wait on.
       host: productionEngineHost({
         teamId: input.teamId,
-        catalog: teamCatalog,
+        credentialIds: teamCatalog.credentialIds,
         rawText: inMemoryRawTextStore(),
         locks: new InMemoryWriteLocks(),
       }),

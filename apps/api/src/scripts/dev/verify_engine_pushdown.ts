@@ -21,7 +21,7 @@
 import type { InstanceSchema } from 'movement-lang';
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { runMovement } from '../../services/movement_engine/run';
-import { staticCatalogFromManifests } from '../../services/translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../services/translation_graph/movement/catalog';
 import { createManualAdapter } from '../../services/translation_graph/adapters/manual';
 import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
 import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
@@ -126,7 +126,7 @@ async function run(label: string, body: string): Promise<void> {
     source: movementSource(body),
     event: manualEvent(),
     teamId: TEAM_ID,
-    catalog: staticCatalogFromManifests({
+    catalog: staticCatalogSnapshot({
       credentials: { affinity_cred: { adapters: ['affinity'] } },
       instanceSchemas: { affinity: affinitySchema },
     }),

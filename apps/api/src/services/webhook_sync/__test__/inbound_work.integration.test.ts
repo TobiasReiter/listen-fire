@@ -8,7 +8,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 
 jest.mock('../../translation_graph/movement/catalog', () => {
   const actual = jest.requireActual('../../translation_graph/movement/catalog');
-  return { ...actual, movementCatalogForTeam: jest.fn() };
+  return { ...actual, movementCatalogSnapshotForTeam: jest.fn() };
 });
 jest.mock('../../translation_graph/adapters/resolve', () => {
   const actual = jest.requireActual('../../translation_graph/adapters/resolve');
@@ -45,9 +45,9 @@ import type { ExternalServiceCredentialsId } from '../../../generated/kysely/aut
 import type { WebhookSubscriptionId } from '../../../generated/kysely/automations/WebhookSubscription';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import type { Catalog, InstanceSchema, PositionSchema } from 'movement-lang';
+import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
-import { movementCatalogForTeam, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { movementCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { resumeMovementFiring } from '../../translation_graph/movement/execute';
 import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/router';
@@ -65,7 +65,7 @@ import { logger } from '../../logger';
 import { runHarnessDelivery } from '../../work/harness';
 import { claimDueWork, completeWork } from '../../work/store';
 
-const mockedCatalog = movementCatalogForTeam as jest.Mock;
+const mockedCatalog = movementCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
 const mockedResume = resumeMovementFiring as jest.Mock;
 const mockedDispatch = dispatchTriggerByIdEvent as jest.Mock;
@@ -98,17 +98,17 @@ const ATTIO_SCHEMA: InstanceSchema = {
   eventPositions: [{ position: EVENT }],
 };
 
-function buildCatalog(): Catalog {
+function buildCatalog(): CatalogSnapshot {
   const base = staticCatalogFromManifests({
     credentials: { acme_main: { adapters: ['attio'] }, acme_slack: { adapters: ['slack'] } },
   });
-  return {
+  return snapshotOverManifests({
     ...base,
     instantiate(name, args) {
       if (name === 'attio') return ATTIO_SCHEMA;
       return base.instantiate(name, args);
     },
-  };
+  });
 }
 
 /** A fake adapter whose inbound seam hands back `events` verbatim. */
@@ -332,13 +332,11 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       .values({ id: teamId, name: `inbound-work-${teamId.slice(0, 8)}` } as any)
       .execute();
 
+    const catalog = buildCatalog();
     mockedCatalog.mockResolvedValue({
-      catalog: buildCatalog(),
-      resolveCredentialId: () => 'cred-1',
-      credentialsByName: {},
-      resolveFile: () => null,
+      snapshot: catalog,
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
       notes: [],
-      gaps: [],
     });
     slackEvents = [];
     attioEvents = [ATTIO_EVENT];

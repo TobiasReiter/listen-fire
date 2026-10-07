@@ -92,7 +92,7 @@ import {
 } from '../effect_locks';
 import { InMemoryWriteLocks, type WriteLockHolder } from '../../write_locks/write_locks';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -258,7 +258,7 @@ const ATTIO_SCHEMA: InstanceSchema = {
   supportsInPlaceUpdate: true,
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
   instanceSchemas: { attio: ATTIO_SCHEMA },
 });

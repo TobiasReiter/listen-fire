@@ -85,7 +85,7 @@ jest.mock('../../../movement_engine/run', () => {
 });
 
 jest.mock('../catalog', () => ({
-  movementCatalogForTeam: jest.fn(),
+  movementCatalogSnapshotForTeam: jest.fn(),
 }));
 
 jest.mock('../store', () => ({
@@ -125,8 +125,8 @@ const { runMovement, resumeMovement, MovementRunFailed } = jest.requireMock(
   resumeMovement: jest.Mock;
   MovementRunFailed: new (cause: unknown, partial: unknown) => Error;
 };
-const { movementCatalogForTeam } = jest.requireMock('../catalog') as {
-  movementCatalogForTeam: jest.Mock;
+const { movementCatalogSnapshotForTeam } = jest.requireMock('../catalog') as {
+  movementCatalogSnapshotForTeam: jest.Mock;
 };
 const { getMovementRow } = jest.requireMock('../store') as {
   getMovementRow: jest.Mock;
@@ -171,15 +171,14 @@ const event: TriggerEvent = {
 };
 
 const teamCatalog = {
-  catalog: { fake: true },
-  resolveCredentialId: jest.fn(),
-  credentialsByName: {},
+  snapshot: { fake: true },
+  credentialIds: {},
   notes: [],
 };
 
 beforeEach(() => {
   jest.clearAllMocks();
-  movementCatalogForTeam.mockResolvedValue(teamCatalog);
+  movementCatalogSnapshotForTeam.mockResolvedValue(teamCatalog);
 });
 
 describe('runMovementFiring', () => {
@@ -218,7 +217,7 @@ describe('runMovementFiring', () => {
     // movement the listen fires (name convention). Natural-name → internal-id
     // translation is the engine's adapter-layer concern now — no map rides
     // the runMovement input.
-    expect(movementCatalogForTeam).toHaveBeenCalledWith(TEAM, { source: CLEAN_SOURCE });
+    expect(movementCatalogSnapshotForTeam).toHaveBeenCalledWith(TEAM, { source: CLEAN_SOURCE });
     expect(runMovement).toHaveBeenCalledWith(
       expect.objectContaining({
         source: CLEAN_SOURCE,

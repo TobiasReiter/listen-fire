@@ -82,7 +82,7 @@ import type { ParkSink } from '../run';
 import type { CallbackSink } from '../host';
 import type { ParkedScopeState } from '../serialize';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   RESOURCES_REFERENCE_FIELD_ID,
   type Adapter,
@@ -216,7 +216,7 @@ function webhookEvent(adapterType: string, payload: Record<string, unknown>): Tr
 // The inbox is TYPED here (the thin fixture leaves email untyped), so a graph
 // literal's shape check has teeth — and its attachments are updatable in
 // place, so a write through a reference has a real record to reach.
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     team_drive: { adapters: ['dropbox'] },

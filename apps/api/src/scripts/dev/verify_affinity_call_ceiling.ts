@@ -21,7 +21,7 @@
  * Needs DATABASE_URL: the production host's cross-run write locks are
  * Postgres advisory locks.
  */
-import { fromCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
+import type { CatalogSnapshot } from 'movement-lang';
 import { runMovement } from '../../services/movement_engine/run';
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { AffinityAdapter, AFFINITY_MANIFEST } from '../../services/translation_graph/adapters/affinity';
@@ -114,7 +114,7 @@ const event = {
 
 async function sweep(
   adapter: AffinityAdapter,
-  catalog: ReturnType<typeof fromCatalogSnapshot>,
+  catalog: CatalogSnapshot,
 ): Promise<{ calls: number; failure?: string }> {
   const mark = requests.length;
   try {
@@ -162,7 +162,7 @@ async function seedCompanies(): Promise<number> {
 async function main() {
   console.log(`\n── the fake workspace holds ${await seedCompanies()} companies`);
   const adapter = adapterOnFake();
-  const catalog = fromCatalogSnapshot(await snapshot(adapter));
+  const catalog = await snapshot(adapter);
 
   console.log('\n── the run, held to a ceiling of 2');
   process.env[ENV_VAR] = '2';

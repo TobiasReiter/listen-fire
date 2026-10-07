@@ -34,6 +34,7 @@
 import {
   entryPositionKeyOf,
   instanceSchemaKey,
+  catalogSnapshotOf,
   maybeAbsent,
   parseMovementExpression,
   parseTraversalPath,
@@ -536,6 +537,27 @@ export function staticCatalogFromManifests(
       return schema !== undefined ? { ...schema, edgesCarryProperties: true } : undefined;
     },
   };
+}
+
+/**
+ * A catalog over the static manifests, as the snapshot the engine takes:
+ * every manifest adapter and registered plugin, read through `catalog` —
+ * `staticCatalogFromManifests`, or a fixture wrapping it. The catalog's
+ * credentials come along via its `credentialNames()`.
+ */
+export function snapshotOverManifests(catalog: Catalog): CatalogSnapshot {
+  registerBundledTransforms();
+  return catalogSnapshotOf(catalog, {
+    adapters: listAdapterManifests().map((m) => m.adapterType),
+    plugins: Object.keys(registeredPluginSpecs()),
+  });
+}
+
+/** `staticCatalogFromManifests`, as the snapshot the engine takes. */
+export function staticCatalogSnapshot(
+  options: Parameters<typeof staticCatalogFromManifests>[0] = {},
+): CatalogSnapshot {
+  return snapshotOverManifests(staticCatalogFromManifests(options));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1642,6 +1664,12 @@ export interface TeamCatalogSnapshot {
    * identical in the diagnostics, which is why it must be said out loud.
    */
   gaps?: CatalogGap[];
+  /**
+   * Credential import name → `external_service_credentials.id`. Beside the
+   * snapshot, never in it: the snapshot is what the engine and the browser
+   * read, and credentials stay with the host that resolves adapters.
+   */
+  credentialIds: Record<string, string>;
 }
 
 /**
@@ -1729,6 +1757,8 @@ export async function movementCatalogSnapshotForTeam(
      * cost is bounded by what the program actually names.
      */
     source?: string;
+    /** `source`'s language-version pin — absent means the current version. */
+    languageVersion?: LanguageVersion;
   } = {},
 ): Promise<TeamCatalogSnapshot> {
   registerBundledTransforms();
@@ -1791,7 +1821,10 @@ export async function movementCatalogSnapshotForTeam(
   // whole point; a second implementation here is what let them disagree.
   let gaps: CatalogGap[] = [];
   if (options.source !== undefined) {
-    const live = await movementCatalogForTeam(teamId, { source: options.source });
+    const live = await movementCatalogForTeam(teamId, {
+      source: options.source,
+      ...(options.languageVersion !== undefined ? { languageVersion: options.languageVersion } : {}),
+    });
     notes.push(...live.notes);
     gaps = live.gaps;
     for (const instance of live.instanceSchemas) {
@@ -1816,8 +1849,10 @@ export async function movementCatalogSnapshotForTeam(
   }
 
   const credentials: Record<string, CredentialSpec> = {};
+  const credentialIds: Record<string, string> = {};
   for (const [name, row] of Object.entries(credentialsByName)) {
     credentials[name] = { adapters: row.adapters };
+    credentialIds[name] = row.id;
   }
 
   const plugins = registeredPluginSpecs();
@@ -1850,6 +1885,7 @@ export async function movementCatalogSnapshotForTeam(
     notes,
     remoteConnections,
     ...(gaps.length > 0 ? { gaps } : {}),
+    credentialIds,
   };
 }
 

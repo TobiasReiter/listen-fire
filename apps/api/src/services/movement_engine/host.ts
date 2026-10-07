@@ -169,8 +169,10 @@ export interface EngineHost {
   };
   files: {
     /** File-import resolution (movement libraries): the checker links imports
-     *  through it and the engine runs the linked result. Absent ⇒ a file
-     *  import raises MOVENG_UNSUPPORTED. */
+     *  through it and the engine runs the linked result. Consulted only when
+     *  the run's catalog snapshot carries no `files` — the snapshot's files
+     *  were captured with its schemas, so they win. Neither ⇒ a file import
+     *  raises MOVENG_UNSUPPORTED. */
     resolveFile?: ResolveFile;
     resolveFileText: ResolveFileText;
   };

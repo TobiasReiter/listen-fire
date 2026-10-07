@@ -92,7 +92,10 @@ jest.mock('../../../lib/anthropic', () => ({
 
 import type { Catalog, InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import {
+  snapshotOverManifests,
+  staticCatalogFromManifests,
+} from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -310,10 +313,11 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const manifestCatalog = staticCatalogFromManifests({
   credentials: { acme_main: { adapters: ['attio'] } },
   instanceSchemas: { kg: kgSchema },
 });
+const catalog = snapshotOverManifests(manifestCatalog);
 
 // The real attio company schema (captured reality, `staticCatalogFromManifests`'s
 // thin instance schema) has no date field, and the fix for the UnsnoozeActions
@@ -321,10 +325,10 @@ const catalog = staticCatalogFromManifests({
 // against `@current_date` — never edit the captured schema to manufacture one.
 // This derives a TEST-LOCAL extension instead: the real schema, plus one
 // honestly-dated `founded` field on `company`.
-const datedCompanyCatalog: Catalog = {
-  ...catalog,
+const datedCompanyCatalog = snapshotOverManifests({
+  ...manifestCatalog,
   instantiate: (adapter, args) => {
-    const schema = catalog.instantiate(adapter, args);
+    const schema = manifestCatalog.instantiate(adapter, args);
     if (adapter !== 'attio' || schema === undefined) return schema;
     return {
       ...schema,
@@ -337,7 +341,7 @@ const datedCompanyCatalog: Catalog = {
       },
     };
   },
-};
+});
 
 const CREDENTIAL_IDS: Record<string, string> = { acme_main: 'cred-attio-1' };
 

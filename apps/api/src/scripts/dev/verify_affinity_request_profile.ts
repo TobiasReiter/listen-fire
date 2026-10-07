@@ -44,7 +44,7 @@
  * Needs DATABASE_URL: the production host's cross-run write locks are
  * Postgres advisory locks.
  */
-import { fromCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
+import type { CatalogSnapshot } from 'movement-lang';
 import { runMovement } from '../../services/movement_engine/run';
 import { withRunCallLedger } from '../../services/movement_engine/run_scope';
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
@@ -355,7 +355,7 @@ async function runOne(
   source: string,
   movementName: string,
   client: AffinityAPIClient,
-  catalog: ReturnType<typeof fromCatalogSnapshot>,
+  catalog: CatalogSnapshot,
 ): Promise<string[]> {
   // One instance per ROLE, as the engine builds them — the memo has to span
   // both or the source-role read and the target-role write disagree.
@@ -410,18 +410,16 @@ async function main() {
   const warm = requests.length - mark;
   console.log(`\n── catalog build: ${cold} requests cold, ${warm} warm`);
 
-  const catalog = fromCatalogSnapshot(snap);
-
   // ── the two runs ─────────────────────────────────────────────────────────
   const client = makeClient();
 
-  const createDedup = await runOne(DEDUP, 'Dedup Check', client, catalog);
-  const createUpsert = await runOne(UPSERT, 'Upsert Deal', client, catalog);
+  const createDedup = await runOne(DEDUP, 'Dedup Check', client, snap);
+  const createUpsert = await runOne(UPSERT, 'Upsert Deal', client, snap);
   profile('CREATE run — dedup reads', createDedup);
   profile('CREATE run — Upsert Deal', createUpsert);
 
-  const matchDedup = await runOne(DEDUP, 'Dedup Check', client, catalog);
-  const matchUpsert = await runOne(UPSERT, 'Upsert Deal', client, catalog);
+  const matchDedup = await runOne(DEDUP, 'Dedup Check', client, snap);
+  const matchUpsert = await runOne(UPSERT, 'Upsert Deal', client, snap);
   profile('MATCH run — dedup reads', matchDedup);
   profile('MATCH run — Upsert Deal', matchUpsert);
 
@@ -455,13 +453,13 @@ async function main() {
   // ── (a) / (b): set-if-empty and a real change, twice in one run ──────────
   console.log('\n── (a) two set-if-empty writes in one run');
   await seed();
-  await runOne(FILL_TWICE, 'Fill Twice', makeClient(), catalog);
+  await runOne(FILL_TWICE, 'Fill Twice', makeClient(), snap);
   let stage = (await fieldValues()).filter((v) => v.field_id === 902);
   check(stage.length === 1 && stage[0].value === 'First', `Deal Stage stayed "First" (got ${JSON.stringify(stage.map((s) => s.value))})`);
 
   console.log('\n── (b) a genuine change after a read in the same run');
   await seed();
-  await runOne(FILL_THEN_CHANGE, 'Fill Then Change', makeClient(), catalog);
+  await runOne(FILL_THEN_CHANGE, 'Fill Then Change', makeClient(), snap);
   stage = (await fieldValues()).filter((v) => v.field_id === 902);
   check(stage.length === 1 && stage[0].value === 'Changed', `Deal Stage became "Changed" (got ${JSON.stringify(stage.map((s) => s.value))})`);
 

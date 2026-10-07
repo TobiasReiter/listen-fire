@@ -80,7 +80,7 @@ import { runMovement } from '../run';
 import type { MovementTransformInvoker } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -155,7 +155,7 @@ function makeFakeAdapter(adapterType: string, latencyMs = 0) {
   return { adapter, creates, updates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 

@@ -109,7 +109,7 @@ jest.mock('../../playwright', () => ({
 }));
 
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -241,7 +241,7 @@ function webhookEvent(adapterType: string, payload: Record<string, unknown>): Tr
 
 // ── Catalog / fixture ────────────────────────────────────────────────────────
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dev_slack: { adapters: ['slack'] },
     acme_drive: { adapters: ['affinity'] }, // no thin schema → untyped target (checker silent)

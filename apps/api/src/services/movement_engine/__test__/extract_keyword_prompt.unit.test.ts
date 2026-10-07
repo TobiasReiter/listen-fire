@@ -82,7 +82,7 @@ jest.mock('../../../lib/anthropic', () => ({
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import type {
   LlmCallInput,
@@ -139,7 +139,7 @@ const emailSchema: InstanceSchema = {
   writableRoots: {},
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
   },

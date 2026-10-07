@@ -97,7 +97,7 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { mockCatalog, type Catalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { anthropicChat } from '../../../lib/anthropic';
 import { runFailureCause, runMovement } from '../run';
 
@@ -468,8 +468,8 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-function makeCatalog(options: { kg?: InstanceSchema } = { kg: kgSchema }): Catalog {
-  return mockCatalog({
+function makeCatalog(options: { kg?: InstanceSchema } = { kg: kgSchema }): CatalogSnapshot {
+  return mockCatalogSnapshot({
     adapters: {
       email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
       kg: { constructionArgs: [], ...(options.kg ? { schema: options.kg } : {}) },

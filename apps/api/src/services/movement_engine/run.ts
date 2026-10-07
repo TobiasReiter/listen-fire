@@ -59,7 +59,8 @@
 // `Adapter.linkRecords` seam (KG: edge-only insert mirroring parentLink;
 // Attio: reference-field set/append) — adapters without the capability
 // are rejected by name. E8 lifts file imports (movement libraries, §H):
-// the host's `files.resolveFile` is the one injection point — resolution
+// the catalog snapshot's `files` (else the host's `files.resolveFile`) are
+// the one injection point — resolution
 // lives in movement-lang (`checkProgramWithLink` validates and returns
 // the link), imported movements execute against their library's OWN file
 // environment (built once per path), imported shapes bind as
@@ -76,6 +77,8 @@ import {
   SEQUENTIAL_COLLECTION_SETTINGS,
   type CollectionRunSettings,
   checkProgramWithLink,
+  fromCatalogSnapshot,
+  resolveFileFromSnapshot,
   before,
   CURRENT_LANGUAGE_VERSION,
   languageVersionDiagnostic,
@@ -155,6 +158,7 @@ import type {
   CallScope,
   CallStatement,
   Catalog,
+  CatalogSnapshot,
   ConstructionCall,
   ExprSlot,
   CallbackExpression,
@@ -178,6 +182,7 @@ import type {
   PathHead,
   Program,
   ProgramLink,
+  ResolveFile,
   ShapeDeclaration,
   ShapeNode,
   Statement,
@@ -407,8 +412,9 @@ export interface RunMovementInput {
    * other branch of a paused run, until the run itself is resumed.
    */
   limitPaused?: boolean;
-  /** The checker's catalog (adapters / credentials / instance schemas). */
-  catalog: Catalog;
+  /** The checker's catalog (adapters / credentials / instance schemas), as
+   *  data built for this firing — the engine never holds a live catalog. */
+  catalog: CatalogSnapshot;
   /** Everything the run reaches outside its program (`host.ts`). */
   host: EngineHost;
   /** The run this is (the host's trigger-run id), named on the engine's log
@@ -671,15 +677,15 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // Error severity only: info diagnostics (MOV_LISTEN_MISSING — a
   // dispatchable movement with no listen) never block a run; the engine is
   // routinely handed library movements to execute directly. With the
-  // host's resolveFile, the check RESOLVES file imports and the returned link is
+  // file resolver, the check RESOLVES file imports and the returned link is
   // the engine's import structure — validation and execution consume one
   // resolution.
-  const { program, link } = parseAndCheck(input);
+  const { program, prepared } = parseAndCheck(input);
   // Every way into the interpreter opens the same door: one segment, one
   // third-party call ceiling (run_scope.ts). A fifth entry point that
   // forgets `withRunCallLedger` loses the safeguard silently, so they all
   // wrap here rather than deeper.
-  return withRunCallLedger(() => new Interpreter(input, link).run(program), runScopeOf(input));
+  return withRunCallLedger(() => new Interpreter(input, prepared).run(program), runScopeOf(input));
 }
 
 /** The run context every entry point opens its segment under. */
@@ -713,10 +719,26 @@ function runScopeOf(input: RunMovementInput): {
  */
 const RETIRED_BUT_STILL_RUNNABLE = new Set<string>([DiagnosticCodes.WRITE_SHAPE_RETIRED]);
 
+/** What every entry point hands its interpreter: the catalog rebuilt from the
+ *  input's snapshot (once — the checker and the run's instantiations read the
+ *  same one) and the program's import link. */
+interface PreparedRun {
+  catalog: Catalog;
+  link?: ProgramLink;
+}
+
+/** The resolver file imports read. The snapshot's own files win: they were
+ *  captured with the catalog the program is checked against, so imports and
+ *  instance schemas describe one moment of the workspace. The host's resolver
+ *  serves a host that resolves imports dynamically and ships no files. */
+function fileResolverOf(input: RunMovementInput): ResolveFile | undefined {
+  return resolveFileFromSnapshot(input.catalog) ?? input.host.files.resolveFile;
+}
+
 /** Parse + check the program, throwing the same MOVENG_PARSE / MOVENG_CHECK
  *  errors `runMovement` does. Shared by run + resume so a resume re-validates
  *  the pinned source exactly as a fresh run did. */
-function parseAndCheck(input: RunMovementInput): { program: Program; link?: ProgramLink } {
+function parseAndCheck(input: RunMovementInput): { program: Program; prepared: PreparedRun } {
   const languageVersion = input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
   // The pin is answered before the source is read: a version this release
   // cannot honour must fail as exactly that, not as whatever the current
@@ -736,11 +758,11 @@ function parseAndCheck(input: RunMovementInput): { program: Program; link?: Prog
     }
     throw e;
   }
-  const { diagnostics: allDiagnostics, link } = checkProgramWithLink(program, input.catalog, {
+  const catalog = fromCatalogSnapshot(input.catalog);
+  const resolveFile = fileResolverOf(input);
+  const { diagnostics: allDiagnostics, link } = checkProgramWithLink(program, catalog, {
     languageVersion,
-    ...(input.host.files.resolveFile !== undefined
-      ? { resolveFile: input.host.files.resolveFile }
-      : {}),
+    ...(resolveFile !== undefined ? { resolveFile } : {}),
   });
 
   const diagnostics = allDiagnostics.filter(
@@ -755,7 +777,7 @@ function parseAndCheck(input: RunMovementInput): { program: Program; link?: Prog
       diagnostics,
     );
   }
-  return { program, ...(link !== undefined ? { link } : {}) };
+  return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
 }
 
 export interface ResumeMovementInput extends RunMovementInput {
@@ -798,7 +820,7 @@ export interface ResumeMovementInput extends RunMovementInput {
  * is byte-identical. Single-ask linear body only (chunk 5).
  */
 export async function resumeMovement(input: ResumeMovementInput): Promise<MovementRunResult> {
-  const { program, link } = parseAndCheck(input);
+  const { program, prepared } = parseAndCheck(input);
   // The answer graph `r` (§4.4): for the single-ask scalar case it's a value
   // binding (the validated answer); the post-ask body reads it as a value. A
   // `Correct` answer is a curated position-SET (the edited + surviving rows) —
@@ -808,7 +830,7 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // no answer to bind (cost / error resume re-enters AT the un-run statement).
   const answer: Binding | undefined = input.reenter ? undefined : rematerialiseAnswer(input.answer);
   return withRunCallLedger(() =>
-    new Interpreter(input, link).resume({
+    new Interpreter(input, prepared).resume({
       program,
       state: input.state,
       ...(answer !== undefined ? { answer } : {}),
@@ -833,9 +855,9 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
 export async function settleRaceFrame(
   input: ResumeMovementInput & { frameAddress: string },
 ): Promise<MovementRunResult> {
-  const { program, link } = parseAndCheck(input);
+  const { program, prepared } = parseAndCheck(input);
   return withRunCallLedger(() =>
-    new Interpreter(input, link).settleRaceFrame({
+    new Interpreter(input, prepared).settleRaceFrame({
       program,
       state: input.state,
       frameAddress: input.frameAddress,
@@ -854,9 +876,9 @@ export async function settleRaceFrame(
 export async function fireCallbackBody(
   input: ResumeMovementInput & { values: Record<string, unknown>; callIndex: number },
 ): Promise<MovementRunResult> {
-  const { program, link } = parseAndCheck(input);
+  const { program, prepared } = parseAndCheck(input);
   return withRunCallLedger(() =>
-    new Interpreter(input, link).fireCallback({
+    new Interpreter(input, prepared).fireCallback({
       program,
       state: input.state,
       values: input.values,
@@ -2379,10 +2401,13 @@ class Interpreter {
     return this.flowFrames.getStore()?.callStack ?? this.runCallStack;
   }
 
+  private readonly catalog: Catalog;
+
   constructor(
     private readonly input: RunMovementInput,
-    private readonly link?: ProgramLink,
+    prepared: PreparedRun,
   ) {
+    this.catalog = prepared.catalog;
     this.runTrace = input.host.trace ?? [];
     this.limitPaused = input.limitPaused === true;
     // A deprecated pin runs, and says so on the run's own record. (An
@@ -2393,7 +2418,7 @@ class Interpreter {
     }
     this.pinnedNow = input.firedAt ?? new Date();
     this.resolveAdapterFn = input.host.adapters.resolve;
-    this.currentImports = link?.imports;
+    this.currentImports = prepared.link?.imports;
     // The firing that started this run rides along in the provenance of every
     // graph write it makes. `suppress_self` — the 2-way-sync flag — is answered
     // from that marker alone (`didWeAuthor`), and without it an automated write
@@ -3577,9 +3602,31 @@ class Interpreter {
     identity: InstanceIdentityDescriptor,
   ): Extract<Binding, { kind: 'instance' }> {
     const args: Record<string, string> = { ...(identity.constructionConfig ?? {}) };
-    const spec = this.input.catalog.adapter(identity.adapterSlug);
+    const spec = this.catalog.adapter(identity.adapterSlug);
     const credentialArg = (spec && credentialArgOf(spec)?.name) ?? 'credentials';
     if (identity.credentialName !== undefined) args[credentialArg] = identity.credentialName;
+    // The pinned source constructs the same instances at resume as at park, so
+    // what can go missing is the team's side: the adapter uninstalled, the
+    // credential removed. Resolving such an instance anyway would hand back an
+    // untyped one that runs on as if nothing were wrong. A missing SCHEMA alone
+    // is not a miss — an instance can be untyped by design (no published
+    // surface, failed introspection), exactly as at construction.
+    const credential =
+      identity.credentialName !== undefined ? this.catalog.credential(identity.credentialName) : undefined;
+    const inSnapshot =
+      spec !== undefined &&
+      (identity.credentialName === undefined ||
+        credential?.adapters.includes(identity.adapterSlug) === true);
+    if (!inSnapshot) {
+      const spelled = Object.entries(args)
+        .map(([name, value]) => `${name}: ${value}`)
+        .join(', ');
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `instance ${identity.adapterSlug}(${spelled}) is not in the catalog snapshot`,
+      );
+    }
+    const schema = this.catalog.instantiate(identity.adapterSlug, args);
     return {
       kind: 'instance',
       name: identity.name,
@@ -3588,7 +3635,7 @@ class Interpreter {
       ...(identity.constructionConfig !== undefined
         ? { constructionConfig: identity.constructionConfig }
         : {}),
-      schema: this.input.catalog.instantiate(identity.adapterSlug, args),
+      schema,
     };
   }
 
@@ -3824,7 +3871,7 @@ class Interpreter {
           if (!this.currentImports) {
             throw unsupported(
               `the file import "${statement.source.path}"`,
-              'this run has no file resolver — its host provides no `files.resolveFile`',
+              'this run has no file resolver — its catalog snapshot carries no files and its host provides no `files.resolveFile`',
             );
           }
           await this.declareFileImports(statement.names, statement.source.path, env);
@@ -4107,7 +4154,7 @@ class Interpreter {
 
   private instanceBinding(name: string, construct: ConstructionCall): Binding {
     const adapterSlug = this.importOriginal(construct.callee);
-    const spec = this.input.catalog.adapter(adapterSlug);
+    const spec = this.catalog.adapter(adapterSlug);
     const credentialArg = (spec && credentialArgOf(spec)?.name) ?? 'credentials';
     const credential = construct.args.find((a) => a.name === credentialArg);
     const args: Record<string, string> = {};
@@ -4131,7 +4178,7 @@ class Interpreter {
       adapterSlug,
       ...(unwrappedCred !== null ? { credentialName: this.importOriginal(unwrappedCred) } : {}),
       ...(Object.keys(constructionConfig).length > 0 ? { constructionConfig } : {}),
-      schema: this.input.catalog.instantiate(adapterSlug, args),
+      schema: this.catalog.instantiate(adapterSlug, args),
     };
   }
 
@@ -5622,7 +5669,7 @@ class Interpreter {
       if (callee?.kind === 'opaque') {
         throw unsupported(
           `calling the import '${statement.callee}'`,
-          'this run has no file resolver — its host provides no `files.resolveFile` (or declare the movement in this file)',
+          'this run has no file resolver — its catalog snapshot carries no files and its host provides no `files.resolveFile` (or declare the movement in this file)',
         );
       }
       throw new MovementEngineError(

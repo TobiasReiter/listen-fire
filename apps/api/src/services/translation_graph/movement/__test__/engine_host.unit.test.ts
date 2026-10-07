@@ -21,7 +21,7 @@ import { productionEngineHost } from '../engine_host';
 import { inMemoryRawTextStore } from '../raw_text_store';
 
 const TEAM_ID = 'team-1' as TeamId;
-const catalog = { resolveCredentialId: () => undefined, resolveFile: () => undefined };
+const credentialIds = {};
 
 beforeEach(() => {
   resolverStores.length = 0;
@@ -30,14 +30,14 @@ beforeEach(() => {
 
 describe('productionEngineHost — file text storage', () => {
   it("a firing's host stores file text in the team's raw_text table", () => {
-    productionEngineHost({ teamId: TEAM_ID, catalog });
+    productionEngineHost({ teamId: TEAM_ID, credentialIds });
     expect(postgresRawTextStore).toHaveBeenCalledWith(TEAM_ID);
     expect(resolverStores).toEqual([postgresStore]);
   });
 
   it('a host given an in-memory store never builds the Postgres one', () => {
     const rawText = inMemoryRawTextStore();
-    productionEngineHost({ teamId: TEAM_ID, catalog, rawText });
+    productionEngineHost({ teamId: TEAM_ID, credentialIds, rawText });
     expect(postgresRawTextStore).not.toHaveBeenCalled();
     expect(resolverStores).toEqual([rawText]);
   });
@@ -49,5 +49,15 @@ describe('inMemoryRawTextStore', () => {
     const a = await store.getOrCreateId('  deck text ');
     expect(await store.getOrCreateId('deck text')).toBe(a);
     expect(await store.getOrCreateId('other text')).not.toBe(a);
+  });
+});
+
+// The host, not the engine, owns credential ids: they ride beside the catalog
+// snapshot, never in it.
+describe('productionEngineHost — credential ids', () => {
+  it('answers an import name from the ids it was built with, and nothing else', () => {
+    const host = productionEngineHost({ teamId: TEAM_ID, credentialIds: { acme_main: 'cred-1' } });
+    expect(host.adapters.credentialId('acme_main')).toBe('cred-1');
+    expect(host.adapters.credentialId('unknown')).toBeUndefined();
   });
 });

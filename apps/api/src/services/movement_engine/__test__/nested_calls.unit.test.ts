@@ -7,7 +7,7 @@
 
 import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -68,7 +68,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });

@@ -8,7 +8,7 @@
 // firing + recorder, read back exactly as the agent surface does.
 //
 // The two NETWORK seams a bare test DB can't stand up are mocked (and ONLY
-// those): the catalog's live adapter introspection (`movementCatalogForTeam`)
+// those): the catalog's live adapter introspection (`movementCatalogSnapshotForTeam`)
 // and adapter I/O (`resolveAdapter`). Everything else — dispatch gates, the
 // firing, the run recorder, the engine seed/narrow/traverse — runs for real.
 
@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 
 jest.mock('../catalog', () => {
   const actual = jest.requireActual('../catalog');
-  return { ...actual, movementCatalogForTeam: jest.fn() };
+  return { ...actual, movementCatalogSnapshotForTeam: jest.fn() };
 });
 jest.mock('../../adapters/resolve', () => {
   const actual = jest.requireActual('../../adapters/resolve');
@@ -33,7 +33,11 @@ import type { MovementId } from '../../../../generated/kysely/automations/Moveme
 import type { PipelineConfigurationId } from '../../../../generated/kysely/public/PipelineConfiguration';
 import { dispatchTriggerByIdEvent } from '../../triggers/router';
 import { inspectMovementRun, listMovementRuns } from '../run_now';
-import { movementCatalogForTeam, staticCatalogFromManifests } from '../catalog';
+import {
+  movementCatalogSnapshotForTeam,
+  snapshotOverManifests,
+  staticCatalogFromManifests,
+} from '../catalog';
 import { resolveAdapter } from '../../adapters/resolve';
 import {
   makeStablePosition,
@@ -41,11 +45,11 @@ import {
 } from '../../types';
 import type { Adapter, RuntimeCapabilities } from '../../adapter';
 import { containerAssociation } from '../../adapter';
-import type { Catalog, InstanceSchema, PositionSchema } from 'movement-lang';
+import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey } from 'movement-lang';
 import type { TriggerEvent } from '../../triggers/types';
 
-const mockedCatalog = movementCatalogForTeam as jest.Mock;
+const mockedCatalog = movementCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
 
 const COMPANIES_OBJECT_ID = 'obj-companies';
@@ -86,20 +90,20 @@ const ATTIO_SCHEMA: InstanceSchema = {
   eventPositions: [{ position: EVENT }],
 };
 
-function buildCatalog(): Catalog {
+function buildCatalog(): CatalogSnapshot {
   const base = staticCatalogFromManifests({
     credentials: {
       acme_main: { adapters: ['attio'] },
       acme_slack: { adapters: ['slack'] },
     },
   });
-  return {
+  return snapshotOverManifests({
     ...base,
     instantiate(name, args) {
       if (name === 'attio') return ATTIO_SCHEMA;
       return base.instantiate(name, args);
     },
-  };
+  });
 }
 
 // Fake Attio SOURCE mirroring getRecordForEvent: the `-[:Companies]->` edge
@@ -283,12 +287,9 @@ describe('typed listen events — dispatch path (real DB)', () => {
     // The catalog: hand-built (the live introspection seam is faked).
     const catalog = buildCatalog();
     mockedCatalog.mockResolvedValue({
-      catalog,
-      resolveCredentialId: () => 'cred-1',
-      credentialsByName: {},
-      resolveFile: () => null,
+      snapshot: catalog,
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
       notes: [],
-      gaps: [],
     });
 
     // Adapter I/O: a fake Attio source + a fake Slack target.

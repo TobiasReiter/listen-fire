@@ -118,7 +118,7 @@ jest.mock('../../movement/store', () => ({
   getMovementRow: jest.fn(),
 }));
 jest.mock('../../movement/catalog', () => ({
-  movementCatalogForTeam: jest.fn(),
+  movementCatalogSnapshotForTeam: jest.fn(),
 }));
 
 // The team-Context seam a background firing runs inside — pass-through here;
@@ -132,7 +132,7 @@ jest.mock('../../adapters/resolve', () => ({
   resolveAdapter: jest.fn(),
 }));
 
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { dispatchMutationEvent } from '../mutation_dispatch';
 import type {
   Adapter,
@@ -153,8 +153,8 @@ const { findTriggersByKind } = jest.requireMock('../../storage/tg_table') as {
 const { getMovementRow } = jest.requireMock('../../movement/store') as {
   getMovementRow: jest.Mock;
 };
-const { movementCatalogForTeam } = jest.requireMock('../../movement/catalog') as {
-  movementCatalogForTeam: jest.Mock;
+const { movementCatalogSnapshotForTeam } = jest.requireMock('../../movement/catalog') as {
+  movementCatalogSnapshotForTeam: jest.Mock;
 };
 const { resolveAdapter } = jest.requireMock('../../adapters/resolve') as {
   resolveAdapter: jest.Mock;
@@ -417,18 +417,15 @@ describe('dispatchMutationEvent → movement firings (a graph listen, end to end
         updatedAt: new Date(),
       };
     });
-    movementCatalogForTeam.mockResolvedValue({
-      catalog: mockCatalog({
+    movementCatalogSnapshotForTeam.mockResolvedValue({
+      snapshot: mockCatalogSnapshot({
         adapters: {
           attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }]},
           kg: { constructionArgs: [], schema: kgSchema },
         },
         credentials: { acme_main: { adapter: 'attio' } },
       }),
-      resolveCredentialId: () => 'cred-attio-1',
-      credentialsByName: {},
-      translation: {},
-      resolveFile: () => undefined,
+      credentialIds: { acme_main: 'cred-attio-1' },
       notes: [],
     });
     resolveAdapter.mockImplementation(async ({ adapterType }: { adapterType: string }) => {

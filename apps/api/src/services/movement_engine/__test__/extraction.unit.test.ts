@@ -109,7 +109,8 @@ jest.mock('../../document', () => ({
 }));
 
 import {
-  mockCatalog,
+  mockCatalogSnapshot,
+  type CatalogSnapshot,
   type ExtractExpression,
   type InstanceSchema,
   type Span,
@@ -129,7 +130,7 @@ import { NO_PROVENANCE } from '../provenance';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import { registerBundledTransforms } from '../../translation_graph/engine/transforms/register-bundled';
 import { DOCUMENT_STORE_OWNER } from '../../translation_graph/engine/files/document_store';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type {
   LlmCallInput,
   LlmCallResult,
@@ -368,7 +369,7 @@ const wrap = (value: unknown) => ({ evidence: 'q', value });
 
 // The stage-0 fixture uses the REAL static catalog (manifests + thin
 // schemas).
-const parityCatalog = staticCatalogFromManifests({
+const parityCatalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     acme_main: { adapters: ['attio'] },
@@ -429,7 +430,7 @@ const slackSchema: InstanceSchema = {
   },
 };
 
-const movementCatalog = mockCatalog({
+const movementCatalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
@@ -2385,7 +2386,7 @@ describe('EXISTS over extract edges — emission children as the traversal seam'
 //   (b) walking `extractedNode-[:_resources]->` yields the source FILE position
 //       carrying the SAME FileRef, writable to a file field (bytes upload).
 
-const carryFileSchema = (): { catalog: ReturnType<typeof mockCatalog> } => {
+const carryFileSchema = (): { catalog: CatalogSnapshot } => {
   const emailWithFiles: InstanceSchema = {
     positions: { message: { properties: { subject: 'text', text: 'text', deck: 'file' }, edges: {} } },
     collections: {},
@@ -2402,7 +2403,7 @@ const carryFileSchema = (): { catalog: ReturnType<typeof mockCatalog> } => {
     },
   };
   return {
-    catalog: mockCatalog({
+    catalog: mockCatalogSnapshot({
       adapters: {
         email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailWithFiles },
         attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioWithDeck },

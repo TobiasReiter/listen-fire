@@ -23,7 +23,7 @@ import type {
   InstanceSchema,
   PluginSpec,
 } from '../checker/catalog';
-import { credentialArgOf, entryPositionKeyOf, modelsMember } from '../checker/catalog';
+import { credentialArgOf, entryPositionKeyOf, mockCatalog, modelsMember } from '../checker/catalog';
 import type { ResolveFile } from '../checker/link';
 import { unwrapCredentialArg } from '../parser/scan';
 
@@ -280,6 +280,66 @@ export function fromCatalogSnapshot(snapshot: CatalogSnapshot): Catalog {
     },
     ...modelsMember(snapshot.models),
   };
+}
+
+/**
+ * A live `Catalog` read back out as a snapshot — for a holder of a catalog
+ * object whose consumer takes data (the movement engine takes a snapshot).
+ *
+ * A `Catalog` answers lookups but cannot list what it holds, so the caller
+ * names the adapters and plugins to read; credentials default to the
+ * catalog's own `credentialNames()`. Each instance schema is read once per
+ * (adapter, credential) at the meta position, so a catalog whose
+ * `instantiate` answers differently per entry position is flattened to its
+ * unpositioned answer — which is where a snapshot's positioned lookup falls
+ * back anyway.
+ */
+export function catalogSnapshotOf(
+  catalog: Catalog,
+  names: {
+    adapters: Iterable<string>;
+    plugins?: Iterable<string>;
+    credentials?: Iterable<string>;
+  },
+): CatalogSnapshot {
+  const credentials: Record<string, { adapters: string[] }> = {};
+  for (const name of names.credentials ?? catalog.credentialNames?.() ?? []) {
+    const spec = catalog.credential(name);
+    if (spec) credentials[name] = { adapters: [...spec.adapters] };
+  }
+  const adapters: CatalogSnapshot['adapters'] = {};
+  for (const slug of names.adapters) {
+    const spec = catalog.adapter(slug);
+    if (!spec) continue;
+    const schemas: Record<string, InstanceSchema> = {};
+    const credentialArg = credentialArgOf(spec);
+    if (!credentialArg) {
+      const schema = catalog.instantiate(slug, {});
+      if (schema) schemas[instanceSchemaKey({})] = schema;
+    } else {
+      for (const [credentialName, credential] of Object.entries(credentials)) {
+        if (!credential.adapters.includes(slug)) continue;
+        const schema = catalog.instantiate(slug, { [credentialArg.name]: credentialName });
+        if (schema) schemas[instanceSchemaKey({ credentialName })] = schema;
+      }
+    }
+    adapters[slug] = { ...spec, schemas };
+  }
+  const plugins: CatalogSnapshot['plugins'] = {};
+  for (const name of names.plugins ?? []) {
+    const spec = catalog.plugin(name);
+    if (spec) plugins[name] = spec;
+  }
+  const models = catalog.models?.();
+  return { adapters, credentials, plugins, ...(models !== undefined ? { models: [...models] } : {}) };
+}
+
+/** `mockCatalog`, as a snapshot: the fixture's own adapters and plugins. */
+export function mockCatalogSnapshot(spec: Parameters<typeof mockCatalog>[0]): CatalogSnapshot {
+  return catalogSnapshotOf(mockCatalog(spec), {
+    adapters: Object.keys(spec.adapters ?? {}),
+    plugins: Object.keys(spec.plugins ?? {}),
+  });
 }
 
 /** A checker `ResolveFile` over the snapshot's saved movement files;

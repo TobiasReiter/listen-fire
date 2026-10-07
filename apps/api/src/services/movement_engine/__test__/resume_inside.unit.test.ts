@@ -27,7 +27,7 @@ import type { ParkedScopeState } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   resumeMovement,
   runMovement,
@@ -88,7 +88,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });

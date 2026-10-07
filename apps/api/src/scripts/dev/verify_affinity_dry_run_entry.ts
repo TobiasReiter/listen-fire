@@ -145,7 +145,7 @@ async function main() {
       payload: {},
     },
     teamId: TEAM_ID,
-    catalog: fromCatalogSnapshot(snap),
+    catalog: snap,
     host: probeEngineHost({
       teamId: TEAM_ID,
       adapters: { resolve: () => adapter, credentialId: () => 'creds-verify' },

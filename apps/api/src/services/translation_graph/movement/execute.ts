@@ -37,7 +37,7 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import { TriggerRunRecorder, type TriggerRunTriggerType } from '../runs/trigger_run';
 import type { TriggerEvent } from '../triggers/types';
-import { movementCatalogForTeam } from './catalog';
+import { movementCatalogSnapshotForTeam } from './catalog';
 import { getMovementRow, recordValidityOutcome, type MovementRow } from './store';
 import { assessMovementValidity, validateMovementForTeam } from './authoring';
 import { movementSourceHash } from './version_store';
@@ -49,9 +49,10 @@ import { productionEngineHost } from './engine_host';
 // ── The shared engine invocation (catalog assembly + runMovement) ───────────
 
 /**
- * Run one movement firing: assemble the team catalog for exactly the
+ * Run one movement firing: assemble the team catalog snapshot for exactly the
  * (adapter, credential) pairs the SAVED source constructs, then hand
- * `runMovement` the canonical text. Natural-name → internal-id translation
+ * `runMovement` the canonical text and the snapshot (its credential ids go to
+ * the host, never the engine). Natural-name → internal-id translation
  * is the adapter layer's job — the engine derives each instance's
  * `AdapterNameResolver` from its own introspection (the default `resolveNames`
  * seam, behind the same cache the catalog's schemas come from); the host
@@ -81,7 +82,7 @@ async function interpretMovementFiring(input: {
    *  publish the trace WHILE the run is going, not only once it settles. */
   trace?: MovementTraceEntry[];
 }): Promise<MovementRunResult> {
-  const teamCatalog = await movementCatalogForTeam(input.teamId, {
+  const teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
     source: input.movementRow.source,
     languageVersion: input.movementRow.languageVersion,
   });
@@ -93,11 +94,11 @@ async function interpretMovementFiring(input: {
     event: input.event,
     teamId: input.teamId,
     firedAt: input.firedAt,
-    catalog: teamCatalog.catalog,
+    catalog: teamCatalog.snapshot,
     runId: input.triggerRunId,
     host: productionEngineHost({
       teamId: input.teamId,
-      catalog: teamCatalog,
+      credentialIds: teamCatalog.credentialIds,
       triggerRunId: input.triggerRunId,
       ...(input.parksInto !== undefined ? { parksInto: input.parksInto } : {}),
       cancel: input.cancelGate,
@@ -491,7 +492,7 @@ async function resumeMovementFiringInContext(
   const cancelGate = makeDbCancelGate(recorder.triggerRunId);
   try {
     const languageVersion = input.pinnedLanguageVersion;
-    const teamCatalog = await movementCatalogForTeam(input.teamId, {
+    const teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
       source: input.pinnedSource,
       languageVersion,
     });
@@ -513,12 +514,12 @@ async function resumeMovementFiringInContext(
       // A run paused at its cost limit stays paused: a branch woken by its own
       // event takes it, then suspends before its next statement.
       limitPaused: recorder.limitPaused,
-      catalog: teamCatalog.catalog,
+      catalog: teamCatalog.snapshot,
       runId: input.runId,
       // A resumed run can re-park at a deeper ask — it gets live parks too.
       host: productionEngineHost({
         teamId: input.teamId,
-        catalog: teamCatalog,
+        credentialIds: teamCatalog.credentialIds,
         triggerRunId: input.runId,
         parksInto: recorder,
         cancel: cancelGate,
@@ -707,7 +708,7 @@ async function fireCallbackFiringInContext(
   const cancelGate = makeDbCancelGate(recorder.triggerRunId);
   try {
     const languageVersion = input.pinnedLanguageVersion;
-    const teamCatalog = await movementCatalogForTeam(input.teamId, {
+    const teamCatalog = await movementCatalogSnapshotForTeam(input.teamId, {
       source: input.pinnedSource,
       languageVersion,
     });
@@ -723,11 +724,11 @@ async function fireCallbackFiringInContext(
         firedAt: recorder.firedAt,
         priorSpentMicrodollars: recorder.priorSpentMicrodollars,
         capBaselineMicrodollars: recorder.capBaselineMicrodollars,
-        catalog: teamCatalog.catalog,
+        catalog: teamCatalog.snapshot,
         runId: input.runId,
         host: productionEngineHost({
           teamId: input.teamId,
-          catalog: teamCatalog,
+          credentialIds: teamCatalog.credentialIds,
           triggerRunId: input.runId,
           parksInto: recorder,
           cancel: cancelGate,

@@ -124,7 +124,7 @@ jest.mock('../../../lib/anthropic', () => ({
 }));
 
 import type { InstanceSchema } from 'movement-lang';
-import { mockCatalog, parseMovementExpression } from 'movement-lang';
+import { mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import {
   MovementRunFailed,
@@ -137,13 +137,14 @@ import {
   rehydrateBinding,
   serializeBinding,
   type BindingDescriptor,
+  type InstanceIdentityDescriptor,
   type ParkedScopeState,
   type RehydrationContext,
 } from '../serialize';
 import { createSingleFlight } from '../single_flight';
 import type { Binding, SourceRead } from '../expression';
 import { Environment, MovementEngineError, evalMovementExpr } from '../expression';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -295,7 +296,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dev_slack: { adapters: ['slack'] },
     acme_main: { adapters: ['attio'] },
@@ -326,7 +327,7 @@ const MILESTONE_CREDENTIAL_IDS: Record<string, string> = {
   acme_affinity: 'cred-affinity-1',
 };
 
-const milestoneCatalog = staticCatalogFromManifests({
+const milestoneCatalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     acme_main: { adapters: ['attio'] },
@@ -3846,7 +3847,7 @@ describe('a discriminated write hands back a handle of the variant it named', ()
     },
   };
 
-  const listCatalog = staticCatalogFromManifests({
+  const listCatalog = staticCatalogSnapshot({
     credentials: {
       dev_slack: { adapters: ['slack'] },
       acme_main: { adapters: ['attio'] },
@@ -4344,6 +4345,73 @@ describe('sleep — durable timer park', () => {
     expect(crm1.creates.map((c) => c.fields.name)).toEqual(['After: Acme']);
     expect(result.writes.map((w) => w.recordType)).toEqual(['company']);
   });
+
+  // The catalog snapshot holds the instances the pinned source constructs. A
+  // parked scope naming any other must fail the resume by name — never come
+  // back as an untyped instance that runs on as if nothing were wrong.
+  describe('a parked instance the catalog snapshot does not hold', () => {
+    async function parkedStateWith(instance: InstanceIdentityDescriptor): Promise<ParkedScopeState> {
+      const { sink, timerParks } = makeFakeParkSink();
+      await runMovement({
+        source: SLEEP_THEN_WRITE,
+        event: webhookEvent('slack', { user: 'Acme' }),
+        teamId: TEAM_ID,
+        catalog,
+        host: makeTestHost({
+          adapters: {
+            credentialId: (name) => CREDENTIAL_IDS[name],
+            resolve: makeResolver({
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+          park: { sink: sink },
+        }),
+      });
+      const state = JSON.parse(JSON.stringify(timerParks[0].state)) as ParkedScopeState;
+      state.scopeChain[state.scopeChain.length - 1].bindings.held = { kind: 'instance', instance };
+      return state;
+    }
+
+    function resume(state: ParkedScopeState): ReturnType<typeof resumeMovement> {
+      return resumeMovement({
+        source: SLEEP_THEN_WRITE,
+        event: webhookEvent('slack', { user: 'Acme' }),
+        teamId: TEAM_ID,
+        catalog,
+        host: makeTestHost({
+          adapters: {
+            credentialId: (name) => CREDENTIAL_IDS[name],
+            resolve: makeResolver({
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+        }),
+        state,
+      });
+    }
+
+    it('fails the resume, naming the instance', async () => {
+      const state = await parkedStateWith({
+        name: 'held',
+        adapterSlug: 'attio',
+        credentialName: 'retired_main',
+      });
+      const failure = await rejectionCause(resume(state));
+      expect(failure).toBeInstanceOf(MovementEngineError);
+      expect(failure).toMatchObject({
+        code: 'MOVENG_RUNTIME',
+        message: 'MOVENG_RUNTIME: instance attio(credentials: retired_main) is not in the catalog snapshot',
+      });
+    });
+
+    it('resumes as before when the snapshot holds it', async () => {
+      const state = await parkedStateWith({ name: 'held', adapterSlug: 'attio', credentialName: 'acme_main' });
+      const result = await resume(state);
+      expect(result.writes.map((w) => w.recordType)).toEqual(['company']);
+    });
+  });
 });
 
 // ── Backtick credential args — run-path coverage ─────────────────────────────
@@ -4355,7 +4423,7 @@ describe('sleep — durable timer park', () => {
 describe('runMovement — direct backtick credential arg (run-path)', () => {
   // A catalog with a credential that MUST be backtick-quoted because its name
   // contains a hyphen (an identifier-unsafe character).
-  const backtickCatalog = staticCatalogFromManifests({
+  const backtickCatalog = staticCatalogSnapshot({
     credentials: {
       'Dev-loop Attio': { adapters: ['attio'] },
     },
@@ -5191,7 +5259,7 @@ describe('json write fields carry structured values through to the adapter', () 
     },
   };
 
-  const docsCatalog = mockCatalog({
+  const docsCatalog = mockCatalogSnapshot({
     adapters: {
       docs: {
         constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],

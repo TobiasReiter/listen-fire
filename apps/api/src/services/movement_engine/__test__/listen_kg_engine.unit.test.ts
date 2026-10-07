@@ -92,7 +92,7 @@ import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import { MovementEngineError } from '../expression';
 import { surfaceReadAdapter } from '../kg';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type {
   Adapter,
   RuntimeCapabilities,
@@ -219,7 +219,7 @@ const kgSchema: InstanceSchema = {
   writableRoots: {},
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
   instanceSchemas: { kg: kgSchema },
 });

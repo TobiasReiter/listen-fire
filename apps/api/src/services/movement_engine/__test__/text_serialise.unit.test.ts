@@ -69,7 +69,7 @@ import type {
   LlmClient,
 } from '../../translation_graph/engine/batched_extraction';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { containerAssociation, type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
@@ -128,7 +128,7 @@ function makeFakeAdapter(adapterType: string): { adapter: Adapter; creates: Reco
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
 });
 

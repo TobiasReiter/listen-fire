@@ -25,7 +25,7 @@ import type { MovementTransformInvoker } from '../extraction';
 import type { ParkedScopeState } from '../serialize';
 import { CallDepthExceeded, parseMaxCallDepth } from '../call_depth';
 import { assertRunBudget, reportRunCost } from '../../../lib/run_spend';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
@@ -90,7 +90,7 @@ function makeFakeAdapter(adapterType: string) {
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 

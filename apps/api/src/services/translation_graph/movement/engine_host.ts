@@ -3,8 +3,6 @@
 // trigger-run recorder's durable parks, Postgres record bindings, raw text and
 // cross-run write locks, and Listen-Fire's acting-user resolution.
 
-import type { ResolveFile } from 'movement-lang';
-
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -39,11 +37,9 @@ import { registryTransformInvoker } from './transform_invoker';
 
 export function productionEngineHost(input: {
   teamId: TeamId;
-  /** The team catalog's credential and file-import resolution. */
-  catalog: {
-    resolveCredentialId: (credentialName: string) => string | undefined;
-    resolveFile: ResolveFile;
-  };
+  /** Credential import name → credential id, from the team's catalog
+   *  snapshot. File imports need nothing here: the snapshot carries the files. */
+  credentialIds: Readonly<Record<string, string>>;
   /** The run the host's model, plugin and file-text calls are billed to. Absent
    *  ⇒ they run under whatever llm-usage context the caller holds (a test run:
    *  none, so nothing is billed to the team). */
@@ -73,7 +69,10 @@ export function productionEngineHost(input: {
           credentialsId,
           ...(constructionArgs !== undefined ? { constructionArgs } : {}),
         }),
-      credentialId: input.catalog.resolveCredentialId,
+      credentialId: (credentialName) =>
+        Object.hasOwn(input.credentialIds, credentialName)
+          ? input.credentialIds[credentialName]
+          : undefined,
     },
     llm: {
       client: billedLlmClient(makeAnthropicLlmClient({ cancel }), usage),
@@ -93,7 +92,6 @@ export function productionEngineHost(input: {
     },
     control: { cancel },
     files: {
-      resolveFile: input.catalog.resolveFile,
       // OCR and transcription are model calls of their own.
       resolveFileText: billedFileText(
         makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId)),

@@ -82,7 +82,7 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import {
   type ExtractCallLlmInput,
@@ -158,7 +158,7 @@ const crmSchema: InstanceSchema = {
   },
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: crmSchema },

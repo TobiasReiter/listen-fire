@@ -80,7 +80,7 @@ import type { MovementTraceEntry } from '../expression';
 import { recordLlmUsage } from '../../../lib/llm_usage';
 import { assertRunBudget, RunCostCapExceeded } from '../../../lib/run_spend';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
@@ -143,7 +143,7 @@ function makeFakeAdapter(adapterType: string) {
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 

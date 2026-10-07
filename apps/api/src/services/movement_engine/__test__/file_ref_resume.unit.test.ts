@@ -21,7 +21,7 @@ import type { FileTextResolution, MovementTraceEntry } from '../expression';
 import type { MovementTransformInvoker } from '../extraction';
 import type { ParkedScopeState } from '../serialize';
 import { assertRunBudget, reportRunCost } from '../../../lib/run_spend';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { Adapter, FileRef, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { streamFileRef } from '../../translation_graph/engine/files/retrieve';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
@@ -171,7 +171,7 @@ const pricedInvoker: MovementTransformInvoker = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 

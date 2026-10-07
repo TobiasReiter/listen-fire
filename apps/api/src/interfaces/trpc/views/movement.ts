@@ -42,6 +42,7 @@ import {
   describeMovementInstance,
   movementCatalogSnapshotForTeam,
   type DescribedInstance,
+  type TeamCatalogSnapshot,
 } from '../../../services/translation_graph/movement/catalog';
 import {
   deleteMovement,
@@ -339,6 +340,15 @@ type SaveMovementResponse = SaveMovementResult & {
   dependentChecks: DependentCheckResult[] | null;
 };
 
+/** A team snapshot minus its credential ids: those are the host's, for
+ *  resolving adapters, and never reach the browser. */
+function forTheEditor({
+  credentialIds: _credentialIds,
+  ...snapshot
+}: TeamCatalogSnapshot): Omit<TeamCatalogSnapshot, 'credentialIds'> {
+  return snapshot;
+}
+
 const movementRouter = (procedure: typeof trpc.procedure) => {
   const userProcedure = sharedUserProcedure(procedure);
 
@@ -346,7 +356,7 @@ const movementRouter = (procedure: typeof trpc.procedure) => {
     catalog: userProcedure.query(async () => {
       const ctx = currentContext();
       const teamId = ctx.user.teamId as TeamId;
-      return movementCatalogSnapshotForTeam(teamId);
+      return forTheEditor(await movementCatalogSnapshotForTeam(teamId));
     }),
 
     /**
@@ -367,7 +377,7 @@ const movementRouter = (procedure: typeof trpc.procedure) => {
       .mutation(async ({ input }) => {
         const ctx = currentContext();
         const teamId = ctx.user.teamId as TeamId;
-        return movementCatalogSnapshotForTeam(teamId, { source: input.source });
+        return forTheEditor(await movementCatalogSnapshotForTeam(teamId, { source: input.source }));
       }),
 
     describeInstance: userProcedure

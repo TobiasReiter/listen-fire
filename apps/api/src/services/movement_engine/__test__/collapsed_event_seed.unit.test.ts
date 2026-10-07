@@ -92,7 +92,7 @@ jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
 }));
 import type { Catalog, InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { positionData } from '../../translation_graph/types';
 import type { Adapter, ParentLink, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
@@ -138,13 +138,13 @@ const CHAT_SCHEMA: InstanceSchema = {
 const baseCatalog = staticCatalogFromManifests({
   credentials: { acme_slack: { adapters: ['slack'] } },
 });
-const catalog: Catalog = {
+const catalog = snapshotOverManifests({
   ...baseCatalog,
   instantiate(name, args) {
     if (name === 'slack') return CHAT_SCHEMA;
     return baseCatalog.instantiate(name, args);
   },
-};
+});
 
 interface RecordedWrite {
   recordType: string;

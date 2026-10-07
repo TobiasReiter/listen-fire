@@ -218,7 +218,7 @@ async function run(
   source: string,
   movementName: string,
   adapter: AffinityAdapter,
-  catalog: ReturnType<typeof fromCatalogSnapshot>,
+  catalog: CatalogSnapshot,
 ): Promise<{ writes: WriteRecord[]; sent: string[] }> {
   const mark = requests.length;
   const result = await runMovement({
@@ -282,7 +282,7 @@ async function main() {
   console.log(`   the person's organizations before: ${JSON.stringify(await membership(personId))}`);
 
   const adapter = adapterOnFake();
-  const catalog = fromCatalogSnapshot(await snapshot(adapter));
+  const catalog = await snapshot(adapter);
 
   console.log('\n── 1. the write, against a person whose every field already matches');
   const first = await run(ATTACH, 'attach', adapter, catalog);
@@ -322,7 +322,7 @@ async function main() {
   console.log(`   after unlink: ${JSON.stringify(afterUnlink)} (PUTs ${JSON.stringify(puts(unlinked.sent))})`);
 
   console.log('\n── 6. `link org -[:List Entries]-> entry` — refused at check time');
-  const refusals = checkProgram(parseProgram(LINK_ENTRY), catalog).filter(
+  const refusals = checkProgram(parseProgram(LINK_ENTRY), fromCatalogSnapshot(catalog)).filter(
     (d) => d.code === 'MOV_LINK_UNSUPPORTED_EDGE',
   );
   console.log(`   diagnostics: ${JSON.stringify(refusals.map((d) => d.message))}`);

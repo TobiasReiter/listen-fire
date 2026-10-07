@@ -16,7 +16,7 @@ import { randomUUID } from 'node:crypto';
 
 jest.mock('../../translation_graph/movement/catalog', () => {
   const actual = jest.requireActual('../../translation_graph/movement/catalog');
-  return { ...actual, movementCatalogForTeam: jest.fn() };
+  return { ...actual, movementCatalogSnapshotForTeam: jest.fn() };
 });
 jest.mock('../../translation_graph/adapters/resolve', () => {
   const actual = jest.requireActual('../../translation_graph/adapters/resolve');
@@ -51,17 +51,17 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
 import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/router';
-import { movementCatalogForTeam, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { movementCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { mintMovementVersionIfChanged } from '../../translation_graph/movement/version_store';
 import { positionData } from '../../translation_graph/types';
 import type { Adapter, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
-import type { Catalog, InstanceSchema, PositionSchema } from 'movement-lang';
+import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 
-const mockedCatalog = movementCatalogForTeam as jest.Mock;
+const mockedCatalog = movementCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
 
 function permissiveCaps(): RuntimeCapabilities {
@@ -95,20 +95,20 @@ const ATTIO_SCHEMA: InstanceSchema = {
   eventPositions: [{ position: EVENT }],
 };
 
-function buildCatalog(): Catalog {
+function buildCatalog(): CatalogSnapshot {
   const base = staticCatalogFromManifests({
     credentials: {
       acme_main: { adapters: ['attio'] },
       acme_slack: { adapters: ['slack'] },
     },
   });
-  return {
+  return snapshotOverManifests({
     ...base,
     instantiate(name, args) {
       if (name === 'attio') return ATTIO_SCHEMA;
       return base.instantiate(name, args);
     },
-  };
+  });
 }
 
 function makeAttioSourceFake(): Adapter {
@@ -277,12 +277,9 @@ describe('a run paused at its cost cap (real DB)', () => {
 
     const catalog = buildCatalog();
     mockedCatalog.mockResolvedValue({
-      catalog,
-      resolveCredentialId: () => 'cred-1',
-      credentialsByName: {},
-      resolveFile: () => null,
+      snapshot: catalog,
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
       notes: [],
-      gaps: [],
     });
     const target = makeSlackTargetFake();
     slackCreates = target.creates;

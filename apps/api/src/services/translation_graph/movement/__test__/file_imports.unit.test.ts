@@ -96,7 +96,8 @@ jest.mock('../../adapters/resolve', () => ({
 import { runMovement } from '../../../movement_engine/run';
 import { MovementEngineError } from '../../../movement_engine/expression';
 import { listUnsupportedConstructs } from '../../../movement_engine/interpretable';
-import { staticCatalogFromManifests } from '../catalog';
+import { fromCatalogSnapshot } from 'movement-lang';
+import { staticCatalogSnapshot } from '../catalog';
 import { diagnoseMovementSource } from '../authoring';
 import { assembleMovementFileSources, resolverOverSources } from '../files';
 import {
@@ -200,7 +201,7 @@ function webhookEvent(adapterType: string, payload: Record<string, unknown>): Tr
 
 // ── Catalog / fixtures ───────────────────────────────────────────────────────
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     team_drive: { adapters: ['dropbox'] },
@@ -288,7 +289,7 @@ describe('assembleMovementFileSources', () => {
 describe('diagnoseMovementSource with resolved file imports', () => {
   it('the §G consumer validates clean — imports resolve, nothing engine-unsupported', () => {
     const validation = diagnoseMovementSource(CONSUMER, {
-      catalog,
+      catalog: fromCatalogSnapshot(catalog),
       resolveCredentialId: (name) => CREDENTIAL_IDS[name],
       resolveFile,
     });
@@ -305,7 +306,7 @@ describe('diagnoseMovementSource with resolved file imports', () => {
       "  movement nested(g: <Files>) {\n    h = g.`name`\n  }\n  write drive-[:file]-> {",
     );
     const validation = diagnoseMovementSource(CONSUMER, {
-      catalog,
+      catalog: fromCatalogSnapshot(catalog),
       resolveCredentialId: (name) => CREDENTIAL_IDS[name],
       resolveFile: resolverOverSources(new Map([['lib/file-routines', badLib]])),
     });

@@ -936,6 +936,12 @@ export interface WalkedDescribedNode {
     name: string;
     description?: string;
     properties: Record<string, WalkedProperty>;
+    /** What identifies one of these records: each entry is a combination of
+     *  names (properties, or this node's own edges) that the source treats as
+     *  unique — a `unique by` candidate. Absent when the source declares none.
+     *  A rule naming anything this node cannot spell is left out rather than
+     *  half-stated. */
+    unique?: string[][];
     stub?: false;
 }
 /** Named, not described. `properties` is ABSENT rather than empty — an empty
@@ -1039,6 +1045,12 @@ export interface TeamCatalogSnapshot {
      * identical in the diagnostics, which is why it must be said out loud.
      */
     gaps?: CatalogGap[];
+    /**
+     * Credential import name → `external_service_credentials.id`. Beside the
+     * snapshot, never in it: the snapshot is what the engine and the browser
+     * read, and credentials stay with the host that resolves adapters.
+     */
+    credentialIds: Record<string, string>;
 }
 export interface DescribedInstance {
     /** Null when the pair can't be introspected — the instance stays
@@ -1093,6 +1105,18 @@ export interface AuthoringDiagnostic {
     /** Marks a construct whose meaning changed between the pin and the version
      *  checked, on an upgrade check (the checker's `Diagnostic.upgrade`). */
     upgrade?: true;
+    /** The exact rewrite that resolves it (also spelled out in `message`):
+     *  replace each 1-based range with `text`; an empty range inserts. */
+    fix?: {
+        edits: AuthoringEdit[];
+    };
+}
+export interface AuthoringEdit {
+    line: number;
+    col: number;
+    endLine: number;
+    endCol: number;
+    text: string;
 }
 export interface MovementValidityAssessment {
     status: MovementValidityStatus;
@@ -4929,9 +4953,11 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 failed_at: Date | null;
                 cancel_requested_at: Date | null;
                 cancel_reason: string | null;
+                ops_run_id: string | null;
                 limit_pause: unknown;
                 cost_cap_baseline_microdollars: string;
-                ops_run_id: string | null;
+                last_heartbeat_at: Date | null;
+                trigger_event_id: TriggerEventId | null;
             }>;
         }>;
         controlTower: _trpc_server.CreateRouterInner<_trpc_server.RootConfig<{
@@ -10408,7 +10434,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 _input_out: typeof _trpc_server.unsetMarker;
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
-            }, TeamCatalogSnapshot>;
+            }, Omit<TeamCatalogSnapshot, "credentialIds">>;
             catalogForSource: _trpc_server.BuildProcedure<"mutation", {
                 _config: _trpc_server.RootConfig<{
                     ctx: {
@@ -10434,7 +10460,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 };
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
-            }, TeamCatalogSnapshot>;
+            }, Omit<TeamCatalogSnapshot, "credentialIds">>;
             describeInstance: _trpc_server.BuildProcedure<"query", {
                 _config: _trpc_server.RootConfig<{
                     ctx: {

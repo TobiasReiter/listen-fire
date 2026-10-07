@@ -168,7 +168,7 @@ async function main() {
     movementName: 'sync',
     event,
     teamId: TEAM_ID,
-    catalog,
+    catalog: snap,
     host: probeEngineHost({
       teamId: TEAM_ID,
       adapters: { resolve: () => adapter, credentialId: () => 'creds-verify' },
@@ -188,7 +188,7 @@ async function main() {
     movementName: 'sync',
     event,
     teamId: TEAM_ID,
-    catalog,
+    catalog: snap,
     host: probeEngineHost({
       teamId: TEAM_ID,
       adapters: { resolve: () => adapter, credentialId: () => 'creds-verify' },
@@ -212,7 +212,7 @@ async function main() {
     movementName: 'sync',
     event,
     teamId: TEAM_ID,
-    catalog,
+    catalog: snap,
     host: probeEngineHost({
       teamId: TEAM_ID,
       adapters: { resolve: () => adapter, credentialId: () => 'creds-verify' },

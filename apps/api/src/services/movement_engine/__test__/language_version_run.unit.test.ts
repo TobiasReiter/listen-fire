@@ -8,11 +8,16 @@
 //   3. a deprecated pin runs, with a warning on the run's own trace;
 //   4. validation (`diagnoseMovementSource`) honours the same pin.
 
-import { CURRENT_LANGUAGE_VERSION, type InstanceSchema, type LanguageRelease } from 'movement-lang';
+import {
+  CURRENT_LANGUAGE_VERSION,
+  fromCatalogSnapshot,
+  type InstanceSchema,
+  type LanguageRelease,
+} from 'movement-lang';
 import { runMovement } from '../run';
 import { currentLanguageVersion } from '../run_scope';
 import { MovementEngineError } from '../errors';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { diagnoseMovementSource } from '../../translation_graph/movement/authoring';
 import type { Adapter, RuntimeCapabilities, UpdateInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
@@ -96,7 +101,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -196,14 +201,14 @@ describe('a run honours its language version pin', () => {
 
 describe('validation honours the pin', () => {
   it('a supported pin validates the text as usual', () => {
-    const validation = diagnoseMovementSource(SOURCE, { catalog, languageVersion: 1 });
+    const validation = diagnoseMovementSource(SOURCE, { catalog: fromCatalogSnapshot(catalog), languageVersion: 1 });
     expect(validation.ok).toBe(true);
     expect(validation.firedMovements).toEqual(['reopen']);
   });
 
   it('an unsupported pin is the whole verdict — not a parse of the text under another version', () => {
     const validation = diagnoseMovementSource('this is not a movement {', {
-      catalog,
+      catalog: fromCatalogSnapshot(catalog),
       languageVersion: 99,
     });
     expect(validation.ok).toBe(false);

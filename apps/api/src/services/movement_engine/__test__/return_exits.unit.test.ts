@@ -21,7 +21,7 @@ jest.mock('../../logger', () => ({
 
 import { resumeMovement, runMovement, type ParkSink } from '../run';
 import type { ParkedScopeState } from '../serialize';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
@@ -69,7 +69,7 @@ function makeFakeAdapter(adapterType: string) {
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 
