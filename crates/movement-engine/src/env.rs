@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use serde_json::{Value as Json, json};
+use serde_json::{Map, Value as Json, json};
 
 use crate::js::{Js, JsArray, JsObject};
 
@@ -225,10 +225,64 @@ impl Encoder {
     }
 }
 
+// ── Plain JSON ──
+
+/// A value as `JSON.parse(JSON.stringify(value))` hands it back: `undefined`
+/// members dropped (null in a list), non-finite numbers null, `-0` 0.
+pub fn json_of_js(value: &Js) -> Json {
+    match value {
+        Js::Undefined | Js::Null => Json::Null,
+        Js::Bool(b) => json!(b),
+        Js::Number(n) if !n.is_finite() => Json::Null,
+        Js::Number(n) if *n == 0.0 => json!(0),
+        Js::Number(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => json!(*n as i64),
+        Js::Number(n) => json!(n),
+        Js::String(s) => json!(s),
+        Js::Array(list) => Json::Array(list.items.iter().map(json_of_js).collect()),
+        Js::Object(object) => {
+            let mut map = Map::new();
+            for (k, v) in object.entries() {
+                if !matches!(v, Js::Undefined) {
+                    map.insert(k.clone(), json_of_js(v));
+                }
+            }
+            Json::Object(map)
+        }
+    }
+}
+
+/// Plain JSON as a value.
+pub fn js_of_json(json: &Json) -> Js {
+    match json {
+        Json::Null => Js::Null,
+        Json::Bool(b) => Js::Bool(*b),
+        Json::Number(n) => Js::Number(n.as_f64().unwrap_or(f64::NAN)),
+        Json::String(s) => Js::str(s.clone()),
+        Json::Array(items) => Js::array(items.iter().map(js_of_json).collect()),
+        Json::Object(map) => {
+            let mut object = JsObject::new();
+            for (k, v) in map {
+                object.set(k.clone(), js_of_json(v));
+            }
+            Js::object(object)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::js::strict_equals;
+
+    #[test]
+    fn values_cross_as_their_json_round_trip() {
+        let mut object = JsObject::new();
+        object.set("a".into(), Js::Undefined);
+        object.set("b".into(), Js::array(vec![Js::Undefined, Js::Number(f64::NAN), Js::Number(-0.0), Js::Number(1.5)]));
+        assert_eq!(json_of_js(&Js::object(object)), json!({ "b": [null, null, 0, 1.5] }));
+        assert!(matches!(js_of_json(&json!({ "x": [1, "y"] })), Js::Object(_)));
+    }
+
 
     #[test]
     fn a_child_scope_shadows_and_falls_back() {

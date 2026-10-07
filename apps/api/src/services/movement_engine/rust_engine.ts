@@ -17,7 +17,6 @@
 // an expression `rustCanEval` admits whose every name is a value binding.
 
 import {
-  applyStdlib,
   callEvalExpression,
   readCall,
   resolveCallee,
@@ -25,30 +24,35 @@ import {
   CURRENT_LANGUAGE_VERSION,
   expressionOfSlot,
   openEngineSegment,
-  stdlibFunctionById,
-  type CatalogSnapshot,
+  identityKeyOf,
+  parseMovementExpression,
+  probePathHead,
+  splitUniquenessConjuncts,
   type CallStatement,
   type ExprSlot,
   type LanguageVersion,
   type MovementCondition,
+  type NodeLiteral,
+  type PathHead,
   type Program,
   type Statement,
+  type WriteExpression,
 } from 'movement-lang';
 
-import { compareValues } from '#shared/expression/filter';
-import type { Expression, FilterOperator } from '#shared/expression/types';
+import { isPurePredicate } from '#shared/expression/filter';
+import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
 import { currentRunSpend } from '../../lib/run_spend';
 import { neverAsAny } from '../../lib/utils/types';
-import type { Adapter } from '../translation_graph/adapter';
-import { applyMovementFunction } from './builtins';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
-import { bindingOf, type Binding, type MovementEvalResult, type MovementExprContext } from './expression';
-import type { EngineHost } from './host';
-import { checkAnswer, checkPinned } from './program_check';
-import { rustEvalStats, rustRunStats } from './rust_stats';
+import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { MovementRunFailed, type MovementRunResult, type RunMovementInput } from './run';
+import { serve, type RouteContext } from './rust_host';
+import { rustEvalStats, rustRunStats } from './rust_stats';
+import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
+
+export { RustShimError, plainJson } from './rust_wire';
 
 /** One request a segment makes of its host. */
 export interface HostRequest {
@@ -78,24 +82,6 @@ export interface EngineProtocol {
   finish(): void;
 }
 
-/** The run ends with this host call's error rather than the engine hearing
- *  it: what the TypeScript engine throws before it runs anything (the check),
- *  the Rust engine must not be able to catch. */
-class RunAborted extends Error {
-  constructor(readonly abortedWith: unknown) {
-    super('the run was aborted by a host call');
-  }
-}
-
-/** A fault in the shim itself (a request it has no route for, a result it
- *  cannot carry), never handed to the engine as an answer: the run fails. */
-export class RustShimError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'RustShimError';
-  }
-}
-
 export type EngineChoice = 'rust' | 'ts';
 
 /** The one place `MOVEMENT_ENGINE` is read. Unset is `ts`; anything other
@@ -120,6 +106,13 @@ export async function runSegmentInRust(
   input: RunMovementInput,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
+  return segmentInRust(input, engine);
+}
+
+async function segmentInRust(
+  input: RunMovementInput,
+  engine?: EngineProtocol,
+): Promise<{ ran: MovementRunResult } | { declined: string }> {
   // Read before the instance opens: an input that cannot cross must not
   // leave a segment open behind it.
   const start = segmentInput(input);
@@ -127,9 +120,19 @@ export async function runSegmentInRust(
   const trace = input.host.trace ?? [];
   const hostErrors: unknown[] = [];
   rustRunStats.routed += 1;
-  const done = await driveEngine(engine ?? openWasmEngine(), start, { ...input, trace, hostErrors });
-  const outcome = readRunResult(done, { trace, hostErrors });
+  let outcome: { ran: MovementRunResult } | { declined: string };
+  try {
+    const done = await driveEngine(engine ?? openWasmEngine(), start, { ...input, trace, hostErrors });
+    outcome = readRunResult(done, { trace, hostErrors });
+  } catch (error) {
+    // The run's own failure, which the Rust engine ran to as the TypeScript
+    // engine would have; a shim fault is not one.
+    if (error instanceof RustShimError) rustRunStats.shimFaults += 1;
+    else rustRunStats.ranWhole += 1;
+    throw error;
+  }
   if ('declined' in outcome) rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
+  else rustRunStats.ranWhole += 1;
   return outcome;
 }
 
@@ -141,7 +144,7 @@ export async function runSegmentInRust(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Pick<RunMovementInput, 'host' | 'teamId' | 'catalog'> & {
+  input: Pick<RunMovementInput, 'host' | 'teamId' | 'catalog' | 'writeSink'> & {
     /** Where the engine's trace entries land (`host.trace`, else the run's own). */
     trace?: MovementRunResult['trace'];
     /** The errors host calls failed with, by the `ref` their answers carry. */
@@ -155,6 +158,7 @@ export async function driveEngine(
     catalog: input.catalog,
     trace: input.trace ?? [],
     hostErrors: input.hostErrors ?? [],
+    ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   };
   const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
   try {
@@ -178,324 +182,6 @@ export async function driveEngine(
   }
 }
 
-// ── Routes ────────────────────────────────────────────────────────────────────
-
-interface RouteContext {
-  host: EngineHost;
-  teamId: RunMovementInput['teamId'];
-  /** The live adapters behind the handles the engine holds, numbered from 1. */
-  instances: Map<number, Adapter>;
-  catalog: CatalogSnapshot;
-  trace: MovementRunResult['trace'];
-  hostErrors: unknown[];
-}
-
-type Route = (args: unknown, context: RouteContext) => Promise<unknown>;
-
-/**
- * Every host call the engine can make, by family and method. The request
- * shapes are the engine's (crates/movement-engine/src/host.rs, one builder
- * each); a route reads its args at this boundary and answers plain data.
- */
-const ROUTES: Record<string, Record<string, Route> | undefined> = {
-  check: {
-    /** The TypeScript checker over the pinned source (program_check.ts):
-     *  every diagnostic, the import link and the checker's AST stamps as
-     *  data. A program that fails its check ends the run with the check's
-     *  error, exactly as parseAndCheck throws it. */
-    async program(args, context) {
-      const request = record(args, 'check.program');
-      const languageVersion = request.languageVersion;
-      if (typeof languageVersion !== 'number') throw new RustShimError('check.program languageVersion must be a number');
-      const upgradingFrom = request.upgradingFrom;
-      if (upgradingFrom !== undefined && typeof upgradingFrom !== 'number') {
-        throw new RustShimError('check.program upgradingFrom must be a number');
-      }
-      const resolveFile = context.host.files.resolveFile;
-      let checked;
-      try {
-        checked = checkPinned({
-          source: string(request.source, 'check.program source'),
-          catalog: context.catalog,
-          languageVersion,
-          ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
-          ...(resolveFile !== undefined ? { hostResolveFile: resolveFile } : {}),
-        });
-      } catch (error) {
-        throw new RunAborted(error);
-      }
-      return checkAnswer(checked);
-    },
-  },
-  adapters: {
-    async resolve(args, context) {
-      const request = record(args, 'adapters.resolve');
-      if (request.teamId !== context.teamId) {
-        throw new RustShimError(`adapters.resolve asked for team ${String(request.teamId)} in a run of another team`);
-      }
-      const role = request.role;
-      if (role !== 'source' && role !== 'target') {
-        throw new RustShimError(`adapters.resolve role must be "source" or "target", not ${JSON.stringify(role)}`);
-      }
-      const credentialsId = optionalString(request.credentialsId, 'adapters.resolve credentialsId');
-      const constructionArgs = optionalStringRecord(request.constructionArgs, 'adapters.resolve constructionArgs');
-      const adapter = await context.host.adapters.resolve({
-        adapterType: string(request.adapterType, 'adapters.resolve adapterType'),
-        teamId: context.teamId,
-        role,
-        ...(credentialsId !== undefined ? { credentialsId } : {}),
-        ...(constructionArgs !== undefined ? { constructionArgs } : {}),
-      });
-      const instance = context.instances.size + 1;
-      context.instances.set(instance, adapter);
-      return { instance, adapterType: adapter.adapterType };
-    },
-    async credentialId(args, context) {
-      const request = record(args, 'adapters.credentialId');
-      return context.host.adapters.credentialId(string(request.credentialName, 'adapters.credentialId credentialName'));
-    },
-    async call(args, context) {
-      const request = record(args, 'adapters.call');
-      const method = string(request.method, 'adapters.call method');
-      const instance = request.instance;
-      const adapter = typeof instance === 'number' ? context.instances.get(instance) : undefined;
-      if (adapter === undefined) throw new RustShimError(`adapters.call ${method}: no adapter instance ${String(instance)}`);
-      const fn: unknown = Reflect.get(adapter, method);
-      if (typeof fn !== 'function') {
-        throw new RustShimError(`adapters.call: the ${adapter.adapterType} adapter has no method ${method}`);
-      }
-      if (!Array.isArray(request.args)) throw new RustShimError(`adapters.call ${method}: args must be an array`);
-      if (request.wire !== true) return Reflect.apply(fn, adapter, request.args);
-      // On the eval wire both ways: the JavaScript's key order, `undefined`
-      // and the numbers JSON cannot say cross as they are.
-      const values = request.args.map((arg) => new WireOut().read(arg));
-      return new Wired(await Reflect.apply(fn, adapter, values), `adapters.call ${method}`);
-    },
-  },
-  control: {
-    /** The cancel gate at a statement boundary. */
-    async cancelled(_args, context) {
-      return context.host.control.cancel.cancelled();
-    },
-    /** The run's last, undebounced, cancel check. */
-    async cancelledNow(_args, context) {
-      return context.host.control.cancel.cancelledNow();
-    },
-  },
-  trace: {
-    /** One entry on the run's trace, as it lands. */
-    async append(args, context) {
-      const entry = traceEntry(record(args, 'trace.append').entry);
-      context.trace.push(entry);
-      return undefined;
-    },
-  },
-  builtins: {
-    /** A built-in the Rust engine hands back for these arguments, answered by
-     *  the TypeScript member: its value, or what it throws. */
-    async function(args) {
-      const request = record(args, 'builtins.function');
-      const id = string(request.id, 'builtins.function id');
-      if (!Array.isArray(request.args)) throw new RustShimError('builtins.function args must be an array');
-      const values = request.args.map((arg) => new WireOut().read(arg));
-      const now = new Date(string(request.now, 'builtins.function now'));
-      const spec = stdlibFunctionById(id);
-      return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
-    },
-    /** The shared comparator, likewise. */
-    async compare(args) {
-      const request = record(args, 'builtins.compare');
-      const op = filterOperator(request.op);
-      const left = new WireOut().read(request.left);
-      const right = new WireOut().read(request.right);
-      return builtinAnswer(() => compareValues(left, op, right));
-    },
-  },
-};
-
-async function serve(request: HostRequest, context: RouteContext): Promise<HostAnswer> {
-  const route = ROUTES[request.family]?.[request.method];
-  const label = `${request.family}.${request.method}`;
-  if (route === undefined) throw new RustShimError(`the shim has no route for ${label}`);
-  rustRunStats.hostCalls[label] = (rustRunStats.hostCalls[label] ?? 0) + 1;
-  let value: unknown;
-  try {
-    value = await route(request.args, context);
-  } catch (error) {
-    if (error instanceof RustShimError) throw error;
-    if (error instanceof RunAborted) throw error.abortedWith;
-    // The host's own failure: the engine decides what it means for the run.
-    // The error itself stays here, under the `ref` its answer carries, so a
-    // run that fails with it fails with this very object.
-    context.hostErrors.push(error);
-    return { error: { ...errorAnswer(error), ref: context.hostErrors.length - 1 } };
-  }
-  const named = adapterCallName(request) ?? label;
-  if (value instanceof Wired) {
-    const wire = new WireOut().value(value.value);
-    if (wire === REFUSED) throw new RustShimError(`${value.what} returned a value the eval wire cannot carry as itself`);
-    return { value: wire };
-  }
-  return value === undefined ? {} : { value: plainJson(value, named) };
-}
-
-/** A route's value to send on the eval wire rather than as JSON. */
-class Wired {
-  constructor(
-    readonly value: unknown,
-    readonly what: string,
-  ) {}
-}
-
-/** `{value: wire}` or `{threw: {class, code?, message}}`. */
-function builtinAnswer(run: () => unknown): unknown {
-  let value: unknown;
-  try {
-    value = run();
-  } catch (error) {
-    if (error instanceof MovementEngineError) return { threw: { class: 'MovementEngineError', code: error.code, message: unprefixed(error) } };
-    if (error instanceof RangeError) return { threw: { class: 'RangeError', message: error.message } };
-    if (error instanceof Error && error.constructor === Error) return { threw: { class: 'Error', message: error.message } };
-    throw new RustShimError(`a built-in threw what the Rust engine cannot rethrow: ${String(error)}`);
-  }
-  const wire = new WireOut().value(value);
-  if (wire === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
-  return { value: wire };
-}
-
-/** A MovementEngineError's message without the `CODE: ` its constructor adds. */
-function unprefixed(error: MovementEngineError): string {
-  const prefix = `${error.code}: `;
-  return error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
-}
-
-function filterOperator(value: unknown): FilterOperator {
-  switch (value) {
-    case 'eq':
-    case 'neq':
-    case 'gt':
-    case 'gte':
-    case 'lt':
-    case 'lte':
-    case 'exists':
-    case 'in':
-    case 'contains':
-    case 'within':
-      return value;
-    default:
-      throw new RustShimError(`builtins.compare op ${JSON.stringify(value)} is not an operator`);
-  }
-}
-
-/** The trace entry kinds the Rust engine appends (crates/movement-engine/src/trace.rs). */
-function traceEntry(value: unknown): MovementRunResult['trace'][number] {
-  const entry = record(value, 'trace.append entry');
-  switch (entry.kind) {
-    case 'gate':
-      if (typeof entry.outcome !== 'boolean') throw new RustShimError('a gate trace entry has a boolean outcome');
-      return { kind: 'gate', outcome: entry.outcome };
-    case 'warning':
-      return { kind: 'warning', code: string(entry.code, 'a warning code'), message: string(entry.message, 'a warning message') };
-    case 'field_miss': {
-      const available = entry.available;
-      if (!Array.isArray(available) || !available.every((key) => typeof key === 'string')) {
-        throw new RustShimError('a field_miss trace entry lists its available keys');
-      }
-      return {
-        kind: 'field_miss',
-        binding: string(entry.binding, 'a field_miss binding'),
-        field: string(entry.field, 'a field_miss field'),
-        available,
-      };
-    }
-    default:
-      throw new RustShimError(`the Rust engine appended a trace entry this shim does not know: ${String(entry.kind)}`);
-  }
-}
-
-function adapterCallName(request: HostRequest): string | undefined {
-  if (request.family !== 'adapters' || request.method !== 'call') return undefined;
-  const args = request.args;
-  const method = typeof args === 'object' && args !== null ? Reflect.get(args, 'method') : undefined;
-  return typeof method === 'string' ? `adapters.call ${method}` : undefined;
-}
-
-function errorAnswer(error: unknown): { message: string; name?: string } {
-  if (error instanceof Error) return { message: error.message, name: error.name };
-  return { message: String(error) };
-}
-
-// ── Boundary checks ───────────────────────────────────────────────────────────
-
-/**
- * `value` itself when it is plain JSON (objects with no prototype but
- * Object's, arrays, strings, finite numbers, booleans, null); otherwise a
- * shim error naming the method that produced it. A stream, a closure, a Date
- * or a Map would not survive the crossing, and silently changing it into
- * something that does would hand the engine a different value.
- */
-export function plainJson(value: unknown, method: string, at = ''): unknown {
-  const where = at === '' ? '' : ` at ${at}`;
-  const kind = typeof value;
-  switch (kind) {
-    case 'string':
-    case 'boolean':
-      return value;
-    case 'number':
-      if (Number.isFinite(value)) return value;
-      throw new RustShimError(`${method} returned ${String(value)}${where}, which JSON cannot carry`);
-    case 'object':
-      return plainJsonObject(value, method, at);
-    case 'undefined':
-    case 'function':
-    case 'bigint':
-    case 'symbol':
-      throw new RustShimError(`${method} returned a ${kind}${where}, which is not plain JSON`);
-    default:
-      return neverAsAny(kind);
-  }
-}
-
-/** `plainJson` for a value whose `typeof` is `object`. */
-function plainJsonObject(value: unknown, method: string, at: string): unknown {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    value.forEach((item, i) => plainJson(item, method, `${at}[${i}]`));
-    return value;
-  }
-  const proto: unknown = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) {
-    const kind = value.constructor?.name ?? 'an object with a prototype';
-    const where = at === '' ? '' : ` at ${at}`;
-    throw new RustShimError(`${method} returned a ${kind}${where}, which is not plain JSON`);
-  }
-  for (const [key, entry] of Object.entries(value)) {
-    if (entry !== undefined) plainJson(entry, method, at === '' ? key : `${at}.${key}`);
-  }
-  return value;
-}
-
-function record(value: unknown, what: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new RustShimError(`${what}: args must be an object`);
-  }
-  return Object.fromEntries(Object.entries(value));
-}
-
-function string(value: unknown, what: string): string {
-  if (typeof value !== 'string') throw new RustShimError(`${what} must be a string`);
-  return value;
-}
-
-function optionalString(value: unknown, what: string): string | undefined {
-  return value === undefined ? undefined : string(value, what);
-}
-
-function optionalStringRecord(value: unknown, what: string): Record<string, string> | undefined {
-  if (value === undefined) return undefined;
-  const entries = Object.entries(record(value, what));
-  return Object.fromEntries(entries.map(([key, entry]) => [key, string(entry, `${what}.${key}`)]));
-}
 
 // ── The segment's data ────────────────────────────────────────────────────────
 
@@ -509,6 +195,7 @@ function segmentInput(input: RunMovementInput): unknown {
   return plainJson(
     {
       entry: 'segment',
+      ...(input.dryRun === true ? { dryRun: true } : {}),
       source: input.source,
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
@@ -545,19 +232,23 @@ export function readRunResult(
   throw new RustShimError(`the Rust engine finished with ${Object.keys(outcome).join(', ') || 'nothing'}, which this shim does not decode`);
 }
 
+const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'cancelled']);
+
 function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRunResult {
   const result = record(value, 'the Rust engine result');
-  const unread = Object.keys(result).filter((key) => key !== 'movementName' && key !== 'cancelled');
+  const unread = Object.keys(result).filter((key) => !RESULT_KEYS.has(key));
   if (unread.length > 0) {
     throw new RustShimError(`the Rust engine result has ${unread.join(', ')}, which this shim does not decode yet`);
   }
   if (result.cancelled !== undefined && result.cancelled !== true) throw new RustShimError('a cancelled result says true');
+  const writes = new WireOut().read(result.writes ?? ['l', 0, []]);
+  if (!Array.isArray(writes) || !writes.every(isWriteRecord)) throw new RustShimError('the Rust engine result writes are write records');
   // The run spent nothing itself; what the run had spent before rides along,
   // as the interpreter's `spendFields` reports it.
   const spend = currentRunSpend();
   return {
     movementName: string(result.movementName, 'the Rust engine result movementName'),
-    writes: [],
+    writes,
     extractionSites: {},
     trace,
     ...(result.cancelled === true ? { cancelled: true } : {}),
@@ -566,6 +257,19 @@ function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRu
       : {}),
     ...(spend.runMicrodollars > 0 ? { runSpentMicrodollars: spend.runMicrodollars } : {}),
   };
+}
+
+/** A write record off the wire: the fields every one carries. */
+function isWriteRecord(value: unknown): value is MovementRunResult['writes'][number] {
+  if (typeof value !== 'object' || value === null) return false;
+  return (
+    typeof Reflect.get(value, 'adapterType') === 'string'
+    && typeof Reflect.get(value, 'recordType') === 'string'
+    && typeof Reflect.get(value, 'created') === 'boolean'
+    && typeof Reflect.get(value, 'committed') === 'boolean'
+    && typeof Reflect.get(value, 'writtenValues') === 'object'
+    && typeof Reflect.get(value, 'provenance') === 'object'
+  );
 }
 
 /** The error the TypeScript engine would have thrown: rebuilt from its class,
@@ -596,9 +300,14 @@ function failureOf(value: unknown, hostErrors: unknown[]): unknown {
  *   them, `n = UPPER(x)`, which reads as the expression it is), `if` /
  *   `else if` / `else` with expression conditions (no `IS`), `return
  *   <expression>`, nested arms alike;
- * - every expression one `rustCanEval` admits, where a name read is a name
+ * - writes (`write …` and `name = write …`): to a collection of a constructed
+ *   instance, along one edge (no WHERE) off a write's handle or the event, or
+ *   onto a held handle (`write co { … }`); with no `bind`; whose `unique by`
+ *   clauses are keys only (no conjunct that narrows); whose fields and spreads
+ *   read what an expression may;
+ * - every expression one `rustCanEval` admits, where a name read is a value
  *   the bodies bind, plus `p.field` with no hops on the movement's event
- *   parameter or on such a name;
+ *   parameter, on such a value, or on a write's handle;
  * - a run that cannot suspend (no `limitPaused`, no `suspendWhen`), whose
  *   trace starts empty, and whose event and source cross as themselves.
  */
@@ -611,6 +320,7 @@ export function rustCanRun(
   // when it decides whether a `field_miss` is new, and the Rust one does not.
   if ((input.host.trace?.length ?? 0) > 0) return false;
   const fileNames = new Set<string>();
+  const instances = new Set<string>();
   const movements: Extract<Statement, { kind: 'movement' }>[] = [];
   for (const statement of program.statements) {
     switch (statement.kind) {
@@ -622,6 +332,7 @@ export function rustCanRun(
       case 'assign':
         if (statement.value.kind !== 'construct') return false;
         fileNames.add(statement.name);
+        instances.add(statement.name);
         break;
       case 'listen':
         break;
@@ -636,13 +347,23 @@ export function rustCanRun(
   return movements.every((movement) => {
     const events = new Set(movement.params.map((p) => p.name));
     const values = new Set<string>();
-    collectBound(movement.body, values);
-    for (const name of values) if (events.has(name) || fileNames.has(name)) return false;
+    const handles = new Set<string>();
+    const bodyInstances = new Set<string>();
+    const nodes = new Set<string>();
+    collectBound(movement.body, { values, handles, instances: bodyInstances, nodes });
+    const bodyNames = [...values, ...handles, ...bodyInstances, ...nodes];
+    for (const name of bodyNames) if (events.has(name) || fileNames.has(name)) return false;
+    if (new Set(bodyNames).size !== bodyNames.length) return false;
     const functions = movements.map((m) => m.name);
-    const bound = (name: string) => events.has(name) || values.has(name) || fileNames.has(name);
+    const bound = (name: string) =>
+      events.has(name) || values.has(name) || handles.has(name) || nodes.has(name) || bodyInstances.has(name) || fileNames.has(name);
     return bodyRuns(movement.body, {
       events,
       values,
+      handles,
+      nodes,
+      instances: new Set([...instances, ...bodyInstances]),
+      movements: new Set(functions),
       languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
       scope: {
         binds: bound,
@@ -657,15 +378,30 @@ interface RunNames {
   events: ReadonlySet<string>;
   /** Every name the body binds to a value. */
   values: ReadonlySet<string>;
+  /** Every name the body binds to a write's handle. */
+  handles: ReadonlySet<string>;
+  /** Every name the body binds to a node it builds (`{ … }`, `graph { … }`). */
+  nodes: ReadonlySet<string>;
+  /** The constructed instances, the file's and the body's. */
+  instances: ReadonlySet<string>;
+  /** The file's movements: a construction spelled with one is a call. */
+  movements: ReadonlySet<string>;
   languageVersion: LanguageVersion;
   /** What a call's callee resolves against: every name the file and the
    *  body bind (a superset of any one point's scope), the file's functions. */
   scope: Parameters<typeof resolveCallee>[1];
 }
 
-function collectBound(statements: Statement[], into: Set<string>): void {
+function collectBound(
+  statements: Statement[],
+  into: { values: Set<string>; handles: Set<string>; instances: Set<string>; nodes: Set<string> },
+): void {
   for (const statement of statements) {
-    if (statement.kind === 'assign') into.add(statement.name);
+    if (statement.kind === 'assign') {
+      const kind = statement.value.kind;
+      const set = kind === 'write' ? into.handles : kind === 'construct' ? into.instances : kind === 'node' ? into.nodes : into.values;
+      set.add(statement.name);
+    }
     if (statement.kind === 'if') {
       for (const arm of statement.arms) collectBound(arm.body, into);
       if (statement.elseArm) collectBound(statement.elseArm.body, into);
@@ -677,11 +413,14 @@ function bodyRuns(statements: Statement[], names: RunNames): boolean {
   return statements.every((statement) => {
     switch (statement.kind) {
       case 'assign':
-      case 'return': {
-        if (statement.value.kind === 'expr') return slotRuns(statement.value.expr, names);
-        const slot = statement.value.kind === 'call' ? builtinValueSlot(statement.value.call, names) : undefined;
-        return slot !== undefined && slotRuns(slot, names);
-      }
+        if (statement.value.kind === 'write') return writeRuns(statement.value.write, names);
+        if (statement.value.kind === 'construct') return !names.movements.has(statement.value.construct.callee);
+        if (statement.value.kind === 'node') return nodeRuns(statement.value.node, names, statement.value.node.graph !== undefined);
+        return rvalueRuns(statement.value, names);
+      case 'return':
+        return rvalueRuns(statement.value, names);
+      case 'write':
+        return writeRuns(statement.write, names);
       case 'if':
         return (
           statement.arms.every((arm) => conditionRuns(arm.condition, names) && bodyRuns(arm.body, names))
@@ -691,6 +430,95 @@ function bodyRuns(statements: Statement[], names: RunNames): boolean {
         return false;
     }
   });
+}
+
+function rvalueRuns(value: Extract<Statement, { kind: 'assign' }>['value'], names: RunNames): boolean {
+  if (value.kind === 'expr') return slotRuns(value.expr, names);
+  const slot = value.kind === 'call' ? builtinValueSlot(value.call, names) : undefined;
+  return slot !== undefined && slotRuns(slot, names);
+}
+
+/** A write the Rust engine runs (`write.rs`). */
+function writeRuns(write: WriteExpression, names: RunNames): boolean {
+  if (write.bind !== undefined) return false;
+  const target = write.target;
+  switch (target.kind) {
+    case 'tuple':
+      return false;
+    case 'position':
+      if (!names.handles.has(target.alias)) return false;
+      break;
+    case 'linked': {
+      const root = target.path.root?.kind === 'name' ? target.path.root.name : undefined;
+      if (root === undefined) return false;
+      if (!names.instances.has(root) && !names.handles.has(root) && !names.events.has(root)) return false;
+      if (!singleUnnarrowedEdge(target.path)) return false;
+      break;
+    }
+    default:
+      return neverAsAny(target);
+  }
+  if (!write.uniqueBy.every((clause) => keyOnly(clause.predicate.raw))) return false;
+  const spreadsRun = (write.spreads ?? []).every(
+    (spread) =>
+      names.values.has(spread.source) || names.handles.has(spread.source) || names.nodes.has(spread.source) || names.events.has(spread.source),
+  );
+  return spreadsRun && write.fields.every((field) => slotRuns(field.value, names));
+}
+
+/** A node or graph literal the Rust engine builds (node.rs): value entries,
+ *  nested literals, and in a graph a reference to a record the run holds and
+ *  a spread of a value, a handle or a node; no shape, no traversal entry. */
+function nodeRuns(literal: NodeLiteral, names: RunNames, graph: boolean): boolean {
+  if (literal.graph?.shape !== undefined) return false;
+  if (!graph && literal.spreads !== undefined) return false;
+  const records = (name: string) => names.handles.has(name) || names.nodes.has(name);
+  const spreadsRun = (literal.spreads ?? []).every((spread) => names.values.has(spread.source) || records(spread.source));
+  return spreadsRun && literal.entries.every((entry) => {
+    switch (entry.kind) {
+      case 'value': {
+        const bare = entry.value.raw.trim();
+        if (graph && records(bare)) return true;
+        if (names.events.has(bare)) return false;
+        return slotRuns(entry.value, names);
+      }
+      case 'nodes':
+        return entry.nodes.every((nested) => nodeRuns(nested, names, graph));
+      case 'declared':
+      case 'traversal':
+        return false;
+      default:
+        return neverAsAny(entry);
+    }
+  });
+}
+
+/** One edge step, with no WHERE (`singleWriteEdge`). */
+function singleUnnarrowedEdge(path: PathHead): boolean {
+  try {
+    const probe = parseMovementExpression(`${probePathHead(path)}.\`__movement_engine_probe__\``);
+    if (probe.type !== 'traverse' || probe.steps.length !== 1) return false;
+    const [step] = probe.steps;
+    return step.type === 'edge' && step.expressionFilter === undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** A `unique by` clause with a key (`identityKeyOf`), whose other
+ *  conjuncts read only the candidate (`isPurePredicate`). */
+function keyOnly(raw: string): boolean {
+  try {
+    const conjuncts = splitUniquenessConjuncts(raw).flatMap((part) => andConjuncts(parseMovementExpression(part.raw)));
+    const narrowing = conjuncts.filter((c) => identityKeyOf(c) === undefined);
+    return conjuncts.length > narrowing.length && narrowing.every(isPurePredicate);
+  } catch {
+    return false;
+  }
+}
+
+function andConjuncts(expr: Expression): Expression[] {
+  return expr.type === 'logical' && expr.op === 'and' ? expr.operands.flatMap(andConjuncts) : [expr];
 }
 
 /** A bound call to a built-in, as the expression it reads as (run.ts
@@ -731,7 +559,7 @@ function conditionRuns(slot: ExprSlot, names: RunNames): boolean {
 }
 
 /** `rustCanEval`'s nodes, a name read being a bound value, and a field read
- *  off the event or a bound value. */
+ *  off the event, a bound value or a write's handle. */
 function runExpressionRuns(expr: Expression, names: RunNames): boolean {
   switch (expr.type) {
     case 'alias_ref':
@@ -741,7 +569,10 @@ function runExpressionRuns(expr: Expression, names: RunNames): boolean {
     case 'traverse':
       return (
         expr.aliasRoot !== undefined
-        && (names.events.has(expr.aliasRoot) || names.values.has(expr.aliasRoot))
+        && (names.events.has(expr.aliasRoot)
+          || names.values.has(expr.aliasRoot)
+          || names.handles.has(expr.aliasRoot)
+          || names.nodes.has(expr.aliasRoot))
         && expr.steps.length === 0
         && expr.expression.type === 'property'
         && !LONE_SURROGATE.test(expr.expression.propertyTypeId)
@@ -991,145 +822,6 @@ function engineErrorCode(code: unknown): MovementEngineErrorCode {
       return code;
     default:
       throw new RustShimError(`the Rust evaluator threw an unknown code ${String(code)}`);
-  }
-}
-
-const REFUSED: unique symbol = Symbol('refused');
-
-/** A lone surrogate: JSON cannot carry it into a Rust string. */
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-
-/**
- * The wire to the Rust evaluator and back (crates/movement-engine/src/env.rs
- * says the format): values with their identity, and the origins of the trails
- * they carry, numbered.
- */
-class WireOut {
-  /** The objects and lists sent, by the id the wire gave them. */
-  private readonly sent: object[] = [];
-  private readonly ids = new Map<object, number>();
-  private readonly open = new Set<object>();
-  readonly origins: ProvenanceOrigin[] = [];
-  private readonly originIds = new Map<ProvenanceOrigin, number>();
-
-  /** `value` on the wire, or REFUSED where it would not cross as itself: a
-   *  function, a Date, a class instance, a record, a lone surrogate. */
-  value(value: unknown): unknown {
-    const kind = typeof value;
-    switch (kind) {
-      case 'undefined':
-        return ['u'];
-      case 'boolean':
-        return value;
-      case 'string':
-        return typeof value === 'string' && LONE_SURROGATE.test(value) ? REFUSED : value;
-      case 'number':
-        if (Number.isNaN(value)) return ['n', 'NaN'];
-        if (value === Infinity) return ['n', 'Infinity'];
-        if (value === -Infinity) return ['n', '-Infinity'];
-        return Object.is(value, -0) ? ['n', '-0'] : value;
-      case 'object':
-        return this.composite(value);
-      case 'function':
-      case 'bigint':
-      case 'symbol':
-        return REFUSED;
-      default:
-        return neverAsAny(kind);
-    }
-  }
-
-  private composite(value: unknown): unknown {
-    if (value === null || typeof value !== 'object') return value;
-    const seen = this.ids.get(value);
-    if (seen !== undefined) return this.open.has(value) ? REFUSED : ['r', seen];
-    const proto: unknown = Object.getPrototypeOf(value);
-    const isList = Array.isArray(value) && proto === Array.prototype;
-    if (!isList && (proto !== Object.prototype || bindingOf(value) !== undefined)) return REFUSED;
-    const id = this.sent.length;
-    this.sent.push(value);
-    this.ids.set(value, id);
-    this.open.add(value);
-    try {
-      if (Array.isArray(value)) {
-        const items: unknown[] = [];
-        for (let i = 0; i < value.length; i++) {
-          // A hole is not `undefined` to every array method.
-          if (!(i in value)) return REFUSED;
-          const item = this.value(value[i]);
-          if (item === REFUSED) return REFUSED;
-          items.push(item);
-        }
-        return ['l', id, items];
-      }
-      const keys = Object.keys(value);
-      if (Object.getOwnPropertyNames(value).length !== keys.length || keys.includes('__proto__')) return REFUSED;
-      const entries: unknown[] = [];
-      for (const key of keys) {
-        if (LONE_SURROGATE.test(key)) return REFUSED;
-        const item = this.value(Reflect.get(value, key));
-        if (item === REFUSED) return REFUSED;
-        entries.push([key, item]);
-      }
-      return ['o', id, entries];
-    } finally {
-      this.open.delete(value);
-    }
-  }
-
-  trail(provenance: Provenance): { origins: number[]; direct?: number } {
-    return {
-      origins: provenance.origins.map((o) => this.originId(o)),
-      ...(provenance.direct !== undefined ? { direct: this.originId(provenance.direct) } : {}),
-    };
-  }
-
-  private originId(origin: ProvenanceOrigin): number {
-    let id = this.originIds.get(origin);
-    if (id === undefined) {
-      id = this.origins.length;
-      this.origins.push(origin);
-      this.originIds.set(origin, id);
-    }
-    return id;
-  }
-
-  /** A value back from the wire: the objects sent as themselves, the new
-   *  ones built once each. */
-  read(wire: unknown, made: Map<number, unknown> = new Map()): unknown {
-    if (!Array.isArray(wire)) return wire;
-    const [tag, a, b] = wire;
-    switch (tag) {
-      case 'u':
-        return undefined;
-      case 'n':
-        return a === 'NaN' ? NaN : a === 'Infinity' ? Infinity : a === '-Infinity' ? -Infinity : -0;
-      case 'i':
-        if (typeof a !== 'number' || this.sent[a] === undefined) throw new RustShimError(`the wire names no sent value ${String(a)}`);
-        return this.sent[a];
-      case 'r':
-        if (typeof a !== 'number' || !made.has(a)) throw new RustShimError(`the wire names no value ${String(a)} it made`);
-        return made.get(a);
-      case 'l': {
-        if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire list is ["l", id, items]');
-        const list: unknown[] = [];
-        made.set(a, list);
-        for (const item of b) list.push(this.read(item, made));
-        return list;
-      }
-      case 'o': {
-        if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire object is ["o", id, entries]');
-        const object: Record<string, unknown> = {};
-        made.set(a, object);
-        for (const entry of b) {
-          if (!Array.isArray(entry) || typeof entry[0] !== 'string') throw new RustShimError('a wire entry is [key, value]');
-          object[entry[0]] = this.read(entry[1], made);
-        }
-        return object;
-      }
-      default:
-        throw new RustShimError(`an unknown wire tag ${String(tag)}`);
-    }
   }
 }
 

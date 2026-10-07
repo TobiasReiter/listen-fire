@@ -48,6 +48,11 @@ impl JsObject {
         &self.entries
     }
 
+    /// A fresh object with `other`'s own entries (`{...other}`).
+    pub fn clone_of(other: &JsObject) -> JsObject {
+        JsObject { entries: other.entries.clone(), origin: None }
+    }
+
     pub fn get(&self, key: &str) -> Option<&Js> {
         self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }

@@ -43,7 +43,9 @@ const PURE_FILES = [
   'run.ts',
   'run_scope.ts',
   'rust_engine.ts',
+  'rust_host.ts',
   'rust_stats.ts',
+  'rust_wire.ts',
   'serialize.ts',
 ];
 

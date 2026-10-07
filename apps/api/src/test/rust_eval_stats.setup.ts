@@ -16,6 +16,7 @@ if (process.env.MOVEMENT_ENGINE === 'rust' && dir !== undefined) {
     resetRustRunStats();
   });
   afterAll(() => {
-    appendFileSync(path.join(dir, `${process.pid}.jsonl`), `${JSON.stringify({ ...rustEvalStats, runs: rustRunStats })}\n`);
+    const file = path.basename(expect.getState().testPath ?? '');
+    appendFileSync(path.join(dir, `${process.pid}.jsonl`), `${JSON.stringify({ ...rustEvalStats, runs: rustRunStats, file })}\n`);
   });
 }

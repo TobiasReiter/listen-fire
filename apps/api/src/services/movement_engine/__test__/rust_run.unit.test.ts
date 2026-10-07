@@ -4,12 +4,11 @@
 // result (or the error, its class and the very object a host call failed
 // with), the trace, and every call the adapters received, in order.
 //
-// The conformance corpora prove the TypeScript engine's semantics, but every
-// program in them writes, and writes are the next slice; these programs are
-// the slice's own: reads of the event and of values, bindings, `if`,
-// interpolation, `return`, the built-ins, the cancel gate.
+// These programs are slice 2a's: reads of the event and of values, bindings,
+// `if`, interpolation, `return`, the built-ins, the cancel gate. Writes and
+// parks are rust_write.unit.test.ts's.
 
-import { mockCatalogSnapshot, parseProgram, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, parseProgram, type InstanceSchema } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { Adapter } from '../../translation_graph/adapter';
@@ -36,22 +35,7 @@ const attioSchema: InstanceSchema = {
   writableRoots: {},
 };
 
-/** The snapshot a fixture's catalog makes, as a production snapshot has it:
- *  mockCatalog's adapter specs carry the fixture's own `schema` beside the
- *  snapshot's `schemas`, which no real snapshot does (and the Rust catalog
- *  refuses what a snapshot does not declare). */
-function snapshotOf(spec: Parameters<typeof mockCatalogSnapshot>[0]): CatalogSnapshot {
-  const snapshot = mockCatalogSnapshot(spec);
-  const adapters = Object.fromEntries(
-    Object.entries(snapshot.adapters).map(([name, adapter]) => {
-      const { schema: _fixtureOnly, ...rest } = adapter as typeof adapter & { schema?: unknown };
-      return [name, rest];
-    }),
-  );
-  return { ...snapshot, adapters };
-}
-
-const catalog = snapshotOf({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
@@ -213,7 +197,9 @@ describe('a whole run in the Rust engine', () => {
     const host = makeTestHost();
     const program = (body: string) => parseProgram(`${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, { languageVersion: 3 });
     expect(rustCanRun(parseProgram(PRELUDE + BINDINGS_AND_IF, { languageVersion: 3 }), { host })).toBe(true);
-    expect(rustCanRun(program('  write crm-[:companies]-> { name: msg.`subject` }'), { host })).toBe(false);
+    expect(rustCanRun(program('  write crm-[:companies]-> { name: msg.`subject` }'), { host })).toBe(true);
+    expect(rustCanRun(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'), { host })).toBe(false);
+    expect(rustCanRun(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'), { host })).toBe(false);
     expect(rustCanRun(program('  x = msg'), { host })).toBe(false);
     expect(rustCanRun(program('  x = AI("why?")'), { host })).toBe(false);
     expect(rustCanRun(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), { host })).toBe(false);

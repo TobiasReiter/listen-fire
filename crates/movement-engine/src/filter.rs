@@ -124,7 +124,18 @@ pub fn is_null_literal(expr: &Expression) -> bool {
 /// (absent for a name it does not know). The engine evaluates through
 /// `eval`, whose semantics this mirrors; adapters filter through this.
 pub fn evaluate_predicate(expr: &Expression, read: &dyn Fn(&str) -> Js) -> Result<Js, EvalError> {
-    let eval = |e: &Expression| evaluate_predicate(e, read);
+    evaluate_predicate_with(expr, read, &compare_values)
+}
+
+/// `evaluatePredicate` with the comparator supplied: a run answers what
+/// `compare_values` hands back (`WITHIN`, which reads the wall clock) by
+/// asking the TypeScript member.
+pub fn evaluate_predicate_with(
+    expr: &Expression,
+    read: &dyn Fn(&str) -> Js,
+    compare: &dyn Fn(&Js, FilterOperator, &Js) -> Result<bool, EvalError>,
+) -> Result<Js, EvalError> {
+    let eval = |e: &Expression| evaluate_predicate_with(e, read, compare);
     Ok(match expr {
         Expression::Static { value } => static_value(value),
         Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => read(property_type_id),
@@ -168,7 +179,7 @@ pub fn evaluate_predicate(expr: &Expression, read: &dyn Fn(&str) -> Js) -> Resul
             } else if is_null_literal(right) {
                 compare_to_null(*op, &l)
             } else {
-                compare_values(&l, *op, &r)?
+                compare(&l, *op, &r)?
             })
         }
         Expression::Logical { op, operands } => {
@@ -194,6 +205,56 @@ pub fn evaluate_predicate(expr: &Expression, read: &dyn Fn(&str) -> Js) -> Resul
         }
         _ => return Err(EvalError::Fallback("not a pure predicate kind this unit evaluates".into())),
     })
+}
+
+/// `isPurePredicate` then `pureLeafReads(…).map(leafReadKey)`: the names a
+/// pure predicate reads, in traversal order; `None` for one that is not pure.
+pub fn pure_leaf_keys(expr: &Expression) -> Option<Vec<String>> {
+    let mut keys = Vec::new();
+    leaf_keys(expr, &mut keys).then_some(keys)
+}
+
+fn leaf_keys(expr: &Expression, into: &mut Vec<String>) -> bool {
+    fn all(items: &[Expression], into: &mut Vec<String>) -> bool {
+        items.iter().all(|e| leaf_keys(e, into))
+    }
+    match expr {
+        Expression::Static { .. } => true,
+        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => {
+            into.push(property_type_id.clone());
+            true
+        }
+        Expression::AliasRef { name } => {
+            into.push(name.clone());
+            true
+        }
+        Expression::Meta { key } => {
+            into.push(format!("@{key}"));
+            true
+        }
+        Expression::Traverse { alias_root, steps, expression } if steps.is_empty() => {
+            let inner = match expression.as_ref() {
+                Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+                Expression::AliasRef { name } => name.clone(),
+                _ => return false,
+            };
+            into.push(format!("{}.{inner}", alias_root.as_deref().unwrap_or("")));
+            true
+        }
+        Expression::List { elements } => elements.iter().all(|e| match e {
+            ListElement::Expression(e) => leaf_keys(e, into),
+            ListElement::Spread(spread) => leaf_keys(&spread.expression, into),
+        }),
+        Expression::Concat { parts } => all(parts, into),
+        Expression::Conditional { condition, then, else_ } => {
+            leaf_keys(condition, into) && leaf_keys(then, into) && leaf_keys(else_, into)
+        }
+        Expression::Compare { left, right, .. } | Expression::Arithmetic { left, right, .. } => leaf_keys(left, into) && leaf_keys(right, into),
+        Expression::Logical { operands, .. } => all(operands, into),
+        Expression::Not { expression } | Expression::Negate { expression } => leaf_keys(expression, into),
+        Expression::At { expression, index } => leaf_keys(expression, into) && leaf_keys(index, into),
+        _ => false,
+    }
 }
 
 /// `l op r` on two numbers: `/` and `%` by zero are null, and `%` keeps the

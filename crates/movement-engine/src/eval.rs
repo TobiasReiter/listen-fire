@@ -88,6 +88,11 @@ pub fn static_value(value: &StaticValue) -> Js {
 pub trait Names {
     fn value(&self, name: &str) -> Option<ValueBinding>;
     fn is_event(&self, name: &str) -> bool;
+    /// A record the run holds (a write's handle, a node it built), whose
+    /// fields the run reads (`readBindingField`).
+    fn is_record(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 impl Names for Env {
@@ -106,6 +111,9 @@ pub enum Ask {
     /// A field of the event position (`msg.\`subject\``), through the
     /// source adapter.
     EventField { field: String },
+    /// A field of a record the run holds (`co.externalId`, `g.title`):
+    /// answered by the run, which holds the record and its fields' trails.
+    RecordField { root: String, field: String },
     /// A built-in this engine does not reproduce for these arguments: the
     /// TypeScript member answers.
     Function { id: String, args: Vec<Js> },
@@ -323,6 +331,12 @@ impl<'a> Evaluator<'a> {
             return match self.reader {
                 Some(reader) => reader.ask(Ask::EventField { field: field.to_string() }),
                 None => Err(EvalError::Fallback("the event needs the host".into())),
+            };
+        }
+        if self.env.is_record(root) {
+            return match self.reader {
+                Some(reader) => reader.ask(Ask::RecordField { root: root.to_string(), field: field.to_string() }),
+                None => Err(EvalError::Fallback("a record the run holds is the run's".into())),
             };
         }
         let Some(binding) = self.env.value(root) else {

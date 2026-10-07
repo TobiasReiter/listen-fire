@@ -87,6 +87,10 @@ pub struct ResolveAdapter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub construction_args: Option<std::collections::BTreeMap<String, String>>,
     pub role: Role,
+    /// A target whose writes are rehearsed: the host wraps the live adapter
+    /// in the run's dry-run capture (`wrapAdapterForDryRun`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -119,6 +123,12 @@ pub mod adapters {
         }
     }
 
+    /// Whether the live adapter implements an optional member (`readRecord`):
+    /// answered a boolean.
+    pub fn has(instance: Instance, method: &str) -> Request {
+        Request { family: Family::Adapters, method: "has".into(), args: json!({ "instance": instance.0, "method": method }) }
+    }
+
     /// `call` with its arguments, and its answer, on the eval wire
     /// (crate::env): key order, `undefined` and the numbers JSON cannot say
     /// cross as the JavaScript has them.
@@ -128,6 +138,37 @@ pub mod adapters {
             method: "call".into(),
             args: json!({ "instance": instance.0, "method": method, "args": args, "wire": true }),
         }
+    }
+}
+
+pub mod llm {
+    use super::*;
+
+    /// The identity judge over a write's candidates (`arbitrateEntities`),
+    /// values on the eval wire: answered `{index: number | null,
+    /// judgeUnavailable?: message}`, the message being what the host's
+    /// `onJudgeUnavailable` heard.
+    pub fn arbitrate_entities(asserted: Json, candidates: Json, record_type: &str, constraints: Json) -> Request {
+        Request {
+            family: Family::Llm,
+            method: "arbitrateEntities".into(),
+            args: json!({ "asserted": asserted, "candidates": candidates, "recordType": record_type, "constraints": constraints }),
+        }
+    }
+}
+
+pub mod locks {
+    use super::*;
+
+    /// The segment's cross-run write locks, taken by name (sorted, each once):
+    /// answered `undefined` once held.
+    pub fn acquire(names: &[String]) -> Request {
+        Request { family: Family::Locks, method: "acquire".into(), args: json!({ "names": names }) }
+    }
+
+    /// The same names let go, as one earlier `acquire` took them.
+    pub fn release(names: &[String]) -> Request {
+        Request { family: Family::Locks, method: "release".into(), args: json!({ "names": names }) }
     }
 }
 
@@ -209,6 +250,7 @@ mod tests {
             credentials_id: None,
             construction_args: None,
             role: Role::Target,
+            dry_run: false,
         });
         assert_eq!((resolve.family.as_str(), resolve.method.as_str()), ("adapters", "resolve"));
         assert_eq!(resolve.args, json!({ "adapterType": "attio", "teamId": "t1", "role": "target" }));

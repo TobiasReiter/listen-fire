@@ -21,11 +21,14 @@ pub mod host;
 pub mod js;
 pub mod js_date;
 pub mod js_regex;
+pub mod node;
 pub mod program;
 pub mod run;
 pub mod stdlib;
 pub mod trace;
+pub mod unique;
 pub mod value;
+pub mod write;
 
 use movement_parser::lowering::expression::Expression;
 

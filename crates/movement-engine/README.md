@@ -9,10 +9,11 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 - **an expression** over value bindings, which the TypeScript evaluator hands
   to `eval_expression` (slice 1, "The evaluator" below);
 - **a whole run** of a program the shim's `rustCanRun` admits: bindings, `if`
-  and `return` over reads of the event and of values (slice 2a, "The run"
-  below). Writes are the next slice, so no conformance program qualifies yet
-  (every one writes); apps/api's `rust_run.unit.test.ts` holds these runs to
-  the TypeScript engine.
+  and `return` over reads of the event and of values (slice 2a), writes with
+  identity (`unique by`) and the nodes a run builds (slice 2b) — "The run"
+  below. apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
+  hold these runs to the TypeScript engine; the conformance corpora route
+  their admitted cases whole.
 
 ## Modules
 
@@ -25,7 +26,10 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
 | `run` | the `segment` entry: `runMovement` for the programs the shim admits (below) |
-| `bindings` | what a name in a run is bound to, the lexical scopes, the source `Position` |
+| `write` | the `write` statement: targets, fields, identity, update or create, the firing record |
+| `unique` | `unique by`: the clauses split into keys and narrowings, the search record, the rules that decide without a judge, the identity lock |
+| `node` | node and graph literals: value entries, nested nodes, reference entries and record copies (the checker's stamps) |
+| `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`) |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation, from the JavaScript runtime (WASM) or natively (below) |
@@ -52,12 +56,13 @@ Measured 2026-10-07 (gzip -9):
 | slice 1, fix round 1 (`ryu-js`, bounded regex parsing) | 1,593,666 | 438,383 |
 | slice 2a (environment services, the check, the run) | 1,751,210 | 488,922 |
 | slice 2a, fix round 1 | 1,751,076 | 488,997 |
+| slice 2b (writes, nodes) | 1,945,584 | 542,520 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
-back, the standard library, the regex matcher, Unicode case tables). The
-total is under the 600 KB warning line, but no longer far under it: the
-browser needs only the parser, so the next slice that grows it should weigh
-splitting into two artifacts.
+back, the standard library, the regex matcher, Unicode case tables); slice
+the writes about 54 KB more. The total is under the 600 KB warning line with
+about 57 KB to spare: the browser needs only the parser, so the next slice that
+grows it should split the browser's parser into an artifact of its own.
 
 ## The protocol
 
@@ -176,13 +181,65 @@ TypeScript takes through its host is a host request here:
 | request | when | answered by the shim from |
 |---|---|---|
 | `check.program` | first | program_check.ts (below) |
-| `adapters.credentialId`, `adapters.resolve` | the source instance (`prepareMovement`) | `host.adapters`; the answer carries the handle and the adapter's `adapterType` |
+| `adapters.credentialId`, `adapters.resolve` | the source instance (`prepareMovement`); each write's target, once per instance (`targetAdapterFor`) | `host.adapters`; the answer carries the handle and the adapter's `adapterType`; a rehearsed target is wrapped in the run's one dry-run capture |
 | `adapters.call` (`wire: true`) `listEntryPoints` | a discriminated event (`naturalRootTypeName`) | the live adapter |
 | `trace.append` | each trace entry, as it lands | pushed onto `host.trace` (the run's trace) |
 | `control.cancelled` | before each statement | `host.control.cancel.cancelled()` |
 | `adapters.call` (`wire: true`) `getFieldValue` | each read of an event field, in evaluation order | the live adapter, through the surface-read wrapper's restamp (done here) |
-| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature) | the TypeScript member itself |
+| `adapters.call` (`wire: true`) `describe`, `resolveEntity`, `readRecord`, `createRecord`, `updateRecord` | a write, in run.ts's order (below) | the live (or dry-run wrapped) adapter |
+| `adapters.has` | before an optional member (`readRecord`) | whether the adapter implements it |
+| `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`; what its `onJudgeUnavailable` heard rides back |
+| `locks.acquire`, `locks.release` | around an identity search and an update by id | the segment's cross-run write-lock holder |
+| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature, `WITHIN`) | the TypeScript member itself |
 | `control.cancelledNow` | the last check | `host.control.cancel.cancelledNow()` |
+
+### Writes
+
+`write.rs` is run.ts's `executeWrite`, for a collection of an instance
+(`write crm-[:companies]->`), one edge off a handle or the event
+(`write co-[:notes]->`, `write msg-[:replies]->`), and a held handle updated
+in place (`write co { … }`):
+
+1. the target adapter resolved, once per instance identity;
+2. `describe`, then each field line in the author's order — a spread is the
+   lines the checker's `spreadFields` stamp names — each value coerced for its
+   field's cardinality;
+3. the discriminated handle type, `unique by` ∪ the descriptor's native
+   constraints, the search record (blank keys null, parents folded in by edge
+   name), and the identity lock (the record type's, when the write can search;
+   the per-key locks gate concurrent flows of one run, which this engine's runs
+   do not have);
+4. `resolveEntity` — once with every key, or once per key when a clause has
+   conjuncts that narrow (each narrowed by `evaluatePredicate` over the
+   candidate, its record read when the search's snapshot lacks a field;
+   `WITHIN` answered by the TypeScript comparator) — then the rules
+   (`arbitrateWithoutJudge`), then the judge;
+5. an update of what was found (its record lock, `readRecord`, the `?:` / `+:`
+   / `+?:` merges, no-op suppression, `noop` / `attach` / `update`, an
+   unsupported association failing the write) or a create (the required-field
+   gate first; a judge that was unavailable leaves the TypeScript's note);
+6. the firing record: each written field's trail summarised, the binding's
+   name, the write's origin interned, the handle bound.
+
+The firing record is held as the JavaScript object the TypeScript builds,
+keys in its order, so the result, a handle read (`co.externalId`, a field of
+what was written, of the adapter's result data) and the handle all see one value.
+
+**Provenance origin ids** are internal: origins live in the run's table and
+trails hold their ids, but nothing a caller sees carries an id — the result's
+provenance is the origins themselves, summarised in trail order. The order of a trail is the order of
+evaluation in both engines (a literal minted once per evaluation, an event
+or handle read once per ask), and deduplication is by origin, which a fresh
+id per mint reproduces exactly (identity, in the TypeScript).
+
+### Nodes
+
+`node.rs` builds `{ … }` / `node { … }` and `graph { … }` without a shape:
+value entries, nested literals, and in a graph a reference entry — the
+checker's `reference` stamp — as an edge landing the record itself, a record
+spread copied by the checker's `copy` plan (fields; a plan that walks edges
+is refused), and a map spread. A node's field reads carry the trail it was
+written with.
 
 - An expression is evaluated by the one evaluator. What it cannot answer
   itself it asks (`eval::Reader`); the evaluation stops, the run asks the
@@ -208,7 +265,11 @@ TypeScript engine would carry on. Each comes back as an error (the run
 fails); none produces a different answer.
 
 - An adapter answers a value the eval wire cannot carry as itself (a
-  `Date`, a class instance, a function): `RustShimError` from the shim.
+  `Date`, a class instance, a function): `RustShimError` from the shim. The
+  likely case — an event field the source's schema types as a date or a
+  datetime, which an adapter may answer as a `Date` — is declined before the
+  source is resolved, read off the catalog snapshot (a `describe` would be an
+  adapter call, after which nothing may decline).
 - A value held in a binding is shaped like an engine binding (an object
   whose `kind` names one, the TypeScript's `bindingOf`): reading its field,
   comparing it by `==`, or spreading it fails with MOVENG_UNSUPPORTED ("this
@@ -237,7 +298,8 @@ one value. `["i", id]` (one of the caller's own objects) appears only in
 writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
-movementName?, event, teamId, now, catalog}`. `languageVersion` is the pin,
+movementName?, event, teamId, now, catalog, dryRun?}`. `dryRun` is a
+rehearsal (writes captured). `languageVersion` is the pin,
 written out (the engine does not know the release's current one); `event`
 is the `TriggerEvent` on the eval wire; `now` is the run's pinned instant as
 a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
@@ -251,7 +313,10 @@ host keeps, so a run that fails with it can name it.
 |---|---|
 | `check.program {source, languageVersion, upgradingFrom?}` | `{diagnostics, link?, stamps}` (below); a program that fails its check gets no answer: the host ends the run with the check's error |
 | `adapters.credentialId {credentialName}` | the credential's id, or `undefined` |
-| `adapters.resolve {adapterType, teamId, credentialsId?, constructionArgs?, role: "source" \| "target"}` | `{instance, adapterType}`: the handle, and the live adapter's own `adapterType` |
+| `adapters.resolve {adapterType, teamId, credentialsId?, constructionArgs?, role: "source" \| "target", dryRun?: true}` | `{instance, adapterType}`: the handle, and the live adapter's own `adapterType`; `dryRun` wraps it in the run's one rehearsal |
+| `adapters.has {instance, method}` | whether the adapter implements `method` |
+| `llm.arbitrateEntities {asserted, candidates, recordType, constraints}` (values on the eval wire) | `{index: number \| null, judgeUnavailable?: message}` |
+| `locks.acquire {names}` / `locks.release {names}` | `undefined` once held / let go |
 | `adapters.call {instance, method, args}` | the method's result as plain JSON (anything else fails the run in the shim) |
 | `adapters.call {instance, method, args, wire: true}` | `args` on the eval wire, the result too |
 | `control.cancelled {}` / `control.cancelledNow {}` | a boolean: the cancel gate, debounced / not |
@@ -261,7 +326,8 @@ host keeps, so a run that fails with it can name it.
 
 **`done`**:
 
-- `{result: {movementName, cancelled?: true}}`;
+- `{result: {movementName, writes, cancelled?: true}}`,
+  `writes` the firing records on the eval wire;
 - `{failed: {error, result}}`: the body failed, and `result` is what the run
   had when it did (the shim throws `MovementRunFailed`);
 - `{thrown: error}`: it failed before the body ran;

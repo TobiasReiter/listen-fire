@@ -275,9 +275,18 @@ describe('the Rust engine shim', () => {
     expect(runFailureCause(failed)).toBe(original);
     if (!(failed instanceof MovementRunFailed)) throw new Error('a MovementRunFailed');
     expect(failed.partial).toEqual({ movementName: 'm', writes: [], trace, extractionSites: {} });
-    expect(() => readRunResult({ result: { movementName: 'm', writes: [] } }, { trace: [], hostErrors: [] })).toThrow(
-      'the Rust engine result has writes, which this shim does not decode yet',
+    const write = {
+      adapterType: 'attio', recordType: 'company', created: true, committed: false, externalId: 'x1',
+      writtenValues: { name: 'Acme' }, outcome: 'create', provenance: { name: [] },
+    };
+    const wired = ['l', 0, [['o', 1, Object.entries(write).map(([k, v]) => [k, typeof v === 'object' ? ['o', 2, Object.entries(v).map(([a, b]) => [a, Array.isArray(b) ? ['l', 3, []] : b])] : v])]]];
+    expect(readRunResult({ result: { movementName: 'm', writes: wired } }, { trace: [], hostErrors: [] })).toEqual({
+      ran: { movementName: 'm', writes: [write], trace: [], extractionSites: {} },
+    });
+    expect(() => readRunResult({ result: { movementName: 'm', extractionSites: {} } }, { trace: [], hostErrors: [] })).toThrow(
+      'the Rust engine result has extractionSites, which this shim does not decode yet',
     );
+    expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', 0, [1]] } }, { trace: [], hostErrors: [] })).toThrow(RustShimError);
     expect(() => readRunResult({ parked: true }, { trace: [], hostErrors: [] })).toThrow(RustShimError);
   });
 });

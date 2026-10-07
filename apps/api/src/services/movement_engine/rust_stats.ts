@@ -26,18 +26,31 @@ export function resetRustEvalStats(): void {
 
 /**
  * Whole runs the shim sent to the Rust engine (`routed`), of those the ones
- * it declined before touching an adapter, by its reason (`declined`, which
+ * it ran to their end (`ranWhole`) and declined before touching an adapter,
+ * by its reason (`declined`, which
  * then ran on the TypeScript engine), and the host calls segments made, by
  * `family.method` (`hostCalls`).
  */
-export const rustRunStats: { routed: number; declined: Record<string, number>; hostCalls: Record<string, number> } = {
+export const rustRunStats: {
+  routed: number;
+  /** Routed runs the Rust engine ran to their end (not declined). */
+  ranWhole: number;
+  /** Routed runs that ended in a fault of the shim's own (`RustShimError`). */
+  shimFaults: number;
+  declined: Record<string, number>;
+  hostCalls: Record<string, number>;
+} = {
   routed: 0,
+  ranWhole: 0,
+  shimFaults: 0,
   declined: {},
   hostCalls: {},
 };
 
 export function resetRustRunStats(): void {
   rustRunStats.routed = 0;
+  rustRunStats.ranWhole = 0;
+  rustRunStats.shimFaults = 0;
   rustRunStats.declined = {};
   rustRunStats.hostCalls = {};
 }

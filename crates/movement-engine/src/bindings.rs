@@ -3,7 +3,6 @@
 //! source position the event seeds.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use movement_parser::catalog::types::InstanceSchema;
@@ -24,6 +23,32 @@ pub enum Binding {
     Opaque,
     /// A movement declared in the file (`kind: 'movement'`).
     Movement(String),
+    /// A write's result (`kind: 'handle'`): the record the write produced,
+    /// the type it stands on, and the graph it lives in.
+    Handle(Rc<Handle>),
+    /// A node the run built (`kind: 'nodePosition'`): a node or graph
+    /// literal. Shared, as the TypeScript's object is: two places holding it
+    /// hold one node.
+    Node(Rc<RefCell<Node>>),
+}
+
+/// `{kind: 'nodePosition', fields, fieldOrder, fieldProvenance, edges}`, the
+/// edges all landed (this engine builds no deferred one).
+#[derive(Debug, Default)]
+pub struct Node {
+    /// As the JavaScript object holds them: in its key order.
+    pub fields: crate::js::JsObject,
+    pub field_order: Vec<String>,
+    pub field_provenance: Vec<(String, crate::env::Trail)>,
+    pub edges: Vec<(String, Vec<Binding>)>,
+}
+
+/// `{kind: 'handle', handle: WriteRecord, targetType, graph: {kind: 'instance', instance}}`.
+#[derive(Debug, Clone)]
+pub struct Handle {
+    pub record: Rc<crate::write::WriteRecord>,
+    pub target_type: String,
+    pub graph: Rc<InstanceBinding>,
 }
 
 /// `{kind: 'instance', name, adapterSlug, credentialName?, constructionConfig?, schema}`.
@@ -41,7 +66,8 @@ pub struct InstanceBinding {
 /// after an `if` arm declares into the scope the arm forked from).
 #[derive(Debug, Default)]
 pub struct Scope {
-    bindings: RefCell<HashMap<String, Binding>>,
+    /// In the order declared, as a `Map` keeps them (a park writes them so).
+    bindings: RefCell<Vec<(String, Binding)>>,
     parent: Option<Rc<Scope>>,
 }
 
@@ -54,15 +80,36 @@ impl Scope {
         Rc::new(Scope { bindings: RefCell::default(), parent: Some(self.clone()) })
     }
 
+    /// `Map.set`: a name already declared here keeps its place.
     pub fn declare(&self, name: impl Into<String>, binding: Binding) {
-        self.bindings.borrow_mut().insert(name.into(), binding);
+        let name = name.into();
+        let mut bindings = self.bindings.borrow_mut();
+        match bindings.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = binding,
+            None => bindings.push((name, binding)),
+        }
     }
 
     pub fn resolve(&self, name: &str) -> Option<Binding> {
-        if let Some(found) = self.bindings.borrow().get(name) {
+        if let Some((_, found)) = self.bindings.borrow().iter().find(|(n, _)| n == name) {
             return Some(found.clone());
         }
         self.parent.as_ref().and_then(|p| p.resolve(name))
+    }
+
+    /// This scope's own bindings, in declaration order.
+    pub fn own_bindings(&self) -> Vec<(String, Binding)> {
+        self.bindings.borrow().clone()
+    }
+
+    /// The lexical chain, root first, this scope last (`chainFromRoot`).
+    pub fn chain_from_root(self: &Rc<Self>) -> Vec<Rc<Scope>> {
+        let mut chain = vec![self.clone()];
+        while let Some(parent) = chain.last().and_then(|s| s.parent.clone()) {
+            chain.push(parent);
+        }
+        chain.reverse();
+        chain
     }
 }
 
@@ -76,6 +123,10 @@ impl Names for Scope {
 
     fn is_event(&self, name: &str) -> bool {
         matches!(self.resolve(name), Some(Binding::Event))
+    }
+
+    fn is_record(&self, name: &str) -> bool {
+        matches!(self.resolve(name), Some(Binding::Handle(_) | Binding::Node(_)))
     }
 }
 
