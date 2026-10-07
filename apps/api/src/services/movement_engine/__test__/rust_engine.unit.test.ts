@@ -11,9 +11,10 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { hostMethodPaths } from '../host';
 import { AdapterCallFailed } from '../host_adapter';
-import { MovementRunFailed, runFailureCause } from '../run';
+import { MovementRunFailed, runFailureCause, type RunMovementInput } from '../run';
 import { openRunContext, RunLedger } from '../run_context';
 import { ENGINE_OWN_ROUTES, shimRoutePaths } from '../rust_host';
+import { resetRustRunStats, rustRunStats } from '../rust_stats';
 import { WireOut } from '../rust_wire';
 import { makeTestHost, type TestHostOverrides } from '../test_host';
 import {
@@ -23,6 +24,7 @@ import {
   readRunResult,
   runSegmentInRust,
   rustCanRun,
+  EVENT_DOES_NOT_CROSS,
   RustShimError,
   type EngineProtocol,
   type EngineStep,
@@ -273,6 +275,32 @@ describe('the Rust engine shim', () => {
     ).rejects.toThrow('adapters.call method "manifest" is not an adapter method');
   });
 
+  it("charges a priced call's cost to the run as its answer passes, so a later shim fault loses none of it", async () => {
+    const served = await hostWith({
+      llm: { arbitrateEntities: async () => ({ index: null, cost: [{ source: 'model:judge', microdollars: 9 }] }) },
+    });
+    const segmentId = served.context.segmentId;
+    const wire = (value: unknown) => new WireOut().value(value);
+    const { engine } = scriptedEngine((seen) =>
+      seen.length === 0
+        ? {
+            pending: [
+              request(1, 'llm', 'arbitrateEntities', inSegment(segmentId, {
+                asserted: wire({ name: 'Acme' }),
+                candidates: wire([]),
+                recordType: 'company',
+                constraints: wire({ any: [{ all: [{ field: 'name' }] }] }),
+                languageVersion: 3,
+                budget: { remainingMicrodollars: null },
+              })),
+            ],
+          }
+        : { pending: [request(2, 'nope', 'nothing', {})] },
+    );
+    await expect(driveEngine(engine, {}, served)).rejects.toThrow('the shim has no route for nope.nothing');
+    expect(served.context.ledger.spend.bySource).toEqual({ 'model:judge': 9 });
+  });
+
   it('refuses an engine that waits with nothing in flight', async () => {
     const { engine, finished } = scriptedEngine(() => ({ pending: [] }));
     await expect(driveEngine(engine, {}, await hostWith({}))).rejects.toThrow(
@@ -305,9 +333,12 @@ describe('the Rust engine shim', () => {
     expect(readRunResult({ result: { movementName: 'm', cancelled: true } }, { context: context(), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [], trace: [], extractionSites: {}, cancelled: true },
     });
+    // The cost the engine reports must be what its host was charged.
     const charged = context();
-    readRunResult({ result: { movementName: 'm' }, cost: [{ source: 'model:judge', microdollars: 12 }] }, { context: charged, hostErrors: [] });
-    expect(charged.ledger.spend).toEqual({ segmentMicrodollars: 12, runMicrodollars: 12, bySource: { 'model:judge': 12 } });
+    charged.ledger.charge([{ source: 'model:judge', microdollars: 12 }]);
+    const reported = { result: { movementName: 'm' }, cost: [{ source: 'model:judge', microdollars: 12 }] };
+    expect(readRunResult(reported, { context: charged, hostErrors: [] })).toMatchObject({ ran: { movementName: 'm' } });
+    expect(() => readRunResult(reported, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(readRunResult({ declined: 'a shape' }, { context: context(), hostErrors: [] })).toEqual({ declined: 'a shape' });
     const original = new TypeError('the adapter broke');
     expect(() => readRunResult({ thrown: { hostError: 0 } }, { context: context(), hostErrors: [original] })).toThrow(original);
@@ -368,19 +399,23 @@ describe('the check host call', () => {
 });
 
 describe('the segment input', () => {
-  it('is read before the engine starts: one that cannot cross starts nothing', async () => {
-    const { engine, started, finished } = scriptedEngine(() => ({ done: {} }));
-    const input = {
-      source: '',
-      event: { occurredAt: new Date(0) },
-      teamId: TEAM,
-      catalog: {},
-      host: makeTestHost(),
-    } as unknown as Parameters<typeof runSegmentInRust>[0];
-    const { context } = await hostWith({});
-    await expect(runSegmentInRust(input, context, engine)).rejects.toThrow(RustShimError);
-    expect(started).toEqual([]);
-    expect(finished()).toBe(false);
+  it('is read before the engine starts: an event or source that cannot cross declines, and starts nothing', async () => {
+    const asked: unknown[] = [];
+    const served = await hostWith({ adapters: { resolve: (r) => (asked.push(r), fakeAdapter()) } });
+    const crossing = (input: { source: string; event: unknown }) =>
+      ({ ...input, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host }) as unknown as RunMovementInput;
+    resetRustRunStats();
+    for (const input of [
+      crossing({ source: '', event: { payload: { occurredAt: new Date(0) } } }),
+      crossing({ source: 'x = "\ud800"', event: { payload: {} } }),
+    ]) {
+      const { engine, started, finished } = scriptedEngine(() => ({ done: {} }));
+      await expect(runSegmentInRust({ input, context: served.context }, engine)).resolves.toEqual({ declined: EVENT_DOES_NOT_CROSS });
+      expect(started).toEqual([]);
+      expect(finished()).toBe(false);
+    }
+    expect(rustRunStats).toMatchObject({ routed: 2, ranWhole: 0, declined: { [EVENT_DOES_NOT_CROSS]: 2 }, hostCalls: {} });
+    expect(asked).toEqual([]);
   });
 });
 

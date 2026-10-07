@@ -101,46 +101,59 @@ export function assertEngineChoiceConfigured(env: Record<string, string | undefi
   engineChoice(env);
 }
 
+/** What a segment in the Rust engine runs: the run's input, the segment the
+ *  run host opened, and the program as the run host already parsed it (the
+ *  `check.program` call checks that tree rather than parsing a third time). */
+export interface RustSegment<Input extends RunMovementInput = RunMovementInput> {
+  input: Input;
+  context: RunContext;
+  parsed?: Program;
+}
+
 /** A segment of `input`'s run in the Rust engine: its result, or that the
  *  engine declined it (before it touched an adapter) for the TypeScript
  *  engine to run. */
 export async function runSegmentInRust(
-  input: RunMovementInput,
-  context: RunContext,
+  segment: RustSegment,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  return segmentInRust({ input, context }, undefined, engine);
+  return segmentInRust(segment, undefined, engine);
 }
 
 /** A parked run resumed in the Rust engine (`rustCanResume` admits its
  *  state): its result, or that the engine declined it before touching an
  *  adapter. */
 export async function resumeSegmentInRust(
-  input: ResumeMovementInput,
-  context: RunContext,
+  segment: RustSegment<ResumeMovementInput>,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  return segmentInRust(
-    { input, context },
-    { state: input.state, ...(input.reenter === true ? { reenter: true } : {}) },
-    engine,
-  );
+  const { input } = segment;
+  return segmentInRust(segment, { state: input.state, ...(input.reenter === true ? { reenter: true } : {}) }, engine);
 }
 
 async function segmentInRust(
-  { input, context }: { input: RunMovementInput; context: RunContext },
+  { input, context, parsed }: RustSegment,
   resume: { state: unknown; reenter?: true } | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  // Read before the instance opens: an input that cannot cross must not
-  // leave an engine instance open behind it.
-  const start = segmentInput(input, context, resume);
-  if (start === undefined) throw new RustShimError('this run cannot cross to the Rust engine (rustCanRun admits none such)');
-  const hostErrors: unknown[] = [];
   rustRunStats.routed += 1;
+  // Read before the instance opens. An event, source or state that cannot
+  // cross the eval wire as itself (a `Date` in a payload, a lone surrogate)
+  // declines here, before the engine has asked the host for anything.
+  const start = segmentInput(input, context, resume);
+  if (start === undefined) return declined(EVENT_DOES_NOT_CROSS);
+  const hostErrors: unknown[] = [];
   let outcome: { ran: MovementRunResult } | { declined: string };
   try {
-    const done = await driveEngine(engine ?? openWasmEngine(), start, { host: input.host, context, catalog: input.catalog, hostErrors });
+    const done = await driveEngine(engine ?? openWasmEngine(), start, {
+      host: input.host,
+      context,
+      catalog: input.catalog,
+      hostErrors,
+      ...(parsed !== undefined
+        ? { parsed: { source: input.source, languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION, program: parsed } }
+        : {}),
+    });
     outcome = readRunResult(done, { context, hostErrors });
   } catch (error) {
     // The run's own failure, which the Rust engine ran to as the TypeScript
@@ -149,9 +162,35 @@ async function segmentInRust(
     else rustRunStats.ranWhole += 1;
     throw error;
   }
-  if ('declined' in outcome) rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
-  else rustRunStats.ranWhole += 1;
+  if ('declined' in outcome) return declined(outcome.declined);
+  rustRunStats.ranWhole += 1;
   return outcome;
+}
+
+/** A `done`'s cost lines, summed by source. */
+function costBySource(cost: unknown): Record<string, number> {
+  if (!Array.isArray(cost)) throw new RustShimError('the Rust engine cost is a list of cost lines');
+  const bySource: Record<string, number> = {};
+  for (const line of cost) {
+    const { source, microdollars } = record(line, 'a Rust engine cost line');
+    if (typeof source !== 'string' || typeof microdollars !== 'number') {
+      throw new RustShimError('a Rust engine cost line is {source, microdollars}');
+    }
+    bySource[source] = (bySource[source] ?? 0) + microdollars;
+  }
+  return bySource;
+}
+
+function canonicalJson(bySource: Record<string, number>): string {
+  return JSON.stringify(Object.entries(bySource).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/** Why a run whose input cannot cross the eval wire is declined. */
+export const EVENT_DOES_NOT_CROSS = 'the event does not cross';
+
+function declined(reason: string): { declined: string } {
+  rustRunStats.declined[reason] = (rustRunStats.declined[reason] ?? 0) + 1;
+  return { declined: reason };
 }
 
 /**
@@ -243,11 +282,15 @@ export function readRunResult(
 ): { ran: MovementRunResult } | { declined: string } {
   const outcome = record(done, 'the Rust engine result');
   if ('declined' in outcome) return { declined: string(outcome.declined, 'the Rust engine declined') };
-  // What the segment's priced calls spent goes on the run's account, which
-  // the run host reports on the result as the segment closes.
-  if (outcome.cost !== undefined) {
-    if (!Array.isArray(outcome.cost)) throw new RustShimError('the Rust engine cost is a list of cost lines');
-    run.context.ledger.charge(outcome.cost);
+  // What the segment's priced calls spent was charged to the run's account
+  // as each answer passed through the shim (rust_host.ts), so a fault cannot
+  // lose it. The engine reports the same lines from its own ledger: they
+  // must agree.
+  const reported = costBySource(outcome.cost ?? []);
+  if (canonicalJson(reported) !== canonicalJson(run.context.ledger.spend.bySource)) {
+    throw new RustShimError(
+      `the Rust engine reports spending ${JSON.stringify(reported)}, but its host charged ${JSON.stringify(run.context.ledger.spend.bySource)}`,
+    );
   }
   const trace = run.context.trace.entries;
   if ('thrown' in outcome) throw failureOf(outcome.thrown, run.hostErrors);
@@ -333,10 +376,12 @@ function failureOf(value: unknown, hostErrors: unknown[]): unknown {
  * - every expression one `rustCanEval` admits, where a name read is a value
  *   the bodies bind, plus `p.field` with no hops on the movement's event
  *   parameter, on such a value, or on a write's handle;
- * - a run that cannot suspend (no `limitPaused`, no `suspendAt`), and whose
- *   event and source cross as themselves;
+ * - a run that cannot suspend (no `limitPaused`, no `suspendAt`);
  * - with a cost cap, no `unique by` write: the judge is a priced call, and a
  *   run that meets its cap there suspends, which this engine cannot.
+ *
+ * Whether the event and source cross the eval wire is not read here: the
+ * segment declines one that does not (`EVENT_DOES_NOT_CROSS`).
  */
 export function rustCanRun(
   program: Program,

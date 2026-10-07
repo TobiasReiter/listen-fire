@@ -17,7 +17,7 @@
 // handed exactly the JavaScript values (key order, `undefined`) the TypeScript
 // engine hands it in process, and an adapter's result comes back the same way.
 
-import { applyStdlib, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
+import { applyStdlib, stdlibFunctionById, type CatalogSnapshot, type Program } from 'movement-lang';
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
@@ -51,6 +51,9 @@ export interface RouteContext {
   context: RunContext;
   catalog: CatalogSnapshot;
   hostErrors: unknown[];
+  /** The program the run host parsed, for `check.program` to check as it
+   *  is. Checked at most once: the checker stamps the tree it checks. */
+  parsed?: { source: string; languageVersion: number; program: Program };
 }
 
 type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
@@ -81,14 +84,26 @@ const ROUTES: Record<string, Route> = {
     if (upgradingFrom !== undefined && typeof upgradingFrom !== 'number') {
       throw new RustShimError('check.program upgradingFrom must be a number');
     }
+    const source = string(request.source, 'check.program source');
+    // The run host's own parse of this very source, when it has one: used
+    // once, then forgotten, since checking stamps it.
+    const reuse = context.parsed;
+    const parsed =
+      reuse !== undefined && reuse.source === source && reuse.languageVersion === languageVersion && upgradingFrom === undefined
+        ? reuse.program
+        : undefined;
+    if (parsed !== undefined) context.parsed = undefined;
     let checked;
     try {
-      checked = checkPinned({
-        source: string(request.source, 'check.program source'),
-        catalog: context.catalog,
-        languageVersion,
-        ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
-      });
+      checked = checkPinned(
+        {
+          source,
+          catalog: context.catalog,
+          languageVersion,
+          ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
+        },
+        parsed,
+      );
     } catch (error) {
       throw new RunAborted(error);
     }
@@ -137,7 +152,7 @@ const ROUTES: Record<string, Route> = {
   /** The identity judge over a write's candidates, a priced call: the
    *  engine's budget goes in, the answer (its cost, or a budget refusal)
    *  comes back as data for the engine's ledger. */
-  async 'llm.arbitrateEntities'(request, { host }) {
+  async 'llm.arbitrateEntities'(request, { host, context }) {
     const asserted = wiredRecord(request.asserted, 'llm.arbitrateEntities asserted');
     const candidates = new WireOut().read(request.candidates);
     if (!Array.isArray(candidates)) throw new RustShimError('llm.arbitrateEntities candidates is a list');
@@ -154,6 +169,11 @@ const ROUTES: Record<string, Route> = {
       languageVersion,
       budget: budgetOf(request.budget),
     });
+    // Charged to the run's account as the answer passes, so what the host
+    // spent reaches the run even if the segment then faults; the engine's own
+    // ledger charges it too, for its budget, and `done` reports it back
+    // (rust_engine.ts `readRunResult` holds the two equal).
+    context.ledger.charge(answer.cost);
     if ('error' in answer) return answer;
     // `candidates[index]` finds nothing for anything but an integer (NaN,
     // a fraction, `undefined`), exactly as for null: the write creates.

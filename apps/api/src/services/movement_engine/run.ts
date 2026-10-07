@@ -713,11 +713,12 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
   if (parsed !== undefined && rustCanRun(parsed, input)) {
     return inRunContext(input, async (context) => {
-      const outcome = await runSegmentInRust(input, context);
+      const outcome = await runSegmentInRust({ input, context, parsed });
       if ('ran' in outcome) return outcome.ran;
       // Declined before any host-visible effect: the interpreter runs it, in
-      // the same segment.
-      const { program, prepared } = parseAndCheck(input, parsed);
+      // the same segment, on a fresh parse (the segment's check may have
+      // stamped `parsed`).
+      const { program, prepared } = parseAndCheck(input);
       return new Interpreter(input, { ...prepared, context }).run(program);
     });
   }
@@ -837,9 +838,9 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
   if (parsed !== undefined && rustCanResume(parsed, input)) {
     return inRunContext(input, async (context) => {
-      const outcome = await resumeSegmentInRust(input, context);
+      const outcome = await resumeSegmentInRust({ input, context, parsed });
       if ('ran' in outcome) return outcome.ran;
-      const { program, prepared } = parseAndCheck(input, parsed);
+      const { program, prepared } = parseAndCheck(input);
       return resumeInterpreter(input, { program, prepared, context });
     });
   }

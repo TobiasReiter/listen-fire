@@ -322,8 +322,8 @@ describe('a whole run in the Rust engine', () => {
     const resolved: unknown[] = [];
     const host = makeTestHost({ adapters: { resolve: (r) => (resolved.push(r), fakeEmail().adapter) } });
     const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
-    const outcome = await runSegmentInRust(
-      {
+    const outcome = await runSegmentInRust({
+      input: {
         source: `${PRELUDE}type Stage = <"a" | "b">\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
         event: webhook({}),
         teamId: TEAM_ID,
@@ -331,7 +331,7 @@ describe('a whole run in the Rust engine', () => {
         host,
       },
       context,
-    );
+    });
     expect(outcome).toEqual({ declined: 'a file-level statement this engine does not run' });
     expect(resolved).toEqual([]);
     expect(rustRunStats.declined).toEqual({ 'a file-level statement this engine does not run': 1 });

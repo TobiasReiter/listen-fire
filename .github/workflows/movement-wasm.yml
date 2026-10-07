@@ -31,13 +31,13 @@ on:
       - "packages/shared/expression/**"
       - "packages/shared/timezone/**"
       - "packages/shared/cron/**"
-      - "apps/api/src/services/movement_engine/rust_*.ts"
-      - "apps/api/src/services/movement_engine/program_check.ts"
-      - "apps/api/src/services/movement_engine/expression.ts"
-      - "apps/api/src/services/movement_engine/builtins.ts"
+      # The TypeScript side of the oracle: the engine and its shim, the
+      # corpora, and what runs them.
+      - "apps/api/src/services/movement_engine/**"
+      - "apps/api/src/__conformance__/**"
       - "apps/api/src/test/rust_eval_stats*"
+      - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
-      - "apps/api/src/services/movement_engine/__test__/rust_e*"
       - ".github/workflows/movement-wasm.yml"
   push:
     branches:
@@ -52,13 +52,13 @@ on:
       - "packages/shared/expression/**"
       - "packages/shared/timezone/**"
       - "packages/shared/cron/**"
-      - "apps/api/src/services/movement_engine/rust_*.ts"
-      - "apps/api/src/services/movement_engine/program_check.ts"
-      - "apps/api/src/services/movement_engine/expression.ts"
-      - "apps/api/src/services/movement_engine/builtins.ts"
+      # The TypeScript side of the oracle: the engine and its shim, the
+      # corpora, and what runs them.
+      - "apps/api/src/services/movement_engine/**"
+      - "apps/api/src/__conformance__/**"
       - "apps/api/src/test/rust_eval_stats*"
+      - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
-      - "apps/api/src/services/movement_engine/__test__/rust_e*"
       - ".github/workflows/movement-wasm.yml"
 
 permissions:
@@ -134,7 +134,7 @@ jobs:
         run: pnpm run test --testPathPattern 'catalog_differential'
       - name: Engine shim, against a double and through the committed artifact
         working-directory: apps/api
-        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_e(ngine|val)|rust_run|rust_write|program_check)'
+        run: pnpm run test:unit --testPathPattern '(movement_engine/__test__/(rust_engine|rust_engine_abi|rust_eval|rust_run|rust_write|program_check|seam_guard)|test/__test__/rust_eval_stats_teardown)\.unit\.test\.ts$'
       # The oracle the crate tests hold the Rust engine to is the TypeScript's
       # own answers: a TypeScript change that moves one must move the oracle.
       - name: The Rust engine's oracle is current
