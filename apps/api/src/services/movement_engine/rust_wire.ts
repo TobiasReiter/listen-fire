@@ -105,6 +105,10 @@ export const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\u
  * they carry, numbered.
  */
 export class WireOut {
+  /** `asData`: a dict shaped like an engine binding crosses as the data it
+   *  is (a parked state's descriptors), not refused as a record. */
+  constructor(private readonly options: { asData?: true } = {}) {}
+
   /** The objects and lists sent, by the id the wire gave them. */
   private readonly sent: object[] = [];
   private readonly ids = new Map<object, number>();
@@ -145,7 +149,7 @@ export class WireOut {
     if (seen !== undefined) return this.open.has(value) ? REFUSED : ['r', seen];
     const proto: unknown = Object.getPrototypeOf(value);
     const isList = Array.isArray(value) && proto === Array.prototype;
-    if (!isList && (proto !== Object.prototype || bindingOf(value) !== undefined)) return REFUSED;
+    if (!isList && (proto !== Object.prototype || (this.options.asData !== true && bindingOf(value) !== undefined))) return REFUSED;
     const id = this.sent.length;
     this.sent.push(value);
     this.ids.set(value, id);

@@ -25,11 +25,11 @@ use movement_parser::ast::{MovementDeclaration, Statement};
 use movement_parser::catalog::helpers::credential_arg_of;
 use movement_parser::catalog::snapshot::Args;
 use serde::Deserialize;
-use serde_json::{Map, Value as Json, json};
+use serde_json::Value as Json;
 
 use crate::bindings::{Binding, Handle, InstanceBinding, Node, Scope};
 use crate::env::{Trail, ValueBinding};
-use crate::env::{js_of_json, json_of_js};
+use crate::env::{json_round_trip, object_of};
 use crate::js::{Js, JsObject};
 use crate::run::{Address, Failure, Flow, Run, Stop};
 use crate::write::WriteRecord;
@@ -37,119 +37,124 @@ use crate::write::WriteRecord;
 /// What a resumed segment is handed (`ResumeMovementInput`'s state and mode).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResumeInput {
+    /// On the eval wire (crate::env): its objects in their stored key order.
     pub state: Json,
     /// Re-enter AT the parked statement rather than step past it.
     #[serde(default)]
     pub reenter: bool,
 }
 
-/// `{version: 1, address, bindingName, presenceBind?, scopeChain}`.
-pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Json {
+/// `{version: 1, address, bindingName, presenceBind?, scopeChain}`, as the
+/// JavaScript object the TypeScript writes: every key in its order (it
+/// crosses to the host on the eval wire).
+pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Js {
     // One table for the whole state: a node two scopes hold is written once.
     let mut park = Vec::new();
-    let chain: Vec<Json> = scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect();
-    let mut state = Map::new();
-    state.insert("version".into(), json!(1));
-    state.insert("address".into(), json!(address));
-    state.insert("bindingName".into(), presence.map_or(Json::Null, |p| json!(p)));
+    let chain: Vec<Js> = scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect();
+    let mut state = vec![
+        ("version", Js::Number(1.0)),
+        ("address", Js::str(address)),
+        ("bindingName", presence.map_or(Js::Null, Js::str)),
+    ];
     if presence.is_some() {
-        state.insert("presenceBind".into(), json!(true));
+        state.push(("presenceBind", Js::Bool(true)));
     }
-    state.insert("scopeChain".into(), Json::Array(chain));
-    Json::Object(state)
+    state.push(("scopeChain", Js::array(chain)));
+    object_of(state)
 }
 
 /// The nodes one park has written, numbered as first reached (`ParkWriter`).
 type ParkWriter = Vec<*const RefCell<Node>>;
 
-fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Json {
-    let mut bindings = Map::new();
+fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Js {
+    let mut bindings = JsObject::new();
     for (name, binding) in scope.own_bindings() {
-        bindings.insert(name.clone(), serialize_binding(run, &name, &binding, park));
+        bindings.set(name.clone(), serialize_binding(run, &name, &binding, park));
     }
-    json!({ "bindings": bindings })
+    object_of(vec![("bindings", Js::object(bindings))])
 }
 
 /// `serializeBinding`, for the kinds this engine binds.
-fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut ParkWriter) -> Json {
+fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut ParkWriter) -> Js {
+    let kind = |k: &str| ("kind", Js::str(k));
     match binding {
         Binding::Node(node) => {
             let address = Rc::as_ptr(node);
             if let Some(id) = park.iter().position(|p| *p == address) {
-                return json!({ "kind": "nodeRef", "id": id });
+                return object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))]);
             }
             // Numbered before its edges are walked: an edge back here is a
             // reference, not another lap.
             let id = park.len();
             park.push(address);
             let node = node.borrow();
-            let mut edges = Map::new();
+            let mut edges = JsObject::new();
             for (edge, landings) in &node.edges {
-                let landings: Vec<Json> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect();
-                edges.insert(edge.clone(), json!({ "kind": "landed", "landings": landings }));
+                let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect();
+                edges.set(edge.clone(), object_of(vec![kind("landed"), ("landings", Js::array(landings))]));
             }
-            let provenance: Map<String, Json> = node.field_provenance.iter().map(|(f, t)| (f.clone(), provenance_of(run, t))).collect();
-            json!({
-                "kind": "nodePosition",
-                "id": id,
-                "fields": json_of_js(&Js::object(JsObject::clone_of(&node.fields))),
-                "fieldOrder": node.field_order,
-                "fieldProvenance": provenance,
-                "edges": edges,
-            })
+            let mut provenance = JsObject::new();
+            for (field, trail) in &node.field_provenance {
+                provenance.set(field.clone(), provenance_of(run, trail));
+            }
+            object_of(vec![
+                kind("nodePosition"),
+                ("id", Js::Number(id as f64)),
+                ("fields", Js::object(JsObject::clone_of(&node.fields))),
+                ("fieldOrder", Js::array(node.field_order.iter().map(|f| Js::str(f.clone())).collect())),
+                ("fieldProvenance", Js::object(provenance)),
+                ("edges", Js::object(edges)),
+            ])
         }
-        Binding::Event => json!({ "kind": "event" }),
-        Binding::Instance(instance) => json!({ "kind": "instance", "instance": identity(instance) }),
-        Binding::Opaque => json!({ "kind": "opaque", "what": "import", "name": name }),
-        Binding::Movement(movement) => json!({ "kind": "movement", "name": movement }),
-        Binding::Handle(handle) => json!({
-            "kind": "handle",
-            "handle": json_of_js(&handle.record.object),
-            "targetType": handle.target_type,
-            "graph": { "kind": "instance", "instance": identity(&handle.graph) },
-        }),
+        Binding::Event => object_of(vec![kind("event")]),
+        Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
+        Binding::Opaque => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
+        Binding::Movement(movement) => object_of(vec![kind("movement"), ("name", Js::str(movement.clone()))]),
+        Binding::Handle(handle) => object_of(vec![
+            kind("handle"),
+            ("handle", handle.record.object.clone()),
+            ("targetType", Js::str(handle.target_type.clone())),
+            ("graph", object_of(vec![kind("instance"), ("instance", identity(&handle.graph))])),
+        ]),
         Binding::Value(value) => {
-            let mut descriptor = Map::new();
-            descriptor.insert("kind".into(), json!("value"));
-            if !matches!(value.value, Js::Undefined) {
-                descriptor.insert("value".into(), json_of_js(&value.value));
-            }
+            // `assertJsonSerializable`: the value as it will come back.
+            let mut descriptor = vec![kind("value"), ("value", json_round_trip(&value.value))];
             if let Some(trail) = &value.trail {
-                descriptor.insert("provenance".into(), provenance_of(run, trail));
+                descriptor.push(("provenance", provenance_of(run, trail)));
             }
             if value.many {
-                descriptor.insert("many".into(), json!(true));
+                descriptor.push(("many", Js::Bool(true)));
             }
-            Json::Object(descriptor)
+            object_of(descriptor)
         }
     }
 }
 
 /// `serializeInstanceIdentity`.
-fn identity(instance: &InstanceBinding) -> Json {
-    let mut identity = Map::new();
-    identity.insert("name".into(), json!(instance.name));
-    identity.insert("adapterSlug".into(), json!(instance.adapter_slug));
+fn identity(instance: &InstanceBinding) -> Js {
+    let mut identity = vec![("name", Js::str(instance.name.clone())), ("adapterSlug", Js::str(instance.adapter_slug.clone()))];
     if let Some(credential) = &instance.credential_name {
-        identity.insert("credentialName".into(), json!(credential));
+        identity.push(("credentialName", Js::str(credential.clone())));
     }
     if !instance.construction_config.is_empty() {
-        let config: Map<String, Json> = instance.construction_config.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
-        identity.insert("constructionConfig".into(), Json::Object(config));
+        let mut config = JsObject::new();
+        for (k, v) in &instance.construction_config {
+            config.set(k.clone(), Js::str(v.clone()));
+        }
+        identity.push(("constructionConfig", Js::object(config)));
     }
-    Json::Object(identity)
+    object_of(identity)
 }
 
 /// A trail as the TypeScript's `Provenance`: the origins themselves.
-fn provenance_of(run: &Run<'_>, trail: &Trail) -> Json {
+fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
     let origins = run.origins.borrow();
-    let origin = |id: &u32| origins.get(*id as usize).cloned().unwrap_or(Json::Null);
-    let mut provenance = Map::new();
-    provenance.insert("origins".into(), Json::Array(trail.origins.iter().map(origin).collect()));
+    let origin = |id: &u32| origins.get(*id as usize).cloned().unwrap_or(Js::Null);
+    let mut provenance = vec![("origins", Js::array(trail.origins.iter().map(origin).collect()))];
     if let Some(direct) = &trail.direct {
-        provenance.insert("direct".into(), origin(direct));
+        provenance.push(("direct", origin(direct)));
     }
-    Json::Object(provenance)
+    object_of(provenance)
 }
 
 // ── Resume ──
@@ -158,19 +163,22 @@ impl Run<'_> {
     /// `resumeAlongAddress` for a leaf inside `if` arms of the dispatched
     /// movement's body.
     pub(crate) async fn resume(&self, resume: &crate::park::ResumeInput, movement: &MovementDeclaration, scope: &Rc<Scope>, path: &str) -> Result<(), Stop> {
-        let state = &resume.state;
+        // The state as it was stored, keys in their stored order (on the eval
+        // wire, as the event is): values, records and configs keep it.
+        let state = &crate::env::decode(&resume.state).map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the parked state does not read: {e}"))))?;
+        let state_address = text(at(state, "address")).unwrap_or("").to_string();
         let malformed = |why: &str| {
             Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
-                format!("malformed parked address '{}' — {why}", state.get("address").and_then(Json::as_str).unwrap_or("")),
+                format!("malformed parked address '{state_address}' — {why}"),
             ))
         };
-        let address = parse_address(state.get("address").and_then(Json::as_str).unwrap_or(""))
+        let address = parse_address(&state_address)
             .ok_or_else(|| malformed("its steps do not read"))?;
         if address.last().is_none_or(|(kind, _)| *kind != 's') {
             return Err(malformed("a parked leaf ends at a statement"));
         }
-        let chain: Vec<Json> = state.get("scopeChain").and_then(Json::as_array).cloned().unwrap_or_default();
+        let chain: Vec<Js> = items(at(state, "scopeChain")).to_vec();
         let park = ParkReader::default();
         self.rehydrate_into(chain.get(1), scope, &park)?;
 
@@ -202,8 +210,7 @@ impl Run<'_> {
                 return Err(Stop::Thrown(Failure::engine(
                     "MOVENG_RUNTIME",
                     format!(
-                        "resume: address descends 'branch' into a statement other than `if` (parked '{}')",
-                        state.get("address").and_then(Json::as_str).unwrap_or("")
+                        "resume: address descends 'branch' into a statement other than `if` (parked '{state_address}')"
                     ),
                 )));
             };
@@ -215,8 +222,7 @@ impl Run<'_> {
                         return Err(Stop::Thrown(Failure::engine(
                             "MOVENG_RUNTIME",
                             format!(
-                                "resume: if branch {branch} has no body (parked '{}')",
-                                state.get("address").and_then(Json::as_str).unwrap_or("")
+                                "resume: if branch {branch} has no body (parked '{state_address}')"
                             ),
                         )));
                     }
@@ -239,9 +245,9 @@ impl Run<'_> {
             )));
         }
         let (_, leaf) = address[address.len() - 1];
-        let binding_name = state.get("bindingName").and_then(Json::as_str);
+        let binding_name = text(at(state, "bindingName"));
         if !resume.reenter
-            && state.get("presenceBind").and_then(Json::as_bool) == Some(true)
+            && matches!(at(state, "presenceBind"), Some(Js::Bool(true)))
             && let Some(name) = binding_name
         {
             current.declare(name, Binding::Value(ValueBinding { value: Js::Bool(true), trail: Some(Trail::default()), many: false }));
@@ -266,10 +272,10 @@ impl Run<'_> {
 
     /// `rehydrateScopeInto`: a scope's bindings declared into `scope`, the
     /// trigger's own live ones kept.
-    fn rehydrate_into(&self, serialized: Option<&Json>, scope: &Rc<Scope>, park: &ParkReader) -> Result<(), Stop> {
-        let Some(bindings) = serialized.and_then(|s| s.get("bindings")).and_then(Json::as_object) else { return Ok(()) };
-        for (name, descriptor) in bindings {
-            let kind = descriptor.get("kind").and_then(Json::as_str).unwrap_or("");
+    fn rehydrate_into(&self, serialized: Option<&Js>, scope: &Rc<Scope>, park: &ParkReader) -> Result<(), Stop> {
+        let Some(bindings) = serialized.and_then(|s| at(s, "bindings")) else { return Ok(()) };
+        for (name, descriptor) in pairs(Some(bindings)) {
+            let kind = text(at(descriptor, "kind")).unwrap_or("");
             if scope.resolve(name).is_some() && matches!(kind, "event" | "instance" | "movement" | "shape") {
                 continue;
             }
@@ -282,11 +288,11 @@ impl Run<'_> {
     }
 
     /// `rehydrateBinding`, for the kinds this engine binds.
-    fn rehydrate(&self, descriptor: &Json, park: &ParkReader) -> Result<Binding, String> {
-        match descriptor.get("kind").and_then(Json::as_str) {
-            Some("nodeRef") => Ok(Binding::Node(park.numbered(descriptor.get("id").and_then(Json::as_u64).ok_or("a nodeRef without an id")?))),
+    fn rehydrate(&self, descriptor: &Js, park: &ParkReader) -> Result<Binding, String> {
+        match text(at(descriptor, "kind")) {
+            Some("nodeRef") => Ok(Binding::Node(park.numbered(id_of(at(descriptor, "id")).ok_or("a nodeRef without an id")?))),
             Some("nodePosition") => {
-                let node = match descriptor.get("id").and_then(Json::as_u64) {
+                let node = match id_of(at(descriptor, "id")) {
                     Some(id) => {
                         let node = park.numbered(id);
                         park.filled(id);
@@ -294,57 +300,57 @@ impl Run<'_> {
                     }
                     None => Rc::new(RefCell::new(Node::default())),
                 };
-                let fields = descriptor.get("fields").and_then(Json::as_object).cloned().unwrap_or_default();
-                let order: Vec<String> = match descriptor.get("fieldOrder").and_then(Json::as_array) {
-                    Some(order) => order.iter().filter_map(|f| f.as_str().map(String::from)).collect(),
-                    None => fields.keys().cloned().collect(),
+                let fields = pairs(at(descriptor, "fields")).to_vec();
+                let order: Vec<String> = match at(descriptor, "fieldOrder") {
+                    Some(order) => items(Some(order)).iter().filter_map(|f| text(Some(f)).map(String::from)).collect(),
+                    None => fields.iter().map(|(k, _)| k.clone()).collect(),
                 };
                 // `inOrder`: the order kept, then whatever else the map holds.
                 let mut ordered = JsObject::new();
                 for key in &order {
-                    if let Some(value) = fields.get(key) {
-                        ordered.set(key.clone(), js_of_json(value));
+                    if let Some((_, value)) = fields.iter().find(|(k, _)| k == key) {
+                        ordered.set(key.clone(), value.clone());
                     }
                 }
                 for (key, value) in &fields {
                     if ordered.get(key).is_none() {
-                        ordered.set(key.clone(), js_of_json(value));
+                        ordered.set(key.clone(), value.clone());
                     }
                 }
                 let mut provenance = Vec::new();
-                for (field, trail) in descriptor.get("fieldProvenance").and_then(Json::as_object).cloned().unwrap_or_default() {
-                    provenance.push((field, self.rehydrate_trail(&trail)?));
+                for (field, trail) in pairs(at(descriptor, "fieldProvenance")) {
+                    provenance.push((field.clone(), self.rehydrate_trail(trail)?));
                 }
                 let mut edges = Vec::new();
-                for (edge, landed) in descriptor.get("edges").and_then(Json::as_object).cloned().unwrap_or_default() {
-                    if landed.get("kind").and_then(Json::as_str) != Some("landed") {
+                for (edge, landed) in pairs(at(descriptor, "edges")) {
+                    if text(at(landed, "kind")) != Some("landed") {
                         return Err("a deferred edge is not this engine's to resume".into());
                     }
                     let mut landings = Vec::new();
-                    for landing in landed.get("landings").and_then(Json::as_array).cloned().unwrap_or_default() {
-                        landings.push(self.rehydrate(&landing, park)?);
+                    for landing in items(at(landed, "landings")) {
+                        landings.push(self.rehydrate(landing, park)?);
                     }
-                    edges.push((edge, landings));
+                    edges.push((edge.clone(), landings));
                 }
                 *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, edges };
                 Ok(Binding::Node(node))
             }
             Some("event") => Ok(Binding::Event),
             Some("opaque") => Ok(Binding::Opaque),
-            Some("movement") => Ok(Binding::Movement(descriptor.get("name").and_then(Json::as_str).unwrap_or("").to_string())),
-            Some("instance") => Ok(Binding::Instance(Rc::new(self.rehydrate_instance(descriptor.get("instance").unwrap_or(&Json::Null))?))),
+            Some("movement") => Ok(Binding::Movement(text(at(descriptor, "name")).unwrap_or("").to_string())),
+            Some("instance") => Ok(Binding::Instance(Rc::new(self.rehydrate_instance(at(descriptor, "instance").unwrap_or(&Js::Null))?))),
             Some("value") => {
-                let value = descriptor.get("value").map_or(Js::Undefined, js_of_json);
-                let trail = descriptor.get("provenance").map(|p| self.rehydrate_trail(p)).transpose()?;
-                let many = descriptor.get("many").and_then(Json::as_bool) == Some(true);
+                let value = at(descriptor, "value").cloned().unwrap_or(Js::Undefined);
+                let trail = at(descriptor, "provenance").map(|p| self.rehydrate_trail(p)).transpose()?;
+                let many = matches!(at(descriptor, "many"), Some(Js::Bool(true)));
                 Ok(Binding::Value(ValueBinding { value, trail, many }))
             }
             Some("handle") => {
-                let record = descriptor.get("handle").ok_or("a handle descriptor without its record")?;
-                let target_type = descriptor.get("targetType").and_then(Json::as_str).ok_or("a handle without a targetType")?;
-                let graph = descriptor.get("graph").and_then(|g| g.get("instance")).ok_or("a handle without its graph")?;
+                let record = at(descriptor, "handle").ok_or("a handle descriptor without its record")?;
+                let target_type = text(at(descriptor, "targetType")).ok_or("a handle without a targetType")?;
+                let graph = at(descriptor, "graph").and_then(|g| at(g, "instance")).ok_or("a handle without its graph")?;
                 Ok(Binding::Handle(Rc::new(Handle {
-                    record: Rc::new(WriteRecord { object: js_of_json(record) }),
+                    record: Rc::new(WriteRecord { object: record.clone() }),
                     target_type: target_type.to_string(),
                     graph: Rc::new(self.rehydrate_instance(graph)?),
                 })))
@@ -356,16 +362,15 @@ impl Run<'_> {
     /// `rehydrateInstance`: the identity's schema instantiated again, live;
     /// an instance the snapshot no longer holds (its adapter uninstalled, its
     /// credential gone or moved) fails the resume rather than run untyped.
-    fn rehydrate_instance(&self, identity: &Json) -> Result<InstanceBinding, String> {
-        let text = |key: &str| identity.get(key).and_then(Json::as_str).map(String::from);
+    fn rehydrate_instance(&self, identity: &Js) -> Result<InstanceBinding, String> {
+        let text = |key: &str| text(at(identity, key)).map(String::from);
         let name = text("name").ok_or("an instance identity without a name")?;
         let adapter_slug = text("adapterSlug").ok_or("an instance identity without an adapterSlug")?;
         let credential_name = text("credentialName");
-        let construction_config: Vec<(String, String)> = identity
-            .get("constructionConfig")
-            .and_then(Json::as_object)
-            .map(|config| config.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
-            .unwrap_or_default();
+        let construction_config: Vec<(String, String)> = pairs(at(identity, "constructionConfig"))
+            .iter()
+            .map(|(k, v)| (k.clone(), match v { Js::String(s) => s.clone(), _ => String::new() }))
+            .collect();
         let spec = self.catalog.adapter(&adapter_slug);
         let credential_arg = spec.and_then(credential_arg_of).map_or_else(|| "credentials".to_string(), |a| a.name.clone());
         let mut spelled: Vec<(String, String)> = construction_config.clone();
@@ -389,11 +394,49 @@ impl Run<'_> {
     }
 
     /// A parked trail's origins, each one more origin in this run's table.
-    fn rehydrate_trail(&self, provenance: &Json) -> Result<Trail, String> {
-        let origins = provenance.get("origins").and_then(Json::as_array).ok_or("a trail without origins")?;
-        let origins = origins.iter().map(|o| self.mint_origin(o.clone())).collect();
-        let direct = provenance.get("direct").map(|d| self.mint_origin(d.clone()));
+    fn rehydrate_trail(&self, provenance: &Js) -> Result<Trail, String> {
+        let origins = at(provenance, "origins").ok_or("a trail without origins")?;
+        let origins = items(Some(origins)).iter().map(|o| self.mint_origin(o.clone())).collect();
+        let direct = at(provenance, "direct").map(|d| self.mint_origin(d.clone()));
         Ok(Trail { origins, direct })
+    }
+}
+
+// ── Reading a stored state (a JavaScript value, in its stored key order) ──
+
+/// `value[key]`, absent for `undefined` as a stored key's absence reads.
+fn at<'v>(value: &'v Js, key: &str) -> Option<&'v Js> {
+    match value {
+        Js::Object(object) => object.get(key).filter(|v| !matches!(v, Js::Undefined)),
+        _ => None,
+    }
+}
+
+fn text(value: Option<&Js>) -> Option<&str> {
+    match value {
+        Some(Js::String(s)) => Some(s),
+        _ => None,
+    }
+}
+
+fn items(value: Option<&Js>) -> &[Js] {
+    match value {
+        Some(Js::Array(list)) => &list.items,
+        _ => &[],
+    }
+}
+
+fn pairs(value: Option<&Js>) -> &[(String, Js)] {
+    match value {
+        Some(Js::Object(object)) => object.entries(),
+        _ => &[],
+    }
+}
+
+fn id_of(value: Option<&Js>) -> Option<u64> {
+    match value {
+        Some(Js::Number(n)) if *n >= 0.0 && n.fract() == 0.0 => Some(*n as u64),
+        _ => None,
     }
 }
 

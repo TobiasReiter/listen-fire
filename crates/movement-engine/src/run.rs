@@ -56,7 +56,7 @@ use crate::eval::{Ask, ErrorClass, EvalError, Evaluated, Evaluator, Prov, Reader
 use crate::executor::{Host, HostError};
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
-use crate::program::{self, Checked};
+use crate::program::{self, Checked, Stamp};
 use crate::stdlib::{self, Surroundings};
 use crate::trace::TraceEntry;
 use crate::{env_services, js_date};
@@ -195,7 +195,7 @@ pub(crate) struct Run<'a> {
     pub(crate) source_instance: RefCell<Option<Rc<InstanceBinding>>>,
     /// Every provenance origin the run has met, by id (the trails hold ids),
     /// as the TypeScript's `ProvenanceOrigin` objects.
-    pub(crate) origins: RefCell<Vec<Json>>,
+    pub(crate) origins: RefCell<Vec<Js>>,
     /// The fields a `field_miss` was traced for, by instance: once each.
     pub(crate) misses: RefCell<Vec<(String, String)>>,
     pub(crate) movement_name: RefCell<String>,
@@ -244,6 +244,11 @@ async fn run(host: &Host, input: &SegmentInput) -> Result<Json, Stop> {
     // Whatever this engine does not run is declined before anything the
     // host can see happens: no trace entry, no adapter.
     if let Some(reason) = declined_by(&run.checked.root.program) {
+        return Err(Stop::Declined(reason));
+    }
+    // Every decline precedes every host-visible effect, the version
+    // warning's trace entry among them.
+    if let Some(reason) = run.date_decline() {
         return Err(Stop::Declined(reason));
     }
     // A deprecated pin runs, and says so on the run's own record (the check's
@@ -354,9 +359,6 @@ impl Run<'_> {
                 "type the parameter against a constructed adapter instance",
             )));
         };
-        if let Some(reason) = self.reads_dates(&movement, &param.name, &source_instance, type_ref) {
-            return Err(Stop::Declined(reason));
-        }
         self.seed(&source_instance, type_ref).await.map_err(Stop::Thrown)?;
         if event_text(&self.event, "triggerType").as_deref() == Some("snapshot") {
             let mut context = self.mutation_context.borrow().clone();
@@ -379,25 +381,54 @@ impl Run<'_> {
         Ok((movement, index, movement_scope))
     }
 
-    /// A field the program reads off the event that the source's schema
-    /// types as a date: the adapter may answer it as a `Date`, which no
-    /// value of this engine is. Declined here, before the source is resolved.
-    fn reads_dates(&self, movement: &MovementDeclaration, param: &str, instance: &InstanceBinding, type_ref: &ast::TypeRef) -> Option<String> {
+    /// `prepareMovement`'s picks — the movement, its event parameter and the
+    /// source instance it is typed against — made with no effect, so that a
+    /// field the program reads off the event that the source's schema types
+    /// as a date declines the run before anything the host can see. The
+    /// adapter may answer such a field as a `Date`, which no value of this
+    /// engine is. Anything `prepare` would fail on is left for it to fail.
+    fn date_decline(&self) -> Option<String> {
+        let statements = &self.checked.root.program.statements;
+        let movements: Vec<&MovementDeclaration> = statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Movement(m) => Some(m),
+                _ => None,
+            })
+            .collect();
+        let movement: &MovementDeclaration = self.select_movement(&movements).ok()?;
+        let index = statements.iter().position(|s| matches!(s, Statement::Movement(m) if std::ptr::eq(m, movement)))?;
+        let [param] = movement.params.as_slice() else { return None };
+        let Some(ParamTypeRef::Name(type_ref)) = &param.type_ else { return None };
+        let file = Scope::root();
+        for statement in statements.iter().filter(|s| !matches!(s, Statement::Movement(_))) {
+            self.file_statement(statement, &file);
+        }
+        self.import_originals.borrow_mut().clear();
+        let Some(Binding::Instance(instance)) = file.resolve(&type_ref.graph) else { return None };
         let schema = instance.schema.as_ref()?;
         let dated = |field: &str| {
             schema.positions.0.iter().any(|(name, position)| {
                 (type_ref.position.as_deref().is_none_or(|p| p == name))
-                    && position.properties.0.get(field).is_some_and(is_dated)
+                    && position.properties.0.get(field).is_some_and(|t| is_dated(t, schema, &mut Vec::new()))
             })
         };
+        let mut read = Vec::new();
         let text = serde_json::to_string(&movement.body).unwrap_or_default();
-        let mut found = None;
-        event_fields_read(&text, param, &mut |field| {
-            if found.is_none() && dated(field) {
-                found = Some(format!("the event's `{field}` is a date, which an adapter may answer as a Date"));
+        event_fields_read(&text, &param.name, &mut |field| read.push(field.to_string()));
+        // `...msg` in a write: the lines the checker's stamp says it writes.
+        let prefix = format!("/statements/{index}/");
+        for (path, stamp) in &self.checked.root.stamps {
+            if let Stamp::SpreadFields(fields) = stamp
+                && path.starts_with(&prefix)
+                && self.checked.root.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str) == Some(param.name.as_str())
+            {
+                read.extend(fields.iter().cloned());
             }
-        });
-        found
+        }
+        read.into_iter()
+            .find(|field| dated(field))
+            .map(|field| format!("the event's `{field}` is a date, which an adapter may answer as a Date"))
     }
 
     fn select_movement<'m>(&self, movements: &[&'m MovementDeclaration]) -> Result<&'m MovementDeclaration, Stop> {
@@ -727,7 +758,7 @@ impl Run<'_> {
                     let span = serde_json::to_value(slot.span).expect("a span is JSON");
                     let mut origins = self.origins.borrow_mut();
                     for _ in first_literal..evaluator.next_literal() {
-                        origins.push(json!({ "kind": "literal", "span": span }));
+                        origins.push(env::object_of(vec![("kind", Js::str("literal")), ("span", env::js_of_json(&span))]));
                     }
                     return Ok(evaluated);
                 }
@@ -804,19 +835,26 @@ impl Run<'_> {
         if value.is_nullish() && !seed.is_stable() {
             self.trace_miss(&source, field).await?;
         }
-        let mut origin = json!({ "kind": "source_field", "instance": source.instance_name, "adapterType": source.adapter_type, "field": field });
+        // In the TypeScript's key order (`readSourcePositionField`).
+        let mut entries = vec![
+            ("kind", Js::str("source_field")),
+            ("instance", Js::str(source.instance_name.clone())),
+            ("adapterType", Js::str(source.adapter_type.clone())),
+        ];
         if seed.is_stable() {
             if let Some(record_type) = &seed.record_type {
-                origin["recordType"] = json!(record_type);
+                entries.push(("recordType", Js::str(record_type.clone())));
             }
-            origin["externalId"] = json!(seed.record_id);
+            entries.push(("externalId", seed.record_id.clone().map_or(Js::Null, Js::String)));
         }
+        entries.push(("field", Js::str(field)));
+        let origin = env::object_of(entries);
         let id = self.mint_origin(origin);
         Ok(Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
     }
 
     /// One more origin in the run's table; its id.
-    pub(crate) fn mint_origin(&self, origin: Json) -> u32 {
+    pub(crate) fn mint_origin(&self, origin: Js) -> u32 {
         let mut origins = self.origins.borrow_mut();
         origins.push(origin);
         origins.len() as u32 - 1
@@ -824,8 +862,8 @@ impl Run<'_> {
 
     /// An origin as the firing record carries it (`ProvenanceSummariser`).
     pub(crate) fn summarised_origin(&self, id: u32) -> Js {
-        let origin = self.origins.borrow().get(id as usize).cloned().unwrap_or(Json::Null);
-        crate::env::js_of_json(&summarise(&origin))
+        let origin = self.origins.borrow().get(id as usize).cloned().unwrap_or(Js::Null);
+        summarise(&origin)
     }
 
     /// `interpretSleep`: a rehearsal fast-forwards; a real run parks the flow
@@ -842,7 +880,7 @@ impl Run<'_> {
                 message: format!("invalid duration literal '{}' — use unit-suffixed literals like 4h, 2d, 90m, 1h30m", duration.raw),
             })
         })?;
-        let answer = self.ask(host::park::commit_timer_park(&address, state, ms)).await.map_err(Stop::Thrown)?;
+        let answer = self.ask(host::park::commit_timer_park(&address, env::encode_plain(&state), ms)).await.map_err(Stop::Thrown)?;
         if answer.as_ref().and_then(|a| a.get("noSink")).is_some() {
             return Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
@@ -1037,30 +1075,48 @@ fn mutation_context(event: &Js, now_ms: f64) -> Js {
 
 /// `ProvenanceSummariser.summariseOrigin` for the origins this engine meets:
 /// an earlier write by its index, `AI()` by its prompt, the rest as they are.
-fn summarise(origin: &Json) -> Json {
-    match origin.get("kind").and_then(Json::as_str) {
-        Some("write") => {
-            let mut summary = json!({ "kind": "write", "write": origin.get("writeIndex").cloned().unwrap_or(Json::Null) });
+fn summarise(origin: &Js) -> Js {
+    let get = |key: &str| crate::unique::get(origin, key);
+    match get("kind") {
+        Js::String(kind) if kind == "write" => {
+            let mut entries = vec![("kind", Js::str("write")), ("write", get("writeIndex"))];
             for key in ["externalId", "field"] {
-                if let Some(value) = origin.get(key) {
-                    summary[key] = value.clone();
+                if !matches!(get(key), Js::Undefined) {
+                    entries.push((key, get(key)));
                 }
             }
-            summary
+            env::object_of(entries)
         }
-        Some("ai") => json!({ "kind": "ai", "prompt": origin.get("prompt").cloned().unwrap_or(Json::Null) }),
-        _ => origin.clone(),
+        Js::String(kind) if kind == "ai" => env::object_of(vec![("kind", Js::str("ai")), ("prompt", get("prompt"))]),
+        _ => match origin {
+            Js::Object(object) => Js::object(JsObject::clone_of(object)),
+            other => other.clone(),
+        },
     }
 }
 
-/// A field type a value of which an adapter may answer as a `Date`.
-fn is_dated(field: &FieldType) -> bool {
+/// A field type a value of which an adapter may answer as a `Date`. A
+/// record is dated when the position it names has a dated property; one this
+/// engine cannot name is taken as possibly dated.
+fn is_dated(field: &FieldType, schema: &InstanceSchema, seen: &mut Vec<String>) -> bool {
     match field {
         FieldType::Scalar(scalar) => matches!(scalar, movement_parser::catalog::types::Scalar::Date | movement_parser::catalog::types::Scalar::Datetime),
-        FieldType::Composite(Composite::List { of, .. } | Composite::MaybeAbsent { of } | Composite::Dict { of, .. }) => is_dated(of),
-        FieldType::Composite(Composite::Union { of }) => of.iter().any(is_dated),
-        FieldType::Composite(Composite::Tuple { of, .. }) => of.iter().flatten().any(is_dated),
-        FieldType::Composite(_) => false,
+        FieldType::Composite(Composite::List { of, .. } | Composite::MaybeAbsent { of } | Composite::Dict { of, .. }) => is_dated(of, schema, seen),
+        FieldType::Composite(Composite::Union { of }) => of.iter().any(|t| is_dated(t, schema, seen)),
+        FieldType::Composite(Composite::Tuple { of, .. }) => of.iter().flatten().any(|t| is_dated(t, schema, seen)),
+        FieldType::Composite(Composite::Record { position }) => {
+            let name = position.as_ref().and_then(|p| p.as_str().or_else(|| p.get("position").and_then(Json::as_str)));
+            let Some(name) = name else { return true };
+            if seen.iter().any(|s| s == name) {
+                return false;
+            }
+            seen.push(name.to_string());
+            match schema.positions.0.get(name) {
+                Some(position) => position.properties.0.values().any(|t| is_dated(t, schema, seen)),
+                None => true,
+            }
+        }
+        FieldType::Composite(Composite::Enum { .. }) => false,
     }
 }
 
@@ -1365,6 +1421,68 @@ mod tests {
         let mut seen = Vec::new();
         event_fields_read(&body, "msg", &mut |f| seen.push(f.to_string()));
         assert_eq!(seen, ["when"]);
+    }
+
+    /// A segment whose check answers `check`, with a dated event field;
+    /// the requests it made, and its `done`.
+    fn dated_run(source: &str, check: Json) -> (Json, Vec<String>) {
+        let schema = |properties: Json, collections: Json| {
+            json!({ "constructionArgs": [], "schemas": { "": {
+                "positions": { "message": { "properties": properties, "edges": {} } },
+                "collections": collections, "writableRoots": {},
+            } } })
+        };
+        let catalog = json!({
+            "adapters": {
+                "email": schema(json!({ "subject": "text", "when": "datetime" }), json!({})),
+                "attio": schema(json!({ "name": "text" }), json!({ "companies": { "target": "message" } })),
+            },
+            "credentials": {}, "plugins": {},
+        });
+        let input = json!({
+            "entry": "segment", "source": source, "languageVersion": 3, "teamId": "t1",
+            "now": "2026-03-12T12:00:00.000Z",
+            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, []]]]],
+            "catalog": catalog,
+        });
+        let mut segment = crate::begin(&input.to_string()).unwrap();
+        let mut seen = Vec::new();
+        let mut step = segment.start().unwrap();
+        loop {
+            match step {
+                Step::Done(done) => return (done, seen),
+                Step::Pending(pending) => {
+                    let request = pending.into_iter().next().expect("one request at a time");
+                    seen.push(format!("{}.{}", request.family, request.method));
+                    let answer = match request.family {
+                        "check" => json!({ "value": check }),
+                        _ => json!({}),
+                    };
+                    step = segment.answer(request.id, crate::read_answer(&answer.to_string()).unwrap()).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_dated_read_declines_before_the_version_warning_is_traced() {
+        let deprecated = json!({ "diagnostics": [{ "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" }], "stamps": [] });
+        let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { name: msg.`when` }\n}";
+        let (done, seen) = dated_run(source, deprecated);
+        assert_eq!(done, json!({ "declined": "the event's `when` is a date, which an adapter may answer as a Date" }));
+        assert_eq!(seen, ["check.program"]);
+    }
+
+    #[test]
+    fn a_spread_of_the_event_declines_on_the_dated_fields_its_stamp_names() {
+        let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { ...msg }\n}";
+        let stamp = |fields: Json| json!({ "diagnostics": [], "stamps": [{ "path": "/statements/3/body/0/write/spreads/0", "spreadFields": fields }] });
+        let (done, seen) = dated_run(source, stamp(json!(["subject", "when"])));
+        assert_eq!(done, json!({ "declined": "the event's `when` is a date, which an adapter may answer as a Date" }));
+        assert_eq!(seen, ["check.program"]);
+        // Undated fields only: the run goes on to its source.
+        let (_, seen) = dated_run(source, stamp(json!(["subject"])));
+        assert_eq!(seen[1], "adapters.resolve");
     }
 
     #[test]

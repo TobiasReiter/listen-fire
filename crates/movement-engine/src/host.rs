@@ -175,7 +175,8 @@ pub mod locks {
 pub mod park {
     use super::*;
 
-    /// A timer park (`sleep`): the leaf's address and its `ParkedScopeState`,
+    /// A timer park (`sleep`): the leaf's address and its `ParkedScopeState`
+    /// (on the eval wire, so its objects keep their key order),
     /// to wake `wakeAfterMs` from the host's own clock (`Date.now()`, as the
     /// TypeScript reads it).
     pub fn commit_timer_park(address: &str, state: Json, wake_after_ms: f64) -> Request {

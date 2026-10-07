@@ -60,6 +60,7 @@ Measured 2026-10-07 (gzip -9):
 | slice 2a, fix round 1 | 1,751,076 | 488,997 |
 | slice 2b, the writes (writes, nodes) | 1,945,584 | 542,520 |
 | slice 2b, the parks | 1,991,568 | 557,094 |
+| slice 2b, fix round 1 | 1,978,540 | 555,330 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
 back, the standard library, the regex matcher, Unicode case tables); slice
@@ -253,7 +254,10 @@ sleep(…)`, its `presenceBind`): the scope chain root first, each scope's own
 bindings in declaration order, as `serializeBinding` writes the kinds this
 engine binds (`event`, `instance`, `opaque`, `movement`, `value` as its JSON
 round trip with its origins, `handle` as its record, `nodePosition` /
-`nodeRef` numbered as one park's table numbers them). A resume
+`nodeRef` numbered as one park's table numbers them). States cross on the eval wire both ways
+(the park's `state`, the resume's `input.resume.state`), so every object keeps
+its key order: a resumed value is the one stored, key for key, as the
+TypeScript's is. A resume
 (`input.resume = {state, reenter?}`) re-layers the movement's scope, descends
 the `if` arms the address names, steps past (or re-enters) the leaf, and
 finishes each enclosing body. A state either engine wrote resumes on either;
@@ -286,8 +290,9 @@ fails); none produces a different answer.
 - An adapter answers a value the eval wire cannot carry as itself (a
   `Date`, a class instance, a function): `RustShimError` from the shim. The
   likely case — an event field the source's schema types as a date or a
-  datetime, which an adapter may answer as a `Date` — is declined before the
-  source is resolved, read off the catalog snapshot (a `describe` would be an
+  datetime (read by an expression, or written by a `...msg` spread as the
+  checker's stamp names its fields) — is declined before the version warning
+  is traced and before the source is resolved, read off the catalog snapshot (a `describe` would be an
   adapter call, after which nothing may decline).
 - A value held in a binding is shaped like an engine binding (an object
   whose `kind` names one, the TypeScript's `bindingOf`): reading its field,
@@ -319,7 +324,8 @@ writes each value out whole, numbering it afresh.
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, teamId, now, catalog, dryRun?, resume?}`. `dryRun` is a
 rehearsal (writes captured, `sleep` fast-forwarded); `resume` is `{state,
-reenter?}`, a `ParkedScopeState` to resume rather than a run to start. `languageVersion` is the pin,
+reenter?}`, a `ParkedScopeState` (on the eval wire) to resume rather than a
+run to start. `languageVersion` is the pin,
 written out (the engine does not know the release's current one); `event`
 is the `TriggerEvent` on the eval wire; `now` is the run's pinned instant as
 a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
@@ -337,7 +343,7 @@ host keeps, so a run that fails with it can name it.
 | `adapters.has {instance, method}` | whether the adapter implements `method` |
 | `llm.arbitrateEntities {asserted, candidates, recordType, constraints}` (values on the eval wire) | `{index: number \| null, judgeUnavailable?: message}` |
 | `locks.acquire {names}` / `locks.release {names}` | `undefined` once held / let go |
-| `park.commitTimerPark {address, state, wakeAfterMs}` | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
+| `park.commitTimerPark {address, state, wakeAfterMs}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
 | `adapters.call {instance, method, args}` | the method's result as plain JSON (anything else fails the run in the shim) |
 | `adapters.call {instance, method, args, wire: true}` | `args` on the eval wire, the result too |
 | `control.cancelled {}` / `control.cancelledNow {}` | a boolean: the cancel gate, debounced / not |

@@ -165,7 +165,10 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
           judgeUnavailable = message;
         },
       });
-      return { index, ...(judgeUnavailable !== undefined ? { judgeUnavailable } : {}) };
+      // `candidates[index]` finds nothing for anything but an integer (NaN,
+      // a fraction, `undefined`), exactly as for null: the write creates.
+      const chosen = typeof index === 'number' && Number.isInteger(index) ? index : null;
+      return { index: chosen, ...(judgeUnavailable !== undefined ? { judgeUnavailable } : {}) };
     },
   },
   locks: {
@@ -191,7 +194,8 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
       if (typeof wakeAfterMs !== 'number') throw new RustShimError('park.commitTimerPark wakeAfterMs is a number');
       await sink.commitTimerPark({
         address: string(request.address, 'park.commitTimerPark address'),
-        state: request.state,
+        // On the eval wire: the state's objects in the order the engine wrote them.
+        state: new WireOut().read(request.state),
         wakeAt: new Date(Date.now() + wakeAfterMs),
       });
       return undefined;

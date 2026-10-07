@@ -21,7 +21,7 @@ use std::rc::Rc;
 use movement_parser::ast::{self, FieldWriteMode, PathRoot, WriteExpression, WriteTarget};
 use movement_parser::catalog::types::InstanceSchema;
 use movement_parser::lowering::expression::{Expression, TraversalStep};
-use serde_json::{Value as Json, json};
+use serde_json::Value as Json;
 
 use crate::bindings::{Binding, Handle, InstanceBinding, Scope};
 use crate::env::{self, Trail};
@@ -615,7 +615,10 @@ impl Run<'_> {
                 );
                 let answer = self.ask(request).await.map_err(thrown)?.unwrap_or(Json::Null);
                 judge_unavailable = answer.get("judgeUnavailable").and_then(Json::as_str).map(String::from);
-                answer.get("index").and_then(Json::as_f64).map(|i| i as usize)
+                // `candidates[chosen]`: anything but an index into the list
+                // (negative, fractional, past the end) finds nothing, and the
+                // write creates, as the TypeScript's lookup does.
+                answer.get("index").and_then(Json::as_f64).filter(|i| *i >= 0.0 && i.fract() == 0.0).map(|i| i as usize)
             }
         };
         let matched = chosen.and_then(|i| candidates.get(i)).map(|c| unique::get(c, "externalId"));
@@ -860,11 +863,11 @@ impl Run<'_> {
             object.set("bindingName".into(), Js::str(name));
         }
         let external_id = object.get("externalId").cloned().unwrap_or(Js::Undefined);
-        let mut origin = json!({ "kind": "write", "writeIndex": write_index });
+        let mut origin = vec![("kind", Js::str("write")), ("writeIndex", Js::Number(write_index as f64))];
         if !matches!(external_id, Js::Undefined) {
-            origin["externalId"] = env_json(&external_id);
+            origin.push(("externalId", external_id.clone()));
         }
-        object.set("origin".into(), crate::env::js_of_json(&origin));
+        object.set("origin".into(), env::object_of(origin));
         let record = Rc::new(WriteRecord { object: Js::object(object) });
         self.writes.borrow_mut().push(record.clone());
         let handle = Handle {
@@ -889,9 +892,9 @@ impl Run<'_> {
         let value = handle.record.field(field)?;
         let trail = match handle.record.get("origin") {
             Js::Object(origin) => {
-                let mut read = crate::env::json_of_js(&Js::Object(origin));
-                read["field"] = json!(field);
-                let id = self.mint_origin(read);
+                let mut read = JsObject::clone_of(&origin);
+                read.set("field".into(), Js::str(field));
+                let id = self.mint_origin(Js::object(read));
                 Trail { origins: vec![id], direct: Some(id) }
             }
             _ => Trail::default(),
@@ -1155,6 +1158,3 @@ fn unquote_construction_arg(raw: &str) -> String {
     t.to_string()
 }
 
-fn env_json(value: &Js) -> Json {
-    crate::env::json_of_js(value)
-}

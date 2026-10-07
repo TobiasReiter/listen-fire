@@ -198,17 +198,20 @@ export async function driveEngine(
 // ── The segment's data ────────────────────────────────────────────────────────
 
 /** Everything of `input` but its host, as the `segment` entry reads it
- *  (crates/movement-engine/src/run.rs `SegmentInput`): the event on the eval
- *  wire, so its payload keeps its key order. Undefined for an input that
- *  cannot cross as itself. */
+ *  (crates/movement-engine/src/run.rs `SegmentInput`): the event, and a
+ *  resumed state, on the eval wire, so their objects keep their key order
+ *  (a stored state's is the order it was stored in). Undefined for an input
+ *  that cannot cross as itself. */
 function segmentInput(input: RunMovementInput, resume?: { state: unknown; reenter?: true }): unknown {
   const event = new WireOut().value(input.event);
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
+  const state = resume !== undefined ? new WireOut({ asData: true }).value(resume.state) : undefined;
+  if (state === REFUSED) return undefined;
   return plainJson(
     {
       entry: 'segment',
       ...(input.dryRun === true ? { dryRun: true } : {}),
-      ...(resume !== undefined ? { resume } : {}),
+      ...(resume !== undefined ? { resume: { ...resume, state } } : {}),
       source: input.source,
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
@@ -644,7 +647,8 @@ export function rustCanResume(
         return false;
     }
   };
-  const resumable = state.scopeChain.every((scope) => Object.values(scope.bindings).every(holds));
+  const resumable =
+    state.scopeChain.every((scope) => Object.values(scope.bindings).every(holds)) && new WireOut({ asData: true }).value(state) !== REFUSED;
   return resumable && rustCanRun(program, input);
 }
 

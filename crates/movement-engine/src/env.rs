@@ -227,6 +227,38 @@ impl Encoder {
 
 // ── Plain JSON ──
 
+/// An object with these entries, in this order (JavaScript's key order).
+pub fn object_of(entries: Vec<(&str, Js)>) -> Js {
+    let mut object = JsObject::new();
+    for (key, value) in entries {
+        object.set(key.to_string(), value);
+    }
+    Js::object(object)
+}
+
+/// `JSON.parse(JSON.stringify(value))`, keys kept in their order:
+/// `undefined` members dropped (null in a list), non-finite numbers null,
+/// `-0` 0. `undefined` itself stays `undefined`.
+pub fn json_round_trip(value: &Js) -> Js {
+    match value {
+        Js::Number(n) if !n.is_finite() => Js::Null,
+        Js::Number(n) if *n == 0.0 => Js::Number(0.0),
+        Js::Array(list) => Js::array(
+            list.items.iter().map(|item| if matches!(item, Js::Undefined) { Js::Null } else { json_round_trip(item) }).collect(),
+        ),
+        Js::Object(object) => {
+            let mut copy = JsObject::new();
+            for (k, v) in object.entries() {
+                if !matches!(v, Js::Undefined) {
+                    copy.set(k.clone(), json_round_trip(v));
+                }
+            }
+            Js::object(copy)
+        }
+        other => other.clone(),
+    }
+}
+
 /// A value as `JSON.parse(JSON.stringify(value))` hands it back: `undefined`
 /// members dropped (null in a list), non-finite numbers null, `-0` 0.
 pub fn json_of_js(value: &Js) -> Json {

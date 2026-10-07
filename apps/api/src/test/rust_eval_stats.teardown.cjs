@@ -4,7 +4,25 @@
 const { existsSync, readdirSync, readFileSync, rmSync } = require('node:fs');
 const path = require('node:path');
 
-module.exports = async function globalTeardown() {
+// Routing floors, under MOVEMENT_ENGINE=rust: the fewest runs each corpus must
+// run whole in Rust. They catch a routing regression (a change to the
+// allow-list, a decline, a shim fault) that leaves every case green because
+// the TypeScript engine quietly took the runs back. Raise them deliberately,
+// with the slice that routes more; never lower one to make a run pass.
+// Measured at slice 2b (2026-10-07): v1 69, v2 75. A floor applies to a run
+// of the whole corpus only: a run narrowed to some files or cases checks the
+// rest (nothing declined, no shim fault, something ran whole) but not it.
+const RAN_WHOLE_FLOOR = { v1: 60, v2: 70 };
+
+/** Which corpus this run is, from its test match. */
+function corpusOf(projectConfig) {
+  const match = (projectConfig?.testMatch ?? []).join(' ');
+  if (match.includes('__conformance__/v1')) return 'v1';
+  if (match.includes('__conformance__/v2')) return 'v2';
+  return undefined;
+}
+
+module.exports = async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
@@ -36,4 +54,16 @@ module.exports = async function globalTeardown() {
   if (total.answered === 0) {
     throw new Error('MOVEMENT_ENGINE=rust, and the Rust evaluator answered no expression in the whole run');
   }
+  const corpus = corpusOf(projectConfig);
+  if (corpus === undefined) return;
+  const failures = [];
+  if (runs.routed > 0 && runs.ranWhole === 0) failures.push(`${runs.routed} runs were routed and none ran whole`);
+  if (Object.keys(runs.declined).length > 0) failures.push(`the corpus expects no declines, and these happened: ${JSON.stringify(runs.declined)}`);
+  if (runs.shimFaults > 0) failures.push(`${runs.shimFaults} runs ended in a shim fault`);
+  const whole = !globalConfig?.testPathPattern && !globalConfig?.testNamePattern;
+  if (whole && runs.ranWhole < RAN_WHOLE_FLOOR[corpus]) {
+    failures.push(`${runs.ranWhole} runs ran whole in Rust, under the ${corpus} floor of ${RAN_WHOLE_FLOOR[corpus]}`);
+  }
+  console.log(`Rust routing floor (${corpus}): ran whole ${runs.ranWhole}, floor ${RAN_WHOLE_FLOOR[corpus]}`);
+  if (failures.length > 0) throw new Error(`MOVEMENT_ENGINE=rust routing regression (${corpus}): ${failures.join('; ')}`);
 };

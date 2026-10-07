@@ -33,12 +33,19 @@ import { parsePinned } from '../program_check';
 const TEAM_ID = '00000000-0000-0000-0000-0000000000b2' as TeamId;
 
 const emailSchema: InstanceSchema = {
-  positions: { message: { properties: { subject: 'text', text: 'text', missing: 'text', when: 'date' }, edges: {} } },
+  positions: { message: { properties: { subject: 'text', text: 'text', missing: 'text', when: 'date', meta: 'json' }, edges: {} } },
   collections: {},
   writableRoots: {},
 };
 
-const companyFields = { name: 'text', stage: 'text', domain: 'text', tags: { kind: 'list', of: 'text' }, updated: 'datetime' } as const;
+const companyFields = {
+  name: 'text',
+  stage: 'text',
+  domain: 'text',
+  tags: { kind: 'list', of: 'text' },
+  updated: 'datetime',
+  blob: 'json',
+} as const;
 
 const attioSchema: InstanceSchema = {
   positions: {
@@ -463,7 +470,8 @@ describe('parks in the Rust engine', () => {
     const { ts, rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(rust.parks[0]?.address).toBe('s2.b0.s0');
-    expect(JSON.parse(JSON.stringify(rust.parks[0]?.state))).toEqual(JSON.parse(JSON.stringify(ts.parks[0]?.state)));
+    // Key for key, in order: the string, not `toEqual`, which ignores order.
+    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
   });
 
   it('a rehearsal fast-forwards past a sleep', async () => {
@@ -493,6 +501,27 @@ describe('parks in the Rust engine', () => {
     const ownTs = await runOn('ts', { source: PARKS, event, resume: fromTs });
     expect(onTs.result).toEqual(ownTs.result);
     expect(onTs.attio).toEqual(ownTs.attio);
+  });
+
+  it('resumes a parked object in the order it was stored, not sorted', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  d = msg.`meta`',
+      '  co = write crm-[:companies]-> { name: "first", blob: d }',
+      '  await sleep(30s)',
+      '  write crm-[:companies]-> { name: "after", blob: d }',
+      '  write crm-[:companies]-> { name: "again", blob: co.`blob` }',
+      '}',
+    ].join('\n');
+    const event = webhook({ meta: { name: 'Acme', amount: 1, zeta: true, alpha: { b: 1, a: 2 } } });
+    const parked = await runOn('ts', { source, event });
+    // As stored: a JSON round trip keeps insertion order, as jsonb keeps its own.
+    const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
+    const { ts, rust } = await agree({ source, event, resume: state });
+    // `toEqual` ignores key order: the strings are the point.
+    expect(JSON.stringify(rust.attio)).toBe(JSON.stringify(ts.attio));
+    expect(JSON.stringify(rust.result)).toBe(JSON.stringify(ts.result));
+    expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}');
   });
 
   it('leaves to the TypeScript engine a state it does not resume', () => {
