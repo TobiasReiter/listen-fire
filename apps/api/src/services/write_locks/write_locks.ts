@@ -9,6 +9,30 @@ import { MovementEngineError } from '../movement_engine/errors';
 
 export const DEFAULT_WRITE_LOCK_TIMEOUT_MS = 60_000;
 
+export const WRITE_LOCK_TIMEOUT_ENV_VAR = 'MOVEMENT_WRITE_LOCK_TIMEOUT_MS';
+
+/** The per-name wait, or the default when unset. Throws on a value that is set
+ *  but is not a positive whole number of milliseconds: a typo must not read as
+ *  "never wait" or "wait forever". */
+export function parseWriteLockTimeoutMs(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_WRITE_LOCK_TIMEOUT_MS;
+  const ms = Number(raw.trim());
+  if (!Number.isInteger(ms) || ms <= 0) {
+    throw new Error(
+      `${WRITE_LOCK_TIMEOUT_ENV_VAR}="${raw}" is not a positive whole number. ` +
+        `Set it to how many milliseconds a write may wait for another run's lock (e.g. ${WRITE_LOCK_TIMEOUT_ENV_VAR}=${DEFAULT_WRITE_LOCK_TIMEOUT_MS}), ` +
+        `or leave it unset for the default of ${DEFAULT_WRITE_LOCK_TIMEOUT_MS}.`,
+    );
+  }
+  return ms;
+}
+
+/** Boot: refuse a timeout set to nonsense, rather than letting the first
+ *  contended write find out. */
+export function assertWriteLockTimeoutConfigured(env: NodeJS.ProcessEnv = process.env): void {
+  parseWriteLockTimeoutMs(env[WRITE_LOCK_TIMEOUT_ENV_VAR]);
+}
+
 export interface WriteLockHolder {
   /**
    * Acquire all names exclusively, one at a time in sorted order. Within the
@@ -16,9 +40,8 @@ export interface WriteLockHolder {
    * holder holds (or is waiting for) shares it, and the lock is let go when
    * every acquire of it has been released. The timeout (`timeoutMs`, default
    * 60_000) applies PER NAME: rejects MOVENG_RUNTIME 'write lock timeout:
-   * <name>'. A cross-holder deadlock or a lost session rejects loudly too
-   * ('write lock deadlock: <name>', 'write lock session lost: <name>'), never
-   * hangs.
+   * <name>'. A cross-holder deadlock surfaces the same way, as a timeout; a
+   * lost session rejects 'write lock session lost: <name>'. Neither hangs.
    *
    * All or nothing: a failing acquire gives back what that call took, so a
    * caller releases only after an acquire that resolved. Sorting orders the
@@ -50,10 +73,6 @@ export function lockKey(scope: string, name: string): string {
 
 export function writeLockTimeout(name: string): MovementEngineError {
   return new MovementEngineError('MOVENG_RUNTIME', `write lock timeout: ${name}`, { name });
-}
-
-export function writeLockDeadlock(name: string): MovementEngineError {
-  return new MovementEngineError('MOVENG_RUNTIME', `write lock deadlock: ${name}`, { name });
 }
 
 export function writeLockHolderClosed(): MovementEngineError {

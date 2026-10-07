@@ -40,6 +40,7 @@ import { assertJevConfigured } from './lib/jev/client';
 import { assertRunCostCapConfigured } from './lib/run_spend';
 import { assertExtractionTiersConfigured } from './services/movement_engine/ai_tiers';
 import { assertMaxCallDepthConfigured } from './services/movement_engine/call_depth';
+import { assertWriteLockTimeoutConfigured } from './services/write_locks/write_locks';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';
 import { rootHandler } from './lib/middleware/root_handler';
 import { HEALTH_CHECK_ENDPOINT, WORKERS_HEALTH_ENDPOINT } from './constants';
@@ -103,6 +104,10 @@ assertRunCostCapConfigured();
 // A call depth limit set to something that is not a positive whole number is
 // a deployment that believes its recursions are bounded when they are not.
 assertMaxCallDepthConfigured();
+
+// A lock wait set to something that is not a positive whole number of
+// milliseconds would fail every contended write, or never let one give up.
+assertWriteLockTimeoutConfigured();
 
 // A blocked event loop is the one failure this process cannot narrate: the
 // health check goes unanswered, the logs stop mid-sentence, and the platform

@@ -90,7 +90,7 @@ import {
   type ExternalRecordRef,
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
-import { positionData } from '../../translation_graph/types';
+import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { InMemoryWriteLocks, type WriteLocks } from '../../write_locks/write_locks';
 import { PostgresWriteLocks, type PostgresWriteLockHolder } from '../../write_locks/postgres';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
@@ -348,5 +348,92 @@ describe("a run's lock is let go when its write is done, not when the run ends",
       await observer.end();
     }
     expect(seen).toEqual([{ pid: expect.any(Number), locks: 0 }]);
+  });
+});
+
+/** An inbox whose message has two attachments, listed in `order`; each update
+ *  takes 100 ms, so the two runs' members overlap. */
+function inboxListing(order: readonly string[], updates: string[]): Adapter {
+  return {
+    ...inertAdapter('email'),
+    async getRelated({ fieldId }) {
+      if (fieldId !== 'files') return [];
+      return order.map((recordId) => ({
+        position: makeStablePosition({ adapterType: 'email', recordType: 'attachment', recordId }),
+      }));
+    },
+    async updateRecord(input) {
+      await sleep(100);
+      updates.push(input.externalId);
+      return { adapterType: 'email', externalId: input.externalId, data: {}, association: containerAssociation(input) };
+    },
+  };
+}
+
+const INBOX_CATALOG = staticCatalogSnapshot({
+  credentials: {},
+  instanceSchemas: {
+    email: {
+      positions: {
+        message: { properties: { subject: 'text' }, edges: { files: { target: 'attachment', readable: true } } },
+        attachment: { properties: { filename: 'text' }, edges: {} },
+      },
+      collections: { message: { target: 'message' } },
+      supportsInPlaceUpdate: true,
+      writableRoots: {
+        attachment: { fields: { filename: 'text' }, resultShape: { externalId: 'text', filename: 'text' } },
+      },
+    },
+  },
+});
+
+const TOUCH_BOTH = [
+  'import { email } from adapters',
+  '',
+  'inbox = email()',
+  '',
+  'movement intake(m: <inbox-[:message]->>) {',
+  '  MAP(m-[:files]->, { concurrency: 2 }, (f) => {',
+  '    write f { filename: "seen" }',
+  '  })',
+  '}',
+].join('\n');
+
+describe('two runs whose parallel members update the same two records in opposite orders', () => {
+  it('under Postgres, both succeed: a member waiting for a lock does not stall its siblings', async () => {
+    const postgres = new PostgresWriteLocks({ connectionString: connectionString(), timeoutMs: 10_000 });
+    const lockedNames: string[] = [];
+    const recording: WriteLocks = {
+      holder: (scope) => {
+        const holder = postgres.holder(scope);
+        return {
+          acquire: (names) => {
+            lockedNames.push(...names);
+            return holder.acquire(names);
+          },
+          release: (names) => holder.release(names),
+        };
+      },
+    };
+    const teamId = randomUUID() as TeamId;
+    const updates: string[] = [];
+    const runWith = (order: readonly string[]) =>
+      runMovement({
+        source: TOUCH_BOTH,
+        movementName: 'intake',
+        event: webhookEvent(order.join('-')),
+        teamId,
+        host: makeTestHost({
+          adapters: { credentialId: () => undefined, resolve: () => inboxListing(order, updates) },
+          locks: recording,
+        }),
+        catalog: INBOX_CATALOG,
+      });
+
+    const results = await Promise.all([runWith(['r1', 'r2']), runWith(['r2', 'r1'])]);
+
+    expect(results.map((result) => result.writes.length)).toEqual([2, 2]);
+    expect([...updates].sort()).toEqual(['r1', 'r1', 'r2', 'r2']);
+    expect(new Set(lockedNames)).toEqual(new Set(['record "email" "r1"', 'record "email" "r2"']));
   });
 });

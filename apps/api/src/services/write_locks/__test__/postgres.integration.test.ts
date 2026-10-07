@@ -97,6 +97,9 @@ describe('PostgresWriteLocks', () => {
     // The dead holder's release must still settle cleanly.
     await a.release();
     expect(warn).toHaveBeenCalledWith('[write_locks] lock session dropped', expect.anything());
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('may have run unprotected'), {
+      names: ['record attio 1', 'record attio 2'],
+    });
   });
 
   it('rejects with the lock name when the lock stays held past the timeout', async () => {
@@ -160,7 +163,39 @@ describe('PostgresWriteLocks', () => {
     expect(warn).toHaveBeenCalled();
   });
 
-  it('fails one side of a cross-holder deadlock loudly instead of hanging', async () => {
+  it('fails one side of a cross-holder deadlock as a timeout, and the other side completes', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 500 });
+    const scope = randomUUID();
+    const a = holderOf(locks, scope);
+    const b = holderOf(locks, scope);
+
+    await a.acquire(['record attio 1']);
+    await b.acquire(['record attio 2']);
+    // The loser's segment ends on the failure, which lets the winner through.
+    const releasingOnFailure = (holder: PostgresWriteLockHolder, name: string) =>
+      holder.acquire([name]).catch(async (err: unknown) => {
+        await holder.release();
+        throw err;
+      });
+    // B starts waiting later, so A's deadline comes first. Two waits begun at
+    // the same instant would both time out: both fail loudly, neither hangs.
+    const started = Date.now();
+    const aWaits = releasingOnFailure(a, 'record attio 2');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const results = await Promise.allSettled([aWaits, releasingOnFailure(b, 'record attio 1')]);
+    const rejected = results.filter((result) => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({
+      reason: {
+        code: 'MOVENG_RUNTIME',
+        message: expect.stringContaining('write lock timeout: record attio 2'),
+      },
+    });
+    expect(results[1]!.status).toBe('fulfilled');
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("a sibling waiting on a contended lock does not hold up another sibling's unlock", async () => {
     const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
     const scope = randomUUID();
     const a = holderOf(locks, scope);
@@ -168,25 +203,56 @@ describe('PostgresWriteLocks', () => {
 
     await a.acquire(['record attio 1']);
     await b.acquire(['record attio 2']);
-    // The loser keeps what it took before the deadlock until it releases,
-    // which is what lets the winner through.
-    const releasingOnFailure = (holder: PostgresWriteLockHolder, name: string) =>
-      holder.acquire([name]).catch(async (err: unknown) => {
-        await holder.release();
-        throw err;
-      });
-    const results = await Promise.allSettled([
-      releasingOnFailure(a, 'record attio 2'),
-      releasingOnFailure(b, 'record attio 1'),
-    ]);
-    const rejected = results.filter((result) => result.status === 'rejected');
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]).toMatchObject({
-      reason: {
-        code: 'MOVENG_RUNTIME',
-        message: expect.stringContaining('write lock deadlock: record attio'),
-      },
+    const waiting = tracked(b.acquire(['record attio 1']));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const started = Date.now();
+    await b.release(['record attio 2']);
+    expect(Date.now() - started).toBeLessThan(50);
+    expect(waiting.settled()).toBe(false);
+    // The unlock reached Postgres: another holder can take the name now.
+    const c = holderOf(locks, scope);
+    await c.acquire(['record attio 2']);
+  });
+
+  it('reconnects on the next acquire when the session dropped while holding nothing', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const a = holderOf(locks, randomUUID());
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+
+    await a.acquire(['record attio 1']);
+    await a.release(['record attio 1']);
+    const before = await backendPidOf(a);
+    await observer.query('SELECT pg_terminate_backend($1)', [before]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    await a.acquire(['record attio 2']);
+    const after = await backendPidOf(a);
+    expect(after).not.toBe(before);
+    expect(await advisoryLockCount(after)).toBe(1);
+    const reconnects = warn.mock.calls.filter(([message]) => String(message).includes('reconnecting'));
+    expect(reconnects).toHaveLength(1);
+  });
+
+  it('refuses after a drop while holding, and names what was held when it releases', async () => {
+    const locks = new PostgresWriteLocks({ connectionString, timeoutMs: 10_000 });
+    const a = holderOf(locks, randomUUID());
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+
+    await a.acquire(['record attio 1']);
+    await observer.query('SELECT pg_terminate_backend($1)', [await backendPidOf(a)]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    await expect(a.acquire(['record attio 2'])).rejects.toMatchObject({
+      code: 'MOVENG_RUNTIME',
+      message: expect.stringContaining('write lock session lost'),
     });
+    await a.release(['record attio 1']);
+    await a.release();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('may have run unprotected'),
+      { names: ['record attio 1'] },
+    );
   });
 
   it('release waits for an acquire still in flight on the same holder', async () => {

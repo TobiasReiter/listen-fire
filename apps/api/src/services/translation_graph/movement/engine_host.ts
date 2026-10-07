@@ -21,7 +21,7 @@ import {
 import { makeRecorderParkSink } from '../../movement_engine/park_sink';
 import type { CancelGate } from '../../movement_engine/run';
 import { PostgresWriteLocks } from '../../write_locks/postgres';
-import type { WriteLocks } from '../../write_locks/write_locks';
+import { parseWriteLockTimeoutMs, WRITE_LOCK_TIMEOUT_ENV_VAR, type WriteLocks } from '../../write_locks/write_locks';
 import type { ActingUser } from '../adapter';
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
@@ -153,7 +153,10 @@ let postgresWriteLocks: WriteLocks | undefined;
 
 function processWriteLocks(): WriteLocks {
   if (postgresWriteLocks === undefined) {
-    postgresWriteLocks = new PostgresWriteLocks({ connectionString: lockDatabaseUrl() });
+    postgresWriteLocks = new PostgresWriteLocks({
+      connectionString: lockDatabaseUrl(),
+      timeoutMs: parseWriteLockTimeoutMs(process.env[WRITE_LOCK_TIMEOUT_ENV_VAR]),
+    });
   }
   return postgresWriteLocks;
 }
