@@ -169,11 +169,7 @@ function billedExtractCallClient(client: ExtractCallLlmClient, usage: UsageScope
 }
 
 function billedTransforms(invoker: HostTransformInvoker, usage: UsageScope): HostTransformInvoker {
-  return {
-    invoke: (request) => usage(() => metered(request, (input) => invoker.invoke(input))),
-    ...(invoker.declaredOutput !== undefined ? { declaredOutput: invoker.declaredOutput } : {}),
-    ...(invoker.isPriced !== undefined ? { isPriced: invoker.isPriced } : {}),
-  };
+  return { invoke: (request) => usage(() => metered(request, (input) => invoker.invoke(input))) };
 }
 
 function billedFileText(read: FileTextReader, usage: UsageScope): ResolveFileText {

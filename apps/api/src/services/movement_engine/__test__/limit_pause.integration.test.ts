@@ -30,8 +30,6 @@ jest.mock('../../translation_graph/movement/transform_invoker', () => {
   return {
     ...actual,
     registryTransformInvoker: {
-      declaredOutput: actual.registryTransformInvoker.declaredOutput,
-      isPriced: () => true,
       async invoke({ config }: { config: Record<string, unknown> }) {
         mockFetched.push(String(config.url));
         runSpend.reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: 1_000_000 });
@@ -231,7 +229,6 @@ function webhookEvent(): TriggerEvent {
     occurredAt: new Date().toISOString(),
   };
 }
-
 
 const FETCH_TWICE = [
   'import { attio, slack } from adapters',

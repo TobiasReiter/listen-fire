@@ -93,7 +93,6 @@ import {
 import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { InMemoryWriteLocks, type WriteLocks } from '../../write_locks/write_locks';
 import { PostgresWriteLocks, type PostgresWriteLockHolder } from '../../write_locks/postgres';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import { makeTestHost } from '../host';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -223,8 +222,6 @@ const SOURCE = [
 /** A `fetch_url` that takes as long as its url says, after `whileWaiting`. */
 function slowFetch(whileWaiting: () => Promise<void>): MovementTransformInvoker {
   return {
-    declaredOutput: (plugin) =>
-      (getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-')))?.signature.output,
     async invoke({ config }) {
       await whileWaiting();
       await sleep(Number(config.url));

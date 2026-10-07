@@ -149,7 +149,7 @@ describe('priced host calls under the run budget', () => {
       },
     });
     const ledger = new RunLedger({ capMicrodollars: 2.5 * DOLLAR });
-    const priced = pricedCalls(host, ledger);
+    const priced = pricedCalls(host, { ledger, plugins: {} });
     await priced.client.call({ system: '', userMessage: '', label: 'a', model: 'sonnet' });
     await priced.client.call({ system: '', userMessage: '', label: 'b', model: 'sonnet' });
     expect(budgets).toEqual([{ remainingMicrodollars: 2.5 * DOLLAR }, { remainingMicrodollars: 1.5 * DOLLAR }]);
@@ -165,7 +165,7 @@ describe('priced host calls under the run budget', () => {
       },
     });
     const ledger = new RunLedger({ capMicrodollars: DOLLAR });
-    const priced = pricedCalls(host, ledger);
+    const priced = pricedCalls(host, { ledger, plugins: {} });
     const err = await priced
       .resolveFileText({ file: { __brand: 'FileRef', name: 'call.mp3' } })
       .catch((e: unknown) => e);
@@ -179,7 +179,6 @@ describe('priced host calls under the run budget', () => {
     const host = makeTestHost({
       llm: {
         transforms: {
-          isPriced: (plugin) => plugin === 'paid',
           invoke: async ({ plugin }) => {
             invoked.push(plugin);
             return {};
@@ -187,7 +186,11 @@ describe('priced host calls under the run budget', () => {
         },
       },
     });
-    const priced = pricedCalls(host, new RunLedger({ capMicrodollars: DOLLAR, priorMicrodollars: DOLLAR }));
+    // Whether a plugin is priced is the snapshot's to say.
+    const priced = pricedCalls(host, {
+      ledger: new RunLedger({ capMicrodollars: DOLLAR, priorMicrodollars: DOLLAR }),
+      plugins: { paid: { args: [], priced: true }, free: { args: [], priced: false } },
+    });
     await expect(priced.transforms.invoke({ plugin: 'paid', config: {}, extractedContext: {} })).rejects.toThrow(
       RunCostCapExceeded,
     );
@@ -200,7 +203,7 @@ describe('priced host calls under the run budget', () => {
       llm: { arbitrateEntities: async () => ({ index: 1, cost: [{ source: 'model:judge', microdollars: 300 }] }) },
     });
     const ledger = new RunLedger({});
-    const index = await pricedCalls(host, ledger).arbitrateEntities({
+    const index = await pricedCalls(host, { ledger, plugins: {} }).arbitrateEntities({
       asserted: {},
       candidates: [],
       recordType: 'company',

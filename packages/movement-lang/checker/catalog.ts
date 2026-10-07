@@ -312,6 +312,12 @@ export interface PluginSpec {
   /** Named arguments the plugin accepts. */
   args: string[];
   /**
+   * Whether invoking it may cost money (a paid scrape, a paid search, priced
+   * work of its own). The engine refuses to start a priced plugin once the
+   * run has spent its cost cap; an unpriced one runs regardless.
+   */
+  priced: boolean;
+  /**
    * Arguments (⊆ `args`) a call MUST supply — the `triggerConfigRequired`
    * shape, one door over: a call missing one is MOV_THROUGH_ARG_MISSING.
    *

@@ -21,7 +21,6 @@ import type { FileTextResolution, TransformInvocationResult, TransformInvokeInpu
 import type { ExtractCallLlmInput, ExtractCallLlmResult } from './extraction_call';
 import type { CancelGate, ParkSink, SuspensionPoint } from './run';
 import type { ParkedScopeState } from './serialize';
-import type { TransformOutputShape } from '../translation_graph/types';
 
 // ── Priced calls ────────────────────────────────────────────────────────────
 //
@@ -89,22 +88,11 @@ export interface HostExtractCallClient {
   call(input: Priced<ExtractCallLlmInput>): Promise<Costed<ExtractCallLlmResult>>;
 }
 
-/** `through` stages and plugin calls. */
+/** `through` stages and plugin calls. What the engine knows of a plugin —
+ *  its arguments, its declared output, whether it is priced — is the run's
+ *  catalog snapshot's (`plugins`); invoking it is the host's. */
 export interface HostTransformInvoker {
   invoke(input: Priced<TransformInvokeInput>): Promise<Costed<TransformInvocationResult>>;
-  /**
-   * What a PLAIN call to this plugin hands back — the plugin's own declaration,
-   * the same one the checker typed the call against. Absent (or undefined for
-   * this plugin) ⇒ the plugin never declared one, and the engine refuses a
-   * plain call rather than guessing. A `through [ … ]` stage never asks.
-   */
-  declaredOutput?(plugin: string): TransformOutputShape | undefined;
-  /**
-   * Whether invoking this plugin may cost money (a paid scrape, a paid search,
-   * its own priced work). A priced plugin is not started once the run has
-   * spent its cost cap. Absent ⇒ unpriced.
-   */
-  isPriced?(plugin: string): boolean;
 }
 
 /** Which candidate an identity search's write IS: the index into

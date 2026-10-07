@@ -84,6 +84,7 @@ import {
   type ExpectedNode,
   type Fixture,
 } from './_fixtures/extraction_bakeoff';
+import { registeredPluginSpecs } from '../../services/translation_graph/movement/catalog';
 
 // ── The candidates ─────────────────────────────────────────────────────────
 
@@ -564,6 +565,7 @@ async function runOne(
       runtime: {
         llm,
         transformInvoker: stubInvoker(fixture),
+        plugins: registeredPluginSpecs(),
         evalSlot: async () => ({ value: fixture.source, provenance: NO_PROVENANCE }),
         trace,
       },

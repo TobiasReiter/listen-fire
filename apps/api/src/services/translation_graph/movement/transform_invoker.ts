@@ -6,12 +6,19 @@ import { runFields } from '../../../lib/llm_usage';
 import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from '../../../lib/run_cost';
 import { DocumentService } from '../../document';
 import { logger } from '../../logger';
-import { transformFor, type TransformInvocationResult } from '../../movement_engine/extraction';
+import type { TransformInvocationResult } from '../../movement_engine/extraction';
 import type { Costed, HostTransformInvoker } from '../../movement_engine/host';
 import type { FileRef } from '../adapter';
 import { documentStoreFileRef } from '../engine/files/document_store';
-import type { TransformInput, TransformOutput } from '../engine/transforms/registry';
-import { makeEphemeralPosition, type TransformOutputShape } from '../types';
+import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
+import { makeEphemeralPosition } from '../types';
+
+/** A plugin by either spelling: movement identifiers can't carry dashes, so a
+ *  program writes `vc_url_retrieval` for a transform registered as
+ *  `vc-url-retrieval`. */
+function transformFor(plugin: string): TransformImpl | undefined {
+  return getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
+}
 
 /**
  * The production invoker — the TG transform registry, dispatched the same way
@@ -21,12 +28,6 @@ import { makeEphemeralPosition, type TransformOutputShape } from '../types';
  * the underscore spelling resolves too (`vc_url_retrieval`).
  */
 export const registryTransformInvoker: HostTransformInvoker = {
-  declaredOutput(plugin): TransformOutputShape | undefined {
-    return transformFor(plugin)?.signature.output;
-  },
-  isPriced(plugin): boolean {
-    return transformFor(plugin)?.priced === true;
-  },
   async invoke({ plugin, config, extractedContext }): Promise<Costed<TransformInvocationResult>> {
     const impl = transformFor(plugin);
     if (!impl) {

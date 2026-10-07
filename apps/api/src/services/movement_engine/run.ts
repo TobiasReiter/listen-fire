@@ -78,6 +78,8 @@ import {
   type CollectionRunSettings,
   checkProgramWithLink,
   fromCatalogSnapshot,
+  pluginOutputUnder,
+  type PluginOutput,
   resolveFileFromSnapshot,
   before,
   CURRENT_LANGUAGE_VERSION,
@@ -238,8 +240,6 @@ import {
   positionRecordId,
   type SchemaFieldDescriptor,
   type SourcePosition,
-  type TransformOutputKind,
-  transformOutputUnder,
 } from '../translation_graph/types';
 import {
   arbitrateWithoutJudge,
@@ -308,6 +308,7 @@ import {
   buildDeclarationSpec,
   buildExtractSpec,
   materializeExtract,
+  pluginSpecNamed,
   recordExtractedEntities,
   tracedUrl,
   type DeclaredNodeShape,
@@ -2449,7 +2450,7 @@ class Interpreter {
   ) {
     this.catalog = prepared.catalog;
     this.context = prepared.context;
-    this.priced = pricedCalls(input.host, prepared.context.ledger);
+    this.priced = pricedCalls(input.host, { ledger: prepared.context.ledger, plugins: input.catalog.plugins });
     this.effectLocks = new EffectLocks({ holder: prepared.context.writeLockHolder });
     this.runTrace = input.host.trace ?? [];
     this.limitPaused = input.limitPaused === true;
@@ -5822,7 +5823,10 @@ class Interpreter {
     body: BodyContext,
   ): Promise<Binding | undefined> {
     const invoker = this.priced.transforms;
-    const declared = invoker.declaredOutput?.(plugin);
+    // The shape the movement's pin gets — a plugin whose output changed keeps
+    // its older shape for movements pinned before the change.
+    const spec = pluginSpecNamed(this.input.catalog.plugins, plugin);
+    const declared = spec !== undefined ? pluginOutputUnder(spec, this.languageVersion) : undefined;
     if (declared === undefined) {
       // The checker refuses a plain call to a plugin that declared no output,
       // so reaching here means the two disagree — which is worth saying, not
@@ -5859,10 +5863,8 @@ class Interpreter {
     const result = await invoker.invoke({ plugin, config, extractedContext: {} });
     // What the plugin brought back is no longer justified by the quote that
     // pointed at it, so the origins survive and the direct citation does not.
-    // The shape the movement's pin gets — a plugin whose output changed keeps
-    // its older shape for movements pinned before the change.
     const { binding, handedBack } = pluginCallBinding(
-      transformOutputUnder(declared, this.languageVersion),
+      declared,
       result,
       transformed(unionProvenance(trails)),
     );
@@ -7330,6 +7332,7 @@ class Interpreter {
       runtime: {
         llm: this.llmClient(),
         transformInvoker: this.priced.transforms,
+        plugins: this.input.catalog.plugins,
         evalSlot: (slot) => this.evaluateSlot(slot, { env }),
         resolveFileText: this.fileTextResolver(),
         trace: this.trace,
@@ -12083,7 +12086,7 @@ const PLUGIN_FETCHED_TEXT_FIELD = 'text';
  * separate question, and it is the trace's, not the program's.
  */
 function pluginCallBinding(
-  output: TransformOutputKind,
+  output: PluginOutput,
   result: TransformInvocationResult,
   provenance: Provenance,
 ): { binding: Binding; handedBack: boolean } {

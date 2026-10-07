@@ -124,12 +124,10 @@ const ALLOWED: Array<(module: string) => boolean> = [
   under('services/logger'),
   // Shared engine helpers that are pure computation over engine data: the
   // dry-run write capture, resource stamping and filtering, the model choice
-  // for an extraction's size. The transform registry is the plugin-signature
-  // debt (DESIGN §9 item 8).
+  // for an extraction's size.
   (m) => m === 'services/translation_graph/engine/dry_run_adapter',
   (m) => m === 'services/translation_graph/engine/files/resources',
   (m) => m === 'services/translation_graph/engine/batched_extraction/schema_synthesis',
-  (m) => m === 'services/translation_graph/engine/transforms/registry',
   under('services/translation_graph/uniqueness'),
   under('services/translation_graph/required_fields'),
   under('services/translation_graph/types'),

@@ -68,7 +68,6 @@ import {
   type ExpressionType,
   type Position,
   type TransformOutputKind,
-  type TransformSignature,
 } from '../types';
 import { connectMethodForType } from '../../credentials/connect_link';
 import { isLegacyApp } from '../../credentials/app_id';
@@ -76,7 +75,7 @@ import { indexManifestsByName, listAdapterManifests } from '../adapters/registry
 import { listRemoteAdapters } from '../adapters/remote/store';
 import { teamAdapterManifests } from '../adapters/team_manifests';
 import { registerBundledTransforms } from '../engine/transforms/register-bundled';
-import { getTransform, listTransforms } from '../engine/transforms/registry';
+import { getTransform, listTransforms, type TransformImpl } from '../engine/transforms/registry';
 import { assembleMovementFileSources, resolverOverSources } from './files';
 import {
   adapterInstanceIsWarm,
@@ -237,9 +236,12 @@ const THIN_INSTANCE_SCHEMAS: Record<string, InstanceSchema> = {
  *
  * The effect row rides through verbatim, and so does the declared output —
  * absent stays absent either way, which is what keeps a plugin nobody has
- * described to `through [ … ]` stages.
+ * described to `through [ … ]` stages. Whether invoking it may cost money
+ * rides as `priced`, which the engine reads to refuse a priced plugin once the
+ * run has spent its cap.
  */
-function pluginSpecOf(signature: TransformSignature): PluginSpec {
+function pluginSpecOf(impl: TransformImpl): PluginSpec {
+  const { signature } = impl;
   const authorParams = signature.params.filter((p) => !p.auto);
   const requiredArgs = authorParams.filter((p) => p.required === true).map((p) => p.name);
   // Two different facts, kept apart because they have different answers.
@@ -264,6 +266,7 @@ function pluginSpecOf(signature: TransformSignature): PluginSpec {
   }));
   return {
     args: authorParams.map((p) => p.name),
+    priced: impl.priced === true,
     ...(requiredArgs.length ? { requiredArgs } : {}),
     ...(signature.effects !== undefined ? { effects: signature.effects } : {}),
     ...(fedArgs.length ? { fedArgs } : {}),
@@ -356,7 +359,7 @@ export function registeredPluginSpecs(): Record<string, PluginSpec> {
   registerBundledTransforms();
   const plugins: Record<string, PluginSpec> = {};
   for (const impl of listTransforms()) {
-    plugins[impl.signature.name.replace(/-/g, '_')] = pluginSpecOf(impl.signature);
+    plugins[impl.signature.name.replace(/-/g, '_')] = pluginSpecOf(impl);
   }
   return plugins;
 }
@@ -522,7 +525,7 @@ export function staticCatalogFromManifests(
       // Movement identifiers can't contain dashes; registered transform
       // names do (`vc-url-retrieval`). Accept the underscore spelling.
       const impl = getTransform(name) ?? getTransform(name.replace(/_/g, '-'));
-      return impl ? pluginSpecOf(impl.signature) : undefined;
+      return impl ? pluginSpecOf(impl) : undefined;
     },
     instantiate(adapterName): InstanceSchema | undefined {
       // STUB — construction arguments are ignored; see module header for
@@ -1382,7 +1385,7 @@ async function assembleTeamCatalog(
     },
     plugin(name): PluginSpec | undefined {
       const impl = getTransform(name) ?? getTransform(name.replace(/_/g, '-'));
-      return impl ? pluginSpecOf(impl.signature) : undefined;
+      return impl ? pluginSpecOf(impl) : undefined;
     },
     instantiate(adapterName, args): InstanceSchema | undefined {
       const manifest = manifestBySlug.get(adapterName);

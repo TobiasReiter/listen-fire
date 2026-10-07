@@ -88,8 +88,7 @@ import {
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { makeTestHost } from '../host';
 
@@ -183,7 +182,6 @@ function delayedInvoker(fail: ReadonlySet<string> = new Set()) {
   let inFlight = 0;
   let maxInFlight = 0;
   const invoker: MovementTransformInvoker = {
-    declaredOutput: (plugin) => realOutput(plugin),
     async invoke({ config }) {
       const url = String(config.url);
       inFlight += 1;
@@ -205,11 +203,6 @@ function delayedInvoker(fail: ReadonlySet<string> = new Set()) {
     maxInFlight: () => maxInFlight,
     finished: () => events.filter((e) => e.startsWith('end ')).map((e) => e.slice(4)),
   };
-}
-
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
 }
 
 function webhookEvent(): TriggerEvent {

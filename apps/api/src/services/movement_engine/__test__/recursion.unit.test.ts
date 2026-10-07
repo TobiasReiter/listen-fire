@@ -27,8 +27,7 @@ import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } fro
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { makeTestHost, type HostTransformInvoker } from '../host';
 
@@ -108,10 +107,6 @@ const PRELUDE = [
 function pricedInvoker() {
   const charged: string[] = [];
   const invoker: HostTransformInvoker = {
-    declaredOutput: (plugin) => {
-      const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-      return impl?.signature.output as TransformOutputShape | undefined;
-    },
     async invoke({ config, budget }) {
       const url = String(config.url);
       const { value, cost } = await withSpendMeter(budget, async () => {

@@ -85,8 +85,7 @@ import { assertRunBudget, runCostCapFromEnv, withSpendMeter } from '../../../lib
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
+import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { makeTestHost, type HostTransformInvoker } from '../host';
 
@@ -168,7 +167,6 @@ const MEMBERS = '["a", "b", "c", "d", "e"]';
 function pricedInvoker() {
   const charged: string[] = [];
   const invoker: HostTransformInvoker = {
-    declaredOutput: (plugin) => realOutput(plugin),
     async invoke({ config, budget }) {
       const url = String(config.url);
       const { value, cost } = await withSpendMeter(budget, async () => {
@@ -189,11 +187,6 @@ function pricedInvoker() {
   return { invoker, charged };
 }
 
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
-}
-
 function webhookEvent(): TriggerEvent {
   return {
     pipelineInputId: 'pi-run-cost-cap',
@@ -206,8 +199,9 @@ function webhookEvent(): TriggerEvent {
 async function run(
   source: string,
   invoker: HostTransformInvoker,
-  options: { priorSpentMicrodollars?: number } = {},
+  options: { priorSpentMicrodollars?: number; fetchUrlPriced?: boolean } = {},
 ) {
+  const { fetchUrlPriced, ...spend } = options;
   const email = makeFakeAdapter('email');
   const attio = makeFakeAdapter('attio');
   const result = await runMovement({
@@ -215,7 +209,11 @@ async function run(
     movementName: 'intake',
     event: webhookEvent(),
     teamId: TEAM_ID,
-    catalog,
+    // Whether a plugin is priced is the snapshot's to say.
+    catalog:
+      fetchUrlPriced === undefined
+        ? catalog
+        : { ...catalog, plugins: { ...catalog.plugins, fetch_url: { ...catalog.plugins.fetch_url!, priced: fetchUrlPriced } } },
     host: makeTestHost({
       adapters: {
         credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
@@ -225,7 +223,7 @@ async function run(
       llm: { transforms: invoker },
     }),
     costCapMicrodollars: runCostCapFromEnv(),
-    ...options,
+    ...spend,
   });
   return { result, attio };
 }
@@ -374,11 +372,9 @@ describe('a resumed segment', () => {
 // ── Plugins that price their own work ───────────────────────────────────────
 
 describe('a plugin that prices its own work', () => {
-  function selfPricedInvoker(options: { priced: boolean }) {
+  function selfPricedInvoker() {
     const invoked: string[] = [];
     const invoker: HostTransformInvoker = {
-      declaredOutput: (plugin) => realOutput(plugin),
-      isPriced: () => options.priced,
       async invoke({ config }) {
         invoked.push(String(config.url));
         // The production invoker answers a plugin's own envelope as this line.
@@ -392,7 +388,7 @@ describe('a plugin that prices its own work', () => {
   }
 
   it('is charged what its result reports, under its own name', async () => {
-    const plugin = selfPricedInvoker({ priced: true });
+    const plugin = selfPricedInvoker();
     const { result } = await run(ONE_FETCH, plugin.invoker);
     expect(result.spentMicrodollars).toBe(3_000);
     expect(result.spentBySource).toEqual({ 'plugin:fetch_url': 3_000 });
@@ -400,22 +396,23 @@ describe('a plugin that prices its own work', () => {
 
   it('a priced plugin is not started once the run has spent its cap', async () => {
     process.env[ENV_VAR] = '1';
-    const plugin = selfPricedInvoker({ priced: true });
-    const failure = await failureOf(run(ONE_FETCH, plugin.invoker, { priorSpentMicrodollars: DOLLAR }));
+    const plugin = selfPricedInvoker();
+    const failure = await failureOf(
+      run(ONE_FETCH, plugin.invoker, { priorSpentMicrodollars: DOLLAR, fetchUrlPriced: true }),
+    );
     expect(runFailureCause(failure)).toBeInstanceOf(RunCostCapExceeded);
     expect(plugin.invoked).toEqual([]);
   });
 
   it('an unpriced plugin is not asked first', async () => {
     process.env[ENV_VAR] = '1';
-    const plugin = selfPricedInvoker({ priced: false });
-    await run(ONE_FETCH, plugin.invoker, { priorSpentMicrodollars: DOLLAR });
+    const plugin = selfPricedInvoker();
+    await run(ONE_FETCH, plugin.invoker, { priorSpentMicrodollars: DOLLAR, fetchUrlPriced: false });
     expect(plugin.invoked).toEqual(['a']);
   });
 
   it('a malformed cost report fails the run rather than charging nothing', async () => {
     const invoker: HostTransformInvoker = {
-      declaredOutput: (plugin) => realOutput(plugin),
       async invoke() {
         return { text: 'x', cost: [{ source: 'plugin:fetch_url', microdollars: -5 }] };
       },

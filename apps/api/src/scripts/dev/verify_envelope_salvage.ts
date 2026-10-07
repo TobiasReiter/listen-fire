@@ -26,6 +26,7 @@ import {
 } from '../../services/movement_engine/extraction';
 import type { MovementTraceEntry } from '../../services/movement_engine/expression';
 import { NO_PROVENANCE } from '../../services/movement_engine/provenance';
+import { registeredPluginSpecs } from '../../services/translation_graph/movement/catalog';
 
 const span: Span = { start: { line: 1, col: 1 }, end: { line: 1, col: 1 } };
 
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
           throw new Error('this replay invokes no plugin');
         },
       },
+      plugins: registeredPluginSpecs(),
       evalSlot: async () => ({
         value: `Four LinkedIn lines: ${NAMES.join(', ')}.`,
         provenance: NO_PROVENANCE,

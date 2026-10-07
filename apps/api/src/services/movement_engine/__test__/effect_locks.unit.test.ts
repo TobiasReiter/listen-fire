@@ -100,9 +100,8 @@ import {
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type SchemaTypeDescriptor, type TransformOutputShape } from '../../translation_graph/types';
+import { positionData, type SchemaTypeDescriptor } from '../../translation_graph/types';
 import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
 import { makeTestHost } from '../host';
@@ -273,14 +272,8 @@ const PRELUDE = [
   '',
 ].join('\n');
 
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
-}
-
 /** A `fetch_url` that takes as long as its url says (`"40"` → 40ms). */
 const delayedFetch: MovementTransformInvoker = {
-  declaredOutput: (plugin) => realOutput(plugin),
   async invoke({ config }) {
     await sleep(Number(config.url));
     return { text: `got-${String(config.url)}` };

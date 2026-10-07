@@ -28,10 +28,9 @@
 // engine runs one call per `#extract` site; this planner batches a
 // whole through-free region into one.
 //
-// `through` plugins are the TG transform registry's implementations,
-// invoked exactly like the TG engine's entity-enrichment cycle invokes
-// them (`kind: 'context-dependent'`, outputs projected from
-// `result.properties`) — injectable for tests.
+// `through` plugins are invoked through the host (`transforms.invoke`); what
+// the engine knows of each — the arguments a stage feeds it, the ones it must
+// be handed — comes from the run's catalog snapshot (`plugins`).
 //
 // Field types (incl. enum options) come from EXPLICIT annotations only —
 // a primitive name (`amount: number "…"`) or a BORROWED dotted path
@@ -62,6 +61,7 @@ import type {
   FieldType,
   LanguageVersion,
   PluginCall,
+  PluginSpec,
   ShapeNode,
 } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
@@ -70,10 +70,7 @@ import { matchOption } from '../../lib/utils/string';
 import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction';
 import { selectModel } from '../translation_graph/engine/batched_extraction/schema_synthesis';
 import { extractionCallSettings, type ExtractionCallSettings, type TierModel } from './ai_tiers';
-import { getTransform } from '../translation_graph/engine/transforms/registry';
-import type { TransformImpl } from '../translation_graph/engine/transforms/registry';
 import { logger } from '../logger';
-import type { TransformOutputShape } from '../translation_graph/types';
 import type { FileRef, Resource } from '../translation_graph/adapter';
 import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import { stampResourceId } from '../translation_graph/engine/files/resources';
@@ -431,11 +428,15 @@ export interface TransformInvocationResult {
   outcome?: string;
 }
 
+/** The plugins a run's catalog snapshot describes, by name. */
+export type PluginSpecs = Readonly<Record<string, PluginSpec>>;
+
 /** A plugin by either spelling: movement identifiers can't carry dashes, so a
- *  program writes `vc_url_retrieval` for a transform registered as
- *  `vc-url-retrieval`. */
-export function transformFor(plugin: string): TransformImpl | undefined {
-  return getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
+ *  program writes `vc_url_retrieval` for a plugin registered as
+ *  `vc-url-retrieval`; the snapshot keys the underscore spelling. */
+export function pluginSpecNamed(plugins: PluginSpecs, plugin: string): PluginSpec | undefined {
+  const spelled = plugin.replace(/-/g, '_');
+  return Object.hasOwn(plugins, spelled) ? plugins[spelled] : undefined;
 }
 
 /** One plugin invocation, as the engine asks for it. */
@@ -453,24 +454,6 @@ export interface TransformInvokeInput {
  *  every invocation spent. */
 export interface MovementTransformInvoker {
   invoke(input: TransformInvokeInput): Promise<TransformInvocationResult>;
-  /**
-   * What a PLAIN call to this plugin hands back — the plugin's own declaration,
-   * the same one the checker typed the call against. The engine asks because
-   * `invoke`'s two channels (the text it fetched, the properties it attached)
-   * carry everything a plugin can produce, and the declaration is what says
-   * which of them the bound name IS.
-   *
-   * Absent (or undefined for this plugin) ⇒ the plugin never declared one, so a
-   * plain call should not have got past the checker; the engine refuses rather
-   * than guessing. A `through [ … ]` stage never asks.
-   */
-  declaredOutput?(plugin: string): TransformOutputShape | undefined;
-  /**
-   * Whether invoking this plugin may cost money (a paid scrape, a paid search,
-   * its own priced work). A priced plugin is not started once the run has
-   * spent its cost cap. Absent ⇒ unpriced.
-   */
-  isPriced?(plugin: string): boolean;
 }
 
 /** Ancestor fields handed to a nested node's plugin, nested under the
@@ -826,6 +809,10 @@ export {
 export interface ExtractRuntime {
   llm: LlmClient;
   transformInvoker: MovementTransformInvoker;
+  /** The plugins the run's catalog snapshot describes: what a stage feeds a
+   *  plugin from the extract source (its `fedArgs`) and which arguments it
+   *  must be handed (its `requiredArgs`). */
+  plugins: PluginSpecs;
   /** Evaluates an expression slot in the interpreter's current scope —
    *  `from` data and non-field plugin arguments resolve through this.
    *  Returns the value WITH its trail (E4): the `from` slots' origins
@@ -1803,10 +1790,8 @@ class Materializer {
     // Engine-injected `auto` params (e.g. vc_url_retrieval's `text`): fed
     // from the extract source text, not author-supplied. Done last so the
     // author can't override them.
-    const impl = transformFor(plugin.plugin);
-    for (const param of impl?.signature.params ?? []) {
-      if (param.auto) config[param.name] = this.sourceText;
-    }
+    const spec = pluginSpecNamed(this.runtime.plugins, plugin.plugin);
+    for (const fed of spec?.fedArgs ?? []) config[fed.name] = this.sourceText;
 
     // The URL the invocation was pointed at — the one argument worth naming
     // on the trace, because a fetch is what a slow run is usually waiting on
@@ -1814,13 +1799,12 @@ class Materializer {
     const url = typeof config.url === 'string' ? tracedUrl(config.url) : undefined;
     const started = Date.now();
 
-    for (const param of impl?.signature.params ?? []) {
-      if (!param.required || param.auto) continue;
-      if (!isBlank(config[param.name])) continue;
+    for (const param of spec?.requiredArgs ?? []) {
+      if (!isBlank(config[param])) continue;
       logger.info('[movement:transform] required argument is empty — skipping this entity', {
         plugin: plugin.plugin,
-        param: param.name,
-        written: plugin.args.some((a) => a.name === param.name),
+        param,
+        written: plugin.args.some((a) => a.name === param),
         ...runLogFields(this.runtime.run),
       });
       trace.push({
@@ -1828,7 +1812,7 @@ class Materializer {
         plugin: plugin.plugin,
         node,
         durationMs: 0,
-        skippedParam: param.name,
+        skippedParam: param,
       });
       return SKIPPED;
     }

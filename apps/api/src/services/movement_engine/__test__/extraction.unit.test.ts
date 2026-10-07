@@ -442,12 +442,12 @@ const movementCatalog = mockCatalogSnapshot({
     acme_workspace: { adapters: ['slack'] },
   },
   plugins: {
-    vc_fetch: { args: ['urls'] },
+    vc_fetch: { args: ['urls'], priced: false },
     // Real registered transform; `text` is an `auto` param, so it takes NO
     // author args (the engine auto-feeds the source content).
-    vc_url_retrieval: { args: [] },
+    vc_url_retrieval: { args: [], priced: true, fedArgs: [{ name: 'text', required: true }] },
     // The targeted twin: every argument is the author's, and `url` is required.
-    fetch_url: { args: ['url', 'email', 'password'], fedByExtraction: true },
+    fetch_url: { args: ['url', 'email', 'password'], priced: true, requiredArgs: ['url'], fedByExtraction: true },
   },
 });
 
@@ -1556,6 +1556,7 @@ describe('a stage whose plugins contributed nothing', () => {
             throw new Error('test: a plugin-less stage must not invoke anything');
           },
         },
+        plugins: {},
         evalSlot: async () => ({
           value: 'Acme builds rockets.',
           provenance: NO_PROVENANCE,
@@ -2414,7 +2415,7 @@ const carryFileSchema = (): { catalog: CatalogSnapshot } => {
         dealflow_inbox: { adapters: ['email'] },
         acme_main: { adapters: ['attio'] },
       },
-      plugins: { vc_url_retrieval: { args: [] } },
+      plugins: { vc_url_retrieval: { args: [], priced: true, fedArgs: [{ name: 'text', required: true }] } },
     }),
   };
 };
@@ -4318,6 +4319,7 @@ describe('a field answered without a usable citation still answers', () => {
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({
           value: 'Flintt — fintech, London, Series A',
           provenance: NO_PROVENANCE,
@@ -4391,6 +4393,7 @@ describe('a field answered without a usable citation still answers', () => {
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({ value: 'Flintt — fintech', provenance: NO_PROVENANCE }),
       },
     });
@@ -4449,6 +4452,7 @@ describe('a reply that answered outside the envelope is re-wrapped, not rejected
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({
           value: 'Flintt — fintech, London, Series A',
           provenance: NO_PROVENANCE,
@@ -4591,6 +4595,7 @@ describe('a retry over a shape failure asks for the envelope, not for the values
             throw new Error('test: nothing to invoke');
           },
         },
+        plugins: {},
         evalSlot: async () => ({ value: 'Flintt — fintech', provenance: NO_PROVENANCE }),
       },
     });

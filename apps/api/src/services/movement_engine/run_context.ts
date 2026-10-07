@@ -33,7 +33,7 @@ import type { LlmClient } from '../translation_graph/engine/batched_extraction';
 import type { EntityArbitration } from '../translation_graph/engine/entity_match';
 import type { WriteLockHolder } from '../write_locks/write_locks';
 import type { FileTextResolution } from './expression';
-import type { MovementTransformInvoker } from './extraction';
+import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs } from './extraction';
 import type { ExtractCallLlmClient } from './extraction_call';
 import type { Costed, EngineHost } from './host';
 import type { CancelGate } from './run';
@@ -225,8 +225,16 @@ export interface PricedCalls {
   resolveFileText: (input: { file: FileRef }) => Promise<FileTextResolution>;
 }
 
-export function pricedCalls(host: EngineHost, ledger: RunLedger): PricedCalls {
+export function pricedCalls(
+  host: EngineHost,
+  run: {
+    ledger: RunLedger;
+    /** The run's catalog snapshot's plugins: which of them are priced. */
+    plugins: PluginSpecs;
+  },
+): PricedCalls {
   const { llm, files } = host;
+  const { ledger, plugins } = run;
   return {
     client: { call: (input) => charged(ledger, (budget) => llm.client.call({ ...input, budget })) },
     extractCall: {
@@ -236,15 +244,9 @@ export function pricedCalls(host: EngineHost, ledger: RunLedger): PricedCalls {
       // A priced plugin is refused before it starts once the run has spent
       // its cap; anything it or the models it calls spend comes back as cost.
       invoke: async (input) => {
-        if (llm.transforms.isPriced?.(input.plugin) === true) ledger.check();
+        if (pluginSpecNamed(plugins, input.plugin)?.priced === true) ledger.check();
         return charged(ledger, (budget) => llm.transforms.invoke({ ...input, budget }));
       },
-      ...(llm.transforms.declaredOutput !== undefined
-        ? { declaredOutput: (plugin: string) => llm.transforms.declaredOutput?.(plugin) }
-        : {}),
-      ...(llm.transforms.isPriced !== undefined
-        ? { isPriced: (plugin: string) => llm.transforms.isPriced?.(plugin) === true }
-        : {}),
     },
     arbitrateEntities: async (input) =>
       (await charged(ledger, (budget) => llm.arbitrateEntities({ ...input, budget }))).index,

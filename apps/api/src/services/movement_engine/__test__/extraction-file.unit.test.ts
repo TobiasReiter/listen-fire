@@ -86,6 +86,7 @@ function runtimeFor(opts: {
   return {
     llm: opts.llm,
     transformInvoker: { async invoke() { return {}; } },
+    plugins: {},
     evalSlot: async (s: ExprSlot) => {
       const value = opts.slots[s.raw];
       return { value, provenance: NO_PROVENANCE };
