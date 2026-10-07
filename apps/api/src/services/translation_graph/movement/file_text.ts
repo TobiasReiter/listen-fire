@@ -43,7 +43,7 @@ import { getXlsxContent } from '../../../lib/utils/excel';
 import { getPptxText } from '../../../lib/utils/powerpoint';
 import { logger } from '../../logger';
 import type { FileUnreadable } from '../../movement_engine/extraction';
-import type { ResolveFileText } from '../../movement_engine/host';
+import type { FileTextResolution } from '../../movement_engine/expression';
 import type { FileRef, ResolveFileRefResult } from '../adapter';
 import { streamFileRef, type StreamFileRefOptions } from '../engine/files/retrieve';
 import type { RawTextStore } from './raw_text_store';
@@ -248,7 +248,11 @@ async function extractTextFromStream(
  * resolution (`streamFileRef`, for the run's team) → text extraction → the
  * raw-text store, which is a parameter so tests need no database.
  */
-export function makeFileTextResolver(rawText: RawTextStore, bytes: StreamFileRefOptions): ResolveFileText {
+/** A file's text, read on the host. Unmetered: the run's host serves it under
+ *  the run's budget (`engine_host.ts`). */
+export type FileTextReader = (input: { file: FileRef }) => Promise<FileTextResolution>;
+
+export function makeFileTextResolver(rawText: RawTextStore, bytes: StreamFileRefOptions): FileTextReader {
   return async ({ file: ref }) => {
     const kind = fileKind(ref);
     if (!kind) {

@@ -44,6 +44,8 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import type { LanguageVersion } from 'movement-lang';
+
 import type { WriteLockHolder } from '../write_locks/write_locks';
 
 import { MovementEngineError } from './errors';
@@ -255,6 +257,8 @@ export function identityLocks(input: {
   constraints: UniquenessConstraints;
   resolveRecord: Record<string, unknown>;
   fields: Record<string, unknown>;
+  /** The run's pin: whether a blank key part is a key. */
+  languageVersion: LanguageVersion;
 }): LockRequest[] {
   const { constraints } = input;
   if (constraints.any.length === 0) return [];
@@ -275,7 +279,7 @@ export function identityLocks(input: {
     for (const field of fields) {
       const values = new Set<string>();
       for (const raw of [input.resolveRecord[field], input.fields[field]]) {
-        if (isBlankIdentityValue(raw)) continue;
+        if (isBlankIdentityValue(raw, input.languageVersion)) continue;
         const folded = foldKeyValue(raw);
         if (folded === undefined) return wholeType;
         values.add(folded);

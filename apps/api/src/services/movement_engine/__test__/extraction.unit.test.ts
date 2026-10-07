@@ -109,6 +109,7 @@ jest.mock('../../document', () => ({
 }));
 
 import {
+  CURRENT_LANGUAGE_VERSION,
   mockCatalogSnapshot,
   type CatalogSnapshot,
   type ExtractExpression,
@@ -890,6 +891,8 @@ describe('through-staged extraction', () => {
         plugin: 'vc_fetch',
         config: { urls: 'acme.com' },
         extractedContext: { name: 'Acme', urls: 'acme.com' },
+        // The run has no cap, so the plugin may spend without limit.
+        budget: { remainingMicrodollars: null },
       },
     ]);
 
@@ -3523,9 +3526,9 @@ describe('a unique-by key that came back empty matches nothing', () => {
 
   it('a candidate whose key is empty is never an exact match for an empty asserted key', () => {
     const constraints = { any: [{ all: [{ field: 'name' }] }] };
-    expect(candidateIsAllExact(constraints, { name: '' }, { name: '' })).toBe(false);
-    expect(candidateIsAllExact(constraints, { name: null }, { name: null })).toBe(false);
-    expect(candidateIsAllExact(constraints, { name: 'Acme' }, { name: 'acme' })).toBe(true);
+    expect(candidateIsAllExact(constraints, { asserted: { name: '' }, candidate: { name: '' }, languageVersion: CURRENT_LANGUAGE_VERSION })).toBe(false);
+    expect(candidateIsAllExact(constraints, { asserted: { name: null }, candidate: { name: null }, languageVersion: CURRENT_LANGUAGE_VERSION })).toBe(false);
+    expect(candidateIsAllExact(constraints, { asserted: { name: 'Acme' }, candidate: { name: 'acme' }, languageVersion: CURRENT_LANGUAGE_VERSION })).toBe(true);
   });
 });
 

@@ -22,7 +22,8 @@ const sendSlackNotification = jest.fn().mockResolvedValue(undefined);
 jest.mock('../../lib/slack', () => ({ sendSlackNotification }));
 
 import { ScraperService, looksLikeSpaShell } from '../scraper';
-import { currentRunSpend, RunCostCapExceeded, withRunSpendLedger } from '../../lib/run_spend';
+import { BudgetExhausted, NO_BUDGET_LIMIT } from '../../lib/run_cost';
+import { withSpendMeter } from '../../lib/run_spend';
 import { logger } from '../logger';
 
 const fetchMock = jest.fn();
@@ -219,40 +220,32 @@ describe('looksLikeSpaShell', () => {
 });
 
 describe('ScraperService.getWebsite — what a run is charged', () => {
-  const COST_CAP = 'MOVEMENT_MAX_RUN_COST_USD';
-  afterEach(() => {
-    delete process.env[COST_CAP];
-  });
-
-  it('charges the run per Web Unlocker request, a rendered retry included', async () => {
+  it('charges the call per Web Unlocker request, a rendered retry included', async () => {
     fetchMock.mockResolvedValueOnce(okResponse('<html><body></body></html>'));
     const renderedHtml = `<html><body><p>${'Rendered content once JS ran. '.repeat(10)}</p></body></html>`;
     fetchMock.mockResolvedValueOnce(okResponse(renderedHtml));
 
-    await withRunSpendLedger(async () => {
-      await ScraperService.getWebsite('https://example.com', { provider: 'brightdata' });
-      expect(currentRunSpend().bySource).toEqual({ 'service:brightdata.web_unlocker': 3_000 });
-    });
+    const { cost } = await withSpendMeter(NO_BUDGET_LIMIT, () =>
+      ScraperService.getWebsite('https://example.com', { provider: 'brightdata' }),
+    );
+    expect(cost).toEqual([{ source: 'service:brightdata.web_unlocker', microdollars: 3_000 }]);
   });
 
   it('a failed request is not charged', async () => {
     fetchMock.mockResolvedValue(new Response('nope', { status: 401, statusText: 'Unauthorized' }));
-    await withRunSpendLedger(async () => {
+    const cost: unknown[] = [];
+    await withSpendMeter(NO_BUDGET_LIMIT, async () => {
       await expect(ScraperService.getWebsite('https://example.com', { provider: 'brightdata' })).rejects.toThrow();
-      expect(currentRunSpend().segmentMicrodollars).toBe(0);
-    });
+    }).then((metered) => cost.push(...metered.cost));
+    expect(cost).toEqual([]);
   });
 
-  it('is not started once the run has spent its cap', async () => {
-    process.env[COST_CAP] = '1';
-    await withRunSpendLedger(
-      async () => {
-        await expect(ScraperService.getWebsite('https://example.com', { provider: 'brightdata' })).rejects.toThrow(
-          RunCostCapExceeded,
-        );
-      },
-      { priorMicrodollars: 1_000_000 },
-    );
+  it('is not started once the run has spent its budget', async () => {
+    await expect(
+      withSpendMeter({ remainingMicrodollars: 0 }, () =>
+        ScraperService.getWebsite('https://example.com', { provider: 'brightdata' }),
+      ),
+    ).rejects.toThrow(BudgetExhausted);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

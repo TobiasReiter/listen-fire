@@ -6,7 +6,7 @@ import { getQb } from './kysely';
 import { logger } from '../services/logger';
 import type { Resolved } from './models/map';
 import { models } from './models/registry';
-import { isInsideRunSpendAccount, reportRunCost } from './run_spend';
+import { isInsideSpendMeter, reportRunCost } from './run_spend';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { DealflowPipelineId } from '../generated/kysely/public/DealflowPipeline';
 import type { AgentConversationId } from '../generated/kysely/public/AgentConversation';
@@ -230,7 +230,7 @@ interface RecordUsageOptions {
 async function recordLlmUsage(options: RecordUsageOptions): Promise<void> {
   const ctx = currentLlmUsageContext();
   const teamId = ctx?.data.teamId;
-  const insideRun = isInsideRunSpendAccount();
+  const insideRun = isInsideSpendMeter();
 
   if (!teamId && !insideRun) return;
 

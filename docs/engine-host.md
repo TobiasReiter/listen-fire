@@ -4,18 +4,19 @@ The movement engine (`apps/api/src/services/movement_engine/`) runs a program. E
 
 ## What a run is given
 
-- **Data.** The source and its language version, a `CatalogSnapshot`, the trigger event, and, on resume, the parked state. A `CatalogSnapshot` is the team's catalog as plain JSON: adapters and their schemas, credential names, plugins, models, and the saved files the program imports.
+- **Data.** The source and its language version, a `CatalogSnapshot`, the trigger event, the cost cap (`costCapMicrodollars`, absent for none) with what the run spent before this segment, and, on resume, the parked state. A `CatalogSnapshot` is the team's catalog as plain JSON: adapters and their schemas, credential names, plugins, models, and the saved files the program imports.
 - **A host.** The calls the engine makes while it runs.
 
 ## The host's groups
 
 | Group | What the engine asks of it |
 |---|---|
-| `adapters` | Construct an adapter instance; map a credential name to its id. |
-| `llm` | The extraction and `AI()` client, the `extract(…)` call client, `through` stages and plugins, and the judge for identity matches the engine's own rules cannot settle. |
+| `segment` | Open the host's half of a segment (`open({ runId?, teamId, languageVersion })` answers `{ segmentId }`); close it (`close({ segmentId })` answers what its adapter calls spent, `{ cost? }`). |
+| `adapters` | Construct an adapter instance for a segment (`resolve({ …, segmentId })`); map a credential name to its id. |
+| `llm` | The extraction and `AI()` client, the `extract(…)` call client, `through` stages and plugins, and the judge for identity matches the engine's own rules cannot settle (`{ index }`). Every call is priced. |
 | `park` | Persist a timer, await or suspension (`sink`); queue the wake for an await's key (`wake`); mint and read callbacks (`callbacks`); record and find bound counterparts (`bindings`). With no `sink`, a run that reaches a park fails: that is a dry run. |
-| `control` | The cancel gate, checked at each statement and model call. `suspendWhen` lets the host pause a run between statements; the cost cap uses it. |
-| `files` | Resolve a file import when the snapshot carries no files; turn a file into text (`resolveFileText({ file })`); render and store a `FILE()` artifact (`render({ content, type })`). |
+| `control` | The cancel gate, checked at each statement and model call. `suspendWhen` lets the host pause a run between statements. |
+| `files` | Resolve a file import when the snapshot carries no files; turn a file into text (`resolveFileText({ file, budget })`, priced: transcription and OCR are model calls); render and store a `FILE()` artifact (`render({ content, type })`). |
 | `lookup` | Map an event's actor to a team user (`@user_*`). |
 | `locks` | Cross-run write locks (below). |
 | `trace` | The array the run appends its decision trace to, so a caller can read it while the run goes. |
@@ -24,14 +25,22 @@ After an await park is durable, the engine asks the await's question once more i
 
 A file is a `FileRef`: a JSON descriptor of where its bytes live, never the bytes. Its `source` names either the adapter instance that owns them (`{ adapterType, credentialId?, constructionArgs?, handle }`) or the document store (`{ store: 'document', objectUri }`). The engine only carries descriptors: it hands them to `files.resolveFileText` and gets text back, gets one back from `files.render`, and passes them through write fields. Every byte read happens on the host side: a target adapter or the file-text resolver calls `streamFileRef`, which resolves the named instance with the descriptor's credential and asks it for the bytes. A parked run holds the descriptors as they are, so a resume needs nothing rebound.
 
-The engine keeps its own cost ledger. Host code still reports into it ambiently rather than through call results (see "Recorded debts").
+### Spend
+
+Every priced call (`llm.*`, `llm.transforms.invoke`, `llm.arbitrateEntities`, `files.resolveFileText`) takes `budget: { remainingMicrodollars: number | null }` in and answers `cost?: Array<{ source, microdollars }>` out (absent: it spent nothing). `source` is where the money went, `kind:name` (`model:claude-sonnet-5`, `service:brightdata.web_unlocker`, `plugin:fetch_url`). The engine keeps the run's ledger (`movement_engine/run_context.ts`): the budget is the run's cap less what it has spent against it (`null` with no cap), and every answer's cost is charged. A host refuses priced work past the budget by throwing `BudgetExhausted` carrying what the call spent first (`lib/run_cost.ts`); the engine charges that and raises the run's cap, `RunCostCapExceeded`, from its own figures, and suspends the run there. A priced plugin (`isPriced`) is refused by the engine before it starts. `segment.close` answers what the segment's adapter calls spent (an adapter's own model call to match a record); the engine charges it as the segment ends, so it reaches the run's figures, not the cap check inside that segment.
+
+The production host meters each priced call under its budget (`withSpendMeter`, `lib/run_spend.ts`): the model and service clients far below the call charge the meter and check it before they start, exactly as they set the billing context's usage rows. The meter and the billing context are host state, set around each call; the engine imports neither.
+
+### Segments
+
+A segment is one entry into the interpreter: a fresh run, a resume, a race settlement, a callback body. Its engine state (`RunContext`: the pin, the cancel gate, the run's id for log lines, the cross-run lock holder, the spend ledger, the host segment's id) is opened by the entry point and passed explicitly to whatever needs it. The host's half (`translation_graph/segment_scope.ts`) holds what the segment's adapter calls have read (a read memo, so a record read three times in one run is one request), how many third-party calls they made (a ceiling: `AFFINITY_MAX_CALLS_PER_RUN`, default 2000), and the pin they answer under. The production host binds every adapter it resolves to the segment it was resolved for, so each call into it, and each step of an iteration it hands back, runs in that scope. A call past the ceiling fails with `AdapterCallCeilingExceeded` (`kind: 'call_ceiling'`), a typed error of the host contract; the engine fails the run with it, and `onError` never forgives it.
 
 ## Supplying a host
 
-- **Production:** `productionEngineHost` (`translation_graph/movement/engine_host.ts`). It wires each group to Postgres, the adapter registry and the model providers. Given a run id, it bills each model call to the run. Firings, resumes and callbacks build their snapshot with `runCatalogSnapshotForTeam`, which returns the snapshot and, beside it, the credential ids the host needs. Ids never go into the snapshot.
+- **Production:** `productionEngineHost` (`translation_graph/movement/engine_host.ts`). It wires each group to Postgres, the adapter registry and the model providers. Given a run id, it bills each model call to the run. The run host reads the cost cap (`MOVEMENT_MAX_RUN_COST_USD`) once as each segment starts and passes it as `costCapMicrodollars`. Firings, resumes and callbacks build their snapshot with `runCatalogSnapshotForTeam`, which returns the snapshot and, beside it, the credential ids the host needs. Ids never go into the snapshot.
 - **Tests:** `makeTestHost(overrides)`. A test supplies only the pieces its program reaches. No default touches a network or a database. `makeFakeParkSink()` records parks in memory. A piece left out does one of three things:
   - **Throws, naming itself, when the run reaches it:** `adapters.resolve`, every `llm.*` client, `park.bindings`, `files.resolveFileText`.
-  - **Defaults quietly:** `files.render` answers a document-store descriptor whose store key holds nothing (a test that reads the bytes supplies a render that stores them); `park.wake` records each request into `overrides.wakes` (a fresh array when absent); `adapters.credentialId` answers `undefined`; `lookup.resolveActingUser` answers `null` (no acting user); `control.cancel` never cancels; `trace` is a fresh `[]`; `locks` is a fresh `InMemoryWriteLocks`.
+  - **Defaults quietly:** `segment.open` answers a fresh id and `segment.close` answers nothing spent, with no memo or ceiling behind them (a test of the segment scope supplies `hostSegments` and binds its adapters with `segmentBoundAdapter`); `files.render` answers a document-store descriptor whose store key holds nothing (a test that reads the bytes supplies a render that stores them); `park.wake` records each request into `overrides.wakes` (a fresh array when absent); `adapters.credentialId` answers `undefined`; `lookup.resolveActingUser` answers `null` (no acting user); `control.cancel` never cancels; `trace` is a fresh `[]`; `locks` is a fresh `InMemoryWriteLocks`.
   - **Is absent, so the run takes its no-substrate path:** without `park.sink` a park fails (a dry run); without `park.callbacks` a `callback(…)` or an await on one fails as unsupported ("needs the durable trigger-run substrate"); without `files.resolveFile` an import resolves only from the snapshot's files, and fails ("no file resolver") when the snapshot carries none.
 - **Another embedder** supplies its own object of the same shape. The engine's inputs and outputs as a whole are plain data; several individual host calls still pass live objects or closures (see "Recorded debts").
 
@@ -53,7 +62,6 @@ The engine keeps two writes from colliding at two levels.
 
 ## Recorded debts
 
-- **Ambient spend and run scope.** Host-side model calls (`lib/llm_usage`'s `reportRunCost`) and the budget check (`assertRunBudget`, `lib/run_spend`) report and enforce cost through the engine's ambient spend ledger, not through call results. Adapters read the engine's run scope (the language-version pin, the call ceiling, the read memo) the same way. These channels must become explicit host-call results before the engine moves to Rust (cloud-native DESIGN §9, item 7).
 - **Plugin signatures.** `extraction.ts` reads a plugin's automatic and required parameters from the process's transform registry, not from the snapshot's `plugins` (DESIGN §9, item 8).
-- **Live objects in host calls.** Some host calls pass live objects or closures: the `Adapter` that `adapters.resolve` returns, `getCandidates` into `resolveActingUser`, `onJudgeUnavailable`, the shared trace array. Plain data holds for the engine's inputs and outputs as a whole, not yet for every host call (DESIGN §9, item 9).
+- **Live objects in host calls.** Some host calls pass live objects or closures: the `Adapter` that `adapters.resolve` returns (so the call ceiling still reaches the engine as a thrown typed error, not a call result), `getCandidates` into `resolveActingUser`, `onJudgeUnavailable`, the shared trace array, the lock holder. Plain data holds for the engine's inputs and outputs as a whole, not yet for every host call (DESIGN §9, item 9).
 - **Resumed segments do not heartbeat.** A timer, await or ask resume keeps the run `parked` and stamps no heartbeat. A crash mid-resume re-runs the parked step: at least once, as before.

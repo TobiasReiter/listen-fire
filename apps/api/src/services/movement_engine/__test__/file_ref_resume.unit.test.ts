@@ -20,9 +20,8 @@ jest.mock('../../logger', () => ({
 import { Readable } from 'node:stream';
 import type { FileTextResolution, MovementTraceEntry } from '../expression';
 import { resumeMovement, runMovement, type MovementRunResult, type ParkSink, type RunLimitPause } from '../run';
-import type { MovementTransformInvoker } from '../extraction';
 import type { ParkedScopeState } from '../serialize';
-import { assertRunBudget, reportRunCost } from '../../../lib/run_spend';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { fileHandle, type Adapter, type FileRef, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import { streamFileRef, type ResolveFileOwner } from '../../translation_graph/engine/files/retrieve';
@@ -30,7 +29,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost, type HostTransformInvoker } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000054' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -188,15 +187,18 @@ function fileTextOn(resolveOwner: ResolveFileOwner) {
 }
 
 /** A `fetch_url` that costs one dollar, refused first once the cap is met. */
-const pricedInvoker: MovementTransformInvoker = {
+const pricedInvoker: HostTransformInvoker = {
   declaredOutput: (plugin) => {
     const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
     return impl?.signature.output as TransformOutputShape | undefined;
   },
-  async invoke({ config }) {
-    assertRunBudget();
-    reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
-    return { text: `got-${String(config.url)}` };
+  async invoke({ config, budget }) {
+    const { value, cost } = await withSpendMeter(budget, async () => {
+      assertRunBudget();
+      reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
+      return { text: `got-${String(config.url)}` };
+    });
+    return { ...value, cost };
   },
 };
 
@@ -325,6 +327,7 @@ function harness(source: string, from: { event: TriggerEvent; catalog: typeof ca
     event: from.event,
     teamId: TEAM_ID,
     catalog: from.catalog,
+    costCapMicrodollars: runCostCapFromEnv(),
     host: makeTestHost({
       adapters: {
         credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),

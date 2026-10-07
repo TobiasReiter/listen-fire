@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
 import { getKnowledgeQb } from '../../lib/kysely';
 import { logger } from '../logger';
@@ -453,7 +454,7 @@ async function searchCandidatesByConstraints(options: {
         }
         if (entry.expr.type === 'property') {
           const extractedVal = extractedPropertyValues.get(entry.expr.propertyTypeId);
-          if (isBlankIdentityValue(extractedVal)) { allMatch = false; break; }
+          if (isBlankIdentityValue(extractedVal, CURRENT_LANGUAGE_VERSION)) { allMatch = false; break; }
           const candidateVals = propValuesByNode.get(nodeId)?.get(entry.expr.propertyTypeId);
           if (!candidateVals || candidateVals.size === 0) { allMatch = false; break; }
           const match = entry.fuzzy
@@ -526,7 +527,7 @@ function compileEntry(
 
   if (expr.type === 'property') {
     const value = extractedPropertyValues.get(expr.propertyTypeId);
-    if (isBlankIdentityValue(value)) return null;
+    if (isBlankIdentityValue(value, CURRENT_LANGUAGE_VERSION)) return null;
     const lowerVal = String(value).toLowerCase();
 
     // Check both value_text (single-cardinality) and value_text_array (multi-cardinality)

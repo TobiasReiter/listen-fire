@@ -8,7 +8,7 @@
 
 import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
-import { isRunCostCapExceeded } from '../../../../lib/run_spend';
+import { isBudgetExhausted } from '../../../../lib/run_cost';
 import { logger } from '../../../logger';
 import { RawTextService } from '../../../raw_text';
 import { ResourceService } from '../../../resource';
@@ -107,7 +107,7 @@ async function fetchUrlInner(
     };
   } catch (e) {
     // A run out of budget is not a page that failed to load.
-    if (isRunCostCapExceeded(e)) throw e;
+    if (isBudgetExhausted(e)) throw e;
     logger.warn('[transform:fetch-resource] Failed to fetch URL', {
       url,
       error: describeError(e),

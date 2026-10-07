@@ -15,6 +15,7 @@ import {
   type TransformInput,
 } from '../../engine/transforms/registry';
 import { registryTransformInvoker } from '../transform_invoker';
+import { NO_BUDGET_LIMIT } from '../../../../lib/run_cost';
 
 // ── registryTransformInvoker: kind dispatch + output translation ────────────
 // The production invoker the host hands the engine. Guards the
@@ -82,10 +83,22 @@ describe('registryTransformInvoker dispatch', () => {
       },
       run: async () => ({ outcome: 'no_match' }),
     };
+    // A plugin that prices its own work.
+    const pricedImpl: TransformImpl = {
+      signature: {
+        name: '__test_priced',
+        description: 'reports what it cost',
+        params: [],
+        dataDependency: 'extracted_context',
+        additions: {},
+      },
+      run: async () => ({ outcome: 'fetched', cost: { quantity: 2, unit: 'request', unitPriceMicrodollars: 1_500 } }),
+    };
     registerTransform(preImpl);
     registerTransform(ctxImpl);
     registerTransform(throwImpl);
     registerTransform(outcomeImpl);
+    registerTransform(pricedImpl);
   });
 
   it('dispatches a pre-extraction plugin with pre-extraction input and pipes its edge-text into result.text', async () => {
@@ -93,6 +106,7 @@ describe('registryTransformInvoker dispatch', () => {
       plugin: '__test_pre',
       config: { content: 'source' },
       extractedContext: {},
+      budget: NO_BUDGET_LIMIT,
     });
     expect(seenKind.pre).toBe('pre-extraction');
     expect(result.text).toBe('PAGE ONE\n\nPAGE TWO');
@@ -104,6 +118,7 @@ describe('registryTransformInvoker dispatch', () => {
       plugin: '__test_ctx',
       config: {},
       extractedContext: { name: 'Ada' },
+      budget: NO_BUDGET_LIMIT,
     });
     expect(seenKind.ctx).toBe('context-dependent');
     expect(result.data).toEqual({ added: 'value' });
@@ -115,8 +130,19 @@ describe('registryTransformInvoker dispatch', () => {
       plugin: '__test_outcome',
       config: {},
       extractedContext: {},
+      budget: NO_BUDGET_LIMIT,
     });
     expect(result).toEqual({ outcome: 'no_match' });
+  });
+
+  it('answers a plugin’s own cost envelope as a cost line under the plugin’s name', async () => {
+    const result = await registryTransformInvoker.invoke({
+      plugin: '__test_priced',
+      config: {},
+      extractedContext: {},
+      budget: NO_BUDGET_LIMIT,
+    });
+    expect(result).toEqual({ outcome: 'fetched', cost: [{ source: 'plugin:__test_priced', microdollars: 3_000 }] });
   });
 
   it('turns a throwing plugin into an empty result rather than failing the run', async () => {
@@ -124,6 +150,7 @@ describe('registryTransformInvoker dispatch', () => {
       plugin: '__test_throw',
       config: { content: 'source' },
       extractedContext: {},
+      budget: NO_BUDGET_LIMIT,
     });
     expect(result).toEqual({});
   });
@@ -133,6 +160,7 @@ describe('registryTransformInvoker dispatch', () => {
       plugin: '__does_not_exist',
       config: {},
       extractedContext: {},
+      budget: NO_BUDGET_LIMIT,
     });
     expect(result).toEqual({});
   });

@@ -896,6 +896,7 @@ describe('through-staged extraction', () => {
         plugin: 'vc_fetch',
         config: { urls: 'acme.com' },
         extractedContext: { name: 'Acme', urls: 'acme.com' },
+        budget: { remainingMicrodollars: null },
       },
     ]);
 

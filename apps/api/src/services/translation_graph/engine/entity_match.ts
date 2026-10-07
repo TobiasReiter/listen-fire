@@ -9,6 +9,7 @@
 // (Attio, Affinity, KG, …), whereas the KG path is hardcoded to
 // extracted-entity → KG-node matching.
 
+import type { LanguageVersion } from 'movement-lang';
 import { z } from 'zod';
 
 import { execute } from '../../../lib/prompts/execute';
@@ -21,12 +22,14 @@ import {
   type JevAnswer,
   type JevNoulQuestion,
 } from '../../../lib/jev/client';
-import { isRunCostCapExceeded } from '../../../lib/run_spend';
+import { isBudgetExhausted } from '../../../lib/run_cost';
+import { withSpendMeter } from '../../../lib/run_spend';
 import { neverAsAny } from '../../../lib/utils/types';
 import { logger } from '../../logger';
 import type { ExternalRecordRef } from '../adapter';
 import { arbitrateWithoutJudge, type UniquenessConstraints } from '../uniqueness';
 import { aiExpressionSettings, claudeModelId } from '../../movement_engine/ai_tiers';
+import type { Costed, Priced } from '../../movement_engine/host';
 
 // The judge runs on the SAME model `AI()`'s "careful" tier names — reused
 // rather than hard-coded so a self-hosted deployment with only
@@ -170,7 +173,7 @@ async function judgeEntityMatchGenerative(input: {
   } catch (err) {
     // Out of money is not "no judge": declining here would create a duplicate
     // record, so the run stops instead.
-    if (isRunCostCapExceeded(err)) throw err;
+    if (isBudgetExhausted(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     logger.warn('[tg_entity_match] judge call failed; declining to merge', {
       recordType: input.recordType,
@@ -348,7 +351,7 @@ export async function judgeEntityMatch(input: {
       try {
         return await judgeEntityMatchViaJev(input);
       } catch (err) {
-        if (err instanceof JevConfigurationError || isRunCostCapExceeded(err)) throw err;
+        if (err instanceof JevConfigurationError || isBudgetExhausted(err)) throw err;
         const message = err instanceof Error ? err.message : String(err);
         logger.warn('[tg_entity_match] jev judge failed; falling back to the generative judge', {
           recordType: input.recordType,
@@ -360,6 +363,18 @@ export async function judgeEntityMatch(input: {
   }
 
   return judgeEntityMatchGenerative(input);
+}
+
+/** One write's identity question: which of its search's candidates the
+ *  asserted record IS. */
+export interface EntityArbitration {
+  asserted: Record<string, unknown>;
+  candidates: ExternalRecordRef[];
+  recordType: string;
+  constraints: UniquenessConstraints;
+  /** The pin of the run asking: whether a blank key is a key. */
+  languageVersion: LanguageVersion;
+  onJudgeUnavailable?: (message: string) => void;
 }
 
 /**
@@ -385,13 +400,7 @@ export async function judgeEntityMatch(input: {
  *
  * Returns the index into `candidates`, or null to create a new record.
  */
-export async function arbitrateEntityCandidates(input: {
-  asserted: Record<string, unknown>;
-  candidates: ExternalRecordRef[];
-  recordType: string;
-  constraints: UniquenessConstraints;
-  onJudgeUnavailable?: (message: string) => void;
-}): Promise<number | null> {
+export async function arbitrateEntityCandidates(input: EntityArbitration): Promise<number | null> {
   const decided = arbitrateWithoutJudge(input);
   if (decided !== undefined) return decided;
   return judgeEntityMatch({
@@ -400,4 +409,14 @@ export async function arbitrateEntityCandidates(input: {
     recordType: input.recordType,
     onJudgeUnavailable: input.onJudgeUnavailable,
   });
+}
+
+/** `arbitrateEntityCandidates` as a movement run's host serves it: under the
+ *  run's budget, answering what the judge's model calls cost. */
+export async function meteredArbitration({
+  budget,
+  ...arbitration
+}: Priced<EntityArbitration>): Promise<Costed<{ index: number | null }>> {
+  const { value, cost } = await withSpendMeter(budget, () => arbitrateEntityCandidates(arbitration));
+  return { index: value, cost };
 }

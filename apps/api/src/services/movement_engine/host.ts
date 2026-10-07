@@ -7,23 +7,38 @@
 // fakes, and a piece a test did not provide fails loudly when the run reaches
 // it, never by quietly reaching a real system.
 
-import type { FileArtifactType, ResolveFile } from 'movement-lang';
+import type { FileArtifactType, LanguageVersion, ResolveFile } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
+import type { Budget, CostLine } from '../../lib/run_cost';
 import type { ActingUser, ActorCandidate, Adapter, FileRef } from '../translation_graph/adapter';
-import type { LlmClient } from '../translation_graph/engine/batched_extraction';
-import type { arbitrateEntityCandidates } from '../translation_graph/engine/entity_match';
+import type { LlmCallInput, LlmCallResult } from '../translation_graph/engine/batched_extraction';
+import type { EntityArbitration } from '../translation_graph/engine/entity_match';
 import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import type { CallbackCall, CallbackParamSpec } from './callback_types';
 import type { MovementTraceEntry } from './expression';
-import type { FileTextResolution, MovementTransformInvoker } from './extraction';
-import type { ExtractCallLlmClient } from './extraction_call';
+import type { FileTextResolution, TransformInvocationResult, TransformInvokeInput } from './extraction';
+import type { ExtractCallLlmInput, ExtractCallLlmResult } from './extraction_call';
 import type { CancelGate, ParkSink, SuspensionPoint } from './run';
 import type { ParkedScopeState } from './serialize';
+import type { TransformOutputShape } from '../translation_graph/types';
 
-/** Adapter resolution — the SAME seam `evaluateTranslationGraph` and provision
- *  use: one adapter per (adapterType, credential, construction args, role). */
-export type ResolveAdapter = (input: {
+// ── Priced calls ────────────────────────────────────────────────────────────
+//
+// Every host call that may cost money takes the run's remaining budget in and
+// answers what it spent. The host refuses priced work past the budget (throwing
+// `BudgetExhausted` with what it spent first); the engine keeps the run's
+// account and raises the cap from it (movement_engine/run_context.ts).
+
+/** A priced call's request: the engine's input and the run's remaining budget. */
+export type Priced<Input> = Input & { budget: Budget };
+
+/** A priced call's answer and what the call spent, by source. Absent ⇒ it
+ *  spent nothing. */
+export type Costed<Output> = Output & { cost?: CostLine[] };
+
+/** What the engine asks of an adapter instance. */
+export interface AdapterResolution {
   adapterType: string;
   teamId: TeamId;
   credentialsId?: string;
@@ -31,17 +46,85 @@ export type ResolveAdapter = (input: {
    *  position (Sheets' `spreadsheet:`). Position-free adapters ignore it. */
   constructionArgs?: Record<string, string>;
   role: 'source' | 'target';
-}) => Adapter | Promise<Adapter>;
+}
+
+/** Adapter resolution — the SAME seam `evaluateTranslationGraph` and provision
+ *  use: one adapter per (adapterType, credential, construction args, role).
+ *  Every call names the segment it is made for: the instance answers inside
+ *  that segment's host scope (what it already read, how many calls it made). */
+export type ResolveAdapter = (input: AdapterResolution & { segmentId: string }) => Adapter | Promise<Adapter>;
+
+/**
+ * An adapter call refused because its segment made as many calls to a
+ * third-party system as one segment may — the host's typed answer, raised by
+ * the call that would have gone one over. Its message is the whole failure
+ * surface an author sees (it lands verbatim in the run's failure reason): the
+ * number, the knob, and why the run stopped. The engine fails the run with it,
+ * and `onError` never forgives it.
+ */
+export class AdapterCallCeilingExceeded extends Error {
+  readonly kind = 'call_ceiling';
+  constructor(
+    /** The system that counts, e.g. `affinity`. */
+    readonly system: string,
+    readonly calls: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AdapterCallCeilingExceeded';
+  }
+}
+
+export function isAdapterCallCeilingExceeded(err: unknown): err is AdapterCallCeilingExceeded {
+  return err instanceof AdapterCallCeilingExceeded;
+}
+
+/** The extraction keyword's and `AI()`'s model call. */
+export interface HostLlmClient {
+  call(input: Priced<LlmCallInput>): Promise<Costed<LlmCallResult>>;
+}
+
+/** The extraction CALL's model call (`extract(content, Shape)`). */
+export interface HostExtractCallClient {
+  call(input: Priced<ExtractCallLlmInput>): Promise<Costed<ExtractCallLlmResult>>;
+}
+
+/** `through` stages and plugin calls. */
+export interface HostTransformInvoker {
+  invoke(input: Priced<TransformInvokeInput>): Promise<Costed<TransformInvocationResult>>;
+  /**
+   * What a PLAIN call to this plugin hands back — the plugin's own declaration,
+   * the same one the checker typed the call against. Absent (or undefined for
+   * this plugin) ⇒ the plugin never declared one, and the engine refuses a
+   * plain call rather than guessing. A `through [ … ]` stage never asks.
+   */
+  declaredOutput?(plugin: string): TransformOutputShape | undefined;
+  /**
+   * Whether invoking this plugin may cost money (a paid scrape, a paid search,
+   * its own priced work). A priced plugin is not started once the run has
+   * spent its cost cap. Absent ⇒ unpriced.
+   */
+  isPriced?(plugin: string): boolean;
+}
 
 /** Which candidate an identity search's write IS: the index into
  *  `candidates`, or null to create. Asked only when the rules alone cannot
  *  decide (`arbitrateWithoutJudge`), so it is the judge's model call. */
-export type ArbitrateEntities = typeof arbitrateEntityCandidates;
+export type ArbitrateEntities = (input: Priced<EntityArbitration>) => Promise<Costed<{ index: number | null }>>;
 
 /** A file's extracted TEXT (the knowledge-pipeline parity path). The host
- *  redeems the descriptor's bytes and runs the extractor; only text, or the
- *  reason there is none, comes back. */
-export type ResolveFileText = (input: { file: FileRef }) => Promise<FileTextResolution>;
+ *  redeems the descriptor's bytes and runs the extractor (transcription and
+ *  OCR are priced); only text, or the reason there is none, comes back. */
+export type ResolveFileText = (input: Priced<{ file: FileRef }>) => Promise<Costed<FileTextResolution>>;
+
+/** What a segment is opened for. */
+export interface SegmentOpening {
+  /** The run, when it has one (a test or dry run may not). */
+  runId?: string;
+  teamId: TeamId;
+  /** The movement's pin, which an adapter's version conditionals read. */
+  languageVersion: LanguageVersion;
+}
 
 /** `FILE(content, type)`: the host renders the composed string, stores the
  *  artifact, and answers the stored file's descriptor. */
@@ -137,6 +220,17 @@ export interface AwaitWakeRequest {
 }
 
 export interface EngineHost {
+  /**
+   * The host's half of a run segment: what its adapter calls have already read
+   * and how many third-party calls they have made. The engine opens one per
+   * entry point and closes it however the segment ends; `close` answers what
+   * the segment's adapter calls spent (an adapter may make a model call of its
+   * own), which the engine charges to the run.
+   */
+  segment: {
+    open(input: SegmentOpening): Promise<{ segmentId: string }>;
+    close(input: { segmentId: string }): Promise<{ cost?: CostLine[] }>;
+  };
   adapters: {
     resolve: ResolveAdapter;
     /** Imported credential name → `external_service_credentials.id`.
@@ -145,12 +239,12 @@ export interface EngineHost {
   };
   llm: {
     /** The extraction keyword's and `AI()`'s model client. */
-    client: LlmClient;
+    client: HostLlmClient;
     /** The extraction CALL's client (`extract(content, Shape)`), which sends
      *  its prompt as blocks with cache breakpoints. */
-    extractCall: ExtractCallLlmClient;
+    extractCall: HostExtractCallClient;
     /** `through` stages and plugin calls. */
-    transforms: MovementTransformInvoker;
+    transforms: HostTransformInvoker;
     /** Identity arbitration among a write's search candidates. */
     arbitrateEntities: ArbitrateEntities;
   };
@@ -218,6 +312,7 @@ export interface EngineHost {
 
 /** What a test supplies: any piece of any group, the rest defaulted. */
 export interface TestHostOverrides {
+  segment?: Partial<EngineHost['segment']>;
   adapters?: Partial<EngineHost['adapters']>;
   llm?: Partial<EngineHost['llm']>;
   park?: Partial<EngineHost['park']>;
@@ -243,15 +338,23 @@ function notProvided(piece: string): Error {
 
 /**
  * A host for tests: every piece the test does not supply is in memory, finds
- * nothing, or throws naming itself when the run reaches it. `park.wake`
+ * nothing, or throws naming itself when the run reaches it. A segment opens
+ * and closes with nothing behind it (no read memo, no call ceiling, nothing
+ * spent); a test of the host's segment scope supplies the real one. `park.wake`
  * records into `overrides.wakes` (a fresh array when absent). No default
  * reaches a network or a database. Parks, callbacks and file imports stay
  * absent unless supplied, which the engine refuses loudly as it does for any
  * host without them (`makeFakeParkSink` is an in-memory park sink).
  */
 export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
-  const { adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {}, wakes = [] } = overrides;
+  const { segment = {}, adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {}, wakes = [] } =
+    overrides;
+  let segments = 0;
   return {
+    segment: {
+      open: segment.open ?? (async () => ({ segmentId: `test-segment-${++segments}` })),
+      close: segment.close ?? (async () => ({})),
+    },
     adapters: {
       resolve:
         adapters.resolve ??

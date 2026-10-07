@@ -22,7 +22,7 @@ import type {
 import { AFFINITY_ADAPTER_TYPE, listEntityKind, type DecodedTypeId } from './types';
 import { AFFINITY_LIST_ENTRIES_EDGE, AFFINITY_LIST_NAME_FIELD } from './schema_catalog';
 import { logger } from '../../../logger';
-import { isAdapterCallCeilingExceeded } from '../../../movement_engine/run_scope';
+import { isAdapterCallCeilingExceeded } from '../../../movement_engine/host';
 import { readOrgBuiltins, readPersonBuiltins } from './shared';
 
 export async function resolveEntity(input: {

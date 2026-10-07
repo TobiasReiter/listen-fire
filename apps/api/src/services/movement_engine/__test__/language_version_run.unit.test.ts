@@ -1,8 +1,9 @@
 // The language-version pin through the REAL interpreter and the authoring
 // gate:
 //
-//   1. a run compiles and executes under its pin, and the pin is the run
-//      context every adapter call sees (`currentLanguageVersion()`);
+//   1. a run compiles and executes under its pin, and the pin is what every
+//      adapter call sees off the host segment the run opened
+//      (`currentLanguageVersion()`);
 //   2. a pin this release does not support is refused — before the source is
 //      read, naming the version and the fix, never run as the current one;
 //   3. a deprecated pin runs, with a warning on the run's own trace;
@@ -15,7 +16,7 @@ import {
   type LanguageRelease,
 } from 'movement-lang';
 import { runMovement } from '../run';
-import { currentLanguageVersion } from '../run_scope';
+import { currentLanguageVersion, hostSegments, segmentBoundAdapter } from '../../translation_graph/segment_scope';
 import { MovementEngineError } from '../errors';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { diagnoseMovementSource } from '../../translation_graph/movement/authoring';
@@ -135,11 +136,13 @@ function run(kg: ReturnType<typeof makeKgFake>, languageVersion?: number) {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
+    // The production host's segment scope, around the test's adapters.
     host: makeTestHost({
+      segment: hostSegments,
       adapters: {
-        resolve: ({ adapterType }) => {
-          if (adapterType === 'manual') return manualAdapter;
-          if (adapterType === KG) return kg.adapter;
+        resolve: ({ adapterType, segmentId }) => {
+          if (adapterType === 'manual') return segmentBoundAdapter(manualAdapter, segmentId);
+          if (adapterType === KG) return segmentBoundAdapter(kg.adapter, segmentId);
           throw new Error(`test: no fake adapter for '${adapterType}'`);
         },
       },

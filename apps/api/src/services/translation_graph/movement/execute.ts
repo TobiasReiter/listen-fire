@@ -32,6 +32,7 @@ import type { MovementTraceEntry } from '../../movement_engine/expression';
 import { makeDbCancelGate } from '../../movement_engine/cancel_gate';
 import { failRunAndCancelRequests } from '../../interaction/run_failure';
 import { LlmUsageContext } from '../../../lib/llm_usage';
+import { runCostCapFromEnv } from '../../../lib/run_spend';
 import type { ParkedScopeState } from '../../movement_engine/serialize';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
@@ -94,6 +95,8 @@ async function interpretMovementFiring(input: {
     event: input.event,
     teamId: input.teamId,
     firedAt: input.firedAt,
+    // The deployment's cost cap, read once as the run starts.
+    costCapMicrodollars: runCostCapFromEnv(),
     catalog: teamCatalog.snapshot,
     runId: input.triggerRunId,
     host: productionEngineHost({
@@ -508,7 +511,9 @@ async function resumeMovementFiringInContext(
       firedAt: recorder.firedAt,
       // What the run spent before it parked, read back with its clock: the
       // cost cap is the run's, not the segment's — counted from the run's last
-      // resume from a limit pause, which reset its usage.
+      // resume from a limit pause, which reset its usage. The cap is read
+      // afresh: a run resumed after ops raised it meets the new one.
+      costCapMicrodollars: runCostCapFromEnv(),
       priorSpentMicrodollars: recorder.priorSpentMicrodollars,
       capBaselineMicrodollars: recorder.capBaselineMicrodollars,
       // A run paused at its cost limit stays paused: a branch woken by its own
@@ -722,6 +727,7 @@ async function fireCallbackFiringInContext(
         // The run's original firing instant (see the resume path) — a callback
         // body belongs to the run that minted it, clock included.
         firedAt: recorder.firedAt,
+        costCapMicrodollars: runCostCapFromEnv(),
         priorSpentMicrodollars: recorder.priorSpentMicrodollars,
         capBaselineMicrodollars: recorder.capBaselineMicrodollars,
         catalog: teamCatalog.snapshot,

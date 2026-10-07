@@ -16,7 +16,16 @@ import ts from 'typescript';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import { makeFakeParkSink, makeTestHost, type AwaitWakeRequest, type RenderFile, type ResolveFileText } from '../host';
+import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
+
+import {
+  makeFakeParkSink,
+  makeTestHost,
+  type AwaitWakeRequest,
+  type EngineHost,
+  type RenderFile,
+  type ResolveFileText,
+} from '../host';
 import { runMovement, type ParkSink } from '../run';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 
@@ -40,7 +49,7 @@ const PURE_FILES = [
   'local_edge_adapter.ts',
   'provenance.ts',
   'run.ts',
-  'run_scope.ts',
+  'run_context.ts',
   'serialize.ts',
 ];
 
@@ -75,6 +84,14 @@ const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }>
   { matches: under('lib/anthropic'), reason: 'the model provider (the host supplies `llm`)' },
   { matches: under('lib/llm_usage'), reason: 'billing context (the host wraps model calls)' },
   {
+    matches: under('lib/run_spend'),
+    reason: "a priced call's spend meter (the host meters its calls; the engine keeps the run's ledger)",
+  },
+  {
+    matches: under('services/translation_graph/segment_scope'),
+    reason: "a segment's host scope (the engine holds only the segment's id)",
+  },
+  {
     matches: under('services/translation_graph/adapters'),
     reason: 'adapter implementations (the host supplies `adapters`)',
   },
@@ -100,7 +117,8 @@ const ALLOWED: Array<(module: string) => boolean> = [
   (m) => m.startsWith('node:') || builtinModules.includes(m),
   (m) => m.startsWith('#shared/'),
   under('lib/utils'),
-  under('lib/run_spend'),
+  // The spend vocabulary both sides speak: budgets, cost lines, the cap.
+  under('lib/run_cost'),
   under('lib/models'),
   under('lib/prompts'),
   under('services/logger'),
@@ -239,6 +257,8 @@ describe('the engine/host seam', () => {
     expect(moduleOf(probe, '../../lib/kysely')).toBe('lib/kysely');
     expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, './park_sink')))).toBe(true);
     expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../translation_graph/engine/files/retrieve')))).toBe(true);
+    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../../lib/run_spend')))).toBe(true);
+    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../translation_graph/segment_scope')))).toBe(true);
   });
 });
 
@@ -280,7 +300,8 @@ describe('the engine/host seam carries data', () => {
 
   // A file crosses as its descriptor: FILE() asks the host to render and gets
   // a descriptor back; READ() hands that descriptor over and gets text back.
-  // No bytes, and no closure, in either direction.
+  // No bytes, and no closure, in either direction. The segment the run opened
+  // and closed around them, the budget in and the cost out, are data too.
   it('a file render and a file read pass plain data only', async () => {
     const teamId = '00000000-0000-0000-0000-000000000043' as TeamId;
     const calls: Array<{ call: string; input: unknown; output: unknown }> = [];
@@ -295,9 +316,21 @@ describe('the engine/host seam carries data', () => {
       return output;
     };
     const resolveFileText: ResolveFileText = async (input) => {
-      const output = { text: 'the digest', rawTextId: 'rt-1' };
+      const output = { text: 'the digest', rawTextId: 'rt-1', cost: [{ source: 'model:ocr', microdollars: 120 }] };
       calls.push({ call: 'resolveFileText', input, output });
       return output;
+    };
+    const segment: EngineHost['segment'] = {
+      open: async (input) => {
+        const output = { segmentId: 'seg-1' };
+        calls.push({ call: 'segment.open', input, output });
+        return output;
+      },
+      close: async (input) => {
+        const output = { cost: [] };
+        calls.push({ call: 'segment.close', input, output });
+        return output;
+      },
     };
     const manual = createManualAdapter({ teamId });
     const result = await runMovement({
@@ -321,16 +354,32 @@ describe('the engine/host seam carries data', () => {
       teamId,
       catalog: staticCatalogSnapshot({ credentials: {} }),
       host: makeTestHost({
-        adapters: { resolve: () => manual },
+        segment,
+        adapters: {
+          resolve: (input) => {
+            calls.push({ call: 'adapters.resolve', input, output: 'an adapter' });
+            return manual;
+          },
+        },
         files: { render, resolveFileText },
       }),
       dryRun: true,
     });
 
     expect(result.trace.filter((entry) => entry.kind === 'warning')).toEqual([]);
-    expect(calls.map((c) => c.call)).toEqual(['render', 'resolveFileText']);
-    expect(calls[0]?.input).toEqual({ content: 'the digest', type: 'text' });
-    expect(calls[1]?.input).toEqual({ file: calls[0]?.output });
+    const made = calls.filter((c) => c.call !== 'adapters.resolve');
+    expect(made.map((c) => c.call)).toEqual(['segment.open', 'render', 'resolveFileText', 'segment.close']);
+    expect(made[0]?.input).toEqual({ teamId, languageVersion: CURRENT_LANGUAGE_VERSION });
+    expect(made[1]?.input).toEqual({ content: 'the digest', type: 'text' });
+    // A priced call: the run's budget in (no cap here), what it spent out —
+    // and the run charged it.
+    expect(made[2]?.input).toEqual({ file: made[1]?.output, budget: { remainingMicrodollars: null } });
+    expect(result.spentBySource).toEqual({ 'model:ocr': 120 });
+    expect(made[3]?.input).toEqual({ segmentId: 'seg-1' });
+    // Every adapter is resolved for the segment, by its id.
+    for (const resolved of calls.filter((c) => c.call === 'adapters.resolve')) {
+      expect(resolved.input).toMatchObject({ segmentId: 'seg-1' });
+    }
     expect(JSON.parse(JSON.stringify(calls))).toEqual(calls);
   });
 });

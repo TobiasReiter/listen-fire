@@ -19,6 +19,7 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { anthropicChat } from '../../../lib/anthropic';
+import { runCostCapFromEnv } from '../../../lib/run_spend';
 import { logger } from '../../logger';
 import { runMovement } from '../../movement_engine/run';
 import type { CapturedWrite } from '../engine/dry_run_adapter';
@@ -168,6 +169,7 @@ export async function runMovementTestRun(
         : {}),
       event,
       teamId: input.teamId,
+      costCapMicrodollars: runCostCapFromEnv(),
       catalog: teamCatalog.snapshot,
       // A test run leaves nothing durable behind, its file text included, and
       // captures its writes rather than making them, so it takes no cross-run

@@ -267,7 +267,7 @@ describe('a match against a system', () => {
   ];
 
   it('a lone fuzzy hit goes to the judge; accepted, the handle is the record and the block runs', async () => {
-    arbitrateEntities.mockResolvedValue(0);
+    arbitrateEntities.mockResolvedValue({ index: 0 });
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio', { company: [ACME] });
     const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter });
@@ -283,7 +283,7 @@ describe('a match against a system', () => {
   });
 
   it('the judge declining is a miss: the scope ends, nothing is written', async () => {
-    arbitrateEntities.mockResolvedValue(null);
+    arbitrateEntities.mockResolvedValue({ index: null });
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio', { company: [ACME] });
     const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter });

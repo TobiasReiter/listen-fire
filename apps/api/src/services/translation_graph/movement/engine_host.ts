@@ -1,21 +1,27 @@
 // The production `EngineHost`: the world a movement run reaches, wired to the
-// real systems — the adapter registry, Anthropic and the plugin registry, the
-// trigger-run recorder's durable parks, Postgres record bindings, file text and
-// rendering, cross-run write locks, and Listen-Fire's acting-user resolution.
+// real systems — the adapter registry behind each segment's scope, Anthropic
+// and the plugin registry, the trigger-run recorder's durable parks, Postgres
+// record bindings, file text and rendering, cross-run write locks, and
+// Listen-Fire's acting-user resolution.
 
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { LlmUsageContext } from '../../../lib/llm_usage';
+import type { Budget, CostLine } from '../../../lib/run_cost';
+import { withSpendMeter } from '../../../lib/run_spend';
 import { enqueueAwaitWake } from '../../movement_engine/await_wake';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
 import type { MovementTraceEntry } from '../../movement_engine/expression';
-import type { MovementTransformInvoker } from '../../movement_engine/extraction';
 import type { ExtractCallLlmClient } from '../../movement_engine/extraction_call';
 import {
   NEVER_CANCELLED,
+  type Costed,
   type EngineHost,
+  type HostExtractCallClient,
+  type HostLlmClient,
+  type HostTransformInvoker,
   type ResolveActingUserInput,
   type ResolveFileText,
 } from '../../movement_engine/host';
@@ -29,10 +35,11 @@ import { resolveActingUser } from '../adapters/acting_user/resolve';
 import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
 import { resolveAdapter } from '../adapters/resolve';
 import type { LlmClient } from '../engine/batched_extraction';
-import { arbitrateEntityCandidates } from '../engine/entity_match';
+import { meteredArbitration } from '../engine/entity_match';
+import { hostSegments, segmentBoundAdapter } from '../segment_scope';
 import type { TriggerRunRecorder } from '../runs/trigger_run';
 import { renderFileArtifact } from './file_render';
-import { makeFileTextResolver } from './file_text';
+import { makeFileTextResolver, type FileTextReader } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
 import { postgresRawTextStore, type RawTextStore } from './raw_text_store';
 import { postgresRecordBindings } from './record_bindings';
@@ -62,16 +69,21 @@ export function productionEngineHost(input: {
   const cancel = input.cancel ?? NEVER_CANCELLED;
   const usage = usageScope({ teamId: input.teamId, triggerRunId: input.triggerRunId, cancel });
   return {
+    segment: hostSegments,
     adapters: {
       // Production resolution is per (type, credential, construction args); the
-      // role is a test seam.
-      resolve: ({ adapterType, teamId, credentialsId, constructionArgs }) =>
-        resolveAdapter({
-          adapterType,
-          teamId,
-          credentialsId,
-          ...(constructionArgs !== undefined ? { constructionArgs } : {}),
-        }),
+      // role is a test seam. The instance answers inside the segment it was
+      // resolved for.
+      resolve: async ({ adapterType, teamId, credentialsId, constructionArgs, segmentId }) =>
+        segmentBoundAdapter(
+          await resolveAdapter({
+            adapterType,
+            teamId,
+            credentialsId,
+            ...(constructionArgs !== undefined ? { constructionArgs } : {}),
+          }),
+          segmentId,
+        ),
       credentialId: (credentialName) =>
         Object.hasOwn(input.credentialIds, credentialName)
           ? input.credentialIds[credentialName]
@@ -82,7 +94,7 @@ export function productionEngineHost(input: {
       extractCall: billedExtractCallClient(makeAnthropicExtractCallClient({ cancel }), usage),
       transforms: billedTransforms(registryTransformInvoker, usage),
       // The judge is a model call like any other.
-      arbitrateEntities: (arbitration) => usage(() => arbitrateEntityCandidates(arbitration)),
+      arbitrateEntities: (arbitration) => usage(() => meteredArbitration(arbitration)),
     },
     park: {
       ...(input.parksInto !== undefined
@@ -113,13 +125,15 @@ export function productionEngineHost(input: {
   };
 }
 
-// ── Billing: the llm-usage context, set around each call ───────────────────
+// ── Billing and budget, set around each call ────────────────────────────────
 //
 // Every model call below the host records its usage against the ambient
-// `LlmUsageContext`. The host sets it explicitly around each of its own calls
-// rather than relying on the caller having set it around the whole run, so the
-// engine never depends on that ambient state: what a call is billed to is the
-// host's decision, made where the call leaves for the world.
+// `LlmUsageContext`, and charges its price to the ambient spend meter. The host
+// sets both explicitly around each of its own calls rather than relying on the
+// caller having set them around the whole run, so the engine never depends on
+// that ambient state: what a call is billed to, and the budget it may spend, are
+// the host's to set where the call leaves for the world — the budget from the
+// call's own request, what it spent back on its answer.
 
 type UsageScope = <T>(call: () => Promise<T>) => Promise<T>;
 
@@ -134,24 +148,36 @@ function usageScope(input: {
     new LlmUsageContext({ teamId: input.teamId, triggerRunId, cancelGate: input.cancel }).runAsync(call);
 }
 
-function billedLlmClient(client: LlmClient, usage: UsageScope): LlmClient {
-  return { call: (input) => usage(() => client.call(input)) };
+/** Serve one priced call under its request's budget; the answer comes back
+ *  with every line spent — the meter's, and any the call reported of its own
+ *  (a plugin's cost envelope). */
+async function metered<Request extends { budget: Budget }, Output extends object>(
+  request: Request,
+  call: (request: Request) => Promise<Costed<Output>>,
+): Promise<Costed<Output>> {
+  const { value, cost } = await withSpendMeter(request.budget, () => call(request));
+  const lines: CostLine[] = [...cost, ...(value.cost ?? [])];
+  return { ...value, cost: lines };
 }
 
-function billedExtractCallClient(client: ExtractCallLlmClient, usage: UsageScope): ExtractCallLlmClient {
-  return { call: (input) => usage(() => client.call(input)) };
+function billedLlmClient(client: LlmClient, usage: UsageScope): HostLlmClient {
+  return { call: (request) => usage(() => metered(request, (input) => client.call(input))) };
 }
 
-function billedTransforms(invoker: MovementTransformInvoker, usage: UsageScope): MovementTransformInvoker {
+function billedExtractCallClient(client: ExtractCallLlmClient, usage: UsageScope): HostExtractCallClient {
+  return { call: (request) => usage(() => metered(request, (input) => client.call(input))) };
+}
+
+function billedTransforms(invoker: HostTransformInvoker, usage: UsageScope): HostTransformInvoker {
   return {
-    invoke: (input) => usage(() => invoker.invoke(input)),
+    invoke: (request) => usage(() => metered(request, (input) => invoker.invoke(input))),
     ...(invoker.declaredOutput !== undefined ? { declaredOutput: invoker.declaredOutput } : {}),
     ...(invoker.isPriced !== undefined ? { isPriced: invoker.isPriced } : {}),
   };
 }
 
-function billedFileText(resolve: ResolveFileText, usage: UsageScope): ResolveFileText {
-  return (request) => usage(() => resolve(request));
+function billedFileText(read: FileTextReader, usage: UsageScope): ResolveFileText {
+  return (request) => usage(() => metered(request, (input) => read(input)));
 }
 
 // ── Cross-run write locks ───────────────────────────────────────────────────

@@ -93,7 +93,7 @@ import type { Adapter, FileRef } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost, type Priced } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
 const FIXTURE = path.join(__dirname, '__fixtures__', 'extract_keyword_prompts.json');
@@ -210,8 +210,11 @@ function event(): TriggerEvent {
 async function promptsOf(lines: string[]): Promise<LlmCallInput[]> {
   const calls: LlmCallInput[] = [];
   const llm = {
-    async call(input: LlmCallInput): Promise<LlmCallResult> {
-      calls.push(input);
+    async call(input: Priced<LlmCallInput>): Promise<LlmCallResult> {
+      // What the model is sent: the run's budget rides the host call, not the
+      // prompt.
+      const { budget: _budget, ...prompt } = input;
+      calls.push(prompt);
       const key = /`(x:[^`]+)`/.exec(input.system)?.[1] ?? 'missing';
       return { parsedJson: { [key]: [] } };
     },

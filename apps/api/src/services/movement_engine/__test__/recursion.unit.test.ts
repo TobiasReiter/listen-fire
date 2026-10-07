@@ -21,17 +21,16 @@ jest.mock('../../logger', () => ({
 }));
 
 import { resumeMovement, runMovement, runFailureCause, type MovementRunResult, type ParkSink } from '../run';
-import type { MovementTransformInvoker } from '../extraction';
 import type { ParkedScopeState } from '../serialize';
 import { CallDepthExceeded, parseMaxCallDepth } from '../call_depth';
-import { assertRunBudget, reportRunCost } from '../../../lib/run_spend';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost, type HostTransformInvoker } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000077' as TeamId;
 const COST_ENV = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -108,17 +107,20 @@ const PRELUDE = [
  *  cap, then charged. Shared across segments, so `charged` is the whole run. */
 function pricedInvoker() {
   const charged: string[] = [];
-  const invoker: MovementTransformInvoker = {
+  const invoker: HostTransformInvoker = {
     declaredOutput: (plugin) => {
       const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
       return impl?.signature.output as TransformOutputShape | undefined;
     },
-    async invoke({ config }) {
+    async invoke({ config, budget }) {
       const url = String(config.url);
-      assertRunBudget();
-      reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
-      charged.push(url);
-      return { text: `got-${url}` };
+      const { value, cost } = await withSpendMeter(budget, async () => {
+        assertRunBudget();
+        reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
+        charged.push(url);
+        return { text: `got-${url}` };
+      });
+      return { ...value, cost };
     },
   };
   return { invoker, charged };
@@ -202,6 +204,7 @@ function harness(source: string) {
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    costCapMicrodollars: runCostCapFromEnv(),
     host: makeTestHost({
       adapters: {
         credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),

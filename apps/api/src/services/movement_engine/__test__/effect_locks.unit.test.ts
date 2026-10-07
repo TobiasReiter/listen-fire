@@ -104,7 +104,7 @@ import { positionData, type SchemaTypeDescriptor, type TransformOutputShape } fr
 import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { InstanceSchema } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
 import { makeTestHost } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
@@ -565,6 +565,7 @@ describe('the lock table', () => {
       constraints: { any: [{ all: [{ field: 'tags' }] }] },
       resolveRecord: { tags: ['a'] },
       fields: { tags: ['a'] },
+      languageVersion: CURRENT_LANGUAGE_VERSION,
     });
     expect(locks).toEqual([{ name: expect.stringMatching(/^identity /), mode: { kind: 'exclusive' } }]);
   });
@@ -578,6 +579,7 @@ describe('the cross-run locks beneath the lock table', () => {
     constraints: { any: [{ all: [{ field: 'domain' }] }] },
     resolveRecord: { domain: 'acme.com' },
     fields: { domain: 'acme.com' },
+    languageVersion: CURRENT_LANGUAGE_VERSION,
   });
   const typeLockName = companyIdentity[0]!.name;
 
@@ -614,6 +616,7 @@ describe('the cross-run locks beneath the lock table', () => {
         constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] },
         resolveRecord: { name: 'Acme' },
         fields: { name: 'Acme' },
+        languageVersion: CURRENT_LANGUAGE_VERSION,
       }),
       [typeLockName],
     ],
@@ -678,6 +681,7 @@ describe('the cross-run locks beneath the lock table', () => {
         constraints: { any: [{ all: [{ field: 'domain' }] }] },
         resolveRecord: { domain },
         fields: { domain },
+        languageVersion: CURRENT_LANGUAGE_VERSION,
       });
     let releaseSecond: () => void = () => {};
     const secondRunning = new Promise<void>((resolve) => (releaseSecond = resolve));

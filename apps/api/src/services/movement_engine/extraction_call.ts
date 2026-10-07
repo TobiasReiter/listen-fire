@@ -65,7 +65,7 @@ import {
   type MovementTraceEntry,
 } from './expression';
 import { fromOrigin, NO_PROVENANCE, type ExtractSiteRef, type Provenance, type ProvenanceOrigin } from './provenance';
-import { throwIfCancelled } from './run_scope';
+import { throwIfCancelled, type RunFacts } from './run_context';
 
 // ── The model seam ──────────────────────────────────────────────────────────
 
@@ -178,6 +178,9 @@ export interface ExtractCallRuntime {
   resolveFileText?: (ref: FileRef) => Promise<FileTextResolution>;
   trace?: MovementTraceEntry[];
   state: ExtractCallRunState;
+  /** The run this call is in — its cancel gate and its id for log lines.
+   *  Absent ⇒ outside a run: nothing to cancel. */
+  run?: RunFacts;
 }
 
 // ── The prompt ──────────────────────────────────────────────────────────────
@@ -566,7 +569,7 @@ async function contentFile(ref: FileRef, runtime: ExtractCallRuntime): Promise<C
       };
     }
     if (result.text.trim() === '') return { traced: { ...named, unreadable: 'no_text' } };
-    const bounded = boundFileText(result.text, ref);
+    const bounded = boundFileText({ text: result.text, ref, run: runtime.run });
     return {
       text: bounded.content,
       origin: {
@@ -717,7 +720,7 @@ export async function runExtractCall(input: ExtractCallInput): Promise<Binding> 
     return reply ? { reply } : {};
   };
   const ask = async (last: string, label: string): Promise<ExtractCallLlmResult> => {
-    await throwIfCancelled();
+    await throwIfCancelled(runtime.run);
     const reply = await runtime.llm.call({
       system: EXTRACT_CALL_SYSTEM_PROMPT,
       blocks: [...contentBlocks, { text: last }],

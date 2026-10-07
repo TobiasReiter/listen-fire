@@ -3,14 +3,11 @@
 // fetched files land in.
 
 import { runFields } from '../../../lib/llm_usage';
-import { isRunCostCapExceeded } from '../../../lib/run_spend';
+import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from '../../../lib/run_cost';
 import { DocumentService } from '../../document';
 import { logger } from '../../logger';
-import {
-  transformFor,
-  type MovementTransformInvoker,
-  type TransformInvocationResult,
-} from '../../movement_engine/extraction';
+import { transformFor, type TransformInvocationResult } from '../../movement_engine/extraction';
+import type { Costed, HostTransformInvoker } from '../../movement_engine/host';
 import type { FileRef } from '../adapter';
 import { documentStoreFileRef } from '../engine/files/document_store';
 import type { TransformInput, TransformOutput } from '../engine/transforms/registry';
@@ -23,14 +20,14 @@ import { makeEphemeralPosition, type TransformOutputShape } from '../types';
  * the context data block). Movement identifiers can't carry dashes, so
  * the underscore spelling resolves too (`vc_url_retrieval`).
  */
-export const registryTransformInvoker: MovementTransformInvoker = {
+export const registryTransformInvoker: HostTransformInvoker = {
   declaredOutput(plugin): TransformOutputShape | undefined {
     return transformFor(plugin)?.signature.output;
   },
   isPriced(plugin): boolean {
     return transformFor(plugin)?.priced === true;
   },
-  async invoke({ plugin, config, extractedContext }): Promise<TransformInvocationResult> {
+  async invoke({ plugin, config, extractedContext }): Promise<Costed<TransformInvocationResult>> {
     const impl = transformFor(plugin);
     if (!impl) {
       logger.warn('[movement:transform] no such plugin — skipping', { plugin, ...runFields() });
@@ -62,7 +59,7 @@ export const registryTransformInvoker: MovementTransformInvoker = {
     } catch (error) {
       // Out of money is not "no enrichment": the run stops, as it would at a
       // model call made outside a plugin.
-      if (isRunCostCapExceeded(error)) throw error;
+      if (isBudgetExhausted(error)) throw error;
       logger.warn('[movement:transform] plugin threw — no enrichment', {
         plugin,
         error,
@@ -79,12 +76,22 @@ export const registryTransformInvoker: MovementTransformInvoker = {
     const fetchedText = collectEmissionText(result.edges);
     const records = await emissionRecords(result.edges, plugin);
 
-    const out: TransformInvocationResult = {};
+    const out: Costed<TransformInvocationResult> = {};
     if (fetchedText) out.text = fetchedText;
     if (Object.keys(data).length > 0) out.data = data;
     if (records.length > 0) out.records = records;
     if (result.outcome) out.outcome = result.outcome;
-    if (result.cost !== undefined) out.cost = result.cost;
+    // What the plugin says its own work cost, under its own name. Spend its
+    // model calls and service clients report is metered where it happens,
+    // under THEIR names — the envelope is for what nothing else priced.
+    if (result.cost !== undefined) {
+      out.cost = [
+        {
+          source: costSourceKey({ kind: 'plugin', name: plugin }),
+          microdollars: costEnvelopeMicrodollars(result.cost),
+        },
+      ];
+    }
 
     logger.info('[movement:transform] ran', {
       plugin,

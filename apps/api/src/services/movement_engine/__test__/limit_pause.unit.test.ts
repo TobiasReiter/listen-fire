@@ -12,8 +12,11 @@
 //     finishes the run: results correct, nothing done twice;
 //   · where nothing durable can hold the suspension, the cap still fails the run.
 //
-// The members' priced work is a plugin standing in for a model call: it asks
-// the run's account first and reports its cost, exactly as the model clients do.
+// The members' priced work is a plugin standing in for a model call, served as
+// the production host serves one: under the budget the engine hands it, asking
+// the meter first and reporting its cost, exactly as the model clients do. The
+// cap is read from the environment as each segment starts, as the run host
+// reads it, and handed to the run as data.
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -25,16 +28,16 @@ jest.mock('../../logger', () => ({
 }));
 
 import { resumeMovement, runMovement, runFailureCause, MovementRunFailed, type MovementRunResult, type ParkSink, type RunLimitPause } from '../run';
-import type { MovementTransformInvoker } from '../extraction';
 import type { ParkedScopeState } from '../serialize';
-import { assertRunBudget, reportRunCost, RunCostCapExceeded } from '../../../lib/run_spend';
+import { RunCostCapExceeded } from '../../../lib/run_cost';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type TransformOutputShape } from '../../translation_graph/types';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { makeTestHost } from '../host';
+import { makeTestHost, type HostTransformInvoker } from '../host';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000053' as TeamId;
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
@@ -112,18 +115,21 @@ const DELAY_MS: Record<string, number> = { a: 30, b: 5, c: 20, d: 1, e: 10 };
  *  cap, then charged. Shared across segments, so `charged` is the whole run. */
 function pricedInvoker() {
   const charged: string[] = [];
-  const invoker: MovementTransformInvoker = {
+  const invoker: HostTransformInvoker = {
     declaredOutput: (plugin) => {
       const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
       return impl?.signature.output as TransformOutputShape | undefined;
     },
-    async invoke({ config }) {
+    async invoke({ config, budget }) {
       const url = String(config.url);
-      assertRunBudget();
-      await wait(DELAY_MS[url] ?? 0);
-      reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
-      charged.push(url);
-      return { text: `got-${url}` };
+      const { value, cost } = await withSpendMeter(budget, async () => {
+        assertRunBudget();
+        await wait(DELAY_MS[url] ?? 0);
+        reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
+        charged.push(url);
+        return { text: `got-${url}` };
+      });
+      return { ...value, cost };
     },
   };
   return { invoker, charged };
@@ -214,6 +220,7 @@ function harness(source: string, options: { parkSink?: boolean } = {}) {
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
+    costCapMicrodollars: runCostCapFromEnv(),
     host: makeTestHost({
       adapters: {
         credentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),

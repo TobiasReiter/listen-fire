@@ -88,7 +88,7 @@ jest.mock('../../../lib/prompts/execute', () => ({
 
 import { execute } from '../../../lib/prompts/execute';
 import { runMovement } from '../run';
-import { arbitrateEntityCandidates } from '../../translation_graph/engine/entity_match';
+import { meteredArbitration } from '../../translation_graph/engine/entity_match';
 
 import type { InstanceSchema } from 'movement-lang';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
@@ -209,7 +209,7 @@ function run(body: string[], attio: Adapter) {
     catalog,
     host: makeTestHost({
       // The host's judge, over the mocked prompt.
-      llm: { arbitrateEntities: arbitrateEntityCandidates },
+      llm: { arbitrateEntities: meteredArbitration },
       adapters: {
         credentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
         resolve: ({ adapterType }: { adapterType: string }) => {

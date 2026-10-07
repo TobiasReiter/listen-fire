@@ -213,7 +213,13 @@ import type {
   WriteResult,
 } from '../translation_graph/adapter';
 import { fileHandle, updateRecordSucceeded } from '../translation_graph/adapter';
-import type { BindingEndpoint, CallbackSink, EngineHost, ResolveAdapter } from './host';
+import {
+  isAdapterCallCeilingExceeded,
+  type AdapterResolution,
+  type BindingEndpoint,
+  type CallbackSink,
+  type EngineHost,
+} from './host';
 import {
   newDryRunRehearsal,
   wrapAdapterForDryRun,
@@ -303,7 +309,6 @@ import {
   buildExtractSpec,
   materializeExtract,
   recordExtractedEntities,
-  invokePricedTransform,
   tracedUrl,
   type DeclaredNodeShape,
   type ExtractNodeSpec,
@@ -349,16 +354,21 @@ import {
   type CallbackCall,
   type CallbackParamSpec,
 } from './callback_types';
-import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
-import type { WriteLocks } from '../write_locks/write_locks';
+import {
+  closeRunContext,
+  openRunContext,
+  pricedCalls,
+  type PricedCalls,
+  type RunContext,
+  type RunLedger,
+} from './run_context';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';
 import {
-  currentRunSpend,
   formatUsd,
   isRunCostCapExceeded,
   RUN_COST_CAP_ENV_VAR,
   type RunCostCapExceeded,
-} from '../../lib/run_spend';
+} from '../../lib/run_cost';
 
 /** The in-memory graph a `Called` landing belongs to. A callback belongs to no
  *  SYSTEM, so this names the construct, never an adapter — it is what an `IS`
@@ -394,10 +404,16 @@ export interface RunMovementInput {
    */
   firedAt?: Date;
   /**
+   * The most the run may spend on priced work (model calls, paid services,
+   * priced plugins), in microdollars — the run host reads its deployment's cap
+   * once and hands it over as data. Absent ⇒ no cap.
+   */
+  costCapMicrodollars?: number;
+  /**
    * What this run spent in its EARLIER segments, in microdollars — the host
    * reads it back off the run's record when it resumes a parked run, so the
-   * cost cap (`lib/run_spend.ts`) holds across every park. Absent ⇒ a fresh
-   * run, which has spent nothing.
+   * cost cap holds across every park. Absent ⇒ a fresh run, which has spent
+   * nothing.
    */
   priorSpentMicrodollars?: number;
   /**
@@ -686,30 +702,47 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // the engine's import structure — validation and execution consume one
   // resolution.
   const { program, prepared } = parseAndCheck(input);
-  // Every way into the interpreter opens the same door: one segment, one
-  // third-party call ceiling (run_scope.ts). A fifth entry point that
-  // forgets `withRunCallLedger` loses the safeguard silently, so they all
-  // wrap here rather than deeper.
-  return withRunCallLedger(() => new Interpreter(input, prepared).run(program), runScopeOf(input));
+  return inRunContext(input, (context) => new Interpreter(input, { ...prepared, context }).run(program));
 }
 
-/** The run context every entry point opens its segment under. */
-function runScopeOf(input: RunMovementInput): {
-  languageVersion: LanguageVersion;
-  priorSpentMicrodollars: number;
-  capBaselineMicrodollars: number;
-  writeLocks: { locks: WriteLocks; teamId: string };
-  cancel: CancelGate;
-  runId?: string;
-} {
-  return {
-    languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
-    priorSpentMicrodollars: input.priorSpentMicrodollars ?? 0,
-    capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
-    writeLocks: { locks: input.host.locks, teamId: input.teamId },
-    cancel: input.host.control.cancel,
+/**
+ * Every way into the interpreter opens the same door: one segment — its host
+ * segment (the adapters' read memo and call ceiling), its cross-run lock
+ * holder, the run's spend account — closed however the segment ends. A fifth
+ * entry point that skipped it would lose those safeguards silently, so they
+ * all go through here.
+ *
+ * What the segment's adapter calls spent is known only once the host segment
+ * closes, so the spend on the result (or on a failure's partial result) is
+ * read after the close.
+ */
+async function inRunContext(
+  input: RunMovementInput,
+  run: (context: RunContext) => Promise<MovementRunResult>,
+): Promise<MovementRunResult> {
+  const context = await openRunContext({
+    host: input.host,
+    teamId: input.teamId,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
-  };
+    languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+    spend: {
+      priorMicrodollars: input.priorSpentMicrodollars ?? 0,
+      capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
+      ...(input.costCapMicrodollars !== undefined ? { capMicrodollars: input.costCapMicrodollars } : {}),
+    },
+  });
+  let result: MovementRunResult;
+  try {
+    try {
+      result = await run(context);
+    } finally {
+      await closeRunContext(context, input.host);
+    }
+  } catch (error) {
+    if (error instanceof MovementRunFailed) Object.assign(error.partial, spendFields(context.ledger));
+    throw error;
+  }
+  return { ...result, ...spendFields(context.ledger) };
 }
 
 /**
@@ -834,8 +867,8 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // edited fields off the synthetic emission (chunk 6c). Under `reenter` there is
   // no answer to bind (cost / error resume re-enters AT the un-run statement).
   const answer: Binding | undefined = input.reenter ? undefined : rematerialiseAnswer(input.answer);
-  return withRunCallLedger(() =>
-    new Interpreter(input, prepared).resume({
+  return inRunContext(input, (context) =>
+    new Interpreter(input, { ...prepared, context }).resume({
       program,
       state: input.state,
       ...(answer !== undefined ? { answer } : {}),
@@ -844,7 +877,6 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
         ? { deferRaceSettlement: input.deferRaceSettlement }
         : {}),
     }),
-    runScopeOf(input),
   );
 }
 
@@ -861,13 +893,12 @@ export async function settleRaceFrame(
   input: ResumeMovementInput & { frameAddress: string },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
-  return withRunCallLedger(() =>
-    new Interpreter(input, prepared).settleRaceFrame({
+  return inRunContext(input, (context) =>
+    new Interpreter(input, { ...prepared, context }).settleRaceFrame({
       program,
       state: input.state,
       frameAddress: input.frameAddress,
     }),
-    runScopeOf(input),
   );
 }
 
@@ -882,14 +913,13 @@ export async function fireCallbackBody(
   input: ResumeMovementInput & { values: Record<string, unknown>; callIndex: number },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
-  return withRunCallLedger(() =>
-    new Interpreter(input, prepared).fireCallback({
+  return inRunContext(input, (context) =>
+    new Interpreter(input, { ...prepared, context }).fireCallback({
       program,
       state: input.state,
       values: input.values,
       callIndex: input.callIndex,
     }),
-    runScopeOf(input),
   );
 }
 
@@ -1653,13 +1683,12 @@ interface CallFrame {
   declaration?: MovementDeclaration;
 }
 
-/** What this segment and the run have spent so far (`lib/run_spend.ts`) —
- *  a run that has made no priced call carries no fields. */
-function spendFields(): Pick<
-  MovementRunResult,
-  'spentMicrodollars' | 'runSpentMicrodollars' | 'spentBySource'
-> {
-  const spend = currentRunSpend();
+/** What this segment and the run have spent so far (the run's ledger,
+ *  `run_context.ts`) — a run that has made no priced call carries no fields. */
+function spendFields(
+  ledger: RunLedger,
+): Pick<MovementRunResult, 'spentMicrodollars' | 'runSpentMicrodollars' | 'spentBySource'> {
+  const spend = ledger.spend;
   return {
     ...(spend.segmentMicrodollars > 0
       ? { spentMicrodollars: spend.segmentMicrodollars, spentBySource: spend.bySource }
@@ -2307,7 +2336,7 @@ class Interpreter {
   private readonly targetAdapterCache = new Map<string, Adapter>();
   /** Source-role adapters for graph-rooted traversals (see graphReadFor). */
   private readonly sourceAdapterCache = new Map<string, Adapter>();
-  private readonly resolveAdapterFn: ResolveAdapter;
+  private readonly resolveAdapterFn: (input: AdapterResolution) => Adapter | Promise<Adapter>;
   /** Rebuilt in run() for snapshot seeds, where the event envelope's
    *  adapterType is a placeholder and the source instance is canonical. */
   private mutationContext: MutationContext;
@@ -2345,7 +2374,12 @@ class Interpreter {
   private readonly boundaries = new AsyncLocalStorage<readonly LiveBoundary[]>();
   /** What keeps concurrent flows' effects on the world from racing — see
    *  `effect_locks.ts`. */
-  private readonly effectLocks = new EffectLocks({ holder: segmentWriteLockHolder() });
+  private readonly effectLocks: EffectLocks;
+  /** This segment's engine state: the pin, the cancel gate, the host
+   *  segment, the spend account. */
+  private readonly context: RunContext;
+  /** The host's priced families under the run's budget. */
+  private readonly priced: PricedCalls;
   /** The run is PAUSED at a limit: every flow suspends at its next statement
    *  boundary, and no collection op starts another member. Set by the first
    *  flow to meet the cost cap (`suspendAtLimit`), or from the start when an
@@ -2387,9 +2421,10 @@ class Interpreter {
   private readonly libraryEnvs = new Map<string, Environment>();
 
   /** The movement's pin — what the engine's `since`/`before` conditionals
-   *  read (a plugin or adapter reads the same value off the run scope). */
+   *  read (an adapter reads the same value off its host segment, opened with
+   *  it). */
   private get languageVersion(): LanguageVersion {
-    return this.input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
+    return this.context.languageVersion;
   }
 
   /** Where a trace entry lands: the running flow's own buffer inside a
@@ -2410,9 +2445,12 @@ class Interpreter {
 
   constructor(
     private readonly input: RunMovementInput,
-    prepared: PreparedRun,
+    prepared: PreparedRun & { context: RunContext },
   ) {
     this.catalog = prepared.catalog;
+    this.context = prepared.context;
+    this.priced = pricedCalls(input.host, prepared.context.ledger);
+    this.effectLocks = new EffectLocks({ holder: prepared.context.writeLockHolder });
     this.runTrace = input.host.trace ?? [];
     this.limitPaused = input.limitPaused === true;
     // A deprecated pin runs, and says so on the run's own record. (An
@@ -2422,7 +2460,10 @@ class Interpreter {
       this.trace.push({ kind: 'warning', code: versionWarning.code, message: versionWarning.message });
     }
     this.pinnedNow = input.firedAt ?? new Date();
-    this.resolveAdapterFn = input.host.adapters.resolve;
+    // Every adapter is resolved for this segment, so it answers inside the
+    // segment's host scope.
+    this.resolveAdapterFn = (resolution) =>
+      input.host.adapters.resolve({ ...resolution, segmentId: prepared.context.segmentId });
     this.currentImports = prepared.link?.imports;
     // The firing that started this run rides along in the provenance of every
     // graph write it makes. `suppress_self` — the 2-way-sync flag — is answered
@@ -3556,7 +3597,7 @@ class Interpreter {
       ...(this.deferredRaceFrames.size > 0
         ? { deferredRaceFrames: [...this.deferredRaceFrames] }
         : {}),
-      ...spendFields(),
+      ...spendFields(this.context.ledger),
     };
   }
 
@@ -5780,7 +5821,7 @@ class Interpreter {
     env: Environment,
     body: BodyContext,
   ): Promise<Binding | undefined> {
-    const invoker = this.input.host.llm.transforms;
+    const invoker = this.priced.transforms;
     const declared = invoker.declaredOutput?.(plugin);
     if (declared === undefined) {
       // The checker refuses a plain call to a plugin that declared no output,
@@ -5815,7 +5856,7 @@ class Interpreter {
       trails.push(provenance);
     }
     const started = Date.now();
-    const result = await invokePricedTransform(invoker, { plugin, config, extractedContext: {} });
+    const result = await invoker.invoke({ plugin, config, extractedContext: {} });
     // What the plugin brought back is no longer justified by the quote that
     // pointed at it, so the origins survive and the direct citation does not.
     // The shape the movement's pin gets — a plugin whose output changed keeps
@@ -7288,10 +7329,11 @@ class Interpreter {
       spec,
       runtime: {
         llm: this.llmClient(),
-        transformInvoker: this.input.host.llm.transforms,
+        transformInvoker: this.priced.transforms,
         evalSlot: (slot) => this.evaluateSlot(slot, { env }),
         resolveFileText: this.fileTextResolver(),
         trace: this.trace,
+        run: this.context,
       },
     });
     recordExtractedEntities(this.trace, traceMark, emission);
@@ -7350,6 +7392,7 @@ class Interpreter {
         resolveFileText: this.fileTextResolver(),
         trace: this.trace,
         state: this.extractCalls,
+        run: this.context,
       },
     });
   }
@@ -7382,7 +7425,7 @@ class Interpreter {
   }
 
   private extractCallClient(): ExtractCallLlmClient {
-    return this.input.host.llm.extractCall;
+    return this.priced.extractCall;
   }
 
   private async describeIn(slot: ExprSlot, env: Environment): Promise<string> {
@@ -7399,15 +7442,13 @@ class Interpreter {
   }
 
   private llmClient(): LlmClient {
-    return this.input.host.llm.client;
+    return this.priced.client;
   }
 
   /** The one file→text seam for the whole run — an `extract from [ … ]` file
    *  source and a `READ(file)` in an expression read a file the same way. */
   private fileTextResolver(): (ref: FileRef) => Promise<FileTextResolution> {
-    this.fileTextSeam ??= this.warnWhenBytesUnavailable((file) =>
-      this.input.host.files.resolveFileText({ file }),
-    );
+    this.fileTextSeam ??= this.warnWhenBytesUnavailable((file) => this.priced.resolveFileText({ file }));
     return this.fileTextSeam;
   }
 
@@ -8342,7 +8383,7 @@ class Interpreter {
     // reads a null key component as "cannot match on this", so blank becomes
     // null here, once, instead of in each adapter's search.
     for (const field of constraintFields) {
-      if (isBlankIdentityValue(record[field])) record[field] = null;
+      if (isBlankIdentityValue(record[field], this.languageVersion)) record[field] = null;
     }
     for (const parent of input.target.parents) {
       if (parent.externalId === undefined) continue;
@@ -8401,15 +8442,17 @@ class Interpreter {
       asserted: input.asserted,
       candidates,
       constraints: input.constraints,
+      languageVersion: this.languageVersion,
     });
     const chosen =
       decided !== undefined
         ? decided
-        : await this.input.host.llm.arbitrateEntities({
+        : await this.priced.arbitrateEntities({
             asserted: input.asserted,
             candidates,
             recordType: input.recordType,
             constraints: input.constraints,
+            languageVersion: this.languageVersion,
             onJudgeUnavailable: (message) => {
               judgeUnavailable = message;
             },
@@ -8494,6 +8537,7 @@ class Interpreter {
       constraints: input.constraints,
       resolveRecord: input.resolveRecord,
       fields: input.fields,
+      languageVersion: this.languageVersion,
     });
     return this.effectLocks.withLocks(locks, () => this.findThenWrite(input));
   }
@@ -9158,6 +9202,7 @@ class Interpreter {
             constraints: identity.constraints,
             resolveRecord,
             fields,
+            languageVersion: this.languageVersion,
           }),
         ];
       },

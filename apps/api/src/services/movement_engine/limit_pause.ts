@@ -1,5 +1,5 @@
 // A run PAUSED at a limit — today the per-run cost cap (MOVEMENT_MAX_RUN_COST_USD,
-// lib/run_spend.ts). Everything about the pause that touches the database lives
+// lib/run_cost.ts). Everything about the pause that touches the database lives
 // here: marking the run paused, saying so (the `Run Paused` system event),
 // reading the pause back for a run's status, and resuming the run.
 //
@@ -30,7 +30,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { formatUsd, RUN_COST_CAP_ENV_VAR } from '../../lib/run_spend';
+import { formatUsd, RUN_COST_CAP_ENV_VAR } from '../../lib/run_cost';
 import { logger } from '../logger';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { MovementId } from '../../generated/kysely/automations/Movement';
