@@ -10,12 +10,21 @@
 // and by `rustCanRun`, the allow-list of what the Rust engine can already run.
 // It allows nothing yet; it grows one slice at a time, each proven by the
 // engine conformance corpora running unchanged against both engines.
+//
+// Below a whole program, one expression can already run in Rust: `evalInRust`
+// is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
+// an expression `rustCanEval` admits whose every name is a value binding.
 
-import { openEngineSegment, type Program } from 'movement-lang';
+import { applyStdlib, callEvalExpression, openEngineSegment, stdlibFunctionById, type Program } from 'movement-lang';
 
+import type { Expression } from '#shared/expression/types';
+import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
 import { neverAsAny } from '../../lib/utils/types';
 import type { Adapter } from '../translation_graph/adapter';
+import { MovementEngineError, type MovementEngineErrorCode } from './errors';
+import { bindingOf, type Binding, type MovementEvalResult, type MovementExprContext } from './expression';
 import type { EngineHost } from './host';
+import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import type { MovementRunResult, RunMovementInput } from './run';
 
 /** One request a segment makes of its host. */
@@ -95,9 +104,14 @@ export async function runSegmentInRust(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Pick<RunMovementInput, 'host' | 'teamId'>,
+  input: Pick<RunMovementInput, 'host' | 'teamId' | 'firedAt'>,
 ): Promise<unknown> {
-  const context: RouteContext = { host: input.host, teamId: input.teamId, instances: new Map() };
+  const context: RouteContext = {
+    host: input.host,
+    teamId: input.teamId,
+    instances: new Map(),
+    now: input.firedAt ?? new Date(),
+  };
   const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
   try {
     let step = engine.start(start);
@@ -127,6 +141,8 @@ interface RouteContext {
   teamId: RunMovementInput['teamId'];
   /** The live adapters behind the handles the engine holds, numbered from 1. */
   instances: Map<number, Adapter>;
+  /** The run's pinned instant (`firedAt`, else when the segment began). */
+  now: Date;
 }
 
 type Route = (args: unknown, context: RouteContext) => Promise<unknown>;
@@ -176,6 +192,17 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
       }
       if (!Array.isArray(request.args)) throw new RustShimError(`adapters.call ${method}: args must be an array`);
       return Reflect.apply(fn, adapter, request.args);
+    },
+  },
+  clock: {
+    /** The pinned instant, and `DATE.TODAY(zone)` from it: the zone database
+     *  is the host's, not the artifact's. A zone that is not one is the
+     *  member's own error, answered as an error. */
+    async now(args, context) {
+      const zone = string(record(args, 'clock.now').zone, 'clock.now zone');
+      const spec = stdlibFunctionById(DATE_TODAY);
+      if (spec === undefined) throw new RustShimError('the standard library has no DATE.TODAY');
+      return { nowIso: context.now.toISOString(), zone, today: applyStdlib(spec, [zone], context.now) };
     },
   },
 };
@@ -362,3 +389,401 @@ function readRequest(value: unknown, call: string): HostRequest {
     args: request.args,
   };
 }
+
+// ── The evaluator ─────────────────────────────────────────────────────────────
+
+/** The flat built-ins and namespaced members the Rust evaluator runs
+ *  (crates/movement-engine/src/stdlib.rs). `DATETIME.AT` is not one: it
+ *  needs the zone database, which the artifact does not carry. */
+const RUST_FUNCTIONS: ReadonlySet<string> = new Set([
+  'isnull', 'coalesce', 'trim', 'lower', 'upper', 'length', 'abs', 'round', 'floor', 'ceil', 'tostring', 'tonumber',
+  'multi', 'split', 'date', 'datetime', 'number',
+  'currency.get_number_from_figure', 'currency.get_code_from_figure', 'currency.format_figure',
+  'date.parse', 'date.add_days', 'date.format', 'date.format_iso', 'date.today',
+  'text.regex_extract', 'text.slug', 'text.pairs', 'text.serialise', 'url.host', 'number.format',
+]);
+
+const DATE_TODAY = 'date.today';
+
+/**
+ * Whether the Rust evaluator runs `expr`: every node a kind it evaluates (no
+ * host reads, no model, no traversal), every function one of its built-ins,
+ * `DATE.TODAY`'s zone written down (its answer is worked out here, from the
+ * run's pinned instant), and every literal and name one JSON carries as
+ * itself into a Rust string.
+ */
+export function rustCanEval(expr: Expression): boolean {
+  switch (expr.type) {
+    case 'static':
+      if (typeof expr.value === 'string') return !LONE_SURROGATE.test(expr.value);
+      return typeof expr.value !== 'number' || (Number.isFinite(expr.value) && !Object.is(expr.value, -0));
+    case 'alias_ref':
+      return !LONE_SURROGATE.test(expr.name);
+    case 'property':
+      return !LONE_SURROGATE.test(expr.propertyTypeId);
+    case 'at':
+      return rustCanEval(expr.expression) && rustCanEval(expr.index);
+    case 'list':
+      return expr.elements.every((element) => rustCanEval(listElementExpression(element)));
+    case 'object':
+      return expr.entries.every(
+        (member) =>
+          (isObjectSpread(member) || (member.key !== '__proto__' && !LONE_SURROGATE.test(member.key)))
+          && rustCanEval(objectMemberExpression(member)),
+      );
+    case 'concat':
+      return expr.parts.every(rustCanEval);
+    case 'conditional':
+      return rustCanEval(expr.condition) && rustCanEval(expr.then) && rustCanEval(expr.else);
+    case 'compare':
+      return expr.op !== 'within' && rustCanEval(expr.left) && rustCanEval(expr.right);
+    case 'logical':
+      return expr.operands.every(rustCanEval);
+    case 'not':
+    case 'negate':
+      return rustCanEval(expr.expression);
+    case 'arithmetic':
+      return rustCanEval(expr.left) && rustCanEval(expr.right);
+    case 'function':
+      return (
+        RUST_FUNCTIONS.has(expr.fn)
+        && (expr.fn !== DATE_TODAY || expr.args[0]?.type === 'static')
+        && expr.args.every(rustCanEval)
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * `expr` evaluated by the Rust engine, or undefined where the TypeScript
+ * evaluator must answer: not admitted, a name that is not a value binding, a
+ * value that cannot cross as itself, or a reading Rust does not reproduce
+ * (its `fallback`). Errors are thrown as the TypeScript evaluator throws them.
+ */
+export function evalInRust(expr: Expression, ctx: MovementExprContext): MovementEvalResult | undefined {
+  if (!rustCanEval(expr)) return undefined;
+  const wire = new WireOut();
+  const bindings: Record<string, unknown> = {};
+  const read = new Map<string, Extract<Binding, { kind: 'value' }>>();
+  for (const name of namesRead(expr)) {
+    const binding = ctx.env.resolve(name);
+    if (binding?.kind !== 'value') return undefined;
+    const value = wire.value(binding.value);
+    if (value === REFUSED) return undefined;
+    read.set(name, binding);
+    bindings[name] = {
+      value,
+      ...(binding.provenance !== undefined ? { provenance: wire.trail(binding.provenance) } : {}),
+      ...(binding.many === true ? { many: true } : {}),
+    };
+  }
+  const today = todayAnswers(expr, ctx.meta?.now ?? new Date());
+  if (today === undefined) return undefined;
+  const envelope = {
+    bindings,
+    origins: wire.origins.length,
+    ...(ctx.languageVersion !== undefined ? { languageVersion: ctx.languageVersion } : {}),
+    ...(Object.keys(today).length > 0 ? { clock: { today } } : {}),
+  };
+  const reply = callEvalExpression(JSON.stringify(expr), JSON.stringify(envelope));
+  const answer = record(reply.json, 'the Rust evaluator reply');
+  if (!reply.ok) {
+    throw new RustShimError(`the Rust evaluator refused its input: ${String(record(answer.error, 'its error').message)}`);
+  }
+  if ('fallback' in answer) return undefined;
+  if ('error' in answer) throw thrownBy(record(answer.error, 'the Rust evaluator error'));
+  const literal = new Map<number, ProvenanceOrigin>();
+  const origin = (id: unknown): ProvenanceOrigin => {
+    if (typeof id !== 'number') throw new RustShimError(`an origin id is a number, not ${String(id)}`);
+    const own = wire.origins[id];
+    if (own !== undefined) return own;
+    // A literal the evaluation read: one fresh origin per literal, shared
+    // between `origins` and `direct` as `fromOrigin` shares it.
+    let minted = literal.get(id);
+    if (minted === undefined) {
+      minted = { kind: 'literal', ...(ctx.literalSpan !== undefined ? { span: ctx.literalSpan } : {}) };
+      literal.set(id, minted);
+    }
+    return minted;
+  };
+  const trail = record(answer.provenance, 'the Rust evaluator provenance');
+  let provenance: Provenance;
+  if (typeof trail.binding === 'string') {
+    provenance = read.get(trail.binding)?.provenance ?? NO_PROVENANCE;
+  } else {
+    if (!Array.isArray(trail.origins)) throw new RustShimError('the Rust evaluator provenance has no origins');
+    provenance = {
+      origins: trail.origins.map(origin),
+      ...(trail.direct !== undefined ? { direct: origin(trail.direct) } : {}),
+    };
+  }
+  return { value: wire.read(answer.value), provenance };
+}
+
+/** The names `expr` reads: its `alias_ref`s and rootless `property` reads. */
+function namesRead(expr: Expression, into: Set<string> = new Set()): Set<string> {
+  switch (expr.type) {
+    case 'alias_ref':
+      into.add(expr.name);
+      break;
+    case 'property':
+      into.add(expr.propertyTypeId);
+      break;
+    case 'at':
+      namesRead(expr.expression, into);
+      namesRead(expr.index, into);
+      break;
+    case 'list':
+      for (const element of expr.elements) namesRead(listElementExpression(element), into);
+      break;
+    case 'object':
+      for (const member of expr.entries) namesRead(objectMemberExpression(member), into);
+      break;
+    case 'concat':
+      for (const part of expr.parts) namesRead(part, into);
+      break;
+    case 'conditional':
+      namesRead(expr.condition, into);
+      namesRead(expr.then, into);
+      namesRead(expr.else, into);
+      break;
+    case 'compare':
+    case 'arithmetic':
+      namesRead(expr.left, into);
+      namesRead(expr.right, into);
+      break;
+    case 'logical':
+      for (const operand of expr.operands) namesRead(operand, into);
+      break;
+    case 'not':
+    case 'negate':
+      namesRead(expr.expression, into);
+      break;
+    case 'function':
+      for (const a of expr.args) namesRead(a, into);
+      break;
+    default:
+      break;
+  }
+  return into;
+}
+
+/** `DATE.TODAY(zone)` for each zone `expr` writes down, worked out by the
+ *  TypeScript member from the run's pinned instant: the date, or the message
+ *  it throws. Undefined where it throws something other than an Error. */
+function todayAnswers(
+  expr: Expression,
+  now: Date,
+): Record<string, { value: unknown } | { error: string }> | undefined {
+  const spec = stdlibFunctionById(DATE_TODAY);
+  const answers: Record<string, { value: unknown } | { error: string }> = {};
+  const visit = (e: Expression): boolean => {
+    if (e.type === 'function' && e.fn === DATE_TODAY) {
+      const zone = e.args[0];
+      if (spec !== undefined && zone?.type === 'static' && zone.value !== null) {
+        try {
+          answers[String(zone.value)] = { value: applyStdlib(spec, [zone.value], now) };
+        } catch (error) {
+          if (!(error instanceof Error) || error.constructor !== Error) return false;
+          answers[String(zone.value)] = { error: error.message };
+        }
+      }
+    }
+    return childExpressions(e).every(visit);
+  };
+  return visit(expr) ? answers : undefined;
+}
+
+function childExpressions(expr: Expression): Expression[] {
+  switch (expr.type) {
+    case 'at':
+      return [expr.expression, expr.index];
+    case 'list':
+      return expr.elements.map(listElementExpression);
+    case 'object':
+      return expr.entries.map(objectMemberExpression);
+    case 'concat':
+      return expr.parts;
+    case 'conditional':
+      return [expr.condition, expr.then, expr.else];
+    case 'compare':
+    case 'arithmetic':
+      return [expr.left, expr.right];
+    case 'logical':
+      return expr.operands;
+    case 'not':
+    case 'negate':
+      return [expr.expression];
+    case 'function':
+      return expr.args;
+    default:
+      return [];
+  }
+}
+
+/** The error the TypeScript evaluator would have thrown. */
+function thrownBy(error: Record<string, unknown>): Error {
+  const message = string(error.message, 'the Rust evaluator error message');
+  switch (error.class) {
+    case 'MovementEngineError':
+      return new MovementEngineError(engineErrorCode(error.code), message);
+    case 'Error':
+      return new Error(message);
+    case 'RangeError':
+      return new RangeError(message);
+    default:
+      throw new RustShimError(`the Rust evaluator threw an unknown class ${String(error.class)}`);
+  }
+}
+
+/** The codes the Rust evaluator throws with. */
+function engineErrorCode(code: unknown): MovementEngineErrorCode {
+  switch (code) {
+    case 'MOVENG_RUNTIME':
+    case 'MOVENG_UNSUPPORTED':
+      return code;
+    default:
+      throw new RustShimError(`the Rust evaluator threw an unknown code ${String(code)}`);
+  }
+}
+
+const REFUSED: unique symbol = Symbol('refused');
+
+/** A lone surrogate: JSON cannot carry it into a Rust string. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * The wire to the Rust evaluator and back (crates/movement-engine/src/env.rs
+ * says the format): values with their identity, and the origins of the trails
+ * they carry, numbered.
+ */
+class WireOut {
+  /** The objects and lists sent, by the id the wire gave them. */
+  private readonly sent: object[] = [];
+  private readonly ids = new Map<object, number>();
+  private readonly open = new Set<object>();
+  readonly origins: ProvenanceOrigin[] = [];
+  private readonly originIds = new Map<ProvenanceOrigin, number>();
+
+  /** `value` on the wire, or REFUSED where it would not cross as itself: a
+   *  function, a Date, a class instance, a record, a lone surrogate. */
+  value(value: unknown): unknown {
+    const kind = typeof value;
+    switch (kind) {
+      case 'undefined':
+        return ['u'];
+      case 'boolean':
+        return value;
+      case 'string':
+        return typeof value === 'string' && LONE_SURROGATE.test(value) ? REFUSED : value;
+      case 'number':
+        if (Number.isNaN(value)) return ['n', 'NaN'];
+        if (value === Infinity) return ['n', 'Infinity'];
+        if (value === -Infinity) return ['n', '-Infinity'];
+        return Object.is(value, -0) ? ['n', '-0'] : value;
+      case 'object':
+        return this.composite(value);
+      case 'function':
+      case 'bigint':
+      case 'symbol':
+        return REFUSED;
+      default:
+        return neverAsAny(kind);
+    }
+  }
+
+  private composite(value: unknown): unknown {
+    if (value === null || typeof value !== 'object') return value;
+    const seen = this.ids.get(value);
+    if (seen !== undefined) return this.open.has(value) ? REFUSED : ['r', seen];
+    const proto: unknown = Object.getPrototypeOf(value);
+    const isList = Array.isArray(value) && proto === Array.prototype;
+    if (!isList && (proto !== Object.prototype || bindingOf(value) !== undefined)) return REFUSED;
+    const id = this.sent.length;
+    this.sent.push(value);
+    this.ids.set(value, id);
+    this.open.add(value);
+    try {
+      if (Array.isArray(value)) {
+        const items: unknown[] = [];
+        for (let i = 0; i < value.length; i++) {
+          // A hole is not `undefined` to every array method.
+          if (!(i in value)) return REFUSED;
+          const item = this.value(value[i]);
+          if (item === REFUSED) return REFUSED;
+          items.push(item);
+        }
+        return ['l', id, items];
+      }
+      const keys = Object.keys(value);
+      if (Object.getOwnPropertyNames(value).length !== keys.length || keys.includes('__proto__')) return REFUSED;
+      const entries: unknown[] = [];
+      for (const key of keys) {
+        if (LONE_SURROGATE.test(key)) return REFUSED;
+        const item = this.value(Reflect.get(value, key));
+        if (item === REFUSED) return REFUSED;
+        entries.push([key, item]);
+      }
+      return ['o', id, entries];
+    } finally {
+      this.open.delete(value);
+    }
+  }
+
+  trail(provenance: Provenance): { origins: number[]; direct?: number } {
+    return {
+      origins: provenance.origins.map((o) => this.originId(o)),
+      ...(provenance.direct !== undefined ? { direct: this.originId(provenance.direct) } : {}),
+    };
+  }
+
+  private originId(origin: ProvenanceOrigin): number {
+    let id = this.originIds.get(origin);
+    if (id === undefined) {
+      id = this.origins.length;
+      this.origins.push(origin);
+      this.originIds.set(origin, id);
+    }
+    return id;
+  }
+
+  /** A value back from the wire: the objects sent as themselves, the new
+   *  ones built once each. */
+  read(wire: unknown, made: Map<number, unknown> = new Map()): unknown {
+    if (!Array.isArray(wire)) return wire;
+    const [tag, a, b] = wire;
+    switch (tag) {
+      case 'u':
+        return undefined;
+      case 'n':
+        return a === 'NaN' ? NaN : a === 'Infinity' ? Infinity : a === '-Infinity' ? -Infinity : -0;
+      case 'i':
+        if (typeof a !== 'number' || this.sent[a] === undefined) throw new RustShimError(`the wire names no sent value ${String(a)}`);
+        return this.sent[a];
+      case 'r':
+        if (typeof a !== 'number' || !made.has(a)) throw new RustShimError(`the wire names no value ${String(a)} it made`);
+        return made.get(a);
+      case 'l': {
+        if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire list is ["l", id, items]');
+        const list: unknown[] = [];
+        made.set(a, list);
+        for (const item of b) list.push(this.read(item, made));
+        return list;
+      }
+      case 'o': {
+        if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire object is ["o", id, entries]');
+        const object: Record<string, unknown> = {};
+        made.set(a, object);
+        for (const entry of b) {
+          if (!Array.isArray(entry) || typeof entry[0] !== 'string') throw new RustShimError('a wire entry is [key, value]');
+          object[entry[0]] = this.read(entry[1], made);
+        }
+        return object;
+      }
+      default:
+        throw new RustShimError(`an unknown wire tag ${String(tag)}`);
+    }
+  }
+}
+

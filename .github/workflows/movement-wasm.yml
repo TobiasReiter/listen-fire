@@ -25,7 +25,7 @@ on:
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
       - "apps/api/src/services/movement_engine/rust_engine*.ts"
-      - "apps/api/src/services/movement_engine/__test__/rust_engine*"
+      - "apps/api/src/services/movement_engine/__test__/rust_e*"
       - ".github/workflows/movement-wasm.yml"
   push:
     branches:
@@ -39,7 +39,7 @@ on:
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
       - "apps/api/src/services/movement_engine/rust_engine*.ts"
-      - "apps/api/src/services/movement_engine/__test__/rust_engine*"
+      - "apps/api/src/services/movement_engine/__test__/rust_e*"
       - ".github/workflows/movement-wasm.yml"
 
 permissions:
@@ -114,7 +114,7 @@ jobs:
         run: pnpm run test --testPathPattern 'catalog_differential'
       - name: Engine shim, against a double and through the committed artifact
         working-directory: apps/api
-        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/rust_engine'
+        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/rust_e(ngine|val)'
       # The artifact ships to browsers: keep its download size in view.
       - name: Size budget
         run: |

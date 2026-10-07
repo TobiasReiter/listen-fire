@@ -264,6 +264,24 @@ describe('the Rust engine shim', () => {
   });
 });
 
+describe('the clock route', () => {
+  it('answers clock.now with the pinned instant and the day it is in the zone', async () => {
+    const { engine, answers } = scriptedEngine((seen) =>
+      seen.length === 0
+        ? { pending: [request(1, 'clock', 'now', { zone: 'Pacific/Auckland' }), request(2, 'clock', 'now', { zone: 'Mars/Base' })] }
+        : seen.length === 1
+          ? { pending: [] }
+          : { done: {} },
+    );
+    await driveEngine(engine, { entry: 'test' }, { ...hostWith({}), firedAt: new Date('2026-03-12T12:30:00Z') });
+    const byId = Object.fromEntries(answers.map(({ id, answer }) => [id, answer]));
+    expect(byId[1]).toEqual({
+      value: { nowIso: '2026-03-12T12:30:00.000Z', zone: 'Pacific/Auckland', today: '2026-03-13' },
+    });
+    expect(byId[2]).toEqual({ error: { message: expect.stringContaining('DATE.TODAY(zone)'), name: 'Error' } });
+  });
+});
+
 describe('the segment input', () => {
   it('is read before the engine starts: one that cannot cross starts nothing', async () => {
     const { engine, started, finished } = scriptedEngine(() => ({ done: {} }));

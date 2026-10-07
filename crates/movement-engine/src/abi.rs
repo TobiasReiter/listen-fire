@@ -98,6 +98,39 @@ unsafe fn emit(result: Result<Step, ProtocolError>, out_ptr_ptr: *mut usize, out
     status
 }
 
+/// One expression evaluated against value bindings, synchronously, on any
+/// instance (the parser's long-lived one serves). `expr` is the lowered
+/// `Expression`'s JSON; `bindings` the envelope `env::read_envelope` reads.
+///
+/// Status 0: `{"value": wire, "provenance": {"binding": name} | {"origins",
+/// "direct"?}}`, `{"error": {"class", "code"?, "message"}}` (what the
+/// TypeScript evaluator throws), or `{"fallback": reason}` (evaluate it in
+/// TypeScript). Status 1: `{"error": {"message"}}`, input this cannot read.
+///
+/// # Safety
+/// Both inputs readable; the out slots writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn eval_expression(
+    expr_ptr: *const u8,
+    expr_len: u32,
+    bindings_ptr: *const u8,
+    bindings_len: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    install_panic_hook();
+    let read = |ptr, len, what| unsafe { utf8(ptr, len, what) }.map_err(|e| e["message"].as_str().unwrap_or_default().to_string());
+    let reply = read(expr_ptr, expr_len, "the expression")
+        .and_then(|expr| Ok((expr, read(bindings_ptr, bindings_len, "the bindings")?)))
+        .and_then(|(expr, bindings)| crate::evaluate(expr, bindings));
+    let (status, reply) = match reply {
+        Ok(reply) => (OK, reply),
+        Err(message) => (ERROR, json!({ "error": { "message": message } })),
+    };
+    unsafe { write_out(to_sorted_json(&reply), out_ptr_ptr, out_len_ptr) };
+    status
+}
+
 #[cfg(test)]
 mod tests {
     use movement_parser::abi::{alloc, dealloc, last_panic};

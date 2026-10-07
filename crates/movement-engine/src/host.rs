@@ -8,8 +8,9 @@
 use serde::Serialize;
 use serde_json::{Value as Json, json};
 
-/// The `EngineHost` groups a request can address, plus `Echo`: the protocol's
-/// own probe, served by no host (the `echo` entry's requests name it).
+/// The `EngineHost` groups a request can address, plus `Clock` (the run's
+/// pinned instant, which the shim holds) and `Echo`: the protocol's own
+/// probe, served by no host (the `echo` entry's requests name it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     Adapters,
@@ -19,6 +20,7 @@ pub enum Family {
     Files,
     Lookup,
     Locks,
+    Clock,
     Echo,
 }
 
@@ -32,6 +34,7 @@ impl Family {
             Family::Files => "files",
             Family::Lookup => "lookup",
             Family::Locks => "locks",
+            Family::Clock => "clock",
             Family::Echo => "echo",
         }
     }
@@ -45,6 +48,7 @@ impl Family {
             Family::Files,
             Family::Lookup,
             Family::Locks,
+            Family::Clock,
             Family::Echo,
         ]
         .into_iter()
@@ -108,6 +112,18 @@ pub mod adapters {
     }
 }
 
+pub mod clock {
+    use super::*;
+
+    /// The run's pinned instant and the calendar date it is in `zone`:
+    /// answered `{nowIso, zone, today}`, or an error for a zone that is not
+    /// one (`DATE.TODAY(zone)`'s own message). The date is the shim's to
+    /// work out because the zone database is not in the artifact.
+    pub fn now(zone: &str) -> Request {
+        Request { family: Family::Clock, method: "now".into(), args: json!({ "zone": zone }) }
+    }
+}
+
 /// The instance handle a `resolve` answer carries.
 pub fn instance_of(answer: &Json) -> Option<Instance> {
     answer.get("instance").and_then(Json::as_u64).map(Instance)
@@ -132,11 +148,14 @@ mod tests {
         assert_eq!(call.args, json!({ "instance": 3, "method": "readRecord", "args": ["person", "r1"] }));
         assert_eq!(instance_of(&json!({ "instance": 3 })), Some(Instance(3)));
         assert_eq!(adapters::credential_id("crm").args, json!({ "credentialName": "crm" }));
+        let now = clock::now("Europe/Berlin");
+        assert_eq!((now.family.as_str(), now.method.as_str()), ("clock", "now"));
+        assert_eq!(now.args, json!({ "zone": "Europe/Berlin" }));
     }
 
     #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "park", "control", "files", "lookup", "locks", "echo"] {
+        for name in ["adapters", "llm", "park", "control", "files", "lookup", "locks", "clock", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);
