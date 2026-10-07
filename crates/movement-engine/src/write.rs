@@ -626,10 +626,7 @@ impl Run<'_> {
                     return Err(thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }));
                 }
                 judge_unavailable = answer.get("judgeUnavailable").and_then(Json::as_str).map(String::from);
-                // `candidates[chosen]`: anything but an index into the list
-                // (negative, fractional, past the end) finds nothing, and the
-                // write creates, as the TypeScript's lookup does.
-                answer.get("index").and_then(Json::as_f64).filter(|i| *i >= 0.0 && i.fract() == 0.0).map(|i| i as usize)
+                judged_index(&answer)
             }
         };
         let matched = chosen.and_then(|i| candidates.get(i)).map(|c| unique::get(c, "externalId"));
@@ -951,6 +948,14 @@ impl Run<'_> {
     }
 }
 
+/// The candidate the judge picked: `candidates[index]`, where anything but a
+/// non-negative integer (negative, fractional, null, absent) finds nothing and
+/// the write creates, as the TypeScript's lookup does. An index past the end
+/// finds nothing too, which the caller's `candidates.get` answers.
+fn judged_index(answer: &Json) -> Option<usize> {
+    answer.get("index").and_then(Json::as_f64).filter(|i| *i >= 0.0 && i.fract() == 0.0).map(|i| i as usize)
+}
+
 struct Identity {
     branches: Vec<Js>,
     overlay: Vec<(String, Js)>,
@@ -1173,3 +1178,19 @@ fn unquote_construction_arg(raw: &str) -> String {
     t.to_string()
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_judge_picks_only_by_a_non_negative_integer_index() {
+        assert_eq!(judged_index(&json!({ "index": 1 })), Some(1));
+        assert_eq!(judged_index(&json!({ "index": 0.0 })), Some(0));
+        assert_eq!(judged_index(&json!({ "index": 7 })), Some(7), "past the end: the caller's lookup finds nothing");
+        for none in [json!({ "index": -1 }), json!({ "index": 0.5 }), json!({ "index": null }), json!({}), json!({ "index": "1" })] {
+            assert_eq!(judged_index(&none), None, "{none}");
+        }
+    }
+}

@@ -1518,6 +1518,32 @@ mod tests {
     }
 
     #[test]
+    fn a_record_is_dated_through_the_positions_it_names() {
+        let schema: InstanceSchema = serde_json::from_value(json!({
+            "positions": {
+                "message": { "properties": { "subject": "text", "sender": { "kind": "record", "position": "person" } }, "edges": {} },
+                "person": { "properties": { "name": "text", "met": { "kind": "list", "of": { "kind": "record", "position": "meeting" } } }, "edges": {} },
+                "meeting": { "properties": { "at": "datetime" }, "edges": {} },
+                "loop": { "properties": { "next": { "kind": "record", "position": "loop" }, "name": "text" }, "edges": {} },
+            },
+            "collections": {}, "writableRoots": {},
+        }))
+        .unwrap();
+        let field = |json: Json| -> FieldType { serde_json::from_value(json).unwrap() };
+        let dated = |json: Json| is_dated(&field(json), &schema, &mut Vec::new());
+        assert!(dated(json!("date")) && dated(json!("datetime")) && !dated(json!("text")));
+        // A record two positions deep, through a list, reaches a datetime.
+        assert!(dated(json!({ "kind": "record", "position": "message" })));
+        assert!(dated(json!({ "kind": "maybeAbsent", "of": { "kind": "record", "position": "person" } })));
+        // A cycle with nothing dated in it ends, undated.
+        assert!(!dated(json!({ "kind": "record", "position": "loop" })));
+        // A record this engine cannot name, or one naming no position, may be dated.
+        assert!(dated(json!({ "kind": "record" })));
+        assert!(dated(json!({ "kind": "record", "position": "nowhere" })));
+        assert!(!dated(json!({ "kind": "enum", "options": ["a"] })));
+    }
+
+    #[test]
     fn addresses_encode_as_address_ts_does() {
         let root = Address::default();
         assert_eq!(root.encode(), "");

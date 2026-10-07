@@ -14,6 +14,26 @@ const path = require('node:path');
 // rest (nothing declined, no shim fault, something ran whole) but not it.
 const RAN_WHOLE_FLOOR = { v1: 60, v2: 70 };
 
+/**
+ * Whether this run is the whole corpus: no file or case filter, and none of
+ * jest's other ways of running a part of it (related or changed files, a
+ * shard, a rerun of failures, paths named on the command line).
+ */
+function isWholeCorpus(globalConfig) {
+  if (globalConfig === undefined) return false;
+  return (
+    !globalConfig.testPathPattern
+    && !globalConfig.testNamePattern
+    && !globalConfig.findRelatedTests
+    && !globalConfig.onlyChanged
+    && !globalConfig.onlyFailures
+    && !globalConfig.changedSince
+    && !globalConfig.lastCommit
+    && globalConfig.shard == null
+    && (globalConfig.nonFlagArgs ?? []).length === 0
+  );
+}
+
 /** Which corpus this run is, from its test match. */
 function corpusOf(projectConfig) {
   const match = (projectConfig?.testMatch ?? []).join(' ');
@@ -22,7 +42,7 @@ function corpusOf(projectConfig) {
   return undefined;
 }
 
-module.exports = async function globalTeardown(globalConfig, projectConfig) {
+async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
@@ -60,10 +80,12 @@ module.exports = async function globalTeardown(globalConfig, projectConfig) {
   if (runs.routed > 0 && runs.ranWhole === 0) failures.push(`${runs.routed} runs were routed and none ran whole`);
   if (Object.keys(runs.declined).length > 0) failures.push(`the corpus expects no declines, and these happened: ${JSON.stringify(runs.declined)}`);
   if (runs.shimFaults > 0) failures.push(`${runs.shimFaults} runs ended in a shim fault`);
-  const whole = !globalConfig?.testPathPattern && !globalConfig?.testNamePattern;
-  if (whole && runs.ranWhole < RAN_WHOLE_FLOOR[corpus]) {
+  if (isWholeCorpus(globalConfig) && runs.ranWhole < RAN_WHOLE_FLOOR[corpus]) {
     failures.push(`${runs.ranWhole} runs ran whole in Rust, under the ${corpus} floor of ${RAN_WHOLE_FLOOR[corpus]}`);
   }
   console.log(`Rust routing floor (${corpus}): ran whole ${runs.ranWhole}, floor ${RAN_WHOLE_FLOOR[corpus]}`);
   if (failures.length > 0) throw new Error(`MOVEMENT_ENGINE=rust routing regression (${corpus}): ${failures.join('; ')}`);
-};
+}
+
+module.exports = globalTeardown;
+module.exports.isWholeCorpus = isWholeCorpus;
