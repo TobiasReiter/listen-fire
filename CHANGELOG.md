@@ -26,7 +26,7 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 ### Fixed
 
-- A run parking on an await could miss a wake that arrived while it parked, and then wait forever. The park now writes the parked run before the correlation that points at it, so a wake in between finds both or neither. The re-check after parking now also wakes the run when the re-check itself fails (the remote is down); if the remote is still down when that wake resumes the run, the run fails, as any resumed adapter failure does.
+- A run parking on an await could miss a wake that arrived while it parked, and then wait forever. The park now writes the parked run before the correlation that points at it, so a wake in between finds both or neither. When the re-check after parking itself fails (the remote is down), the run stays parked without a wake and the failure is logged with the await's key; the adapter's own wake covers later landings.
 
 <!-- add merged PRs here -->
 

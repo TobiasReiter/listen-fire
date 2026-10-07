@@ -121,8 +121,9 @@ export function runAwaiting(input: {
   source: string;
   adapter: Adapter;
   parkSink: ParkSink;
-  /** The host's wake; absent ⇒ the test host's, which throws when reached. */
+  /** The host's wake; absent ⇒ the test host's, which records into `wakes`. */
   wake?: (request: AwaitWakeRequest) => Promise<void>;
+  wakes?: AwaitWakeRequest[];
 }) {
   const manual = createManualAdapter({ teamId: input.teamId });
   const event: TriggerEvent = {
@@ -146,6 +147,7 @@ export function runAwaiting(input: {
         },
       },
       park: { sink: input.parkSink, ...(input.wake !== undefined ? { wake: input.wake } : {}) },
+      ...(input.wakes !== undefined ? { wakes: input.wakes } : {}),
     }),
     dryRun: false,
   });

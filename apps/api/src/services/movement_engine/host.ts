@@ -219,6 +219,8 @@ export interface TestHostOverrides {
   lookup?: Partial<EngineHost['lookup']>;
   locks?: WriteLocks;
   trace?: MovementTraceEntry[];
+  /** Where the default `park.wake` records each wake the engine asks for. */
+  wakes?: AwaitWakeRequest[];
 }
 
 /** The gate of a run nothing can cancel. */
@@ -234,13 +236,14 @@ function notProvided(piece: string): Error {
 
 /**
  * A host for tests: every piece the test does not supply is in memory, finds
- * nothing, or throws naming itself when the run reaches it. No default
+ * nothing, or throws naming itself when the run reaches it. `park.wake`
+ * records into `overrides.wakes` (a fresh array when absent). No default
  * reaches a network or a database. Parks, callbacks and file imports stay
  * absent unless supplied, which the engine refuses loudly as it does for any
  * host without them (`makeFakeParkSink` is an in-memory park sink).
  */
 export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
-  const { adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {} } = overrides;
+  const { adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {}, wakes = [] } = overrides;
   return {
     adapters: {
       resolve:
@@ -277,8 +280,8 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
       ...(park.callbacks !== undefined ? { callbacks: park.callbacks } : {}),
       wake:
         park.wake ??
-        (async () => {
-          throw notProvided('park.wake');
+        (async (request) => {
+          wakes.push(request);
         }),
       bindings: park.bindings ?? {
         record: async () => {

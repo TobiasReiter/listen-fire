@@ -6507,38 +6507,35 @@ class Interpreter {
    * (WHERE included) now that the park is durable covers that gap: anything
    * landing after this is seen by its own wake.
    *
-   * A re-check that cannot answer (the remote is down) wakes anyway, rather
-   * than risk the lost landing. The wake is idempotent: its resume re-enters
-   * the await and checks again, re-parking if it is still pending. A resume
-   * whose check fails again fails the run, as any adapter failure in a resumed
-   * segment does. A wake that cannot be queued leaves the park as durable as
-   * before, so it is logged, not raised.
+   * A re-check that cannot answer (the remote is down) leaves the run parked
+   * and wakes nothing: waking would resume into the same failure and fail the
+   * run. The vendor's at-least-once wake covers later landings. The known gap
+   * is a landing whose only wake arrived before the correlation existed AND
+   * whose re-check failed — logged loudly here. A wake that cannot be queued
+   * leaves the park as durable as before, so it is logged, not raised.
    */
   private async wakeIfResolvedWhileParking(input: {
     adapterType: string;
     correlationKey: string;
     resolvesNow: () => Promise<boolean>;
   }): Promise<void> {
+    const wake = { adapterType: input.adapterType, teamId: this.input.teamId, correlationKey: input.correlationKey };
     let resolved: boolean;
     try {
       resolved = await input.resolvesNow();
     } catch (err) {
-      logger.warn('[MovementEngine] await re-check after parking failed; waking to re-check', {
-        adapterType: input.adapterType,
+      logger.error('[MovementEngine] await re-check after parking failed; the run stays parked without a wake', {
+        ...wake,
         error: err instanceof Error ? err.message : String(err),
       });
-      resolved = true;
+      return;
     }
     if (!resolved) return;
     try {
-      await this.input.host.park.wake({
-        adapterType: input.adapterType,
-        teamId: this.input.teamId,
-        correlationKey: input.correlationKey,
-      });
+      await this.input.host.park.wake(wake);
     } catch (err) {
       logger.error('[MovementEngine] await wake after parking could not be queued', {
-        adapterType: input.adapterType,
+        ...wake,
         error: err instanceof Error ? err.message : String(err),
       });
     }
