@@ -73,6 +73,9 @@ export function productionEngineHost(input: {
   /** The run whose parks and callbacks persist through this recorder. Absent ⇒
    *  no durable substrate: a dry run never parks or mints a callback. */
   parksInto?: TriggerRunRecorder;
+  /** The run lease the segment steps under: every park it commits lands only
+   *  while the run is still leased to it. */
+  lease?: { token: string };
   /** Absent ⇒ the run is never cancelled. */
   cancel?: CancelGate;
   /** Where the run's trace is appended as it goes, so a caller can publish it
@@ -130,7 +133,7 @@ export function productionEngineHost(input: {
     park: {
       ...(input.parksInto !== undefined
         ? {
-            sink: makeRecorderParkSink(input.parksInto),
+            sink: makeRecorderParkSink(input.parksInto, input.lease !== undefined ? { lease: input.lease } : {}),
             callbacks: makeRecorderCallbackSink(input.parksInto, input.teamId),
           }
         : {}),

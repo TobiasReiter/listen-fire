@@ -36,6 +36,7 @@ jest.mock('../../storage/tg_table', () => ({ loadTriggerById: jest.fn() }));
 jest.mock('../execute', () => ({ movementForTrigger: jest.fn() }));
 jest.mock('../../runs/trigger_run', () => ({
   TriggerRunRecorder: jest.fn(),
+  reportedFailureReason: jest.requireActual('../../runs/trigger_run').reportedFailureReason,
 }));
 jest.mock('../../../../lib/kysely', () => ({ getAutomationsQb: jest.fn() }));
 jest.mock('../../../../lib/errors', () => ({ handleError: jest.fn() }));

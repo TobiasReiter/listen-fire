@@ -83,6 +83,8 @@ async function interpretMovementFiring(input: {
   /** The array the run appends its decision trace to — supplied so a caller can
    *  publish the trace WHILE the run is going, not only once it settles. */
   trace?: MovementTraceEntry[];
+  /** The run lease the firing holds; its parks are fenced by it. */
+  lease?: HeldRunLease;
 }): Promise<MovementRunResult> {
   const teamCatalog = await runCatalogSnapshotForTeam(input.teamId, {
     source: input.movementRow.source,
@@ -105,6 +107,7 @@ async function interpretMovementFiring(input: {
       teamId: input.teamId,
       triggerRunId: input.triggerRunId,
       ...(input.parksInto !== undefined ? { parksInto: input.parksInto } : {}),
+      ...(input.lease !== undefined ? { lease: input.lease } : {}),
       cancel: input.cancelGate,
       ...(input.trace !== undefined ? { trace: input.trace } : {}),
     }),
@@ -305,6 +308,7 @@ async function runMovementFiringInContext(
         // don't create durable interactions). The park rows are written + the
         // run flipped to `parked` through this same recorder.
         ...(input.dryRun ? {} : { parksInto: recorder }),
+        ...(lease !== null ? { lease } : {}),
         cancelGate,
         trace,
       });
@@ -574,6 +578,7 @@ async function resumeMovementFiringInContext(
         teamId: input.teamId,
         triggerRunId: input.runId,
         parksInto: recorder,
+        ...(input.lease !== undefined ? { lease: input.lease } : {}),
         cancel: cancelGate,
       }),
       state: input.state,
@@ -790,6 +795,7 @@ async function fireCallbackFiringInContext(
           teamId: input.teamId,
           triggerRunId: input.runId,
           parksInto: recorder,
+          ...(input.lease !== undefined ? { lease: input.lease } : {}),
           cancel: cancelGate,
         }),
         state: input.state,

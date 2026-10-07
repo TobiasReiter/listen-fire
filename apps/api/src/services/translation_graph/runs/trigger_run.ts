@@ -973,6 +973,18 @@ export async function runningSegment(
   return stale ? 'orphaned' : 'live';
 }
 
+/**
+ * Why a run failed, as a reader reports it: the row's `failure_reason` once
+ * the run has failed, and nothing before. A first firing that lost its lease
+ * notes its reason on a row that is still `running` (`noteFirstFiringLeaseLost`)
+ * for the orphan sweep to settle with; until the run is settled that note is
+ * not a failure, and a run another instance went on to park or finish is not
+ * one at all.
+ */
+export function reportedFailureReason(row: { status: string; failure_reason: string | null }): string | null {
+  return row.status === 'failed' ? row.failure_reason : null;
+}
+
 const ORPHANED_SEGMENT = 'segment did not complete: process died or stalled';
 const LEASE_LOST_SEGMENT = 'segment did not complete: its run lease was lost to another instance';
 

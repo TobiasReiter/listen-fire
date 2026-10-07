@@ -24,6 +24,7 @@ import { SECOND } from '../../constants';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
+import { runLeasedTo } from './lease_fence';
 
 /** A segment beats every 5s (the recorder's live-trace tick) and a lease
  *  holder renews every third of this; a minute of silence is a dead process,
@@ -235,14 +236,21 @@ export async function claimParkedLeaf(input: {
 }
 
 /** The claimed leaf's row is done with: delete it, unless the step parked
- *  again at the same address (the row is `parked` again, and stays). */
-export async function finishResumedLeaf(runId: TriggerRunId, address: string): Promise<void> {
-  await getAutomationsQb(['parked_run'])
+ *  again at the same address (the row is `parked` again, and stays). Given
+ *  the lease that claimed it, only while the run's lease is still that one: a
+ *  holder whose lease lapsed leaves the row to the new holder. */
+export async function finishResumedLeaf(
+  runId: TriggerRunId,
+  address: string,
+  lease?: { token: string },
+): Promise<void> {
+  let finish = getAutomationsQb(['parked_run', 'trigger_run'])
     .deleteFrom('parked_run')
     .where('run_id', '=', runId)
     .where('address', '=', address)
-    .where('status', '=', 'resuming')
-    .execute();
+    .where('status', '=', 'resuming');
+  if (lease !== undefined) finish = finish.where(runLeasedTo(lease.token));
+  await finish.execute();
 }
 
 async function returnAbandonedLeaves(runId: TriggerRunId): Promise<void> {

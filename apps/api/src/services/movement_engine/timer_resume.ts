@@ -42,7 +42,8 @@ import { armTimerWake, timerWorkKey } from './timer_wake';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { ParkedScopeState } from './serialize';
-import { runHasPendingJoins, clearJoins } from './join_pending';
+import { runHasPendingJoins } from './join_pending';
+import { dropRunLeaves } from './lease_fence';
 import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
@@ -326,7 +327,7 @@ export async function resumeTimerParkedRun(
       // rows + pending joins; prior writes (incl. this branch's, before the
       // error) stay committed. No ask requests to cancel (timer parks never
       // created any).
-      await settleFailure(runId);
+      await settleFailure(runId, lease);
       return 'done';
     }
 
@@ -345,12 +346,12 @@ export async function resumeTimerParkedRun(
       // its run was paused at a limit suspended AT this same address, rewriting
       // the row as `parked`, and it is now the run's to resume. No join decrement (the branch did not
       // complete). The run stays parked.
-      await finishResumedLeaf(runId, leaf.address);
+      await finishResumedLeaf(runId, leaf.address, lease);
       continue;
     }
 
     // The branch completed — `settleBranchComplete` already decremented the join.
-    await finishResumedLeaf(runId, leaf.address);
+    await finishResumedLeaf(runId, leaf.address, lease);
   }
 
   // Fully settled (no pending join, no parked leaf left) ⇒ sweep residual live
@@ -363,10 +364,7 @@ export async function resumeTimerParkedRun(
       .where('status', '=', 'parked')
       .select('id')
       .executeTakeFirst();
-    if (remaining === undefined) {
-      await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-      await clearJoins(runId);
-    }
+    if (remaining === undefined) await dropRunLeaves(runId, lease);
   }
   return 'done';
 }
@@ -427,11 +425,10 @@ async function deleteLeaf(runId: TriggerRunId, address: string): Promise<void> {
     .execute();
 }
 
-async function settleFailure(runId: TriggerRunId): Promise<void> {
+async function settleFailure(runId: TriggerRunId, lease: HeldRunLease | undefined): Promise<void> {
   // An ERROR in any branch fails the whole run (P14): drop the timer-parked rows +
   // pending joins (prior writes stand). No ask requests to cancel (timer parks
   // never created any).
-  await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-  await clearJoins(runId);
+  await dropRunLeaves(runId, lease);
 }
 

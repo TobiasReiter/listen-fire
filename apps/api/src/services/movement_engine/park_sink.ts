@@ -30,14 +30,23 @@ import {
 } from '../translation_graph/adapters/await_correlation';
 import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
 import { armTimerWake } from './timer_wake';
+import { RunLeaseLost } from './run_lease';
 
 /**
  * Build the firing's park sink, backed by its `TriggerRunRecorder` (the run
  * identity + version pin live there). Each commit* method ensures the run row
  * exists before any FK-bearing park row is written.
+ *
+ * Given the run lease the segment holds, every park it commits lands only
+ * while the run's lease is still that one (`lease_token`): a holder whose
+ * lease lapsed mid-statement is refused (`RunLeaseLost`) rather than
+ * overwriting the parks of the instance that took the run over.
  */
-export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
+export function makeRecorderParkSink(recorder: TriggerRunRecorder, opts: { lease?: { token: string } } = {}): ParkSink {
   const runId = recorder.triggerRunId;
+  const fence = opts.lease?.token;
+  const park = (leaf: Omit<ParkedLeaf, 'runId' | 'fence'>) =>
+    upsertParkedLeaf({ ...leaf, runId, ...(fence !== undefined ? { fence } : {}) });
   return {
     async commitTimerPark(input: {
       address: string;
@@ -52,27 +61,7 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
       // (wake_at recomputes from the replay; crash-recovery only). NO
       // interaction_request, NO token — the wake driver resumes without a human
       // answer.
-      await getAutomationsQb(['parked_run'])
-        .insertInto('parked_run')
-        .values({
-          run_id: runId,
-          address: input.address,
-          status: 'parked',
-          park_reason: 'timer',
-          wake_at: wakeAt,
-          state: jsonb(input.state),
-        })
-        .onConflict((oc) =>
-          oc.columns(['run_id', 'address']).doUpdateSet({
-            state: jsonb(input.state),
-            // A leaf re-parked by its own resume is parked again, not the
-            // claimed row its driver deletes once the step is over.
-            status: 'parked',
-            park_reason: 'timer',
-            wake_at: wakeAt,
-          }),
-        )
-        .execute();
+      await park({ address: input.address, reason: 'timer', wakeAt, state: input.state });
       // The parked_run row stays the truth; the work row only says when to look.
       await armTimerWake({ runId, teamId: recorder.teamId, wakeAt });
       await recorder.markParked();
@@ -98,23 +87,7 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
       // never a correlation without its park, which it would drop as "already
       // drained" and leave the run deaf.
       await recorder.ensureStarted();
-      await getAutomationsQb(['parked_run'])
-        .insertInto('parked_run')
-        .values({
-          run_id: runId,
-          address: input.address,
-          status: 'parked',
-          park_reason: 'await',
-          state: jsonb(input.state),
-        })
-        .onConflict((oc) =>
-          oc.columns(['run_id', 'address']).doUpdateSet({
-            state: jsonb(input.state),
-            status: 'parked',
-            park_reason: 'await',
-          }),
-        )
-        .execute();
+      await park({ address: input.address, reason: 'await', wakeAt: null, state: input.state });
       await registerAwaitCorrelation({
         adapterType: input.adapterType,
         correlationKey: input.correlationKey,
@@ -144,26 +117,7 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
       // re-registers if it is still waiting. Left in place, every poll would
       // wake it into the pause again.
       await dropAwaitCorrelation({ runId, address: input.address });
-      await getAutomationsQb(['parked_run'])
-        .insertInto('parked_run')
-        .values({
-          run_id: runId,
-          address: input.address,
-          status: 'parked',
-          park_reason: 'limit',
-          wake_at: null,
-          state: jsonb(input.state),
-        })
-        .onConflict((oc) =>
-          oc.columns(['run_id', 'address']).doUpdateSet({
-            state: jsonb(input.state),
-            status: 'parked',
-            park_reason: 'limit',
-            wake_at: null,
-            updated_at: sql`now()`,
-          }),
-        )
-        .execute();
+      await park({ address: input.address, reason: 'limit', wakeAt: null, state: input.state, rewritten: true });
       await recorder.markParked();
       await settleIfCancelledDuringPark(runId);
     },
@@ -173,12 +127,20 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
       // re-reaches the same frame OVERWRITES to the same deterministic count (the
       // frontier is stable under P11), never double-counting. The atomic
       // decrement on resume (join_pending.ts) drives completion.
-      await getAutomationsQb(['join_pending'])
+      const recorded = await getAutomationsQb(['join_pending', 'trigger_run'])
         .insertInto('join_pending')
-        .values({
-          run_id: runId,
-          frame_address: input.frameAddress as never,
-          pending: input.parkedChildren,
+        .columns(['run_id', 'frame_address', 'pending'])
+        .expression((eb) => {
+          let row = eb
+            .selectFrom('trigger_run')
+            .select([
+              'trigger_run.id as run_id',
+              sql<string>`${input.frameAddress}::text`.as('frame_address'),
+              sql<number>`${input.parkedChildren}::integer`.as('pending'),
+            ])
+            .where('trigger_run.id', '=', runId);
+          if (fence !== undefined) row = row.where('trigger_run.lease_token', '=', fence);
+          return row;
         })
         .onConflict((oc) =>
           oc.columns(['run_id', 'frame_address']).doUpdateSet({
@@ -186,7 +148,9 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder): ParkSink {
             updated_at: new Date(),
           }),
         )
-        .execute();
+        .returning('run_id')
+        .executeTakeFirst();
+      if (recorded === undefined) throw notWritten(runId, fence);
     },
 
     async decrementJoin(input: {
@@ -348,4 +312,62 @@ async function settleIfCancelledDuringPark(runId: TriggerRunId): Promise<void> {
 
 function jsonb(value: unknown): unknown {
   return sql`${JSON.stringify(value)}::jsonb` as unknown;
+}
+
+interface ParkedLeaf {
+  runId: TriggerRunId;
+  address: string;
+  reason: 'timer' | 'await' | 'limit';
+  wakeAt: Date | null;
+  state: unknown;
+  /** Stamp `updated_at` on a rewrite: how the limit resume tells a flow that
+   *  suspended again at once from the one it stepped. */
+  rewritten?: true;
+  /** The run lease token the write must still hold. */
+  fence?: string;
+}
+
+/** UPSERT on (run_id, address): a re-reached park rewrites its own row, as
+ *  `parked` again (a leaf re-parked by its own resume is parked, not the
+ *  claimed row its driver deletes once the step is over). Fenced by the
+ *  lease when given one: written only while the run's lease is still that
+ *  token's, refused otherwise. */
+async function upsertParkedLeaf(leaf: ParkedLeaf): Promise<void> {
+  const { runId, fence } = leaf;
+  const written = await getAutomationsQb(['parked_run', 'trigger_run'])
+    .insertInto('parked_run')
+    .columns(['run_id', 'address', 'status', 'park_reason', 'wake_at', 'state'])
+    .expression((eb) => {
+      let row = eb
+        .selectFrom('trigger_run')
+        .select([
+          'trigger_run.id as run_id',
+          sql<string>`${leaf.address}::text`.as('address'),
+          sql<string>`'parked'`.as('status'),
+          sql<string>`${leaf.reason}::text`.as('park_reason'),
+          sql<Date | null>`${leaf.wakeAt}::timestamptz`.as('wake_at'),
+          sql<unknown>`${JSON.stringify(leaf.state)}::jsonb`.as('state'),
+        ])
+        .where('trigger_run.id', '=', runId);
+      if (fence !== undefined) row = row.where('trigger_run.lease_token', '=', fence);
+      return row;
+    })
+    .onConflict((oc) =>
+      oc.columns(['run_id', 'address']).doUpdateSet({
+        state: jsonb(leaf.state),
+        status: 'parked',
+        park_reason: leaf.reason,
+        wake_at: leaf.wakeAt,
+        ...(leaf.rewritten ? { updated_at: sql<Date>`now()` } : {}),
+      }),
+    )
+    .returning('id')
+    .executeTakeFirst();
+  if (written === undefined) throw notWritten(runId, fence);
+}
+
+/** Why a fenced write wrote nothing: the lease is another's now, or (with no
+ *  lease to fence by) the run has no row to write against. */
+function notWritten(runId: TriggerRunId, fence: string | undefined): Error {
+  return fence !== undefined ? new RunLeaseLost(runId) : new Error(`run ${runId} has no trigger_run row to park on`);
 }

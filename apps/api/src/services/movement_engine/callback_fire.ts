@@ -46,6 +46,12 @@ import {
 } from './callback_store';
 import type { CallbackParamSpec } from './callback_types';
 
+/** How long after a fire its durable rows (the body's, the wake's) come due.
+ *  The body and the prompt wake run in this process right after the claim;
+ *  these rows only matter if the process dies before they finish, so they wait
+ *  well past a normal body. */
+const CALLBACK_BACKSTOP_MS = 30 * SECOND;
+
 /** What the caller acks with. Every non-`recorded` outcome is a REFUSAL the door
  *  reports as such — never a silent no-op. */
 export type CallbackFireOutcome =
@@ -242,11 +248,6 @@ export function registerCallbackFireWork(): void {
   registerWorkHandler('fire_callback', fireCallbackHandler);
 }
 
-/** How long after a fire its durable rows (the body's, the wake's) come due.
- *  The body and the prompt wake run in this process right after the claim;
- *  these rows only matter if the process dies before they finish, so they wait
- *  well past a normal body. */
-const CALLBACK_BACKSTOP_MS = 30 * SECOND;
 
 /**
  * Queue the durable half of the wake before the body starts. The prompt wake

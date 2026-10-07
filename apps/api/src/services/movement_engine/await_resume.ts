@@ -27,7 +27,8 @@ import { wakeAwaitPayloadSchema } from './await_wake';
 import { settleCancelledRun } from '../interaction/run_failure';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { ParkedScopeState } from './serialize';
-import { runHasPendingJoins, clearJoins } from './join_pending';
+import { runHasPendingJoins } from './join_pending';
+import { dropRunLeaves } from './lease_fence';
 import { abandonAskAwaits, loadResolvableAskAwaits } from '../translation_graph/adapters/ask/await_store';
 import { loadResolvableCallbackAwaits } from './callback_sink';
 import {
@@ -232,7 +233,7 @@ async function resumeAwaitRun(
     if (outcome.error) {
       // An engine ERROR fails the whole run (P14): drop every correlation +
       // parked/join row; prior writes stand.
-      await settleFailure(runId);
+      await settleFailure(runId, lease);
       return;
     }
 
@@ -257,13 +258,13 @@ async function resumeAwaitRun(
       //     the later matching candidate. Leave everything intact (the re-park
       //     wrote the row back as `parked`).
       if (outcome.result.parkedAddress !== leaf.address) {
-        await resolveAwaitLeaf(runId, leaf.address);
+        await resolveAwaitLeaf(runId, leaf.address, lease);
       }
       continue;
     }
 
     // The branch completed — resolve this leaf (drop correlation + parked row).
-    await resolveAwaitLeaf(runId, leaf.address);
+    await resolveAwaitLeaf(runId, leaf.address, lease);
   }
 
   // Post-batch: settle each race whose branches completed this batch, ONCE, with
@@ -293,7 +294,7 @@ async function resumeAwaitRun(
       });
       if (outcome.leaseLost) return;
       if (outcome.error) {
-        await settleFailure(runId);
+        await settleFailure(runId, lease);
         return;
       }
     }
@@ -308,10 +309,9 @@ async function resumeAwaitRun(
       .where('status', '=', 'parked')
       .select('id')
       .executeTakeFirst();
-    if (remaining === undefined) {
-      await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-      await clearJoins(runId);
-    }
+    // Under the lease that stepped the run: a holder that lost it leaves the
+    // new holder's rows alone.
+    if (remaining === undefined) await dropRunLeaves(runId, lease);
   }
 }
 
@@ -336,19 +336,18 @@ async function settleBranchComplete(
  *  An await woken while its run was paused at a limit suspended at this same
  *  address instead of re-checking: that row was written back as `parked`, and
  *  is the run's to resume (limit_pause.ts). */
-async function resolveAwaitLeaf(runId: TriggerRunId, address: string): Promise<void> {
+async function resolveAwaitLeaf(runId: TriggerRunId, address: string, lease: HeldRunLease | undefined): Promise<void> {
   await dropAwaitCorrelation({ runId, address });
-  await finishResumedLeaf(runId, address);
+  await finishResumedLeaf(runId, address, lease);
 }
 
-async function settleFailure(runId: TriggerRunId): Promise<void> {
+async function settleFailure(runId: TriggerRunId, lease: HeldRunLease | undefined): Promise<void> {
   // An ERROR in any branch fails the whole run (P14). Any ask the run was still
   // awaiting is closed with it — the run is over, so its link must stop offering
   // a live form — then every remaining correlation, parked row and join goes.
   await abandonAskAwaits({ runId });
   await dropAwaitCorrelationsForRun(runId);
-  await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-  await clearJoins(runId);
+  await dropRunLeaves(runId, lease);
 }
 
 export const wakeAwaitHandler: WorkHandler = {

@@ -48,7 +48,7 @@ import {
   type TriggerIdDispatchResult,
 } from '../triggers/router';
 import { neverAsAny } from '../../../lib/utils/types';
-import { TriggerRunRecorder } from '../runs/trigger_run';
+import { reportedFailureReason, TriggerRunRecorder } from '../runs/trigger_run';
 import { movementForTrigger } from './execute';
 import { loadTriggerById } from '../storage/tg_table';
 import {
@@ -403,7 +403,7 @@ export async function getMovementRunStatus(input: {
     startedAt: row.started_at.toISOString(),
     finishedAt: row.completed_at ? row.completed_at.toISOString() : null,
     failedAt: row.failed_at ? row.failed_at.toISOString() : null,
-    failureReason: row.failure_reason,
+    failureReason: reportedFailureReason(row),
     costUsd: costMicrodollarsToUsd(cost?.costMicrodollars ?? 0),
     modelCalls: cost?.calls ?? 0,
     ...(pause !== null
@@ -515,7 +515,7 @@ export async function listMovementRuns(input: {
       startedAt: row.started_at.toISOString(),
       finishedAt: row.completed_at ? row.completed_at.toISOString() : null,
       failedAt: row.failed_at ? row.failed_at.toISOString() : null,
-      failureReason: row.failure_reason,
+      failureReason: reportedFailureReason(row),
       costUsd: costMicrodollarsToUsd(cost?.costMicrodollars ?? 0),
       modelCalls: cost?.calls ?? 0,
     };
@@ -744,7 +744,7 @@ export async function inspectMovementRun(input: {
     startedAt: row.started_at.toISOString(),
     finishedAt: row.completed_at ? row.completed_at.toISOString() : null,
     failedAt: row.failed_at ? row.failed_at.toISOString() : null,
-    failureReason: row.failure_reason,
+    failureReason: reportedFailureReason(row),
     costUsd: costMicrodollarsToUsd(cost?.costMicrodollars ?? 0),
     modelCalls: cost?.calls ?? 0,
     sourceEvent: row.trigger_payload,

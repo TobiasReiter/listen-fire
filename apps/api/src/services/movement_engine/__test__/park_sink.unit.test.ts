@@ -11,9 +11,9 @@ function makeQb(): unknown {
   const chain: unknown = new Proxy(() => undefined, {
     get(_t, prop) {
       if (prop === 'then') return undefined;
-      if (prop === 'execute' || prop === 'executeTakeFirst') {
-        return async () => undefined;
-      }
+      if (prop === 'execute') return async () => undefined;
+      // A written row comes back from each upsert.
+      if (prop === 'executeTakeFirst') return async () => ({ id: 'row-1' });
       return (...args: unknown[]) => {
         if (prop === 'insertInto') writes.push(`insert ${String(args[0])}`);
         return chain;

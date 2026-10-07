@@ -236,11 +236,26 @@ export async function runHasPendingJoins(runId: TriggerRunId): Promise<boolean> 
 }
 
 /** Drop every pending-count AND every branch export for a run (run failure /
- *  completion cleanup — live state, not history). */
-export async function clearJoins(runId: TriggerRunId): Promise<void> {
-  await getAutomationsQb(['join_pending', 'join_branch_export'])
+ *  completion cleanup — live state, not history). Given the run lease's
+ *  token, only while the lease is still that token's: a holder whose lease
+ *  lapsed must not clear the new holder's joins. */
+export async function clearJoins(runId: TriggerRunId, opts: { leaseToken?: string } = {}): Promise<void> {
+  const { leaseToken } = opts;
+  await getAutomationsQb(['join_pending', 'join_branch_export', 'trigger_run'])
     .transaction()
     .execute(async (trx) => {
+      if (leaseToken !== undefined) {
+        // Held for the transaction: the lease cannot change hands between
+        // the check and the deletes.
+        const held = await trx
+          .selectFrom('trigger_run')
+          .where('id', '=', runId)
+          .where('lease_token', '=', leaseToken)
+          .select('id')
+          .forUpdate()
+          .executeTakeFirst();
+        if (held === undefined) return;
+      }
       await trx.deleteFrom('join_pending').where('run_id', '=', runId).execute();
       await trx.deleteFrom('join_branch_export').where('run_id', '=', runId).execute();
     });

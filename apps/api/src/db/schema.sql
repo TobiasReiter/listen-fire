@@ -3945,6 +3945,9 @@ ALTER TABLE ONLY automations.parked_run
 
 CREATE INDEX parked_run_run_id_idx ON automations.parked_run USING btree (run_id);
 CREATE INDEX parked_run_timer_wake_idx ON automations.parked_run (wake_at) WHERE park_reason = 'timer' AND status = 'parked';
+-- The leaves claimed mid-resume, per run: what every lease claim returns to
+-- `parked`, and what the orphan sweep scans.
+CREATE INDEX parked_run_resuming_idx ON automations.parked_run USING btree (run_id) WHERE (status = 'resuming'::text);
 
 -- Deferred automations work. One row per unit of work; deleted on completion
 -- (or rescheduled when interval_ms is set). The lease is what makes claiming

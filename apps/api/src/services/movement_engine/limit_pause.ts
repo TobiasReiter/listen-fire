@@ -42,7 +42,8 @@ import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
 import { runSpentMicrodollars, type TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
-import { clearJoins, runHasPendingJoins } from './join_pending';
+import { runHasPendingJoins } from './join_pending';
+import { dropRunLeaves } from './lease_fence';
 import type { RunLimitPause } from './run';
 import type { ParkedScopeState } from './serialize';
 import { MovementEngineError } from './errors';
@@ -249,14 +250,13 @@ export async function resumeLimitPausedRun(
     if (outcome.error) {
       // An error in any branch fails the whole run (P14); its other branches go
       // with it. Prior writes stand.
-      await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-      await clearJoins(runId);
+      await dropRunLeaves(runId, lease);
       return { resumed };
     }
     // Completed, or parked somewhere else: this leaf is done. Suspended again
     // at the same statement (it met the cap at once): its row was rewritten
     // as `parked`, and stays.
-    await finishResumedLeaf(runId, leaf.address);
+    await finishResumedLeaf(runId, leaf.address, lease);
     if (outcome.result?.parked && (await runIsLimitPaused(runId))) break;
   }
 
@@ -267,10 +267,7 @@ export async function resumeLimitPausedRun(
       .where('status', '=', 'parked')
       .select('id')
       .executeTakeFirst();
-    if (remaining === undefined) {
-      await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
-      await clearJoins(runId);
-    }
+    if (remaining === undefined) await dropRunLeaves(runId, lease);
   }
   return { resumed };
 }

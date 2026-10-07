@@ -14,6 +14,8 @@ import { makeRecorderParkSink } from '../park_sink';
 import { enqueueAwaitWake } from '../await_wake';
 import { loadCorrelatedParks } from '../../translation_graph/adapters/await_correlation';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+import { claimParkedLeaf, claimRunLease, finishResumedLeaf, RunLeaseLost } from '../run_lease';
+import { dropRunLeaves } from '../lease_fence';
 
 let teamId: TeamId;
 let runId: TriggerRunId;
@@ -76,6 +78,7 @@ afterAll(async () => {
 afterEach(async () => {
   // Reset after each test so tests are independent.
   await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
+  await getAutomationsQb(['join_pending']).deleteFrom('join_pending').where('run_id', '=', runId).execute();
   await getAutomationsQb(['adapter_await']).deleteFrom('adapter_await').where('run_id', '=', runId).execute();
   await getAutomationsQb(['work']).deleteFrom('work').where('team_id', '=', teamId).execute();
   // Reset run status to running so ensureStarted / markParked can flip it again.
@@ -195,5 +198,66 @@ describe('commitAwaitPark', () => {
     expect(awaiting.checks).toBe(2);
     expect(await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'req-1' })).toHaveLength(1);
     expect(await awaitWakes()).toEqual([{ payload: { adapterType: 'ask', teamId, correlationKey: 'req-1' } }]);
+  });
+});
+
+describe('a park under a lease that lapsed', () => {
+  const STATE = { version: 1, address: 's0', bindingName: null, scopeChain: [] };
+
+  afterEach(async () => {
+    await getAutomationsQb(['trigger_run'])
+      .updateTable('trigger_run')
+      .set({ lease_owner: null, lease_until: null, lease_token: null })
+      .where('id', '=', runId)
+      .execute();
+  });
+
+  it("is refused: a stale token's park commit writes nothing, and the new holder's row stands", async () => {
+    const current = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+    expect(current).not.toBeNull();
+    const fresh = makeRecorderParkSink(makeStubRecorder({ teamId, runId }), { lease: { token: current!.token } });
+    const stale = makeRecorderParkSink(makeStubRecorder({ teamId, runId }), { lease: { token: randomUUID() } });
+    const wakeAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await fresh.commitTimerPark({ address: 's0', state: { ...STATE, by: 'new' }, wakeAt });
+
+    await expect(
+      stale.commitTimerPark({ address: 's0', state: { ...STATE, by: 'stale' }, wakeAt }),
+    ).rejects.toBeInstanceOf(RunLeaseLost);
+    await expect(
+      stale.commitAwaitPark({ address: 's1', state: STATE, adapterType: 'ask', correlationKey: 'req-9' }),
+    ).rejects.toBeInstanceOf(RunLeaseLost);
+    await expect(stale.commitSuspension!({ address: 's2', state: STATE })).rejects.toBeInstanceOf(RunLeaseLost);
+    await expect(stale.recordJoin({ frameAddress: 's3', parkedChildren: 2 })).rejects.toBeInstanceOf(RunLeaseLost);
+
+    const rows = await getAutomationsQb(['parked_run'])
+      .selectFrom('parked_run')
+      .where('run_id', '=', runId)
+      .select(['address', 'state'])
+      .execute();
+    expect(rows).toEqual([{ address: 's0', state: { ...STATE, by: 'new' } }]);
+    expect(await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'req-9' })).toEqual([]);
+    const joins = await getAutomationsQb(['join_pending']).selectFrom('join_pending').where('run_id', '=', runId).select('frame_address').execute();
+    expect(joins).toEqual([]);
+  });
+
+  it("a stale holder's finish of a claimed leaf, and its sweep of the run, leave the new holder's rows alone", async () => {
+    const current = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+    const sink = makeRecorderParkSink(makeStubRecorder({ teamId, runId }), { lease: { token: current!.token } });
+    await sink.commitTimerPark({ address: 's0', state: STATE, wakeAt: new Date().toISOString() });
+    await sink.recordJoin({ frameAddress: 's', parkedChildren: 1 });
+    expect(await claimParkedLeaf({ runId, address: 's0' })).not.toBeNull();
+    const stale = { token: randomUUID() };
+
+    await finishResumedLeaf(runId, 's0', stale);
+    await dropRunLeaves(runId, stale);
+    const left = await getAutomationsQb(['parked_run']).selectFrom('parked_run').where('run_id', '=', runId).select('status').execute();
+    expect(left).toEqual([{ status: 'resuming' }]);
+    expect(await getAutomationsQb(['join_pending']).selectFrom('join_pending').where('run_id', '=', runId).select('pending').execute()).toEqual([{ pending: 1 }]);
+
+    // The holder itself finishes the leaf and sweeps the run.
+    await finishResumedLeaf(runId, 's0', current!);
+    await dropRunLeaves(runId, current!);
+    expect(await getAutomationsQb(['parked_run']).selectFrom('parked_run').where('run_id', '=', runId).select('id').execute()).toEqual([]);
+    expect(await getAutomationsQb(['join_pending']).selectFrom('join_pending').where('run_id', '=', runId).select('pending').execute()).toEqual([]);
   });
 });

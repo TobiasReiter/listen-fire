@@ -64,6 +64,7 @@ import type { ExternalServiceCredentialsId } from '../../../generated/kysely/aut
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
+import { reportedFailureReason } from '../../../services/translation_graph/runs/trigger_run';
 import { UserService } from '../../../services/user';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
@@ -296,7 +297,7 @@ const triggersRouter = (procedure: typeof trpc.procedure) => {
           startedAt: row.started_at,
           completedAt: row.completed_at,
           failedAt: row.failed_at,
-          failureReason: row.failure_reason,
+          failureReason: reportedFailureReason(row),
           nodesWritten: row.nodes_written,
           // A dry run captured writes but committed nothing — surface it so
           // the activity feed reads as a preview, not a real write.
