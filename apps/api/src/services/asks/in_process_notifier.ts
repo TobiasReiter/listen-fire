@@ -10,20 +10,24 @@
 //
 // A settle queues the engine's wake for the ask's id — the same `wake_await`
 // row an inbound signal queues — so every answer door (the link page, Slack,
-// MCP, the control tower, a Response write in movement code) wakes its run
-// through one durable door, and the wake outlives this process. The kick asks
+// MCP, the control tower, a Response write in movement code) and the cancel
+// door wake their run through one durable door, and the wake outlives this
+// process. Being registered is what tells the cancel door a drain exists here. The kick asks
 // this process's drain for a pass now rather than on its next tick.
 
 import { registerAskSettledNotifier } from '../translation_graph/adapters/ask/notifier';
 import { ASK_ADAPTER_TYPE } from '../translation_graph/adapters/ask/type';
+import type { AskRecord } from '../translation_graph/adapters/ask/store';
 import { enqueueAwaitWake } from '../movement_engine/await_wake';
 import { notifyWork } from '../work/drain';
 
+/** Queue the engine's wake for whatever run is parked on the ask, and ask this
+ *  process's drain for a pass now. */
+async function wakeRunsParkedOn(ask: AskRecord): Promise<void> {
+  await enqueueAwaitWake({ adapterType: ASK_ADAPTER_TYPE, teamId: ask.teamId, correlationKey: ask.id });
+  notifyWork();
+}
+
 export function notifyEngineOfSettledAsks(): void {
-  registerAskSettledNotifier({
-    async notify(ask) {
-      await enqueueAwaitWake({ adapterType: ASK_ADAPTER_TYPE, teamId: ask.teamId, correlationKey: ask.id });
-      notifyWork();
-    },
-  });
+  registerAskSettledNotifier({ notify: wakeRunsParkedOn, cancelled: wakeRunsParkedOn });
 }

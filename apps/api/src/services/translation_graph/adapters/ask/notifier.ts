@@ -28,7 +28,11 @@ import type { AskRecord } from './store';
 
 /** What a deployment does when an ask settles. */
 export interface AskSettledNotifier {
+  /** An ask was answered. */
   notify(ask: AskRecord): Promise<void>;
+  /** An ask was cancelled. Only the in-process waiter hears of it: a cancel is
+   *  not an answer, so no creator webhook is sent for one. */
+  cancelled(ask: AskRecord): Promise<void>;
 }
 
 let inProcessNotifier: AskSettledNotifier | null = null;
@@ -40,6 +44,30 @@ let inProcessNotifier: AskSettledNotifier | null = null;
  */
 export function registerAskSettledNotifier(notifier: AskSettledNotifier): void {
   inProcessNotifier = notifier;
+}
+
+/** Tests only: back to a deployment with nothing registered. */
+export function resetAskSettledNotifierForTests(): void {
+  inProcessNotifier = null;
+}
+
+/**
+ * An ask was cancelled — tell the in-process waiter, if this deployment has
+ * one. Registration is the one fact that says an engine (and so a drain) lives
+ * here; with none registered (an asks-only deployment) there is nobody to wake
+ * and nothing else to do, so this is silent. Never throws, like
+ * `notifyAskSettled`: the cancel is already committed.
+ */
+export async function notifyAskCancelled(ask: AskRecord): Promise<void> {
+  if (!inProcessNotifier) return;
+  try {
+    await inProcessNotifier.cancelled(ask);
+  } catch (err) {
+    logger.error('[asks] failed to notify a cancelled ask (the cancel stands)', {
+      askId: ask.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /** Enqueue the settle for signed delivery. No `callback_url` means the creator

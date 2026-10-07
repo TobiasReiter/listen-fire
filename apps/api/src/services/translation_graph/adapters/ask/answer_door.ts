@@ -22,11 +22,8 @@
 //
 // Ops decisions
 
-import { enqueueAwaitWake } from '../../../movement_engine/await_wake';
-import { notifyWork } from '../../../work/drain';
-import { notifyAskSettled } from './notifier';
+import { notifyAskCancelled, notifyAskSettled } from './notifier';
 import { answerAsk, cancelAsk, lookupAskByToken, type AskRecord, type CancelOutcome } from './store';
-import { ASK_ADAPTER_TYPE } from './type';
 import type { AskId } from '../../../../generated/kysely/asks/Ask';
 
 export type AskDoorOutcome =
@@ -125,21 +122,15 @@ export async function answerAskById(askId: AskId, raw: unknown): Promise<AskDoor
  * Cancel an open ask — the cancellation door, beside the answer door. Every
  * caller that cancels on purpose comes through here (`write a { Cancelled: true
  * }`, `POST /v1/asks/:id/cancel`), so a run parked on the ask is woken now and
- * its await resolves empty. Only the local engine is told: a cancel is not an
- * answer, so the creator's settle webhook stays the answer's alone.
+ * its await resolves empty. Only the in-process waiter is told, and only where
+ * one is registered: a cancel is not an answer, so the creator's settle
+ * webhook stays the answer's alone.
  *
  * Run teardown (`abandonAskAwaits`) cancels through the store directly: it has
  * already withdrawn the parks, so there is nobody to wake.
  */
 export async function cancelAskAndWake(input: { id: AskId }): Promise<CancelOutcome> {
   const outcome = await cancelAsk(input);
-  if (outcome.ok) {
-    await enqueueAwaitWake({
-      adapterType: ASK_ADAPTER_TYPE,
-      teamId: outcome.ask.teamId,
-      correlationKey: outcome.ask.id,
-    });
-    notifyWork();
-  }
+  if (outcome.ok) await notifyAskCancelled(outcome.ask);
   return outcome;
 }

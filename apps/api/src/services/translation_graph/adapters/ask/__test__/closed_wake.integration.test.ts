@@ -35,6 +35,8 @@ import { drainUntilIdle, inProcessNotifier, resetWorkHandlersForTests, setWorkNo
 import { loadCorrelatedParks, registerAwaitCorrelation } from '../../await_correlation';
 import { askClosedSweepHandler, registerAskClosedSweepWork } from '../closed_sweep';
 import { cancelAskAndWake } from '../answer_door';
+import { notifyEngineOfSettledAsks } from '../../../../asks/in_process_notifier';
+import { resetAskSettledNotifierForTests } from '../notifier';
 import { AskAdapter } from '../index';
 import { ASK_ADAPTER_TYPE } from '../type';
 import { answerAsk, cancelAsk, createAsk, type AskRecord } from '../store';
@@ -101,6 +103,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  resetAskSettledNotifierForTests();
   setWorkNotifier(inProcessNotifier);
   resetWorkHandlersForTests();
   await cleanupTeam(teamId);
@@ -222,6 +225,8 @@ describe('a closed ask wakes the run parked on it', () => {
   });
 
   it('the cancel door queues the wake itself, before any sweep', async () => {
+    // The composed deployment's wiring: the engine is here to be woken.
+    notifyEngineOfSettledAsks();
     const { ask } = await runParkedOnAsk();
     const seen: AwaitResolution[] = [];
     awaitReadsTheAsk(ask.id, seen);

@@ -67,6 +67,7 @@ async function asks(): Promise<void> {
     async notify() {
       nudged += 1;
     },
+    async cancelled() {},
   });
 
   const ask = await createAsk({

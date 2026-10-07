@@ -69,6 +69,7 @@ describe('notifyAskSettled', () => {
       async notify(ask) {
         notified.push(ask.id);
       },
+      async cancelled() {},
     });
     await notifyAskSettled(settled('https://receiver.test/hook'));
     expect(notified).toEqual(['ask-1']);
@@ -81,6 +82,7 @@ describe('notifyAskSettled', () => {
       async notify(ask) {
         notified.push(ask.id);
       },
+      async cancelled() {},
     });
     process.env.ASKS_SETTLE_DELIVERY = 'webhook';
     await notifyAskSettled(settled('https://receiver.test/hook'));
@@ -101,6 +103,7 @@ describe('notifyAskSettled', () => {
       async notify() {
         throw new Error('receiver exploded');
       },
+      async cancelled() {},
     });
     await expect(notifyAskSettled(settled(null))).resolves.toBeUndefined();
   });

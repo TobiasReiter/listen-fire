@@ -22,7 +22,8 @@ jest.mock('../ask/store', () => {
   };
 });
 
-// A cancel goes through the cancel door, which queues the engine's wake.
+// A cancel goes through the cancel door, which queues the engine's wake where
+// the engine's notifier is registered.
 const enqueueAwaitWakeMock = jest.fn();
 jest.mock('../../../movement_engine/await_wake', () => ({
   enqueueAwaitWake: (...a: unknown[]) => enqueueAwaitWakeMock(...a),
@@ -30,6 +31,7 @@ jest.mock('../../../movement_engine/await_wake', () => ({
 jest.mock('../../../work/drain', () => ({ notifyWork: jest.fn() }));
 
 import { AskAdapter } from '../ask';
+import { notifyEngineOfSettledAsks } from '../../../asks/in_process_notifier';
 import { AskResponseRefused } from '../ask/answer_door';
 import { UPDATE_NOT_FOUND } from '../not_found';
 import { makeStablePosition, makeUnstablePosition } from '../../types';
@@ -525,6 +527,8 @@ describe('reading the Response edge — synchronous, empty until answered', () =
 
 describe('updateRecord — the cancellation surface', () => {
   it('{ Cancelled: true } freezes an open ask to expired', async () => {
+    // The composed deployment's wiring, so the cancel door has an engine to wake.
+    notifyEngineOfSettledAsks();
     cancelAskMock.mockResolvedValue({ ok: true, ask: { ...STORED, state: 'expired' } });
     const result = await adapter().updateRecord(
       { recordType: 'Check', externalId: 'ask-1', fields: { Cancelled: true }, mutationContext: ctx() } as UpdateInput,
