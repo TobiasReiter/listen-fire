@@ -21,8 +21,8 @@ Entries are written for two readers: an operator running a self-hosted installat
 - The checker's catalog and type-model core is Rust, behind `catalog_query`, held to the TypeScript by a differential.
 - Added a checker conformance corpus (`checks.json` and snapshots) that pins diagnostics across the checker port.
 - `constructor`-style keys (`constructor`, `__proto__`) no longer lower as properties.
-- Chains over 1,024 members are refused ("chain too long").
-- Deep nesting is refused at the limits: 128 for parse, 2,048 for JSON reads, 256 for typed catalog reads.
+- Chains over 1,024 members are refused ("chain too long"). A resource limit, not a language rule, so no language-version conditional (same precedent as the 128 nesting limit).
+- Deep nesting is refused at the limits: 128 for parse, 2,048 for JSON reads, 256 for typed catalog reads. Resource limits, not language rules, so no language-version conditional.
 
 <!-- add merged PRs here -->
 

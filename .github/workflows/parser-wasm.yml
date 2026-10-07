@@ -98,7 +98,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Parser pins through the committed artifact
         working-directory: packages/movement-lang
-        run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points'
+        run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points|lowering_regression|lowering_vocabulary|checks_regression|catalog_depth|loader'
       # The TypeScript catalog stays in use until the checker is ported, so
       # the Rust one is held to it on every change to either.
       - name: Catalog differential through the committed artifact

@@ -37,6 +37,11 @@ function canonical(value) {
 const keyOf = (r) =>
   canonical({ source: r.source, snapshot: r.snapshot, version: r.version, parseVersion: r.parseVersion, upgradingFrom: r.upgradingFrom });
 
+const beats = (a, b) => {
+  if (Boolean(a.note) !== Boolean(b.note)) return Boolean(a.note);
+  return canonical(a) < canonical(b);
+};
+
 const byKey = new Map();
 const stats = {};
 for (const arg of process.argv.slice(2)) {
@@ -58,12 +63,14 @@ for (const arg of process.argv.slice(2)) {
         `non-deterministic check: version ${record.version} source ${JSON.stringify(record.source.slice(0, 200))} gave ${canonical(seen.diagnostics)} and ${canonical(record.diagnostics)}`,
       );
     }
-    if (!seen) {
-      s.added += 1;
-      const { file: where, ...rest } = record;
-      // Where a noted record came from is what a reader needs to judge it.
-      byKey.set(key, record.note ? { ...rest, file: where } : rest);
-    }
+    const { file: where, ...rest } = record;
+    // Where a noted record came from is what a reader needs to judge it.
+    const candidate = record.note ? { ...rest, file: where } : rest;
+    if (!seen) s.added += 1;
+    // Equal records differ only in note/file/key order, and jest worker order
+    // varies, so the kept one is chosen by content: a noted record, then the
+    // lowest canonical JSON.
+    if (!seen || beats(candidate, seen)) byKey.set(key, candidate);
   }
 }
 

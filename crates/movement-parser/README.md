@@ -85,6 +85,12 @@ wasm32. A lowering refusal's `class` is absent for a `LoweringError`,
 `"BridgeError"` for a built-in call's static shape (the TypeScript's
 expression/call_shape.ts, now ported, threw that class), and `"MalformedTree"` when the input was not a tree (not UTF-8, not JSON, nested past 2,048 levels, or not a tree's shape).
 
+A tree the lowering cannot read (past the 2,048-level JSON bound or an unknown
+shape) surfaces to TypeScript as a plain `Error`, not a `BridgeError`, so
+apps/api aborts the run loudly rather than degrading. The invalid-UTF-8
+refusal's `pos` is a byte offset (serde's `valid_up_to`), unlike every other
+offset, which is in UTF-16 units; only raw `Uint8Array` callers can reach it.
+
 A panic aborts (`panic = "abort"`), which traps the instance. A panic hook
 records the message first; the loader reads it through `last_panic` from the
 trapped instance, puts it in the error it throws, then discards the instance
@@ -104,7 +110,8 @@ collection calls) need 256–512 KiB (measured 2026-10-06 with 256 KiB and
 512 KiB builds), and a slot's expression is parsed only after the
 statement parse returns, so the two never stack. Overflowing the shadow
 stack is an out-of-bounds trap, which hangs Node 22 on macOS rather than
-throwing, so the limit must stay well inside it.
+throwing, so the limit must stay well inside it. JSON reads are bounded at
+2,048 levels (see Chains).
 
 ## JSON output
 
@@ -230,9 +237,8 @@ tokens) — describing one is refused here until the typing layer is ported.
   (`"0"`–`"4294967294"`) first, ascending, then the rest as written
   (`util::js::object_key_order`). `declaredTypesIn` is a `Map`, so it keeps
   plain insertion order.
-- **Nesting limits.** The parse is bounded at 128 levels; JSON reads at
-  2,048; typed catalog reads at 256. Past one the answer is a clean refusal
-  naming the limit. A chain over 1,024 members is refused as "chain too long".
+- **Nesting limit.** Typed catalog reads are bounded at 256 levels; past it
+  the answer is a clean refusal naming the limit.
 - **`<` on strings.** `unionVariants` and `refinementKey`'s key sort compare
   UTF-16 units (`util::js::cmp_utf16`), not code points: an astral character
   sorts before U+E000–U+FFFF.
@@ -241,7 +247,8 @@ tokens) — describing one is refused here until the typing layer is ported.
   (spaces and punctuation, then digits, then letters with case ignored until
   everything else ties, lower case first; control characters ignored), read
   off Node 22 on 2026-10-07. Outside ASCII it falls back to code points,
-  where ICU sorts an accented letter with its base letter. The sort only
+  where ICU sorts an accented letter with its base letter; TypeScript aligns to
+  code-point order when the checker port replaces it. The sort only
   matters for an adapter with two or more position arguments — none in the
   corpus has more than one — and a name outside ASCII; either side would
   then key the schema differently.
