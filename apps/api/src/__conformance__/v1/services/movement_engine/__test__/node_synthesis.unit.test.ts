@@ -90,7 +90,7 @@ import type { ParkSink } from '../run';
 import type { CallbackSink } from '../callback_sink';
 import type { ParkedScopeState } from '../serialize';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   RESOURCES_REFERENCE_FIELD_ID,
   type Adapter,
@@ -221,7 +221,7 @@ function webhookEvent(adapterType: string, payload: Record<string, unknown>): Tr
 
 // ── Catalog / fixtures ───────────────────────────────────────────────────────
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     team_drive: { adapters: ['dropbox'] },

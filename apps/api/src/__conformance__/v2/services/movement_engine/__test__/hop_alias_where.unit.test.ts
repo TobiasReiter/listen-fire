@@ -9,7 +9,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { Adapter, GetRelatedInput, RelatedResult } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
@@ -119,7 +119,7 @@ listen to runs {} fire sweep
     source,
     event: manualEvent(),
     teamId: TEAM_ID,
-    catalog: staticCatalogFromManifests({
+    catalog: staticCatalogSnapshot({
       credentials: { kg_cred: { adapters: [KG] } },
       instanceSchemas: { [KG]: schema },
     }),

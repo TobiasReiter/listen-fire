@@ -96,7 +96,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
   }),
 }));
 
-import type { Catalog } from 'movement-lang';
+import { catalogSnapshotOf, type Catalog } from 'movement-lang';
 import { runMovement } from '../run';
 import { MovementEngineError } from '../expression';
 import type {
@@ -310,7 +310,7 @@ const schemasBySlug = {
   [KG_ADAPTER_TYPE]: kgProjection.schema,
 };
 
-const teamLikeCatalog: Catalog = {
+const teamLikeLiveCatalog: Catalog = {
   adapter(name) {
     if (!(name in schemasBySlug)) return undefined;
     return {
@@ -334,6 +334,11 @@ const teamLikeCatalog: Catalog = {
     return schemasBySlug[adapter as keyof typeof schemasBySlug];
   },
 };
+const TEAM_LIKE_NAMES = {
+  adapters: Object.keys(schemasBySlug),
+  credentials: ['dev_loop_attio', 'dev_loop_slack'],
+};
+const teamLikeCatalog = catalogSnapshotOf(teamLikeLiveCatalog, TEAM_LIKE_NAMES);
 
 const CREDENTIAL_IDS: Record<string, string> = {
   dev_loop_attio: 'cred-attio-1',
@@ -785,13 +790,16 @@ describe('drift throws loudly (Decision #4)', () => {
         teamId: TEAM_ID,
         // No `Ghost Type` in the graph's schema, but keep the rest so the
         // checker doesn't reject the whole program for an unrelated reason.
-        catalog: {
-          ...teamLikeCatalog,
-          instantiate: (adapter) =>
-            adapter === KG_ADAPTER_TYPE
-              ? undefined
-              : schemasBySlug[adapter as keyof typeof schemasBySlug],
-        },
+        catalog: catalogSnapshotOf(
+          {
+            ...teamLikeLiveCatalog,
+            instantiate: (adapter) =>
+              adapter === KG_ADAPTER_TYPE
+                ? undefined
+                : schemasBySlug[adapter as keyof typeof schemasBySlug],
+          },
+          TEAM_LIKE_NAMES,
+        ),
         host: makeTestHost({
           adapters: {
             resolve: makeResolveAdapter({

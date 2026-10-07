@@ -115,7 +115,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
 }));
 
 import {
-  mockCatalog,
+  mockCatalogSnapshot,
   type ExtractExpression,
   type InstanceSchema,
   type Span,
@@ -143,7 +143,7 @@ import {
 } from '../../translation_graph/engine/transforms/registry';
 import { registerBundledTransforms } from '../../translation_graph/engine/transforms/register-bundled';
 import { DOCUMENT_STORE_OWNER } from '../../translation_graph/engine/files/document_store';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type {
   LlmCallInput,
   LlmCallResult,
@@ -392,7 +392,7 @@ const wrap = (value: unknown) => ({ evidence: 'q', value });
 
 // The stage-0 fixture uses the REAL static catalog (manifests + thin
 // schemas).
-const parityCatalog = staticCatalogFromManifests({
+const parityCatalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     acme_main: { adapters: ['attio'] },
@@ -453,7 +453,7 @@ const slackSchema: InstanceSchema = {
   },
 };
 
-const movementCatalog = mockCatalog({
+const movementCatalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
@@ -2432,7 +2432,7 @@ const carryFileSchema = (): { catalog: ReturnType<typeof mockCatalog> } => {
     },
   };
   return {
-    catalog: mockCatalog({
+    catalog: mockCatalogSnapshot({
       adapters: {
         email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailWithFiles },
         attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioWithDeck },

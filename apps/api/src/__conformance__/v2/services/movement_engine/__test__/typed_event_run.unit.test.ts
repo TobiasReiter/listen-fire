@@ -97,7 +97,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
 import type { Catalog, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressDisplay, eventAddressKey } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import {
   makeStablePosition,
   positionData,
@@ -163,13 +163,13 @@ const baseCatalog = staticCatalogFromManifests({
     acme_slack: { adapters: ['slack'] },
   },
 });
-const catalog: Catalog = {
+const catalog = snapshotOverManifests({
   ...baseCatalog,
   instantiate(name, args) {
     if (name === 'attio') return ATTIO_SCHEMA;
     return baseCatalog.instantiate(name, args);
   },
-};
+});
 
 interface RecordedWrite {
   recordType: string;

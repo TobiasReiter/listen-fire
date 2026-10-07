@@ -92,7 +92,7 @@ import { runMovement } from '../run';
 import { arbitrateEntityCandidates } from '../../translation_graph/engine/entity_match';
 
 import type { InstanceSchema } from 'movement-lang';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -212,7 +212,7 @@ const crmSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
   instanceSchemas: { attio: crmSchema },
 });

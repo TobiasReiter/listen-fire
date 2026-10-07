@@ -19,7 +19,7 @@ import { parseTraversalPath, refinementKey, scanInstanceChains } from 'movement-
 import type { InstanceSchema } from 'movement-lang';
 import { refineInstanceSchema } from '../../translation_graph/movement/refinements';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -235,7 +235,7 @@ async function runWith(input: {
   fake: { adapter: Adapter };
   body: string;
 }) {
-  const catalog = staticCatalogFromManifests({
+  const catalog = staticCatalogSnapshot({
     credentials: { kg_cred: { adapters: [KG] } },
     instanceSchemas: { [KG]: input.schema },
   });

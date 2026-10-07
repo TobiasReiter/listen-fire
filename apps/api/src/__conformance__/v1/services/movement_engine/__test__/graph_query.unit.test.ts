@@ -17,7 +17,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -150,7 +150,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] }, kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });

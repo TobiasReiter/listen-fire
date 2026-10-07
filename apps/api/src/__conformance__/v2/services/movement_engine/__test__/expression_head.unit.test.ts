@@ -91,7 +91,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
   }),
 }));
 
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import type {
   LlmCallInput,
@@ -234,7 +234,7 @@ const attioSchema: InstanceSchema = {
   },
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: {
       constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],

@@ -24,7 +24,7 @@ import type { ParkedScopeState } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { snapshotOverManifests, staticCatalogFromManifests, staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { runMovement, fireCallbackBody, type ParkSink } from '../run';
 import { makeTestHost } from '../host';
 
@@ -79,7 +79,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -606,11 +606,11 @@ describe('a callback body that ANSWERS a request', () => {
     credentials: { kg_cred: { adapters: ['kg'] } },
     instanceSchemas: { kg: kgSchema },
   });
-  const askCatalog = {
+  const askCatalog = snapshotOverManifests({
     ...base,
     instantiate: (name: string, args?: Record<string, unknown>) =>
       name === ASK ? askSchema : base.instantiate(name, args as never),
-  };
+  });
 
   const SOURCE = `import { manual, ask, kg } from adapters
 import { kg_cred } from credentials

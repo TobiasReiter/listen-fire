@@ -87,7 +87,7 @@ import { runMovement } from '../run';
 import type { MovementTransformInvoker, TransformInvocationResult } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -151,7 +151,7 @@ function makeFakeAdapter(adapterType: string): { adapter: Adapter; creates: Reco
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 

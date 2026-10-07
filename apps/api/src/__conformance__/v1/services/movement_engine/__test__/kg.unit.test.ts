@@ -103,7 +103,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
   }),
 }));
 
-import { mockCatalog, type Catalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type Catalog, type InstanceSchema } from 'movement-lang';
 import { anthropicChat } from '../../../lib/anthropic';
 import { runFailureCause, runMovement } from '../run';
 
@@ -475,7 +475,7 @@ const kgSchema: InstanceSchema = {
 };
 
 function makeCatalog(options: { kg?: InstanceSchema } = { kg: kgSchema }): Catalog {
-  return mockCatalog({
+  return mockCatalogSnapshot({
     adapters: {
       email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
       kg: { constructionArgs: [], ...(options.kg ? { schema: options.kg } : {}) },

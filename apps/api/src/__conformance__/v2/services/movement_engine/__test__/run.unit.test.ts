@@ -154,7 +154,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
 }));
 
 import type { InstanceSchema } from 'movement-lang';
-import { mockCatalog, parseMovementExpression } from 'movement-lang';
+import { mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import {
   MovementRunFailed,
@@ -173,7 +173,7 @@ import {
 import { createSingleFlight } from '../single_flight';
 import type { Binding, SourceRead } from '../expression';
 import { Environment, MovementEngineError, evalMovementExpr } from '../expression';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -325,7 +325,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dev_slack: { adapters: ['slack'] },
     acme_main: { adapters: ['attio'] },
@@ -356,7 +356,7 @@ const MILESTONE_CREDENTIAL_IDS: Record<string, string> = {
   acme_affinity: 'cred-affinity-1',
 };
 
-const milestoneCatalog = staticCatalogFromManifests({
+const milestoneCatalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     acme_main: { adapters: ['attio'] },
@@ -3869,7 +3869,7 @@ describe('a discriminated write hands back a handle of the variant it named', ()
     },
   };
 
-  const listCatalog = staticCatalogFromManifests({
+  const listCatalog = staticCatalogSnapshot({
     credentials: {
       dev_slack: { adapters: ['slack'] },
       acme_main: { adapters: ['attio'] },
@@ -4378,7 +4378,7 @@ describe('sleep — durable timer park', () => {
 describe('runMovement — direct backtick credential arg (run-path)', () => {
   // A catalog with a credential that MUST be backtick-quoted because its name
   // contains a hyphen (an identifier-unsafe character).
-  const backtickCatalog = staticCatalogFromManifests({
+  const backtickCatalog = staticCatalogSnapshot({
     credentials: {
       'Dev-loop Attio': { adapters: ['attio'] },
     },
@@ -5214,7 +5214,7 @@ describe('json write fields carry structured values through to the adapter', () 
     },
   };
 
-  const docsCatalog = mockCatalog({
+  const docsCatalog = mockCatalogSnapshot({
     adapters: {
       docs: {
         constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
