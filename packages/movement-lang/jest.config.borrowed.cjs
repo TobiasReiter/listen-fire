@@ -16,15 +16,20 @@ module.exports = {
   // jest.conformance.v<n>.cjs — never under the current one.
   testPathIgnorePatterns: ['/node_modules/', '/__conformance__/'],
   testEnvironment: 'node',
-  maxWorkers: 1,
+  maxWorkers: '50%',
   clearMocks: true,
   // Resolve TypeScript sources before any stray compiled `.js` — see the
   // same rationale in jest.config.ts.
   moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'cjs', 'jsx', 'json', 'node'],
+  // Transpile only: types are owned by `pnpm code:type-check`.
   transform: {
     '^.+\\.tsx?$': [
       path.join(API_NODE_MODULES, 'ts-jest'),
-      { tsconfig: { target: 'es2022', module: 'commonjs', esModuleInterop: true, strict: true } },
+      {
+        tsconfig: { target: 'es2022', module: 'commonjs', esModuleInterop: true, strict: true },
+        isolatedModules: true,
+        diagnostics: false,
+      },
     ],
   },
   modulePaths: [API_NODE_MODULES],

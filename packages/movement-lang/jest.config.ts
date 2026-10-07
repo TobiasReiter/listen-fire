@@ -1,9 +1,11 @@
 export default {
   clearMocks: true,
-  maxWorkers: 1,
+  maxWorkers: '50%',
   testMatch: ['**/*.unit.test.ts'],
   testPathIgnorePatterns: ['/node_modules/', '/__conformance__/'],
   preset: 'ts-jest',
+  // Transpile only: types are owned by `pnpm code:type-check`.
+  transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }] },
   testEnvironment: 'node',
   rootDir: '.',
   // Resolve TypeScript sources BEFORE any compiled `.js`. ts-jest's preset
