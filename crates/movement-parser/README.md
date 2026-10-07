@@ -1,7 +1,21 @@
 # movement-parser
 
-The movement-language parser in Rust, compiled to WASM and called from
-TypeScript through `packages/movement-lang/wasm/loader.ts`.
+The movement-language parser and expression lowering in Rust, compiled to
+WASM and called from TypeScript through `packages/movement-lang/wasm/loader.ts`.
+
+## Modules
+
+| module | what |
+|---|---|
+| `lexer`, `expr`, `stmt`, `tree`, `ast`, `scan` | the parser: statement and expression grammars, their JSON shapes |
+| `lowering` | the expression tree → the shared `Expression` (packages/shared/expression/types.ts); the only lowering since `parser/expression/lower.ts` became its wrapper |
+| `abi` | the C ABI over both |
+
+`lowering/vocabulary/data.rs` (the stdlib families, the FILE/READ and
+options-map contracts, the AI tiers) is generated from the TypeScript
+declarations by `packages/movement-lang/parser/expression/__test__/lowering_vocabulary.unit.test.ts`,
+which pins it: run that test with `UPDATE_LOWERING_VOCABULARY=1` after
+changing expression/stdlib.ts, then rebuild the WASM.
 
 ## Toolchain
 
@@ -50,11 +64,15 @@ differ.
 | `parse_program_eager` | as `parse_program` | the same `Program`, each slot also carrying `tree` (its `MExpr`) or `error` (`{message, pos}`) |
 | `parse_expression` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `parse_nested_call` | `(raw_ptr, raw_len, at_start, at_end, origin_line, origin_col, version, out_ptr_ptr, out_len_ptr) -> status` | |
+| `lower_expression` | `(tree_ptr, tree_len, src_ptr, src_len, out_ptr_ptr, out_len_ptr) -> status` | the tree's JSON and its source text in; the `Expression`, or `{"error": {message, code?, class?}}` |
+| `lower_condition` | as `lower_expression` | the `MovementCondition` |
 | `last_panic` | `(out_ptr_ptr, out_len_ptr)` | the last panic's message, in a static buffer (not freed) |
 
 Status 0 means the output is the tree; 1 means it is `{"error": {…}}`. The
 output is UTF-8 JSON the caller must `dealloc`. Every value is an i32 on
-wasm32.
+wasm32. A lowering refusal's `class` is absent for a `LoweringError`,
+`"BridgeError"` for a built-in call's static shape (expression/call_shape.ts
+threw that class), and `"MalformedTree"` when the input was not a tree.
 
 A panic aborts (`panic = "abort"`), which traps the instance. A panic hook
 records the message first; the loader reads it through `last_panic` from the
@@ -79,7 +97,65 @@ throwing, so the limit must stay well inside it.
 
 ## JSON output
 
-Keys are sorted recursively. Emit through `to_sorted_json`: it goes via
-`serde_json::Value`, whose `Map` is a `BTreeMap` while serde_json's
+The parser's keys are sorted recursively. Emit through `to_sorted_json`: it
+goes via `serde_json::Value`, whose `Map` is a `BTreeMap` while serde_json's
 `preserve_order` feature is off (the default, and kept off). A derived
 `Serialize` alone would write struct fields in declaration order.
+
+The lowering's are NOT sorted: it writes its typed values directly, each
+struct's fields declared in the order the TypeScript lowering built the
+object, and a hop's `{ … }` settings (`config`, and `config.extra`) as
+`IndexMap`s in the order they were written — the one place the order is the
+source's. A consumer that walks or stringifies an `Expression` sees what it
+saw from the TypeScript (the differential compared the stringified values).
+
+The lowering reads its tree by hand from a `serde_json::Value`
+(`lowering/read.rs`) rather than through derived `Deserialize`s, which more
+than doubled the artifact. Measured 2026-10-07: the parser alone was 442,538
+bytes; with the lowering through derived `Deserialize`s, 944,142; read by
+hand, 708,832; with the vocabulary as generated Rust rather than parsed
+JSON, 647,732 (215,621 gzipped, against 144,677).
+
+## JavaScript semantics in the lowering
+
+The lowering's refusal messages are the TypeScript's, and some of its rules
+read text, so these are reproduced explicitly:
+
+- **UTF-16 offsets.** A tree's `at` indexes its source in UTF-16 units; the
+  `IS` subject, an `IS` address's hop text and a `#linked` WHERE are sliced
+  that way (`util::utf16`). A duration's unit is "the last unit lowercased"
+  (`js::lowercase_last_unit`), which leaves half an astral character alone.
+  An option key's did-you-mean counts edits in UTF-16 units.
+- **Whitespace.** `trim()` and the regexes' `\s` are JavaScript's set
+  (U+FEFF in, U+0085 out), not Rust's.
+- **Regexes.** None run; each is reproduced by hand: `/^[A-Za-z_][A-Za-z0-9_]*$/`
+  (a plain hop label), `/^[A-Z][A-Z0-9_]+$/` (namespace-shaped),
+  `/^(ASC|DESC)$/i`, `label.split(/[:\s]/, 1)` (an ending hop's base), and the
+  three `#linked` adapter regexes with their leftmost-match order. `/i`
+  without the `u` flag folds ASCII only.
+- **Numbers.** A number in a message prints as `String(x)` does
+  (`js::number_to_string`: `1e+21`, `1e-7`, `0.1`); Rust's `{}` differs at
+  both ends. The tree's numbers are parsed with serde_json's
+  `float_roundtrip`, without which a decimal can come back one ULP off. An
+  integral number up to 2^53 is written as an integer, past it as a float;
+  `JSON.parse` reads either as the same number.
+- **Case.** `toUpperCase`/`toLowerCase` are Rust's `to_uppercase`/
+  `to_lowercase` — both the full Unicode mapping, final sigma included.
+- **Object keys.** `extra.__proto__ = v` set the TypeScript object's
+  prototype instead of adding a key, so the lowering drops that key. One
+  TypeScript quirk is NOT reproduced: a `_resources` WHERE name looked up on
+  a plain object found `constructor` (and `__proto__`) on Object.prototype and
+  lowered to a `resource` read with no field; the lowering refuses it as an
+  unknown property, as the table means (reported for a ruling, 2026-10-07).
+- **Lone surrogates.** A source holding one reaches the WASM as U+FFFD
+  (`TextEncoder`), so a slice of it differs from the JavaScript's. The parser
+  has the same boundary.
+
+## Depth
+
+The lowering recurses once per tree level, as the TypeScript did; the
+grammar bounds nesting (`MAX_DEPTH`), but not a chain (`a.b.c…`, `a + b +
+…`). Measured 2026-10-07: a chain of about 2,200 members or 2,400 operators
+exhausts the engine's stack (a `RangeError`, thrown as "movement parser
+crashed"), where the TypeScript lowering reached the parser's own limit of
+about 2,600.

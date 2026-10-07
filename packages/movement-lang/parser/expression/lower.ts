@@ -30,6 +30,7 @@ import { describeStdlibFamily, listStdlibNamespaces, stdlibFamily } from '../../
 import { neverAsAny } from '../../never';
 import { isMapSpread, type BinaryOp, type CallArg, type Hop, type MapEntry, type MExpr, type Name, type TypeExpr } from './tree';
 import { parseExpression } from './parse_expression';
+import { callLowering } from '../../wasm/loader';
 
 export class LoweringError extends BridgeError {
   constructor(message: string, code?: string) {
@@ -68,12 +69,91 @@ const TOP: Ctx = { edgeProps: false };
 
 /** Lower one expression; `source` is the text `tree` was parsed from. */
 export function lowerExpression(tree: MExpr, source: string): Expression {
-  return new Lowering(source).lower(tree, TOP);
+  return TS_LOWERING ? tsLowerExpression(tree, source) : rustLowerExpression(tree, source);
 }
 
 /** Lower one `if` condition into its top-level
  *  `AND` conjuncts, each an `IS` type guard or an expression. */
 export function lowerCondition(tree: MExpr, source: string): MovementCondition {
+  return TS_LOWERING ? tsLowerCondition(tree, source) : rustLowerCondition(tree, source);
+}
+
+// ── The Rust lowering (crates/movement-parser/src/lowering) ──
+//
+// The tree is JSON already (the Rust parser's output, or a rewriting of it),
+// so it crosses the boundary as it is; the source goes with it because a few
+// rules read the text the tree's offsets index.
+
+declare const process: { env?: Record<string, string | undefined> } | undefined;
+
+/** Transitional: `MOVEMENT_LOWERING=ts` runs the TypeScript lowering below. */
+const TS_LOWERING = typeof process !== 'undefined' && process.env?.MOVEMENT_LOWERING === 'ts';
+
+/** @internal The Rust lowering, whatever the switch says (the differential). */
+export function rustLowerExpression(tree: MExpr, source: string): Expression {
+  const { ok, json } = callLowering('lower_expression', JSON.stringify(tree), source);
+  if (!ok) throw loweringRefusal(json);
+  if (!isLoweredExpression(json)) throw malformedLowering('expression', json);
+  return json;
+}
+
+/** @internal As `rustLowerExpression`. */
+export function rustLowerCondition(tree: MExpr, source: string): MovementCondition {
+  const { ok, json } = callLowering('lower_condition', JSON.stringify(tree), source);
+  if (!ok) throw loweringRefusal(json);
+  if (!isLoweredCondition(json)) throw malformedLowering('condition', json);
+  return json;
+}
+
+/** The refusal, in the class the TypeScript lowering threw it in: a
+ *  built-in call's static shape is a `BridgeError` (expression/call_shape.ts),
+ *  everything else a `LoweringError`. */
+function loweringRefusal(json: unknown): Error {
+  const error = isRecord(json) ? json.error : undefined;
+  if (!isRecord(error) || typeof error.message !== 'string') throw malformedLowering('refusal', json);
+  const code = typeof error.code === 'string' ? error.code : undefined;
+  switch (error.class) {
+    case undefined:
+      return new LoweringError(error.message, code);
+    case 'BridgeError':
+      return new BridgeError(error.message, undefined, code);
+    case 'MalformedTree':
+      return new Error(error.message);
+    default:
+      throw malformedLowering('refusal', json);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// Shallow on purpose, as the parser's tree guards are (parser/rust_parser.ts):
+// they tell the envelopes apart; beneath the root the value is the Rust
+// lowering's own output, whose shape the pinned fixture holds
+// (__test__/lowering_regression).
+
+function isLoweredExpression(value: unknown): value is Expression {
+  return isRecord(value) && typeof value.type === 'string';
+}
+
+function isLoweredCondition(value: unknown): value is MovementCondition {
+  return isRecord(value) && typeof value.kind === 'string';
+}
+
+function malformedLowering(what: string, json: unknown): Error {
+  return new Error(`the movement lowering returned a malformed ${what}: ${JSON.stringify(json)?.slice(0, 200)}`);
+}
+
+// ── The TypeScript lowering (transitional; the differential's other side) ──
+
+/** @internal */
+export function tsLowerExpression(tree: MExpr, source: string): Expression {
+  return new Lowering(source).lower(tree, TOP);
+}
+
+/** @internal */
+export function tsLowerCondition(tree: MExpr, source: string): MovementCondition {
   return new Lowering(source).condition(tree);
 }
 

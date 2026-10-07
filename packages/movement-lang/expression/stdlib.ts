@@ -351,7 +351,8 @@ const CHUNKS_OPTIONS: BuiltinOptionsSpec = {
   },
 };
 
-const BUILTIN_OPTIONS: ReadonlyArray<BuiltinOptionsSpec> = [CHUNKS_OPTIONS];
+/** Exported for the lowering vocabulary's pin (parser/expression/__test__/lowering_vocabulary). */
+export const BUILTIN_OPTIONS: ReadonlyArray<BuiltinOptionsSpec> = [CHUNKS_OPTIONS];
 
 const BUILTIN_OPTIONS_BY_FN = new Map(BUILTIN_OPTIONS.map((spec) => [spec.fn, spec]));
 

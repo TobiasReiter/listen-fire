@@ -15,6 +15,7 @@ use std::sync::{Mutex, Once};
 
 use serde_json::json;
 
+use crate::lowering::{self, Mode};
 use crate::{NestedCall, Parsed, to_sorted_json};
 
 const OK: u32 = 0;
@@ -117,6 +118,61 @@ pub unsafe extern "C" fn parse_nested_call(
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
+/// `lowerExpression(tree, source)`: the tree's JSON and the text it was
+/// parsed from in, the `Expression` (status 0) or `{"error": {message,
+/// code?, class?}}` (status 1) out. Unlike the parses, the output keeps the
+/// TypeScript lowering's key order instead of sorting (`crate::lowering`).
+///
+/// # Safety
+/// Both input ranges must be readable; the out slots writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lower_expression(
+    tree_ptr: *const u8,
+    tree_len: u32,
+    src_ptr: *const u8,
+    src_len: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    unsafe { lower(Mode::Expression, (tree_ptr, tree_len), (src_ptr, src_len), out_ptr_ptr, out_len_ptr) }
+}
+
+/// `lowerCondition(tree, source)`, as `lower_expression`.
+///
+/// # Safety
+/// As `lower_expression`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lower_condition(
+    tree_ptr: *const u8,
+    tree_len: u32,
+    src_ptr: *const u8,
+    src_len: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    unsafe { lower(Mode::Condition, (tree_ptr, tree_len), (src_ptr, src_len), out_ptr_ptr, out_len_ptr) }
+}
+
+unsafe fn lower(
+    mode: Mode,
+    tree: (*const u8, u32),
+    src: (*const u8, u32),
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    install_panic_hook();
+    let inputs = unsafe { utf8(tree.0, tree.1) }.and_then(|tree| Ok((tree, unsafe { utf8(src.0, src.1) }?)));
+    let (status, bytes) = match inputs {
+        Ok((tree, source)) => match lowering::lower_json_bytes(tree, source, mode) {
+            Ok(bytes) => (OK, bytes),
+            Err(bytes) => (ERROR, bytes),
+        },
+        Err(error) => (ERROR, to_sorted_json(&json!({ "error": error }))),
+    };
+    unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
+    status
+}
+
 /// Room for one panic message. Fixed so that recording a panic allocates
 /// nothing: the panic may have struck inside the allocator.
 const PANIC_CAPACITY: usize = 1024;
@@ -188,6 +244,12 @@ unsafe fn emit(parsed: Parsed, out_ptr_ptr: *mut usize, out_len_ptr: *mut usize)
         Ok(tree) => (OK, to_sorted_json(&tree)),
         Err(error) => (ERROR, to_sorted_json(&json!({ "error": error }))),
     };
+    unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
+    status
+}
+
+/// Hands `bytes` to the caller through the out slots.
+unsafe fn write_out(bytes: Vec<u8>, out_ptr_ptr: *mut usize, out_len_ptr: *mut usize) {
     // A boxed slice's allocation is exactly `byte_layout(len)`, which is what
     // `dealloc` frees with.
     let bytes = bytes.into_boxed_slice();
@@ -199,7 +261,6 @@ unsafe fn emit(parsed: Parsed, out_ptr_ptr: *mut usize, out_len_ptr: *mut usize)
         out_ptr_ptr.write_unaligned(ptr as usize);
         out_len_ptr.write_unaligned(len);
     }
-    status
 }
 
 #[cfg(test)]
@@ -223,6 +284,69 @@ mod tests {
         let (status, json) = call_expression("'héllo 🌍'");
         assert_eq!(status, OK);
         assert_eq!(json, r#"{"at":{"end":10,"start":0},"kind":"string","parts":["héllo 🌍"],"quote":"'"}"#);
+    }
+
+    fn call_lowering(mode: Mode, tree: &str, source: &str) -> (u32, String) {
+        let input = |text: &str| {
+            let len = u32::try_from(text.len()).unwrap();
+            let ptr = alloc(len);
+            unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), ptr, text.len()) };
+            (ptr, len)
+        };
+        let ((tree_ptr, tree_len), (src_ptr, src_len)) = (input(tree), input(source));
+        let (mut out_ptr, mut out_len) = (0usize, 0usize);
+        let status = unsafe {
+            match mode {
+                Mode::Expression => lower_expression(tree_ptr, tree_len, src_ptr, src_len, &mut out_ptr, &mut out_len),
+                Mode::Condition => lower_condition(tree_ptr, tree_len, src_ptr, src_len, &mut out_ptr, &mut out_len),
+            }
+        };
+        let out = unsafe { std::slice::from_raw_parts(out_ptr as *const u8, out_len) }.to_vec();
+        unsafe {
+            dealloc(tree_ptr, tree_len);
+            dealloc(src_ptr, src_len);
+            dealloc(out_ptr as *mut u8, u32::try_from(out_len).unwrap());
+        }
+        (status, String::from_utf8(out).unwrap())
+    }
+
+    #[test]
+    fn lowering_round_trips_in_the_typescript_key_order() {
+        let (_, tree) = call_expression("a == 1");
+        let (status, json) = call_lowering(Mode::Expression, &tree, "a == 1");
+        assert_eq!(status, OK);
+        assert_eq!(
+            json,
+            r#"{"type":"compare","op":"eq","left":{"type":"property","propertyTypeId":"a"},"right":{"type":"static","value":1}}"#
+        );
+        let (status, json) = call_lowering(Mode::Condition, &tree, "a == 1");
+        assert_eq!(status, OK);
+        assert!(json.starts_with(r#"{"kind":"expr","expr":{"type":"compare""#), "{json}");
+    }
+
+    #[test]
+    fn a_refusal_comes_back_as_an_error_envelope() {
+        let (_, tree) = call_expression("x[0]");
+        assert_eq!(
+            call_lowering(Mode::Expression, &tree, "x[0]"),
+            (ERROR, r#"{"error":{"message":"an index read `x[i]` is written AT(x, i)"}}"#.to_string())
+        );
+        let (_, tree) = call_expression("FILE(x)");
+        assert_eq!(
+            call_lowering(Mode::Expression, &tree, "FILE(x)"),
+            (
+                ERROR,
+                r#"{"error":{"message":"FILE(content, \"pdf\" | \"text\") takes exactly 2 arguments, got 1 — e.g. FILE(report_text, \"pdf\")","class":"BridgeError"}}"#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_tree_that_is_not_one_is_the_caller_s_fault() {
+        let (status, json) = call_lowering(Mode::Expression, r#"{"kind":"nope"}"#, "");
+        assert_eq!(status, ERROR);
+        assert!(json.contains(r#""class":"MalformedTree""#), "{json}");
     }
 
     #[test]

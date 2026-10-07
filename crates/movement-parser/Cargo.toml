@@ -10,10 +10,16 @@ description = "The movement-language parser, exposed to TypeScript through a C A
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# The lowering's one data-ordered map (a hop's `extra` settings) keeps its
+# insertion order, as the TypeScript object it is read as does.
+indexmap = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` stays off: serde_json's Map is then a BTreeMap, which is
 # what makes `to_sorted_json` emit sorted keys.
-serde_json = "1"
+# `float_roundtrip`: the lowering parses the tree's numbers, and the default
+# parser can be one ULP off. `unbounded_depth`: a tree at the grammar's depth
+# limit nests deeper than serde_json's default 128.
+serde_json = { version = "1", features = ["float_roundtrip", "unbounded_depth"] }
 
 [dev-dependencies]
 sha2 = "0.11.0"

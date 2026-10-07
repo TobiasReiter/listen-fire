@@ -1,4 +1,4 @@
-// Loads the Rust parser (crates/movement-parser, built by
+// Loads the Rust parser and lowering (crates/movement-parser, built by
 // scripts/build-parser-wasm.sh) and calls its hand-written C ABI: UTF-8 bytes
 // in, UTF-8 JSON bytes out, every buffer freed by the side that did not
 // allocate it. Node instantiates synchronously when this module loads; a
@@ -32,11 +32,14 @@ interface WasmModule {
 
 type ParserFunction = 'parse_program' | 'parse_program_eager' | 'parse_expression' | 'parse_nested_call';
 
+/** The lowering's exports take two inputs: the tree's JSON, and its source. */
+type LoweringFunction = 'lower_expression' | 'lower_condition';
+
 interface ParserExports {
   memory: { readonly buffer: unknown };
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
-  call(fn: ParserFunction, args: number[]): number;
+  call(fn: ParserFunction | LoweringFunction, args: number[]): number;
   lastPanic(outPtrPtr: number, outLenPtr: number): void;
 }
 
@@ -122,18 +125,39 @@ export function callParser(
   return call(fn, input, extra);
 }
 
-function call(fn: ParserFunction, input: string | Uint8Array, extra: number[]): { ok: boolean; json: unknown } {
+/**
+ * Calls one lowering export with the tree (as JSON) and the source text it
+ * was parsed from, and returns the JSON it emits: the lowered value, or
+ * `{error: …}`.
+ *
+ * @internal Used by the lowering wrapper (parser/expression/lower.ts).
+ */
+export function callLowering(fn: LoweringFunction, treeJson: string, source: string): { ok: boolean; json: unknown } {
+  return call(fn, [treeJson, source], []);
+}
+
+/** `inputs`: one (pointer, length) pair each, in order, before `extra`. */
+function call(
+  fn: ParserFunction | LoweringFunction,
+  inputs: string | Uint8Array | Array<string | Uint8Array>,
+  extra: number[],
+): { ok: boolean; json: unknown } {
   const exports = currentExports();
-  const bytes = typeof input === 'string' ? encoder.encode(input) : input;
+  const buffers = (Array.isArray(inputs) ? inputs : [inputs]).map(input =>
+    typeof input === 'string' ? encoder.encode(input) : input,
+  );
   let status: number;
   let json: string;
   let slots: number | undefined;
   try {
-    const inPtr = exports.alloc(bytes.length);
-    memoryBytes(exports).set(bytes, inPtr);
+    const pairs = buffers.map(bytes => {
+      const ptr = exports.alloc(bytes.length);
+      memoryBytes(exports).set(bytes, ptr);
+      return { ptr, len: bytes.length };
+    });
     slots = exports.alloc(8);
-    status = exports.call(fn, [inPtr, bytes.length, ...extra, slots, slots + 4]);
-    exports.dealloc(inPtr, bytes.length);
+    status = exports.call(fn, [...pairs.flatMap(p => [p.ptr, p.len]), ...extra, slots, slots + 4]);
+    for (const p of pairs) exports.dealloc(p.ptr, p.len);
     const view = new DataView(memoryBuffer(exports));
     const outPtr = view.getUint32(slots, true);
     const outLen = view.getUint32(slots + 4, true);
@@ -216,11 +240,13 @@ function readExports(raw: Record<string, unknown>): ParserExports {
   const alloc = exported('alloc');
   const dealloc = exported('dealloc');
   const lastPanic = exported('last_panic');
-  const parsers: Record<ParserFunction, (...args: number[]) => unknown> = {
+  const parsers: Record<ParserFunction | LoweringFunction, (...args: number[]) => unknown> = {
     parse_program: exported('parse_program'),
     parse_program_eager: exported('parse_program_eager'),
     parse_expression: exported('parse_expression'),
     parse_nested_call: exported('parse_nested_call'),
+    lower_expression: exported('lower_expression'),
+    lower_condition: exported('lower_condition'),
   };
   return {
     memory,

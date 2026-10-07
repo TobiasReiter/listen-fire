@@ -6,6 +6,7 @@ pub mod abi;
 pub mod ast;
 pub mod expr;
 pub mod lexer;
+pub mod lowering;
 pub mod scan;
 pub mod stmt;
 pub mod tree;
