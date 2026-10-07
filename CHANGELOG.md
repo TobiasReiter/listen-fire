@@ -15,9 +15,18 @@ Entries are written for two readers: an operator running a self-hosted installat
 - A resumed run whose adapter has been uninstalled, or whose credential is gone or now serves another system, fails naming the instance (`instance <system>(credentials: <name>) is not in the catalog snapshot`).
 - For embedders: the movement engine reaches everything outside the program through one `EngineHost`: adapters, model calls, parking (with record bindings), the trace, cancellation, files, acting-user lookup and write locks. A run takes a `CatalogSnapshot`, the team's catalog as plain JSON, rather than a live catalog. `makeTestHost` builds an in-memory host for tests. See [`docs/engine-host.md`](docs/engine-host.md).
 
+- Remote adapters: every call Listen-Fire makes to a remote adapter now carries `x-listen-fire-team: <team id>`, so a server serving several teams knows which install is calling. The push doors (`emit`, `wake`) refuse a body over 1 MB with 413 (the limit was 25 MB).
+- A remote adapter may no longer take a slug that a built-in adapter answers to (its slug, trigger kinds or aliases, in any casing), nor `callback` or `ask`. Installing one is refused, the push doors answer 401 for it, and the webhook door never routes to it. An existing install with such a slug was already shadowed by the built-in at resolution; it now also stops receiving pushes.
+- The webhook door queues a delivery's await wakes before it answers 200. When the adapter's wake keys cannot be read, or their wakes cannot be queued, the door answers 500 after the delivery's events are receipted and queued, so the sender's retry re-attempts the wakes without running the events twice. It used to log the failure and answer 200, losing the wakes.
+- For embedders: `EngineHost.park` gains `wake({ adapterType, teamId, correlationKey })`, and `ParkSink.commitAwaitPark` no longer takes a `resolvesNow` closure. The engine re-checks an await itself once the park is durable and calls `park.wake` when it already resolved, so every host call carries plain data.
+
 - The movement parser is implemented in Rust and loaded as WebAssembly; the TypeScript grammar is removed. Browser callers await `initParser()` before parsing. Two parses differ, under every language version:
   - Nesting deeper than 128 levels is refused with "nesting too deep". Statements and expressions are bounded separately: statements count their own levels, and each expression counts its own from zero. It used to be accepted. Much deeper nesting would overflow the WebAssembly parser's stack; real automations nest a few levels.
   - An expression error naming an unrecognised character outside the Basic Multilingual Plane (an emoji, say) now quotes the whole character. It used to quote half of it.
+
+### Fixed
+
+- A run parking on an await could miss a wake that arrived while it parked, and then wait forever. The park now writes the parked run before the correlation that points at it, so a wake in between finds both or neither. The re-check after parking now also wakes the run when the re-check itself fails (the remote is down); if the remote is still down when that wake resumes the run, the run fails, as any resumed adapter failure does.
 
 <!-- add merged PRs here -->
 

@@ -22,6 +22,7 @@ Contents:
 - [Telling Listen-Fire something happened](#telling-listen-fire-something-happened)
 - [Paging](#paging)
 - [Files](#files)
+- [Limits and timeouts](#limits-and-timeouts)
 - [Errors](#errors)
 - [Build your first adapter](#build-your-first-adapter)
 
@@ -56,13 +57,25 @@ You answer with HTTP 200 and one of two bodies:
 - An application failure is still HTTP 200, with `ok: false`.
 - Non-200 is for transport faults only: 401 when authentication fails, 400 when
   the body is not a request envelope. Listen-Fire treats any non-2xx as a
-  retryable transport error.
+  transport error, marked retryable (see [Limits](#limits-and-timeouts) for
+  what that does today).
 - Listen-Fire validates every `result` against the method's schema. A wrong
   shape fails the call and names the method and the offending path.
 
-Names on the wire are natural names: the display names you publish for types,
-fields and edges (`Company`, `Name`, `Comments`). Your own internal ids never
-cross the wire, except record ids, which are identity.
+Types, fields and edges each have two names, and the two may differ:
+
+- `typeId` (and a field's `fieldId`) is your own id. Listen-Fire hands a
+  `typeId` back to `describe` and reads it in a reference's `targetTypeId`.
+  Keep it stable.
+- `displayName` (a reference's `name`, for an edge) is the natural name.
+  Automations write it (`crm-[:Company]->`), and every other call names the
+  type, field or edge by it: `recordType: "Company"`, the keys of `fields`,
+  `edge: "Comments"`. It is not just presentation: renaming it breaks the
+  saved automations that use it.
+- `describe` may be asked by either name, so accept both. Simplest: give each
+  type one name and use it for both.
+
+Record ids are identity, and cross the wire unchanged.
 
 ## Versioning
 
@@ -89,6 +102,9 @@ Listen-Fire sends your secret on every call. Your manifest picks how:
 - Check the header on every request; answer HTTP 401 when it is missing or wrong.
 - The secret is entered at install time and stored encrypted. It never goes in
   the manifest.
+- Every call also carries `x-listen-fire-team: <team id>`, the UUID of the team
+  whose install is calling. A server that serves several teams learns from it
+  which one. It is not a credential: authenticate by the secret.
 - When your server calls Listen-Fire (the push doors), it sends the same
   header with the same secret. See [the doors](#the-two-doors-you-call).
 
@@ -119,8 +135,15 @@ The manifest file registers your server with a team:
 ```
 
 - `adapterType` is the slug an automation imports (`import { acme_crm } from adapters`). One install per slug per team.
+  It may not be a name a built-in adapter answers to (`slack`, `gmail`,
+  `inbound_email`, `kg_mutation`, …, in any casing), nor `callback` or `ask`:
+  the install is refused.
 - `methods` lists exactly what you implement. Listen-Fire never calls an
   optional method you did not list.
+- The file is what Listen-Fire uses. Installing calls your `manifest` method
+  only to check its `protocolVersion` and its shape; `methods`,
+  `supportedTriggers` and `runtimeCapabilities` come from the file. Keep the
+  two answers the same.
 - `supportedTriggers` is `["webhook"]` if your system announces events, else `[]`.
 - Optional fields: `handbookSection` (`{ title, content }`, prose the authoring
   handbook shows about your system), `vocabulary` (an icon and event phrasing),
@@ -141,7 +164,7 @@ Each example shows `params` → `result` (the `result` inside `ok: true`).
 
 ### manifest
 
-`{}` →
+`{}` → the same declarations as the manifest file:
 
 ```json
 {
@@ -149,9 +172,17 @@ Each example shows `params` → `result` (the `result` inside `ok: true`).
   "adapterType": "acme_crm",
   "supportedTriggers": ["webhook"],
   "runtimeCapabilities": { "traversal": { "incoming": false, "edgeProperties": false }, "resources": false },
-  "methods": ["listEntryPoints", "describe", "resolveEntity", "getFieldValue", "getRelated", "createRecord", "updateRecord", "deleteRecord"]
+  "methods": [
+    "listEntryPoints", "describe", "resolveEntity", "getFieldValue", "getRelated",
+    "iterateRelatedPage", "createRecord", "updateRecord", "deleteRecord",
+    "preprocessInbound", "listEventTypes", "wakeKeys", "resolveAwait",
+    "ensureEventSubscription", "removeEventSubscription"
+  ]
 }
 ```
+
+Listen-Fire reads only `protocolVersion` from it (see
+[installing](#the-manifest-and-installing)).
 
 `webhookEventTypeId` (a string) is optional.
 
@@ -354,7 +385,7 @@ On the reference in `describe`:
   to the host door). Without it, `await FIRST(…)` is refused when the
   automation is saved, and the author is told to poll instead.
 - `resolvesEmpty: true` — the wait can end with nothing (for example, the
-  record was deleted). Authors then must handle the absent case.
+  record was deleted). Then what follows the `await` runs zero times.
 
 ### resolveAwait
 
@@ -384,10 +415,11 @@ Answer one of three:
   will later wake with. Listen-Fire stores the key against the waiting run.
 - `landed`: here is what arrived. `correlationKey` is required here too: if
   no landing passes the automation's `WHERE`, the run keeps waiting on it.
-- `empty`: the wait is over with nothing. Only on an edge declared
-  `resolvesEmpty`. Listen-Fire does not yet enforce this: an `empty` on any
-  other edge is bound anyway, and the run continues with an absent value
-  the author was never made to handle. Never return it there.
+- `empty`: the wait is over with nothing, and what follows the `await` runs
+  zero times. Only on an edge declared `resolvesEmpty`. Listen-Fire does not
+  yet enforce this: an `empty` on any other edge is bound anyway, and its
+  downstream silently runs zero times where the author never planned for it.
+  Never return it there.
 - Each landing's `fields` are read back through your `getFieldValue` for its
   `recordType`, so key them the way your positions' `data` is keyed.
 - The first landing that passes the `WHERE` wins.
@@ -410,7 +442,15 @@ Wake by key, two ways:
 - or, if Listen-Fire receives your webhooks ([host door](#inbound-through-the-host-door)),
   implement `wakeKeys`: `{ "raw": <the delivery body> }` → `["thread:company-1"]`.
   Listen-Fire calls it for every delivery, whether or not the delivery also
-  carries events. If `wakeKeys` fails, the delivery's events still go through.
+  carries events. If `wakeKeys` fails, the delivery's events are still
+  receipted and queued, and the delivery is answered 500 so you send it
+  again; the resend replays the events without running them twice and
+  retries the wakes.
+
+**Commit before you wake.** A wake makes Listen-Fire call `resolveAwait` for
+the key at once. If the landing is not yet visible to that read (still in an
+open transaction, or on a replica that lags), the run parks again on
+`pending` and nothing follows: no second wake comes unless you send one.
 
 A wake for a key nobody is waiting on does nothing. A run woken early simply
 calls `resolveAwait` again and parks again on `pending`.
@@ -442,7 +482,8 @@ Authentication:
 - Send the same header, with the same secret, that Listen-Fire sends you (your
   `authStrategy`). The install whose secret matches is the team.
 - You never name the team, except with the optional `x-listen-fire-team`
-  header. Use it when one secret serves several teams' installs of your
+  header (the same header, and the same team id, Listen-Fire sends on every
+  call to you). Use it when one secret serves several teams' installs of your
   adapter: it narrows the lookup to that team. Its value must be the team's
   id, a UUID; anything else is answered 401 with no further detail.
 
@@ -452,15 +493,17 @@ Answers:
 |---|---|---|
 | 202 | `{ "accepted": n }` | queued |
 | 400 | `{ "error": "bad_request", "issues": [{ "path", "message" }] }` | malformed body |
-| 401 | `{ "error": "unauthorized" }` | the secret matches no install of this type, the type is not installed, or the named team has no matching install |
+| 401 | `{ "error": "unauthorized" }` | the secret matches no install of this type, the type is not installed, the named team has no matching install, or the type is a name a built-in adapter answers to |
 | 409 | `{ "error": "ambiguous_credential", "message" }` | the secret matches installs on several teams and no `x-listen-fire-team` was sent |
+| 413 | | the body is over 1 MB |
 | 500 | `{ "error": "capture_failed", "accepted", "failed" }` | some events could not be receipted (see below) |
 | 500 | `{ "error": "internal" }` | retry later |
 
 - Authentication is checked before the body, so an unauthenticated caller
   learns nothing about the body's shape.
 - 401 is the only refusal for anything unauthenticated: never 404.
-- A body carries 1 to 1,000 events or keys.
+- A body carries 1 to 1,000 events or keys, in at most 1 MB of JSON
+  (`content-type: application/json`).
 - Delivery is at least once. Retry on 5xx or a network failure.
 - A `capture_failed` 500 on `emit` is partial: the events counted in
   `accepted` were receipted and queued before the 500. Since `emit` is not
@@ -543,7 +586,8 @@ If your system sends webhooks, let Listen-Fire subscribe:
    x-listen-fire-signature: <lowercase hex HMAC-SHA256 of the exact raw body, keyed by the secret>
    ```
 
-   The body is your own format. Listen-Fire answers:
+   The body is your own format, sent as `content-type: application/json`, at
+   most 100 KB. Listen-Fire answers:
 
    | Status | When |
    |---|---|
@@ -551,7 +595,7 @@ If your system sends webhooks, let Listen-Fire subscribe:
    | 400 `{ "error": "provider_mismatch" }` | the URL's adapter segment does not match the subscription |
    | 401 `{ "error": "signature_invalid" }` | bad or missing signature |
    | 404 `{ "error": "subscription_not_found" }` | unknown or deleted subscription |
-   | 500 | your adapter does not implement `preprocessInbound`, or an internal failure |
+   | 500 | your adapter does not implement `preprocessInbound`; `wakeKeys` failed or its wakes could not be queued (the events are already receipted: send the delivery again); or an internal failure |
 
 3. While your delivery is open, Listen-Fire calls you back:
    `preprocessInbound({ raw })` turns your body into events, `wakeKeys({ raw })`
@@ -594,8 +638,8 @@ again. Keep the callback on HTTPS.
   end), and so does a walk past 10,000 pages.
 - Refuse a cursor you did not mint with `bad_request` (not retryable). On
   the TypeScript reference kit, throw `AdapterBadRequestError`; any other
-  throw becomes `adapter_error`, which is retryable, so Listen-Fire would
-  ask again with the same cursor.
+  throw becomes `adapter_error`, which is marked retryable: a caller that
+  honours the flag would ask again with the same cursor.
 
 The TypeScript reference kit (`createAdapterProtocolHandler`) serves
 `iterateRelatedPage` for you. If your in-process adapter only offers a stream
@@ -633,6 +677,21 @@ File bytes never ride the JSON envelope; they move by URL.
   short-lived. The reference kit answers `resolveFileRef` only for a ref that
   already carries a `url`; any other ref answers `method_not_implemented`.
 
+## Limits and timeouts
+
+- **Push doors** (`emit`, `wake`): a JSON body of at most 1 MB, carrying 1 to
+  1,000 events or keys. A larger body is answered 413 before anything is
+  read.
+- **Host webhook door**: the raw body is read only for
+  `content-type: application/json`, up to 100 KB. A larger body is answered
+  413. A body of any other content type is not read, so its signature cannot
+  verify (401).
+- **Calls to your server**: Listen-Fire sets no timeout of its own; Node's
+  `fetch` defaults apply (about 5 minutes for the response headers, and 5
+  minutes between body chunks). A call is never retried in place, and the
+  `retryable` flag is not yet acted on: a failed call fails the automation
+  run that made it (an install's `manifest` call fails the install).
+
 ## Errors
 
 Inside the envelope (HTTP 200, `ok: false`):
@@ -640,7 +699,7 @@ Inside the envelope (HTTP 200, `ok: false`):
 | `code` | `retryable` | Meaning |
 |---|---|---|
 | `method_not_implemented` | false | Unknown method, or one you do not implement |
-| `adapter_error` | true | Your code failed; Listen-Fire may retry |
+| `adapter_error` | true | Your code failed (the flag is not yet acted on: [Limits](#limits-and-timeouts)) |
 | `bad_request` | false | `params` did not match the method's schema (the message is `<method>: <path>: <problem>`), or you refused the request (a cursor you never minted) |
 | `protocol_version` | false | The request's `protocolVersion` is not `"2"` |
 
