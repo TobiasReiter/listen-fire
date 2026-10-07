@@ -14,19 +14,10 @@ jest.mock('../../../protocol/client', () => {
   return { ...actual, postRpc: jest.fn() };
 });
 
-jest.mock('../../await_correlation', () => ({
-  registerAwaitCorrelation: jest.fn(),
-  dropAwaitCorrelation: jest.fn(),
-}));
-
 import { postRpc } from '../../../protocol/client';
-import { registerAwaitCorrelation } from '../../await_correlation';
 import { RemoteAdapter, createRemoteAdapter, fetchRemoteManifest } from '../index';
 
 const postRpcMock = postRpc as jest.MockedFunction<typeof postRpc>;
-const registerAwaitCorrelationMock = registerAwaitCorrelation as jest.MockedFunction<
-  typeof registerAwaitCorrelation
->;
 
 const runtimeCapabilities: RuntimeCapabilities = {
   traversal: { incoming: false, edgeProperties: false },
@@ -360,22 +351,6 @@ describe('RemoteAdapter awaitable gating', () => {
       landings: [{ recordType: 'Response', fields: { Answer: 'yes' } }],
     });
     expect(postRpcMock).toHaveBeenCalledWith(expect.objectContaining({ method: 'resolveAwait', params: point }));
-  });
-
-  it('registers the correlation key the pending answer named', async () => {
-    const adapter = buildAdapter([...ALL_METHODS, 'resolveAwait']);
-    enqueue({ status: 'pending', correlationKey: 'C1:1.2' });
-    await adapter.awaitable!.resolveAwait(point);
-    await adapter.awaitable!.registerAwait({ ...point, runId: 'run-1', address: 'a/0', teamId: 'team-1' });
-    expect(registerAwaitCorrelationMock).toHaveBeenCalledWith({
-      adapterType: 'remote-email',
-      correlationKey: 'C1:1.2',
-      runId: 'run-1',
-      teamId: 'team-1',
-      address: 'a/0',
-    });
-    // The key came from the earlier answer — no second round-trip.
-    expect(calledMethods()).toEqual(['resolveAwait']);
   });
 });
 

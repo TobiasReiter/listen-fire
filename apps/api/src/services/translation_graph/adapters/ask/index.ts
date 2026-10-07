@@ -60,10 +60,8 @@ import { uniformWalk } from '../hop';
 import type {
   AwaitableCapability,
   AwaitPoint,
-  AwaitParkRef,
   AwaitResolution,
 } from '../../awaitable';
-import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
 import {
   ASK_FAMILIES,
   ASK_ANSWER_TYPES,
@@ -77,7 +75,6 @@ import {
   type AskProvenance,
   type AskRowSpec,
 } from './store';
-import { registerAskAwait, dropAskAwait } from './await_store';
 import { AskResponseRefused, writeAskResponse } from './answer_door';
 import { ASK_ADAPTER_TYPE } from './type';
 
@@ -874,10 +871,9 @@ export class AskAdapter extends BaseAdapter implements Adapter {
 
   /**
    * The AWAITABLE capability (asks-as-adapter §A) — the engine consumption of
-   * the `Response` edge's `awaitable`/`resolvesEmpty` flags. Correlation rides
-   * the generic `adapter_await` map (adapter_type='ask'); the state lattice IS
-   * the resolution:
-   *   - open      → `pending`  (park, armed)
+   * the `Response` edge's `awaitable`/`resolvesEmpty` flags. A pending ask
+   * correlates on its own id; the state lattice IS the resolution:
+   *   - open      → `pending`  (park, armed, keyed by the ask id)
    *   - answered  → `landed`   (the Response node carrying the typed answer)
    *   - expired   → `empty`    (resolvesEmpty — an explicit cancel settles the
    *                             awaiter empty immediately, F6)
@@ -899,12 +895,13 @@ export class AskAdapter extends BaseAdapter implements Adapter {
       }
       switch (ask.state) {
         case 'open':
-          return { status: 'pending' };
+          return { status: 'pending', correlationKey: ask.id };
         case 'expired':
           return { status: 'empty' };
         case 'answered':
           return {
             status: 'landed',
+            correlationKey: ask.id,
             landings: [
               {
                 recordId: ask.id,
@@ -917,17 +914,6 @@ export class AskAdapter extends BaseAdapter implements Adapter {
             ],
           };
       }
-    },
-    registerAwait: async (input: AwaitPoint & AwaitParkRef): Promise<void> => {
-      await registerAskAwait({
-        askId: input.recordId as AskId,
-        runId: input.runId as TriggerRunId,
-        teamId: this.teamId,
-        address: input.address,
-      });
-    },
-    dropCorrelation: async (input: Pick<AwaitParkRef, 'runId' | 'address'>): Promise<void> => {
-      await dropAskAwait({ runId: input.runId as TriggerRunId, address: input.address });
     },
   };
 }

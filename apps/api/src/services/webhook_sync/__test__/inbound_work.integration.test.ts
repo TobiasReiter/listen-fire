@@ -59,6 +59,7 @@ import { dispatchEventHandler, registerDispatchWork } from '../../translation_gr
 import { registerAwaitWork } from '../../movement_engine/await_resume';
 import { drainUntilIdle, inProcessNotifier, resetWorkHandlersForTests, setWorkNotifier } from '../../work/drain';
 import { handleInboundWebhook } from '../handler';
+import { SlackAdapter } from '../../translation_graph/adapters/slack';
 import { refreshLinkedObjects } from '../linked_object_cache';
 import { linkedObjectRefreshHandler, registerLinkedObjectWork } from '../linked_object_refresh';
 import { logger } from '../../logger';
@@ -111,8 +112,13 @@ function buildCatalog(): CatalogSnapshot {
   });
 }
 
-/** A fake adapter whose inbound seam hands back `events` verbatim. */
-function makeFakeAdapter(adapterType: string, events: () => DiscriminableEvent[]): Adapter {
+/** A fake adapter whose inbound seam hands back `events` verbatim, with the
+ *  given wake door. */
+function makeFakeAdapter(
+  adapterType: string,
+  events: () => DiscriminableEvent[],
+  wakeKeys?: Adapter['wakeKeys'],
+): Adapter {
   return {
     adapterType,
     supportedTriggers: ['webhook'] as never[],
@@ -120,6 +126,7 @@ function makeFakeAdapter(adapterType: string, events: () => DiscriminableEvent[]
     async preprocessInbound() {
       return { events: events() };
     },
+    ...(wakeKeys !== undefined ? { wakeKeys } : {}),
     async listEntryPoints() {
       return [];
     },
@@ -229,8 +236,8 @@ function attioDelivery(subscriptionId: string) {
   };
 }
 
-function slackDelivery(subscriptionId: string) {
-  const rawBody = Buffer.from(JSON.stringify({ type: 'event_callback', event: { type: 'message' } }));
+function slackDelivery(subscriptionId: string, event: Record<string, unknown> = { type: 'message' }) {
+  const rawBody = Buffer.from(JSON.stringify({ type: 'event_callback', event_id: 'Ev1', event }));
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = createHmac('sha256', SECRET).update(`v0:${timestamp}:${rawBody.toString('utf-8')}`).digest('hex');
   return { provider: 'SLACK', subscriptionId, rawBody, signatureHeader: `${timestamp}:v0=${signature}` };
@@ -342,7 +349,11 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     attioEvents = [ATTIO_EVENT];
     mockedResolve.mockImplementation(async ({ adapterType }: { adapterType: string }) => {
       if (adapterType === 'attio') return makeFakeAdapter('attio', () => attioEvents);
-      if (adapterType === 'slack') return makeFakeAdapter('slack', () => slackEvents);
+      // The real Slack wake derivation: the door's job is to route its keys.
+      if (adapterType === 'slack') {
+        const slack = new SlackAdapter(teamId);
+        return makeFakeAdapter('slack', () => slackEvents, (input) => slack.wakeKeys(input));
+      }
       throw new Error(`test: no fake for '${adapterType}'`);
     });
   });
@@ -540,7 +551,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     expect(await workRows(teamId, 'dispatch_event')).toHaveLength(0);
   });
 
-  it('a Slack thread reply queues a wake_await row; draining resumes the parked await', async () => {
+  it("a Slack thread reply queues a wake_await row for the adapter's wake key; draining resumes the parked await", async () => {
     const triggerId = await seedMovementTrigger(teamId);
     await dispatchTriggerByIdEvent({
       triggerId,
@@ -571,8 +582,9 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     mockedResume.mockResolvedValue({ result: { parked: false } });
 
     const subscriptionId = await seedSubscription(teamId, 'SLACK');
-    slackEvents = [{ payload: { channel: 'C123', thread_ts: '1700000000.000100', text: 'approved' } }];
-    const result = await handleInboundWebhook(slackDelivery(subscriptionId));
+    const reply = { type: 'message', channel: 'C123', ts: '1700000000.000200', thread_ts: '1700000000.000100', text: 'approved' };
+    slackEvents = [{ payload: reply }];
+    const result = await handleInboundWebhook(slackDelivery(subscriptionId, reply));
     expect(result.ok).toBe(true);
     await result.enqueueDeferred!();
 

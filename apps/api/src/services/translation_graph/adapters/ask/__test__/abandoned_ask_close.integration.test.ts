@@ -26,7 +26,8 @@ import { makeRecorderParkSink } from '../../../../movement_engine/park_sink';
 import { settleRunsParkedOnTriggers } from '../../../../interaction/run_failure';
 import { asksRouter } from '../../../../../interfaces/rest/asks';
 import { answerAskByToken } from '../answer_door';
-import { registerAskAwait } from '../await_store';
+import { registerAwaitCorrelation } from '../../await_correlation';
+import { ASK_ADAPTER_TYPE } from '../type';
 import { createAsk, getAsk, type AskRecord } from '../store';
 
 // The link page's own harness — the closed rendering is a user-facing promise,
@@ -122,7 +123,7 @@ async function askParkedAt(address: string): Promise<AskRecord> {
       state: JSON.stringify({ version: 1, address, scopeChain: [] }),
     } as any)
     .execute();
-  await registerAskAwait({ askId: ask.id, runId, teamId, address });
+  await registerAwaitCorrelation({ adapterType: ASK_ADAPTER_TYPE, correlationKey: ask.id, runId, teamId, address });
   return ask;
 }
 

@@ -426,6 +426,9 @@ describe('v2 methods', () => {
       landings: [{ recordId: 'r1', recordType: 'Response', fields: { Answer: 'yes' } }],
     };
     expect(METHODS.resolveAwait.result.parse(landed)).toEqual(landed);
+    // The key to keep waiting on, for landings that all fail the await's WHERE.
+    const keyed = { ...landed, correlationKey: 'C1:1.2' };
+    expect(METHODS.resolveAwait.result.parse(keyed)).toEqual(keyed);
     expect(METHODS.resolveAwait.result.parse({ status: 'empty' })).toEqual({ status: 'empty' });
   });
 

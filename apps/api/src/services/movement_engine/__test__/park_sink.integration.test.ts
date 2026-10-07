@@ -1,7 +1,9 @@
 // Real-DB proof that `commitTimerPark` writes the durable timer-park row
 // correctly. Standing gate for §3 of plans/2026-07-01-movement-sleep/3_model.md:
 // a `parked_run` row with `park_reason='timer'` and `wake_at` set, and idempotent
-// UPSERT on `(run_id, address)`.
+// UPSERT on `(run_id, address)`. And that `commitAwaitPark` writes the
+// correlation row itself, then re-checks once so an answer that landed while
+// it parked still wakes the run.
 
 import { randomUUID } from 'node:crypto';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
@@ -9,6 +11,8 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { makeRecorderParkSink } from '../park_sink';
+import { loadCorrelatedParks } from '../../translation_graph/adapters/await_correlation';
+import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 
 let teamId: TeamId;
 let runId: TriggerRunId;
@@ -71,6 +75,8 @@ afterAll(async () => {
 afterEach(async () => {
   // Reset after each test so tests are independent.
   await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', runId).execute();
+  await getAutomationsQb(['adapter_await']).deleteFrom('adapter_await').where('run_id', '=', runId).execute();
+  await getAutomationsQb(['work']).deleteFrom('work').where('team_id', '=', teamId).execute();
   // Reset run status to running so ensureStarted / markParked can flip it again.
   await getAutomationsQb(['trigger_run'])
     .updateTable('trigger_run')
@@ -127,5 +133,82 @@ describe('commitTimerPark', () => {
     expect(rows[0].park_reason).toBe('timer');
     // The second call's wake_at is the durable value.
     expect(Math.abs(new Date(rows[0].wake_at!).getTime() - wakeAt2.getTime())).toBeLessThan(1000);
+  });
+});
+
+async function awaitWakes() {
+  return getAutomationsQb(['work'])
+    .selectFrom('work')
+    .where('team_id', '=', teamId)
+    .where('kind', '=', 'wake_await')
+    .select('payload')
+    .execute();
+}
+
+describe('commitAwaitPark', () => {
+  it('writes the correlation row from the key to the park, then the await park; no wake while still pending', async () => {
+    const sink = makeRecorderParkSink(makeStubRecorder({ teamId, runId }));
+
+    await sink.commitAwaitPark({
+      address: 's1',
+      state: { scope: true },
+      adapterType: 'slack',
+      correlationKey: 'C123:1700000000.000100',
+      resolvesNow: async () => false,
+    });
+
+    expect(
+      await loadCorrelatedParks({ adapterType: 'slack', teamId, correlationKey: 'C123:1700000000.000100' }),
+    ).toEqual([{ runId, teamId, address: 's1' }]);
+    const park = await getAutomationsQb(['parked_run'])
+      .selectFrom('parked_run')
+      .select(['park_reason', 'status'])
+      .where('run_id', '=', runId)
+      .where('address', '=', 's1')
+      .executeTakeFirstOrThrow();
+    expect(park).toEqual({ park_reason: 'await', status: 'parked' });
+    expect(await awaitWakes()).toEqual([]);
+  });
+
+  it('a failing re-check leaves the park as it was', async () => {
+    const sink = makeRecorderParkSink(makeStubRecorder({ teamId, runId }));
+
+    await sink.commitAwaitPark({
+      address: 's1',
+      state: {},
+      adapterType: 'slack',
+      correlationKey: 'C1:1.0',
+      resolvesNow: async () => {
+        throw new Error('slack is down');
+      },
+    });
+
+    expect(await loadCorrelatedParks({ adapterType: 'slack', teamId, correlationKey: 'C1:1.0' })).toHaveLength(1);
+    expect(await awaitWakes()).toEqual([]);
+  });
+
+  // Review focus: the reply that lands between the first check and the
+  // correlation row would otherwise wake nothing, and nothing else looks again.
+  it('an answer that landed while the run parked queues the wake itself, with no inbound event', async () => {
+    const awaiting = makeAwaitingAdapter([
+      { status: 'pending', correlationKey: 'req-1' },
+      {
+        status: 'landed',
+        correlationKey: 'req-1',
+        landings: [{ recordId: 'req-1', recordType: 'Check Response', fields: { Answer: true } }],
+      },
+    ]);
+
+    const result = await runAwaiting({
+      teamId,
+      source: awaitingSource(),
+      adapter: awaiting.adapter,
+      parkSink: makeRecorderParkSink(makeStubRecorder({ teamId, runId })),
+    });
+
+    expect(result.parked).toBe(true);
+    expect(awaiting.checks).toBe(2);
+    expect(await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'req-1' })).toHaveLength(1);
+    expect(await awaitWakes()).toEqual([{ payload: { adapterType: 'ask', teamId, correlationKey: 'req-1' } }]);
   });
 });

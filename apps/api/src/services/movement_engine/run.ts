@@ -345,7 +345,12 @@ import {
   type SerializedFrame,
   type SerializedScope,
 } from './serialize';
-import { isCallbackParamType, type CallbackCall, type CallbackParamSpec } from './callback_types';
+import {
+  CALLBACK_AWAIT_TYPE,
+  isCallbackParamType,
+  type CallbackCall,
+  type CallbackParamSpec,
+} from './callback_types';
 import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
 import type { WriteLocks } from '../write_locks/write_locks';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';
@@ -470,18 +475,23 @@ export interface ParkSink {
   commitTimerPark(input: { address: string; state: unknown; wakeAt: Date }): Promise<void>;
   /**
    * Record an AWAIT park (`await x-[:E]->` untilNonEmpty, asks-as-adapter §A):
-   * a `parked_run` row with `park_reason='await'` + the serialized scope. Unlike
-   * `commitPark` there is NO `interaction_request` and NO token — the awaitable
-   * adapter's own correlation map (registered via `correlate`, which the sink
-   * hands the run id) drives resume, which RE-ENTERS at the await (`reenter`)
-   * and re-checks live. Idempotent on `(run_id, address)`.
+   * the correlation from `(adapterType, correlationKey)` to this park, then a
+   * `parked_run` row with `park_reason='await'` + the serialized scope. Unlike
+   * `commitPark` there is NO `interaction_request` and NO token — a wake on the
+   * key drives resume, which RE-ENTERS at the await (`reenter`) and re-checks
+   * live. Idempotent on `(run_id, address)`.
    */
   commitAwaitPark(input: {
     address: string;
     state: unknown;
-    /** Register the awaitable adapter's correlation for this park — invoked with
-     *  the sink's run id (the interpreter supplies the adapter + record). */
-    correlate: (runId: string) => Promise<void>;
+    /** Whose key it is: the awaitable adapter's type, or the reserved callback
+     *  identity. */
+    adapterType: string;
+    correlationKey: string;
+    /** The await's own check, WHERE included: true when it would resolve now.
+     *  Asked once more after the park is durable — a wake that landed between
+     *  the first check and the correlation row found nothing to wake. */
+    resolvesNow: () => Promise<boolean>;
   }): Promise<void>;
   /** Resume-unwind join decrement (§6.1). Returns { closed } — true for the unique
    *  branch that closes the frame (runs the post-join continuation). Crash-safe closer
@@ -6333,52 +6343,72 @@ class Interpreter {
     // `recordId` reads it here (Slack's `Replies`: channel + thread ride the
     // write handle's data, not its `ts`).
     const headData = headBinding.handle.resultData ?? undefined;
-    const resolution = await adapter.awaitable.resolveAwait({
-      recordId,
-      edge,
-      ...(headData !== undefined ? { headData } : {}),
-    });
-    if (resolution.status === 'landed') {
-      // Apply the awaited WHERE to each candidate (B.1) THROUGH the adapter's own
-      // getFieldValue — the exact read path the resumed body uses — so the
-      // predicate reads a candidate identically to `o.User` post-bind, with no
-      // name/keying skew between the WHERE and the binding. The first landing to
-      // pass wins (v1 edges are cardinality-one).
-      let matched: { recordType?: string; fields: Record<string, unknown> } | undefined;
-      for (const landing of resolution.landings) {
-        if (
-          hopFilter === undefined ||
-          (await awaitLandingMatches({ filter: hopFilter, adapter, adapterType, landing }))
-        ) {
-          matched = landing;
-          break;
-        }
+    const awaitable = adapter.awaitable;
+    const point = { recordId, edge, ...(headData !== undefined ? { headData } : {}) };
+    // The whole check, WHERE included: the re-check after parking asks the same
+    // question, so landings that all fail the WHERE never count as a wake.
+    const check = async (): Promise<
+      | { status: 'bind'; landing: { recordType?: string; fields: Record<string, unknown> } }
+      | { status: 'empty' }
+      | { status: 'wait'; correlationKey: string | undefined }
+    > => {
+      const resolution = await awaitable.resolveAwait(point);
+      switch (resolution.status) {
+        case 'pending':
+          return { status: 'wait', correlationKey: resolution.correlationKey };
+        case 'empty':
+          return { status: 'empty' };
+        case 'landed':
+          // Apply the awaited WHERE to each candidate (B.1) THROUGH the adapter's
+          // own getFieldValue — the exact read path the resumed body uses — so the
+          // predicate reads a candidate identically to `o.User` post-bind, with no
+          // name/keying skew between the WHERE and the binding. The first landing
+          // to pass wins (v1 edges are cardinality-one).
+          for (const landing of resolution.landings) {
+            if (
+              hopFilter === undefined ||
+              (await awaitLandingMatches({ filter: hopFilter, adapter, adapterType, landing }))
+            ) {
+              return { status: 'bind', landing };
+            }
+          }
+          // Landings exist but NONE match the WHERE — the await stays ARMED,
+          // exactly like pending; a later matching arrival resumes it (F10/B.1).
+          return { status: 'wait', correlationKey: resolution.correlationKey };
+        default:
+          return neverAsAny(resolution);
       }
-      if (matched !== undefined) {
-        // The resolved shortcut (S2): continue inline.
-        this.declareAwaitResult(
-          env,
-          bindingName,
-          adapterType,
-          adapter,
-          matched.fields,
-          instanceName,
-          matched.recordType,
-        );
-        return;
-      }
-      // Landings exist but NONE match the WHERE — leave the await ARMED (park),
-      // exactly like pending; a later matching arrival resumes it (F10/B.1).
+    };
+
+    const outcome = await check();
+    if (outcome.status === 'bind') {
+      // The resolved shortcut (S2): continue inline.
+      this.declareAwaitResult(
+        env,
+        bindingName,
+        adapterType,
+        adapter,
+        outcome.landing.fields,
+        instanceName,
+        outcome.landing.recordType,
+      );
+      return;
     }
-    if (resolution.status === 'empty') {
+    if (outcome.status === 'empty') {
       // A resolvesEmpty settlement — bind an empty match; downstream runs zero
       // times (F6). Awaiting an already-settled-empty edge is instant.
       this.declareAwaitResult(env, bindingName, adapterType, adapter, {}, instanceName);
       return;
     }
+    if (outcome.correlationKey === undefined) {
+      // Parking with no key would wait on a wake nothing can send.
+      throw new Error(
+        `await '-[:${edge}]->' on '${adapterType}': no landing passed the WHERE, and the adapter named no key to keep waiting on`,
+      );
+    }
 
-    // Pending: register the correlation on the adapter (its map from the ask id
-    // to this park), record the await park, and suspend. Resume re-enters here.
+    // Pending: record the await park under the adapter's key, and suspend.
+    // Resume re-enters here.
     const parkSink = this.input.host.park.sink;
     if (!parkSink) {
       throw unsupported(
@@ -6386,7 +6416,6 @@ class Interpreter {
         'this run has no park sink — an await needs the durable trigger-run substrate',
       );
     }
-    const awaitable = adapter.awaitable;
     const state = this.parkedState((park) => ({
       version: 1,
       address,
@@ -6398,15 +6427,9 @@ class Interpreter {
     await parkSink.commitAwaitPark({
       address,
       state,
-      correlate: (runId: string) =>
-        awaitable.registerAwait({
-          recordId,
-          edge,
-          ...(headData !== undefined ? { headData } : {}),
-          runId,
-          teamId: this.input.teamId as unknown as string,
-          address,
-        }),
+      adapterType: adapter.adapterType,
+      correlationKey: outcome.correlationKey,
+      resolvesNow: async () => (await check()).status !== 'wait',
     });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -6414,8 +6437,8 @@ class Interpreter {
 
   /**
    * `await cb-[:Called]->` — CHECK-NOW, ELSE PARK, exactly as an adapter await
-   * does, with the CALL LEDGER standing in for `resolveAwait`: a call already
-   * recorded resolves inline; nothing recorded registers the correlation and
+   * does, with the CALL LEDGER standing in for `resolveAwait` and the callback id
+   * for its key: a call already recorded resolves inline; nothing recorded
    * parks. Resume RE-ENTERS here and re-reads the ledger live — which is why
    * the calls are never carried on the captured binding.
    *
@@ -6445,8 +6468,9 @@ class Interpreter {
       );
     }
 
-    const calls = await sink.calls(binding.callbackId);
-    const matched = calls.find((call) => this.callbackCallMatches(call, input.hopFilter));
+    const firstMatch = async (): Promise<CallbackCall | undefined> =>
+      (await sink.calls(binding.callbackId)).find((call) => this.callbackCallMatches(call, input.hopFilter));
+    const matched = await firstMatch();
     if (matched !== undefined) {
       // The resolved shortcut (S2): a fire already landed — continue inline.
       if (bindingName !== undefined) env.declare(bindingName, this.callbackCallBinding(matched));
@@ -6470,7 +6494,9 @@ class Interpreter {
     await parkSink.commitAwaitPark({
       address,
       state,
-      correlate: () => sink.correlateAwait({ callbackId: binding.callbackId, address }),
+      adapterType: CALLBACK_AWAIT_TYPE,
+      correlationKey: binding.callbackId,
+      resolvesNow: async () => (await firstMatch()) !== undefined,
     });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);

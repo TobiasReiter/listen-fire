@@ -145,7 +145,6 @@ function makeParkSink() {
       keep('timer', input.address, input.state);
     },
     async commitAwaitPark(input) {
-      await input.correlate('run-1');
       keep('await', input.address, input.state);
     },
     async commitSuspension(input) {
@@ -200,7 +199,6 @@ function makeCallbackSink() {
     async calls(callbackId) {
       return ledger[callbackId] ?? [];
     },
-    async correlateAwait() {},
   };
   return { sink, ledger };
 }

@@ -2,6 +2,12 @@
 // parameter may be, and what one recorded fire looks like. Engine-side so the
 // interpreter can name it without importing the host's callback store.
 
+/** The correlation map's `adapter_type` for a callback await.
+ *  A RESERVED engine identity, not a system: the map is keyed on opaque text and
+ *  its reaps are adapter-agnostic by construction, so a callback await gets the
+ *  run-death / race-loss cleanup for free. */
+export const CALLBACK_AWAIT_TYPE = 'callback';
+
 /** The scalar types a fire-time parameter may declare — the checker already
  *  refuses anything else (a platform cannot hand us a record position). */
 export const CALLBACK_PARAM_TYPES = [

@@ -10,8 +10,6 @@ const createAskMock = jest.fn();
 const cancelAskMock = jest.fn();
 const getAskMock = jest.fn();
 const answerAskMock = jest.fn();
-const registerAskAwaitMock = jest.fn();
-const dropAskAwaitMock = jest.fn();
 
 jest.mock('../ask/store', () => {
   const actual = jest.requireActual('../ask/store');
@@ -23,11 +21,6 @@ jest.mock('../ask/store', () => {
     answerAsk: (...a: unknown[]) => answerAskMock(...a),
   };
 });
-
-jest.mock('../ask/await_store', () => ({
-  registerAskAwait: (...a: unknown[]) => registerAskAwaitMock(...a),
-  dropAskAwait: (...a: unknown[]) => dropAskAwaitMock(...a),
-}));
 
 import { AskAdapter } from '../ask';
 import { AskResponseRefused } from '../ask/answer_door';
@@ -73,17 +66,15 @@ beforeEach(() => {
   createAskMock.mockReset();
   cancelAskMock.mockReset();
   getAskMock.mockReset();
-  registerAskAwaitMock.mockReset();
-  dropAskAwaitMock.mockReset();
   answerAskMock.mockReset();
 });
 
 describe('the awaitable capability — the state lattice IS the resolution', () => {
   const point = { recordId: 'ask-1', edge: 'Response' };
 
-  it('an OPEN ask resolves PENDING (the engine parks)', async () => {
+  it('an OPEN ask resolves PENDING, keyed by the ask id (the engine parks on it)', async () => {
     getAskMock.mockResolvedValue({ ...STORED, state: 'open' });
-    expect(await adapter().awaitable!.resolveAwait(point)).toEqual({ status: 'pending' });
+    expect(await adapter().awaitable!.resolveAwait(point)).toEqual({ status: 'pending', correlationKey: 'ask-1' });
   });
 
   it('an ANSWERED ask resolves LANDED, carrying the typed answer under the DECLARED field name', async () => {
@@ -98,6 +89,7 @@ describe('the awaitable capability — the state lattice IS the resolution', () 
     // getFieldValue reads by the declared name.
     expect(res).toEqual({
       status: 'landed',
+      correlationKey: 'ask-1',
       landings: [{ recordId: 'ask-1', recordType: 'Check Response', fields: { Answer: true } }],
     });
   });
@@ -107,6 +99,7 @@ describe('the awaitable capability — the state lattice IS the resolution', () 
     const res = await adapter().awaitable!.resolveAwait(point);
     expect(res).toEqual({
       status: 'landed',
+      correlationKey: 'ask-1',
       landings: [{ recordId: 'ask-1', recordType: 'Draft Response', fields: { Answer: { note: 'x' } } }],
     });
   });
@@ -162,26 +155,6 @@ describe('the awaitable capability — the state lattice IS the resolution', () 
   it('a deleted ask resolves EMPTY rather than parking forever', async () => {
     getAskMock.mockResolvedValue(null);
     expect(await adapter().awaitable!.resolveAwait(point)).toEqual({ status: 'empty' });
-  });
-
-  it('registerAwait records the correlation; dropCorrelation removes it', async () => {
-    registerAskAwaitMock.mockResolvedValue(undefined);
-    dropAskAwaitMock.mockResolvedValue(undefined);
-    await adapter().awaitable!.registerAwait({
-      recordId: 'ask-1',
-      edge: 'Response',
-      runId: 'run-1',
-      teamId: 'ignored',
-      address: 'stmt 3',
-    });
-    expect(registerAskAwaitMock).toHaveBeenCalledWith({
-      askId: 'ask-1',
-      runId: 'run-1',
-      teamId: TEAM,
-      address: 'stmt 3',
-    });
-    await adapter().awaitable!.dropCorrelation({ runId: 'run-1', address: 'stmt 3' });
-    expect(dropAskAwaitMock).toHaveBeenCalledWith({ runId: 'run-1', address: 'stmt 3' });
   });
 });
 

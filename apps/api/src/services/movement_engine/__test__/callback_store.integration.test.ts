@@ -16,8 +16,8 @@ import type { ParkedScopeState } from '../serialize';
 
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { CALLBACK_ID_PREFIX, callbackUrl, claimCallbackFire, coerceCallbackValues, getCallback, isCallbackId, listRunCallbacks, mintCallback, readCallbackCalls, revokeRunCallbacks } from '../callback_store';
-import type { CallbackParamSpec } from '../callback_types';
-import { CALLBACK_AWAIT_TYPE, loadResolvableCallbackAwaits } from '../callback_sink';
+import { CALLBACK_AWAIT_TYPE, type CallbackParamSpec } from '../callback_types';
+import { loadResolvableCallbackAwaits } from '../callback_sink';
 
 let teamId: TeamId;
 let runId: TriggerRunId;

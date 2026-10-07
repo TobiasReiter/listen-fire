@@ -629,10 +629,10 @@ export interface Adapter {
 
   /**
    * The AWAITABLE capability (asks-as-adapter §A) — present ONLY on adapters
-   * that advertise awaitable edges (`await x-[:E]->`). It holds the correlation
-   * map (park ↔ watch-point) and receives the one cancellation signal. Absent on
-   * every ordinary adapter. The ask adapter is the first (and, in chunk B, only)
-   * implementor. Delivery-orthogonal (P12) — this is not rendering or delivery.
+   * that advertise awaitable edges (`await x-[:E]->`). It answers whether an
+   * awaited edge has resolved and, if not, the key that will wake it; the engine
+   * keeps the correlation itself. Absent on every ordinary adapter.
+   * Delivery-orthogonal (P12) — this is not rendering or delivery.
    */
   readonly awaitable?: AwaitableCapability;
 
@@ -872,6 +872,15 @@ export interface Adapter {
     events: DiscriminableEvent[];
     checkpoint?: unknown;
   }>;
+
+  /**
+   * The wake door, separate from `preprocessInbound`'s events: the correlation
+   * keys (as `awaitable.resolveAwait` names them when pending) that this raw
+   * inbound payload may have resolved. The engine resumes whatever is parked on
+   * them; a key nothing waits on is a no-op. No ordering against the events —
+   * a resumed await re-checks live, so it never relies on the payload.
+   */
+  wakeKeys?(input: { raw: unknown }): Promise<string[]>;
 
   /**
    * The instance-aware union of event types this connection can emit. The

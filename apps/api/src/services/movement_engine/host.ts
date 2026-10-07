@@ -104,8 +104,8 @@ export interface ResolveActingUserInput {
   getCandidates: () => Promise<ActorCandidate[]>;
 }
 
-/** The callback seam: minting `callback(…)`, reading its call ledger,
- *  correlating an `await cb-[:Called]->`. Separate from `ParkSink` on purpose:
+/** The callback seam: minting `callback(…)` and reading its call ledger (an
+ *  `await cb-[:Called]->` parks through `ParkSink` like any await). Separate from `ParkSink` on purpose:
  *  a park is a leaf the run is waiting on, a callback is not one. */
 export interface CallbackSink {
   /** Mint a callback: persist the captured continuation + signature, yield the
@@ -120,8 +120,6 @@ export interface CallbackSink {
   /** The LIVE call ledger — what `cb-[:Called]->` reads and what a re-entered
    *  `await cb-[:Called]->` re-checks. */
   calls(callbackId: string): Promise<CallbackCall[]>;
-  /** Register an `await cb-[:Called]->` park so a fire can wake it. */
-  correlateAwait(input: { callbackId: string; address: string }): Promise<void>;
 }
 
 export interface EngineHost {

@@ -12,10 +12,12 @@
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { parseSlackEvents } from './providers/slack';
-import { dispatchToProviderTriggers } from './handler';
+import { dispatchToProviderTriggers, enqueueAwaitWakes } from './handler';
+import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { SLACK_ADAPTER_TYPE, slackEventToDiscriminable } from '../translation_graph/adapters/slack';
 import { SLACK_APP_ID } from '../credentials/app_id';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
+import type { TeamId } from '../../generated/kysely/core/Team';
 
 /** The provider key SLACK triggers are routed by (= `trigger.kind`). */
 const SLACK_PROVIDER_KEY = 'SLACK';
@@ -69,6 +71,28 @@ export async function handleSlackEventsInbound(raw: unknown): Promise<SlackEvent
   if (!install) {
     logger.info('[SlackEvents] no Listen-Fire install for workspace — ignoring', { teamId });
     return { ok: true, classification: 'unknown_workspace', teamId };
+  }
+
+  // The wake door, independent of dispatch below (consent-by-silence, S18).
+  const nativeTeamId = install.nativeTeamId as TeamId;
+  try {
+    const adapter = await resolveAdapter({
+      adapterType: SLACK_ADAPTER_TYPE,
+      teamId: nativeTeamId,
+      credentialsId: install.credentialsId,
+    });
+    if (adapter.wakeKeys) {
+      await enqueueAwaitWakes({
+        adapterType: adapter.adapterType,
+        teamId: nativeTeamId,
+        wakeKeys: await adapter.wakeKeys({ raw }),
+      });
+    }
+  } catch (err) {
+    logger.error('[SlackEvents] await wake failed', {
+      teamId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   let processed = 0;

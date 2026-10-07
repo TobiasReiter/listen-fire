@@ -10,10 +10,7 @@ import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
 import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
-import {
-  registerAwaitCorrelation,
-  type ResolvableAwait,
-} from '../translation_graph/adapters/await_correlation';
+import type { ResolvableAwait } from '../translation_graph/adapters/await_correlation';
 import {
   callbackUrl,
   mintCallback,
@@ -21,11 +18,7 @@ import {
 } from './callback_store';
 import type { CallbackSink } from './host';
 
-/** The adapter-agnostic correlation map's `adapter_type` for a callback await.
- *  A RESERVED engine identity, not a system: the map is keyed on opaque text and
- *  its reaps are adapter-agnostic by construction, so a callback await gets the
- *  run-death / race-loss cleanup for free. */
-export const CALLBACK_AWAIT_TYPE = 'callback';
+import { CALLBACK_AWAIT_TYPE } from './callback_types';
 
 // Re-exported only for the conformance corpora; live code imports it from
 // `host.ts`.
@@ -95,14 +88,5 @@ export function makeRecorderCallbackSink(
       return readCallbackCalls(callbackId);
     },
 
-    async correlateAwait(input) {
-      await registerAwaitCorrelation({
-        adapterType: CALLBACK_AWAIT_TYPE,
-        correlationKey: input.callbackId,
-        runId,
-        teamId,
-        address: input.address,
-      });
-    },
   };
 }

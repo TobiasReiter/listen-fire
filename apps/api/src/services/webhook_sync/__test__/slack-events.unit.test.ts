@@ -43,6 +43,15 @@ jest.mock('../handler', () => ({
       adapter: input.adapterType,
     });
   }),
+  enqueueAwaitWakes: jest.fn(async (input: unknown) => {
+    wakeCalls.push(input);
+  }),
+}));
+
+const wakeCalls: unknown[] = [];
+const wakeKeys = jest.fn(async (_input: { raw: unknown }) => ['C1:0.9']);
+jest.mock('../../translation_graph/adapters/resolve', () => ({
+  resolveAdapter: jest.fn(async () => ({ adapterType: 'slack', wakeKeys })),
 }));
 
 import { handleSlackEventsInbound } from '../slack_events';
@@ -59,6 +68,8 @@ function eventCallback(teamId: string) {
 beforeEach(() => {
   installByIdentifier.clear();
   dispatchCalls.length = 0;
+  wakeCalls.length = 0;
+  wakeKeys.mockClear();
 });
 
 describe('handleSlackEventsInbound — team_id routing', () => {
@@ -67,6 +78,14 @@ describe('handleSlackEventsInbound — team_id routing', () => {
     const result = await handleSlackEventsInbound(eventCallback('T_SLACK'));
     expect(result.classification).toBe('dispatched');
     expect(dispatchCalls).toEqual([{ team: 'team-1', cred: 'cred-slack', adapter: 'slack' }]);
+  });
+
+  it("queues the adapter's wake keys for the delivery, beside dispatch", async () => {
+    installByIdentifier.set('teamId:T_SLACK', { id: 'cred-slack', team_id: 'team-1' });
+    const raw = eventCallback('T_SLACK');
+    await handleSlackEventsInbound(raw);
+    expect(wakeKeys).toHaveBeenCalledWith({ raw });
+    expect(wakeCalls).toEqual([{ adapterType: 'slack', teamId: 'team-1', wakeKeys: ['C1:0.9'] }]);
   });
 
   it('drops a workspace with no Listen-Fire install', async () => {

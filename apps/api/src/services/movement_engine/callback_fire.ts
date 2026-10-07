@@ -21,7 +21,7 @@ import { triggerEventSchema, type TriggerEvent } from '../translation_graph/trig
 import { fireCallbackFiring } from '../translation_graph/movement/execute';
 import { loadCorrelatedParks } from '../translation_graph/adapters/await_correlation';
 import { drainRunAwaits, runResumeSlot } from './await_resume';
-import { CALLBACK_AWAIT_TYPE } from './callback_sink';
+import { CALLBACK_AWAIT_TYPE } from './callback_types';
 import { claimCallbackFire, coerceCallbackValues, getCallback, type CallbackRecord } from './callback_store';
 import type { CallbackParamSpec } from './callback_types';
 

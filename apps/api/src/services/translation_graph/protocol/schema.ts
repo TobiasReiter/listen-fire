@@ -626,11 +626,17 @@ export const WireAwaitLanding = z.object({
 /**
  * What an awaited edge resolves to now. A pending answer names the
  * correlation key the adapter will later `wake` with — the engine keeps the
- * key → parked-run map, so the adapter never writes the engine's tables.
+ * key → parked-run map, so the adapter never writes the engine's tables. A
+ * landed answer may name it too, for when no landing passes the await's WHERE
+ * and the engine has to keep waiting.
  */
 export const WireAwaitResolution = z.discriminatedUnion('status', [
   z.object({ status: z.literal('pending'), correlationKey: z.string() }),
-  z.object({ status: z.literal('landed'), landings: z.array(WireAwaitLanding) }),
+  z.object({
+    status: z.literal('landed'),
+    landings: z.array(WireAwaitLanding),
+    correlationKey: z.string().optional(),
+  }),
   z.object({ status: z.literal('empty') }),
 ]);
 export type WireAwaitResolutionShape = z.infer<typeof WireAwaitResolution>;

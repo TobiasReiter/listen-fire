@@ -1,5 +1,5 @@
 // The ask adapter's slice of the GENERIC correlation map (`adapter_await`, rows
-// with `adapter_type='ask'`). Registration / drop are the generic operations
+// with `adapter_type='ask'`). The engine writes and drops the rows itself
 // (`await_correlation.ts`); what is ask-SPECIFIC and lives here is RESOLVABILITY:
 // an ask await resolves when its ask record SETTLES (answered / expired), which
 // the resume worker discovers by joining the correlation rows to `ask.state`.
@@ -10,39 +10,9 @@ import { getAsksQb, getAutomationsQb, getQb } from '../../../../lib/kysely';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { AskId } from '../../../../generated/kysely/asks/Ask';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
-import {
-  registerAwaitCorrelation,
-  dropAwaitCorrelation,
-  type ResolvableAwait,
-} from '../await_correlation';
+import { dropAwaitCorrelation, type ResolvableAwait } from '../await_correlation';
 import { ASK_ADAPTER_TYPE } from './type';
 import { cancelAsk } from './store';
-
-/** Register (or re-register) a park's ask correlation — the ask id is the
- *  correlation key. Idempotent on (run, address). */
-export async function registerAskAwait(input: {
-  askId: AskId;
-  runId: TriggerRunId;
-  teamId: TeamId;
-  address: string;
-}): Promise<void> {
-  await registerAwaitCorrelation({
-    adapterType: ASK_ADAPTER_TYPE,
-    correlationKey: input.askId,
-    runId: input.runId,
-    teamId: input.teamId,
-    address: input.address,
-  });
-}
-
-/** Drop ONE park's correlation (the RESOLVED case — the answer landed and the
- *  leaf moved on). Does NOT touch the ask record, which is already settled. */
-export async function dropAskAwait(input: {
-  runId: TriggerRunId;
-  address: string;
-}): Promise<void> {
-  await dropAwaitCorrelation(input);
-}
 
 /**
  * Withdraw ask await parks that will NEVER be consumed — a race arm that lost,

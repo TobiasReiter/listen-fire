@@ -65,7 +65,6 @@ import type {
 } from '../../adapter';
 import type {
   AwaitableCapability,
-  AwaitParkRef,
   AwaitPoint,
   AwaitResolution,
 } from '../../awaitable';
@@ -82,11 +81,8 @@ import type { Expression } from '#shared/expression/types';
 import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
 import type { AuthStrategy } from '../../protocol/client';
 import { METHODS, WireManifestProtocolVersion } from '../../protocol/schema';
-import type { MethodName, WireAwaitResolutionShape } from '../../protocol/schema';
+import type { MethodName } from '../../protocol/schema';
 import { writeParentLinks, unsupportedAssociation } from '../../adapter';
-import { dropAwaitCorrelation, registerAwaitCorrelation } from '../await_correlation';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
 
 export interface RemoteAdapterConfig {
   /** Slug the engine routes on. */
@@ -133,7 +129,7 @@ export const OPTIONAL_REMOTE_METHODS = [
   'ensureEventSubscription',
   'removeEventSubscription',
   'wakeKeys',
-] as const satisfies readonly (keyof RemoteAdapter)[];
+] as const satisfies readonly (keyof Adapter)[];
 
 /**
  * Install-time manifest fetch. Calls the server's `manifest` method and
@@ -453,46 +449,14 @@ export class RemoteAdapter implements Adapter {
     return this.call('wakeKeys', input);
   }
 
-  /**
-   * The awaitable capability over the wire. The server answers `resolveAwait`
-   * with the correlation key when pending; the current capability contract
-   * still asks the adapter to register that key itself, so the key from the
-   * last pending answer is remembered per watch-point and written to the
-   * shared correlation table, as the in-process awaitables do.
-   */
   private remoteAwaitable(): AwaitableCapability {
-    const pendingKeys = new Map<string, string>();
-    const pointKey = (point: AwaitPoint): string => JSON.stringify([point.recordId, point.edge]);
-    const resolveOverWire = async (point: AwaitPoint): Promise<WireAwaitResolutionShape> => {
-      const resolution = await this.call('resolveAwait', {
-        recordId: point.recordId,
-        edge: point.edge,
-        ...(point.headData !== undefined ? { headData: point.headData } : {}),
-      });
-      if (resolution.status === 'pending') pendingKeys.set(pointKey(point), resolution.correlationKey);
-      return resolution;
-    };
     return {
-      resolveAwait: (point: AwaitPoint): Promise<AwaitResolution> => resolveOverWire(point),
-      registerAwait: async (input: AwaitPoint & AwaitParkRef): Promise<void> => {
-        let correlationKey = pendingKeys.get(pointKey(input));
-        if (correlationKey === undefined) {
-          const resolution = await resolveOverWire(input);
-          // Landed since the check that parked it: there is nothing to wait on.
-          if (resolution.status !== 'pending') return;
-          correlationKey = resolution.correlationKey;
-        }
-        await registerAwaitCorrelation({
-          adapterType: this.adapterType,
-          correlationKey,
-          runId: input.runId as TriggerRunId,
-          teamId: input.teamId as TeamId,
-          address: input.address,
-        });
-      },
-      dropCorrelation: async (input: Pick<AwaitParkRef, 'runId' | 'address'>): Promise<void> => {
-        await dropAwaitCorrelation({ runId: input.runId as TriggerRunId, address: input.address });
-      },
+      resolveAwait: (point: AwaitPoint): Promise<AwaitResolution> =>
+        this.call('resolveAwait', {
+          recordId: point.recordId,
+          edge: point.edge,
+          ...(point.headData !== undefined ? { headData: point.headData } : {}),
+        }),
     };
   }
 

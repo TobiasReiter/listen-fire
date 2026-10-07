@@ -109,6 +109,9 @@ async function loadHandler(options: {
    *  (the branch that does NOT short-circuit — see the WhatsApp describe
    *  block below). */
   waCallback?: boolean;
+  /** What the adapter's `wakeKeys` names for the delivery; absent ⇒ the
+   *  adapter has no wake door. */
+  wakeKeys?: string[];
 }): Promise<Harness> {
   jest.resetModules();
 
@@ -179,8 +182,10 @@ async function loadHandler(options: {
   }));
   jest.doMock('../../translation_graph/adapters/resolve', () => ({
     resolveAdapter: jest.fn(async () => ({
+      adapterType: options.adapterType ?? 'attio',
       preprocessInbound,
       listEventTypes: jest.fn(async () => []),
+      ...(options.wakeKeys !== undefined ? { wakeKeys: jest.fn(async () => options.wakeKeys) } : {}),
     })),
   }));
   jest.doMock('../../translation_graph/storage/tg_table', () => ({
@@ -188,7 +193,7 @@ async function loadHandler(options: {
       options.triggers ?? [{ id: 'trig-1', movementId: 'movement-1', credentialsId: null, config: {} }],
     ),
   }));
-  jest.doMock('../../movement_engine/await_resume', () => ({
+  jest.doMock('../../movement_engine/await_wake', () => ({
     enqueueAwaitWake: jest.fn(async () => undefined),
   }));
   jest.doMock('../../work/drain', () => ({ notifyWork: jest.fn() }));
@@ -216,7 +221,7 @@ async function loadHandler(options: {
     enqueueCapturedEvents: jest.Mock;
     readReceiptGroupOutcomes: jest.Mock;
   };
-  const awaitMod = jest.requireMock('../../movement_engine/await_resume') as {
+  const awaitMod = jest.requireMock('../../movement_engine/await_wake') as {
     enqueueAwaitWake: jest.Mock;
   };
   const drainMod = jest.requireMock('../../work/drain') as { notifyWork: jest.Mock };
@@ -371,7 +376,7 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     expect(h.enqueueLinkedObjectRefresh).not.toHaveBeenCalled();
   });
 
-  it('queues a Slack thread wake even when NO trigger matched the delivery', async () => {
+  it("queues the adapter's wake keys even when NO trigger matched the delivery", async () => {
     // Consent-by-silence: a reply must wake its `await …-[:Replies]->` park
     // whether or not any movement listens for Slack messages.
     const h = await loadHandler({
@@ -379,6 +384,7 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
       provider: 'SLACK',
       adapterType: 'slack',
       triggers: [],
+      wakeKeys: ['C1:111.1'],
     });
 
     const result = await deliver(h, 'SLACK');
@@ -392,6 +398,20 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
       correlationKey: 'C1:111.1',
     });
     expect(h.enqueueCapturedEvents).toHaveBeenCalledWith([]);
+  });
+
+  it('a delivery with wake keys but no events still queues the wakes', async () => {
+    const h = await loadHandler({ events: [], adapterType: 'slack', wakeKeys: ['C1:111.1'] });
+
+    const result = await deliver(h);
+    expect(result.eventsProcessed).toBe(0);
+    await result.enqueueDeferred!();
+
+    expect(h.enqueueAwaitWake).toHaveBeenCalledWith({
+      adapterType: 'slack',
+      teamId: 'team-1',
+      correlationKey: 'C1:111.1',
+    });
   });
 });
 

@@ -1,24 +1,27 @@
-// The AWAITABLE capability (asks-as-adapter chunk B, layer 3 §A). An adapter
-// that advertises awaitable edges takes on exactly two duties — CORRELATION
-// (hold the map from its native identity to the engine's parks, so an inbound
-// resolution finds the parks to resume) and CANCELLATION (receive the one
-// signal, drop the correlation entry). The engine owns parking, resume, and
-// WHERE evaluation; the adapter owns identity + its internal cancel-vs-resolve
-// races (F17).
+// The AWAITABLE capability (asks-as-adapter chunk B, layer 3 §A; protocol v2).
+// An adapter that advertises awaitable edges answers one question: "is this
+// edge resolved yet, and if not, what key should wake it?" The engine owns
+// everything stateful — the correlation row from that key to its park, the
+// park itself, resume, WHERE evaluation, and dropping the row when the park
+// ends. No run identity crosses into the adapter, so the capability works the
+// same in process and over the wire. The second question, "which keys does
+// this inbound payload wake?", is `Adapter.wakeKeys`.
 //
 // This is a NARROW, delivery-orthogonal capability (P12): it is NOT rendering,
-// delivery, uniqueness, or streams (`fires` owns those). Only the ask adapter
-// implements it in chunk B; Slack `Replies` is chunk E. The interface is specced
-// generically so the second declarant doesn't bend the design.
+// delivery, uniqueness, or streams (`fires` owns those).
 
 /** What a live check-now (`await x-[:E]->`) resolves to right now. */
 export type AwaitResolution =
-  /** Nothing has landed yet — the engine parks the leaf (armed). */
-  | { status: 'pending' }
+  /** Nothing has landed yet — the engine parks the leaf (armed) and correlates
+   *  the park to `correlationKey`, the key a later wake names (Slack:
+   *  `channel:thread_ts`; ask: the ask id). */
+  | { status: 'pending'; correlationKey: string }
   /** The edge resolves to ≥1 landing — the engine binds them (after applying
    *  the await's WHERE) and continues inline. Each landing carries the fields
-   *  the resumed body reads (`r.answer`). */
-  | { status: 'landed'; landings: AwaitLanding[] }
+   *  the resumed body reads (`r.answer`). `correlationKey` is the key to keep
+   *  waiting on should no landing pass the WHERE (a thread with replies, none of
+   *  them the one asked for); without it such an await cannot park. */
+  | { status: 'landed'; landings: AwaitLanding[]; correlationKey?: string }
   /** A `resolvesEmpty` settlement (an ask explicitly cancelled → expired, F6):
    *  the await completes immediately with an EMPTY match — downstream blocks run
    *  zero times. Only legal on an edge declared `resolvesEmpty`. */
@@ -48,42 +51,22 @@ export interface AwaitPoint {
   /** The awaited edge's name (`Response`). */
   edge: string;
   /** Everything a normal traversal of the head gets — the head's inline position
-   *  data (ruling 2026-07-24: "the engine passes the adapter everything a normal
-   *  traversal gets PLUS the park id"). An adapter whose correlation identity is
+   *  data. An adapter whose correlation identity is
    *  NOT the bare `recordId` reads it here: Slack's `Replies` correlates on the
    *  channel + thread, which ride the write handle's data, not its `ts`. Absent
    *  for a head with no inline data. */
   headData?: Record<string, unknown>;
 }
 
-/** The engine park an await registers against a watch-point. */
-export interface AwaitParkRef {
-  runId: string;
-  /** The parked leaf's canonical lexical address (matches parked_run.address). */
-  address: string;
-  teamId: string;
-}
-
 export interface AwaitableCapability {
   /**
    * Live check-now: does this awaited edge currently resolve, and to what?
-   * Called at the `await` (continue-inline vs park) and re-called on every
-   * resume (re-enter). The engine applies the await's WHERE to `landed`
+   * Called at the `await` (continue-inline vs park), once more right after
+   * parking (a wake that landed between the two would otherwise be lost), and
+   * on every resume (re-enter). The engine applies the await's WHERE to `landed`
    * landings; the adapter only reports what has arrived.
    */
   resolveAwait(point: AwaitPoint): Promise<AwaitResolution>;
-  /**
-   * CORRELATION duty: record the park ↔ watch-point map so an inbound resolution
-   * finds the parked run. Idempotent on (runId, address) — a re-parked await
-   * re-registers the same row.
-   */
-  registerAwait(input: AwaitPoint & AwaitParkRef): Promise<void>;
-  /**
-   * CANCELLATION duty: the one signal (run death ≡ race loss). The REQUIRED
-   * response is to drop THIS park's correlation entry — NOT to settle the
-   * record (F7: an ask stays answerable, its late answer lands as data).
-   */
-  dropCorrelation(input: Pick<AwaitParkRef, 'runId' | 'address'>): Promise<void>;
 }
 
 /** An adapter that advertises awaitable edges exposes this capability. Absent ⇒

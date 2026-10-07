@@ -274,7 +274,6 @@ function makeFakeCallbackSink() {
     async calls() {
       return [];
     },
-    async correlateAwait() {},
   } as unknown as CallbackSink;
   return { sink, mints };
 }

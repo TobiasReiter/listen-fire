@@ -26,6 +26,8 @@
 // "attach facts + per-property evidence to an existing message".
 
 import { Readable } from 'node:stream';
+import { z } from 'zod';
+
 import { parseSlackEvents } from '../../../webhook_sync/providers/slack';
 import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
@@ -90,14 +92,8 @@ import {
 import type {
   AwaitableCapability,
   AwaitPoint,
-  AwaitParkRef,
   AwaitResolution,
 } from '../../awaitable';
-import {
-  registerAwaitCorrelation,
-  dropAwaitCorrelation,
-} from '../await_correlation';
-import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
 import { SLACK_MESSAGE_FUNCTION, composeSlackMessage } from './compose';
 import {
   SLACK_CHANNELS_COLLECTION,
@@ -416,6 +412,17 @@ export function slackEventToDiscriminable(
     ? { ...base, changeType: 'create' }
     : base;
 }
+
+/** The thread a `Replies` await parks on and an inbound reply wakes:
+ *  `channel:thread_ts`. Both sides take the thread from `replyAnchorFromParent`,
+ *  the same anchor a reply write uses, so all three agree on what "the thread"
+ *  of a message is. */
+function replyCorrelationKey(anchor: { channelId: string; threadTs: string }): string {
+  return `${anchor.channelId}:${anchor.threadTs}`;
+}
+
+/** The fields of an inbound message event that make it a thread reply. */
+const SlackThreadReply = z.object({ channel: z.string(), thread_ts: z.string() });
 
 export class SlackAdapter extends BaseAdapter {
 
@@ -761,9 +768,8 @@ export class SlackAdapter extends BaseAdapter {
             name: SLACK_MESSAGE_THREAD_EDGE_NAMES.replies,
             writable: true,
             awaitable: true,
-            // An inbound Slack event carries the reply and queues the wake for
-            // the run parked on the thread (`enqueueSlackReplyWake`) — real
-            // push, no poll behind it.
+            // An inbound Slack event carries the reply and wakes the run parked
+            // on the thread (`wakeKeys`) — real push, no poll behind it.
             watchable: true,
             resolvesEmpty: false,
             // `conversations.replies` answers oldest-first and the hop only
@@ -1629,16 +1635,16 @@ export class SlackAdapter extends BaseAdapter {
   // ts, and an inbound thread reply carries the same channel + thread_ts — so the
   // correlation key is `channel:thread_ts`, mapping the thread to its parks.
   //
-  // Resolution is EVENT-DRIVEN (no poll): an inbound reply on the Listen-Fire events
-  // seam looks up this thread's parks (`resumeAwaitsForCorrelation`) and drives
-  // them; `resolveAwait` then re-checks the thread live and binds the reply. The
+  // Resolution is EVENT-DRIVEN (no poll): `wakeKeys` names an inbound reply's
+  // thread, the engine wakes the parks correlated to it, and `resolveAwait` then
+  // re-checks the thread live and binds the reply. The
   // reply's own fields ride the landing raw (the message schema keys them), so a
   // resumed body reads `o.`Message`` / `o.User` through the ordinary message
   // `getFieldValue` — no ask-style Response node.
   //
-  // Cancellation is the generic default (F7): drop the correlation entry, nothing
-  // else — there is nothing to freeze about a thread. A reply after the race
-  // settles finds no correlation and is just a Slack message.
+  // Cancellation is the engine's alone (F7): it drops its correlation row, and
+  // there is nothing to freeze about a thread. A reply after the race settles
+  // finds no correlation and is just a Slack message.
   readonly awaitable: AwaitableCapability = {
     resolveAwait: async (point: AwaitPoint): Promise<AwaitResolution> => {
       if (
@@ -1653,18 +1659,20 @@ export class SlackAdapter extends BaseAdapter {
         externalId: point.recordId,
         data: point.headData,
       });
-      if (!anchor.channelId) {
-        // No channel identity to correlate on — cannot live-check. Park (armed);
-        // the event-driven retry re-checks once the head's channel is known.
-        return { status: 'pending' };
+      if (anchor.channelId === undefined) {
+        throw new Error(
+          'SlackAdapter.resolveAwait: a Replies await needs the message channel to ' +
+            'correlate on (headData.channelId) — none was carried.',
+        );
       }
+      const correlationKey = replyCorrelationKey({ channelId: anchor.channelId, threadTs: anchor.threadTs });
       const client = await this.getSlackApiClient();
       if (!client) {
         logger.warn('[SlackAdapter.resolveAwait] no Slack client — parking (will retry)', {
           teamId: this.teamId,
           channelId: anchor.channelId,
         });
-        return { status: 'pending' };
+        return { status: 'pending', correlationKey };
       }
       const resolver = await this.resolver();
       const naturalMessage = resolver.naturalTypeName(SLACK_MESSAGE_TYPE_ID);
@@ -1680,9 +1688,10 @@ export class SlackAdapter extends BaseAdapter {
       const replies = (thread.messages ?? []).filter(
         (raw) => (raw as { ts?: string }).ts !== anchor.threadTs,
       );
-      if (replies.length === 0) return { status: 'pending' };
+      if (replies.length === 0) return { status: 'pending', correlationKey };
       return {
         status: 'landed',
+        correlationKey,
         landings: replies.map((raw) => ({
           recordId: `${anchor.channelId}:${(raw as { ts?: string }).ts ?? ''}`,
           recordType: naturalMessage,
@@ -1693,37 +1702,18 @@ export class SlackAdapter extends BaseAdapter {
         })),
       };
     },
-    registerAwait: async (input: AwaitPoint & AwaitParkRef): Promise<void> => {
-      const key = this.replyCorrelationKey(input.recordId, input.headData);
-      if (key === null) {
-        throw new Error(
-          'SlackAdapter.registerAwait: a Replies await needs the message channel to ' +
-            'correlate on (headData.channelId) — none was carried.',
-        );
-      }
-      await registerAwaitCorrelation({
-        adapterType: SLACK_ADAPTER_TYPE,
-        correlationKey: key,
-        runId: input.runId as TriggerRunId,
-        teamId: this.teamId,
-        address: input.address,
-      });
-    },
-    dropCorrelation: async (input: Pick<AwaitParkRef, 'runId' | 'address'>): Promise<void> => {
-      await dropAwaitCorrelation({ runId: input.runId as TriggerRunId, address: input.address });
-    },
   };
 
-  /** The correlation key for a `Replies` await: `channel:thread_ts` (the thread
-   *  root a reply lands in), derived from the awaited message's write handle
-   *  exactly as `replyAnchorFromParent` derives a reply write's anchor. Null when
-   *  the channel can't be recovered (an await on a message with no channel data —
-   *  a bug, refused loudly at register). Public shape used at both register and
-   *  the inbound resolution (an inbound reply builds the same key). */
-  replyCorrelationKey(recordId: string, headData?: Record<string, unknown>): string | null {
-    const anchor = replyAnchorFromParent({ externalId: recordId, data: headData });
-    if (!anchor.channelId) return null;
-    return `${anchor.channelId}:${anchor.threadTs}`;
+  /** An inbound thread reply wakes the `Replies` awaits parked on its thread. */
+  async wakeKeys(input: { raw: unknown }): Promise<string[]> {
+    const keys: string[] = [];
+    for (const event of parseSlackEvents(input.raw)) {
+      const reply = SlackThreadReply.safeParse(event.rawPayload);
+      if (!reply.success) continue;
+      const { threadTs } = replyAnchorFromParent({ externalId: event.recordId, data: reply.data });
+      keys.push(replyCorrelationKey({ channelId: reply.data.channel, threadTs }));
+    }
+    return keys;
   }
 
   // ── 4c. Actor candidate parsing (acting-user split) ─────────────────────

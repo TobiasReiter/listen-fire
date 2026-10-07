@@ -17,7 +17,6 @@ import {
 import { channelScopeMatches, eventConfigList } from '../translation_graph/triggers/listen_config';
 import type { TriggerId } from '../../generated/kysely/automations/Trigger';
 import { ATTIO_ADAPTER_TYPE } from '../translation_graph/adapters/attio';
-import { SLACK_ADAPTER_TYPE } from '../translation_graph/adapters/slack';
 import { TELEGRAM_ADAPTER_TYPE, TelegramAdapter } from '../translation_graph/adapters/telegram';
 import { handleTelegramCallbackQuery, ownsCallbackQuery } from './telegram_callback_door';
 import { WHATSAPP_ADAPTER_TYPE } from '../translation_graph/adapters/whatsapp';
@@ -26,7 +25,7 @@ import {
   handleWhatsappInteractiveReplies,
   ownsWhatsappInteractiveReply,
 } from './whatsapp_callback_door';
-import { enqueueAwaitWake } from '../movement_engine/await_resume';
+import { enqueueAwaitWake } from '../movement_engine/await_wake';
 import { notifyWork } from '../work/drain';
 import type { HarnessDelivery, SettleReport } from '../work/harness';
 import {
@@ -203,9 +202,12 @@ async function handleInboundWebhook(options: {
     raw: body,
     checkpoint: sub.inbound_checkpoint ?? undefined,
   });
+  // The wake door, independent of the events: a delivery may resolve a parked
+  // await whether or not it carries anything a trigger listens for.
+  const wakeKeys = adapter.wakeKeys ? await adapter.wakeKeys({ raw: body }) : [];
 
   const events = extraction.events;
-  if (!events.length) {
+  if (!events.length && !wakeKeys.length) {
     return { ok: true, eventsProcessed: 0 };
   }
 
@@ -244,6 +246,11 @@ async function handleInboundWebhook(options: {
   const enqueueDeferred = async (): Promise<EnqueuedDelivery> => {
     const enqueueErrors = [...captureErrors];
     const enqueued: CapturedInboundEvent[] = [];
+    try {
+      await enqueueAwaitWakes({ adapterType: adapter.adapterType, teamId: sub.team_id as TeamId, wakeKeys });
+    } catch (err) {
+      logger.error(`Webhook await wake failed:`, { wakeKeys, err });
+    }
     for (const entry of captured) {
       try {
         await enqueueCapturedInboundEvent({ captured: entry, subscription: sub });
@@ -337,8 +344,7 @@ async function captureInboundEvent(input: {
 }
 
 /**
- * Phase 2 for ONE event: queue a wake for any watch-point the event satisfies,
- * a linked_object refresh when a KG node is bridged to the record it names, and
+ * Phase 2 for ONE event: queue a linked_object refresh when a KG node is bridged to the record it names, and
  * a run per stored receipt. The rows are independent; none makes a live
  * provider read inside the request.
  */
@@ -347,17 +353,6 @@ async function enqueueCapturedInboundEvent(input: {
   subscription: { team_id: string; credentials_id: string; provider: string };
 }): Promise<void> {
   const { captured, subscription } = input;
-
-  // Watch-point resolution is INDEPENDENT of trigger dispatch — a thread reply
-  // must resolve an `await m-[:Replies]->` even when no movement listens for
-  // Slack messages (consent-by-silence, S18), so it is queued whether or not
-  // any receipt was captured.
-  if (captured.adapterType === SLACK_ADAPTER_TYPE) {
-    await enqueueSlackReplyWake({
-      event: captured.event,
-      teamId: subscription.team_id as TeamId,
-    });
-  }
 
   // The cache refresh is its own row, owed whether or not any trigger matched.
   const { externalId, recordType, idempotencyKey } = captured.event;
@@ -378,30 +373,20 @@ async function enqueueCapturedInboundEvent(input: {
 }
 
 /**
- * Queue the wake for `await m-[:Replies]->` parks on an inbound Slack THREAD
- * REPLY. A reply carries a `thread_ts` (its own thread root) distinct from a
- * top-level message; `channel:thread_ts` is the correlation key the Slack
- * adapter registered its awaits under (see `SlackAdapter.replyCorrelationKey`).
- * The wake drives the parks awaiting that thread forward; `resolveAwait`
- * re-checks the thread live and binds the reply. Not a thread reply (no
- * `thread_ts`) ⇒ nothing queued — the event flows on to ordinary trigger
- * dispatch. Team-scoped so a reply only wakes its own team's parks.
+ * Queue a wake per key an adapter's `wakeKeys` named for one inbound delivery.
+ * INDEPENDENT of trigger dispatch — a thread reply must resolve an
+ * `await m-[:Replies]->` even when no movement listens for its messages
+ * (consent-by-silence, S18) — and unordered against it: the resumed await
+ * re-checks live. Team-scoped so a delivery only wakes its own team's parks.
  */
-async function enqueueSlackReplyWake(input: {
-  event: DiscriminableEvent;
+export async function enqueueAwaitWakes(input: {
+  adapterType: string;
   teamId: TeamId;
+  wakeKeys: readonly string[];
 }): Promise<void> {
-  const payload = input.event.payload as
-    | { channel?: unknown; thread_ts?: unknown }
-    | undefined;
-  const channel = typeof payload?.channel === 'string' ? payload.channel : undefined;
-  const threadTs = typeof payload?.thread_ts === 'string' ? payload.thread_ts : undefined;
-  if (!channel || !threadTs) return;
-  await enqueueAwaitWake({
-    adapterType: SLACK_ADAPTER_TYPE,
-    teamId: input.teamId,
-    correlationKey: `${channel}:${threadTs}`,
-  });
+  for (const correlationKey of input.wakeKeys) {
+    await enqueueAwaitWake({ adapterType: input.adapterType, teamId: input.teamId, correlationKey });
+  }
 }
 
 /**
@@ -515,21 +500,6 @@ async function loadEventTypes(
  *
  */
 export async function dispatchToProviderTriggers(input: ProviderTriggerDispatch): Promise<void> {
-  const { event, subscription, adapterType } = input;
-
-  // Watch-point resolution rides the SAME inbound seam as trigger dispatch, but
-  // is INDEPENDENT of it — a thread reply must resolve an `await m-[:Replies]->`
-  // even when no movement listens for Slack messages (consent-by-silence, S18).
-  // So it is queued FIRST, before the capture's early returns. The Listen-Fire
-  // Slack events route funnels through here, already off its request; the BYO
-  // webhook_sync door queues its wakes in its own deferred half instead.
-  if (adapterType === SLACK_ADAPTER_TYPE) {
-    await enqueueSlackReplyWake({
-      event,
-      teamId: subscription.team_id as TeamId,
-    });
-  }
-
   await enqueueCapturedEvents(await captureProviderTriggerEvents(input));
   notifyWork();
 }
