@@ -178,12 +178,13 @@ pub mod builtins {
 pub mod check {
     use super::*;
 
-    /// The pinned source checked against the run's snapshot: answered
+    /// The pinned source checked against the run's snapshot (the host's,
+    /// which the segment was handed too): answered
     /// `{diagnostics, link?, stamps}` (crate::program reads it). A program
     /// that fails its check never gets an answer: the host ends the run with
     /// MOVENG_CHECK, as the TypeScript engine does before it runs anything.
-    pub fn program(source: &str, snapshot: &Json, language_version: u32, upgrading_from: Option<u32>) -> Request {
-        let mut args = json!({ "source": source, "snapshot": snapshot, "languageVersion": language_version });
+    pub fn program(source: &str, language_version: u32, upgrading_from: Option<u32>) -> Request {
+        let mut args = json!({ "source": source, "languageVersion": language_version });
         if let Some(from) = upgrading_from {
             args["upgradingFrom"] = json!(from);
         }
@@ -215,9 +216,9 @@ mod tests {
         assert_eq!(call.args, json!({ "instance": 3, "method": "readRecord", "args": ["person", "r1"] }));
         assert_eq!(instance_of(&json!({ "instance": 3 })), Some(Instance(3)));
         assert_eq!(adapters::credential_id("crm").args, json!({ "credentialName": "crm" }));
-        let check = check::program("src", &json!({ "adapters": {} }), 3, None);
+        let check = check::program("src", 3, None);
         assert_eq!((check.family.as_str(), check.method.as_str()), ("check", "program"));
-        assert_eq!(check.args, json!({ "source": "src", "snapshot": { "adapters": {} }, "languageVersion": 3 }));
+        assert_eq!(check.args, json!({ "source": "src", "languageVersion": 3 }));
     }
 
     #[test]

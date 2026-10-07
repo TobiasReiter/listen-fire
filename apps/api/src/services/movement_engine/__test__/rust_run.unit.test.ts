@@ -218,6 +218,10 @@ describe('a whole run in the Rust engine', () => {
     expect(rustCanRun(program('  x = AI("why?")'), { host })).toBe(false);
     expect(rustCanRun(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), { host })).toBe(false);
     expect(rustCanRun(program('  x = crm.`name`'), { host })).toBe(false);
+    // A caller's trace already holding entries: its field misses are the
+    // TypeScript engine's to see.
+    const seeded = makeTestHost({ trace: [{ kind: 'gate', outcome: true }] });
+    expect(rustCanRun(parseProgram(PRELUDE + BINDINGS_AND_IF, { languageVersion: 3 }), { host: seeded })).toBe(false);
   });
 
   it('reads the event, binds, interpolates and branches as the TypeScript engine does', async () => {

@@ -4,7 +4,8 @@
 //!
 //! The checker mutates the program it checks — a write's spread gains the
 //! fields it stands for (`WriteSpread.fields`), a graph's spread what it copies
-//! (`MapSpread.copy`) — and the engine reads both. The answer carries each as
+//! (`MapSpread.copy`), a graph entry holding a record that it is a reference
+//! (`NodeEntry.reference`) — and the engine reads all three. The answer carries each as
 //! a stamp keyed by the node's AST path: a JSON Pointer (RFC 6901) from the
 //! `Program` object through the keys and indices of the program's JSON as the
 //! parser emits it (`/statements/2/body/0/write/spreads/1`), with `file`
@@ -25,6 +26,9 @@ pub enum Stamp {
     SpreadFields(Vec<String>),
     /// A graph spread's copy plan (`MapSpread.copy`), as data.
     Copy(Json),
+    /// A graph entry whose value is a record: an edge holding it
+    /// (`NodeEntry.reference`).
+    Reference,
 }
 
 /// One parsed file: its typed AST, the same tree as JSON (what AST paths
@@ -90,11 +94,12 @@ pub fn join_check(root: File, answer: &Json, language_version: u32) -> Result<Ch
             Some(other) => return Err(format!("a stamp's file is a path, not {other}")),
         };
         let node = file.tree.pointer(&path).ok_or_else(|| format!("no node at {path}"))?;
-        let stamped = match (stamp.get("spreadFields"), stamp.get("copy")) {
-            (Some(fields), None) if is_write_spread(&path, node) => Stamp::SpreadFields(
+        let stamped = match (stamp.get("spreadFields"), stamp.get("copy"), stamp.get("reference")) {
+            (Some(fields), None, None) if is_write_spread(&path, node) => Stamp::SpreadFields(
                 serde_json::from_value(fields.clone()).map_err(|e| format!("the fields stamped at {path}: {e}"))?,
             ),
-            (None, Some(copy)) if is_map_spread(node) => Stamp::Copy(copy.clone()),
+            (None, Some(copy), None) if is_map_spread(node) => Stamp::Copy(copy.clone()),
+            (None, None, Some(Json::Bool(true))) if is_value_entry(node) => Stamp::Reference,
             _ => return Err(format!("the stamp at {path} does not fit the node there: {stamp}")),
         };
         file.stamps.insert(path, stamped);
@@ -114,6 +119,11 @@ fn is_write_spread(path: &str, node: &Json) -> bool {
 /// A graph's spread: it says where among the entries it stands.
 fn is_map_spread(node: &Json) -> bool {
     node.get("source").is_some_and(Json::is_string) && node.get("after").is_some_and(Json::is_u64)
+}
+
+/// A graph literal's `name: value` entry.
+fn is_value_entry(node: &Json) -> bool {
+    node.get("kind").and_then(Json::as_str) == Some("value") && node.get("name").is_some_and(Json::is_string)
 }
 
 fn imports_of(list: Option<&Json>) -> Result<Vec<Import>, String> {
@@ -158,6 +168,17 @@ mod tests {
             Some(&Stamp::SpreadFields(vec!["name".into(), "stage".into()]))
         );
         assert_eq!(checked.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn a_reference_stamp_lands_on_a_graph_entry() {
+        let source = "import { attio } from adapters\ncrm = attio()\nmovement m(e: <crm>) {\n  if 1 == 1 {\n    g = graph { owner: e }\n  }\n}";
+        let path = "/statements/2/body/0/arms/0/body/0/value/node/entries/0";
+        let answer = json!({ "diagnostics": [], "stamps": [{ "path": path, "reference": true }] });
+        let checked = join_check(parse(source, 3).unwrap(), &answer, 3).unwrap();
+        assert_eq!(checked.root.stamps.get(path), Some(&Stamp::Reference));
+        let spread = json!({ "diagnostics": [], "stamps": [{ "path": "/statements/2/body/0/arms/0/body/0/value/node", "reference": true }] });
+        assert!(join_check(parse(source, 3).unwrap(), &spread, 3).unwrap_err().contains("does not fit"));
     }
 
     #[test]

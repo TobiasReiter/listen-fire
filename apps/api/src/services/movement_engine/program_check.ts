@@ -5,8 +5,10 @@
 // (rust_engine.ts), and reads the answer as plain data (`checkAnswer`).
 //
 // The checker MUTATES the program it checks: it records on a write's spread
-// the fields it stands for (`WriteSpread.fields`) and on a graph's spread
-// what it copies (`MapSpread.copy`). The engine reads both. A Rust engine
+// the fields it stands for (`WriteSpread.fields`), on a graph's spread what
+// it copies (`MapSpread.copy`), and on a graph entry whose value is a record
+// that the entry is an edge holding it (`NodeEntry.reference`). The engine
+// reads all three; program_check.unit pins that there are no others. A Rust engine
 // re-parses the source, so those facts cross as STAMPS, each keyed by its
 // node's place in the program's JSON — the AST path scheme:
 //
@@ -144,12 +146,13 @@ export function checkPinned(input: CheckInput, parsed?: Program): CheckedProgram
 
 // ── The check as data ─────────────────────────────────────────────────────────
 
-/** A checker fact about one node, keyed by its AST path (the header): the
- *  spread's field list, or the graph spread's copy plan (a `CopyPlan`, as
- *  plain data). */
+/** A checker fact about one node, keyed by its AST path (the header): a
+ *  write spread's field list, a graph spread's copy plan (a `CopyPlan`, as
+ *  plain data), or that a graph entry is a reference. */
 export type Stamp = { file?: string; path: string } & (
   | { spreadFields: readonly string[] }
   | { copy: unknown }
+  | { reference: true }
 );
 
 /** One imported name, its declaration an AST path into its file. */
@@ -214,7 +217,8 @@ function importsData(imports: ReadonlyMap<string, LinkedExport>): LinkedImportDa
 }
 
 /** The checker's stamps on `program`: a `fields` on a write's spread, a
- *  `copy` on a graph's. Neither key is one the parser writes. */
+ *  `copy` on a graph's, a `reference` on a graph entry. No key the parser
+ *  writes. */
 function stampsIn(program: Program, file?: string): Stamp[] {
   const stamps: Stamp[] = [];
   const at = (path: string) => (file !== undefined ? { file, path } : { path });
@@ -230,8 +234,10 @@ function stampsIn(program: Program, file?: string): Stamp[] {
     }
     const copy: unknown = Reflect.get(node, 'copy');
     if (copy !== undefined) stamps.push({ ...at(path), copy });
+    const reference = Reflect.get(node, 'kind') === 'value' && Reflect.get(node, 'reference') === true;
+    if (reference) stamps.push({ ...at(path), reference: true });
     for (const [key, child] of Object.entries(node)) {
-      if (key === 'copy' || (inSpreads && key === 'fields')) continue;
+      if (key === 'copy' || (inSpreads && key === 'fields') || (reference && key === 'reference')) continue;
       visit(child, `${path}/${pointerToken(key)}`, key === 'spreads');
     }
   };

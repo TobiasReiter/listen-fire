@@ -216,7 +216,7 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
       try {
         checked = checkPinned({
           source: string(request.source, 'check.program source'),
-          catalog: snapshotOf(request.snapshot, context),
+          catalog: context.catalog,
           languageVersion,
           ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
           ...(resolveFile !== undefined ? { hostResolveFile: resolveFile } : {}),
@@ -475,29 +475,6 @@ function plainJsonObject(value: unknown, method: string, at: string): unknown {
   return value;
 }
 
-/** The run's own snapshot, which the engine was handed in its input and
- *  hands back to be checked against: any other is refused, so the check
- *  can only ever be of the run's catalog. */
-function snapshotOf(value: unknown, context: RouteContext): CatalogSnapshot {
-  if (!sameJson(value, context.catalog)) {
-    throw new RustShimError('check.program was asked to check against a snapshot other than the run\'s');
-  }
-  return context.catalog;
-}
-
-/** Deep equality of two JSON values, object keys in any order (the engine
- *  writes its objects' keys sorted). */
-function sameJson(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => sameJson(item, b[i]));
-  }
-  const aKeys = Object.keys(a).filter((k) => Reflect.get(a, k) !== undefined);
-  const bKeys = Object.keys(b).filter((k) => Reflect.get(b, k) !== undefined);
-  return aKeys.length === bKeys.length && aKeys.every((k) => sameJson(Reflect.get(a, k), Reflect.get(b, k)));
-}
-
 function record(value: unknown, what: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new RustShimError(`${what}: args must be an object`);
@@ -622,14 +599,17 @@ function failureOf(value: unknown, hostErrors: unknown[]): unknown {
  * - every expression one `rustCanEval` admits, where a name read is a name
  *   the bodies bind, plus `p.field` with no hops on the movement's event
  *   parameter or on such a name;
- * - a run that cannot suspend (no `limitPaused`, no `suspendWhen`) and whose
- *   event and source cross as themselves.
+ * - a run that cannot suspend (no `limitPaused`, no `suspendWhen`), whose
+ *   trace starts empty, and whose event and source cross as themselves.
  */
 export function rustCanRun(
   program: Program,
   input: Pick<RunMovementInput, 'host' | 'limitPaused' | 'languageVersion'>,
 ): boolean {
   if (input.limitPaused === true || input.host.control.suspendWhen !== undefined) return false;
+  // A trace the caller already wrote into: the TypeScript engine reads it
+  // when it decides whether a `field_miss` is new, and the Rust one does not.
+  if ((input.host.trace?.length ?? 0) > 0) return false;
   const fileNames = new Set<string>();
   const movements: Extract<Statement, { kind: 'movement' }>[] = [];
   for (const statement of program.statements) {

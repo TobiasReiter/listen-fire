@@ -51,6 +51,7 @@ Measured 2026-10-07 (gzip -9):
 | this crate with the evaluator (slice 1) | 1,581,987 | 426,071 |
 | slice 1, fix round 1 (`ryu-js`, bounded regex parsing) | 1,593,666 | 438,383 |
 | slice 2a (environment services, the check, the run) | 1,751,210 | 488,922 |
+| slice 2a, fix round 1 | 1,751,076 | 488,997 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
 back, the standard library, the regex matcher, Unicode case tables). The
@@ -189,37 +190,124 @@ TypeScript takes through its host is a host request here:
   so far. So the host sees the TypeScript's calls in the TypeScript's order,
   short-circuits included, and no expression needs to be async.
 - `adapters.call` with `wire: true` carries its arguments and its answer on
-  the eval wire: an event payload's key order (a `field_miss` lists the keys
-  in it), `undefined` and the numbers JSON cannot say cross as the JavaScript
-  has them. The event itself arrives on the wire too.
+  the eval wire (below): an event payload's key order (a `field_miss` lists
+  the keys in it), `undefined` and the numbers JSON cannot say cross as the
+  JavaScript has them. The event itself arrives on the wire too.
 - Addresses are address.ts's (`s1.b0.s2`), kept for the parks to come.
-- `done` is `{result}`, `{failed: {error, result}}` (the shim throws
-  `MovementRunFailed`), `{thrown: error}` (before the body), or `{declined:
-  reason}`: before it touches anything the host can see, the engine refuses
-  what it does not run (`run::declined_by`, its own guard behind the shim's
-  allow-list), and the shim runs the program on the TypeScript engine. A host
-  call that failed is named by the `ref` its error answer carried, and the
-  shim rethrows that very error object.
+- `done` is one of four shapes (below). Before it touches anything the host
+  can see, the engine refuses what it does not run (`run::declined_by`, its
+  own guard behind the shim's allow-list) as `declined`, and the shim runs
+  the program on the TypeScript engine.
 - `rustRunStats` counts what the shim routed, declined and asked (by
   `family.method`); the conformance teardown prints it beside the evaluator's.
+
+### Errors a run can meet mid-run
+
+These end a run partway through, after it has made adapter calls, where the
+TypeScript engine would carry on. Each comes back as an error (the run
+fails); none produces a different answer.
+
+- An adapter answers a value the eval wire cannot carry as itself (a
+  `Date`, a class instance, a function): `RustShimError` from the shim.
+- A value held in a binding is shaped like an engine binding (an object
+  whose `kind` names one, the TypeScript's `bindingOf`): reading its field,
+  comparing it by `==`, or spreading it fails with MOVENG_UNSUPPORTED ("this
+  reading (…) is not supported…"). TypeScript reads such a dict as a record.
+- A field read off a held object names one of `Object.prototype`'s members
+  it does not own (`meta.\`constructor\``): MOVENG_UNSUPPORTED. TypeScript's
+  `value[field] ?? null` finds the prototype's member.
+- A record compared by identity (`a == b` where either is binding-shaped):
+  MOVENG_UNSUPPORTED. TypeScript compares two records by identity.
+
+None of these is a built-in's reading, so none can be handed to the
+TypeScript member (`builtins.*`); each needs the record model a later slice
+brings.
+
+### For an embedder: the segment protocol
+
+Every shape here is what apps/api's rust_engine.ts sends and answers; another
+host answers the same requests the same way.
+
+**The eval wire** (src/env.rs). JSON's scalars stand for themselves;
+`["u"]` is `undefined`; `["n", "NaN" | "Infinity" | "-Infinity" | "-0"]`; a
+list `["l", id, [items…]]`; an object `["o", id, [[key, value]…]]` in the
+object's own key order; `["r", id]` the same list or object again within
+one value. `["i", id]` (one of the caller's own objects) appears only in
+`eval_expression`'s answers, never on a segment's host calls: a segment
+writes each value out whole, numbering it afresh.
+
+**The input** (`engine_start`): `{entry: "segment", source, languageVersion,
+movementName?, event, teamId, now, catalog}`. `languageVersion` is the pin,
+written out (the engine does not know the release's current one); `event`
+is the `TriggerEvent` on the eval wire; `now` is the run's pinned instant as
+a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
+`CatalogSnapshot`. Other members are ignored.
+
+**Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or
+`{error: {message, name?, ref?}}`; `ref` numbers the very error object the
+host keeps, so a run that fails with it can name it.
+
+| request (family.method, args) | answer |
+|---|---|
+| `check.program {source, languageVersion, upgradingFrom?}` | `{diagnostics, link?, stamps}` (below); a program that fails its check gets no answer: the host ends the run with the check's error |
+| `adapters.credentialId {credentialName}` | the credential's id, or `undefined` |
+| `adapters.resolve {adapterType, teamId, credentialsId?, constructionArgs?, role: "source" \| "target"}` | `{instance, adapterType}`: the handle, and the live adapter's own `adapterType` |
+| `adapters.call {instance, method, args}` | the method's result as plain JSON (anything else fails the run in the shim) |
+| `adapters.call {instance, method, args, wire: true}` | `args` on the eval wire, the result too |
+| `control.cancelled {}` / `control.cancelledNow {}` | a boolean: the cancel gate, debounced / not |
+| `trace.append {entry}` | `undefined`; `entry` is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
+| `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
+| `builtins.compare {op, left, right}` | the same two shapes, for `compareValues(left, op, right)`; `op` a `FilterOperator` |
+
+**`done`**:
+
+- `{result: {movementName, cancelled?: true}}`;
+- `{failed: {error, result}}`: the body failed, and `result` is what the run
+  had when it did (the shim throws `MovementRunFailed`);
+- `{thrown: error}`: it failed before the body ran;
+- `{declined: reason}`: nothing the host can see has happened; run the
+  program another way.
+
+`error` is `{class: "MovementEngineError", code, message}` (`message` without
+the `CODE: ` the TypeScript constructor adds), `{class: "Error" |
+"RangeError", message}`, or `{hostError: ref}`: the error a host call failed
+with, by the `ref` its answer carried.
 
 ## The check
 
 The checker is still TypeScript, so a segment asks for it: `check.program
-{source, snapshot, languageVersion, upgradingFrom?}`, answered `{diagnostics,
-link?, stamps}` by apps/api's program_check.ts (the same check every
-TypeScript run passes). A program that fails it never gets an answer: the
-host ends the run with MOVENG_CHECK (or MOVENG_PARSE, MOVENG_LANGUAGE_VERSION),
-exactly as the TypeScript engine throws before it runs anything.
+{source, languageVersion, upgradingFrom?}`, checked against the run's own
+snapshot (the host holds it; the segment was handed the same), answered
+`{diagnostics, link?, stamps}` by apps/api's program_check.ts (the same check
+every TypeScript run passes). A program that fails it never gets an answer:
+the host ends the run with MOVENG_CHECK (or MOVENG_PARSE,
+MOVENG_LANGUAGE_VERSION), exactly as the TypeScript engine throws before it
+runs anything.
 
-The checker mutates the AST the engine then reads (a write spread's
-`fields`, a graph spread's `copy`), so those cross as stamps keyed by **AST
-path**: a JSON Pointer (RFC 6901) from the `Program` object through the
-program's JSON exactly as the parser emits it, e.g.
-`/statements/2/body/0/write/spreads/1`, with `file` naming the library for a
-stamp in an imported file. The link's declarations are paths too
-(`/statements/<i>` of their file). `program::join_check` re-parses, places
-each stamp and refuses one that does not land on a node of its kind.
+The checker mutates the AST the engine then reads, so its three facts cross
+as **stamps**: `{file?, path, spreadFields | copy | reference}`.
+
+| stamp | the node | what the checker wrote |
+|---|---|---|
+| `spreadFields: [name…]` | a write's spread (`write … { ...d }`) | `WriteSpread.fields` |
+| `copy: CopyPlan` | a graph's spread (`graph { ...r }`) | `MapSpread.copy` (`{fields, edges: {name: CopyPlan}}`) |
+| `reference: true` | a graph entry whose value is a record (`graph { owner: r }`) | `NodeEntry.reference`: the entry is an edge holding it |
+
+- `path` is an **AST path**: a JSON Pointer (RFC 6901) from the `Program`
+  object through the program's JSON exactly as the parser emits it, e.g.
+  `/statements/5/body/0/arms/0/body/1/value/node/entries/0`.
+- `file` names the library for a stamp in an imported file (the pointer is
+  then from that file's `Program`); absent for the program run.
+- `program_check.unit` pins that these three are all: a fresh parse with the
+  stamps applied must equal the checked program, the root's and a library's.
+- `program::join_check` re-parses, places each stamp and refuses one that
+  does not land on a node of its kind.
+
+The **link**: `{imports: [import…], files: [{path, source, imports:
+[import…], exports: [{name, kind, declaration}]}]}`, where an import is
+`{local, kind: "movement" | "shape", name, file, declaration}` and
+`declaration` is an AST path into its file (`/statements/<i>`). Problems are
+among the diagnostics.
 
 ## Environment services
 
@@ -246,9 +334,11 @@ Two implementations:
   normaliser and decimal formatter.
 
 tests/env_services.rs holds the native one to tests/env/fixture.json:
-6,323 requests answered by Node 22.20 through the very module the loader
-imports (generate.ts; seeded; every IANA zone at six instants including a
-daylight-saving week and one before the common era, aliases, offsets,
+8,457 requests answered by Node 22.20 through the very module the loader
+imports (generate.ts; seeded; every IANA zone at seven instants including a
+European daylight-saving week and one before the common era; every half
+hour across the US (2026-03-08, 2026-11-01) and southern-hemisphere
+(2026-04-05, 2026-10-04) changes in the zones that keep them; aliases, offsets,
 invalid names; IDN, IPv4/IPv6, percent-encoded and opaque hosts; NFC/NFD/
 NFKC/NFKD over compatibility, Hangul and combining sequences; 14 locales).
 packages/movement-lang/wasm/__test__/env_services.unit.test.ts holds the

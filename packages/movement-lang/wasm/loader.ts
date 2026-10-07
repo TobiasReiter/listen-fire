@@ -374,7 +374,9 @@ function instantiate(module: WasmModule): ParserExports {
  * from this runtime: the request's JSON in, the `{value}` reply copied into
  * a buffer of the instance's own `alloc` (the Rust side frees it), through
  * the two out slots. Status 1 with `{error: {message}}` for a request it
- * cannot read; nothing is thrown through the instance.
+ * cannot read or answer. Only a failure to hand the reply back (the
+ * instance's `alloc` trapping, or its memory gone) throws through the
+ * instance, which then traps as any call into it would.
  */
 function newInstance(module: WasmModule): Record<string, unknown> {
   let raw: Record<string, unknown> | undefined;

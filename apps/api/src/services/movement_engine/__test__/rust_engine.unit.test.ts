@@ -287,8 +287,7 @@ describe('the check host call', () => {
     adapters: { manual: { constructionArgs: [] } },
   });
   const SOURCE = ['import { manual } from adapters', 'go = manual()', 'movement m(e: <go>) {', '  x = 1', '}'].join('\n');
-  const check = (source: string, snapshot: unknown = catalog) =>
-    request(1, 'check', 'program', { source, snapshot, languageVersion: 3 });
+  const check = (source: string) => request(1, 'check', 'program', { source, languageVersion: 3 });
 
   it("answers check.program with the TypeScript checker's diagnostics, link and stamps", async () => {
     const { engine, answers } = scriptedEngine((seen) => (seen.length === 0 ? { pending: [check(SOURCE)] } : { done: {} }));
@@ -305,12 +304,6 @@ describe('the check host call', () => {
     expect(finished()).toBe(true);
   });
 
-  it("refuses to check against any snapshot but the run's", async () => {
-    const { engine } = scriptedEngine(() => ({ pending: [check(SOURCE, EMPTY_CATALOG_SNAPSHOT)] }));
-    await expect(driveEngine(engine, { entry: 'test' }, { host: makeTestHost(), teamId: TEAM, catalog })).rejects.toThrow(
-      RustShimError,
-    );
-  });
 });
 
 describe('the segment input', () => {

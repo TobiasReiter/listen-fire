@@ -55,6 +55,24 @@ for (const zone of ZONES) {
   for (const instant of [...instants, spring, autumn, ancient]) ask({ op: 'tz_convert', instantIso: new Date(instant).toISOString(), zone });
 }
 
+// The days the clocks change elsewhere: the US (2026-03-08, 2026-11-01) and
+// the southern hemisphere (Sydney, 2026-04-05 / 2026-10-04), every half hour
+// across each, in the zones that keep them.
+const TRANSITIONS: Array<{ zones: string[]; days: number[] }> = [
+  { zones: ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'US/Eastern', 'America/St_Johns'], days: [Date.UTC(2026, 2, 8), Date.UTC(2026, 10, 1)] },
+  { zones: ['Australia/Sydney', 'Australia/Melbourne', 'Australia/Lord_Howe', 'Australia/Adelaide', 'Pacific/Auckland'], days: [Date.UTC(2026, 3, 5), Date.UTC(2026, 9, 4)] },
+];
+for (const { zones, days } of TRANSITIONS) {
+  for (const zone of zones) {
+    for (const day of days) {
+      // From 18h before the local midnight to 30h after, wherever the zone sits.
+      for (let at = day - 18 * 3_600_000; at <= day + 30 * 3_600_000; at += 1_800_000) {
+        ask({ op: 'tz_convert', instantIso: new Date(at).toISOString(), zone });
+      }
+    }
+  }
+}
+
 // ── url_parse ─────────────────────────────────────────────────────────────────
 
 const SCHEMES = ['http://', 'https://', 'HTTPS://', 'ws://', 'wss://', 'ftp://', 'file://', 'git://', 'mailto:', 'http:', 'http:\\\\', 'x-y+z://', ''];

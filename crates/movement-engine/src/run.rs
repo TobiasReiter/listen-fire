@@ -192,9 +192,8 @@ async fn run(host: &Host, input: &SegmentInput) -> Result<Json, Stop> {
         .map_err(|e| Stop::Declined(format!("the catalog snapshot does not load: {e}")))?;
     let root = program::parse(&input.source, version)
         .map_err(|e| Stop::Declined(format!("the source does not parse here as it did for the shim: {e}")))?;
-    let snapshot: Json = serde_json::from_str(input.catalog.get()).expect("the catalog was read a moment ago");
     let answer = host
-        .request(host::check::program(&input.source, &snapshot, version, None))
+        .request(host::check::program(&input.source, version, None))
         .await
         .map_err(|e| Stop::Thrown(Failure::Host(e)))?
         .ok_or_else(|| Stop::Declined("check.program answered nothing".into()))?;
