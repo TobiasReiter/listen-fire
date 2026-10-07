@@ -1738,7 +1738,7 @@ mod tests {
     fn deep_nesting_is_refused_not_overflowed() {
         let deep = |open: &str, close: &str, n: usize| format!("{}a{}", open.repeat(n), close.repeat(n));
         // Run where a debug build's frames fit; the WASM stack is sized for
-        // the limit in a release build (see scripts/build-parser-wasm.sh).
+        // the limit in a release build (see scripts/build-movement-wasm.sh).
         let run = |text: String| std::thread::Builder::new()
             .stack_size(256 << 20)
             .spawn(move || parse_expression(&text).map(|_| ()).map_err(|e| e.message))

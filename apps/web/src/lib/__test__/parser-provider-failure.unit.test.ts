@@ -84,7 +84,7 @@ describe('the browser parser provider when the parser fails to load', () => {
   });
 
   it('shows an error with Try again, and a retry that succeeds renders the children', async () => {
-    const artifact = fs.readFileSync(path.join(__dirname, '../../../../../packages/movement-lang/wasm/movement_parser.wasm'));
+    const artifact = fs.readFileSync(path.join(__dirname, '../../../../../packages/movement-lang/wasm/movement.wasm'));
     Reflect.set(globalThis, 'window', globalThis);
     const fetched = jest
       .spyOn(globalThis, 'fetch')

@@ -31,7 +31,7 @@ pub fn fail<T>(message: impl Into<String>, pos: usize) -> PResult<T> {
 /// level; overflowing it under `--stack-first` is an out-of-bounds trap,
 /// which hangs Node 22 on macOS instead of throwing). The bound keeps both
 /// several times clear; real expressions nest a few levels.
-/// scripts/build-parser-wasm.sh sizes the shadow stack.
+/// scripts/build-movement-wasm.sh sizes the shadow stack.
 pub const MAX_DEPTH: usize = 128;
 
 pub const TOO_DEEP: &str = "nesting too deep";

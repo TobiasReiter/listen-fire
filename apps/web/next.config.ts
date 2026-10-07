@@ -12,7 +12,7 @@ import { apiProxyRewrites } from './src/lib/api-proxy';
 // its content hash so a long-cached old parser can never be served for a new
 // build; the URL reaches the client through `env` below, which both `next dev`
 // and `next build` inline from this one config evaluation.
-const parserBytes = fs.readFileSync(require.resolve('movement-lang/wasm/movement_parser.wasm'));
+const parserBytes = fs.readFileSync(require.resolve('movement-lang/wasm/movement.wasm'));
 const parserFile = `movement_parser.${createHash('sha256').update(parserBytes).digest('hex').slice(0, 12)}.wasm`;
 const publicDir = path.join(__dirname, 'public');
 for (const stale of fs.readdirSync(publicDir)) {

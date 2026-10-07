@@ -236,8 +236,10 @@ static PANIC_HOOK: Once = Once::new();
 
 /// A panic aborts, which traps the instance and loses the message; the hook
 /// keeps it where `last_panic` can hand it to the loader, which reads it
-/// from the trapped instance before discarding it.
-fn install_panic_hook() {
+/// from the trapped instance before discarding it. Public, as `utf8` and
+/// `write_out` are, because crates/movement-engine links this ABI into its
+/// own exports rather than defining a second `alloc`.
+pub fn install_panic_hook() {
     PANIC_HOOK.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -268,7 +270,10 @@ pub unsafe extern "C" fn last_panic(out_ptr_ptr: *mut usize, out_len_ptr: *mut u
 }
 
 /// `what` names the input in the refusal, where an export takes more than one.
-unsafe fn utf8<'a>(ptr: *const u8, len: u32, what: &str) -> Result<&'a str, serde_json::Value> {
+///
+/// # Safety
+/// `ptr..ptr+len` must be readable for the returned lifetime.
+pub unsafe fn utf8<'a>(ptr: *const u8, len: u32, what: &str) -> Result<&'a str, serde_json::Value> {
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
     std::str::from_utf8(bytes).map_err(|e| {
         json!({ "message": format!("{what} is not valid UTF-8"), "pos": e.valid_up_to() })
@@ -285,7 +290,10 @@ unsafe fn emit(parsed: Parsed, out_ptr_ptr: *mut usize, out_len_ptr: *mut usize)
 }
 
 /// Hands `bytes` to the caller through the out slots.
-unsafe fn write_out(bytes: Vec<u8>, out_ptr_ptr: *mut usize, out_len_ptr: *mut usize) {
+///
+/// # Safety
+/// The out slots must be writable.
+pub unsafe fn write_out(bytes: Vec<u8>, out_ptr_ptr: *mut usize, out_len_ptr: *mut usize) {
     // A boxed slice's allocation is exactly `byte_layout(len)`, which is what
     // `dealloc` frees with.
     let bytes = bytes.into_boxed_slice();

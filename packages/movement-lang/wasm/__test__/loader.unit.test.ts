@@ -151,7 +151,7 @@ function committedArtifact(): Uint8Array {
   if (typeof fs !== 'object' || fs === null || !('readFileSync' in fs) || typeof fs.readFileSync !== 'function') {
     throw new Error('no fs');
   }
-  const bytes: unknown = fs.readFileSync(`${__dirname}/../movement_parser.wasm`);
+  const bytes: unknown = fs.readFileSync(`${__dirname}/../movement.wasm`);
   if (!ArrayBuffer.isView(bytes)) throw new Error('no bytes');
   return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }

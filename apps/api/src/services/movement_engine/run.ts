@@ -352,6 +352,7 @@ import {
   type CallbackParamSpec,
 } from './callback_types';
 import { isAdapterCallCeilingExceeded, segmentWriteLockHolder, withRunCallLedger } from './run_scope';
+import { engineChoice, runSegmentInRust, rustCanRun } from './rust_engine';
 import type { WriteLocks } from '../write_locks/write_locks';
 import { CallDepthExceeded, isCallDepthExceeded, maxCallDepth } from './call_depth';
 import {
@@ -688,6 +689,7 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // the engine's import structure — validation and execution consume one
   // resolution.
   const { program, prepared } = parseAndCheck(input);
+  if (engineChoice() === 'rust' && rustCanRun(program)) return runSegmentInRust(input);
   // Every way into the interpreter opens the same door: one segment, one
   // third-party call ceiling (run_scope.ts). A fifth entry point that
   // forgets `withRunCallLedger` loses the safeguard silently, so they all

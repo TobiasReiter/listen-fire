@@ -1,16 +1,18 @@
-name: parser-wasm
-# A prod-safety check, not a lint gate: the repo ships movement_parser.wasm so
-# the pnpm dev loop needs no Rust, and the shipped bytes must be the crate's.
+name: movement-wasm
+# A prod-safety check, not a lint gate: the repo ships movement.wasm (the
+# parser and the engine, built from crates/movement-engine) so the pnpm dev
+# loop needs no Rust, and the shipped bytes must be the crates'.
 #
 #  - rebuild-matches-committed rebuilds the artifact and fails if it differs.
-#  - parser-tests runs the crate's tests (including the strict programs
+#  - parser-tests runs both crates' tests (including the strict programs
 #    harness) and the movement-lang parser pins through the committed
 #    artifact: every corpus program and expression text parses as pinned;
 #    and the catalog differential: the Rust catalog answers every lookup the
-#    checker corpus makes as the TypeScript one does.
+#    checker corpus makes as the TypeScript one does; and the engine's
+#    TypeScript shim, against a double and through the committed artifact.
 #
 # The committed artifact was built on macOS; the path remapping and pinned
-# toolchain in scripts/build-parser-wasm.sh are meant to make Linux produce the
+# toolchain in scripts/build-movement-wasm.sh are meant to make Linux produce the
 # same bytes, and this workflow's first green run is what verifies that.
 on:
   pull_request:
@@ -19,10 +21,12 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
-      - "scripts/build-parser-wasm.sh"
+      - "scripts/build-movement-wasm.sh"
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
-      - ".github/workflows/parser-wasm.yml"
+      - "apps/api/src/services/movement_engine/rust_engine*.ts"
+      - "apps/api/src/services/movement_engine/__test__/rust_engine*"
+      - ".github/workflows/movement-wasm.yml"
   push:
     branches:
       - main
@@ -31,10 +35,12 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
-      - "scripts/build-parser-wasm.sh"
+      - "scripts/build-movement-wasm.sh"
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
-      - ".github/workflows/parser-wasm.yml"
+      - "apps/api/src/services/movement_engine/rust_engine*.ts"
+      - "apps/api/src/services/movement_engine/__test__/rust_engine*"
+      - ".github/workflows/movement-wasm.yml"
 
 permissions:
   contents: read
@@ -59,13 +65,13 @@ jobs:
           key: cargo-registry-${{ hashFiles('Cargo.lock') }}
       - name: Rebuild and compare
         run: |
-          committed=$(sha256sum packages/movement-lang/wasm/movement_parser.wasm | cut -d' ' -f1)
-          ./scripts/build-parser-wasm.sh
-          rebuilt=$(sha256sum packages/movement-lang/wasm/movement_parser.wasm | cut -d' ' -f1)
+          committed=$(sha256sum packages/movement-lang/wasm/movement.wasm | cut -d' ' -f1)
+          ./scripts/build-movement-wasm.sh
+          rebuilt=$(sha256sum packages/movement-lang/wasm/movement.wasm | cut -d' ' -f1)
           echo "committed $committed"
           echo "rebuilt   $rebuilt"
           if [ "$committed" != "$rebuilt" ]; then
-            echo "::error::movement_parser.wasm differs from what the crate builds. Run scripts/build-parser-wasm.sh and commit the rebuilt packages/movement-lang/wasm/movement_parser.wasm. If it differs only on Linux, the build is not reproducible across platforms: see the reproducibility notes in crates/movement-parser/README.md."
+            echo "::error::movement.wasm differs from what the crates build. Run scripts/build-movement-wasm.sh and commit the rebuilt packages/movement-lang/wasm/movement.wasm. If it differs only on Linux, the build is not reproducible across platforms: see the reproducibility notes in crates/movement-parser/README.md."
             exit 1
           fi
 
@@ -85,7 +91,7 @@ jobs:
             ~/.cargo/git
           key: cargo-registry-${{ hashFiles('Cargo.lock') }}
       - name: Crate tests
-        run: cargo test --locked -p movement-parser
+        run: cargo test --locked -p movement-parser -p movement-engine
       - uses: pnpm/action-setup@v3
         with:
           version: 9
@@ -106,17 +112,20 @@ jobs:
         env:
           MOVEMENT_CATALOG_DIFFERENTIAL: "1"
         run: pnpm run test --testPathPattern 'catalog_differential'
+      - name: Engine shim, against a double and through the committed artifact
+        working-directory: apps/api
+        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/rust_engine'
       # The artifact ships to browsers: keep its download size in view.
       - name: Size budget
         run: |
-          f=packages/movement-lang/wasm/movement_parser.wasm
+          f=packages/movement-lang/wasm/movement.wasm
           raw=$(wc -c < "$f" | tr -d ' ')
           gz=$(gzip -9 -c "$f" | wc -c | tr -d ' ')
           echo "raw $raw bytes, gzipped $gz bytes"
           if [ "$gz" -gt 1048576 ]; then
-            echo "::error::movement_parser.wasm is $gz bytes gzipped, over the 1 MB budget."
+            echo "::error::movement.wasm is $gz bytes gzipped, over the 1 MB budget."
             exit 1
           fi
           if [ "$gz" -gt 614400 ]; then
-            echo "::warning::movement_parser.wasm is $gz bytes gzipped, over the 600 KB warning line (fails at 1 MB)."
+            echo "::warning::movement.wasm is $gz bytes gzipped, over the 600 KB warning line (fails at 1 MB)."
           fi

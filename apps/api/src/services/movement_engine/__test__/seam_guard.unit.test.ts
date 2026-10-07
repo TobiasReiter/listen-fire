@@ -40,6 +40,7 @@ const PURE_FILES = [
   'provenance.ts',
   'run.ts',
   'run_scope.ts',
+  'rust_engine.ts',
   'serialize.ts',
 ];
 
