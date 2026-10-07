@@ -688,8 +688,10 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // segment asks for its own check (the `check.program` host call), which
   // throws exactly what parseAndCheck throws.
   const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
-  if (parsed !== undefined && rustCanRun(parsed)) {
-    return withRunCallLedger(() => runSegmentInRust(input), runScopeOf(input));
+  if (parsed !== undefined && rustCanRun(parsed, input)) {
+    const outcome = await withRunCallLedger(() => runSegmentInRust(input), runScopeOf(input));
+    // A program the Rust engine declined (before it touched an adapter) runs here.
+    if ('ran' in outcome) return outcome.ran;
   }
   const { program, prepared } = parseAndCheck(input, parsed);
   // Every way into the interpreter opens the same door: one segment, one

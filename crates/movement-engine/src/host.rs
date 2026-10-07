@@ -8,8 +8,10 @@
 use serde::Serialize;
 use serde_json::{Value as Json, json};
 
-/// The `EngineHost` groups a request can address, plus `Check` (the
-/// TypeScript checker, until the checker is Rust) and `Echo`: the protocol's own
+/// The `EngineHost` groups a request can address (`Trace` is its `trace`
+/// array), plus `Check` (the TypeScript checker, until the checker is Rust),
+/// `Builtins` (the TypeScript standard library, for the readings this engine
+/// hands back) and `Echo`: the protocol's own
 /// probe, served by no host (the `echo` entry's requests name it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
@@ -20,7 +22,9 @@ pub enum Family {
     Files,
     Lookup,
     Locks,
+    Trace,
     Check,
+    Builtins,
     Echo,
 }
 
@@ -34,7 +38,9 @@ impl Family {
             Family::Files => "files",
             Family::Lookup => "lookup",
             Family::Locks => "locks",
+            Family::Trace => "trace",
             Family::Check => "check",
+            Family::Builtins => "builtins",
             Family::Echo => "echo",
         }
     }
@@ -48,7 +54,9 @@ impl Family {
             Family::Files,
             Family::Lookup,
             Family::Locks,
+            Family::Trace,
             Family::Check,
+            Family::Builtins,
             Family::Echo,
         ]
         .into_iter()
@@ -110,6 +118,61 @@ pub mod adapters {
             args: json!({ "instance": instance.0, "method": method, "args": args }),
         }
     }
+
+    /// `call` with its arguments, and its answer, on the eval wire
+    /// (crate::env): key order, `undefined` and the numbers JSON cannot say
+    /// cross as the JavaScript has them.
+    pub fn call_wire(instance: Instance, method: &str, args: Vec<Json>) -> Request {
+        Request {
+            family: Family::Adapters,
+            method: "call".into(),
+            args: json!({ "instance": instance.0, "method": method, "args": args, "wire": true }),
+        }
+    }
+}
+
+pub mod control {
+    use super::*;
+
+    /// The cancel gate at a statement boundary (`cancel.cancelled()`):
+    /// answered true once a cancel is requested.
+    pub fn cancelled() -> Request {
+        Request { family: Family::Control, method: "cancelled".into(), args: json!({}) }
+    }
+
+    /// The run's last cancel check, undebounced (`cancel.cancelledNow()`).
+    pub fn cancelled_now() -> Request {
+        Request { family: Family::Control, method: "cancelledNow".into(), args: json!({}) }
+    }
+}
+
+pub mod trace {
+    use super::*;
+
+    /// One entry appended to the run's trace as it lands.
+    pub fn append(entry: &crate::trace::TraceEntry) -> Request {
+        Request { family: Family::Trace, method: "append".into(), args: json!({ "entry": entry }) }
+    }
+}
+
+pub mod builtins {
+    use super::*;
+
+    /// A built-in this engine hands back for these arguments, answered by
+    /// the TypeScript member: `{id, args, now, languageVersion}`, values on
+    /// the eval wire, the answer too.
+    pub fn function(id: &str, args: Vec<Json>, now: &str, language_version: u32) -> Request {
+        Request {
+            family: Family::Builtins,
+            method: "function".into(),
+            args: json!({ "id": id, "args": args, "now": now, "languageVersion": language_version }),
+        }
+    }
+
+    /// The shared comparator (`compareValues`), likewise.
+    pub fn compare(op: &str, left: Json, right: Json) -> Request {
+        Request { family: Family::Builtins, method: "compare".into(), args: json!({ "op": op, "left": left, "right": right }) }
+    }
 }
 
 pub mod check {
@@ -159,7 +222,7 @@ mod tests {
 
     #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "park", "control", "files", "lookup", "locks", "check", "echo"] {
+        for name in ["adapters", "llm", "park", "control", "files", "lookup", "locks", "trace", "check", "builtins", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);

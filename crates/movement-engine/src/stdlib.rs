@@ -658,6 +658,12 @@ const OBJECT_PROTOTYPE_NAMES: [&str; 12] = [
     "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "__proto__", "toLocaleString",
 ];
 
+/// One of `Object.prototype`'s own names: a read of it off a plain object
+/// finds the prototype's member, not nothing.
+pub fn is_object_prototype_name(name: &str) -> bool {
+    OBJECT_PROTOTYPE_NAMES.contains(&name)
+}
+
 /// `bindingOf(value) !== undefined`.
 pub fn is_binding_shaped(value: &Js) -> bool {
     match value {

@@ -31,6 +31,7 @@ import {
   diagnosticSeverity,
   parseProgram,
 } from 'movement-lang';
+
 import type {
   Catalog,
   CatalogSnapshot,

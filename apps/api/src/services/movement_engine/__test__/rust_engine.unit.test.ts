@@ -7,6 +7,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { makeTestHost, type TestHostOverrides } from '../host';
+import { MovementRunFailed, runFailureCause } from '../run';
 import {
   assertEngineChoiceConfigured,
   driveEngine,
@@ -121,7 +122,7 @@ describe('the Rust engine shim', () => {
     expect(done).toEqual({ ok: true });
     expect(resolved).toEqual([{ adapterType: 'fake', teamId: TEAM, role: 'source' }]);
     expect(answers).toEqual([
-      { id: 1, answer: { value: { instance: 1 } } },
+      { id: 1, answer: { value: { instance: 1, adapterType: 'fake' } } },
       { id: 2, answer: { value: 'value of Name' } },
     ]);
     expect(finished()).toBe(true);
@@ -164,7 +165,7 @@ describe('the Rust engine shim', () => {
     expect(done).toEqual([2, 1]);
     expect(answers).toEqual([
       { id: 2, answer: { value: 'cred-1' } },
-      { id: 1, answer: { value: { instance: 1 } } },
+      { id: 1, answer: { value: { instance: 1, adapterType: 'fake' } } },
     ]);
   });
 
@@ -195,7 +196,7 @@ describe('the Rust engine shim', () => {
     );
     expect(answers).toEqual(
       expect.arrayContaining([
-        { id: 1, answer: { error: { message: 'registry down', name: 'TypeError' } } },
+        { id: 1, answer: { error: { message: 'registry down', name: 'TypeError', ref: 0 } } },
         { id: 2, answer: {} },
       ]),
     );
@@ -250,19 +251,34 @@ describe('the Rust engine shim', () => {
     expect(finished()).toBe(true);
   });
 
-  it('reads a result with nothing in it, and refuses what it does not decode yet', () => {
-    expect(readRunResult({ movementName: 'm', writes: [], trace: [], extractionSites: {} })).toEqual({
-      movementName: 'm',
-      writes: [],
-      trace: [],
-      extractionSites: {},
+  it('reads a result, a failure and a decline, and refuses what it does not decode yet', () => {
+    const trace = [{ kind: 'gate' as const, outcome: true }];
+    expect(readRunResult({ result: { movementName: 'm' } }, { trace, hostErrors: [] })).toEqual({
+      ran: { movementName: 'm', writes: [], trace, extractionSites: {} },
     });
-    expect(() => readRunResult({ movementName: 'm', writes: [{}], trace: [] })).toThrow(
-      'the Rust engine result has writes this shim does not decode yet',
+    expect(readRunResult({ result: { movementName: 'm', cancelled: true } }, { trace: [], hostErrors: [] })).toEqual({
+      ran: { movementName: 'm', writes: [], trace: [], extractionSites: {}, cancelled: true },
+    });
+    expect(readRunResult({ declined: 'a shape' }, { trace: [], hostErrors: [] })).toEqual({ declined: 'a shape' });
+    const original = new TypeError('the adapter broke');
+    expect(() => readRunResult({ thrown: { hostError: 0 } }, { trace: [], hostErrors: [original] })).toThrow(original);
+    expect(() =>
+      readRunResult({ thrown: { class: 'MovementEngineError', code: 'MOVENG_NOT_FOUND', message: 'no movement' } }, { trace: [], hostErrors: [] }),
+    ).toThrow('MOVENG_NOT_FOUND: no movement');
+    let failed: unknown;
+    try {
+      readRunResult({ failed: { error: { hostError: 0 }, result: { movementName: 'm' } } }, { trace, hostErrors: [original] });
+    } catch (error) {
+      failed = error;
+    }
+    expect(failed).toBeInstanceOf(MovementRunFailed);
+    expect(runFailureCause(failed)).toBe(original);
+    if (!(failed instanceof MovementRunFailed)) throw new Error('a MovementRunFailed');
+    expect(failed.partial).toEqual({ movementName: 'm', writes: [], trace, extractionSites: {} });
+    expect(() => readRunResult({ result: { movementName: 'm', writes: [] } }, { trace: [], hostErrors: [] })).toThrow(
+      'the Rust engine result has writes, which this shim does not decode yet',
     );
-    expect(() => readRunResult({ movementName: 'm', writes: [], trace: [], parked: true })).toThrow(
-      'the Rust engine result has parked, which this shim does not decode yet',
-    );
+    expect(() => readRunResult({ parked: true }, { trace: [], hostErrors: [] })).toThrow(RustShimError);
   });
 });
 
@@ -326,7 +342,9 @@ describe('choosing the engine', () => {
     expect(() => assertEngineChoiceConfigured({})).not.toThrow();
   });
 
-  it('lets no program through to the Rust engine yet', () => {
-    expect(rustCanRun({ statements: [] })).toBe(false);
+  it('admits no run that could suspend', () => {
+    expect(rustCanRun({ statements: [] }, { host: makeTestHost() })).toBe(true);
+    expect(rustCanRun({ statements: [] }, { host: makeTestHost(), limitPaused: true })).toBe(false);
+    expect(rustCanRun({ statements: [] }, { host: makeTestHost({ control: { suspendWhen: () => false } }) })).toBe(false);
   });
 });

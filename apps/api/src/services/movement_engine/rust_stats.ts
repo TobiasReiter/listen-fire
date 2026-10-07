@@ -23,3 +23,21 @@ export function resetRustEvalStats(): void {
   rustEvalStats.answered = 0;
   rustEvalStats.fallback = {};
 }
+
+/**
+ * Whole runs the shim sent to the Rust engine (`routed`), of those the ones
+ * it declined before touching an adapter, by its reason (`declined`, which
+ * then ran on the TypeScript engine), and the host calls segments made, by
+ * `family.method` (`hostCalls`).
+ */
+export const rustRunStats: { routed: number; declined: Record<string, number>; hostCalls: Record<string, number> } = {
+  routed: 0,
+  declined: {},
+  hostCalls: {},
+};
+
+export function resetRustRunStats(): void {
+  rustRunStats.routed = 0;
+  rustRunStats.declined = {};
+  rustRunStats.hostCalls = {};
+}

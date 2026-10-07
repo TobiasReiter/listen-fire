@@ -16,7 +16,7 @@ use movement_parser::lowering::expression::{
     Expression, FilterOperator, ListElement, LogicalOp, ObjectMember, StaticValue,
 };
 
-use crate::env::{Env, Trail};
+use crate::env::{Env, Trail, ValueBinding};
 use crate::filter::{arithmetic, at_index, compare_to_null, compare_values, is_null_literal};
 use crate::js::{Js, JsObject};
 use crate::stdlib::{self, Surroundings};
@@ -38,6 +38,9 @@ pub enum EvalError {
     /// reproduce (a text only V8's date parser reads, a regex feature): the
     /// TypeScript evaluator answers it instead.
     Fallback(String),
+    /// The evaluation needs an answer from the host it does not have yet
+    /// (`Reader`): the caller asks, and evaluates the expression again.
+    Suspend,
 }
 
 impl EvalError {
@@ -80,11 +83,49 @@ pub fn static_value(value: &StaticValue) -> Js {
     }
 }
 
+/// The names an expression reads: value bindings, and which names are the
+/// event (read through the host).
+pub trait Names {
+    fn value(&self, name: &str) -> Option<ValueBinding>;
+    fn is_event(&self, name: &str) -> bool;
+}
+
+impl Names for Env {
+    fn value(&self, name: &str) -> Option<ValueBinding> {
+        self.resolve(name).cloned()
+    }
+
+    fn is_event(&self, _name: &str) -> bool {
+        false
+    }
+}
+
+/// What an evaluation inside a run asks of its host, in evaluation order.
+#[derive(Debug, Clone)]
+pub enum Ask {
+    /// A field of the event position (`msg.\`subject\``), through the
+    /// source adapter.
+    EventField { field: String },
+    /// A built-in this engine does not reproduce for these arguments: the
+    /// TypeScript member answers.
+    Function { id: String, args: Vec<Js> },
+    /// The shared comparator, likewise.
+    Compare { op: FilterOperator, left: Js, right: Js },
+}
+
+/// The host's answers to an evaluation's asks. An evaluation is replayed
+/// from the start after each new answer, so the answers are handed out in
+/// the order asked; one not answered yet is `Suspend`.
+pub trait Reader {
+    fn ask(&self, ask: Ask) -> Result<Evaluated, EvalError>;
+}
+
 pub struct Evaluator<'a> {
-    env: &'a Env,
+    env: &'a dyn Names,
     language_version: Option<u32>,
     around: Surroundings<'a>,
     next_literal: Cell<u32>,
+    reader: Option<&'a dyn Reader>,
 }
 
 type Eval = Result<Evaluated, EvalError>;
@@ -92,8 +133,27 @@ type Eval = Result<Evaluated, EvalError>;
 impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
-    pub fn new(env: &'a Env, language_version: Option<u32>, around: Surroundings<'a>, first_literal: u32) -> Self {
-        Evaluator { env, language_version, around, next_literal: Cell::new(first_literal) }
+    pub fn new(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, first_literal: u32) -> Self {
+        Evaluator { env, language_version, around, next_literal: Cell::new(first_literal), reader: None }
+    }
+
+    /// Inside a run: what the evaluation cannot answer itself, it asks.
+    pub fn with_reader(mut self, reader: &'a dyn Reader) -> Self {
+        self.reader = Some(reader);
+        self
+    }
+
+    /// The first literal origin id the evaluation has not minted.
+    pub fn next_literal(&self) -> u32 {
+        self.next_literal.get()
+    }
+
+    /// `result`, or the host's answer where this engine handed it back.
+    fn or_ask(&self, result: Result<Js, EvalError>, ask: impl FnOnce() -> Ask) -> Result<Js, EvalError> {
+        match (result, self.reader) {
+            (Err(EvalError::Fallback(_)), Some(reader)) => reader.ask(ask()).map(|answered| answered.value),
+            (other, _) => other,
+        }
     }
 
     pub fn eval(&self, expr: &Expression) -> Eval {
@@ -211,8 +271,12 @@ impl<'a> Evaluator<'a> {
                 if records && matches!(op, FilterOperator::Eq | FilterOperator::Neq) {
                     return Err(EvalError::Fallback("a record compared by its identity".into()));
                 }
-                let value = compare_values(&l.value, *op, &r.value)?;
-                Ok(Evaluated { value: Js::Bool(value), prov: self.union(&[&l.prov, &r.prov]) })
+                let value = self.or_ask(compare_values(&l.value, *op, &r.value).map(Js::Bool), || Ask::Compare {
+                    op: *op,
+                    left: l.value.clone(),
+                    right: r.value.clone(),
+                })?;
+                Ok(Evaluated { value, prov: self.union(&[&l.prov, &r.prov]) })
             }
             Expression::Logical { op, operands } => {
                 let wanted = matches!(op, LogicalOp::Or);
@@ -242,12 +306,51 @@ impl<'a> Evaluator<'a> {
                 Ok(Evaluated { value, prov: self.union(&[&l.prov, &r.prov]) })
             }
             Expression::Function { fn_, args } => self.function(fn_, args),
+            Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => {
+                let Expression::Property { property_type_id: field } = expression.as_ref() else {
+                    return Err(EvalError::Fallback("a traversal terminal other than a field".into()));
+                };
+                self.traverse(root, field)
+            }
             other => Err(EvalError::Fallback(format!("the expression kind {:?} needs the host", kind_of(other)))),
         }
     }
 
+    /// `root.field` with no hops: the event's field through the host, or a
+    /// value binding's field projected (`readBindingField`'s value case).
+    fn traverse(&self, root: &str, field: &str) -> Eval {
+        if self.env.is_event(root) {
+            return match self.reader {
+                Some(reader) => reader.ask(Ask::EventField { field: field.to_string() }),
+                None => Err(EvalError::Fallback("the event needs the host".into())),
+            };
+        }
+        let Some(binding) = self.env.value(root) else {
+            return Err(EvalError::Fallback(format!("'{root}' is not a value binding")));
+        };
+        // A record held on the value plane reads as the record it is.
+        if stdlib::is_binding_shaped(&binding.value) {
+            return Err(EvalError::Fallback("a record held in a value binding".into()));
+        }
+        let value = match &binding.value {
+            Js::Object(object) => match object.get(field) {
+                Some(found) if !found.is_nullish() => found.clone(),
+                Some(_) => Js::Null,
+                // `value[field] ?? null` reads Object.prototype's names too.
+                None if stdlib::is_object_prototype_name(field) => {
+                    return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
+                }
+                None => Js::Null,
+            },
+            _ => Js::Null,
+        };
+        // A field projected out of a value keeps the taint union but drops
+        // `direct`: it is not the whole value's quote.
+        Ok(Evaluated { value, prov: self.union(&[&Prov::Binding(root.to_string())]) })
+    }
+
     fn read_name(&self, name: &str) -> Eval {
-        let Some(binding) = self.env.resolve(name) else {
+        let Some(binding) = self.env.value(name) else {
             return Err(EvalError::engine(
                 "MOVENG_RUNTIME",
                 format!("'{name}' is not in scope — the checker should have caught this"),
@@ -260,7 +363,7 @@ impl<'a> Evaluator<'a> {
     fn is_many_valued(&self, expr: &Expression) -> bool {
         match expr {
             Expression::AliasRef { name } | Expression::Property { property_type_id: name } => {
-                self.env.resolve(name).is_some_and(|b| b.many)
+                self.env.value(name).is_some_and(|b| b.many)
             }
             _ => false,
         }
@@ -281,7 +384,10 @@ impl<'a> Evaluator<'a> {
                 values.push(result.value);
                 provs.push(result.prov);
             }
-            let value = stdlib::apply_namespaced(id, &values, self.around)?;
+            let value = self.or_ask(stdlib::apply_namespaced(id, &values, self.around), || Ask::Function {
+                id: id.to_string(),
+                args: values.clone(),
+            })?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
         if !stdlib::FLAT.contains(&id) {
@@ -312,7 +418,7 @@ impl<'a> Evaluator<'a> {
             return Ok(Evaluated { value: Js::Null, prov: self.union(&provs) });
         }
         let values: Vec<Js> = results.iter().map(|r| r.value.clone()).collect();
-        let value = stdlib::apply_flat(id, &values)?;
+        let value = self.or_ask(stdlib::apply_flat(id, &values), || Ask::Function { id: id.to_string(), args: values.clone() })?;
         Ok(Evaluated { value, prov: self.union(&provs) })
     }
 
@@ -322,10 +428,10 @@ impl<'a> Evaluator<'a> {
         let mut origins: Vec<u32> = Vec::new();
         for part in parts {
             let trail = match part {
-                Prov::Built(trail) => Some(trail),
-                Prov::Binding(name) => self.env.resolve(name).and_then(|b| b.trail.as_ref()),
+                Prov::Built(trail) => Some(trail.clone()),
+                Prov::Binding(name) => self.env.value(name).and_then(|b| b.trail),
             };
-            for &origin in trail.map_or(&[][..], |t| &t.origins[..]) {
+            for &origin in trail.as_ref().map_or(&[][..], |t| &t.origins[..]) {
                 if !origins.contains(&origin) {
                     origins.push(origin);
                 }

@@ -7,27 +7,48 @@
 // the engine calls its methods by that handle.
 //
 // Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`)
-// and by `rustCanRun`, the allow-list of what the Rust engine can already run.
-// It allows nothing yet; it grows one slice at a time, each proven by the
-// engine conformance corpora running unchanged against both engines.
+// and by `rustCanRun`, the allow-list of what the Rust engine can already run
+// whole (bindings, `if` and `return` over reads of the event and of values,
+// slice 2a). It grows one slice at a time, each proven against the TypeScript
+// engine on the same programs.
 //
 // Below a whole program, one expression can already run in Rust: `evalInRust`
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import { callEvalExpression, CURRENT_LANGUAGE_VERSION, openEngineSegment, type CatalogSnapshot, type Program } from 'movement-lang';
+import {
+  applyStdlib,
+  callEvalExpression,
+  readCall,
+  resolveCallee,
+  conditionOfSlot,
+  CURRENT_LANGUAGE_VERSION,
+  expressionOfSlot,
+  openEngineSegment,
+  stdlibFunctionById,
+  type CatalogSnapshot,
+  type CallStatement,
+  type ExprSlot,
+  type LanguageVersion,
+  type MovementCondition,
+  type Program,
+  type Statement,
+} from 'movement-lang';
 
-import type { Expression } from '#shared/expression/types';
+import { compareValues } from '#shared/expression/filter';
+import type { Expression, FilterOperator } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
+import { currentRunSpend } from '../../lib/run_spend';
 import { neverAsAny } from '../../lib/utils/types';
 import type { Adapter } from '../translation_graph/adapter';
+import { applyMovementFunction } from './builtins';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import { bindingOf, type Binding, type MovementEvalResult, type MovementExprContext } from './expression';
 import type { EngineHost } from './host';
 import { checkAnswer, checkPinned } from './program_check';
-import { rustEvalStats } from './rust_stats';
+import { rustEvalStats, rustRunStats } from './rust_stats';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
-import type { MovementRunResult, RunMovementInput } from './run';
+import { MovementRunFailed, type MovementRunResult, type RunMovementInput } from './run';
 
 /** One request a segment makes of its host. */
 export interface HostRequest {
@@ -43,7 +64,10 @@ export type EngineStep = { pending: HostRequest[] } | { done: unknown };
 
 /** An answer: the value (`{}` when it is `undefined`), or the error the host
  *  raised, which the engine receives as an `Err` it may handle. */
-export type HostAnswer = { value: unknown } | Record<string, never> | { error: { message: string; name?: string } };
+export type HostAnswer =
+  | { value: unknown }
+  | Record<string, never>
+  | { error: { message: string; name?: string; ref?: number } };
 
 /** The engine's side of the conversation. `openWasmEngine` is the real one;
  *  a test drives the shim with a double. */
@@ -89,22 +113,24 @@ export function assertEngineChoiceConfigured(env: Record<string, string | undefi
   engineChoice(env);
 }
 
-/** Whether the Rust engine can run `program`. Nothing yet: each slice adds
- *  the constructs its conformance cases prove. */
-export function rustCanRun(_program: Program): boolean {
-  return false;
-}
-
-/** A segment of `input`'s run, in the Rust engine. */
+/** A segment of `input`'s run in the Rust engine: its result, or that the
+ *  engine declined it (before it touched an adapter) for the TypeScript
+ *  engine to run. */
 export async function runSegmentInRust(
   input: RunMovementInput,
   engine?: EngineProtocol,
-): Promise<MovementRunResult> {
+): Promise<{ ran: MovementRunResult } | { declined: string }> {
   // Read before the instance opens: an input that cannot cross must not
   // leave a segment open behind it.
   const start = segmentInput(input);
-  const done = await driveEngine(engine ?? openWasmEngine(), start, input);
-  return readRunResult(done);
+  if (start === undefined) throw new RustShimError('this run cannot cross to the Rust engine (rustCanRun admits none such)');
+  const trace = input.host.trace ?? [];
+  const hostErrors: unknown[] = [];
+  rustRunStats.routed += 1;
+  const done = await driveEngine(engine ?? openWasmEngine(), start, { ...input, trace, hostErrors });
+  const outcome = readRunResult(done, { trace, hostErrors });
+  if ('declined' in outcome) rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
+  return outcome;
 }
 
 /**
@@ -115,13 +141,20 @@ export async function runSegmentInRust(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Pick<RunMovementInput, 'host' | 'teamId' | 'catalog'>,
+  input: Pick<RunMovementInput, 'host' | 'teamId' | 'catalog'> & {
+    /** Where the engine's trace entries land (`host.trace`, else the run's own). */
+    trace?: MovementRunResult['trace'];
+    /** The errors host calls failed with, by the `ref` their answers carry. */
+    hostErrors?: unknown[];
+  },
 ): Promise<unknown> {
   const context: RouteContext = {
     host: input.host,
     teamId: input.teamId,
     instances: new Map(),
     catalog: input.catalog,
+    trace: input.trace ?? [],
+    hostErrors: input.hostErrors ?? [],
   };
   const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
   try {
@@ -153,6 +186,8 @@ interface RouteContext {
   /** The live adapters behind the handles the engine holds, numbered from 1. */
   instances: Map<number, Adapter>;
   catalog: CatalogSnapshot;
+  trace: MovementRunResult['trace'];
+  hostErrors: unknown[];
 }
 
 type Route = (args: unknown, context: RouteContext) => Promise<unknown>;
@@ -213,7 +248,7 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
       });
       const instance = context.instances.size + 1;
       context.instances.set(instance, adapter);
-      return { instance };
+      return { instance, adapterType: adapter.adapterType };
     },
     async credentialId(args, context) {
       const request = record(args, 'adapters.credentialId');
@@ -230,7 +265,50 @@ const ROUTES: Record<string, Record<string, Route> | undefined> = {
         throw new RustShimError(`adapters.call: the ${adapter.adapterType} adapter has no method ${method}`);
       }
       if (!Array.isArray(request.args)) throw new RustShimError(`adapters.call ${method}: args must be an array`);
-      return Reflect.apply(fn, adapter, request.args);
+      if (request.wire !== true) return Reflect.apply(fn, adapter, request.args);
+      // On the eval wire both ways: the JavaScript's key order, `undefined`
+      // and the numbers JSON cannot say cross as they are.
+      const values = request.args.map((arg) => new WireOut().read(arg));
+      return new Wired(await Reflect.apply(fn, adapter, values), `adapters.call ${method}`);
+    },
+  },
+  control: {
+    /** The cancel gate at a statement boundary. */
+    async cancelled(_args, context) {
+      return context.host.control.cancel.cancelled();
+    },
+    /** The run's last, undebounced, cancel check. */
+    async cancelledNow(_args, context) {
+      return context.host.control.cancel.cancelledNow();
+    },
+  },
+  trace: {
+    /** One entry on the run's trace, as it lands. */
+    async append(args, context) {
+      const entry = traceEntry(record(args, 'trace.append').entry);
+      context.trace.push(entry);
+      return undefined;
+    },
+  },
+  builtins: {
+    /** A built-in the Rust engine hands back for these arguments, answered by
+     *  the TypeScript member: its value, or what it throws. */
+    async function(args) {
+      const request = record(args, 'builtins.function');
+      const id = string(request.id, 'builtins.function id');
+      if (!Array.isArray(request.args)) throw new RustShimError('builtins.function args must be an array');
+      const values = request.args.map((arg) => new WireOut().read(arg));
+      const now = new Date(string(request.now, 'builtins.function now'));
+      const spec = stdlibFunctionById(id);
+      return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
+    },
+    /** The shared comparator, likewise. */
+    async compare(args) {
+      const request = record(args, 'builtins.compare');
+      const op = filterOperator(request.op);
+      const left = new WireOut().read(request.left);
+      const right = new WireOut().read(request.right);
+      return builtinAnswer(() => compareValues(left, op, right));
     },
   },
 };
@@ -239,6 +317,7 @@ async function serve(request: HostRequest, context: RouteContext): Promise<HostA
   const route = ROUTES[request.family]?.[request.method];
   const label = `${request.family}.${request.method}`;
   if (route === undefined) throw new RustShimError(`the shim has no route for ${label}`);
+  rustRunStats.hostCalls[label] = (rustRunStats.hostCalls[label] ?? 0) + 1;
   let value: unknown;
   try {
     value = await route(request.args, context);
@@ -246,10 +325,92 @@ async function serve(request: HostRequest, context: RouteContext): Promise<HostA
     if (error instanceof RustShimError) throw error;
     if (error instanceof RunAborted) throw error.abortedWith;
     // The host's own failure: the engine decides what it means for the run.
-    return { error: errorAnswer(error) };
+    // The error itself stays here, under the `ref` its answer carries, so a
+    // run that fails with it fails with this very object.
+    context.hostErrors.push(error);
+    return { error: { ...errorAnswer(error), ref: context.hostErrors.length - 1 } };
   }
   const named = adapterCallName(request) ?? label;
+  if (value instanceof Wired) {
+    const wire = new WireOut().value(value.value);
+    if (wire === REFUSED) throw new RustShimError(`${value.what} returned a value the eval wire cannot carry as itself`);
+    return { value: wire };
+  }
   return value === undefined ? {} : { value: plainJson(value, named) };
+}
+
+/** A route's value to send on the eval wire rather than as JSON. */
+class Wired {
+  constructor(
+    readonly value: unknown,
+    readonly what: string,
+  ) {}
+}
+
+/** `{value: wire}` or `{threw: {class, code?, message}}`. */
+function builtinAnswer(run: () => unknown): unknown {
+  let value: unknown;
+  try {
+    value = run();
+  } catch (error) {
+    if (error instanceof MovementEngineError) return { threw: { class: 'MovementEngineError', code: error.code, message: unprefixed(error) } };
+    if (error instanceof RangeError) return { threw: { class: 'RangeError', message: error.message } };
+    if (error instanceof Error && error.constructor === Error) return { threw: { class: 'Error', message: error.message } };
+    throw new RustShimError(`a built-in threw what the Rust engine cannot rethrow: ${String(error)}`);
+  }
+  const wire = new WireOut().value(value);
+  if (wire === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
+  return { value: wire };
+}
+
+/** A MovementEngineError's message without the `CODE: ` its constructor adds. */
+function unprefixed(error: MovementEngineError): string {
+  const prefix = `${error.code}: `;
+  return error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
+}
+
+function filterOperator(value: unknown): FilterOperator {
+  switch (value) {
+    case 'eq':
+    case 'neq':
+    case 'gt':
+    case 'gte':
+    case 'lt':
+    case 'lte':
+    case 'exists':
+    case 'in':
+    case 'contains':
+    case 'within':
+      return value;
+    default:
+      throw new RustShimError(`builtins.compare op ${JSON.stringify(value)} is not an operator`);
+  }
+}
+
+/** The trace entry kinds the Rust engine appends (crates/movement-engine/src/trace.rs). */
+function traceEntry(value: unknown): MovementRunResult['trace'][number] {
+  const entry = record(value, 'trace.append entry');
+  switch (entry.kind) {
+    case 'gate':
+      if (typeof entry.outcome !== 'boolean') throw new RustShimError('a gate trace entry has a boolean outcome');
+      return { kind: 'gate', outcome: entry.outcome };
+    case 'warning':
+      return { kind: 'warning', code: string(entry.code, 'a warning code'), message: string(entry.message, 'a warning message') };
+    case 'field_miss': {
+      const available = entry.available;
+      if (!Array.isArray(available) || !available.every((key) => typeof key === 'string')) {
+        throw new RustShimError('a field_miss trace entry lists its available keys');
+      }
+      return {
+        kind: 'field_miss',
+        binding: string(entry.binding, 'a field_miss binding'),
+        field: string(entry.field, 'a field_miss field'),
+        available,
+      };
+    }
+    default:
+      throw new RustShimError(`the Rust engine appended a trace entry this shim does not know: ${String(entry.kind)}`);
+  }
 }
 
 function adapterCallName(request: HostRequest): string | undefined {
@@ -361,8 +522,13 @@ function optionalStringRecord(value: unknown, what: string): Record<string, stri
 
 // ── The segment's data ────────────────────────────────────────────────────────
 
-/** Everything of `input` but its host, as the `segment` entry will read it. */
+/** Everything of `input` but its host, as the `segment` entry reads it
+ *  (crates/movement-engine/src/run.rs `SegmentInput`): the event on the eval
+ *  wire, so its payload keeps its key order. Undefined for an input that
+ *  cannot cross as itself. */
 function segmentInput(input: RunMovementInput): unknown {
+  const event = new WireOut().value(input.event);
+  if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
   return plainJson(
     {
       entry: 'segment',
@@ -371,43 +537,238 @@ function segmentInput(input: RunMovementInput): unknown {
       // release's current version.
       languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
       ...(input.movementName !== undefined ? { movementName: input.movementName } : {}),
-      event: input.event,
+      event,
       teamId: input.teamId,
-      ...(input.firedAt !== undefined ? { firedAt: input.firedAt.toISOString() } : {}),
-      ...(input.priorSpentMicrodollars !== undefined ? { priorSpentMicrodollars: input.priorSpentMicrodollars } : {}),
-      ...(input.capBaselineMicrodollars !== undefined ? { capBaselineMicrodollars: input.capBaselineMicrodollars } : {}),
-      ...(input.limitPaused !== undefined ? { limitPaused: input.limitPaused } : {}),
+      // The run's pinned instant, as the TypeScript interpreter pins it.
+      now: (input.firedAt ?? new Date()).toISOString(),
       catalog: input.catalog,
-      ...(input.runId !== undefined ? { runId: input.runId } : {}),
-      ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
     },
     'the segment input',
   );
 }
 
 /**
- * The segment's `done` as a `MovementRunResult`. Only what a slice the
- * allow-list admits can produce is read; anything more (writes, trace
- * entries, parks) is refused until the slice that produces it decodes it.
+ * The segment's `done` (crates/movement-engine/src/run.rs says its shapes):
+ * the run's result, the error it failed with (a body's failure wrapped in
+ * `MovementRunFailed`, carrying what the run did, as the interpreter wraps
+ * it), or that it declined.
  */
-export function readRunResult(done: unknown): MovementRunResult {
-  const result = record(done, 'the Rust engine result');
-  const movementName = string(result.movementName, 'the Rust engine result movementName');
-  for (const field of ['writes', 'trace'] as const) {
-    const value = result[field];
-    if (!Array.isArray(value) || value.length > 0) {
-      throw new RustShimError(`the Rust engine result has ${field} this shim does not decode yet`);
-    }
+export function readRunResult(
+  done: unknown,
+  run: { trace: MovementRunResult['trace']; hostErrors: unknown[] },
+): { ran: MovementRunResult } | { declined: string } {
+  const outcome = record(done, 'the Rust engine result');
+  if ('declined' in outcome) return { declined: string(outcome.declined, 'the Rust engine declined') };
+  if ('thrown' in outcome) throw failureOf(outcome.thrown, run.hostErrors);
+  if ('failed' in outcome) {
+    const failed = record(outcome.failed, 'the Rust engine failure');
+    throw new MovementRunFailed(failureOf(failed.error, run.hostErrors), resultOf(failed.result, run.trace));
   }
-  const sites = record(result.extractionSites ?? {}, 'the Rust engine result extractionSites');
-  if (Object.keys(sites).length > 0) {
-    throw new RustShimError('the Rust engine result has extraction sites this shim does not decode yet');
-  }
-  const unread = Object.keys(result).filter((key) => !['movementName', 'writes', 'trace', 'extractionSites'].includes(key));
+  if ('result' in outcome) return { ran: resultOf(outcome.result, run.trace) };
+  throw new RustShimError(`the Rust engine finished with ${Object.keys(outcome).join(', ') || 'nothing'}, which this shim does not decode`);
+}
+
+function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRunResult {
+  const result = record(value, 'the Rust engine result');
+  const unread = Object.keys(result).filter((key) => key !== 'movementName' && key !== 'cancelled');
   if (unread.length > 0) {
     throw new RustShimError(`the Rust engine result has ${unread.join(', ')}, which this shim does not decode yet`);
   }
-  return { movementName, writes: [], extractionSites: {}, trace: [] };
+  if (result.cancelled !== undefined && result.cancelled !== true) throw new RustShimError('a cancelled result says true');
+  // The run spent nothing itself; what the run had spent before rides along,
+  // as the interpreter's `spendFields` reports it.
+  const spend = currentRunSpend();
+  return {
+    movementName: string(result.movementName, 'the Rust engine result movementName'),
+    writes: [],
+    extractionSites: {},
+    trace,
+    ...(result.cancelled === true ? { cancelled: true } : {}),
+    ...(spend.segmentMicrodollars > 0
+      ? { spentMicrodollars: spend.segmentMicrodollars, spentBySource: spend.bySource }
+      : {}),
+    ...(spend.runMicrodollars > 0 ? { runSpentMicrodollars: spend.runMicrodollars } : {}),
+  };
+}
+
+/** The error the TypeScript engine would have thrown: rebuilt from its class,
+ *  or the very one a host call failed with. */
+function failureOf(value: unknown, hostErrors: unknown[]): unknown {
+  const error = record(value, 'the Rust engine error');
+  if ('hostError' in error) {
+    const ref = error.hostError;
+    if (typeof ref !== 'number' || ref < 0 || ref >= hostErrors.length) {
+      throw new RustShimError(`the Rust engine failed with a host error this shim never answered (${String(ref)})`);
+    }
+    return hostErrors[ref];
+  }
+  return thrownBy(error);
+}
+
+// ── What the Rust engine runs whole ───────────────────────────────────────────
+
+/**
+ * Whether the Rust engine runs `input`'s run whole: an explicit allow-list,
+ * read off the parsed program (crates/movement-engine/src/run.rs runs what
+ * it admits, and declines, before touching an adapter, what it finds it
+ * cannot):
+ *
+ * - file scope: imports from `adapters` and `credentials`, instance
+ *   constructions, `listen`s, movement declarations;
+ * - every movement body: `name = <expression>` (a built-in's call among
+ *   them, `n = UPPER(x)`, which reads as the expression it is), `if` /
+ *   `else if` / `else` with expression conditions (no `IS`), `return
+ *   <expression>`, nested arms alike;
+ * - every expression one `rustCanEval` admits, where a name read is a name
+ *   the bodies bind, plus `p.field` with no hops on the movement's event
+ *   parameter or on such a name;
+ * - a run that cannot suspend (no `limitPaused`, no `suspendWhen`) and whose
+ *   event and source cross as themselves.
+ */
+export function rustCanRun(
+  program: Program,
+  input: Pick<RunMovementInput, 'host' | 'limitPaused' | 'languageVersion'>,
+): boolean {
+  if (input.limitPaused === true || input.host.control.suspendWhen !== undefined) return false;
+  const fileNames = new Set<string>();
+  const movements: Extract<Statement, { kind: 'movement' }>[] = [];
+  for (const statement of program.statements) {
+    switch (statement.kind) {
+      case 'import':
+        if (statement.source.kind !== 'builtin') return false;
+        if (statement.source.namespace !== 'adapters' && statement.source.namespace !== 'credentials') return false;
+        for (const name of statement.names) fileNames.add(name.alias ?? name.name);
+        break;
+      case 'assign':
+        if (statement.value.kind !== 'construct') return false;
+        fileNames.add(statement.name);
+        break;
+      case 'listen':
+        break;
+      case 'movement':
+        fileNames.add(statement.name);
+        movements.push(statement);
+        break;
+      default:
+        return false;
+    }
+  }
+  return movements.every((movement) => {
+    const events = new Set(movement.params.map((p) => p.name));
+    const values = new Set<string>();
+    collectBound(movement.body, values);
+    for (const name of values) if (events.has(name) || fileNames.has(name)) return false;
+    const functions = movements.map((m) => m.name);
+    const bound = (name: string) => events.has(name) || values.has(name) || fileNames.has(name);
+    return bodyRuns(movement.body, {
+      events,
+      values,
+      languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+      scope: {
+        binds: bound,
+        functionSpelled: (name) => functions.find((f) => f.toLowerCase() === name.toLowerCase()),
+      },
+    });
+  });
+}
+
+interface RunNames {
+  /** The movement's parameters: the event. */
+  events: ReadonlySet<string>;
+  /** Every name the body binds to a value. */
+  values: ReadonlySet<string>;
+  languageVersion: LanguageVersion;
+  /** What a call's callee resolves against: every name the file and the
+   *  body bind (a superset of any one point's scope), the file's functions. */
+  scope: Parameters<typeof resolveCallee>[1];
+}
+
+function collectBound(statements: Statement[], into: Set<string>): void {
+  for (const statement of statements) {
+    if (statement.kind === 'assign') into.add(statement.name);
+    if (statement.kind === 'if') {
+      for (const arm of statement.arms) collectBound(arm.body, into);
+      if (statement.elseArm) collectBound(statement.elseArm.body, into);
+    }
+  }
+}
+
+function bodyRuns(statements: Statement[], names: RunNames): boolean {
+  return statements.every((statement) => {
+    switch (statement.kind) {
+      case 'assign':
+      case 'return': {
+        if (statement.value.kind === 'expr') return slotRuns(statement.value.expr, names);
+        const slot = statement.value.kind === 'call' ? builtinValueSlot(statement.value.call, names) : undefined;
+        return slot !== undefined && slotRuns(slot, names);
+      }
+      case 'if':
+        return (
+          statement.arms.every((arm) => conditionRuns(arm.condition, names) && bodyRuns(arm.body, names))
+          && (statement.elseArm === undefined || bodyRuns(statement.elseArm.body, names))
+        );
+      default:
+        return false;
+    }
+  });
+}
+
+/** A bound call to a built-in, as the expression it reads as (run.ts
+ *  `resolvedRValue`); undefined for any other call. */
+function builtinValueSlot(call: CallStatement, names: RunNames): ExprSlot | undefined {
+  const reading = readCall(call, (callee) => resolveCallee(callee, names.scope, names.languageVersion), 'value');
+  return reading.kind === 'value' ? reading.expr : undefined;
+}
+
+function slotRuns(slot: ExprSlot, names: RunNames): boolean {
+  try {
+    return runExpressionRuns(expressionOfSlot(slot), names);
+  } catch {
+    return false;
+  }
+}
+
+function conditionRuns(slot: ExprSlot, names: RunNames): boolean {
+  let condition: MovementCondition;
+  try {
+    condition = conditionOfSlot(slot);
+  } catch {
+    return false;
+  }
+  const runs = (c: MovementCondition): boolean => {
+    switch (c.kind) {
+      case 'and':
+        return c.conjuncts.every(runs);
+      case 'expr':
+        return runExpressionRuns(c.expr, names);
+      case 'isTest':
+        return false;
+      default:
+        return neverAsAny(c);
+    }
+  };
+  return runs(condition);
+}
+
+/** `rustCanEval`'s nodes, a name read being a bound value, and a field read
+ *  off the event or a bound value. */
+function runExpressionRuns(expr: Expression, names: RunNames): boolean {
+  switch (expr.type) {
+    case 'alias_ref':
+      return names.values.has(expr.name) && rustCanEval(expr);
+    case 'property':
+      return names.values.has(expr.propertyTypeId) && rustCanEval(expr);
+    case 'traverse':
+      return (
+        expr.aliasRoot !== undefined
+        && (names.events.has(expr.aliasRoot) || names.values.has(expr.aliasRoot))
+        && expr.steps.length === 0
+        && expr.expression.type === 'property'
+        && !LONE_SURROGATE.test(expr.expression.propertyTypeId)
+      );
+    default:
+      return rustCanEval(expr, (child) => runExpressionRuns(child, names));
+  }
 }
 
 // ── The WASM engine ───────────────────────────────────────────────────────────
@@ -462,8 +823,9 @@ const RUST_FUNCTIONS: ReadonlySet<string> = new Set([
  * Whether the Rust evaluator runs `expr`: every node a kind it evaluates (no
  * host reads, no model, no traversal), every function one of its built-ins,
  * and every literal and name one JSON carries as itself into a Rust string.
+ * `child` judges the sub-expressions (a whole run's admission widens it).
  */
-export function rustCanEval(expr: Expression): boolean {
+export function rustCanEval(expr: Expression, child: (expr: Expression) => boolean = rustCanEval): boolean {
   switch (expr.type) {
     case 'static':
       if (typeof expr.value === 'string') return !LONE_SURROGATE.test(expr.value);
@@ -473,30 +835,30 @@ export function rustCanEval(expr: Expression): boolean {
     case 'property':
       return !LONE_SURROGATE.test(expr.propertyTypeId);
     case 'at':
-      return rustCanEval(expr.expression) && rustCanEval(expr.index);
+      return child(expr.expression) && child(expr.index);
     case 'list':
-      return expr.elements.every((element) => rustCanEval(listElementExpression(element)));
+      return expr.elements.every((element) => child(listElementExpression(element)));
     case 'object':
       return expr.entries.every(
         (member) =>
           (isObjectSpread(member) || (member.key !== '__proto__' && !LONE_SURROGATE.test(member.key)))
-          && rustCanEval(objectMemberExpression(member)),
+          && child(objectMemberExpression(member)),
       );
     case 'concat':
-      return expr.parts.every(rustCanEval);
+      return expr.parts.every((e) => child(e));
     case 'conditional':
-      return rustCanEval(expr.condition) && rustCanEval(expr.then) && rustCanEval(expr.else);
+      return child(expr.condition) && child(expr.then) && child(expr.else);
     case 'compare':
-      return expr.op !== 'within' && rustCanEval(expr.left) && rustCanEval(expr.right);
+      return expr.op !== 'within' && child(expr.left) && child(expr.right);
     case 'logical':
-      return expr.operands.every(rustCanEval);
+      return expr.operands.every((e) => child(e));
     case 'not':
     case 'negate':
-      return rustCanEval(expr.expression);
+      return child(expr.expression);
     case 'arithmetic':
-      return rustCanEval(expr.left) && rustCanEval(expr.right);
+      return child(expr.left) && child(expr.right);
     case 'function':
-      return RUST_FUNCTIONS.has(expr.fn) && expr.args.every(rustCanEval);
+      return RUST_FUNCTIONS.has(expr.fn) && expr.args.every((e) => child(e));
     default:
       return false;
   }
@@ -640,11 +1002,12 @@ function thrownBy(error: Record<string, unknown>): Error {
   }
 }
 
-/** The codes the Rust evaluator throws with. */
+/** The codes the Rust engine throws with. */
 function engineErrorCode(code: unknown): MovementEngineErrorCode {
   switch (code) {
     case 'MOVENG_RUNTIME':
     case 'MOVENG_UNSUPPORTED':
+    case 'MOVENG_NOT_FOUND':
       return code;
     default:
       throw new RustShimError(`the Rust evaluator threw an unknown code ${String(code)}`);

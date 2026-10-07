@@ -4,11 +4,15 @@ The movement engine in Rust. A segment of a run executes inside one WASM
 instance and asks its TypeScript host for everything outside the program;
 `apps/api/src/services/movement_engine/rust_engine.ts` is the host side.
 
-The first slice of language semantics is the pure evaluator: an expression
-over value bindings, which the TypeScript evaluator hands to `eval_expression`
-when `MOVEMENT_ENGINE=rust` (see "The evaluator" below). `rustCanRun` (in the
-shim) still admits no whole program, and the only segment entries are the
-protocol's probes (`echo`, `panic`).
+Under `MOVEMENT_ENGINE=rust` the engine runs two things:
+
+- **an expression** over value bindings, which the TypeScript evaluator hands
+  to `eval_expression` (slice 1, "The evaluator" below);
+- **a whole run** of a program the shim's `rustCanRun` admits: bindings, `if`
+  and `return` over reads of the event and of values (slice 2a, "The run"
+  below). Writes are the next slice, so no conformance program qualifies yet
+  (every one writes); apps/api's `rust_run.unit.test.ts` holds these runs to
+  the TypeScript engine.
 
 ## Modules
 
@@ -20,6 +24,9 @@ protocol's probes (`echo`, `panic`).
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
+| `run` | the `segment` entry: `runMovement` for the programs the shim admits (below) |
+| `bindings` | what a name in a run is bound to, the lexical scopes, the source `Position` |
+| `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`) |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation, from the JavaScript runtime (WASM) or natively (below) |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
@@ -43,6 +50,7 @@ Measured 2026-10-07 (gzip -9):
 | this crate (the parser included), the protocol only | 1,222,941 | 336,866 |
 | this crate with the evaluator (slice 1) | 1,581,987 | 426,071 |
 | slice 1, fix round 1 (`ryu-js`, bounded regex parsing) | 1,593,666 | 438,383 |
+| slice 2a (environment services, the check, the run) | 1,751,210 | 488,922 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
 back, the standard library, the regex matcher, Unicode case tables). The
@@ -76,6 +84,7 @@ Entries (`input.entry`):
 
 | entry | what |
 |---|---|
+| `segment` | a run, executed whole (`run`) |
 | `echo` | issues each of `requests` (`{family, method, args}`) at once, finishes with `{answers}` in the answer envelope |
 | `panic` | panics with `message`: the loader's trap path, provable against the real artifact |
 
@@ -157,6 +166,42 @@ The evaluator switch counts what it did (`rustEvalStats` in rust_engine.ts:
 not admitted, admitted, answered, fallback by reason). Under
 `MOVEMENT_ENGINE=rust` the conformance runs print the totals and fail when Rust
 answered nothing.
+
+## The run
+
+`run::segment` takes run.ts's steps in run.ts's order, and every step the
+TypeScript takes through its host is a host request here:
+
+| request | when | answered by the shim from |
+|---|---|---|
+| `check.program` | first | program_check.ts (below) |
+| `adapters.credentialId`, `adapters.resolve` | the source instance (`prepareMovement`) | `host.adapters`; the answer carries the handle and the adapter's `adapterType` |
+| `adapters.call` (`wire: true`) `listEntryPoints` | a discriminated event (`naturalRootTypeName`) | the live adapter |
+| `trace.append` | each trace entry, as it lands | pushed onto `host.trace` (the run's trace) |
+| `control.cancelled` | before each statement | `host.control.cancel.cancelled()` |
+| `adapters.call` (`wire: true`) `getFieldValue` | each read of an event field, in evaluation order | the live adapter, through the surface-read wrapper's restamp (done here) |
+| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature) | the TypeScript member itself |
+| `control.cancelledNow` | the last check | `host.control.cancel.cancelledNow()` |
+
+- An expression is evaluated by the one evaluator. What it cannot answer
+  itself it asks (`eval::Reader`); the evaluation stops, the run asks the
+  host, and the expression is evaluated again from the start with the answers
+  so far. So the host sees the TypeScript's calls in the TypeScript's order,
+  short-circuits included, and no expression needs to be async.
+- `adapters.call` with `wire: true` carries its arguments and its answer on
+  the eval wire: an event payload's key order (a `field_miss` lists the keys
+  in it), `undefined` and the numbers JSON cannot say cross as the JavaScript
+  has them. The event itself arrives on the wire too.
+- Addresses are address.ts's (`s1.b0.s2`), kept for the parks to come.
+- `done` is `{result}`, `{failed: {error, result}}` (the shim throws
+  `MovementRunFailed`), `{thrown: error}` (before the body), or `{declined:
+  reason}`: before it touches anything the host can see, the engine refuses
+  what it does not run (`run::declined_by`, its own guard behind the shim's
+  allow-list), and the shim runs the program on the TypeScript engine. A host
+  call that failed is named by the `ref` its error answer carried, and the
+  shim rethrows that very error object.
+- `rustRunStats` counts what the shim routed, declined and asked (by
+  `family.method`); the conformance teardown prints it beside the evaluator's.
 
 ## The check
 

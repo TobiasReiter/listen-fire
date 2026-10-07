@@ -11,6 +11,7 @@
 //! entries are still the protocol's own probes.
 
 pub mod abi;
+pub mod bindings;
 pub mod env;
 pub mod env_services;
 pub mod eval;
@@ -21,7 +22,9 @@ pub mod js;
 pub mod js_date;
 pub mod js_regex;
 pub mod program;
+pub mod run;
 pub mod stdlib;
+pub mod trace;
 pub mod value;
 
 use movement_parser::lowering::expression::Expression;
@@ -37,10 +40,11 @@ use host::{Family, Request};
 ///
 /// - `echo`: issues each of `requests` (`{family, method, args}`) at once
 ///   and finishes with `{answers}`, each in the answer envelope it came in.
+/// - `segment`: a run, executed whole (crate::run says what it runs).
 /// - `panic`: panics with `message` on the first poll, so a loader can prove
 ///   its trap path against the real artifact.
-pub fn begin(input: &str) -> Result<Segment, ProtocolError> {
-    let input: Json = serde_json::from_str(input).map_err(|e| ProtocolError(format!("the input is not JSON: {e}")))?;
+pub fn begin(input_text: &str) -> Result<Segment, ProtocolError> {
+    let input: Json = serde_json::from_str(input_text).map_err(|e| ProtocolError(format!("the input is not JSON: {e}")))?;
     match input.get("entry").and_then(Json::as_str) {
         Some("echo") => {
             let requests = input
@@ -54,6 +58,11 @@ pub fn begin(input: &str) -> Result<Segment, ProtocolError> {
                 let answers = join_all(requests.into_iter().map(|request| host.request(request)).collect()).await;
                 json!({ "answers": answers.iter().map(answer_envelope).collect::<Vec<_>>() })
             }))
+        }
+        Some("segment") => {
+            let segment: run::SegmentInput =
+                serde_json::from_str(input_text).map_err(|e| ProtocolError(format!("a segment's input does not read: {e}")))?;
+            Ok(Segment::new(|host| run::segment(host, segment)))
         }
         Some("panic") => {
             let message = input.get("message").and_then(Json::as_str).unwrap_or("").to_string();
@@ -124,6 +133,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
             ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
         } }),
         Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
+        Err(EvalError::Suspend) => unreachable!("an evaluation with no reader never suspends"),
     })
 }
 

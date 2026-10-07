@@ -175,9 +175,18 @@ pub fn encode(value: &Js) -> Json {
     encoder.value(value)
 }
 
+/// A value for a host call: written out whole, the caller's own objects
+/// included (a run's host has no table of objects it sent; their order and
+/// identity within the value still cross).
+pub fn encode_plain(value: &Js) -> Json {
+    let mut encoder = Encoder { plain: true, ..Encoder::default() };
+    encoder.value(value)
+}
+
 #[derive(Default)]
 struct Encoder {
     written: HashMap<usize, u64>,
+    plain: bool,
 }
 
 impl Encoder {
@@ -191,13 +200,13 @@ impl Encoder {
             Js::Number(n) if *n == 0.0 && n.is_sign_negative() => json!(["n", "-0"]),
             Js::Number(n) => json!(n),
             Js::String(s) => json!(s),
-            Js::Array(array) => match array.origin {
+            Js::Array(array) => match array.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
                 None => self.shared(Rc::as_ptr(array) as usize, |this| {
                     json!(array.items.iter().map(|item| this.value(item)).collect::<Vec<_>>())
                 }, "l"),
             },
-            Js::Object(object) => match object.origin {
+            Js::Object(object) => match object.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
                 None => self.shared(Rc::as_ptr(object) as usize, |this| {
                     json!(object.entries().iter().map(|(k, v)| json!([k, this.value(v)])).collect::<Vec<_>>())
