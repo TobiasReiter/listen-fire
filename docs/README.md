@@ -2,6 +2,7 @@
 
 - [`dev-loop.md`](dev-loop.md): the local development loop. Boot the whole stack against real Postgres and Redis and fake third-party services, drive the knowledge agents and the UI, inject synthetic inbound events, and inspect what the system did. This is how a change is verified end to end without an account anywhere. [`CONTRIBUTING.md`](../CONTRIBUTING.md) has the short version.
 - [`api-ingest.md`](api-ingest.md): the ingest API: submitting records over HTTP with an API key. [`api-ingest-slack.txt`](api-ingest-slack.txt) is the same content formatted for pasting into Slack.
+- [`engine-host.md`](engine-host.md): the boundary between the movement engine and the code that runs it. What a host supplies, how a test or another embedder supplies one, and the cross-run write locks.
 - [`language/steady-lynx-migration.md`](language/steady-lynx-migration.md): migrating an automation to language version 3, Steady Lynx. Every rule that changed, grouped by topic, with the diagnostic codes and their rewrites.
 - [`security-google-oauth.md`](security-google-oauth.md): the security posture of the Google OAuth integration, written against the CASA Tier 2 requirements.
 
