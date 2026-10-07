@@ -44,11 +44,9 @@ describe('productionEngineHost — file text storage', () => {
 });
 
 describe('inMemoryRawTextStore', () => {
-  it('gives the same id to the same text and a new one to different text', async () => {
+  it('gives test-run file text no id, as before the host boundary', async () => {
     const store = inMemoryRawTextStore();
-    const a = await store.getOrCreateId('  deck text ');
-    expect(await store.getOrCreateId('deck text')).toBe(a);
-    expect(await store.getOrCreateId('other text')).not.toBe(a);
+    expect(await store.getOrCreateId('deck text')).toBeUndefined();
   });
 });
 
