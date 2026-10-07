@@ -151,10 +151,12 @@ jest.mock('../run_lease', () => ({
 const claimDueWorkMock = jest.fn();
 const completeWorkMock = jest.fn();
 const releaseWorkMock = jest.fn();
+const deferWorkMock = jest.fn();
 jest.mock('../../work/store', () => ({
   claimDueWork: (...a: unknown[]) => claimDueWorkMock(...a),
   completeWork: (...a: unknown[]) => completeWorkMock(...a),
   releaseWork: (...a: unknown[]) => releaseWorkMock(...a),
+  deferWork: (...a: unknown[]) => deferWorkMock(...a),
   heartbeatWork: jest.fn(async () => true),
   enqueueWork: jest.fn(),
 }));
@@ -301,6 +303,7 @@ describe('await-resume driver — a failing resume is retried by the work table'
         dueAt: claimedAt,
         intervalMs: null,
         attempts: 1,
+        deferrals: 0,
         leaseOwner: 'me',
         leaseUntil: claimedAt,
         leaseToken: 'token-1',
@@ -346,7 +349,7 @@ describe('await-resume driver — a wake racing the park', () => {
 });
 
 describe('await-resume driver — a run another process is stepping', () => {
-  it('releases the wake row with backoff, resumes nothing, and completes nothing', async () => {
+  it('defers the wake row a few seconds, resumes nothing, and completes nothing', async () => {
     resetWorkHandlersForTests();
     registerAwaitWork();
     livePark.add(LEAF);
@@ -362,6 +365,7 @@ describe('await-resume driver — a run another process is stepping', () => {
         dueAt: claimedAt,
         intervalMs: null,
         attempts: 1,
+        deferrals: 0,
         leaseOwner: 'me',
         leaseUntil: claimedAt,
         leaseToken: 'token-2',
@@ -375,9 +379,12 @@ describe('await-resume driver — a run another process is stepping', () => {
     expect(result).toMatchObject({ claimed: 1, deferred: 1, failed: 0 });
     expect(resumeMovementFiringMock).not.toHaveBeenCalled();
     expect(completeWorkMock).not.toHaveBeenCalled();
-    const released = releaseWorkMock.mock.calls[0]?.[0] as { id: string; dueAt?: Date };
-    expect(released.id).toBe('w-2');
-    expect(released.dueAt?.getTime()).toBeGreaterThanOrEqual(before + 1_000);
+    expect(releaseWorkMock).not.toHaveBeenCalled();
+    const deferred = deferWorkMock.mock.calls[0]?.[0] as { id: string; dueAt: Date };
+    expect(deferred.id).toBe('w-2');
+    // The first deferral: two seconds on.
+    expect(deferred.dueAt.getTime()).toBeGreaterThanOrEqual(before + 2_000);
+    expect(deferred.dueAt.getTime()).toBeLessThan(before + 3_000);
     // The leaf and its correlation are left for the retry.
     expect(livePark.has(LEAF)).toBe(true);
     expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();

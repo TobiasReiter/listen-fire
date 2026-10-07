@@ -17,6 +17,7 @@ function toWorkRow(row: Work): WorkRow {
     dueAt: row.due_at,
     intervalMs: row.interval_ms,
     attempts: row.attempts,
+    deferrals: row.deferrals,
     leaseOwner: row.lease_owner,
     leaseUntil: row.lease_until,
     leaseToken: row.lease_token,
@@ -161,7 +162,7 @@ export async function completeWork(input: {
   // row is new work, and a periodic row's next tick is too.
   await sql`
     UPDATE automations.work
-    SET lease_owner = NULL, lease_until = NULL, lease_token = NULL, attempts = 0,
+    SET lease_owner = NULL, lease_until = NULL, lease_token = NULL, attempts = 0, deferrals = 0,
         due_at = CASE WHEN interval_ms IS NULL THEN due_at
                       ELSE ${now}::timestamptz + interval_ms * interval '1 millisecond' END
     WHERE ${heldBy(input)}`.execute(qb);
@@ -182,6 +183,26 @@ export async function releaseWork(input: {
     SET lease_owner = NULL, lease_until = NULL, lease_token = NULL,
         due_at = CASE WHEN updated_at = ${input.claimedUpdatedAt}
                       THEN COALESCE(${dueAt}::timestamptz, due_at) ELSE due_at END
+    WHERE ${heldBy(input)}`.execute(getAutomationsQb(['work']));
+}
+
+/** Release a row whose work cannot happen yet (its run is busy elsewhere):
+ *  the lease clears, the claim's attempt is given back — a deferral is not an
+ *  attempt, so the next claim is the same first run, never a recover — and
+ *  the deferral is counted. Due at `dueAt` unless re-armed since claim, as in
+ *  releaseWork. */
+export async function deferWork(input: {
+  id: string;
+  leaseToken: string;
+  claimedUpdatedAt: Date;
+  dueAt: Date;
+}): Promise<void> {
+  await sql`
+    UPDATE automations.work
+    SET lease_owner = NULL, lease_until = NULL, lease_token = NULL,
+        attempts = GREATEST(attempts - 1, 0), deferrals = deferrals + 1,
+        due_at = CASE WHEN updated_at = ${input.claimedUpdatedAt}
+                      THEN ${input.dueAt}::timestamptz ELSE due_at END
     WHERE ${heldBy(input)}`.execute(getAutomationsQb(['work']));
 }
 

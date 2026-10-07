@@ -46,7 +46,7 @@ import { clearJoins, runHasPendingJoins } from './join_pending';
 import type { RunLimitPause } from './run';
 import type { ParkedScopeState } from './serialize';
 import { MovementEngineError } from './errors';
-import { claimParkedLeaf, finishResumedLeaf } from './run_lease';
+import { claimParkedLeaf, finishResumedLeaf, type HeldRunLease } from './run_lease';
 
 /** What `trigger_run.limit_pause` holds while the run is paused. */
 const StoredLimitPauseSchema = z.object({
@@ -154,7 +154,11 @@ async function recordRunPausedEvent(input: {
  * limit. The caller owns the run (team-scoped) and serialises it against the
  * run's other resumes.
  */
-export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resumed: number }> {
+export async function resumeLimitPausedRun(
+  runId: TriggerRunId,
+  /** The run lease the caller holds: each resumed segment watches it. */
+  lease?: HeldRunLease,
+): Promise<{ resumed: number }> {
   const run = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('id', '=', runId)
@@ -236,8 +240,12 @@ export async function resumeLimitPausedRun(runId: TriggerRunId): Promise<{ resum
       // calls it had finished replay from its journal.
       reenter: true,
       settleBranchComplete: () => settleBranchComplete(runId, leaf.address),
+      ...(lease !== undefined ? { lease } : {}),
     });
     resumed += 1;
+    // The lease was lost mid-step: the run may be another instance's now, so
+    // this one leaves every row as it is.
+    if (outcome.leaseLost) return { resumed };
     if (outcome.error) {
       // An error in any branch fails the whole run (P14); its other branches go
       // with it. Prior writes stand.

@@ -66,6 +66,14 @@ export {
   type CallbackParamType,
 } from './callback_types';
 
+/** A call as the ledger keeps it: the call itself, and when its body ran —
+ *  so a queued body that already ran (its row lost after the body committed)
+ *  is never run twice. `bodyRanAt` is the host's bookkeeping; the engine's
+ *  `Called` landing never sees it. */
+export interface LedgerCall extends CallbackCall {
+  bodyRanAt?: string;
+}
+
 /** `live` is the only non-terminal state. `fired` is a single-use claim; a
  *  repeatable callback stays `live` and accumulates calls until revoked. */
 export type CallbackStatus = 'live' | 'fired' | 'revoked';
@@ -80,7 +88,7 @@ export interface CallbackRecord {
   params: CallbackParamSpec[];
   /** The captured closure, in the park machinery's own shape. */
   state: ParkedScopeState;
-  calls: CallbackCall[];
+  calls: LedgerCall[];
   singleUse: boolean;
   expiresAt: Date | null;
   status: CallbackStatus;
@@ -118,7 +126,7 @@ function toRecord(row: CallbackRow): CallbackRecord {
     address: row.address,
     params: (row.params as CallbackParamSpec[] | null) ?? [],
     state: row.state as ParkedScopeState,
-    calls: (row.calls as CallbackCall[] | null) ?? [],
+    calls: (row.calls as LedgerCall[] | null) ?? [],
     singleUse: row.single_use,
     expiresAt: row.expires_at,
     status: row.status as CallbackStatus,
@@ -187,7 +195,19 @@ export async function getCallback(id: string): Promise<CallbackRecord | null> {
  *  the calls arrive AFTER the scope was captured. */
 export async function readCallbackCalls(id: string): Promise<CallbackCall[]> {
   const record = await getCallback(id);
-  return record?.calls ?? [];
+  return (record?.calls ?? []).map(({ at, values }) => ({ at, values }));
+}
+
+/** Record on the ledger that call `callIndex`'s body has run. */
+export async function markCallbackBodyRan(input: { id: string; callIndex: number }): Promise<void> {
+  await getAutomationsQb(['callback'])
+    .updateTable('callback')
+    .set({
+      calls: sql`jsonb_set(calls, ${`{${input.callIndex}}`}::text[], (calls -> ${input.callIndex}::int) || jsonb_build_object('bodyRanAt', to_jsonb(now())))` as never,
+      updated_at: new Date(),
+    })
+    .where('id', '=', input.id as CallbackId)
+    .execute();
 }
 
 export async function listRunCallbacks(runId: TriggerRunId): Promise<CallbackRecord[]> {

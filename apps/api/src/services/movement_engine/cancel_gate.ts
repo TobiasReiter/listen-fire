@@ -12,6 +12,7 @@ import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun
 import type { CancelGate } from './run';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
+import { RunLeaseLost, type HeldRunLease } from './run_lease';
 
 const POLL_MS = 3_000;
 
@@ -22,7 +23,17 @@ export interface DbCancelGate extends CancelGate {
   reason(): string | null;
 }
 
-export function makeDbCancelGate(runId: TriggerRunId): DbCancelGate {
+/**
+ * `lease`: the run lease this segment runs under. Once it is lost the gate
+ * throws `RunLeaseLost` at the next boundary — the same places a cancel
+ * stops the run — rather than letting a segment carry on that another
+ * instance may now be stepping. Checked before the debounce: it costs nothing.
+ */
+export function makeDbCancelGate(runId: TriggerRunId, opts: { lease?: Pick<HeldRunLease, 'isLost'> } = {}): DbCancelGate {
+  const { lease } = opts;
+  const assertLeaseHeld = (): void => {
+    if (lease?.isLost()) throw new RunLeaseLost(runId);
+  };
   let lastCheckedMs = -Infinity;
   let latchedCancelled = false;
   let latchedReason: string | null = null;
@@ -47,11 +58,13 @@ export function makeDbCancelGate(runId: TriggerRunId): DbCancelGate {
 
   return {
     async cancelled(): Promise<boolean> {
+      assertLeaseHeld();
       if (latchedCancelled) return true;
       if (Date.now() - lastCheckedMs < POLL_MS) return false;
       return read();
     },
     async cancelledNow(): Promise<boolean> {
+      assertLeaseHeld();
       if (latchedCancelled) return true;
       return read();
     },

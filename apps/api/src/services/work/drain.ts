@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import type { WorkContext, WorkHandler, WorkKind, WorkRow } from './kinds';
 
 import { logger } from '../logger';
-import { claimDueWork, completeWork, heartbeatWork, releaseWork } from './store';
+import { claimDueWork, completeWork, deferWork, heartbeatWork, releaseWork } from './store';
 
 // One process is one owner: owner is only informational (the lease token fences),
 // so a stable name makes the lease column readable across passes.
@@ -79,6 +79,16 @@ export function drainPassFailing(result: DrainResult): boolean {
 }
 
 type RowOutcome = 'ran' | 'recovered' | 'failed' | 'deferred';
+
+// A row whose run is busy elsewhere looks again soon, a little later each time,
+// never more than half a minute out: the run is alive, just held.
+const DEFER_STEP_MS = 2_000;
+const DEFER_CAP_MS = 30_000;
+
+/** When a row deferred for the `deferrals`-th time (1-based) is due again. */
+export function deferredDueMs(deferrals: number): number {
+  return Math.min(DEFER_STEP_MS * deferrals, DEFER_CAP_MS);
+}
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 300_000;
@@ -165,7 +175,16 @@ async function runRow(input: {
         reason: error.message,
       });
       clearInterval(timer);
-      await releaseWithBackoff({ row, leaseToken, clock });
+      const dueAt = new Date(clock().getTime() + deferredDueMs(row.deferrals + 1));
+      try {
+        await deferWork({ id: row.id, leaseToken, claimedUpdatedAt, dueAt });
+      } catch (deferError) {
+        logger.warn('[work] defer failed; the lease will lapse instead', {
+          kind: row.kind,
+          key: row.key,
+          error: deferError,
+        });
+      }
       return 'deferred';
     }
     // Handlers own failure recording; the drain only makes the row retry at its due_at.

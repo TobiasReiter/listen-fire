@@ -3963,7 +3963,11 @@ CREATE TABLE automations.work (
     lease_until timestamptz,
     lease_token uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    -- Times the row was released because its run was busy elsewhere
+    -- (WorkDeferred). Not attempts: a deferral is not a failure, never routes a
+    -- row to its handler's recover, and backs off on its own fixed schedule.
+    deferrals integer NOT NULL DEFAULT 0
 );
 CREATE INDEX work_due_idx ON automations.work (due_at);
 CREATE INDEX work_team_idx ON automations.work (team_id) WHERE team_id IS NOT NULL;

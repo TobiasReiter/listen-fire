@@ -34,7 +34,7 @@ import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { logger } from '../logger';
 import { settleCancelledRun, settleUnresumableRun } from '../interaction/run_failure';
 import { runningSegment } from '../translation_graph/runs/trigger_run';
-import { claimParkedLeaf, finishResumedLeaf, ORPHAN_AFTER, withRunLease } from './run_lease';
+import { claimParkedLeaf, finishResumedLeaf, ORPHAN_AFTER, withRunLease, type HeldRunLease } from './run_lease';
 import { neverAsAny } from '../../lib/utils/types';
 import type { WorkHandler } from '../work/kinds';
 import { registerWorkHandler } from '../work/drain';
@@ -73,18 +73,20 @@ export const resumeTimerHandler: WorkHandler = {
     const run = await getAutomationsQb(['trigger_run'])
       .selectFrom('trigger_run')
       .where('id', '=', runId)
-      .select(['team_id', 'cancel_requested_at'])
+      .select(['team_id'])
       .executeTakeFirst();
     if (!run) return;
     // `trigger_run.team_id` is an opaque tenant uuid (D3 dropped the FK, and
     // with it the brand); naming it as core's team id is the boundary conversion.
     const teamId = run.team_id as TeamId;
-    const stepped = await withRunLease(runId, async () => {
-      if (run.cancel_requested_at !== null) {
+    const stepped = await withRunLease(runId, async (lease) => {
+      // Read again under the lease: a cancel stamped while another instance
+      // held the run is this holder's to settle.
+      if (await cancelRequested(runId)) {
         await settleCancelledRun(runId);
         return;
       }
-      await resumeTimerParkedRun({ runId, teamId }, ctx.now);
+      await resumeTimerParkedRun({ runId, teamId }, ctx.now, lease);
       await rearmForNextLeaf({ runId, teamId, now: ctx.now });
     });
     // Another process is stepping the run (its first firing, a wake): look
@@ -121,6 +123,15 @@ export const resumeTimerHandler: WorkHandler = {
     }
   },
 };
+
+async function cancelRequested(runId: TriggerRunId): Promise<boolean> {
+  const row = await getAutomationsQb(['trigger_run'])
+    .selectFrom('trigger_run')
+    .where('id', '=', runId)
+    .select('cancel_requested_at')
+    .executeTakeFirst();
+  return row?.cancel_requested_at != null;
+}
 
 async function recheckLiveRunLater(input: { runId: TriggerRunId; now: Date }): Promise<void> {
   const run = await getAutomationsQb(['trigger_run'])
@@ -224,7 +235,9 @@ export async function settleStampedTimerParkedRuns(): Promise<void> {
     .execute();
   for (const row of rows) {
     try {
-      await settleCancelledRun(row.run_id);
+      // Under the run's lease; a run another instance is stepping is that
+      // holder's to settle (its cancel gate sees the stamp), or the next pass's.
+      await withRunLease(row.run_id, () => settleCancelledRun(row.run_id));
     } catch (err) {
       logger.error('[TimerResume] settle-cancelled failed', {
         runId: row.run_id,
@@ -243,7 +256,12 @@ export async function settleStampedTimerParkedRuns(): Promise<void> {
  * complete). A not-yet-due sibling leaf is left parked (its `wake_at` window
  * bounds the query), holding the join until its own wake.
  */
-export async function resumeTimerParkedRun(run: TimerParkedRunRow, now: Date): Promise<void> {
+export async function resumeTimerParkedRun(
+  run: TimerParkedRunRow,
+  now: Date,
+  /** The run lease the caller holds: each resumed segment watches it. */
+  lease?: HeldRunLease,
+): Promise<void> {
   const { runId, teamId } = run;
   const triggerRun = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
@@ -324,8 +342,12 @@ export async function resumeTimerParkedRun(run: TimerParkedRunRow, now: Date): P
       // reason the default is step-past).
       ...(isUntil ? { reenter: true } : {}),
       settleBranchComplete: () => settleBranchComplete(runId, leaf.address),
+      ...(lease !== undefined ? { lease } : {}),
     });
 
+    // The lease was lost mid-step: the run may be another instance's now, so
+    // this one leaves every row as it is.
+    if (outcome.leaseLost) return;
     if (outcome.error) {
       // An engine ERROR in any branch fails the whole run (P14): drop the timer
       // rows + pending joins; prior writes (incl. this branch's, before the

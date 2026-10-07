@@ -150,6 +150,35 @@ describe('GET — renders, never fires', () => {
 });
 
 describe('POST — the only firing verb', () => {
+  it('answers 202 when the body is queued behind another instance', async () => {
+    fireCallback.mockResolvedValue({ kind: 'recorded', callback: record(), queued: true });
+    const res = await fetch(`${baseUrl}/api/cb/cb_abc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ outcome: 'recorded' });
+  });
+
+  it('answers 500, never hangs, when firing throws — JSON and page alike', async () => {
+    fireCallback.mockRejectedValue(new Error('lease table unreachable'));
+    const json = await fetch(`${baseUrl}/api/cb/cb_abc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: '{}',
+    });
+    expect(json.status).toBe(500);
+    expect(await json.json()).toMatchObject({ outcome: 'error' });
+    const page = await fetch(`${baseUrl}/api/cb/cb_abc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html' },
+      body: '',
+    });
+    expect(page.status).toBe(500);
+    expect(await page.text()).toContain('Something went wrong');
+  });
+
   it('fires from a JSON body', async () => {
     const res = await fetch(`${baseUrl}/api/cb/cb_abc`, {
       method: 'POST',

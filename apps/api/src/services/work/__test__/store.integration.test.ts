@@ -8,6 +8,7 @@ import { getAutomationsQb } from '../../../lib/kysely';
 import {
   claimDueWork,
   completeWork,
+  deferWork,
   enqueueWork,
   ensurePeriodicWork,
   heartbeatWork,
@@ -337,6 +338,24 @@ describe('work store', () => {
       leaseUntil: null,
       leaseToken: null,
     });
+  });
+
+  it('deferWork gives the attempt back and counts the deferral: the next claim is a first run again', async () => {
+    const key = freshKey('resume_timer');
+    await enqueueWork({ kind: 'resume_timer', key, dueAt: at(0) });
+    for (let deferral = 1; deferral <= 3; deferral++) {
+      const claimed = await claimOne({ owner: 'drainer-1' });
+      expect(claimed.attempts).toBe(1);
+      expect(claimed.deferrals).toBe(deferral - 1);
+      await deferWork({ ...claimOf(claimed), claimedUpdatedAt: claimed.updatedAt, dueAt: at(500) });
+    }
+    expect(await rowByKey(key)).toMatchObject({ dueAt: at(500), attempts: 0, deferrals: 3, leaseToken: null });
+
+    // Done at last: a re-armed row starts its deferrals afresh.
+    const claimed = await claimOne({ owner: 'drainer-1' });
+    await enqueueWork({ kind: 'resume_timer', key, dueAt: at(700) });
+    await completeWork({ ...claimOf(claimed), claimedUpdatedAt: claimed.updatedAt });
+    expect(await rowByKey(key)).toMatchObject({ attempts: 0, deferrals: 0 });
   });
 
   it('releaseWork with dueAt moves due_at and clears the lease without bumping updated_at', async () => {

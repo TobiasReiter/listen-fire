@@ -135,6 +135,7 @@ function workRow(input: { triggerId: string; leaseUntil?: Date | null }): WorkRo
     dueAt: new Date(0),
     intervalMs: null,
     attempts: input.leaseUntil ? 1 : 0,
+    deferrals: 0,
     leaseOwner: input.leaseUntil ? 'other' : null,
     leaseUntil: input.leaseUntil ?? null,
     leaseToken: input.leaseUntil ? 'token' : null,

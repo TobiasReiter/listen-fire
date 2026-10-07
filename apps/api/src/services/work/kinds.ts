@@ -32,6 +32,8 @@ export interface WorkRow {
   dueAt: Date;
   intervalMs: number | null;
   attempts: number;
+  /** Releases because the row's run was busy elsewhere; never attempts. */
+  deferrals: number;
   leaseOwner: string | null;
   leaseUntil: Date | null;
   leaseToken: string | null;

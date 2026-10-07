@@ -15,12 +15,11 @@
 // Each verifies the target run belongs to the acting team (a cross-team id reads
 // as not-found).
 
-import { sql } from 'kysely';
 import { getAutomationsQb } from '../../lib/kysely';
 import { MovementEngineError } from '../movement_engine/errors';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
-import { failRunAndCancelRequests } from './run_failure';
+import { failRunAndCancelRequests, stampCancelRequested } from './run_failure';
 import { resumeLimitPausedRun } from '../movement_engine/limit_pause';
 import { runResumeSlot } from '../movement_engine/await_resume';
 import { RunBusy, withRunLease } from '../movement_engine/run_lease';
@@ -43,7 +42,7 @@ export async function resumeRun(input: {
   let failure: unknown;
   await runResumeSlot.exclusive(runId as unknown as string, async () => {
     try {
-      const stepped = await withRunLease(runId, () => resumeLimitPausedRun(runId));
+      const stepped = await withRunLease(runId, (lease) => resumeLimitPausedRun(runId, lease));
       if (stepped.kind === 'busy') throw new RunBusy(runId);
       resumed = stepped.value.resumed;
     } catch (err) {
@@ -132,25 +131,6 @@ async function readRunStatus(runId: TriggerRunId): Promise<string | undefined> {
     .select('status')
     .executeTakeFirst();
   return row?.status;
-}
-
-/** The guarded stamp: only lands on a run that is STILL in one of `statuses`
- *  (`running` unless said) with no cancel already in flight. Returns whether
- *  it won the race. */
-async function stampCancelRequested(
-  runId: TriggerRunId,
-  opts: { reason: string; statuses?: ReadonlyArray<'running' | 'parked'> },
-): Promise<boolean> {
-  const { reason, statuses = ['running'] } = opts;
-  const row = await getAutomationsQb(['trigger_run'])
-    .updateTable('trigger_run')
-    .set({ cancel_requested_at: sql`now()`, cancel_reason: reason })
-    .where('id', '=', runId)
-    .where('status', 'in', [...statuses])
-    .where('cancel_requested_at', 'is', null)
-    .returning('id')
-    .executeTakeFirst();
-  return row !== undefined;
 }
 
 /** Verify the run belongs to the team; return its branded id. */

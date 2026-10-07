@@ -13,6 +13,7 @@ import { clearJoins } from '../movement_engine/join_pending';
 import { dropAwaitCorrelationsForRun } from '../translation_graph/adapters/await_correlation';
 import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
 import { revokeRunCallbacks } from '../movement_engine/callback_store';
+import { withRunLease } from '../movement_engine/run_lease';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 
 /**
@@ -91,8 +92,35 @@ export async function settleRunsParkedOnTriggers(input: {
     .select('id')
     .execute();
   for (const run of runs) {
-    await settleUnresumableRun({ runId: run.id, reason: input.reason });
+    // Under the run's lease. A run another instance is resuming right now is
+    // stamped instead: its cancel gate stops it at the next statement and
+    // settles it with this reason (or the park sink does, should it park).
+    const settled = await withRunLease(run.id, () =>
+      settleUnresumableRun({ runId: run.id, reason: input.reason }),
+    );
+    if (settled.kind === 'busy') {
+      await stampCancelRequested(run.id, { reason: input.reason, statuses: ['running', 'parked'] });
+    }
   }
+}
+
+/** The guarded stamp: only lands on a run that is STILL in one of `statuses`
+ *  (`running` unless said) with no cancel already in flight. Returns whether
+ *  it won the race. */
+export async function stampCancelRequested(
+  runId: TriggerRunId,
+  opts: { reason: string; statuses?: ReadonlyArray<'running' | 'parked'> },
+): Promise<boolean> {
+  const { reason, statuses = ['running'] } = opts;
+  const row = await getAutomationsQb(['trigger_run'])
+    .updateTable('trigger_run')
+    .set({ cancel_requested_at: sql`now()`, cancel_reason: reason })
+    .where('id', '=', runId)
+    .where('status', 'in', [...statuses])
+    .where('cancel_requested_at', 'is', null)
+    .returning('id')
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 export async function failRunAndCancelRequests(input: {

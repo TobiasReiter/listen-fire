@@ -229,11 +229,29 @@ async function handleBlockActions(payload: BlockActionsPayload): Promise<void> {
     if (!resolved) continue;
 
     if (resolved.kind === 'callback') {
-      const outcome = await fireCallback({
-        id: resolved.id,
-        values: {},
-        ...(resolved.suppliedValue !== undefined ? { suppliedValue: resolved.suppliedValue } : {}),
-      });
+      let outcome: CallbackFireOutcome;
+      try {
+        outcome = await fireCallback({
+          id: resolved.id,
+          values: {},
+          ...(resolved.suppliedValue !== undefined ? { suppliedValue: resolved.suppliedValue } : {}),
+        });
+      } catch (err) {
+        // The tapper still hears back — silence reads as "it worked" — and the
+        // failure itself is not swallowed.
+        logger.error('[slack/actions] callback firing failed', {
+          id: resolved.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        if (responseUrl) {
+          await postToResponseUrl(responseUrl, {
+            response_type: 'ephemeral',
+            replace_original: false,
+            text: 'Something went wrong recording that.',
+          });
+        }
+        return;
+      }
       if (responseUrl) await ackCallbackToSlack(responseUrl, outcome);
     } else {
       const outcome = await answerAskByToken(resolved.token, resolved.answer);

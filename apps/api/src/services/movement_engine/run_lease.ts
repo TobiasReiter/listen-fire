@@ -95,37 +95,72 @@ export async function releaseRunLease(runId: TriggerRunId, token: string): Promi
 export interface HeldRunLease {
   readonly runId: TriggerRunId;
   readonly token: string;
+  /** True once this holder can no longer be sure the run is still its own: a
+   *  renewal found the lease taken, a renewal failed, or the lease outlived its
+   *  last successful renewal. A segment checks it at every statement boundary
+   *  and stops (`RunLeaseLost`); it never comes back. */
+  isLost(): boolean;
   release(): Promise<void>;
+}
+
+/** A segment whose run lease was lost stops at its next statement: another
+ *  instance may be stepping the run, so it settles nothing and touches no
+ *  parked row. */
+export class RunLeaseLost extends Error {
+  constructor(readonly runId: TriggerRunId) {
+    super('run lease lost; another instance may hold the run');
+    this.name = 'RunLeaseLost';
+  }
 }
 
 /**
  * Take the run's lease for this process, or null while it is held elsewhere.
  * Holding it, every leaf of the run left mid-resume (`resuming`) is a dead
  * holder's, and goes back to `parked` before anything reads the run's leaves.
- * The lease renews itself every third of its life until `release`.
+ * The lease renews itself every third of its life until `release`. `ttlMs`
+ * shortens it for tests; production takes the stale-heartbeat rule.
  */
-export async function takeRunLease(runId: TriggerRunId): Promise<HeldRunLease | null> {
-  const claimed = await claimRunLease(runId, { owner: LEASE_OWNER, ttlMs: RUN_LEASE_TTL_MS });
+export async function takeRunLease(
+  runId: TriggerRunId,
+  opts: { ttlMs?: number } = {},
+): Promise<HeldRunLease | null> {
+  const ttlMs = opts.ttlMs ?? RUN_LEASE_TTL_MS;
+  const claimed = await claimRunLease(runId, { owner: LEASE_OWNER, ttlMs });
   if (claimed === null) return null;
   const { token } = claimed;
-  let renewing = true;
+  // The local deadline: the lease is ours for one life past the last renewal
+  // the database confirmed, and not a moment longer.
+  let deadline = Date.now() + ttlMs;
+  let lost = false;
+  let released = false;
+  const markLost = (reason: string, error?: unknown): void => {
+    if (lost) return;
+    lost = true;
+    clearInterval(timer);
+    logger.warn('[RunLease] lease lost while held', { runId, reason, ...(error !== undefined ? { error } : {}) });
+  };
   const renew = async (): Promise<void> => {
+    const attemptedAt = Date.now();
     try {
-      if (!(await renewRunLease(runId, token, RUN_LEASE_TTL_MS))) {
-        renewing = false;
-        clearInterval(timer);
-        logger.warn('[RunLease] lease lost while held', { runId });
+      if (await renewRunLease(runId, token, ttlMs)) {
+        if (!lost) deadline = attemptedAt + ttlMs;
+      } else {
+        markLost('taken');
       }
     } catch (error) {
-      logger.warn('[RunLease] renewal failed', { runId, error });
+      markLost('renewal failed', error);
     }
   };
   const timer = setInterval(() => {
-    if (renewing) void renew();
-  }, RUN_LEASE_TTL_MS / 3);
+    if (!lost && !released) void renew();
+  }, ttlMs / 3);
   timer.unref?.();
+  const isLost = (): boolean => {
+    if (!lost && !released && Date.now() > deadline) markLost('expired');
+    return lost;
+  };
   const release = async (): Promise<void> => {
-    renewing = false;
+    released = true;
     clearInterval(timer);
     try {
       await releaseRunLease(runId, token);
@@ -139,20 +174,22 @@ export async function takeRunLease(runId: TriggerRunId): Promise<HeldRunLease | 
     await release();
     throw error;
   }
-  return { runId, token, release };
+  return { runId, token, isLost, release };
 }
 
-/** `fn` under the run's lease, released however `fn` ends; `busy` when the
- *  lease is held elsewhere, and `fn` does not run. Not re-entrant: an entry
- *  already holding the run's lease calls its body directly. */
+/** `fn` under the run's lease (handed the lease, so the segment it steps can
+ *  watch it), released however `fn` ends; `busy` when the lease is held
+ *  elsewhere, and `fn` does not run. Not re-entrant: an entry already holding
+ *  the run's lease calls its body directly. */
 export async function withRunLease<T>(
   runId: TriggerRunId,
-  fn: () => Promise<T>,
+  fn: (lease: HeldRunLease) => Promise<T>,
+  opts: { ttlMs?: number } = {},
 ): Promise<{ kind: 'held'; value: T } | { kind: 'busy' }> {
-  const lease = await takeRunLease(runId);
+  const lease = await takeRunLease(runId, opts);
   if (lease === null) return { kind: 'busy' };
   try {
-    return { kind: 'held', value: await fn() };
+    return { kind: 'held', value: await fn(lease) };
   } finally {
     await lease.release();
   }

@@ -38,7 +38,7 @@ import {
 } from '../translation_graph/adapters/await_correlation';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import { createSingleFlight } from './single_flight';
-import { claimParkedLeaf, finishResumedLeaf, withRunLease } from './run_lease';
+import { claimParkedLeaf, finishResumedLeaf, withRunLease, type HeldRunLease } from './run_lease';
 import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
 import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
@@ -88,7 +88,7 @@ export async function resumeAwaitsForCorrelation(input: {
   const outcomes = await Promise.allSettled(
     [...byRun.entries()].map(([runId, extra]) =>
       runResumeSlot.coalesce(runId, async () => {
-        const drained = await withRunLease(runId, () => drainRunAwaits(runId, extra));
+        const drained = await withRunLease(runId, (lease) => drainRunAwaits(runId, extra, lease));
         if (drained.kind === 'busy') busy.push(runId);
       }),
     ),
@@ -107,6 +107,8 @@ export async function resumeAwaitsForCorrelation(input: {
 export async function drainRunAwaits(
   runId: TriggerRunId,
   extraLeaves: ResolvableAwait[] = [],
+  /** The run lease the caller holds: each resumed segment watches it. */
+  lease?: HeldRunLease,
 ): Promise<void> {
   try {
     const askLeaves = await loadResolvableAskAwaits({ runId });
@@ -117,7 +119,7 @@ export async function drainRunAwaits(
     }
     const leaves = [...byAddress.values()];
     if (leaves.length === 0) return;
-    await resumeAwaitRun(runId, leaves);
+    await resumeAwaitRun(runId, leaves, lease);
   } catch (err) {
     logger.error('[AwaitResume] run resume failed', {
       runId,
@@ -133,7 +135,11 @@ export async function drainRunAwaits(
 /** Resume one run, draining every resolvable await leaf. The run's pinned
  *  version + inbound event load once; each leaf RE-ENTERS at its await (the
  *  await re-checks the now-settled edge live and binds its landing). */
-async function resumeAwaitRun(runId: TriggerRunId, leaves: ResolvableAwait[]): Promise<void> {
+async function resumeAwaitRun(
+  runId: TriggerRunId,
+  leaves: ResolvableAwait[],
+  lease: HeldRunLease | undefined,
+): Promise<void> {
   const run = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('id', '=', runId)
@@ -217,8 +223,12 @@ async function resumeAwaitRun(runId: TriggerRunId, leaves: ResolvableAwait[]): P
       // Batch mode: a completing race branch is recorded, not settled inline.
       deferRaceSettlement: true,
       settleBranchComplete: () => settleBranchComplete(runId, leaf.address),
+      ...(lease !== undefined ? { lease } : {}),
     });
 
+    // The lease was lost mid-step: the run may be another instance's now, so
+    // this one leaves every row as it is.
+    if (outcome.leaseLost) return;
     if (outcome.error) {
       // An engine ERROR fails the whole run (P14): drop every correlation +
       // parked/join row; prior writes stand.
@@ -279,7 +289,9 @@ async function resumeAwaitRun(runId: TriggerRunId, leaves: ResolvableAwait[]): P
         state,
         settleRaceFrameAddress: frameAddress,
         settleBranchComplete: () => settleBranchComplete(runId, frameAddress),
+        ...(lease !== undefined ? { lease } : {}),
       });
+      if (outcome.leaseLost) return;
       if (outcome.error) {
         await settleFailure(runId);
         return;

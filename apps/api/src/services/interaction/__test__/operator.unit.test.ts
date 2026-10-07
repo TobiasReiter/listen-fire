@@ -55,6 +55,7 @@ jest.mock('../../movement_engine/limit_pause', () => ({
   resumeLimitPausedRun: (...args: unknown[]) => resumeLimitPausedRun(...args),
 }));
 jest.mock('../run_failure', () => ({
+  ...jest.requireActual('../run_failure'),
   failRunAndCancelRequests: (...args: unknown[]) => failRunAndCancelRequests(...args),
 }));
 

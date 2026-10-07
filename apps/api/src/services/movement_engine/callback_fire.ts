@@ -27,13 +27,19 @@ import { triggerEventSchema, type TriggerEvent } from '../translation_graph/trig
 import { fireCallbackFiring } from '../translation_graph/movement/execute';
 import { loadCorrelatedParks } from '../translation_graph/adapters/await_correlation';
 import { drainRunAwaits, runResumeSlot } from './await_resume';
-import { takeRunLease, withRunLease } from './run_lease';
+import { takeRunLease, withRunLease, type HeldRunLease } from './run_lease';
 import type { WorkHandler } from '../work/kinds';
 import { notifyWork, registerWorkHandler, WorkDeferred } from '../work/drain';
 import { enqueueWork } from '../work/store';
 import { enqueueAwaitWake } from './await_wake';
 import { CALLBACK_AWAIT_TYPE } from './callback_types';
-import { claimCallbackFire, coerceCallbackValues, getCallback, type CallbackRecord } from './callback_store';
+import {
+  claimCallbackFire,
+  coerceCallbackValues,
+  getCallback,
+  markCallbackBodyRan,
+  type CallbackRecord,
+} from './callback_store';
 import type { CallbackParamSpec } from './callback_types';
 
 /** What the caller acks with. Every non-`recorded` outcome is a REFUSAL the door
@@ -101,7 +107,7 @@ export async function fireCallback(input: {
       // structurally impossible.
       const execution = runResumeSlot.exclusive(claim.callback.runId, async () => {
         try {
-          await executeFire(claim.callback, callIndex);
+          await executeFire(claim.callback, callIndex, lease);
         } finally {
           await lease.release();
         }
@@ -136,21 +142,48 @@ async function queueCallbackFire(input: { callback: CallbackRecord; callIndex: n
   notifyWork();
 }
 
+/** Why a queued body must not run now, or null when it may. The door's own
+ *  rule, applied when the body finally gets the run: a callback stops
+ *  answering when its run ends (it is revoked with it), so a body whose run
+ *  has ended or whose callback was revoked meanwhile does not run either; and
+ *  a body the ledger says already ran never runs again. */
+async function queuedBodyRefusal(callback: CallbackRecord, callIndex: number): Promise<string | null> {
+  if (callback.status === 'revoked') return 'its callback was revoked';
+  if (callback.calls[callIndex]?.bodyRanAt !== undefined) return 'its body already ran';
+  const run = await getAutomationsQb(['trigger_run'])
+    .selectFrom('trigger_run')
+    .where('id', '=', callback.runId)
+    .select('status')
+    .executeTakeFirst();
+  if (run === undefined) return 'its run is gone';
+  if (run.status !== 'running' && run.status !== 'parked') return `its run has ended (${run.status})`;
+  return null;
+}
+
 /** A queued body: run it under the run's lease, or defer while the run is
- *  still held. A call whose callback is gone (its run was deleted) has
- *  nothing left to do. */
+ *  still held. Everything that decides whether it runs is read again under
+ *  the lease, where nothing else can change the run. */
 export const fireCallbackHandler: WorkHandler = {
   async run(payload) {
     const { callbackId, callIndex } = fireCallbackPayloadSchema.parse(payload);
-    const callback = await getCallback(callbackId);
-    if (callback === null || callback.calls[callIndex] === undefined) return;
+    const queued = await getCallback(callbackId);
+    if (queued === null || queued.calls[callIndex] === undefined) return;
     // The lease first, as `fireCallback` takes it: an entry of this very
     // process stepping the run holds it too, so the row defers rather than
     // queueing in the slot behind a segment that may run for hours.
-    const fired = await withRunLease(callback.runId, () =>
-      runResumeSlot.exclusive(callback.runId, () => executeFire(callback, callIndex)),
+    const fired = await withRunLease(queued.runId, (lease) =>
+      runResumeSlot.exclusive(queued.runId, async () => {
+        const callback = await getCallback(callbackId);
+        if (callback === null) return;
+        const refusal = await queuedBodyRefusal(callback, callIndex);
+        if (refusal !== null) {
+          logger.info('[Callback] queued body not run', { callbackId, callIndex, reason: refusal });
+          return;
+        }
+        await executeFire(callback, callIndex, lease);
+      }),
     );
-    if (fired.kind === 'busy') throw new WorkDeferred(`run ${callback.runId} is held by another process`);
+    if (fired.kind === 'busy') throw new WorkDeferred(`run ${queued.runId} is held by another process`);
   },
 };
 
@@ -278,7 +311,7 @@ export function callbackAckText(outcome: CallbackFireOutcome): string {
  * inspector. Drains awaits DIRECTLY rather than through the slot — we are
  * already inside it.
  */
-async function executeFire(callback: CallbackRecord, callIndex: number): Promise<void> {
+async function executeFire(callback: CallbackRecord, callIndex: number, lease: HeldRunLease): Promise<void> {
   try {
     const context = await loadRunContext(callback.runId);
     if (context === null) {
@@ -304,7 +337,12 @@ async function executeFire(callback: CallbackRecord, callIndex: number): Promise
         state: callback.state,
         values: callback.calls[callIndex]?.values ?? {},
         callIndex,
+        lease,
       });
+      // The body ran (to its end, to a failure, or to a lost lease part way):
+      // the ledger says so, and no queued retry of this call runs it again.
+      await markCallbackBodyRan({ id: callback.id, callIndex });
+      if (outcome.leaseLost) return;
     }
   } catch (err) {
     // A failing side entry never kills the primary await — it is already
@@ -324,7 +362,7 @@ async function executeFire(callback: CallbackRecord, callIndex: number): Promise
       teamId: callback.teamId,
       correlationKey: callback.id,
     });
-    if (parks.length > 0) await drainRunAwaits(callback.runId, parks);
+    if (parks.length > 0) await drainRunAwaits(callback.runId, parks, lease);
   } catch (err) {
     logger.error('[Callback] await wake failed (the queued backstop wake will retry)', {
       callbackId: callback.id,

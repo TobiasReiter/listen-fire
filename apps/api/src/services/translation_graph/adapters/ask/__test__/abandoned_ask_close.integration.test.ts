@@ -24,6 +24,7 @@ import type { TriggerRunId } from '../../../../../generated/kysely/automations/T
 import type { TriggerRunRecorder } from '../../../runs/trigger_run';
 import { makeRecorderParkSink } from '../../../../movement_engine/park_sink';
 import { settleRunsParkedOnTriggers } from '../../../../interaction/run_failure';
+import { claimRunLease, releaseRunLease } from '../../../../movement_engine/run_lease';
 import { asksRouter } from '../../../../../interfaces/rest/asks';
 import { answerAskByToken } from '../answer_door';
 import { registerAwaitCorrelation } from '../../await_correlation';
@@ -236,6 +237,26 @@ describe('retiring a listener closes the asks its stranded runs were awaiting', 
     const page = await fetch(`${baseUrl}/api/asks/${ask.token}`);
     expect(page.status).toBe(410);
     expect(await page.text()).toContain('This request was closed');
+  });
+
+  it('a run another instance is resuming is stamped for that resume to settle, not torn down under it', async () => {
+    const ask = await askParkedAt('s2');
+    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const reason = 'The listener that started this run was removed';
+
+    await settleRunsParkedOnTriggers({ triggerIds: [triggerId], reason });
+
+    const run = await getAutomationsQb(['trigger_run'])
+      .selectFrom('trigger_run')
+      .where('id', '=', runId)
+      .select(['status', 'cancel_requested_at', 'cancel_reason'])
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('parked');
+    expect(run.cancel_requested_at).not.toBeNull();
+    expect(run.cancel_reason).toBe(reason);
+    // Its leaves and its ask are the holder's to settle.
+    expect((await getAsk(ask.id))?.state).toBe('open');
+    await releaseRunLease(runId, elsewhere!.token);
   });
 
   it('leaves an ask answered BEFORE the settle exactly as it was', async () => {

@@ -60,6 +60,7 @@ jest.mock('../../movement_engine/run_lease', () => ({
   withRunLease: async (_runId: string, fn: () => Promise<unknown>) => ({ kind: 'held', value: await fn() }),
 }));
 jest.mock('../run_failure', () => ({
+  ...jest.requireActual('../run_failure'),
   failRunAndCancelRequests: (...args: unknown[]) => failRunAndCancelRequests(...args),
 }));
 

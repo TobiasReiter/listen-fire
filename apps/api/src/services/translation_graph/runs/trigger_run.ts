@@ -37,7 +37,7 @@ import type { TriggerEventId } from '../../../generated/kysely/automations/Trigg
 import type { TriggerEvent } from '../triggers/types';
 import { markTriggerEventFailed } from '../triggers/event_store';
 import { settleUnresumableRun } from '../../interaction/run_failure';
-import { ORPHAN_AFTER, returnLeavesOfLapsedLeases } from '../../movement_engine/run_lease';
+import { ORPHAN_AFTER, returnLeavesOfLapsedLeases, withRunLease } from '../../movement_engine/run_lease';
 import type { WorkHandler } from '../../work/kinds';
 import { registerWorkHandler } from '../../work/drain';
 
@@ -981,8 +981,9 @@ const ORPHANED_SEGMENT = 'segment did not complete: process died or stalled';
  * (cron, poll, run-now, a KG mutation, chat doors): a process that dies
  * mid-segment leaves its run `running`, and only this notices.
  */
-export async function settleOrphanedRunningRuns(now: Date): Promise<void> {
-  const cutoff = new Date(now.getTime() - ORPHAN_AFTER);
+export async function settleOrphanedRunningRuns(): Promise<void> {
+  // The database clock, as the heartbeat and the lease are written with it.
+  const cutoff = sql<Date>`now() - ${ORPHAN_AFTER}::integer * interval '1 millisecond'`;
   const orphans = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('status', '=', 'running')
@@ -990,16 +991,20 @@ export async function settleOrphanedRunningRuns(now: Date): Promise<void> {
     .select(['id', 'trigger_event_id'])
     .execute();
   for (const orphan of orphans) {
-    await settleUnresumableRun({ runId: orphan.id, reason: ORPHANED_SEGMENT });
-    if (orphan.trigger_event_id !== null) {
+    // Under the run's lease, which a dead segment's has lapsed by now (the
+    // same silence). Held, the run is not orphaned after all: leave it.
+    const settled = await withRunLease(orphan.id, () =>
+      settleUnresumableRun({ runId: orphan.id, reason: ORPHANED_SEGMENT }),
+    );
+    if (settled.kind === 'held' && orphan.trigger_event_id !== null) {
       await markTriggerEventFailed(orphan.trigger_event_id, ORPHANED_SEGMENT);
     }
   }
 }
 
 export const runOrphanSweepHandler: WorkHandler = {
-  async run(_payload, ctx) {
-    await settleOrphanedRunningRuns(ctx.now);
+  async run() {
+    await settleOrphanedRunningRuns();
     // A leaf claimed for resuming by a holder that died is parked again once
     // that holder's lease has lapsed, so the run's next wake finds it.
     await returnLeavesOfLapsedLeases();

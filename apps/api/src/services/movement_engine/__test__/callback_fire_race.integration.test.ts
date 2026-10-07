@@ -39,7 +39,8 @@ import { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { cleanupTeam } from '../../../test/harness/cleanup';
 import { fireCallback } from '../callback_fire';
 import { runResumeSlot } from '../await_resume';
-import { getCallback, mintCallback } from '../callback_store';
+import { getCallback, mintCallback, revokeRunCallbacks } from '../callback_store';
+import { claimRunLease, releaseRunLease } from '../run_lease';
 import { registerCallbackFireWork } from '../callback_fire';
 import { drainWork, resetWorkHandlersForTests } from '../../work/drain';
 import { enqueueWork } from '../../work/store';
@@ -333,6 +334,41 @@ describe('two processes fire one run at once', () => {
     const after = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
     expect(after.claimed).toBe(0);
     expect(bodies).toHaveLength(2);
+  });
+
+  it('a queued body follows the door: none once its run has ended and its callback is revoked', async () => {
+    const { runId, callbackId } = await seedFiredRun({ singleUse: false });
+    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const outcome = await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20' });
+    expect(outcome).toMatchObject({ kind: 'recorded', queued: true });
+    // The run ends while the body waits: its callbacks are revoked with it.
+    await getAutomationsQb(['trigger_run']).updateTable('trigger_run').set({ status: 'success' }).where('id', '=', runId).execute();
+    await revokeRunCallbacks(runId);
+    await releaseRunLease(runId, elsewhere!.token);
+
+    const result = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(result).toMatchObject({ claimed: 1, ran: 1 });
+    expect(fireCallbackFiringMock).not.toHaveBeenCalled();
+  });
+
+  it('a queued body the ledger says already ran never runs again (its row outlived the body)', async () => {
+    const { callbackId } = await seedFiredRun({ singleUse: false });
+    fireCallbackFiringMock.mockResolvedValue({ result: { movementName: 'book_it' } });
+    await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20', awaitExecution: true });
+    expect(fireCallbackFiringMock).toHaveBeenCalledTimes(1);
+    expect((await getCallback(callbackId))?.calls[0]?.bodyRanAt).toEqual(expect.any(String));
+
+    // The crash window: the body committed, the row did not complete.
+    await enqueueWork({
+      kind: 'fire_callback',
+      key: `fire_callback:${callbackId}:0`,
+      teamId,
+      payload: { callbackId, teamId, callIndex: 0 },
+    });
+    const result = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(result).toMatchObject({ claimed: 1, ran: 1 });
+    expect(fireCallbackFiringMock).toHaveBeenCalledTimes(1);
+    expect((await getCallback(callbackId))?.status).toBe('live');
   });
 
   it('a queued body whose callback is gone finds nothing to do', async () => {

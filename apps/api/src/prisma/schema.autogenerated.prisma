@@ -614,6 +614,9 @@ model TriggerRun {
   costCapBaselineMicrodollars BigInt             @default(0) @map("cost_cap_baseline_microdollars")
   lastHeartbeatAt             DateTime?          @map("last_heartbeat_at") @db.Timestamptz(6)
   triggerEventId              String?            @map("trigger_event_id") @db.Uuid
+  leaseOwner                  String?            @map("lease_owner")
+  leaseUntil                  DateTime?          @map("lease_until") @db.Timestamptz(6)
+  leaseToken                  String?            @map("lease_token") @db.Uuid
   adapterAwaits               AdapterAwait[]
   callbacks                   Callback[]
   joinBranchExports           JoinBranchExport[]
@@ -667,6 +670,7 @@ model Work {
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
   leaseToken String?   @map("lease_token") @db.Uuid
+  deferrals  Int       @default(0)
 
   @@index([dueAt], map: "work_due_idx")
   @@map("work")
