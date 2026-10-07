@@ -1,4 +1,4 @@
-import { assertParserReady, callJson, initParser, isParserReady, parserGeneration } from '../loader';
+import { assertParserReady, callJson, callLowering, initParser, isParserReady, parserGeneration } from '../loader';
 
 declare function require(id: string): unknown;
 declare const __dirname: string;
@@ -37,6 +37,15 @@ describe('the parser loader', () => {
       ],
     });
     expect(callJson('parse_nested_call', 'f(x)', [0, 4, 1, 1, 3])).toMatchObject({ kind: 'call', call: { callee: 'f' } });
+    const tree = JSON.stringify(callJson('parse_expression', "'héllo 🌍'", [3]));
+    expect(callLowering('lower_expression', tree, "'héllo 🌍'")).toEqual({
+      ok: true,
+      json: { type: 'static', value: 'héllo 🌍' },
+    });
+    expect(callLowering('lower_condition', tree, "'héllo 🌍'")).toEqual({
+      ok: true,
+      json: { kind: 'expr', expr: { type: 'static', value: 'héllo 🌍' } },
+    });
   });
 
   it('accepts bytes as input', () => {
@@ -150,7 +159,9 @@ function committedArtifact(): Uint8Array {
 // The loader's ABI in miniature: a bump `alloc`, a no-op `dealloc`, one
 // function behind all four parse exports that writes `{"ok":true}` to the
 // out slots and returns status 0 — or hits `unreachable` on a leading "T" —
-// and a `last_panic` that points at a recorded panic message.
+// one behind both lowering exports and the catalog's that always answers
+// `{"ok":true}`, and a
+// `last_panic` that points at a recorded panic message.
 function trappingModule(): Uint8Array {
   const I32 = 0x7f;
   const json = [...'{"ok":true}'].map((c) => c.charCodeAt(0));
@@ -159,7 +170,9 @@ function trappingModule(): Uint8Array {
   // Below 64: a one-byte signed LEB128 i32.const.
   const PANIC_AT = 32;
   const vec = (items: number[][]): number[] => [items.length, ...items.flat()];
-  const section = (id: number, body: number[]): number[] => [id, body.length, ...body];
+  // A section's length is unsigned LEB128: the export section is past 127 bytes.
+  const leb = (n: number): number[] => (n < 0x80 ? [n] : [(n & 0x7f) | 0x80, ...leb(n >> 7)]);
+  const section = (id: number, body: number[]): number[] => [id, ...leb(body.length), ...body];
   const name = (text: string): number[] => [text.length, ...[...text].map((c) => c.charCodeAt(0))];
   const fn = (index: number): number[] => [0x00, index];
   const body = (code: number[]): number[] => [code.length + 2, 0x00, ...code, 0x0b];
@@ -167,6 +180,7 @@ function trappingModule(): Uint8Array {
     [0x60, 1, I32, 1, I32], // alloc(len) -> ptr
     [0x60, 2, I32, I32, 0], // dealloc(ptr, len)
     [0x60, 5, I32, I32, I32, I32, I32, 1, I32], // parse(src, len, version, out_ptr, out_len) -> status
+    [0x60, 6, I32, I32, I32, I32, I32, I32, 1, I32], // lower(tree, len, src, len, out_ptr, out_len) -> status
   ]);
   const exports = vec([
     [...name('memory'), 0x02, 0],
@@ -177,6 +191,9 @@ function trappingModule(): Uint8Array {
     [...name('parse_expression'), ...fn(2)],
     [...name('parse_nested_call'), ...fn(2)],
     [...name('last_panic'), ...fn(3)],
+    [...name('lower_expression'), ...fn(4)],
+    [...name('lower_condition'), ...fn(4)],
+    [...name('catalog_query'), ...fn(4)],
   ]);
   const code = vec([
     // ptr = next; next += len
@@ -192,11 +209,16 @@ function trappingModule(): Uint8Array {
       ...[0x20, 0, 0x41, PANIC_AT, 0x36, 2, 0], // *out_ptr = PANIC_AT
       ...[0x20, 1, 0x41, panic.length, 0x36, 2, 0], // *out_len = panic.length
     ]),
+    body([
+      ...[0x20, 4, 0x41, JSON_AT, 0x36, 2, 0], // *out_ptr = JSON_AT
+      ...[0x20, 5, 0x41, json.length, 0x36, 2, 0], // *out_len = json.length
+      ...[0x41, 0], // status 0
+    ]),
   ]);
   return new Uint8Array([
     ...[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
     ...section(1, types),
-    ...section(3, vec([[0], [1], [2], [1]])),
+    ...section(3, vec([[0], [1], [2], [1], [3]])),
     ...section(5, vec([[0x00, 1]])),
     ...section(6, vec([[I32, 1, 0x41, 0x80, 0x02, 0x0b]])), // mut next = 256
     ...section(7, exports),

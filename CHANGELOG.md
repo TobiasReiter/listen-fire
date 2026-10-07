@@ -24,6 +24,13 @@ Entries are written for two readers: an operator running a self-hosted installat
   - Nesting deeper than 128 levels is refused with "nesting too deep". Statements and expressions are bounded separately: statements count their own levels, and each expression counts its own from zero. It used to be accepted. Much deeper nesting would overflow the WebAssembly parser's stack; real automations nest a few levels.
   - An expression error naming an unrecognised character outside the Basic Multilingual Plane (an emoji, say) now quotes the whole character. It used to quote half of it.
 
+- Movement-language expression lowering is Rust; the TypeScript lowering is deleted.
+- The checker's catalog and type-model core is Rust, behind `catalog_query`, held to the TypeScript by a differential.
+- Added a checker conformance corpus (`checks.json` and snapshots) that pins diagnostics across the checker port.
+- `constructor`-style keys (`constructor`, `__proto__`) no longer lower as properties.
+- Chains over 1,024 members are refused ("chain too long"). A resource limit, not a language rule, so no language-version conditional (same precedent as the 128 nesting limit).
+- Deep nesting is refused at the limits: 128 for parse, 2,048 for JSON reads, 256 for typed catalog reads. Resource limits, not language rules, so no language-version conditional.
+
 ### Fixed
 
 - A run parking on an await could miss a wake that arrived while it parked, and then wait forever. The park now writes the parked run before the correlation that points at it, so a wake in between finds both or neither. When the re-check after parking itself fails (the remote is down), the run stays parked without a wake and the failure is logged with the await's key; the adapter's own wake covers later landings.

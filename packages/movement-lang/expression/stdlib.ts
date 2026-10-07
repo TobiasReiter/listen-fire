@@ -290,12 +290,13 @@ export interface BuiltinOptionsSpec {
   index: number;
   options: ReadonlyArray<BuiltinOptionSpec>;
   /**
-   * A rule spanning two options that literal values already settle
-   * (`overlap` under `size`). Reads the LITERAL value of each key, absent
-   * where the author wrote an expression, and answers with the sentence to
-   * refuse the call with.
+   * The name of a rule spanning two options that literal values already
+   * settle (`overlap` under `size`). The rule is code, and lives once, in the
+   * lowering (crates/movement-parser/src/lowering/call_shape.rs, `agree`):
+   * it reads the LITERAL value of each key, absent where the author wrote an
+   * expression, and answers with the sentence to refuse the call with.
    */
-  agree?: (literals: ReadonlyMap<string, string | number | boolean | null>) => string | undefined;
+  agree?: 'chunks';
   /**
    * Options that are two answers to ONE question (`size` and `entities` both
    * say how big a piece is): exactly one of them is written, and neither
@@ -342,16 +343,11 @@ const CHUNKS_OPTIONS: BuiltinOptionsSpec = {
     },
   ],
   exactlyOne: [{ keys: ['size', 'entities'], what: 'how big a piece is' }],
-  agree: (literals) => {
-    const size = literals.get('size');
-    const overlap = literals.get('overlap');
-    if (typeof size !== 'number' || typeof overlap !== 'number') return undefined;
-    if (overlap < size) return undefined;
-    return `an overlap of ${overlap} is not smaller than a size of ${size} — each piece would repeat the whole of the one before it and the text would never advance`;
-  },
+  agree: 'chunks',
 };
 
-const BUILTIN_OPTIONS: ReadonlyArray<BuiltinOptionsSpec> = [CHUNKS_OPTIONS];
+/** Exported for the lowering vocabulary's pin (parser/expression/__test__/lowering_vocabulary). */
+export const BUILTIN_OPTIONS: ReadonlyArray<BuiltinOptionsSpec> = [CHUNKS_OPTIONS];
 
 const BUILTIN_OPTIONS_BY_FN = new Map(BUILTIN_OPTIONS.map((spec) => [spec.fn, spec]));
 

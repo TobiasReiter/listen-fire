@@ -5,6 +5,8 @@
 import type { ExprSlot, Statement } from '../ast';
 import * as parse from '../parse';
 import * as expression from '../expression/parse_expression';
+import { LoweringError, lowerExpression } from '../expression/lower';
+import type { MExpr } from '../expression/tree';
 import * as bridge from '../../expression/bridge';
 import * as loader from '../../wasm/loader';
 
@@ -82,5 +84,60 @@ describe('the parser entry points on the Rust grammar', () => {
   it('refuses nesting deeper than the grammar bounds', () => {
     const deep = `${'('.repeat(200)}1${')'.repeat(200)}`;
     expect(() => expression.parseExpression(deep)).toThrow('nesting too deep');
+  });
+
+  describe('a chain (crates/movement-parser MAX_CHAIN = 1,024 levels)', () => {
+    const LIMIT = 1024;
+    const lowered = (source: string) => lowerExpression(expression.parseExpression(source), source);
+
+    it('parses and lowers at the limit, in the WASM, without exhausting its stack', () => {
+      for (const source of [
+        `a${'.b'.repeat(LIMIT - 1)}`,
+        `a${' + a'.repeat(LIMIT - 1)}`,
+        `a${'-[:e]->'.repeat(LIMIT - 2)}.b`,
+        `f(${Array(LIMIT).fill('x').join(', ')})`,
+      ]) {
+        expect(() => lowered(source)).not.toThrow();
+      }
+    });
+
+    it('past the limit is a syntax error, and the module stays usable', () => {
+      for (const source of [`a${'.b'.repeat(LIMIT)}`, `a${' + a'.repeat(100_000)}`, `(a${'.b'.repeat(600)})${'.b'.repeat(600)}`]) {
+        const thrown = (() => {
+          try {
+            expression.parseExpression(source);
+          } catch (e) {
+            return e;
+          }
+          throw new Error('expected a refusal');
+        })();
+        expect(thrown).toBeInstanceOf(expression.ExpressionSyntaxError);
+        expect(thrown).toHaveProperty('message', expect.stringContaining('chain too long'));
+        expect(lowered('a.b + 1')).toHaveProperty('type');
+      }
+    });
+
+    it('handed to the lowering past the limit is a LoweringError, and far past it a malformed tree', () => {
+      const at = { start: 0, end: 1 };
+      const chain = (links: number): MExpr => {
+        let tree: MExpr = { kind: 'name', name: { text: 'a', quoted: false, at }, at };
+        for (let i = 0; i < links; i++) tree = { kind: 'member', object: tree, property: { text: 'b', quoted: false, at }, at };
+        return tree;
+      };
+      expect(() => lowerExpression(chain(LIMIT), 'a')).toThrow(LoweringError);
+      expect(() => lowerExpression(chain(LIMIT), 'a')).toThrow('chain too long');
+      const far = (() => {
+        try {
+          lowerExpression(chain(2 * LIMIT + 1), 'a');
+        } catch (e) {
+          return e;
+        }
+        throw new Error('expected a refusal');
+      })();
+      expect(far).toBeInstanceOf(Error);
+      expect(far).not.toBeInstanceOf(LoweringError);
+      expect(far).toHaveProperty('message', expect.stringContaining('nests deeper than 2048 levels'));
+      expect(lowered('a.b + 1')).toHaveProperty('type');
+    });
   });
 });

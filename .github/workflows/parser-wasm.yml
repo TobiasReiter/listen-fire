@@ -5,7 +5,9 @@ name: parser-wasm
 #  - rebuild-matches-committed rebuilds the artifact and fails if it differs.
 #  - parser-tests runs the crate's tests (including the strict programs
 #    harness) and the movement-lang parser pins through the committed
-#    artifact: every corpus program and expression text parses as pinned.
+#    artifact: every corpus program and expression text parses as pinned;
+#    and the catalog differential: the Rust catalog answers every lookup the
+#    checker corpus makes as the TypeScript one does.
 #
 # The committed artifact was built on macOS; the path remapping and pinned
 # toolchain in scripts/build-parser-wasm.sh are meant to make Linux produce the
@@ -19,6 +21,7 @@ on:
       - "rust-toolchain.toml"
       - "scripts/build-parser-wasm.sh"
       - "packages/movement-lang/**"
+      - "packages/shared/expression/**"
       - ".github/workflows/parser-wasm.yml"
   push:
     branches:
@@ -30,6 +33,7 @@ on:
       - "rust-toolchain.toml"
       - "scripts/build-parser-wasm.sh"
       - "packages/movement-lang/**"
+      - "packages/shared/expression/**"
       - ".github/workflows/parser-wasm.yml"
 
 permissions:
@@ -94,4 +98,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Parser pins through the committed artifact
         working-directory: packages/movement-lang
-        run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points'
+        run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points|lowering_regression|lowering_vocabulary|checks_regression|catalog_depth|loader'
+      # The TypeScript catalog stays in use until the checker is ported, so
+      # the Rust one is held to it on every change to either.
+      - name: Catalog differential through the committed artifact
+        working-directory: packages/movement-lang
+        env:
+          MOVEMENT_CATALOG_DIFFERENTIAL: "1"
+        run: pnpm run test --testPathPattern 'catalog_differential'
+      # The artifact ships to browsers: keep its download size in view.
+      - name: Size budget
+        run: |
+          f=packages/movement-lang/wasm/movement_parser.wasm
+          raw=$(wc -c < "$f" | tr -d ' ')
+          gz=$(gzip -9 -c "$f" | wc -c | tr -d ' ')
+          echo "raw $raw bytes, gzipped $gz bytes"
+          if [ "$gz" -gt 1048576 ]; then
+            echo "::error::movement_parser.wasm is $gz bytes gzipped, over the 1 MB budget."
+            exit 1
+          fi
+          if [ "$gz" -gt 614400 ]; then
+            echo "::warning::movement_parser.wasm is $gz bytes gzipped, over the 600 KB warning line (fails at 1 MB)."
+          fi
