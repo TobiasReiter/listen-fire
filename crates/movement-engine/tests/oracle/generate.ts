@@ -9,11 +9,16 @@
 //   - regex.json: `new RegExp(pattern).exec(text)` for seeded patterns over
 //     backreferences, lazy quantifiers, lookaheads, \b, classes, anchors,
 //     alternation and empty iterations.
-// Deterministic: a rerun writes the same bytes (CI diffs them).
+// Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
+// read local time (an offset-less date-time is local to `new Date`), so the
+// process runs in UTC wherever it is started.
 //
 // Regenerate from apps/api (for its ts-node and compiler settings):
 //   TS_NODE_PROJECT=tsconfig.json npx ts-node --transpile-only \
 //     ../../crates/movement-engine/tests/oracle/generate.ts
+
+// Before anything reads the clock: Node re-reads TZ when it is assigned.
+process.env.TZ = 'UTC';
 
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
