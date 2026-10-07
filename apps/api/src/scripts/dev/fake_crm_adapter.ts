@@ -132,6 +132,14 @@ export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile
 /** Companies per traversal page — small, so paging is exercised. */
 export const FAKE_CRM_PAGE_SIZE = 2;
 
+/** The offset a page cursor names — absent on the first page. The CRM mints
+ *  only non-negative integer offsets; anything else did not come from it. */
+function fakeCrmPageOffset(cursor: unknown): number {
+  if (cursor === undefined || cursor === null) return 0;
+  if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor >= 0) return cursor;
+  throw new Error(`fake CRM: unrecognised page cursor ${JSON.stringify(cursor)}.`);
+}
+
 /** The one event the CRM emits: a company was created. */
 export const FAKE_CRM_COMPANY_CREATED = 'company.created';
 
@@ -251,7 +259,7 @@ export function createFakeCrmAdapter(): FakeCrmAdapter {
     },
 
     async iterateRelatedPage(input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage> {
-      const offset = typeof cursor === 'number' ? cursor : 0;
+      const offset = fakeCrmPageOffset(cursor);
       const companies = companiesFrom(input);
       const next = offset + FAKE_CRM_PAGE_SIZE;
       return {

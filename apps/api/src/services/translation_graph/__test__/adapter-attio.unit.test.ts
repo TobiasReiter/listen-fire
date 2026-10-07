@@ -2333,6 +2333,47 @@ describe('AttioAdapter root collection reads (the wired category-3 reads)', () =
     expect(streamed[TOTAL - 1]).toBe('rec-502');
   });
 
+  it('a list-scoped collection hydrates parents lazily: iterateRelated stopped after one item fetches one parent', async () => {
+    const adapter = makeRootReadAdapter('team-root-lazy');
+    const fetched: string[] = [];
+    const inner = (adapter as unknown as { getApiClient: () => Promise<Record<string, unknown>> }).getApiClient;
+    (adapter as unknown as { getApiClient: () => Promise<Record<string, unknown>> }).getApiClient = async () => ({
+      ...(await inner()),
+      queryListEntriesPage: async ({ offset }: { listId: string; limit: number; offset: number }) =>
+        offset > 0
+          ? []
+          : Array.from({ length: 5 }, (_, i) => ({
+              entryId: `entry-${i}`,
+              parentRecordId: `rec-${i}`,
+              parentObjectId: 'companies',
+              entryValues: {},
+              createdAt: '2026-07-03T00:00:00Z',
+            })),
+      getRecord: async ({ recordId }: { objectId: string; recordId: string }) => {
+        fetched.push(recordId);
+        return { id: { record_id: recordId }, values: {} };
+      },
+    });
+    const input = {
+      position: attioMeta,
+      fieldId: 'Companies',
+      direction: 'outgoing' as const,
+      nativeFilter: { kind: 'list', listId: 'hot-uuid' },
+    };
+
+    for await (const r of adapter.iterateRelated(input)) {
+      expect(positionRecordId(r.position)).toBe('rec-0');
+      break;
+    }
+    expect(fetched).toEqual(['rec-0']);
+
+    // The paged contract hands back a whole page, so it hydrates all of it.
+    fetched.length = 0;
+    const page = await adapter.iterateRelatedPage(input);
+    expect(page.items).toHaveLength(5);
+    expect(fetched).toHaveLength(5);
+  });
+
   it('iterateRelatedPage refuses a cursor it did not mint', async () => {
     const adapter = makeRootReadAdapter('team-root-badcursor');
     await expect(

@@ -323,7 +323,14 @@ export function createAdapterProtocolHandler(opts: {
     const args = callArgs(method, params);
     try {
       if (PAGED_METHODS.has(method)) {
-        const result = await servePage({ adapter, method, call, params, warn });
+        const result = await servePage({
+          adapter,
+          method,
+          call,
+          native: adapterMember(adapter, method)?.name === 'iterateRelatedPage',
+          params,
+          warn,
+        });
         send(res, 200, { ok: true, result });
         return;
       }
@@ -348,27 +355,27 @@ export function createAdapterProtocolHandler(opts: {
 }
 
 /**
- * One page of a traversal: the adapter's own page when it pages natively
- * (`call` is then its `iterateRelatedPage`), else its stream drained up to
- * `DRAINED_PAGE_LIMIT`.
+ * One page of a traversal: the adapter's own page when it pages natively,
+ * else its stream drained up to `DRAINED_PAGE_LIMIT`. Which of the two `call`
+ * is was decided once, by `adapterMember`.
  */
 async function servePage(input: {
   adapter: Adapter;
   method: MethodName;
   call: (...args: unknown[]) => unknown;
+  /** `call` is the adapter's own pager (`iterateRelatedPage`), not a stream. */
+  native: boolean;
   params: unknown;
   warn: (message: string) => void;
 }): Promise<unknown> {
-  const { adapter, method, call, warn } = input;
+  const { adapter, method, call, native, warn } = input;
   // The cursor rides beside the traversal input on the wire; in process it is
   // `iterateRelatedPage`'s second argument, and a stream takes none.
   const params: Record<string, unknown> =
     input.params !== null && typeof input.params === 'object' ? { ...input.params } : {};
   const { cursor, ...related } = params;
 
-  if (typeof adapter.iterateRelatedPage === 'function') {
-    return call(related, cursor);
-  }
+  if (native) return call(related, cursor);
   const iterable = call(related);
   if (!isAsyncIterable(iterable)) {
     throw new Error(`${method}: the adapter's iterateRelated did not return an AsyncIterable`);

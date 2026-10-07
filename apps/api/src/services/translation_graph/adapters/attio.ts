@@ -330,6 +330,19 @@ type AttioNativeFilter =
 
 const SNAPSHOT_PAGE_SIZE = 500;
 
+/** A page whose items may be produced lazily, as they are read. */
+interface LazyRelatedPage {
+  items: Iterable<RelatedResult> | AsyncIterable<RelatedResult>;
+  nextCursor?: number;
+}
+
+/** One page of a snapshot; `events` may be lazy (list entries hydrate their
+ *  parent record per event read). */
+interface SnapshotPage {
+  events: Iterable<TriggerEvent> | AsyncIterable<TriggerEvent>;
+  nextOffset?: number;
+}
+
 /** Where the next snapshot page starts, given this page's offset and size —
  *  absent once a short page says the collection is exhausted. */
 function nextSnapshotOffset(offset: number, pageLength: number): { nextOffset?: number } {
@@ -2395,23 +2408,33 @@ export class AttioAdapter extends BaseAdapter {
   }
 
   /**
-   * Streaming variant of `getRelated`: the pages of `iterateRelatedPage`,
-   * walked to the end.
+   * Streaming variant of `getRelated`: Attio's pages walked to the end, each
+   * item produced only when it is read — a list-entry page hydrates its
+   * parent records one per yielded item, so a traversal that stops early
+   * fetches only what it used.
    */
   iterateRelated(input: GetRelatedInput): AsyncIterable<RelatedResult> {
-    return iterateRelatedPages((cursor) => this.iterateRelatedPage(input, cursor));
+    return iterateRelatedPages((cursor) => this.lazyRelatedPage(input, cursor));
+  }
+
+  /** One page of `iterateRelated`, materialised — the paged contract hands
+   *  back whole pages, so this hydrates the page it answers. */
+  async iterateRelatedPage(input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage> {
+    const page = await this.lazyRelatedPage(input, cursor);
+    const items: RelatedResult[] = [];
+    for await (const item of page.items) items.push(item);
+    return { items, ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}) };
   }
 
   /**
-   * One page of `iterateRelated`. A meta-edge hop
-   * (`adapter-meta → -[:<recordType>]->`) pages Attio's own offset paging,
-   * with the offset as the cursor. Other position kinds aren't paged today —
-   * they answer the eager `getRelated` read as a single page.
+   * A meta-edge hop (`adapter-meta → -[:<recordType>]->`) pages Attio's own
+   * offset paging, with the offset as the cursor. Other position kinds aren't
+   * paged today — they answer the eager `getRelated` read as a single page.
    */
-  async iterateRelatedPage(input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage> {
+  private async lazyRelatedPage(input: GetRelatedInput, cursor: unknown): Promise<LazyRelatedPage> {
     if (input.direction !== 'outgoing') {
       throw new Error(
-        `AttioAdapter.iterateRelated only supports outgoing direction.`,
+        `AttioAdapter.iterateRelated / iterateRelatedPage only support outgoing direction.`,
       );
     }
     if (input.position.recordType === META_RECORD_TYPE) {
@@ -2431,7 +2454,7 @@ export class AttioAdapter extends BaseAdapter {
     edgeFieldId: string;
     nativeFilter?: unknown;
     offset: number;
-  }): Promise<RelatedPage> {
+  }): Promise<LazyRelatedPage> {
     const recordType = input.edgeFieldId;
 
     // Synthetic meta sentinels first — fixed internal ids that can never
@@ -2492,12 +2515,13 @@ export class AttioAdapter extends BaseAdapter {
         { pipelineInputId: '', recordType, filter: input.nativeFilter },
         input.offset,
       );
-      const items: RelatedResult[] = [];
-      for (const event of page.events) {
-        const payload = event.payload as SourcePosition | undefined;
-        if (payload && isStablePosition(payload)) items.push({ position: payload });
+      async function* items(): AsyncIterable<RelatedResult> {
+        for await (const event of page.events) {
+          const payload = event.payload as SourcePosition | undefined;
+          if (payload && isStablePosition(payload)) yield { position: payload };
+        }
       }
-      return { items, ...(page.nextOffset !== undefined ? { nextCursor: page.nextOffset } : {}) };
+      return { items: items(), ...(page.nextOffset !== undefined ? { nextCursor: page.nextOffset } : {}) };
     }
 
     // Per-list collection → every entry of the list, as per-list positions.
@@ -2646,7 +2670,7 @@ export class AttioAdapter extends BaseAdapter {
    *  `getListEntriesForRecord` (plus `created_at`, the entry's added-at date),
    *  so a per-list node reads the same whether reached from the root or from
    *  its record. */
-  private async listEntriesPageFromRoot(list: AttioListInfo, offset: number): Promise<RelatedPage> {
+  private async listEntriesPageFromRoot(list: AttioListInfo, offset: number): Promise<LazyRelatedPage> {
     const client = await this.getApiClient();
     const page = await client.queryListEntriesPage({
       listId: list.id,
@@ -3397,11 +3421,13 @@ export class AttioAdapter extends BaseAdapter {
 
   /** One page of `snapshot` at `offset` — the shared unit of Attio's offset
    *  paging, so the trigger snapshot and a paged root read step identically.
-   *  `nextOffset` is absent on the last page. */
+   *  The page's listing is fetched up front; its events may be produced
+   *  lazily (see `listEntriesSnapshotPage`). `nextOffset` is absent on the
+   *  last page. */
   private async snapshotPage(
     input: SnapshotInput,
     offset: number,
-  ): Promise<{ events: TriggerEvent[]; nextOffset?: number }> {
+  ): Promise<SnapshotPage> {
     const objectId = await this.objectApiIdFor(input.recordType, 'snapshot');
     const native: AttioNativeFilter = parseNativeFilter(input.filter);
     const client = await this.getApiClient();
@@ -3434,7 +3460,7 @@ export class AttioAdapter extends BaseAdapter {
     /** A pushed records-query filter (chunk 7) — scopes the fetch server-side
      *  so an unbounded collection WHERE never pages every record. */
     filter?: Record<string, unknown>;
-  }): Promise<{ events: TriggerEvent[]; nextOffset?: number }> {
+  }): Promise<SnapshotPage> {
     const page =
       input.filter !== undefined
         ? await input.client.queryRecordsWithFilter({
@@ -3465,31 +3491,39 @@ export class AttioAdapter extends BaseAdapter {
     pipelineInputId: string;
     client: AttioApiClient;
     offset: number;
-  }): Promise<{ events: TriggerEvent[]; nextOffset?: number }> {
+  }): Promise<SnapshotPage> {
     const page = await input.client.queryListEntriesPage({
       listId: input.listId,
       limit: SNAPSHOT_PAGE_SIZE,
       offset: input.offset,
     });
-    const events: TriggerEvent[] = [];
-    for (const entry of page) {
-      // Each list entry references a parent record; fetch it for full data.
-      // N+1 today — fine for backfill latency, batchable later. An entry
-      // with no parent reference can't hydrate a record — skip it.
+    return { events: this.hydrateListEntries(input, page), ...nextSnapshotOffset(input.offset, page.length) };
+  }
+
+  /**
+   * Each list entry references a parent record; fetch it for full data — one
+   * fetch per event as it is READ, so a consumer that stops early (a LIMIT 1
+   * traversal) doesn't hydrate the rest of the page. N+1 — fine for backfill
+   * latency, batchable later. An entry with no parent reference can't
+   * hydrate a record — skip it.
+   */
+  private async *hydrateListEntries(
+    input: { listId: string; objectType: string; pipelineInputId: string; client: AttioApiClient },
+    entries: Awaited<ReturnType<AttioApiClient['queryListEntriesPage']>>,
+  ): AsyncIterable<TriggerEvent> {
+    for (const entry of entries) {
       if (entry.parentObjectId === null || entry.parentRecordId === null) continue;
       try {
         const record = await input.client.getRecord({
           objectId: entry.parentObjectId,
           recordId: entry.parentRecordId,
         });
-        events.push(
-          this.recordToTriggerEvent({
-            objectType: input.objectType,
-            recordId: record.id.record_id,
-            values: record.values,
-            pipelineInputId: input.pipelineInputId,
-          }),
-        );
+        yield this.recordToTriggerEvent({
+          objectType: input.objectType,
+          recordId: record.id.record_id,
+          values: record.values,
+          pipelineInputId: input.pipelineInputId,
+        });
       } catch (err) {
         logger.warn('[AttioAdapter.snapshot] failed to fetch list-entry parent record', {
           listId: input.listId,
@@ -3499,7 +3533,6 @@ export class AttioAdapter extends BaseAdapter {
         });
       }
     }
-    return { events, ...nextSnapshotOffset(input.offset, page.length) };
   }
 
   private recordToTriggerEvent(input: {

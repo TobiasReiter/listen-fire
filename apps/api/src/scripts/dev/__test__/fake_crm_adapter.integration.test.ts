@@ -138,6 +138,15 @@ describe('Fake CRM pages a traversal over the wire', () => {
     for await (const r of remote.iterateRelated!(input)) streamed.push(positionData(r.position));
     expect(streamed).toEqual(names.map((Name) => ({ Name })));
   });
+
+  it('refuses a cursor it did not mint', async () => {
+    await expect(
+      remote.iterateRelatedPage!(
+        { position: makeMetaPosition(FAKE_CRM_ADAPTER_TYPE), fieldId: FAKE_CRM_COMPANY_TYPE, direction: 'outgoing' },
+        'not-an-offset',
+      ),
+    ).rejects.toThrow(/unrecognised page cursor/);
+  });
 });
 
 // A homespun server can return a bare `[]` from `resolveEntity` (the handbook

@@ -461,6 +461,19 @@ describe('RemoteAdapter streaming re-wrap', () => {
     expect(out).toEqual([r1]);
   });
 
+  it('a server answering the same cursor again fails after the first page instead of looping', async () => {
+    enqueue({ items: [r1], nextCursor: 'a' }, { items: [r1], nextCursor: 'a' });
+    const adapter = buildAdapter(['listEntryPoints', 'describe', 'iterateRelatedPage']);
+    const out: unknown[] = [];
+    await expect(
+      (async () => {
+        for await (const r of adapter.iterateRelated!(input)) out.push(r);
+      })(),
+    ).rejects.toThrow(/same cursor again/);
+    expect(out).toEqual([r1]);
+    expect(calledMethods()).toHaveLength(2);
+  });
+
   it('exposes one page as iterateRelatedPage, so a remote behind a remote pages through', async () => {
     enqueue({ items: [r2], nextCursor: 'rc2' });
     const adapter = buildAdapter(['listEntryPoints', 'describe', 'iterateRelatedPage']);

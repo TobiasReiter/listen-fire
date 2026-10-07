@@ -1668,19 +1668,46 @@ export interface RelatedPage {
 }
 
 /**
+ * The most pages one traversal walks. A real collection that needs more
+ * should be narrowed; past this the walk is assumed to be a server that
+ * never ends, and fails rather than spinning the host.
+ */
+export const MAX_RELATED_PAGES = 10_000;
+
+/**
  * Walk a paged traversal to its end as a stream: the first page is fetched
  * cursorless and each page's `nextCursor` is echoed back until a page
- * carries none.
+ * carries none. A page's items may be lazy (an async iterable), so a caller
+ * that stops early pays only for what it read.
+ *
+ * Cursors come from servers we don't control, so a cursor handed back
+ * unchanged (compared as JSON — cursors ride the wire as JSON) or a walk
+ * past `MAX_RELATED_PAGES` fails loudly instead of looping forever.
  */
 export async function* iterateRelatedPages(
-  page: (cursor: unknown) => Promise<RelatedPage>,
+  page: (cursor: unknown) => Promise<{
+    items: Iterable<RelatedResult> | AsyncIterable<RelatedResult>;
+    nextCursor?: unknown;
+  }>,
 ): AsyncIterable<RelatedResult> {
   let cursor: unknown = undefined;
-  do {
+  for (let pages = 1; ; pages++) {
     const current = await page(cursor);
+    const next = current.nextCursor;
+    // Checked before the page is yielded: a repeat page is the first
+    // symptom, not more data.
+    if (next != null && cursor !== undefined && JSON.stringify(next) === JSON.stringify(cursor)) {
+      throw new Error(
+        `paged traversal: the page for cursor ${JSON.stringify(cursor)} answered the same cursor again, so it would never end.`,
+      );
+    }
     yield* current.items;
-    cursor = current.nextCursor;
-  } while (cursor != null);
+    if (next == null) return;
+    if (pages >= MAX_RELATED_PAGES) {
+      throw new Error(`paged traversal: still not exhausted after ${MAX_RELATED_PAGES} pages; refusing to walk further.`);
+    }
+    cursor = next;
+  }
 }
 
 // ── Capability declarations ───────────────────────────────────────────────
