@@ -112,12 +112,13 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder, opts: { lease
       // and a suspended flow that meets the limit again at once rewrites its own
       // row (`updated_at` is what tells the resume driver it was rewritten).
       await recorder.ensureStarted();
-      // An await that took the pause before re-checking drops its correlation:
-      // resuming the run re-enters the await, which re-checks live and
-      // re-registers if it is still waiting. Left in place, every poll would
-      // wake it into the pause again.
-      await dropAwaitCorrelation({ runId, address: input.address });
+      // The fenced park first: a holder whose lease lapsed is refused here,
+      // before it drops anything. Then an await that took the pause before
+      // re-checking drops its correlation: resuming the run re-enters the
+      // await, which re-checks live and re-registers if it is still waiting.
+      // Left in place, every poll would wake it into the pause again.
       await park({ address: input.address, reason: 'limit', wakeAt: null, state: input.state, rewritten: true });
+      await dropAwaitCorrelation({ runId, address: input.address });
       await recorder.markParked();
       await settleIfCancelledDuringPark(runId);
     },

@@ -23,7 +23,7 @@ The shapes are TypeScript-ish. These rules apply to every one of them.
 - **Answers.** Every method answers a promise. A method shown answering `void` answers nothing (JSON `null` over a wire).
 - **Failure.** A method fails one of two ways.
   - **As data**, in the answer: only `adapters.call` (an `error` variant) and the priced calls (a `budget` refusal). The engine branches on these.
-  - **By throwing** (over a wire: an error response carrying `message`). The engine never branches on a thrown failure's class. It fails the statement with the message, exactly as it fails one on its own error, so a remote host may throw a plain error with the same message.
+  - **By throwing** (over a wire: an error response carrying `message`). The engine never branches on a thrown failure's class. It fails the statement with the message, exactly as it fails one on its own error, so a remote host may throw a plain error with the same message. One exception: `RunLeaseLost` (`movement_engine/errors.ts`), which an in-process host throws when its segment no longer holds the run (from the cancel gate, or a park refused by the lease fence). The engine treats it as control flow, as it treats a cancel: it stops the run, and no collection op's `onError` forgives it.
 - **Retries.** The engine never retries a host call. A host that retries does so inside the call, and only where this document says the call is idempotent.
 
 ## Shared shapes
@@ -191,7 +191,7 @@ fireCallbackBody(input: RunInput & {
 ### Operator limit resume
 
 - A run paused at its cost limit is resumed by an operator only. The host lifts the pause first, then resumes each leaf the pause suspended (`commitSuspension`) with `reenter: true`, `limitPaused` absent, `priorSpentMicrodollars` the run's spend, and `capBaselineMicrodollars` the run's spend at this moment, so the cap counts afresh.
-- Any other entry into a run that is paused passes `limitPaused: true`: the woken branch takes its event (binds the answer, steps past the sleep) and then suspends before its next statement, joining the pause.
+- Any other entry into a run that is paused, except a callback body, passes `limitPaused: true`. A callback body never suspends (see "A callback body"), so it runs whole, pause or not. For the others, the woken branch takes its event (binds the answer, steps past the sleep) and then suspends before its next statement, joining the pause.
 
 ### Join closing
 
@@ -726,7 +726,7 @@ The production host meters each priced call under its budget (`withSpendMeter`, 
 The engine keeps two writes from colliding at two levels.
 
 - **Within a run:** an in-process gate serialises flows of one run (collection members, combinator arms) whose writes could find each other's records.
-- **Across runs:** each effect asks `host.locks` for the names it needs (`acquire({ segmentId, names })` answers a token) and gives them back when it finishes (`release({ token })`), never holding them for the whole segment. The host keeps one `WriteLockHolder` per segment, opened at its first acquire and closed with the segment, which lets go of anything still held. A record, an edge or a binding is locked as itself. An identity write (`unique by`) locks its whole record type in the team, exclusively. So identity writes to one record type in a team run one at a time across all runs, for the length of each find-then-create.
+- **Across runs:** each effect asks `host.locks` for the names it needs (`acquire({ segmentId, names })` answers a token) and gives them back when it finishes (`release({ segmentId, token })`), never holding them for the whole segment. The host keeps one `WriteLockHolder` per segment, opened at its first acquire and closed with the segment, which lets go of anything still held. A record, an edge or a binding is locked as itself. An identity write (`unique by`) locks its whole record type in the team, exclusively. So identity writes to one record type in a team run one at a time across all runs, for the length of each find-then-create.
 
 `WriteLocks` has two implementations (`services/write_locks/`):
 
@@ -767,7 +767,7 @@ Nothing on the request/answer path. Three things stay outside it, by design:
 - **`control`:** `suspendWhen` is gone (a run's `suspendAt` input replaces it); the cancel gate's `reason` is gone from the boundary (the host reports it).
 - **`files`:** `resolveFile` is gone (imports resolve from the snapshot); `resolveFileText` takes a descriptor and answers text; `render` answers a descriptor.
 - **`lookup`:** `resolveActingUser` names the source instance and the event; the host asks the source for candidates itself.
-- **`locks`:** `acquire({ segmentId, names })` answers `{ token }`; `release({ token })`. No lock holder crosses.
+- **`locks`:** `acquire({ segmentId, names })` answers `{ token }`; `release({ segmentId, token })`. No lock holder crosses.
 - **`trace`:** new. `append({ segmentId, entries })` as the run goes.
 
 ## Changes in chunk 4A

@@ -31,12 +31,14 @@ import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'm
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import type { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
+import { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { registerTimerWork, resumeTimerParkedRun, settleCancelledTimersHandler, timerWorkKey } from '../timer_resume';
 import { testWorkContext } from '../../../test/harness/work';
 import { makeRecorderParkSink } from '../park_sink';
 import { drainUntilIdle, drainWork, resetWorkHandlersForTests } from '../../work/drain';
 import { claimRunLease, releaseRunLease, withRunLease, type HeldRunLease } from '../run_lease';
+import { getCallback, listRunCallbacks } from '../callback_store';
+import { loadCorrelatedParks } from '../../translation_graph/adapters/await_correlation';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -195,6 +197,25 @@ const SLEEP_THEN_TWICE = [
   '}',
   '',
   'listen to crm { events: ["record.created"] } fire sleep_then_twice',
+].join('\n');
+
+const SLEEP_THEN_LAST = [
+  'import { attio, slack } from adapters',
+  'import { acme_main, acme_slack } from credentials',
+  '',
+  'crm = attio(credentials: acme_main)',
+  'chat = slack(credentials: acme_slack)',
+  '',
+  'movement sleep_then_last(ev: <crm-[:`Webhook Event`]->>) {',
+  '  cb = callback()',
+  '  await sleep(1h)',
+  '  write chat-[:messages]-> {',
+  '    channel: "#alerts"',
+  '    text: "last"',
+  '  }',
+  '}',
+  '',
+  'listen to crm { events: ["record.created"] } fire sleep_then_last',
 ].join('\n');
 
 async function seedMovement(
@@ -663,5 +684,116 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     expect((await runRow(runId)).status).toBe('success');
     expect(slackCreates).toEqual([{ channel: '#alerts', text: 'awake after sleep' }]);
     expect(await workRows(runId)).toHaveLength(0);
+  });
+
+  it('a lease that lapses during the last statement settles nothing: the stale return touches no row, and the new holder finishes alone', async () => {
+    const { triggerId } = await seedMovement(teamId, {
+      source: SLEEP_THEN_LAST,
+      firedName: 'sleep_then_last',
+      name: 'Sleep then last',
+    });
+    const texts: unknown[] = [];
+    let unstall: () => void = () => {};
+    const stalled = new Promise<void>((resolve) => {
+      unstall = resolve;
+    });
+    let entered: () => void = () => {};
+    const inLastWrite = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const slack = makeSlackTargetFake().adapter;
+    slack.createRecord = async (input) => {
+      texts.push(input.fields.text);
+      if (texts.length === 1) {
+        entered();
+        await stalled;
+      }
+      return { adapterType: 'slack', externalId: `msg-${texts.length}`, data: {} };
+    };
+    mockedResolve.mockImplementation(async ({ adapterType }: { adapterType: string }) =>
+      adapterType === 'slack' ? slack : makeAttioSourceFake(),
+    );
+    await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
+    const { runId } = await parkedRun(teamId);
+    const [callback] = await listRunCallbacks(runId);
+    expect(callback?.status).toBe('live');
+    // A correlation of the run's, which nothing the stale holder does may drop.
+    await getAutomationsQb(['adapter_await'])
+      .insertInto('adapter_await')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .values({ adapter_type: 'ask', correlation_key: 'req-kept', run_id: runId, team_id: teamId, address: 's9' } as any)
+      .execute();
+    await backdateLeafAndRow(runId);
+
+    let stale: HeldRunLease | undefined;
+    const staleStep = withRunLease(
+      runId,
+      (lease) => {
+        stale = lease;
+        return resumeTimerParkedRun({ runId, teamId }, new Date(), lease);
+      },
+      { ttlMs: 1_500 },
+    );
+    await inLastWrite;
+
+    // The lease lapses while the run's last statement is in flight, and
+    // another instance claims the run (without stepping it yet).
+    await getAutomationsQb(['trigger_run'])
+      .updateTable('trigger_run')
+      .set({ lease_until: new Date(Date.now() - 1_000) })
+      .where('id', '=', runId)
+      .execute();
+    const other = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+    expect(other).not.toBeNull();
+    for (let i = 0; i < 40 && !stale?.isLost(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(stale?.isLost()).toBe(true);
+
+    // The write lands and the segment ends normally: there is no statement
+    // boundary after it. The stale holder must still settle nothing.
+    unstall();
+    expect(await staleStep).toEqual({ kind: 'held', value: 'lease_lost' });
+    expect(texts).toEqual(['last']);
+    expect((await runRow(runId)).status).toBe('parked');
+    expect((await getCallback(callback!.id))?.status).toBe('live');
+    expect(await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'req-kept' })).toHaveLength(1);
+    const leaves = await getAutomationsQb(['parked_run']).selectFrom('parked_run').where('run_id', '=', runId).select('status').execute();
+    expect(leaves).toEqual([{ status: 'resuming' }]);
+
+    // The new holder resumes the run itself and finishes it, alone.
+    await releaseRunLease(runId, other!.token);
+    const fresh = await withRunLease(runId, (lease) => resumeTimerParkedRun({ runId, teamId }, new Date(), lease));
+    expect(fresh).toEqual({ kind: 'held', value: 'done' });
+    expect(texts).toEqual(['last', 'last']);
+    expect(await runRow(runId)).toEqual({ status: 'success', failure_reason: null });
+    expect((await getCallback(callback!.id))?.status).toBe('revoked');
+    expect(await parkedRows(runId)).toBe(0);
+  });
+
+  it("a settle that missed the lease check still cannot finish the run: the terminal write is fenced by the lease's token", async () => {
+    const { triggerId } = await seedMovement(teamId, {
+      source: SLEEP_THEN_LAST,
+      firedName: 'sleep_then_last',
+      name: 'Sleep then last',
+    });
+    await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
+    const { runId } = await parkedRun(teamId);
+    const [callback] = await listRunCallbacks(runId);
+    const holder = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+
+    const stale = new TriggerRunRecorder({
+      teamId,
+      triggerId,
+      triggerType: 'webhook',
+      triggerEvent: webhookEvent(),
+      movementVersionId: null,
+      existingRunId: runId,
+    });
+    stale.holdLease({ token: randomUUID() });
+    await stale.markParked();
+    await stale.finish();
+
+    expect((await runRow(runId)).status).toBe('parked');
+    expect((await getCallback(callback!.id))?.status).toBe('live');
+    await releaseRunLease(runId, holder!.token);
   });
 });

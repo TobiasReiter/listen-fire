@@ -375,7 +375,17 @@ async function executeFire(callback: CallbackRecord, callIndex: number, lease: H
     } else {
       // Marked before the body starts: at most once after start, a crash
       // included (the ledger's own comment says what that trades away).
-      await markCallbackBodyStarted({ id: callback.id, callIndex });
+      // The lease lapsed before the body began: the run is another
+      // instance's, and so is this body. Neither marked nor run, its queued
+      // row runs it under the new holder.
+      if (lease.isLost()) return;
+      if (!(await markCallbackBodyStarted({ id: callback.id, callIndex, lease }))) {
+        logger.warn('[Callback] body not started: the run lease is no longer this one', {
+          callbackId: callback.id,
+          callIndex,
+        });
+        return;
+      }
       const outcome = await fireCallbackFiring({
         teamId: callback.teamId,
         triggerId: context.triggerId,

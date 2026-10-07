@@ -305,7 +305,7 @@ import {
   type FileTextResolution,
   type TransformInvocationResult,
 } from './extraction';
-import { RunCancelledSignal } from './errors';
+import { RunCancelledSignal, RunLeaseLost } from './errors';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import {
@@ -1896,7 +1896,7 @@ function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]):
 /**
  * Did a member's function FAIL, as opposed to the run's control flow passing
  * through it? Only a failure is the member's, and only a failure can be
- * forgiven by `onError`: a cancel, the call ceiling, the cost cap, the call
+ * forgiven by `onError`: a cancel, a lost run lease, the call ceiling, the cost cap, the call
  * depth limit, a park and a quiet scope end all mean something about the run, and swallowing one would
  * leave the run believing it had done something it had not.
  */
@@ -1905,6 +1905,7 @@ function isMemberFailure(error: unknown): boolean {
     error instanceof RunParked
     || error instanceof ScopeEndedQuietly
     || error instanceof RunCancelledSignal
+    || error instanceof RunLeaseLost
     || isAdapterCallCeilingReached(error)
     || isRunCostCapExceeded(error)
     || isCallDepthExceeded(error)

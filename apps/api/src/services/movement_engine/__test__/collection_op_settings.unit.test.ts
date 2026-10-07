@@ -76,7 +76,8 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { runMovement } from '../run';
+import { runFailureCause, runMovement } from '../run';
+import { RunLeaseLost } from '../errors';
 import type { MovementTransformInvoker } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
 
@@ -379,6 +380,20 @@ describe('onError: what a member whose function failed does', () => {
       plugin.invoker,
     );
     expect(attio.creates[0]?.fields.summary).toBe('a,b,c,e');
+  });
+
+  it('a lost run lease inside a member is never forgiven: it stops the run, as a cancel does', async () => {
+    for (const onError of ['ignore', 'warn']) {
+      const invoker: MovementTransformInvoker = {
+        async invoke({ config }) {
+          // The host found the run is another instance's now.
+          if (String(config.url) === 'c') throw new RunLeaseLost('run-1');
+          return { text: `got-${String(config.url)}` };
+        },
+      };
+      const failed = await run(mapMovement(`{ onError: "${onError}" }`), invoker).catch((error: unknown) => error);
+      expect(runFailureCause(failed)).toBeInstanceOf(RunLeaseLost);
+    }
   });
 
   it('FILTER drops a member whose predicate failed', async () => {

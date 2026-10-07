@@ -52,3 +52,20 @@ export class RunCancelledSignal extends Error {
     this.name = 'RunCancelledSignal';
   }
 }
+
+/**
+ * A segment whose run lease was lost stops at its next statement: another
+ * instance may be stepping the run, so it settles nothing and touches no
+ * parked row. The statement in flight when the lease lapsed has already run,
+ * and the new holder may run it again: its effects can land twice.
+ *
+ * Raised by an in-process host (its cancel gate, a fenced park), and defined
+ * here because the engine treats it as control flow, exactly as it treats a
+ * cancel: no collection op's `onError` forgives it.
+ */
+export class RunLeaseLost extends Error {
+  constructor(readonly runId: string) {
+    super('run lease lost; another instance may hold the run');
+    this.name = 'RunLeaseLost';
+  }
+}

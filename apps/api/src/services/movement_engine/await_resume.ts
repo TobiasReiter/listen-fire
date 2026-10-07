@@ -194,10 +194,15 @@ async function resumeAwaitRun(
   const deferredFrames = new Map<string, ParkedScopeState>();
 
   for (const leaf of leaves) {
+    // A lease lost since the last leaf: the run may be another instance's now.
+    if (lease?.isLost()) return;
     // Claimed before it is stepped: a leaf another entry already took (or a
     // race cancelled) is not parked any more.
     const parked = await claimParkedLeaf({ runId, address: leaf.address });
     if (!parked || !parked.state) {
+      // Not ours to judge once the lease is lost: the new holder may have
+      // claimed the leaf itself.
+      if (lease?.isLost()) return;
       // Already drained in a prior pass (or cancelled as a race loser) — clear
       // its correlation so later wakes do not re-drive it.
       await dropAwaitCorrelation({ runId, address: leaf.address });
@@ -342,12 +347,15 @@ async function resolveAwaitLeaf(runId: TriggerRunId, address: string, lease: Hel
 }
 
 async function settleFailure(runId: TriggerRunId, lease: HeldRunLease | undefined): Promise<void> {
-  // An ERROR in any branch fails the whole run (P14). Any ask the run was still
-  // awaiting is closed with it — the run is over, so its link must stop offering
-  // a live form — then every remaining correlation, parked row and join goes.
+  // An ERROR in any branch fails the whole run (P14). Every parked row and
+  // join goes, then any ask the run was still awaiting is closed with it — the
+  // run is over, so its link must stop offering a live form — and every
+  // remaining correlation. The fenced drop goes first and gates the rest: a
+  // holder whose lease lapsed tears down nothing of the new holder's.
+  if (lease?.isLost()) return;
+  if (!(await dropRunLeaves(runId, lease))) return;
   await abandonAskAwaits({ runId });
   await dropAwaitCorrelationsForRun(runId);
-  await dropRunLeaves(runId, lease);
 }
 
 export const wakeAwaitHandler: WorkHandler = {

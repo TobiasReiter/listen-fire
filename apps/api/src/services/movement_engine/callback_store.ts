@@ -243,16 +243,36 @@ export async function readCallbackCalls(id: string): Promise<CallbackCall[]> {
   return (record?.calls ?? []).filter(hasLanded).map(({ at, values }) => ({ at, values }));
 }
 
-/** Record on the ledger that call `callIndex`'s body is starting. */
-export async function markCallbackBodyStarted(input: { id: string; callIndex: number }): Promise<void> {
-  await getAutomationsQb(['callback'])
+/** Record on the ledger that call `callIndex`'s body is starting. Given the
+ *  run lease the body runs under, only while the run is still leased to it:
+ *  false when it is not, and nothing was marked, so a holder whose lease
+ *  lapsed never marks a body it will not run. */
+export async function markCallbackBodyStarted(input: {
+  id: string;
+  callIndex: number;
+  lease?: { token: string };
+}): Promise<boolean> {
+  let mark = getAutomationsQb(['callback', 'trigger_run'])
     .updateTable('callback')
     .set({
       calls: sql`jsonb_set(calls, ${`{${input.callIndex}}`}::text[], (calls -> ${input.callIndex}::int) || jsonb_build_object('bodyStartedAt', ${ISO_NOW}))`,
       updated_at: new Date(),
     })
-    .where('id', '=', input.id as CallbackId)
-    .execute();
+    .where('id', '=', input.id as CallbackId);
+  if (input.lease !== undefined) {
+    const { token } = input.lease;
+    mark = mark.where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('trigger_run')
+          .select('trigger_run.id')
+          .whereRef('trigger_run.id', '=', 'callback.run_id')
+          .where('trigger_run.lease_token', '=', token),
+      ),
+    );
+  }
+  const marked = await mark.executeTakeFirst();
+  return Number(marked.numUpdatedRows) > 0;
 }
 
 export async function listRunCallbacks(runId: TriggerRunId): Promise<CallbackRecord[]> {

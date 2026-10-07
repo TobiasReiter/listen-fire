@@ -458,7 +458,7 @@ export interface EngineHost {
     resolveActingUser(input: Scoped<ResolveActingUserInput>): Promise<ActingUser | null>;
   };
   /** The cross-run write locks each segment's effects take beneath their
-   *  own: `acquire({ segmentId, names })` answers a token, `release({ token })`
+   *  own: `acquire({ segmentId, names })` answers a token, `release({ segmentId, token })`
    *  gives back what that acquire took. The segment's lock session closes with
    *  the segment. */
   locks: HostLocks;

@@ -216,6 +216,8 @@ export async function resumeLimitPausedRun(
 
   let resumed = 0;
   for (const leaf of leaves) {
+    // A lease lost since the last leaf: the run may be another instance's now.
+    if (lease?.isLost()) return { resumed };
     if (!leaf.state) {
       await deleteLeafIfUnchanged(runId, leaf.address, leaf.updated_at);
       continue;

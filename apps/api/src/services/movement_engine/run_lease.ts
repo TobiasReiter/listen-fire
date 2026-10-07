@@ -106,16 +106,9 @@ export interface HeldRunLease {
   release(): Promise<void>;
 }
 
-/** A segment whose run lease was lost stops at its next statement: another
- *  instance may be stepping the run, so it settles nothing and touches no
- *  parked row. The statement in flight when the lease lapsed has already run,
- *  and the new holder may run it again: its effects can land twice. */
-export class RunLeaseLost extends Error {
-  constructor(readonly runId: TriggerRunId) {
-    super('run lease lost; another instance may hold the run');
-    this.name = 'RunLeaseLost';
-  }
-}
+// The signal a segment that lost its lease stops with is the engine's own
+// control flow (errors.ts); re-exported for the host side.
+export { RunLeaseLost } from './errors';
 
 /**
  * Take the run's lease for this process, or null while it is held elsewhere.

@@ -28,10 +28,23 @@ export function runLeasedTo(token: string) {
 
 /** Drop a run's live state, every leaf and every join, as a run that has
  *  settled or failed leaves it. Given the lease, only while the run is still
- *  leased under it. */
-export async function dropRunLeaves(runId: TriggerRunId, lease?: { token: string }): Promise<void> {
+ *  leased under it: false when it is not, and nothing was dropped, so a
+ *  caller gates whatever else it would tear down on the answer. */
+export async function dropRunLeaves(runId: TriggerRunId, lease?: { token: string }): Promise<boolean> {
+  if (lease !== undefined && !(await runStillLeasedTo(runId, lease.token))) return false;
   let leaves = getAutomationsQb(['parked_run', 'trigger_run']).deleteFrom('parked_run').where('run_id', '=', runId);
   if (lease !== undefined) leaves = leaves.where(runLeasedTo(lease.token));
   await leaves.execute();
   await clearJoins(runId, lease !== undefined ? { leaseToken: lease.token } : {});
+  return true;
+}
+
+async function runStillLeasedTo(runId: TriggerRunId, token: string): Promise<boolean> {
+  const row = await getAutomationsQb(['trigger_run'])
+    .selectFrom('trigger_run')
+    .where('id', '=', runId)
+    .where('lease_token', '=', token)
+    .select('id')
+    .executeTakeFirst();
+  return row !== undefined;
 }

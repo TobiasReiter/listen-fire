@@ -137,6 +137,9 @@ export class TriggerRunRecorder {
   private flushedSteps = 0;
   private finished = false;
   private opsRunId: string | null = null;
+  /** The run lease the segment settles under: its settle writes land only
+   *  while the run's lease is still this token's (`holdLease`). */
+  private leaseToken: string | undefined;
   /** True once a `running` row has been inserted (a parking firing creates
    *  the run row lazily at park time — §5.2). A non-parking firing never
    *  calls this, so `finish()` inserts the row once, exactly as before. */
@@ -284,13 +287,26 @@ export class TriggerRunRecorder {
    * state (§5.3). Call after `ensureStarted()` once the park rows are
    * written. Best-effort; never breaks the firing.
    */
+  /** Settle under the run lease: from here on the run's terminal status and
+   *  its `parked` flip are written only while the lease is still this one, so
+   *  a holder whose lease lapsed cannot settle the run under the instance
+   *  that took it over. */
+  holdLease(lease: { token: string }): void {
+    this.leaseToken = lease.token;
+  }
+
   async markParked(): Promise<void> {
     try {
-      await getAutomationsQb(['trigger_run'])
+      let park = getAutomationsQb(['trigger_run'])
         .updateTable('trigger_run')
         .set({ status: 'parked' })
-        .where('id', '=', this.id)
-        .execute();
+        .where('id', '=', this.id);
+      if (this.leaseToken !== undefined) park = park.where('lease_token', '=', this.leaseToken);
+      const parked = await park.executeTakeFirst();
+      if (this.leaseToken !== undefined && Number(parked.numUpdatedRows) === 0) {
+        logger.warn('[trigger_run] not marked parked: the run lease is no longer this segment\'s', { runId: this.id });
+        return;
+      }
       // Say so in the feed as well, or an answered-in-a-week run reads as
       // working the whole time and the "running now" tile counts it.
       if (this.opsRunId) {
@@ -661,8 +677,9 @@ export class TriggerRunRecorder {
     completedAt: Date | null;
     failedAt: Date | null;
     failureReason: string | null;
-  }): Promise<{ nodesWritten: number }> {
+  }): Promise<{ nodesWritten: number; settled: boolean }> {
     const pending = this.steps.slice(this.flushedSteps);
+    let settled = true;
     const segmentWrites = pending.reduce((sum, s) => sum + diagnosticWrites(s.diagnostics), 0);
     const segmentErrors = pending.flatMap((s) => s.errors.map((e) => ({ ...e, tgId: s.tgId })));
     let nodesWritten = segmentWrites;
@@ -710,7 +727,7 @@ export class TriggerRunRecorder {
         // A PARKING firing already inserted a `running` row at park time, so a
         // later resume reaching the end UPDATES it to its terminal status +
         // the accumulated step data. The conflict target is the primary key.
-        await trx
+        const written = await trx
           .insertInto('trigger_run')
           .values({
             id: this.id,
@@ -734,8 +751,8 @@ export class TriggerRunRecorder {
             failure_reason: terminal.failureReason,
             trigger_event_id: this.firing.triggerEventId ?? null,
           })
-          .onConflict((oc) =>
-            oc.column('id').doUpdateSet({
+          .onConflict((oc) => {
+            const update = oc.column('id').doUpdateSet({
               status: terminal.status,
               steps: jsonb(steps),
               diagnostics: jsonb(diagnostics),
@@ -744,12 +761,18 @@ export class TriggerRunRecorder {
               completed_at: terminal.completedAt,
               failed_at: terminal.failedAt,
               failure_reason: terminal.failureReason,
-            }),
-          )
-          .execute();
+            });
+            // The terminal fence: a run another instance now holds is not
+            // this segment's to settle.
+            const token = this.leaseToken;
+            return token !== undefined ? update.where('trigger_run.lease_token', '=', token) : update;
+          })
+          .returning('id')
+          .executeTakeFirst();
+        if (written === undefined) settled = false;
       });
-    if (landed) this.flushedSteps = this.steps.length;
-    return { nodesWritten };
+    if (landed && settled) this.flushedSteps = this.steps.length;
+    return { nodesWritten, settled };
   }
 
   /** Insert the trigger_run row + publish it live. Idempotent (no-op if already
@@ -791,12 +814,19 @@ export class TriggerRunRecorder {
       // own lattice, and a late answer still lands as data (F7); run death only
       // drops await correlations, via `failRunAndCancelRequests` on the
       // cancel/abort terminals.
-      ({ nodesWritten } = await this.persistSegment({
+      const persisted = await this.persistSegment({
         status,
         completedAt,
         failedAt,
         failureReason,
-      }));
+      });
+      nodesWritten = persisted.nodesWritten;
+      if (!persisted.settled) {
+        // The lease is another instance's now: it settles the run, revokes
+        // its callbacks and closes its feed run. Nothing here may.
+        logger.warn('[trigger_run] not settled: the run lease is no longer this segment\'s', { runId: this.id });
+        return;
+      }
 
       // Ruling (b), callback-primitive layer 1: a run that reaches its end with
       // un-fired callbacks REVOKES them. Callbacks are ephemeral by definition —

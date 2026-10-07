@@ -148,8 +148,38 @@ function leaseLostOutcome(
 ): MovementFiringOutcome | null {
   const { error } = unwrapRunFailure(err);
   if (!(error instanceof RunLeaseLost)) return null;
+  return stoppedForLostLease(error, context);
+}
+
+/** Consulted before every settle. A segment whose lease lapsed during its
+ *  last statement has no boundary after it to stop at: the engine returns
+ *  normally, and this is where the loss is noticed. */
+function leaseLostBeforeSettle(
+  lease: { isLost(): boolean } | null | undefined,
+  context: { runId: TriggerRunId; movementId: string },
+): MovementFiringOutcome | null {
+  if (lease?.isLost() !== true) return null;
+  return stoppedForLostLease(new RunLeaseLost(context.runId), context);
+}
+
+function stoppedForLostLease(
+  error: RunLeaseLost,
+  context: { runId: TriggerRunId; movementId: string },
+): MovementFiringOutcome {
   logger.error('[MovementEngine] segment stopped: run lease lost; another instance may hold the run', context);
   return { result: null, error: error.message, leaseLost: true };
+}
+
+/** A first firing that lost its lease leaves its run `running` for the new
+ *  holder or the orphan sweep, noting why on the row. */
+async function noteLostFirstFiring(runId: TriggerRunId, lost: MovementFiringOutcome): Promise<MovementFiringOutcome> {
+  await noteFirstFiringLeaseLost(runId).catch((noteErr) =>
+    logger.warn('[MovementEngine] could not note the lost lease on the run', {
+      runId,
+      error: noteErr instanceof Error ? noteErr.message : String(noteErr),
+    }),
+  );
+  return lost;
 }
 
 /**
@@ -288,6 +318,7 @@ async function runMovementFiringInContext(
       // The row now exists as `running` for the life of the firing.
       await recorder.ensureStarted();
       lease = await takeRunLease(recorder.triggerRunId);
+      if (lease !== null) recorder.holdLease(lease);
       if (lease === null) {
         // A fresh run nobody else can know of: only a duplicate firing of
         // one pre-minted run id lands here. It fails, recorded as such.
@@ -320,6 +351,11 @@ async function runMovementFiringInContext(
       triggerRunId: recorder.triggerRunId as unknown as string,
       cancelGate,
     }).runAsync(runFiring);
+    const lostBeforeSettle = leaseLostBeforeSettle(lease, {
+      runId: recorder.triggerRunId,
+      movementId: input.movementRow.id,
+    });
+    if (lostBeforeSettle !== null) return noteLostFirstFiring(recorder.triggerRunId, lostBeforeSettle);
     if (result.cancelled) {
       // The user cancelled the run: the engine stopped at a statement / LLM-call
       // boundary (never mid-write, P14). Settle it `failed` + cancel its open
@@ -383,16 +419,9 @@ async function runMovementFiringInContext(
     }
     return { result };
   } catch (err) {
-    const lost = leaseLostOutcome(err, { runId: recorder.triggerRunId, movementId: input.movementRow.id });
-    if (lost !== null) {
-      await noteFirstFiringLeaseLost(recorder.triggerRunId).catch((noteErr) =>
-        logger.warn('[MovementEngine] could not note the lost lease on the run', {
-          runId: recorder.triggerRunId,
-          error: noteErr instanceof Error ? noteErr.message : String(noteErr),
-        }),
-      );
-      return lost;
-    }
+    const context = { runId: recorder.triggerRunId, movementId: input.movementRow.id };
+    const lost = leaseLostOutcome(err, context) ?? leaseLostBeforeSettle(lease, context);
+    if (lost !== null) return noteLostFirstFiring(recorder.triggerRunId, lost);
     const { error, partial } = unwrapRunFailure(err);
     const message = describeError(error);
     logger.error('[MovementEngine] movement firing failed', {
@@ -533,6 +562,8 @@ async function resumeMovementFiringInContext(
     movementVersionId: input.movementVersionId,
     existingRunId: input.runId,
   });
+  if (input.lease !== undefined) recorder.holdLease(input.lease);
+  const leaseContext = { runId: input.runId, movementId: input.movementId };
   // Take back the ops feed run the parked firing opened, so finishing here
   // CLOSES it. Without this the recorder's `opsRunId` is null for the whole
   // resumed run and the event stays `running` after the user has answered.
@@ -599,6 +630,8 @@ async function resumeMovementFiringInContext(
       triggerRunId: input.runId as unknown as string,
       cancelGate,
     }).runAsync(resumeFiring);
+    const lostBeforeSettle = leaseLostBeforeSettle(input.lease, leaseContext);
+    if (lostBeforeSettle !== null) return lostBeforeSettle;
     if (result.cancelled) {
       // Cancelled mid-resume: settle the run `failed` + cancel its open asks,
       // skipping finish()/markParked() (mirrors the parked/re-park early return).
@@ -650,6 +683,9 @@ async function resumeMovementFiringInContext(
     const settle = input.settleBranchComplete
       ? await input.settleBranchComplete()
       : { runComplete: true };
+    // The quiescence read took a round trip: look again before settling.
+    const lostAtSettle = leaseLostBeforeSettle(input.lease, leaseContext);
+    if (lostAtSettle !== null) return lostAtSettle;
     if (settle.runComplete) {
       await recorder.finish();
       // Prediction-rule hook on the resume's terminal success. The executed
@@ -672,7 +708,7 @@ async function resumeMovementFiringInContext(
     }
     return { result };
   } catch (err) {
-    const lost = leaseLostOutcome(err, { runId: input.runId, movementId: input.movementId });
+    const lost = leaseLostOutcome(err, leaseContext) ?? leaseLostBeforeSettle(input.lease, leaseContext);
     if (lost !== null) return lost;
     const { error, partial } = unwrapRunFailure(err);
     const message = describeError(error);
@@ -763,6 +799,8 @@ async function fireCallbackFiringInContext(
     movementVersionId: input.movementVersionId,
     existingRunId: input.runId,
   });
+  if (input.lease !== undefined) recorder.holdLease(input.lease);
+  const leaseContext = { runId: input.runId, movementId: input.movementId };
   await recorder.adoptOpsRun();
   const movementName =
     input.firedMovementName ?? firedMovementNameFromTriggerName(input.triggerName);
@@ -807,6 +845,8 @@ async function fireCallbackFiringInContext(
       triggerRunId: input.runId as unknown as string,
       cancelGate,
     }).runAsync(fire);
+    const lostBeforeSettle = leaseLostBeforeSettle(input.lease, leaseContext);
+    if (lostBeforeSettle !== null) return lostBeforeSettle;
     recorder.recordMovementStep({
       movementId: input.movementId,
       movementName: result.movementName,
@@ -816,7 +856,7 @@ async function fireCallbackFiringInContext(
     await recorder.snapshotSteps();
     return { result };
   } catch (err) {
-    const lost = leaseLostOutcome(err, { runId: input.runId, movementId: input.movementId });
+    const lost = leaseLostOutcome(err, leaseContext) ?? leaseLostBeforeSettle(input.lease, leaseContext);
     if (lost !== null) return lost;
     const { error, partial } = unwrapRunFailure(err);
     const message = describeError(error);

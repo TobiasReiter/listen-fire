@@ -281,6 +281,8 @@ export async function resumeTimerParkedRun(
     .execute();
 
   for (const leaf of leaves) {
+    // A lease lost since the last leaf: the run may be another instance's now.
+    if (lease?.isLost()) return 'lease_lost';
     if (!leaf.state) {
       await deleteLeaf(runId, leaf.address);
       continue;
