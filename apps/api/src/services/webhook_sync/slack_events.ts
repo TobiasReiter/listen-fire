@@ -12,7 +12,9 @@
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { parseSlackEvents } from './providers/slack';
-import { dispatchToProviderTriggers, enqueueAwaitWakes } from './handler';
+import { dispatchToProviderTriggers } from './handler';
+import { enqueueAwaitWakes } from '../movement_engine/await_wake';
+import { teamIdSchema } from '../../lib/team_id';
 import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { SLACK_ADAPTER_TYPE, slackEventToDiscriminable } from '../translation_graph/adapters/slack';
 import { SLACK_APP_ID } from '../credentials/app_id';
@@ -37,7 +39,7 @@ export interface SlackEventsResult {
  */
 async function resolveSlackInstall(
   slackTeamId: string,
-): Promise<{ credentialsId: string; nativeTeamId: string } | null> {
+): Promise<{ credentialsId: string; nativeTeamId: TeamId } | null> {
   const row = await getAutomationsQb(['external_service_credentials'])
     .selectFrom('external_service_credentials')
     .where('type', '=', ExternalServiceType.SLACK)
@@ -46,7 +48,7 @@ async function resolveSlackInstall(
     .select(['id', 'team_id'])
     .executeTakeFirst();
   if (!row) return null;
-  return { credentialsId: row.id as unknown as string, nativeTeamId: row.team_id as unknown as string };
+  return { credentialsId: row.id as unknown as string, nativeTeamId: teamIdSchema.parse(row.team_id) };
 }
 
 /**
@@ -74,7 +76,7 @@ export async function handleSlackEventsInbound(raw: unknown): Promise<SlackEvent
   }
 
   // The wake door, independent of dispatch below (consent-by-silence, S18).
-  const nativeTeamId = install.nativeTeamId as TeamId;
+  const nativeTeamId = install.nativeTeamId;
   try {
     const adapter = await resolveAdapter({
       adapterType: SLACK_ADAPTER_TYPE,
@@ -85,7 +87,7 @@ export async function handleSlackEventsInbound(raw: unknown): Promise<SlackEvent
       await enqueueAwaitWakes({
         adapterType: adapter.adapterType,
         teamId: nativeTeamId,
-        wakeKeys: await adapter.wakeKeys({ raw }),
+        correlationKeys: await adapter.wakeKeys({ raw }),
       });
     }
   } catch (err) {

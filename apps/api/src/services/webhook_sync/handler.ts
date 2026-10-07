@@ -25,7 +25,7 @@ import {
   handleWhatsappInteractiveReplies,
   ownsWhatsappInteractiveReply,
 } from './whatsapp_callback_door';
-import { enqueueAwaitWake } from '../movement_engine/await_wake';
+import { enqueueAwaitWakes } from '../movement_engine/await_wake';
 import { notifyWork } from '../work/drain';
 import type { HarnessDelivery, SettleReport } from '../work/harness';
 import {
@@ -40,6 +40,7 @@ import type { WebhookProvider } from './providers';
 import { verifyRemoteSignature } from './remote_inbound';
 import { webhookProviderKey } from './urls';
 import { listRemoteAdapters } from '../translation_graph/adapters/remote/store';
+import { mayBeRemoteSlug } from '../translation_graph/adapters/remote/slugs';
 
 function jsonb(value: unknown): unknown {
   return sql`${JSON.stringify(value)}::jsonb` as unknown;
@@ -74,13 +75,14 @@ interface HandleResult {
   eventsProcessed: number;
   error?: string;
   /**
-   * Phase 2: a work row per await wake, per linked_object refresh and per
-   * receipt — nothing else, so nothing live sits between a receipt and its row. The door awaits it BEFORE
-   * acking, since a receipt without a row would never run; the rows themselves
-   * (the linked-object refresh included) run off the request. Absent when the
-   * delivery carried nothing to run. Never rejects for a per-event failure
-   * (those come back in the outcome); the caller still guards against an
-   * unexpected throw.
+   * Phase 2: a work row per linked_object refresh, per receipt and per await
+   * wake — nothing else, so nothing live sits between a receipt and its row.
+   * The door awaits it BEFORE acking, since a receipt or a wake without a row
+   * would never run; the rows themselves (the linked-object refresh included)
+   * run off the request. Absent when the delivery carried nothing to run.
+   * Never rejects for a per-event failure (those come back in the outcome).
+   * Rejects when the delivery's wakes could not be read or queued, after its
+   * events are queued: the door answers 500 so the sender retries.
    */
   enqueueDeferred?: () => Promise<EnqueuedDelivery>;
   /**
@@ -199,31 +201,13 @@ async function handleInboundWebhook(options: {
     raw: body,
     checkpoint: sub.inbound_checkpoint ?? undefined,
   });
-  // The wake door, independent of the events: a delivery may resolve a parked
-  // await whether or not it carries anything a trigger listens for, and a wake
-  // door that fails never costs the delivery its events.
-  let wakeKeys: string[] = [];
-  if (adapter.wakeKeys) {
-    try {
-      wakeKeys = await adapter.wakeKeys({ raw: body });
-    } catch (err) {
-      logger.warn(`[webhook] wakeKeys failed for provider ${sub.provider}; no await wakes from this delivery`, {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
   const events = extraction.events;
-  if (!events.length && !wakeKeys.length) {
-    return { ok: true, eventsProcessed: 0 };
-  }
-
-  // The adapter's event-type union for discrimination, fetched once per delivery.
-  const eventTypes = adapter?.listEventTypes ? await adapter.listEventTypes() : [];
 
   // Phase 1 — capture. Match each event to its triggers and store the durable
   // receipts. Nothing here runs a movement, so the sender gets its 200 back
   // fast; the receipt is what makes the deferred half safe to lose and replay.
+  // The adapter's event-type union for discrimination, fetched once per delivery.
+  const eventTypes = events.length > 0 && adapter.listEventTypes ? await adapter.listEventTypes() : [];
   const captured: CapturedInboundEvent[] = [];
   const captureErrors: { event: DiscriminableEvent; error: string }[] = [];
   for (const event of events) {
@@ -234,6 +218,15 @@ async function handleInboundWebhook(options: {
       logger.error(`Webhook event capture failed:`, { event, err });
       captureErrors.push({ event, error: message });
     }
+  }
+
+  // The wake door, independent of the events: a delivery may resolve a parked
+  // await whether or not it carries anything a trigger listens for. Read after
+  // the capture, so a wake door that fails never costs the delivery its events:
+  // they are receipted, and the sender's retry replays them idempotently.
+  const wakes = await readWakeKeys(adapter, body);
+  if (!events.length && wakes.ok && !wakes.keys.length) {
+    return { ok: true, eventsProcessed: 0 };
   }
 
   // Advance the pull cursor once every event in the batch is durably stored —
@@ -248,16 +241,15 @@ async function handleInboundWebhook(options: {
       .execute();
   }
 
-  // Phase 2 — queue the work. Events keep their delivery order, and one event's
-  // failure never stops the next — the pre-split per-event isolation.
+  // Phase 2 — queue the work, all before the ack. Events keep their delivery
+  // order, and one event's failure never stops the next — the pre-split
+  // per-event isolation. The wakes go last: a wake door that failed, or a wake
+  // row that cannot be queued, throws, so the sender is answered 500 and
+  // retries. Its events are already receipted and queued, so the retry costs
+  // them nothing and re-attempts only what was lost.
   const enqueueDeferred = async (): Promise<EnqueuedDelivery> => {
     const enqueueErrors = [...captureErrors];
     const enqueued: CapturedInboundEvent[] = [];
-    try {
-      await enqueueAwaitWakes({ adapterType: adapter.adapterType, teamId: sub.team_id as TeamId, wakeKeys });
-    } catch (err) {
-      logger.error(`Webhook await wake failed:`, { wakeKeys, err });
-    }
     for (const entry of captured) {
       try {
         await enqueueCapturedInboundEvent({ captured: entry, subscription: sub });
@@ -268,6 +260,8 @@ async function handleInboundWebhook(options: {
         enqueueErrors.push({ event: entry.event, error: message });
       }
     }
+    if (!wakes.ok) throw wakes.error;
+    await enqueueAwaitWakes({ adapterType: adapter.adapterType, teamId: sub.team_id as TeamId, correlationKeys: wakes.keys });
     return {
       teamIds: [sub.team_id],
       readOutcome: (settle) => readDeliveryOutcome({ enqueued, enqueueErrors, settle }),
@@ -346,8 +340,10 @@ function localDoor<S extends SubscriptionRow>(provider: WebhookProvider, subscri
 
 /**
  * A subscription a team's remote install provisioned, recognised by its
- * provider key being the one that install mints (`webhookProviderKey`; a
- * built-in of the same slug wins, as it does at resolution). Everything after
+ * provider key being the one that install mints (`webhookProviderKey`). An
+ * install whose slug a built-in answers to is never recognised (the shared
+ * rule in `remote/slugs`): the built-in wins, as it does at resolution.
+ * Everything after
  * is the ordinary path over the wire — preprocessInbound, listEventTypes and
  * wakeKeys are RemoteAdapter forwarders. The row carries no credential of its
  * own; the install's credential is the channel's.
@@ -356,7 +352,7 @@ async function remoteDoor<S extends SubscriptionRow>(subscription: S): Promise<I
   const installs = await listRemoteAdapters({ teamId: subscription.team_id as TeamId });
   const install = installs.find(
     (row) =>
-      !hasAdapter(row.adapter_type) &&
+      mayBeRemoteSlug(row.adapter_type) &&
       webhookProviderKey({ adapterType: row.adapter_type }) === subscription.provider,
   );
   if (!install) return null;
@@ -450,19 +446,25 @@ async function enqueueCapturedInboundEvent(input: {
 }
 
 /**
- * Queue a wake per key an adapter's `wakeKeys` named for one inbound delivery.
+ * The correlation keys an adapter's `wakeKeys` names for one inbound delivery.
  * INDEPENDENT of trigger dispatch — a thread reply must resolve an
  * `await m-[:Replies]->` even when no movement listens for its messages
  * (consent-by-silence, S18) — and unordered against it: the resumed await
- * re-checks live. Team-scoped so a delivery only wakes its own team's parks.
+ * re-checks live. A throw comes back as the error, for the caller to refuse the
+ * delivery with once its events are safe.
  */
-export async function enqueueAwaitWakes(input: {
-  adapterType: string;
-  teamId: TeamId;
-  wakeKeys: readonly string[];
-}): Promise<void> {
-  for (const correlationKey of input.wakeKeys) {
-    await enqueueAwaitWake({ adapterType: input.adapterType, teamId: input.teamId, correlationKey });
+async function readWakeKeys(
+  adapter: Adapter,
+  raw: unknown,
+): Promise<{ ok: true; keys: string[] } | { ok: false; error: unknown }> {
+  if (!adapter.wakeKeys) return { ok: true, keys: [] };
+  try {
+    return { ok: true, keys: await adapter.wakeKeys({ raw }) };
+  } catch (error) {
+    logger.error(`[webhook] wakeKeys failed for adapter ${adapter.adapterType}; the delivery will be refused for a retry`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { ok: false, error };
   }
 }
 

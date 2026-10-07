@@ -607,6 +607,39 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     expect(await workRows(teamId, 'wake_await')).toHaveLength(0);
   });
 
+  it('a wake door that fails refuses the delivery after its events are receipted and queued; the retry queues the wakes once and the events once', async () => {
+    await seedMovementTrigger(teamId);
+    const subscriptionId = await seedSubscription(teamId, 'ATTIO');
+    attioEvents = [{ ...ATTIO_EVENT, idempotencyKey: 'delivery-wake' }];
+    let wakeDoorUp = false;
+    mockedResolve.mockImplementation(async ({ adapterType }: { adapterType: string }) => {
+      if (adapterType !== 'attio') throw new Error(`test: no fake for '${adapterType}'`);
+      return makeFakeAdapter('attio', () => attioEvents, async () => {
+        if (!wakeDoorUp) throw new Error('wake door down');
+        return ['rec-key-1'];
+      });
+    });
+
+    const first = await handleInboundWebhook(attioDelivery(subscriptionId));
+    expect(first).toMatchObject({ ok: true, eventsProcessed: 1 });
+    await expect(first.enqueueDeferred!()).rejects.toThrow('wake door down');
+
+    // The events cost nothing: receipted and queued before the refusal.
+    const [receipt] = await receipts(teamId);
+    expect(receipt.status).toBe('received');
+    expect((await workRows(teamId, 'dispatch_event')).map((r) => r.key)).toEqual([`dispatch_event:${receipt.id}`]);
+    expect(await workRows(teamId, 'wake_await')).toHaveLength(0);
+
+    // The sender retries the refused delivery.
+    wakeDoorUp = true;
+    await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
+
+    expect(await receipts(teamId)).toHaveLength(1);
+    expect((await workRows(teamId, 'dispatch_event')).map((r) => r.key)).toEqual([`dispatch_event:${receipt.id}`]);
+    const wakes = await workRows(teamId, 'wake_await');
+    expect(wakes.map((w) => w.payload)).toEqual([{ adapterType: 'attio', teamId, correlationKey: 'rec-key-1' }]);
+  });
+
   it('recover on an already-dispatched receipt does not dispatch it again', async () => {
     const triggerId = await seedMovementTrigger(teamId);
     const subscriptionId = await seedSubscription(teamId, 'ATTIO');

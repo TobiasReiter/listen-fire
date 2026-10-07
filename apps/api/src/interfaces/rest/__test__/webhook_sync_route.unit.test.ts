@@ -6,6 +6,7 @@
 //   • the Slack url_verification handshake still short-circuits FIRST,
 //   • a production delivery queues its work rows BEFORE the ack, and pokes the
 //     drain after it,
+//   • a delivery whose wakes cannot be queued is answered 500, never acked,
 //   • a test-harness delivery drains its rows and reports dispatch errors inline,
 //   • phase-1 refusals keep their status codes (404/400/401).
 
@@ -106,6 +107,24 @@ describe('POST /:provider/:subscriptionId — production deliveries', () => {
     const res = await post('/attio/sub-1', { any: 'payload' });
 
     expect(res.body).toEqual({ ok: true, eventsProcessed: 1 });
+  });
+});
+
+describe('POST /:provider/:subscriptionId — a delivery whose wakes cannot be queued', () => {
+  it('answers 500 and never acks, so the sender retries', async () => {
+    handleInboundWebhook.mockResolvedValue({
+      ok: true,
+      eventsProcessed: 1,
+      enqueueDeferred: async () => {
+        throw new Error('wake door down');
+      },
+    });
+
+    const res = await post('/attio/sub-1', { any: 'payload' });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal' });
+    expect(notifyWork).not.toHaveBeenCalled();
   });
 });
 

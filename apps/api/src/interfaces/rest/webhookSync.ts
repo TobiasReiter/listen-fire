@@ -75,8 +75,11 @@ webhookSyncRouter.post(
       }
 
       // Capture, queue, then ack. The handler has durably receipted everything
-      // that arrived; queueing a work row per receipt is a cheap insert that has
-      // to land before the 200, since a receipt without a row would never run.
+      // that arrived; queueing a work row per receipt and per await wake is a
+      // cheap insert that has to land before the 200, since a receipt or a wake
+      // without a row would never run. A wake that cannot be queued throws into
+      // the 500 below, and the sender's retry replays the receipted events
+      // idempotently.
       // The movements run off the request cycle, so a provider that times out
       // its delivery (Slack's 3s, Attio's retry budget) doesn't see a slow run
       // as a failed delivery and redeliver it.

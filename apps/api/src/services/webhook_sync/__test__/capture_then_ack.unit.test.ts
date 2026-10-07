@@ -5,12 +5,14 @@
 //
 //   phase 1 (handleInboundWebhook): signature → preprocessInbound → trigger
 //                      matching → receipt store → pull-cursor advance
-//   phase 2 (enqueueDeferred): wake_await rows → linked_object_refresh rows →
-//                      dispatch_event rows
+//   phase 2 (enqueueDeferred): linked_object_refresh rows → dispatch_event
+//                      rows → wake_await rows
 //
-// with the two properties that make it safe: the cursor only advances over
-// RECEIPTED events, and a phase-2 failure is per-event data, never a rejected
-// delivery. Fully mocked — no DB, no adapters, no engine.
+// with the properties that make it safe: the cursor only advances over
+// RECEIPTED events; a per-event phase-2 failure is per-event data, never a
+// rejected delivery; and a wake that cannot be read or queued rejects the
+// delivery (a 500, so the sender retries) only after its events are queued.
+// Fully mocked — no DB, no adapters, no engine.
 
 import type { DiscriminableEvent } from '../../translation_graph/adapter';
 
@@ -20,7 +22,7 @@ interface Harness {
   enqueueCapturedEvents: jest.Mock;
   readReceiptGroupOutcomes: jest.Mock;
   enqueueLinkedObjectRefresh: jest.Mock;
-  enqueueAwaitWake: jest.Mock;
+  enqueueAwaitWakes: jest.Mock;
   notifyWork: jest.Mock;
   findTriggersByKind: jest.Mock;
   preprocessInbound: jest.Mock;
@@ -112,6 +114,8 @@ async function loadHandler(options: {
   /** What the adapter's `wakeKeys` names for the delivery; absent ⇒ the
    *  adapter has no wake door. */
   wakeKeys?: string[] | Error;
+  /** Make queueing the wake rows fail (the work table is unavailable). */
+  wakeEnqueueError?: Error;
 }): Promise<Harness> {
   jest.resetModules();
 
@@ -201,7 +205,9 @@ async function loadHandler(options: {
     ),
   }));
   jest.doMock('../../movement_engine/await_wake', () => ({
-    enqueueAwaitWake: jest.fn(async () => undefined),
+    enqueueAwaitWakes: jest.fn(async () => {
+      if (options.wakeEnqueueError) throw options.wakeEnqueueError;
+    }),
   }));
   jest.doMock('../../work/drain', () => ({ notifyWork: jest.fn() }));
   jest.doMock('../linked_object_refresh', () => ({
@@ -229,7 +235,7 @@ async function loadHandler(options: {
     readReceiptGroupOutcomes: jest.Mock;
   };
   const awaitMod = jest.requireMock('../../movement_engine/await_wake') as {
-    enqueueAwaitWake: jest.Mock;
+    enqueueAwaitWakes: jest.Mock;
   };
   const drainMod = jest.requireMock('../../work/drain') as { notifyWork: jest.Mock };
   const refreshMod = jest.requireMock('../linked_object_refresh') as {
@@ -250,7 +256,7 @@ async function loadHandler(options: {
     captureDiscriminableEvent: dispatchMod.captureDiscriminableEvent,
     enqueueCapturedEvents: dispatchMod.enqueueCapturedEvents,
     readReceiptGroupOutcomes: dispatchMod.readReceiptGroupOutcomes,
-    enqueueAwaitWake: awaitMod.enqueueAwaitWake,
+    enqueueAwaitWakes: awaitMod.enqueueAwaitWakes,
     notifyWork: drainMod.notifyWork,
     enqueueLinkedObjectRefresh: refreshMod.enqueueLinkedObjectRefresh,
     findTriggersByKind: tgTable.findTriggersByKind,
@@ -286,7 +292,7 @@ describe('handleInboundWebhook — phase 1 ends at the receipt', () => {
     expect(result.eventsProcessed).toBe(2);
     expect(h.captureDiscriminableEvent).toHaveBeenCalledTimes(2);
     expect(h.enqueueCapturedEvents).not.toHaveBeenCalled();
-    expect(h.enqueueAwaitWake).not.toHaveBeenCalled();
+    expect(h.enqueueAwaitWakes).not.toHaveBeenCalled();
     expect(typeof result.enqueueDeferred).toBe('function');
   });
 
@@ -395,19 +401,31 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     });
 
     const result = await deliver(h, 'SLACK');
-    expect(h.enqueueAwaitWake).not.toHaveBeenCalled();
+    expect(h.enqueueAwaitWakes).not.toHaveBeenCalled();
 
     await result.enqueueDeferred!();
 
-    expect(h.enqueueAwaitWake).toHaveBeenCalledWith({
+    expect(h.enqueueAwaitWakes).toHaveBeenCalledWith({
       adapterType: 'slack',
       teamId: 'team-1',
-      correlationKey: 'C1:111.1',
+      correlationKeys: ['C1:111.1'],
     });
     expect(h.enqueueCapturedEvents).toHaveBeenCalledWith([]);
   });
 
-  it('a wake door that throws costs the delivery nothing: its events are still captured and enqueued', async () => {
+  it('queues the wakes after the events, both before the ack', async () => {
+    const h = await loadHandler({ events: [EVENT_A], adapterType: 'slack', wakeKeys: ['C1:111.1'] });
+
+    await (await deliver(h)).enqueueDeferred!();
+
+    expect(h.enqueueCapturedEvents).toHaveBeenCalledTimes(1);
+    expect(h.enqueueAwaitWakes).toHaveBeenCalledTimes(1);
+    expect(h.enqueueCapturedEvents.mock.invocationCallOrder[0]).toBeLessThan(
+      h.enqueueAwaitWakes.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('a wake door that throws costs the delivery nothing: its events are captured and queued, then the delivery is refused for a retry', async () => {
     const h = await loadHandler({ events: [EVENT_A], adapterType: 'slack', wakeKeys: new Error('wake door down') });
 
     const result = await deliver(h);
@@ -415,9 +433,24 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     expect(result.eventsProcessed).toBe(1);
     expect(h.captureDiscriminableEvent).toHaveBeenCalledTimes(1);
 
-    await result.enqueueDeferred!();
+    await expect(result.enqueueDeferred!()).rejects.toThrow('wake door down');
     expect(h.enqueueCapturedEvents).toHaveBeenCalledTimes(1);
-    expect(h.enqueueAwaitWake).not.toHaveBeenCalled();
+    expect(h.enqueueAwaitWakes).not.toHaveBeenCalled();
+  });
+
+  it('a wake row that cannot be queued refuses the delivery, after its events are queued', async () => {
+    const h = await loadHandler({
+      events: [EVENT_A],
+      adapterType: 'slack',
+      wakeKeys: ['C1:111.1'],
+      wakeEnqueueError: new Error('work table unavailable'),
+    });
+
+    const result = await deliver(h);
+    expect(h.captureDiscriminableEvent).toHaveBeenCalledTimes(1);
+
+    await expect(result.enqueueDeferred!()).rejects.toThrow('work table unavailable');
+    expect(h.enqueueCapturedEvents).toHaveBeenCalledTimes(1);
   });
 
   it('a delivery with wake keys but no events still queues the wakes', async () => {
@@ -427,11 +460,19 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     expect(result.eventsProcessed).toBe(0);
     await result.enqueueDeferred!();
 
-    expect(h.enqueueAwaitWake).toHaveBeenCalledWith({
+    expect(h.enqueueAwaitWakes).toHaveBeenCalledWith({
       adapterType: 'slack',
       teamId: 'team-1',
-      correlationKey: 'C1:111.1',
+      correlationKeys: ['C1:111.1'],
     });
+  });
+
+  it('a wake door that throws on a delivery with no events still refuses it for a retry', async () => {
+    const h = await loadHandler({ events: [], adapterType: 'slack', wakeKeys: new Error('wake door down') });
+
+    const result = await deliver(h);
+    expect(result.ok).toBe(true);
+    await expect(result.enqueueDeferred!()).rejects.toThrow('wake door down');
   });
 });
 
