@@ -1,7 +1,7 @@
 // The work kinds the core runs: dispatch, the clock, polling, wakes and
 // callbacks, and the sweeps that keep them. A unit (an adapter package, a
 // product's own upkeep) adds its own kinds: it declares each into
-// `UnitWorkKinds` and registers it with `registerWorkKinds` (units.ts), so the
+// `UnitWorkKinds` and registers it with `registerWorkKinds` (drain.ts), so the
 // core names none of them.
 export const CORE_WORK_KINDS = [
   'dispatch_event', // payload: CapturedTriggerEvent (triggers/dispatch_event.ts)
@@ -38,7 +38,7 @@ const CORE_KINDS: ReadonlySet<string> = new Set(CORE_WORK_KINDS);
  *  claims — each with its interval when it is periodic. */
 const unitKinds = new Map<WorkKind, number | undefined>();
 
-/** Called by `registerWorkKinds` (units.ts) for each kind a unit registers. */
+/** Called by `registerWorkKinds` (drain.ts) for each kind a unit registers. */
 export function admitUnitWorkKind(kind: WorkKind, intervalMs?: number): void {
   unitKinds.set(kind, intervalMs);
 }
@@ -54,6 +54,10 @@ export function periodicUnitWorkKinds(): Array<{ kind: WorkKind; intervalMs: num
   return [...unitKinds].flatMap(([kind, intervalMs]) => (intervalMs === undefined ? [] : [{ kind, intervalMs }]));
 }
 
+export function isCoreWorkKind(value: string): value is CoreWorkKind {
+  return CORE_KINDS.has(value);
+}
+
 export function isWorkKind(value: string): value is WorkKind {
   return CORE_KINDS.has(value) || [...unitKinds.keys()].some((kind) => kind === value);
 }
@@ -63,6 +67,16 @@ export function isWorkKind(value: string): value is WorkKind {
  *  does. */
 export function claimableWorkKinds(): string[] {
   return [...CORE_WORK_KINDS, ...unitKinds.keys()];
+}
+
+/** Refuse a kind this process would never claim: a row of it would sit in
+ *  the table unclaimed, and nothing would say so. */
+export function assertClaimable(kind: string): void {
+  if (!isWorkKind(kind)) {
+    throw new Error(
+      `work kind '${kind}' is not claimable in this process: its unit has not registered it (registerWorkKinds)`,
+    );
+  }
 }
 
 export interface WorkRow {

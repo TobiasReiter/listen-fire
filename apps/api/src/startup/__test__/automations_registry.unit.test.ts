@@ -2,10 +2,11 @@ import { ensurePeriodicWork, removeRetiredWork } from '../../services/work/store
 import {
   recordExternalDrainPass,
   registerWorkHandler,
+  resetWorkHandlersForTests,
   setExternalDrainPassRecorder,
   startDrainLoop,
 } from '../../services/work/drain';
-import { CORE_WORK_KINDS, claimableWorkKinds, forgetUnitWorkKinds } from '../../services/work/kinds';
+import { CORE_WORK_KINDS, claimableWorkKinds } from '../../services/work/kinds';
 import { runNamedWorker, workerTick } from '../../lib/worker';
 import { automationsWorkers, registerAutomationsWork } from '../automations';
 
@@ -45,7 +46,7 @@ const originalMode = process.env.AUTOMATIONS_DRAIN_MODE;
 
 afterEach(() => {
   jest.clearAllMocks();
-  forgetUnitWorkKinds();
+  resetWorkHandlersForTests();
   setExternalDrainPassRecorder(undefined);
   if (originalMode === undefined) delete process.env.AUTOMATIONS_DRAIN_MODE;
   else process.env.AUTOMATIONS_DRAIN_MODE = originalMode;
@@ -132,10 +133,11 @@ describe('the automations registry', () => {
 });
 
 describe('registerAutomationsWork', () => {
-  it('registers exactly one handler for every core kind and every unit kind', async () => {
+  it('registers exactly one core handler for every core kind, and every unit kind through its unit', async () => {
     await registerAutomationsWork();
     const kinds = register.mock.calls.map(([kind]) => kind);
-    expect([...kinds].sort()).toEqual([...CORE_WORK_KINDS, ...UNIT_KINDS].sort());
+    expect([...kinds].sort()).toEqual([...CORE_WORK_KINDS].sort());
+    expect(claimableWorkKinds().sort()).toEqual([...CORE_WORK_KINDS, ...UNIT_KINDS].sort());
   });
 
   it('names no unit kind in the core list: each unit registers its own', async () => {

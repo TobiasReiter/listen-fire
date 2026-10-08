@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '../logger';
 import type { WorkHandler } from '../work/kinds';
-import { registerWorkKinds } from '../work/units';
+import { registerWorkKinds } from '../work/drain';
 import { enqueueWork } from '../work/store';
 import {
   linkedObjectRefreshSchema,

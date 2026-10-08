@@ -8,7 +8,7 @@
 // half-built.
 
 import { AIRTABLE_WORK_KINDS } from '../../airtable_webhook_refresh/worker';
-import type { WorkKindRegistration } from '../../work/units';
+import type { WorkKindRegistration } from '../../work/drain';
 import type { LandingSynthesizer } from '../movement/generic_landings';
 import { ASK_ADAPTER_TYPE, askResponseDescriptorFor } from './ask';
 import { askAwaitKeeper } from './ask/await_keeper';

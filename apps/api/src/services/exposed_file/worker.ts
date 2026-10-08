@@ -14,7 +14,7 @@ import { MINUTE } from '../../constants';
 import { logger } from '../logger';
 import { services } from '../../adapters/registry';
 import type { WorkHandler } from '../work/kinds';
-import { registerWorkKinds } from '../work/units';
+import { registerWorkKinds } from '../work/drain';
 
 const SWEEP_INTERVAL = 5 * MINUTE;
 const SWEEP_BATCH = 100;

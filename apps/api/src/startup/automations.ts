@@ -12,6 +12,7 @@ import { neverAsAny } from '../lib/utils/types';
 import { claimLoopTick } from '../lib/worker';
 import {
   drainPassFailing,
+  registerWorkKinds,
   setExternalDrainPassRecorder,
   startDrainLoop,
   type DrainResult,
@@ -20,7 +21,6 @@ import {
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
-import { registerWorkKinds } from '../services/work/units';
 import { ensureAutomationsPeriodicWork, registerCoreWork } from '../services/work/register';
 import type { WorkerRegistry } from './registry';
 

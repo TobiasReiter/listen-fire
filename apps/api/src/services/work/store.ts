@@ -3,7 +3,7 @@ import { sql, type QueryExecutorProvider } from 'kysely';
 import type { Work } from '../../generated/kysely/automations/Work';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { claimableWorkKinds, isWorkKind, type WorkKind, type WorkRow } from './kinds';
+import { assertClaimable, claimableWorkKinds, isWorkKind, type WorkKind, type WorkRow } from './kinds';
 
 function toWorkRow(row: Work): WorkRow {
   if (!isWorkKind(row.kind))
@@ -63,6 +63,7 @@ export async function enqueueWork(
    *  it is the work of. */
   opts: { db?: QueryExecutorProvider } = {},
 ): Promise<void> {
+  assertClaimable(input.kind);
   const dueAt = input.dueAt ?? new Date();
   await sql`
     INSERT INTO automations.work (kind, key, team_id, payload, due_at, updated_at)
@@ -81,6 +82,7 @@ export async function ensurePeriodicWork(input: {
   intervalMs: number;
   dueAt?: Date;
 }): Promise<void> {
+  assertClaimable(input.kind);
   const dueAt = input.dueAt ?? new Date();
   // A redeploy may change the interval; it must not push back a due_at already set.
   await sql`

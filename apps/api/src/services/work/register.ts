@@ -1,6 +1,6 @@
 // The core's work: every core kind's handler, and the periodic rows that keep
 // the core's sweeps and every registered unit's periodic kinds running. Units
-// register their own kinds (`registerWorkKinds`, units.ts); the deployment
+// register their own kinds (`registerWorkKinds`, drain.ts); the deployment
 // that runs the drain composes them (startup/automations.ts).
 
 import { SECOND } from '../../constants';

@@ -33,7 +33,9 @@ export const CORE_PARK_REASONS = ['timer', 'await', 'limit'] as const;
 export type CoreParkReason = (typeof CORE_PARK_REASONS)[number];
 
 /** Why a leaf is parked: one of the core's reasons, or a reason a unit owns
- *  (opaque to the core). */
+ *  (opaque to the core). The run host's database still admits only the
+ *  core's three and the legacy `ask` (its `parked_run` CHECK constraint) until
+ *  the deferred migration lands, so a unit reason is refused there today. */
 export type ParkReason = CoreParkReason | (string & {});
 
 export function isCorePark(reason: string): reason is CoreParkReason {

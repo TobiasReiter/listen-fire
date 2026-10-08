@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { WorkContext } from '../kinds';
 
 import { drainWork, resetWorkHandlersForTests } from '../drain';
-import { registerWorkKinds } from '../units';
+import { registerWorkKinds } from '../drain';
 import { enqueueWork, removeWork } from '../store';
 
 // exposed_file_sweep is a real unit kind no other suite registers a handler
