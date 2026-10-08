@@ -24,9 +24,12 @@ if (process.env.UPDATE_ENGINE_RUNS === '1' && DIR !== undefined) {
     const actual = jest.requireActual(RUN);
     const { recordEntry } = require(RECORDER);
     const keep = (recording) => lines.push(JSON.stringify({ file, recording }));
+    // A request the engine makes after its entry ended cannot be in any
+    // recording; the fold refuses the harvest, naming it (./teardown.cjs).
+    const late = (message) => lines.push(JSON.stringify({ file, late: message }));
     // A value that cannot cross as JSON fails the entry it crossed in (see
     // ../recorder.ts), so the corpus test fails, naming it.
-    const recorded = (entry, run) => (input) => recordEntry({ entry, input, run, keep });
+    const recorded = (entry, run) => (input) => recordEntry({ entry, input, run, keep, late });
     return {
       ...actual,
       runMovement: recorded('run', actual.runMovement),

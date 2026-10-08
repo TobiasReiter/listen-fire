@@ -38,6 +38,7 @@ import {
   type Program,
   type Statement,
   type WriteExpression,
+  withEnvNow,
 } from 'movement-lang';
 
 import { isPurePredicate } from '#shared/expression/filter';
@@ -146,7 +147,7 @@ async function segmentInRust(
   const hostErrors: unknown[] = [];
   let outcome: { ran: MovementRunResult } | { declined: string };
   try {
-    const done = await driveEngine(engine ?? openWasmEngine(), start, {
+    const done = await driveEngine(withPinnedEnvClock(engine ?? openWasmEngine(), context.pinnedNow), start, {
       host: input.host,
       context,
       catalog: input.catalog,
@@ -724,6 +725,23 @@ export function openWasmEngine(): EngineProtocol {
     start: (input) => readStep(segment.start(JSON.stringify(input)), 'start'),
     answer: (id, answer) => readStep(segment.answer(id, JSON.stringify(answer)), `answer ${id}`),
     finish: () => segment.finish(),
+  };
+}
+
+/**
+ * `engine` with its environment clock held at the segment's pinned instant
+ * through every step. The Rust engine still reads its own clock for a timer's
+ * wake time; held there, what it computes is the pinned instant plus the
+ * sleep, which the shim re-bases on the host's `clock.now` as it commits the
+ * park (rust_host.ts) — the request the TypeScript engine makes there. (The
+ * Rust engine asking `clock.now` itself lands with its merge.)
+ */
+function withPinnedEnvClock(engine: EngineProtocol, pinnedNow: Date): EngineProtocol {
+  const at = pinnedNow.getTime();
+  return {
+    start: (input) => withEnvNow(at, () => engine.start(input)),
+    answer: (id, answer) => withEnvNow(at, () => engine.answer(id, answer)),
+    finish: () => engine.finish(),
   };
 }
 

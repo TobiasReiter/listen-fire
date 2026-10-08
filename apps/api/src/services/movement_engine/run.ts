@@ -297,7 +297,7 @@ import {
   type FileTextResolution,
   type TransformInvocationResult,
 } from './extraction';
-import { RunCancelledSignal, RunLeaseLost } from './errors';
+import { MovementRunFailed, RunCancelledSignal, RunLeaseLost } from './errors';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import {
@@ -572,32 +572,8 @@ export interface MovementRunResult {
   deferredRaceFrames?: string[];
 }
 
-/**
- * A run that DIED mid-way, carrying out the ledger of what it had already done.
- *
- * Writes hit external systems inline, so a throw after the third write leaves
- * three real records behind. Before this channel the ledger died with the stack
- * and the firing record claimed nothing happened — users re-ran and collided
- * with their own writes.
- *
- * Deliberately transparent: `message`, `name` and `stack` are the original
- * error's and it hangs off `cause`, so logs and failure reasons read exactly as
- * they did. Only genuine failures are wrapped — `RunParked`,
- * `RunCancelledSignal` and `ScopeEndedQuietly` are control flow and never reach
- * here.
- */
-export class MovementRunFailed extends Error {
-  constructor(
-    cause: unknown,
-    /** Everything the run had done when it died: writes in program order, the
-     *  extraction sites their provenance references, and the decision trace. */
-    readonly partial: MovementRunResult,
-  ) {
-    super(getErrorMessage(cause), { cause });
-    this.name = cause instanceof Error ? cause.name : 'MovementRunFailed';
-    if (cause instanceof Error && cause.stack !== undefined) this.stack = cause.stack;
-  }
-}
+// `MovementRunFailed` (a run that died, carrying its ledger) is in errors.ts.
+export { MovementRunFailed };
 
 /**
  * The error a run really died of. `MovementRunFailed` is a transparent CARRIER

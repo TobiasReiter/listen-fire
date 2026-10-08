@@ -1,14 +1,19 @@
 // Serving a recording back, and judging a replay. An engine under replay is
 // handed the recorded input and a host that answers from the recording; it
-// conforms when every request it makes was recorded, it makes every recorded
-// request, and it ends as the recording did.
+// conforms when every request it makes was recorded, it makes them in an order
+// the recording allows, it makes every recorded request, and it ends as the
+// recording did.
 //
 // The matching rule: a request is answered by the EARLIEST recorded request
 // not yet served whose family, method and canonical args (`canonicalJson`)
-// are its own. Equal requests are served in recorded order, and branches that
-// interleave differently from the recording still match. A request with no
-// such counterpart is a divergence, and so is a recorded request the replay
-// never makes.
+// are its own, once every request recorded as answered before it was made
+// (its `after`) has been served. Equal requests are served in recorded order.
+// Concurrency is allowed: a request made sooner than the recording made it,
+// while those are still unserved, waits for them — a branch that interleaves
+// differently from the recording still matches. A causal reordering does not:
+// a request that waits on one the replay never makes (the engine waits on the
+// answer before making it) is a divergence naming both. So is a request with
+// no counterpart, and a recorded request the replay never makes.
 
 import {
   canonicalJson,
@@ -32,6 +37,27 @@ const shown = (value: unknown): string => {
   return text.length > SHOWN ? `${text.slice(0, SHOWN)}…` : text;
 };
 
+/** How long a replay may make no progress — no request made, none served —
+ *  while a request waits, before the wait is judged a reordering. Judged on
+ *  two quiet spells in a row, so one long stretch of the engine's own work
+ *  is not mistaken for a stall. */
+const QUIET_MS = 250;
+
+// The kit runs on any runtime with timers; the contracts compile with no
+// runtime's types.
+declare function setTimeout(callback: () => void, ms: number): { unref?(): void };
+declare function clearTimeout(timer: { unref?(): void }): void;
+
+/** A request made and waiting for what the recording answered before it. */
+interface Waiting {
+  made: number;
+  path: string;
+  args: unknown;
+  key: string;
+  resolve(served: ServedAnswer): void;
+  reject(error: ReplayDivergence): void;
+}
+
 /** The recording's requests, served by the matching rule. The first
  *  divergence is kept, because the engine may catch the error a divergent
  *  request throws and carry on (an `onError`, a forgiven read). */
@@ -40,32 +66,38 @@ export class RecordedConversation {
   private readonly served: boolean[];
   private made = 0;
   private divergence: string | undefined;
+  private waiting: Waiting[] = [];
+  private progress = 0;
+  private watchdog: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly requests: readonly RecordedRequest[]) {
     this.keys = requests.map((request) => keyOf(pathOf(request), request.args));
     this.served = requests.map(() => false);
   }
 
-  /** The recorded answer to the request at `path` with `args`. */
-  answer(path: string, args: unknown): ServedAnswer {
+  /** The recorded answer to the request at `path` with `args`, once the
+   *  recording allows it. */
+  answer(path: string, args: unknown): Promise<ServedAnswer> {
     const made = ++this.made;
+    this.progress += 1;
     const key = keyOf(path, args);
-    const index = this.keys.findIndex((recorded, i) => !this.served[i] && recorded === key);
-    if (index < 0) {
-      const message = this.unmatched(made, path, args);
-      this.divergence ??= message;
-      throw new ReplayDivergence(message);
+    if (!this.keys.some((recorded, i) => !this.served[i] && recorded === key)) {
+      return Promise.reject(this.diverge(this.unmatched(made, path, args)));
     }
-    this.served[index] = true;
-    const request = this.requests[index];
-    if (request === undefined) throw new ReplayDivergence(`request ${index} vanished`);
-    return 'error' in request ? { error: request.error } : request.answer === undefined ? {} : { answer: request.answer };
+    return new Promise<ServedAnswer>((resolve, reject) => {
+      this.waiting.push({ made, path, args, key, resolve, reject });
+      this.release();
+    });
   }
 
-  /** The first divergence: a request with no recorded counterpart, or else
-   *  the first recorded request the replay never made. Undefined when the
-   *  conversation matched. */
+  /** The first divergence: a request with no recorded counterpart or one
+   *  reordered past what it depends on, or else the first recorded request
+   *  the replay never made. Undefined when the conversation matched. Asked
+   *  once the entry has ended: a request still waiting then is refused. */
   firstDivergence(): string | undefined {
+    this.stopWatching();
+    for (const waiting of this.waiting) waiting.reject(this.diverge(this.stalled(waiting)));
+    this.waiting = [];
     if (this.divergence !== undefined) return this.divergence;
     const unmade = this.served.indexOf(false);
     if (unmade < 0) return undefined;
@@ -73,6 +105,80 @@ export class RecordedConversation {
     return request === undefined
       ? undefined
       : `recorded request #${unmade + 1} ${pathOf(request)} ${shown(request.args)} was never made`;
+  }
+
+  /** Serve every waiting request the recording now allows, until none is. */
+  private release(): void {
+    for (let releasing = true; releasing; ) {
+      releasing = false;
+      for (const waiting of [...this.waiting]) {
+        const index = this.keys.findIndex((recorded, i) => !this.served[i] && recorded === waiting.key && this.ready(i));
+        if (index < 0) continue;
+        this.served[index] = true;
+        this.progress += 1;
+        this.waiting = this.waiting.filter((w) => w !== waiting);
+        waiting.resolve(servedAnswerOf(this.requests[index]));
+        releasing = true;
+      }
+    }
+    if (this.waiting.length > 0) this.watch();
+    else this.stopWatching();
+  }
+
+  private ready(index: number): boolean {
+    return (this.requests[index]?.after ?? []).every((before) => this.served[before] === true);
+  }
+
+  /** While a request waits, a watch for the replay going quiet. */
+  private watch(): void {
+    if (this.watchdog !== undefined) return;
+    let seen = this.progress;
+    let quiet = 0;
+    const check = (): void => {
+      if (this.progress !== seen) {
+        seen = this.progress;
+        quiet = 0;
+      } else if (++quiet >= 2) {
+        this.watchdog = undefined;
+        const stuck = this.waiting;
+        this.waiting = [];
+        for (const waiting of stuck) waiting.reject(this.diverge(this.stalled(waiting)));
+        return;
+      }
+      this.watchdog = setTimeout(check, QUIET_MS);
+      this.watchdog.unref?.();
+    };
+    this.watchdog = setTimeout(check, QUIET_MS);
+    this.watchdog.unref?.();
+  }
+
+  private stopWatching(): void {
+    if (this.watchdog !== undefined) clearTimeout(this.watchdog);
+    this.watchdog = undefined;
+  }
+
+  private diverge(message: string): ReplayDivergence {
+    this.divergence ??= message;
+    return new ReplayDivergence(message);
+  }
+
+  /** Why a waiting request could not be served: the first recorded request
+   *  its earliest counterpart was recorded after, which the replay has not
+   *  made. */
+  private stalled(waiting: Waiting): string {
+    const head = `request #${waiting.made} ${waiting.path} ${shown(waiting.args)}`;
+    const index = this.keys.findIndex((recorded, i) => !this.served[i] && recorded === waiting.key);
+    const counterpart = this.requests[index];
+    const before = counterpart?.after.find((i) => this.served[i] !== true);
+    const blocking = before !== undefined ? this.requests[before] : undefined;
+    if (counterpart === undefined || before === undefined || blocking === undefined) {
+      return `${head} was still waiting when the entry ended`;
+    }
+    return (
+      `${head} was made before recorded request #${before + 1} ${pathOf(blocking)} ${shown(blocking.args)}, ` +
+      `which the recording answered before making it (as #${index + 1}), and which the replay has not made: ` +
+      'the replay reordered them'
+    );
   }
 
   private unmatched(made: number, path: string, args: unknown): string {
@@ -89,6 +195,11 @@ export class RecordedConversation {
       ? `${head}; the next unserved request recorded was #${next + 1} ${pathOf(nextRequest)} ${shown(nextRequest.args)}`
       : `${head}; every recorded request was already served`;
   }
+}
+
+function servedAnswerOf(request: RecordedRequest | undefined): ServedAnswer {
+  if (request === undefined) throw new ReplayDivergence('a recorded request vanished');
+  return 'error' in request ? { error: request.error } : request.answer === undefined ? {} : { answer: request.answer };
 }
 
 function keyOf(path: string, args: unknown): string {

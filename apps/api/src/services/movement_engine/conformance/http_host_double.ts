@@ -12,7 +12,17 @@
 //   200 body: `{ "answer": <value> }`, or `{}` from a method that answers
 //             nothing, or `{ "error": { class, code?, message } }` for an
 //             error the host threw
-//   409 body: `{ "divergence": "<why>" }` — the recording has no such request
+//   409 body: `{ "divergence": "<why>" }` — the recording has no such
+//             request, or the replay made it out of the recording's order
+//   503 body: the double is serving no recording
+//
+// A host's own thrown error travels as a 200 with an `error` envelope, not
+// as an HTTP error status: the status says only whether the double could
+// answer. A transport failure (a refused connection, any other status) is no
+// host answer, and fails the request as a plain error naming the status; the
+// kit does not model one. Nor does the double advertise which methods it
+// serves: both halves are built from the recording's `methods` (a remote
+// embedder's host will need to say what it serves on the wire).
 
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
@@ -38,21 +48,19 @@ export async function startHostDouble(): Promise<HostDouble> {
   let conversation: RecordedConversation | undefined;
   const app = express();
   app.use(express.json({ limit: '200mb' }));
-  app.post('/host/:family/:method', (request, response) => {
+  app.post('/host/:family/:method', (request, response, next) => {
     if (conversation === undefined) {
       response.status(503).json({ divergence: 'the double is serving no recording' });
       return;
     }
     const { family, method } = request.params;
-    let served: ServedAnswer;
-    try {
-      served = conversation.answer(`${family}.${method}`, request.body);
-    } catch (error) {
-      if (!(error instanceof ReplayDivergence)) throw error;
-      response.status(409).json({ divergence: error.message });
-      return;
-    }
-    response.json(served);
+    conversation.answer(`${family}.${method}`, request.body).then(
+      (served: ServedAnswer) => response.json(served),
+      (error: unknown) => {
+        if (!(error instanceof ReplayDivergence)) return next(error);
+        response.status(409).json({ divergence: error.message });
+      },
+    );
   });
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));

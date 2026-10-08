@@ -2,10 +2,13 @@
 // routing floors (src/test/rust_eval_stats.teardown.cjs), then, under
 // UPDATE_ENGINE_RUNS=1, the fold of every worker's host recordings into the
 // corpus's fixture, ../__fixtures__/engine-runs.v<n>.json — one recording per
-// line, one per distinct entry (its entry point and canonical input), sorted
-// by that key. Of equal inputs the recording kept is chosen by content (the
-// lowest canonical JSON), since worker order varies. Only a run of the whole
-// corpus rewrites the fixture: a narrowed run would shrink it.
+// line, one per distinct conversation (its entry point, canonical input and
+// canonical requests: the same input answered differently is another
+// conversation), sorted by that key. Of equal conversations the recording
+// kept is chosen by content (the lowest canonical JSON), since worker order
+// varies. A host request made after its entry ended refuses the harvest.
+// Only a run of the whole corpus rewrites the fixture: a narrowed run would
+// shrink it.
 const { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 
@@ -22,18 +25,26 @@ function corpusOf(projectConfig) {
 
 function fold(dir, corpus) {
   const byKey = new Map();
+  const late = [];
   let harvested = 0;
   for (const name of readdirSync(dir)) {
     for (const line of readFileSync(path.join(dir, name), 'utf8').split('\n')) {
       if (!line.trim()) continue;
       const row = JSON.parse(line);
+      if (row.late !== undefined) {
+        late.push(`${row.file}: ${row.late}`);
+        continue;
+      }
       harvested += 1;
       const { recording } = row;
-      const key = canonical({ entry: recording.entry, input: recording.input });
+      const key = canonical({ entry: recording.entry, input: recording.input, requests: recording.requests });
       const text = canonical(recording);
       const seen = byKey.get(key);
       if (seen === undefined || text < seen.text) byKey.set(key, { text, line: JSON.stringify(recording) });
     }
+  }
+  if (late.length > 0) {
+    throw new Error(`the ${corpus} corpus made host requests after their entry ended; refusing to overwrite its fixture:\n${late.join('\n')}`);
   }
   if (byKey.size === 0) throw new Error(`no host recordings were harvested from the ${corpus} corpus; refusing to overwrite its fixture`);
   const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);

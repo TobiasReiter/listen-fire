@@ -33,51 +33,52 @@ A contract written down is a claim; a kit is how you check it. Each kit is data 
 
 ### The host kit: recorded engine runs
 
-A host recording is one entry into the engine as data: what it was handed, every request it made of its host in order with the answer each got, and how it ended. The format is the zod schema in `packages/engine-contracts/conformance/recording.ts`:
+A host recording is one entry into the engine as data: what it was handed, every request it made of its host in the order it made them, with the answer each got and the requests already answered when it was made, and how it ended. The format is the zod schema in `packages/engine-contracts/conformance/recording.ts`:
 
 ```ts
 {
   kit: 'host';
-  version: 1;                          // the recording format's own version
+  version: 2;                          // the recording format's own version
   entry: 'run' | 'resume' | 'settleRace' | 'callbackBody';
-  clock: string;                       // the instant the clock read throughout the entry
   input: RunInput | ResumeInput | SettleRaceInput | CallbackBodyInput;  // with its languageVersion
   methods: string[];                   // every host method the recorded host served
-  requests: Array<{ family: string; method: string; args: unknown } & ({ answer?: unknown } | { error: { class: string; code?: string; message: string } })>;
+  requests: Array<
+    { family: string; method: string; args: unknown; after: number[] } &
+    ({ answer?: unknown } | { error: { class: string; code?: string; message: string } })
+  >;
   result?: unknown;                    // exactly one of result and failure
   failure?: { class: string; code?: string; message: string };
 }
 ```
 
-- **`family` and `method`** are a manifest family and one of its methods (`park.sink` and `commitTimerPark`). `args` is the method's one request object, `answer` its answer (absent from a method that answers nothing), `error` what the host threw.
+- **`family` and `method`** are a manifest family and one of its methods (`park.sink` and `commitTimerPark`). `args` is the method's one request object, `answer` its answer (absent from a method that answers nothing), `error` what the host threw (a method that throws rather than rejecting is recorded the same way).
+- **`after`** lists the requests, by index into `requests`, the host had already answered when this one was made, less those another of them implies (one answered before a listed request was made). In a run with nothing concurrent it is the request before.
 - **`methods`** matters because a host may leave out an optional family or method, and the engine behaves differently without it (no park sink: a run that parks raises). A replay serves exactly these.
-- **`clock`** matters because the engine reads the wall clock for a sleep's wake time and a callback's expiry. A recording is made with the clock held still for the whole entry, and a replay holds it at the same instant.
+- **Time and ids are answers.** The engine reads no clock and mints no id of its own (`clock.now`, `ids.mint`, [host-families.md](host-families.md)), so a recording holds every instant and id the entry used.
+- **An error's `class`** is the host's thrown class's name. A replay throws an `Error` under that name, except for three classes the engine branches on, which it rebuilds as themselves: `RunCancelledSignal` (a cancel), `RunLeaseLost` (the segment no longer holds the run), and `MovementEngineError` with its `code`. An embedder's host that means one of those must throw it under that name.
 
 **Replaying.** An engine under replay is handed the recorded input and a host that answers from the recording. It conforms when:
 
 - every request it makes has a recorded counterpart: the earliest recorded request not yet served with the same family, method and canonical args (keys sorted, undefined dropped);
+- a request is served only once every request in its counterpart's `after` has been served. A request made sooner than the recording made it waits for those; concurrency is allowed, and branches may interleave differently from the recording. A request that waits on one the replay never makes (the engine waits for its answer before making it) is a causal reordering: once the replay has made no progress for two quiet spells, it diverges, naming both requests;
 - every recorded request is made;
 - it ends the same way: the same result as canonical JSON, or a failure with the same class, code and message.
 
-The first divergence is named: the request with no counterpart and the nearest recorded one, the recorded request never made, or the path where the results first differ. The rules are `packages/engine-contracts/conformance/replay.ts`.
+The first divergence is named: the request with no counterpart and the nearest recorded one, the request reordered and the one it waited on, the recorded request never made, or the path where the results first differ. The rules are `packages/engine-contracts/conformance/replay.ts`.
 
-**Replaying ours against your engine or host.** Our corpora are `apps/api/src/services/movement_engine/conformance/__fixtures__/engine-runs.v1.json` and `.v2.json`, one recording per line: every distinct entry the v1 and v2 engine corpora make. Each line replays on its own.
+**Replaying ours against your engine or host.** Our corpora are `apps/api/src/services/movement_engine/conformance/__fixtures__/engine-runs.v1.json` and `.v2.json`, one recording per line: every distinct conversation the v1 and v2 engine corpora have (the entry, its input and its requests). Each line replays on its own.
 
 - To test an engine: hand it each recording's input and a host built from `RecordedConversation` (it answers by the matching rule), then judge with `verdictOf`.
-- To test a host over a wire: our HTTP host double is the model. It serves `POST /host/<family>/<method>` with the request object as the body, and answers `{ "answer": … }`, `{}` for a method that answers nothing, or `{ "error": { class, code?, message } }`; a request the recording lacks answers 409 `{ "divergence": "…" }` (`http_host_double.ts`).
+- To test a host over a wire: our HTTP host double is the model. It serves `POST /host/<family>/<method>` with the request object as the body, and answers `{ "answer": … }`, `{}` for a method that answers nothing, or `{ "error": { class, code?, message } }`, always with status 200: a host's thrown error is an answer, carried in the envelope. A request the recording lacks, or one made out of its order, answers 409 `{ "divergence": "…" }` (`http_host_double.ts`). Transport failures are not modelled, and the double does not advertise the methods it serves: both halves are built from the recording's `methods`.
 - Ours runs every recording against three targets on each change: the TypeScript engine in process, the Rust engine through its shim, and the TypeScript engine against the HTTP double (`conformance/__test__/engine_runs.v<n>.unit.test.ts`). The Rust target takes only the recordings its shim routes and runs whole, and skips the rest with the reason.
 
-**Recording your own host.** Wrap any `EngineHost` with the recorder (`apps/api/src/services/movement_engine/conformance/recorder.ts`, `recordEntry`). It hands the engine and the host each other's own values, keeps JSON copies, and refuses a request or answer JSON cannot carry. To re-harvest ours:
+**Recording your own host.** Wrap any `EngineHost` with the recorder (`apps/api/src/services/movement_engine/conformance/recorder.ts`, `recordEntry`). It hands the engine and the host each other's own values, keeps JSON copies, and refuses a request or answer JSON cannot carry, and any request made after the entry ended. To re-harvest ours:
 
 ```bash
 cd apps/api && pnpm harvest:engine-runs
 ```
 
-This records both corpora (`UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v<n>`), then keeps only the recordings that replay on the TypeScript engine, in process and over the HTTP double. It prints each one it drops. A dropped run depended on something a recording cannot carry:
-
-- its test's own module mocks;
-- an id the engine minted at random (an extraction's resource ids), which is most of them;
-- the host's timing (a cancel racing calls still in flight, which a slower host answers later).
+This records both corpora (`UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v<n>`), then checks that every recording replays on the TypeScript engine, in process and over the HTTP double. A recording that does not fails the harvest, naming it and its first divergence, unless a known reason accounts for it (`UNPORTABLE` in `conformance/__test__/engine_runs_replay.ts`, each reason with its exact count per corpus); those are dropped from the fixture.
 
 ### The language kit: checked programs
 

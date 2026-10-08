@@ -27,7 +27,6 @@ import type { EngineHost } from '../host';
 import { fireCallbackBody, resumeMovement, runMovement, settleRaceFrame, type MovementRunResult } from '../run';
 import { rustRunStats } from '../rust_stats';
 import { startHostDouble, httpHost } from './http_host_double';
-import { withHeldClock } from './clock';
 import { recordedError } from './recorder';
 import { hostServing, settle } from './replay_host';
 
@@ -64,12 +63,12 @@ async function replayThrough(
   hostFor: (conversation: RecordedConversation) => EngineHost,
 ): Promise<ReplayVerdict> {
   const conversation = new RecordedConversation(recording.requests);
-  const outcome = await withHeldClock(recording.clock, () => outcomeAgainst(recording, hostFor(conversation)));
+  const outcome = await outcomeAgainst(recording, hostFor(conversation));
   return verdictOf(recording, conversation, outcome);
 }
 
 const inProcess = (conversation: RecordedConversation, methods: readonly string[]): EngineHost =>
-  hostServing(methods, async (path, request) => settle(conversation.answer(path, request)));
+  hostServing(methods, async (path, request) => settle(await conversation.answer(path, request)));
 
 /** Run `body` with `MOVEMENT_ENGINE` set to `engine`, restoring it after. */
 async function underEngine<T>(engine: 'ts' | 'rust', body: () => Promise<T>): Promise<T> {

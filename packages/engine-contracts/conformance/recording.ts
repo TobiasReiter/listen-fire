@@ -1,6 +1,7 @@
 // A host recording: one entry into the engine, as data — what it was handed,
 // every request it made of its host in the order it made them with the answer
-// each got, and how it ended. Recorded at the segment boundary against any
+// each got and the requests already answered when it was made, and how it
+// ended. Recorded at the segment boundary against any
 // host, a recording replays against any other: an engine that is handed the
 // same input and the same answers must make the same requests and end the
 // same way, whatever host serves them (docs/contracts/README.md, "Conformance
@@ -11,13 +12,13 @@ import { z } from 'zod';
 import type { CatalogSnapshot } from 'movement-lang';
 
 import type { TriggerEvent } from '../event';
-import { HOST_FAMILIES } from '../host_families';
+import { hostMethodPaths } from '../host_families';
 import type { ParkedScopeState } from '../park_state';
 import type { CallbackBodyInput, ResumeInput, RunInput, SettleRaceInput } from '../run_input';
 import { tenantIdSchema } from '../tenant';
 
 /** The recording format's own version, which a reader refuses past. */
-export const HOST_RECORDING_VERSION = 1;
+export const HOST_RECORDING_VERSION = 2;
 
 /** JSON with every object's keys sorted and undefined members dropped: two
  *  values are the same request or the same result when these are equal. */
@@ -105,35 +106,40 @@ export const recordedErrorSchema = z.object({
 
 export type RecordedError = z.infer<typeof recordedErrorSchema>;
 
-const FAMILIES: readonly string[] = Object.keys(HOST_FAMILIES);
+const METHODS: ReadonlySet<string> = new Set(hostMethodPaths());
+
+const requestCommon = {
+  family: z.string(),
+  method: z.string(),
+  args: z.unknown(),
+  /** The requests (by index into `requests`) the host had already answered
+   *  when this one was made, less those another of them implies: a request
+   *  answered before one of these was made was answered before this one
+   *  too. A replay serves this request only once it has served all of
+   *  these. */
+  after: z.array(z.number().int().nonnegative()),
+};
+
+const isManifestMethod = (request: { family: string; method: string }): boolean =>
+  METHODS.has(`${request.family}.${request.method}`);
 
 /** One request and what answered it: a value (absent for a method that
  *  answers nothing), or the error the host threw. `family` is a manifest
  *  family (`park.sink`), `method` one of its methods (`commitTimerPark`). */
-export const recordedRequestSchema = z.union([
-  z.object({
-    family: z.string().refine((family) => FAMILIES.includes(family), 'a host family'),
-    method: z.string(),
-    args: z.unknown(),
-    answer: z.unknown().optional(),
-  }),
-  z.object({
-    family: z.string().refine((family) => FAMILIES.includes(family), 'a host family'),
-    method: z.string(),
-    args: z.unknown(),
-    error: recordedErrorSchema,
-  }),
-]);
+export const recordedRequestSchema = z
+  .union([
+    // Strict: a looser first variant would match a thrown request and strip
+    // its error.
+    z.object({ ...requestCommon, error: recordedErrorSchema }).strict(),
+    z.object({ ...requestCommon, answer: z.unknown().optional() }).strict(),
+  ])
+  .refine(isManifestMethod, 'a method of a host family on the manifest');
 
 export type RecordedRequest = z.infer<typeof recordedRequestSchema>;
 
 const common = {
   kit: z.literal('host'),
   version: z.literal(HOST_RECORDING_VERSION),
-  /** The instant the clock read throughout the entry (ISO 8601). The engine
-   *  reads the wall clock for a sleep's wake and a callback's expiry, so a
-   *  replay holds its clock at this instant while the entry runs. */
-  clock: z.string(),
   /** Every method the recorded host served, by path. A family or method a
    *  host leaves out changes what the engine does (no park sink: a run that
    *  parks raises), so a replay serves exactly these. */
@@ -164,7 +170,11 @@ export const hostRecordingSchema = z
   ])
   .refine((recording) => (recording.result === undefined) !== (recording.failure === undefined), {
     message: 'a recording ends in exactly one of result and failure',
-  });
+  })
+  .refine(
+    (recording) => recording.requests.every((request, i) => request.after.every((before) => before < i)),
+    { message: "a request's `after` names only requests made before it" },
+  );
 
 export type HostRecording = z.infer<typeof hostRecordingSchema>;
 

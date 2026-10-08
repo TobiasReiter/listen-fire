@@ -1,18 +1,17 @@
 // The replay of one corpus's recorded runs against the three targets, shared
 // by engine_runs.v1 and engine_runs.v2 (see either for what it proves). Each
 // runs in its own file because each corpus was recorded with its own current
-// language version (the corpus setups mock it), and some of the engine still
-// reads the current version rather than the run's pin — so a recording
-// replays in the environment it was recorded in.
+// language version mocked (the corpus setups do it). Some engine code reads
+// the current version rather than the run's pin; no recording kept exercises
+// that, so mocking it here as well is a precaution, not a need.
 //
-// Under UPDATE_ENGINE_RUNS=1 the replay prunes the fixture instead of judging
-// it, keeping only the recordings that are portable: the ones that replay on
-// the TypeScript engine both in process and over the HTTP double. One that
-// does not depended on something a recording cannot carry — its test's own
-// module mocks, an id the engine minted at random, or the host's timing (a
-// cancel racing calls still in flight, which a slower host answers later).
-// Each one dropped is printed with its first divergence. Run it straight after
-// the harvest (`pnpm harvest:engine-runs` does both).
+// Under UPDATE_ENGINE_RUNS=1 the replay checks the harvest instead of judging
+// it: every recording must replay on the TypeScript engine both in process
+// and over the HTTP double, save the ones a known reason accounts for
+// (`UNPORTABLE`, each with its count per corpus), which are dropped from the
+// fixture. Anything else fails the harvest, naming each recording and its
+// first divergence. Run it straight after the harvest (`pnpm
+// harvest:engine-runs` does both).
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -24,12 +23,12 @@ import { httpTarget, rustTarget, typescriptTarget } from '../replay';
 const FIXTURES = path.resolve(__dirname, '../__fixtures__');
 
 /** The fewest recordings each corpus's fixture holds, and the fewest of them
- *  the Rust engine replays whole. Measured at chunk 5A (2026-10-08): v1 320
- *  recordings, 48 on Rust; v2 388, 51 on Rust. Raise them deliberately; never
- *  lower one to pass. */
+ *  the Rust engine replays whole. Measured at chunk 5A, Task 3b
+ *  (2026-10-08): v1 478 recordings, 68 on Rust; v2 580, 74 on Rust. Raise
+ *  them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 315, rust: 45 },
-  v2: { recordings: 380, rust: 48 },
+  v1: { recordings: 478, rust: 68 },
+  v2: { recordings: 580, rust: 74 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);
@@ -50,28 +49,70 @@ function recordingsOf(corpus: keyof typeof FLOORS): HostRecording[] {
   return linesOf(corpus).map((line, i) => recordingOf(corpus, line, i));
 }
 
-/** Rewrite the fixture with only the recordings that replay on the
- *  TypeScript engine in process and over the HTTP double. */
-async function prune(corpus: keyof typeof FLOORS): Promise<void> {
+/**
+ * The recordings that cannot replay anywhere but where they were recorded,
+ * by why — each a reason a recording cannot carry — and how many of each
+ * corpus's recordings it accounts for. Asserted exactly: a new one, or one
+ * fewer, fails the harvest until this says why.
+ */
+const UNPORTABLE: Array<{
+  reason: string;
+  matches: (recording: HostRecording, divergence: string) => boolean;
+  count: Record<keyof typeof FLOORS, number>;
+}> = [
+  {
+    // The test mocks the language release (v1 unsupported; v1 deprecated) for
+    // itself alone, and a recording cannot carry a module mock.
+    reason: "the test mocks the release's supported and deprecated language versions",
+    matches: (recording) =>
+      recording.failure?.code === 'MOVENG_LANGUAGE_VERSION' ||
+      JSON.stringify(recording.result ?? null).includes('"code":"MOV_LANGUAGE_VERSION_DEPRECATED"'),
+    count: { v1: 0, v2: 2 },
+  },
+  {
+    // An engine non-determinism not yet fixed: an extraction mints its call
+    // sites' ids (`x:<node>#<n>`, part of the prompt) in the order its
+    // concurrent sibling entities reach them, so a host that answers at
+    // another speed sees another numbering.
+    reason: "an extraction numbers its call sites in the order concurrent sibling entities reach them",
+    matches: (_recording, divergence) =>
+      divergence.includes('llm.client.call') && divergence.includes('"label":"movement_extraction"'),
+    count: { v1: 3, v2: 3 },
+  },
+];
+
+/** Check the harvested fixture: every recording replays on the TypeScript
+ *  engine in process and over the HTTP double, or a known reason accounts
+ *  for it. Rewrites the fixture without the accounted ones. */
+async function checkHarvest(corpus: keyof typeof FLOORS): Promise<void> {
   const kept: string[] = [];
-  const dropped: string[] = [];
+  const unexplained: string[] = [];
+  const accounted = new Map<string, number>();
   const http = await httpTarget();
   try {
     for (const [i, line] of linesOf(corpus).entries()) {
       const recording = recordingOf(corpus, line, i);
       const verdicts = [await typescriptTarget.replay(recording), await http.replay(recording)];
       const failed = verdicts.find((verdict) => verdict.kind !== 'same');
-      if (failed === undefined) kept.push(line);
-      else dropped.push(`${label(recording, i)}: ${failed.kind === 'diverged' ? failed.divergence : failed.kind === 'skipped' ? failed.reason : ''}`);
+      if (failed === undefined) {
+        kept.push(line);
+        continue;
+      }
+      const divergence = failed.kind === 'diverged' ? failed.divergence : failed.kind === 'skipped' ? failed.reason : '';
+      const known = UNPORTABLE.find((entry) => entry.matches(recording, divergence));
+      if (known === undefined) unexplained.push(`${label(recording, i)}: ${divergence}`);
+      else accounted.set(known.reason, (accounted.get(known.reason) ?? 0) + 1);
     }
   } finally {
     await http.close();
   }
+  expect(unexplained).toEqual([]);
+  expect(Object.fromEntries(accounted)).toEqual(
+    Object.fromEntries(UNPORTABLE.filter((entry) => entry.count[corpus] > 0).map((entry) => [entry.reason, entry.count[corpus]])),
+  );
   const text = kept.join('\n') + '\n';
   writeFileSync(fixtureOf(corpus), text);
-  console.log(
-    `engine-runs.${corpus}.json: kept ${kept.length}, dropped ${dropped.length}, ${Buffer.byteLength(text)} bytes\n${dropped.join('\n')}`,
-  );
+  console.log(`engine-runs.${corpus}.json: kept ${kept.length}, dropped ${[...accounted.values()].reduce((a, b) => a + b, 0)}, ${Buffer.byteLength(text)} bytes`);
 }
 
 const label = (recording: HostRecording, i: number): string =>
@@ -102,8 +143,8 @@ export function replayCorpus(corpus: keyof typeof FLOORS): void {
   // Hundreds of whole runs per target.
   jest.setTimeout(600_000);
   if (process.env.UPDATE_ENGINE_RUNS === '1') {
-    it('keeps only the recordings that replay on the TypeScript engine', async () => {
-      await prune(corpus);
+    it('every harvested recording replays on the TypeScript engine, or a known reason says why not', async () => {
+      await checkHarvest(corpus);
     });
     return;
   }

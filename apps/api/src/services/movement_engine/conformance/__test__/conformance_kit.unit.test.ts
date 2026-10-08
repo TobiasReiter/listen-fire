@@ -1,7 +1,8 @@
 // The host-conformance kit's own units: the recorder writes a run down as it
-// crossed, a recording replays against the in-process and HTTP targets, the
-// matching rule names the first divergence, and the HTTP host double carries
-// every family's request and answer across a wire.
+// crossed (each request with the requests answered before it), a recording
+// replays against the in-process and HTTP targets, the matching rule allows
+// concurrency and names the first divergence or reordering, and the HTTP host
+// double carries every family's request and answer across a wire.
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -123,7 +124,7 @@ async function recorded(host: EngineHost = testHost()): Promise<RunRecording> {
 const paths = (recording: HostRecording): string[] => recording.requests.map((r) => `${r.family}.${r.method}`);
 
 describe('the recorder', () => {
-  it('writes one run down as it crossed: input, every request in order with its answer, the result', async () => {
+  it('writes one run down as it crossed: input, every request in order with its answer and what it came after, the result', async () => {
     const recording = await recorded();
     expect(hostRecordingSchema.safeParse(JSON.parse(JSON.stringify(recording))).success).toBe(true);
     expect(recording.entry).toBe('run');
@@ -139,6 +140,50 @@ describe('the recorder', () => {
     expect(recording.result).toMatchObject({ movementName: 'intake', writes: [{ externalId: 'ext-1' }, { externalId: 'ext-2' }] });
     expect(recording.methods).toContain('park.wake');
     expect(recording.methods).not.toContain('park.sink.commitTimerPark');
+    // A run with nothing concurrent in it: each request came after the one
+    // before, which implies all the others.
+    expect(recording.requests.map((r) => r.after)).toEqual(recording.requests.map((_, i) => (i === 0 ? [] : [i - 1])));
+  });
+
+  it('records a host method that throws rather than rejecting, and the engine still sees the throw', async () => {
+    const host = testHost();
+    const throwing: EngineHost = {
+      ...host,
+      control: {
+        cancel: {
+          ...host.control.cancel,
+          cancelled: () => {
+            throw new Error('the gate is down');
+          },
+        },
+      },
+    };
+    const kept: HostRecording[] = [];
+    await expect(
+      recordEntry({ entry: 'run', input: input(throwing), run: runMovement, keep: (r) => kept.push(r) }),
+    ).rejects.toThrow('the gate is down');
+    expect(kept[0]?.requests.find((r) => r.method === 'cancelled')).toMatchObject({
+      error: { class: 'Error', message: 'the gate is down' },
+    });
+  });
+
+  it('refuses a request made after the entry ended, and says so', async () => {
+    const late: string[] = [];
+    let captured: EngineHost | undefined;
+    await recordEntry({
+      entry: 'run',
+      input: input(testHost()),
+      run: (entered) => {
+        captured = entered.host;
+        return runMovement(entered);
+      },
+      keep: () => undefined,
+      late: (message) => late.push(message),
+    });
+    expect(() => captured?.control.cancel.cancelled({ segmentId: 'test-segment-1' })).toThrow(
+      'host request control.cancel.cancelled was made after the entry ended',
+    );
+    expect(late).toEqual(['host request control.cancel.cancelled was made after the entry ended']);
   });
 
   it('refuses an answer JSON cannot carry, naming the method', async () => {
@@ -182,12 +227,57 @@ describe('a replay', () => {
 
   it('names a recorded request the replay never made', async () => {
     const recording = await recorded();
-    const extra: RecordedRequest = { family: 'park', method: 'wake', args: { segmentId: 'test-segment-1', adapterType: 'x', correlationKey: 'k' } };
+    const extra: RecordedRequest = {
+      family: 'park',
+      method: 'wake',
+      args: { segmentId: 'test-segment-1', adapterType: 'x', correlationKey: 'k' },
+      after: [],
+    };
     const verdict = await typescriptTarget.replay({ ...recording, requests: [...recording.requests, extra] });
     expect(verdict).toEqual({
       kind: 'diverged',
       divergence: expect.stringMatching(/^recorded request #\d+ park\.wake .* was never made$/),
     });
+  });
+
+  it('lets a request made sooner than recorded wait for what it was recorded after', async () => {
+    const conversation = new RecordedConversation([
+      { family: 'locks', method: 'acquire', args: { segmentId: 's', names: ['a'] }, after: [], answer: { token: 't-a' } },
+      { family: 'locks', method: 'acquire', args: { segmentId: 's', names: ['b'] }, after: [0], answer: { token: 't-b' } },
+    ]);
+    const order: string[] = [];
+    const b = conversation.answer('locks.acquire', { segmentId: 's', names: ['b'] }).then((served) => {
+      order.push('b');
+      return served;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(order).toEqual([]);
+    // B waited; A's request releases it.
+    expect(await conversation.answer('locks.acquire', { segmentId: 's', names: ['a'] })).toEqual({ answer: { token: 't-a' } });
+    expect(await b).toEqual({ answer: { token: 't-b' } });
+    expect(order).toEqual(['b']);
+    expect(conversation.firstDivergence()).toBeUndefined();
+  });
+
+  it('names a causal reordering: a request made before one it waits on, which the replay never makes', async () => {
+    const recording = await recorded();
+    const creates = recording.requests.flatMap((r, i) =>
+      r.family === 'adapters' && r.method === 'call' && JSON.stringify(r.args).includes('createRecord') ? [i] : [],
+    );
+    const [acme, beta] = creates;
+    if (acme === undefined || beta === undefined) throw new Error('two creates expected');
+    // The recording now says Acme's create was made only once Beta's was
+    // answered — but the engine makes Beta's only once Acme's is answered.
+    const requests = recording.requests.map((r, i) => (i === acme ? { ...r, after: [...r.after, beta] } : r));
+    for (const target of [typescriptTarget, http]) {
+      const verdict = await target.replay({ ...recording, requests });
+      expect(verdict).toMatchObject({
+        kind: 'diverged',
+        divergence: expect.stringMatching(
+          new RegExp(`^request #\\d+ adapters\\.call .*"Acme".* was made before recorded request #${beta + 1} adapters\\.call .*"Beta".*the replay reordered them$`),
+        ),
+      });
+    }
   });
 
   it('names where the result differs when the requests match', async () => {
@@ -222,10 +312,16 @@ describe('the HTTP host double', () => {
     const all = hostMethodPaths();
     const requests: RecordedRequest[] = all.map((path, i) => {
       const dot = path.lastIndexOf('.');
-      const request = { family: path.slice(0, dot), method: path.slice(dot + 1), args: { segmentId: 's-1', n: i } };
+      const request = { family: path.slice(0, dot), method: path.slice(dot + 1), args: { segmentId: 's-1', n: i }, after: [] };
       return voids.has(path) ? request : { ...request, answer: { answered: path, nested: [i, null, 'é'] } };
     });
-    requests.push({ family: 'control.cancel', method: 'cancelled', args: { segmentId: 's-2' }, error: { class: 'RunCancelledSignal', message: 'run cancelled by user request' } });
+    requests.push({
+      family: 'control.cancel',
+      method: 'cancelled',
+      args: { segmentId: 's-2' },
+      after: [],
+      error: { class: 'RunCancelledSignal', message: 'run cancelled by user request' },
+    });
     const conversation = new RecordedConversation(requests);
     double.serve(conversation);
     const host = httpHost(double.url, all);

@@ -1,8 +1,11 @@
-// The movement engine's error type — extracted to a dependency-free module
+// The movement engine's error types — in a module with no heavy dependencies
 // so light modules (the name translator, consumed by the catalog's editor
 // snapshot path) can throw the engine's currency without dragging in the
 // evaluator's heavy import graph. `expression.ts` re-exports both symbols,
 // so existing import sites are unchanged.
+
+import { getErrorMessage } from '../../lib/utils/error';
+import type { MovementRunResult } from './run';
 
 export type MovementEngineErrorCode =
   | 'MOVENG_PARSE'
@@ -67,5 +70,32 @@ export class RunLeaseLost extends Error {
   constructor(readonly runId: string) {
     super('run lease lost; another instance may hold the run');
     this.name = 'RunLeaseLost';
+  }
+}
+
+/**
+ * A run that DIED mid-way, carrying out the ledger of what it had already done.
+ *
+ * Writes hit external systems inline, so a throw after the third write leaves
+ * three real records behind. Before this channel the ledger died with the stack
+ * and the firing record claimed nothing happened — users re-ran and collided
+ * with their own writes.
+ *
+ * Deliberately transparent: `message`, `name` and `stack` are the original
+ * error's and it hangs off `cause`, so logs and failure reasons read exactly as
+ * they did. Only genuine failures are wrapped — `RunParked`,
+ * `RunCancelledSignal` and `ScopeEndedQuietly` are control flow and never reach
+ * here.
+ */
+export class MovementRunFailed extends Error {
+  constructor(
+    cause: unknown,
+    /** Everything the run had done when it died: writes in program order, the
+     *  extraction sites their provenance references, and the decision trace. */
+    readonly partial: MovementRunResult,
+  ) {
+    super(getErrorMessage(cause), { cause });
+    this.name = cause instanceof Error ? cause.name : 'MovementRunFailed';
+    if (cause instanceof Error && cause.stack !== undefined) this.stack = cause.stack;
   }
 }
