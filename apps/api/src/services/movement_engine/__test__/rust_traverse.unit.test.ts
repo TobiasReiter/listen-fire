@@ -59,10 +59,11 @@ const graphSchema: InstanceSchema = {
     lead: { properties: { name: 'text', score: 'number' }, edges: {} },
     note: { properties: { text: 'text' }, edges: {} },
   },
-  collections: { company: { target: 'company' }, lead: { target: 'lead' }, note: { target: 'note' } },
+  collections: { company: { target: 'company' }, lead: { target: 'lead' }, note: { target: 'note' }, deal: { target: 'deal' } },
   writableRoots: {
     note: { fields: { text: 'text' }, resultShape: { externalId: 'text', text: 'text' } },
     company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } },
+    deal: { fields: { title: 'text' }, resultShape: { externalId: 'text', title: 'text' } },
   },
   refinements: { [selectionKey(NARROWED)]: 'list_entry "Portfolio"' },
   selectedMembers: { [selectionKey(NARROWED)]: MASTER },
@@ -112,6 +113,10 @@ interface GraphOptions {
   stuckCursor?: boolean;
   /** Land the collection's records as raw payloads (unstable positions). */
   unstable?: boolean;
+  /** What the adapter says it can traverse (`runtimeCapabilities().traversal`). */
+  traversal?: { incoming?: boolean; edgeProperties?: boolean };
+  /** The inline properties of the edge each record is landed by, by its id. */
+  edgeProperties?: Record<string, Record<string, unknown>>;
 }
 
 /** A graph whose records are rows, recording every call it gets. */
@@ -149,14 +154,20 @@ function fakeGraph(options: GraphOptions = {}) {
       }
       if (read.limit !== undefined) kept = kept.slice(0, read.limit);
     }
-    return kept.map((row) => ({ position: position(row) }));
+    return kept.map((row) => {
+      const edgeProperties = options.edgeProperties?.[row.id];
+      return { position: position(row), ...(edgeProperties !== undefined ? { edgeProperties } : {}) };
+    });
   };
   const streaming = options.pageSize !== undefined;
   const pageSize = options.pageSize ?? 0;
   const adapter: Adapter = {
     adapterType: 'graph',
     supportedTriggers: [],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+    runtimeCapabilities: () => ({
+      traversal: { incoming: options.traversal?.incoming ?? false, edgeProperties: options.traversal?.edgeProperties ?? false },
+      resources: false,
+    }),
     listEntryPoints: async () => [],
     async describe(recordType) {
       calls.push(['describe', recordType]);
@@ -496,5 +507,51 @@ describe('traversal blocks in the Rust engine', () => {
     expect(written(rust)).toEqual([undefined, 'Portfolio']);
     // The other member's record was never read.
     expect(calls(rust).filter(([m, input]) => m === 'getFieldValue' && JSON.stringify(input).includes('le-2'))).toEqual([]);
+  });
+
+  it('runs two blocks that reuse a hop alias and a body name, each in its own scope', async () => {
+    const block = (where: string) => `  kg-[c:company WHERE ${where}]-> {\n    n = c.\`name\`\n    write kg-[:note]-> { text: n }\n  }`;
+    const { rust } = await agree({ body: `${block('`stage` == "Late"')}\n${block('`revenue` == 10')}` });
+    expect(written(rust)).toEqual(['Initech', 'Acme']);
+  });
+
+  describe('edge properties', () => {
+    const DEALS: Row[] = [
+      { id: 'd-1', fields: { title: 'Seed round' } },
+      { id: 'd-2', fields: { title: 'Series A' } },
+      { id: 'd-3', fields: { title: 'Bridge' } },
+    ];
+    const graph = (edgeProperties: boolean): GraphOptions => ({
+      collections: { company: COMPANIES, deal: DEALS },
+      edges: { deals: ['d-1', 'd-2', 'd-3'] },
+      traversal: { edgeProperties },
+      edgeProperties: { 'd-1': { role: 'lead' }, 'd-2': { role: 'follow' } },
+    });
+    const body = (where: string) =>
+      [
+        '  role = "lead"',
+        '  co = write kg-[:company]-> { name: "Acme" }',
+        `  co-[d:deals WHERE ${where}]-> {`,
+        '    write kg-[:note]-> { text: d.`title` }',
+        '  }',
+      ].join('\n');
+
+    it('reads a bare name off the walked edge first, then a binding of that name, then the record', async () => {
+      // `d-3` carries no edge properties: the binding `role` answers for it.
+      const { rust } = await agree({ body: body('`role` == "lead"'), graph: graph(true) });
+      expect(written(rust)).toEqual([undefined, 'Seed round', 'Bridge']);
+    });
+
+    it('leaves a bare name alone in the pushed WHERE when the edge can carry it, and closes over the binding when it cannot', async () => {
+      const where = (o: Outcome) => JSON.stringify(calls(o).find(([m]) => m === 'getRelated')?.[1].where);
+      const carried = await agree({ body: body('`role` == "lead"'), graph: graph(true) });
+      expect(where(carried.rust)).not.toContain('{"type":"static","value":"lead"},{"type":"static"');
+      expect(where(carried.rust)).toContain('role');
+      const closed = await agree({ body: body('`role` == "lead"'), graph: graph(false) });
+      expect(where(closed.rust)).not.toContain('role');
+      // Closed over for the fetch; per landing, the edge's own property
+      // still answers first.
+      expect(written(closed.rust)).toEqual([undefined, 'Seed round', 'Bridge']);
+    });
   });
 });

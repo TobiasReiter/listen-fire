@@ -446,7 +446,7 @@ impl Run<'_> {
             Js::Undefined => None,
             properties => Some(properties),
         };
-        let landed = Rc::new(Landed { position, edge_properties, read: read.clone() });
+        let landed = Rc::new(Landed::new(position, edge_properties, read.clone()));
         if let Some(filter) = step.expression_filter.as_deref()
             && !self.hop_keeps(filter, step, landed.clone(), scope, span).await?
         {
@@ -592,9 +592,11 @@ impl Run<'_> {
     /// `source_field` origin.
     pub(crate) async fn landed_field(&self, landed: &Landed, field: &str) -> Result<Evaluated, Failure> {
         let read = &landed.read;
-        let natural = record_type(&landed.position).or_else(|| read.start_surface_type.clone());
-        let position = restamp(&landed.position, natural.as_deref(), &read.adapter_type);
-        let value = self.call_adapter_at(&read.instance, "getFieldValue", &position, vec![("fieldId", Js::str(field))]).await?;
+        let position = landed.surface.get_or_init(|| {
+            let natural = record_type(&landed.position).or_else(|| read.start_surface_type.clone());
+            restamp(&landed.position, natural.as_deref(), &read.adapter_type)
+        });
+        let value = self.call_adapter_at(&read.instance, "getFieldValue", position, vec![("fieldId", Js::str(field))]).await?;
         let stable = is_stable(&landed.position);
         if value.is_nullish() && !stable {
             self.trace_miss_in(&read.instance_name, &position_data(&landed.position), field);
@@ -625,17 +627,34 @@ impl Run<'_> {
             args.extend(rest);
             return self.call_adapter(instance, method, env::object_of(args)).await;
         };
-        let known = self.positions.borrow().iter().position(|p| Rc::ptr_eq(p, object));
-        let arg = match known {
-            Some(reference) => host::adapters::PositionArg { reference: reference as u32, value: None },
-            None => {
-                let mut positions = self.positions.borrow_mut();
-                positions.push(object.clone());
-                host::adapters::PositionArg { reference: positions.len() as u32 - 1, value: Some(env::encode_plain(position)) }
-            }
-        };
+        let (reference, first) = self.positions.borrow_mut().register(object);
+        let value = first.then(|| env::encode_plain(position));
+        let arg = host::adapters::PositionArg { reference, value };
         let request = host::adapters::call_at(self.segment(), instance, method, arg, env::encode_plain(&env::object_of(rest)));
         self.adapter_answer(self.ask(request).await?)
+    }
+}
+
+/// The positions a segment has named to its host, by handle number: empty
+/// as a segment starts, never written into a park (a resumed run's segment
+/// numbers its positions from 0 again). Each object is held, so its address
+/// cannot be reused by another while the table looks it up by that address.
+#[derive(Default)]
+pub(crate) struct PositionTable {
+    held: Vec<Rc<js::JsObject>>,
+    by_address: HashMap<*const js::JsObject, u32>,
+}
+
+impl PositionTable {
+    /// The object's handle, and whether this is the first time it is named.
+    fn register(&mut self, object: &Rc<js::JsObject>) -> (u32, bool) {
+        if let Some(&reference) = self.by_address.get(&Rc::as_ptr(object)) {
+            return (reference, false);
+        }
+        let reference = self.held.len() as u32;
+        self.held.push(object.clone());
+        self.by_address.insert(Rc::as_ptr(object), reference);
+        (reference, true)
     }
 }
 

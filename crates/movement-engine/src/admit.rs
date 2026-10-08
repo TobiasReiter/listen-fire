@@ -82,13 +82,11 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
     for movement in &movements {
         let events: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
         let mut bound = Bound::default();
-        bound.collect(&movement.body);
-        let body_names: Vec<&String> =
-            bound.values.iter().chain(&bound.handles).chain(&bound.instances).chain(&bound.nodes).chain(&bound.landings).collect();
-        if body_names.iter().any(|n| events.contains(*n) || file_names.contains(*n)) {
+        bound.collect(&movement.body, &[]);
+        if bound.sites.iter().any(|(n, _, _)| events.contains(n) || file_names.contains(n)) {
             return Some("name_shadowed".into());
         }
-        if body_names.iter().collect::<BTreeSet<_>>().len() != body_names.len() {
+        if bound.rebound() {
             return Some("name_rebound".into());
         }
         let names = Names {
@@ -191,7 +189,9 @@ fn rvalue_kind(value: &RValue) -> &'static str {
 }
 
 /// Every name a body binds, by what it holds; `if` arms and block bodies
-/// included, and a block head's hop alias (`landings`).
+/// included, and a block head's hop alias (`landings`). Each binding is kept
+/// with the lexical scope it lands in (`sites`): an `if` arm and a block's
+/// body (its iteration, where the hop alias lives) are scopes of their own.
 #[derive(Default)]
 struct Bound {
     values: BTreeSet<String>,
@@ -199,40 +199,87 @@ struct Bound {
     instances: BTreeSet<String>,
     nodes: BTreeSet<String>,
     landings: BTreeSet<String>,
+    /// (name, kind, scope path from the body's root scope).
+    sites: Vec<(String, Kind, Vec<usize>)>,
+    scopes: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Value,
+    Handle,
+    Instance,
+    Node,
+    Landing,
 }
 
 impl Bound {
-    fn collect(&mut self, statements: &[Statement]) {
+    fn collect(&mut self, statements: &[Statement], scope: &[usize]) {
         for statement in statements {
             match statement {
                 Statement::Assign(assign) => {
-                    let into = match &assign.value {
-                        RValue::Write { .. } => &mut self.handles,
-                        RValue::Construct { .. } => &mut self.instances,
-                        RValue::Node { .. } => &mut self.nodes,
-                        _ => &mut self.values,
+                    let kind = match &assign.value {
+                        RValue::Write { .. } => Kind::Handle,
+                        RValue::Construct { .. } => Kind::Instance,
+                        RValue::Node { .. } => Kind::Node,
+                        _ => Kind::Value,
                     };
-                    into.insert(assign.name.clone());
+                    self.bind(&assign.name, kind, scope);
                 }
                 Statement::If(statement) => {
                     for arm in &statement.arms {
-                        self.collect(&arm.body);
+                        let inner = self.enter(scope);
+                        self.collect(&arm.body, &inner);
                     }
                     if let Some(arm) = &statement.else_arm {
-                        self.collect(&arm.body);
+                        let inner = self.enter(scope);
+                        self.collect(&arm.body, &inner);
                     }
                 }
                 Statement::Block(statement) => {
+                    let inner = self.enter(scope);
                     if let Ok(step) = crate::traverse::head_step(&statement.block.head)
                         && let Some(alias) = step.alias
                     {
-                        self.landings.insert(alias);
+                        self.bind(&alias, Kind::Landing, &inner);
                     }
-                    self.collect(&statement.block.body);
+                    self.collect(&statement.block.body, &inner);
                 }
                 _ => {}
             }
         }
+    }
+
+    fn enter(&mut self, scope: &[usize]) -> Vec<usize> {
+        self.scopes += 1;
+        let mut inner = scope.to_vec();
+        inner.push(self.scopes);
+        inner
+    }
+
+    fn bind(&mut self, name: &str, kind: Kind, scope: &[usize]) {
+        let into = match kind {
+            Kind::Value => &mut self.values,
+            Kind::Handle => &mut self.handles,
+            Kind::Instance => &mut self.instances,
+            Kind::Node => &mut self.nodes,
+            Kind::Landing => &mut self.landings,
+        };
+        into.insert(name.to_string());
+        self.sites.push((name.to_string(), kind, scope.to_vec()));
+    }
+
+    /// A name bound twice where one binding can see the other (one scope, or
+    /// one inside the other), or bound as two kinds anywhere: what a body
+    /// binds is read by name, so each name must mean one kind of thing, and a
+    /// name is bound once in any one scope chain. The same name in two sibling
+    /// scopes (two blocks' hop aliases, two arms' bindings) is two names.
+    fn rebound(&self) -> bool {
+        self.sites.iter().enumerate().any(|(i, (name, kind, scope))| {
+            self.sites[i + 1..].iter().any(|(other, other_kind, other_scope)| {
+                name == other && (kind != other_kind || scope.starts_with(other_scope) || other_scope.starts_with(scope))
+            })
+        })
     }
 }
 
@@ -699,6 +746,22 @@ mod tests {
             ("  crm-[c:companies]-> {\n    x = COUNT(c-[:deals]->)\n  }", "expression:aggregate"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+        }
+    }
+
+    #[test]
+    fn scopes_names_lexically() {
+        let twice = "  crm-[c:companies]-> {\n    n = c.`name`\n  }\n  crm-[c:companies]-> {\n    n = c.`name`\n  }";
+        assert_eq!(refused(twice), None, "two blocks reusing a hop alias and a body name");
+        let arms = "  if msg.`subject` == \"a\" {\n    t = 1\n  } else {\n    t = 2\n  }";
+        assert_eq!(refused(arms), None, "one name in two sibling arms");
+        for body in [
+            "  crm-[c:companies]-> {\n    x = 1\n  }\n  c = 1",
+            "  crm-[c:companies]-> {\n    c = 1\n  }",
+            "  crm-[c:companies]-> {\n    n = 1\n  }\n  crm-[c:companies]-> {\n    n = write crm-[:notes]-> { body: \"x\" }\n  }",
+            "  n = 1\n  if n == 1 {\n    n = 2\n  }",
+        ] {
+            assert_eq!(refused(body).as_deref(), Some("name_rebound"), "{body}");
         }
     }
 

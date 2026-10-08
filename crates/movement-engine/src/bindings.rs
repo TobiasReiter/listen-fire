@@ -45,6 +45,17 @@ pub struct Landed {
     pub edge_properties: Option<Js>,
     /// The graph it was landed in, which its fields are read through.
     pub read: Rc<crate::traverse::Read>,
+    /// The position as the read wrapper stamps it for a field read, made
+    /// once: every read of the record names one object, so it crosses to the
+    /// host once (a streamed landing is not restamped as it lands, and would
+    /// otherwise be stamped afresh per read).
+    pub surface: std::cell::OnceCell<Js>,
+}
+
+impl Landed {
+    pub fn new(position: Js, edge_properties: Option<Js>, read: Rc<crate::traverse::Read>) -> Landed {
+        Landed { position, edge_properties, read, surface: std::cell::OnceCell::new() }
+    }
 }
 
 /// `{kind: 'nodePosition', fields, fieldOrder, fieldProvenance, edges}`, the

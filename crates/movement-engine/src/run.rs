@@ -265,9 +265,9 @@ pub(crate) struct Run<'a> {
     /// The graphs block heads read through, resolved as sources, by
     /// instance identity (`sourceAdapterCache`).
     pub(crate) source_reads: RefCell<Vec<(String, Rc<crate::traverse::Read>)>>,
-    /// The positions registered with the host, by handle number (crate::host
-    /// `call_at`): held, so a handle's object is never another's.
-    pub(crate) positions: RefCell<Vec<Rc<JsObject>>>,
+    /// The positions registered with the host this segment (crate::host
+    /// `call_at`), by handle number.
+    pub(crate) positions: RefCell<crate::traverse::PositionTable>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -1451,6 +1451,35 @@ mod tests {
         assert!(reads[1].args.get("position").is_none(), "a handle already registered is not re-sent");
         let Js::Object(read) = env::decode(&reads[1].args["args"]).unwrap() else { panic!("a read") };
         assert_eq!(read.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["fieldId"]);
+    }
+
+    /// A streamed landing is not restamped as it lands; the stamp a field
+    /// read gives it is made once, so the record crosses once however many of
+    /// its fields are read.
+    #[test]
+    fn a_streamed_landing_crosses_once_however_many_fields_are_read() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  msg-[a:attachments]-> {\n    s = \"${a.`name`} ${a.`subject`}\"\n  }\n}";
+        let landing = json!(["o", 1, [["adapterType", "email"], ["recordType", null], ["identity", ["o", 2, [["kind", "unstable"], ["data", ["o", 3, [["name", "a"]]]]]]]]]);
+        let (done, seen) = drive(source, json!(["o", 1, []]), move |request| match (request.family, request.method.as_str()) {
+            ("check", "program") => json!({ "value": { "diagnostics": [], "stamps": [] } }),
+            ("adapters", "resolve") => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["iterateRelated"] } }),
+            ("control.cancel", _) => json!({ "value": false }),
+            ("trace", "append") => json!({}),
+            ("adapters", "call") if request.args["method"] == json!("iterateRelatedPage") => {
+                json!({ "value": { "result": ["o", 0, [["items", ["l", 4, [["o", 5, [["position", landing.clone()]]]]]]]] } })
+            }
+            ("adapters", "call") => json!({ "value": { "result": "x" } }),
+            other => panic!("unexpected {other:?}"),
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let reads: Vec<&PendingRequest> = seen.iter().filter(|r| r.args.get("method") == Some(&json!("getFieldValue"))).collect();
+        assert_eq!(reads.len(), 2);
+        assert_eq!(reads[0].args["positionRef"], reads[1].args["positionRef"]);
+        assert!(reads[0].args.get("position").is_some());
+        assert!(reads[1].args.get("position").is_none(), "the landing's stamp is registered once");
+        // Stamped with the parameter's declared type, its inline data kept.
+        let Js::Object(position) = env::decode(&reads[0].args["position"]).unwrap() else { panic!("a position") };
+        assert!(matches!(position.get("recordType"), Some(Js::String(t)) if t == "message"));
     }
 
     #[test]

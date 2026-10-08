@@ -1,6 +1,6 @@
 //! A hop's pushdown and its ORDER BY / LIMIT plan held to the TypeScript's
 //! own answers (tests/oracle/order_limit.json, written by
-//! tests/oracle/order_limit.ts through generate.ts): for each seeded
+//! tests/oracle/order_limit_oracle.ts through generate.ts): for each seeded
 //! bracket, the pushed `where` / `orderBy` / `limit` must be the very JSON
 //! text JSON.stringify writes for the TypeScript's, with the same leaves
 //! swapped for the same scalars, and the items kept must be the same, in the

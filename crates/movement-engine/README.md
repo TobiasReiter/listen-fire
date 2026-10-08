@@ -253,7 +253,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 | reason | the construct |
 |---|---|
 | `name_shadowed` | a body binds a name the movement's parameters or the file bind |
-| `name_rebound` | a body binds one name as two kinds (a value and a handle, …) |
+| `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name |
 | `statement:<kind>` | a statement other than a binding, `write`, `if`, a traversal block, `await sleep(…)` and `return` (`link`, `unlink`, `delete`, `match`, `call`, `combinator`, `collection`, `error`, `refresh`) |
 | `block_head_rootless`, `block_head_expression_root` | a block head with no root, or rooted at an expression (`AT(rows, 0)-[c:company]->`) |
 | `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle or the event |
@@ -482,7 +482,7 @@ EXISTS and any traversal inside an expression, writes rooted at a hop alias.
 answers (tests/oracle/order_limit.json, 601 seeded brackets: the pushdown's
 JSON text with seeded leaves substituted, and the items kept in order for
 seeded keys of every kind, mixed text and numbers included), written by
-tests/oracle/order_limit.ts through generate.ts; CI regenerates and diffs it
+tests/oracle/order_limit_oracle.ts through generate.ts; CI regenerates and diffs it
 with the rest of the oracle.
 
 ### Nodes
@@ -652,7 +652,12 @@ so the key order is the TypeScript engine's — and the very object it
 registered. A hop WHERE reading k fields of n records sends each record
 once, not k times; the event's payload crosses once per segment. The
 shim's dispatch is rust_host.ts `withPosition`, in the one module that
-routes host requests. (The cheaper of the two shapes the review named:
+routes host requests. The table lives as long as the segment: empty when
+the segment opens, dropped when it closes, never written into a park (a
+resumed run's segment numbers its positions from 0 again). The engine
+looks a position up by its object's address and holds the object, so an
+address is never reused while the table could still find it; a landing's
+field-read stamp is made once, so a streamed record crosses once too. (The cheaper of the two shapes the review named:
 batching the reads would change when each is asked, and a WHERE reads its
 conjuncts' fields in order, a false one ending the reads.)
 
@@ -709,6 +714,14 @@ The rule for what this engine reproduces of JavaScript:
   `ασʕ` in TypeScript. This is an accepted divergence, pinned by
   `stdlib::tests::case_mapping_follows_rusts_unicode_tables`, and is not
   handed back.
+- **One more may differ: a hop's ORDER BY over keys of mixed types, past
+  64 records.** The sort is V8's (crate::order_limit): binary insertion up
+  to 64 items, which reproduces V8 exactly for any comparator; past 64 this
+  engine merges the runs stably, which agrees with V8's TimSort for every
+  total order. Mixed text and number keys are not one (the comparator has
+  cycles), and there the two merges can place records differently. Ruled:
+  specified, not mirrored (the order_limit pin holds every set of 64 or
+  fewer, mixed included).
 - **The specification lands as a language-version change.** A version
   conditional at the point of difference, and a checker diagnostic under the
   new version for any construct whose meaning changes. Saved movements keep
@@ -720,6 +733,9 @@ The rule for what this engine reproduces of JavaScript:
   - date parsing (what a date text may be, and no local time);
   - Unicode case mapping: which Unicode version the language's case tables
     follow, so neither engine's runtime decides it.
+  - a hop's ORDER BY over keys of mixed types: one total order over every
+    key kind (say: nulls, then numbers, then text), so no sort algorithm's
+    merge decides where a record lands.
 
 ## The check
 
