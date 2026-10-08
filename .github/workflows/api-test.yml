@@ -3,6 +3,10 @@ on:
   push:
     paths:
       - "apps/api/**"
+      # The contract docs and the code they transcribe, held equal by the
+      # contracts' drift guards (the step below).
+      - "docs/contracts/**"
+      - "packages/engine-contracts/**"
   workflow_dispatch:
 
 jobs:
@@ -61,6 +65,10 @@ jobs:
       # signatures, ask escalation, file-blob route, dispatch routing, movement
       # execute/run-now, poll worker). Unit-only, ~1 min, can't OOM/timeout —
       # this is the regression signal, not the full suite (that's `pnpm health`).
+      # The contract docs' drift guards: each doc's version line, shape blocks
+      # and the index table against packages/engine-contracts. Seconds, no DB.
+      - name: Contract docs drift guards
+        run: pnpm --filter engine-contracts test
       - name: Smoke tests
         env:
           NODE_OPTIONS: --max-old-space-size=4096

@@ -332,6 +332,7 @@ import {
 import {
   CALLBACK_AWAIT_TYPE,
   isCallbackParamType,
+  refuseUnsupportedParkStateVersion,
   type CallbackCall,
   type CallbackParamSpec,
 } from 'engine-contracts';
@@ -707,6 +708,7 @@ export interface ResumeMovementInput extends ResumeInput {
  * is byte-identical. Single-ask linear body only (chunk 5).
  */
 export async function resumeMovement(input: ResumeMovementInput): Promise<MovementRunResult> {
+  refuseUnsupportedParkStateVersion(input.state.version);
   // A parked state the Rust engine resumes (its own or the TypeScript
   // engine's: the state is one shape) is only parsed here, as `runMovement`
   // parses a run it routes.
@@ -758,6 +760,7 @@ function resumeInterpreter(
 export async function settleRaceFrame(
   input: SettleRaceInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
+  refuseUnsupportedParkStateVersion(input.state.version);
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>
     new Interpreter(input, { ...prepared, context }).settleRaceFrame({
@@ -778,6 +781,7 @@ export async function settleRaceFrame(
 export async function fireCallbackBody(
   input: CallbackBodyInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
+  refuseUnsupportedParkStateVersion(input.state.version);
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>
     new Interpreter(input, { ...prepared, context }).fireCallback({

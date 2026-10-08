@@ -44,10 +44,10 @@ A host recording is one entry into the engine as data: what it was handed, every
   methods: string[];                   // every host method the recorded host served
   requests: Array<
     { family: string; method: string; args: unknown; after: number[] } &
-    ({ answer?: unknown } | { error: { class: string; code?: string; message: string } })
+    ({ answer?: unknown } | { error: ThrownError })
   >;
   result?: unknown;                    // exactly one of result and failure
-  failure?: { class: string; code?: string; message: string };
+  failure?: ThrownError;
 }
 ```
 
@@ -55,7 +55,7 @@ A host recording is one entry into the engine as data: what it was handed, every
 - **`after`** lists the requests, by index into `requests`, the host had already answered when this one was made, less those another of them implies (one answered before a listed request was made). In a run with nothing concurrent it is the request before.
 - **`methods`** matters because a host may leave out an optional family or method, and the engine behaves differently without it (no park sink: a run that parks raises). A replay serves exactly these.
 - **Time and ids are answers.** The engine reads no clock and mints no id of its own (`clock.now`, `ids.mint`, [host-families.md](host-families.md)), so a recording holds every instant and id the entry used.
-- **An error's `class`** is the host's thrown class's name. A replay throws an `Error` under that name, except for three classes the engine branches on, which it rebuilds as themselves: `RunCancelledSignal` (a cancel), `RunLeaseLost` (the segment no longer holds the run), and `MovementEngineError` with its `code`. An embedder's host that means one of those must throw it under that name.
+- **An error** is the error envelope, `ThrownError` (`{ class, code?, message }`), defined with the three classes the engine branches on under "Failure" in [host-families.md](host-families.md#conventions). A replay rebuilds those three as themselves and throws any other as an `Error` under its recorded name.
 
 **Replaying.** An engine under replay is handed the recorded input and a host that answers from the recording. It conforms when:
 
@@ -86,4 +86,4 @@ Every program the test suites check, with its catalog snapshot, language version
 
 ### The adapter kit
 
-Arrives with the adapter conformance command, which runs a vendor's server through the adapter protocol.
+`pnpm adapter:conformance` runs a vendor's server through the adapter protocol and reports each check. See step 1, "Run the conformance CLI against your server", of [Build your first adapter](adapter-protocol.md#build-your-first-adapter).
