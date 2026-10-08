@@ -238,25 +238,68 @@ export async function driveEngine(
   },
 ): Promise<unknown> {
   const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [], positions: new Map() };
-  const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
+  // A settle queue: each request in flight, as it settles, joins the queue
+  // and wakes the one waiter. An answer costs O(1) however many requests are
+  // in flight (a race over every one of them per answer was O(n) each).
+  const settled = new SettleQueue();
+  let inFlight = 0;
   try {
     let step = engine.start(start);
     for (;;) {
       if ('done' in step) return step.done;
       for (const request of step.pending) {
-        const served = serve(request, context).then((answer) => ({ id: request.id, answer }));
-        // Observed here so a shim fault in a request the race below never
-        // reaches is not an unhandled rejection; the race still sees it.
-        served.catch(() => undefined);
-        inFlight.set(request.id, served);
+        inFlight += 1;
+        serve(request, context).then(
+          (answer) => settled.push({ id: request.id, answer }),
+          (failure: unknown) => settled.push({ id: request.id, failure }),
+        );
       }
-      if (inFlight.size === 0) throw new RustShimError('the Rust engine is waiting with no request in flight');
-      const settled = await Promise.race(inFlight.values());
-      inFlight.delete(settled.id);
-      step = engine.answer(settled.id, settled.answer);
+      if (inFlight === 0) throw new RustShimError('the Rust engine is waiting with no request in flight');
+      const next = await settled.next();
+      inFlight -= 1;
+      if ('failure' in next) {
+        // A shim fault ends the segment, but only once every other request
+        // in flight has settled: no host call outlives the segment it named.
+        for (; inFlight > 0; inFlight -= 1) await settled.next();
+        throw next.failure;
+      }
+      step = engine.answer(next.id, next.answer);
     }
   } finally {
     engine.finish();
+  }
+}
+
+type Settled = { id: number; answer: HostAnswer } | { id: number; failure: unknown };
+
+/** Settled requests in the order they settled, and one waiter for the next. */
+class SettleQueue {
+  private readonly items: Settled[] = [];
+  private head = 0;
+  private waiter: (() => void) | undefined;
+
+  push(item: Settled): void {
+    this.items.push(item);
+    const wake = this.waiter;
+    this.waiter = undefined;
+    wake?.();
+  }
+
+  async next(): Promise<Settled> {
+    while (this.head === this.items.length) {
+      await new Promise<void>((resolve) => {
+        this.waiter = resolve;
+      });
+    }
+    const item = this.items[this.head];
+    if (item === undefined) throw new RustShimError('the settle queue woke with nothing settled');
+    this.head += 1;
+    // Drained: start over, so a long segment's queue holds only what waits.
+    if (this.head === this.items.length) {
+      this.items.length = 0;
+      this.head = 0;
+    }
+    return item;
   }
 }
 

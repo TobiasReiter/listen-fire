@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Poll, Waker};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Wake, Waker};
 
 use serde::Serialize;
 use serde_json::Value as Json;
@@ -74,6 +75,9 @@ enum Slot {
 struct Table {
     next_id: u32,
     slots: BTreeMap<u32, Slot>,
+    /// Who to wake when a request in flight is answered: the future that
+    /// awaits it, as the waker it was last polled with.
+    wakers: BTreeMap<u32, Waker>,
 }
 
 /// The segment's handle on the host: every request goes through it.
@@ -96,12 +100,16 @@ impl Host {
         id
     }
 
-    fn take_answer(&self, id: u32) -> Option<Answer> {
+    fn take_answer(&self, id: u32, waker: &Waker) -> Option<Answer> {
         let mut table = self.table.borrow_mut();
         match table.slots.remove(&id) {
-            Some(Slot::Answered(answer)) => Some(answer),
+            Some(Slot::Answered(answer)) => {
+                table.wakers.remove(&id);
+                Some(answer)
+            }
             Some(other) => {
                 table.slots.insert(id, other);
+                table.wakers.insert(id, waker.clone());
                 None
             }
             None => unreachable!("request {id} vanished while its future was alive"),
@@ -110,6 +118,7 @@ impl Host {
 
     fn abandon(&self, id: u32) {
         let mut table = self.table.borrow_mut();
+        table.wakers.remove(&id);
         match table.slots.remove(&id) {
             // Never seen by the shim, so nothing will answer it.
             Some(Slot::Unsent(_)) | Some(Slot::Answered(_)) | None => {}
@@ -124,6 +133,11 @@ impl Host {
         match table.slots.get(&id) {
             Some(Slot::InFlight) => {
                 table.slots.insert(id, Slot::Answered(answer));
+                let waker = table.wakers.remove(&id);
+                drop(table);
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
                 Ok(())
             }
             Some(Slot::Abandoned) => {
@@ -172,15 +186,17 @@ pub struct HostCall {
 impl Future for HostCall {
     type Output = Answer;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Answer> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Answer> {
         // `HostCall` holds no self-references, so it is `Unpin`.
         let this = self.get_mut();
         match std::mem::replace(&mut this.state, CallState::Finished) {
             CallState::Unissued(request) => {
-                this.state = CallState::Issued(this.host.issue(request));
+                let id = this.host.issue(request);
+                this.host.table.borrow_mut().wakers.insert(id, cx.waker().clone());
+                this.state = CallState::Issued(id);
                 Poll::Pending
             }
-            CallState::Issued(id) => match this.host.take_answer(id) {
+            CallState::Issued(id) => match this.host.take_answer(id, cx.waker()) {
                 Some(answer) => Poll::Ready(answer),
                 None => {
                     this.state = CallState::Issued(id);
@@ -269,9 +285,13 @@ pub fn ready<F: Future>(future: F) -> F::Output {
 
 /// Every future to completion, polled together, so their host requests are
 /// in flight at once (the TypeScript engine's `Promise.all`). Outputs come
-/// back in input order whatever order the answers arrived in.
+/// back in input order whatever order the answers arrived in. After the
+/// first poll a future is polled only when it is woken (its answer arrived),
+/// so an answer costs one poll however many futures are in flight.
 pub async fn join_all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
-    JoinAll { futures: futures.into_iter().map(|f| Joined::Running(Box::pin(f))).collect() }.await
+    let ready = Arc::new(ReadySet::default());
+    let wakers = (0..futures.len()).map(|index| Waker::from(Arc::new(ChildWaker { index, ready: ready.clone() }))).collect();
+    JoinAll { futures: futures.into_iter().map(|f| Joined::Running(Box::pin(f))).collect(), wakers, ready, started: false }.await
 }
 
 enum Joined<F: Future> {
@@ -281,6 +301,37 @@ enum Joined<F: Future> {
 
 struct JoinAll<F: Future> {
     futures: Vec<Joined<F>>,
+    /// One per future: waking it marks that future due and wakes the join.
+    wakers: Vec<Waker>,
+    ready: Arc<ReadySet>,
+    started: bool,
+}
+
+/// The futures of one join woken since its last poll, and the join's own
+/// waker. A segment is single-threaded; the locks are what `Waker` asks of
+/// state it shares.
+#[derive(Default)]
+struct ReadySet {
+    woken: Mutex<Vec<usize>>,
+    parent: Mutex<Option<Waker>>,
+}
+
+struct ChildWaker {
+    index: usize,
+    ready: Arc<ReadySet>,
+}
+
+impl Wake for ChildWaker {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.ready.woken.lock().expect("a segment is single-threaded").push(self.index);
+        if let Some(parent) = self.ready.parent.lock().expect("a segment is single-threaded").as_ref() {
+            parent.wake_by_ref();
+        }
+    }
 }
 
 // The futures are boxed and the outputs are only ever moved out whole, so
@@ -292,16 +343,27 @@ impl<F: Future> Future for JoinAll<F> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut all_done = true;
-        for joined in &mut this.futures {
-            if let Joined::Running(future) = joined {
-                match future.as_mut().poll(cx) {
-                    Poll::Ready(output) => *joined = Joined::Done(Some(output)),
-                    Poll::Pending => all_done = false,
-                }
+        *this.ready.parent.lock().expect("a segment is single-threaded") = Some(cx.waker().clone());
+        let due: Vec<usize> = if std::mem::replace(&mut this.started, true) {
+            let mut woken = std::mem::take(&mut *this.ready.woken.lock().expect("a segment is single-threaded"));
+            woken.sort_unstable();
+            woken.dedup();
+            woken
+        } else {
+            (0..this.futures.len()).collect()
+        };
+        for index in due {
+            if let Joined::Running(future) = &mut this.futures[index]
+                && let Poll::Ready(output) = future.as_mut().poll(&mut Context::from_waker(&this.wakers[index]))
+            {
+                this.futures[index] = Joined::Done(Some(output));
             }
         }
-        if !all_done {
+        // A future woken while this pass ran is polled on the next.
+        if !this.ready.woken.lock().expect("a segment is single-threaded").is_empty() {
+            cx.waker().wake_by_ref();
+        }
+        if this.futures.iter().any(|joined| matches!(joined, Joined::Running(_))) {
             return Poll::Pending;
         }
         Poll::Ready(
@@ -347,6 +409,39 @@ mod tests {
         // The later request first: nothing new is issued, the first is still awaited.
         assert_eq!(segment.answer(2, Ok(Some(json!("B")))).unwrap(), Step::Pending(vec![]));
         assert_eq!(segment.answer(1, Ok(None)).unwrap(), Step::Done(json!([null, "B"])));
+    }
+
+    /// 2,000 reads in flight, answered last first: each read is polled when
+    /// it starts and when its answer arrives, never on another's answer.
+    #[test]
+    fn a_join_polls_only_the_futures_an_answer_woke() {
+        const N: usize = 2_000;
+        let polls = Rc::new(std::cell::Cell::new(0usize));
+        let counted = polls.clone();
+        let mut segment = Segment::new(move |host| async move {
+            let reads = (0..N)
+                .map(|i| {
+                    let mut call = echo(&host, &format!("r{i}"));
+                    let polls = counted.clone();
+                    std::future::poll_fn(move |cx| {
+                        polls.set(polls.get() + 1);
+                        Pin::new(&mut call).poll(cx)
+                    })
+                })
+                .collect();
+            json!(join_all(reads).await.len())
+        });
+        let sent = pending(segment.start().unwrap());
+        assert_eq!(sent.len(), N);
+        let mut done = None;
+        for request in sent.iter().rev() {
+            if let Step::Done(result) = segment.answer(request.id, Ok(None)).unwrap() {
+                done = Some(result);
+            }
+        }
+        assert_eq!(done, Some(json!(N)));
+        // Polling every future on every answer would be N²/2, two million.
+        assert_eq!(polls.get(), 2 * N);
     }
 
     #[test]

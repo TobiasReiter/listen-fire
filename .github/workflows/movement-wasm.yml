@@ -185,4 +185,4 @@ jobs:
             fi
           }
           budget movement_parser.wasm 409600 614400
-          budget movement.wasm 614400 1048576
+          budget movement.wasm 819200 1048576

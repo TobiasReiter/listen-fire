@@ -644,8 +644,10 @@ mod tests {
             let Ask::EventField { field } = ask else { panic!("only event reads here") };
             self.asked.borrow_mut().push(field.clone());
             let mut answered = false;
-            Box::pin(std::future::poll_fn(move |_| {
+            Box::pin(std::future::poll_fn(move |cx| {
                 if !std::mem::replace(&mut answered, true) {
+                    // Answered as soon as asked: due again on the next poll.
+                    cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
                 Poll::Ready(Ok(Evaluated { value: Js::str(field.to_uppercase()), prov: Prov::Built(Trail::default()) }))

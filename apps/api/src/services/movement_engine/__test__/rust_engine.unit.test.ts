@@ -216,6 +216,46 @@ describe('the Rust engine shim', () => {
     expect(answers[0]).toEqual({ id: 2, answer: { value: false } });
   });
 
+  it('answers 2,000 requests in flight, the host settling them last first, in linear work', async () => {
+    const N = 2_000;
+    const waiting: Array<() => void> = [];
+    const served = await hostWith({
+      control: {
+        cancel: {
+          cancelled: () => new Promise<boolean>((resolve) => waiting.push(() => resolve(false))),
+          cancelledNow: async () => false,
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
+    const { engine, answers } = scriptedEngine((seen) => {
+      if (seen.length === 0 && waiting.length === 0) {
+        return { pending: Array.from({ length: N }, (_, i) => request(i + 1, 'control.cancel', 'cancelled', inSegment(segmentId, {}))) };
+      }
+      return seen.length < N ? { pending: [] } : { done: seen.length };
+    });
+    // Every `then` attached while the segment runs: a race over the requests
+    // in flight attaches one per request per answer (2,007,000 here); the
+    // settle queue a constant few per request (4,000).
+    const then = Promise.prototype.then;
+    let thens = 0;
+    Promise.prototype.then = function counted(this: Promise<unknown>, ...args: Parameters<typeof then>) {
+      thens += 1;
+      return then.apply(this, args);
+    } as typeof then;
+    try {
+      const driving = driveEngine(engine, {}, served);
+      // Let every request reach the host, then settle them last first.
+      while (waiting.length < N) await new Promise((resolve) => setImmediate(resolve));
+      for (const settle of [...waiting].reverse()) settle();
+      expect(await driving).toBe(N);
+    } finally {
+      Promise.prototype.then = then;
+    }
+    expect(new Set(answers.map((a) => a.id)).size).toBe(N);
+    expect(thens).toBeLessThan(20 * N);
+  });
+
   it("hands the host's thrown failure to the engine as an error answer, and undefined as {}", async () => {
     const served = await hostWith({
       adapters: {
