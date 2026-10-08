@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { hostMethodPaths } from '../host';
@@ -32,7 +32,7 @@ import {
   type HostRequest,
 } from '../rust_engine';
 
-const TEAM = 'team-1' as TeamId;
+const TEAM = tenantIdOf('team-1');
 
 /** A double that issues what `script` says, step by step: each reply is
  *  computed from every answer received so far, so a test can assert both

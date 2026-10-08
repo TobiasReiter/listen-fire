@@ -36,7 +36,7 @@ import type { ExtractCallFinds } from 'movement-lang';
 import { z } from 'zod';
 
 import { neverAsAny } from '../../lib/utils/types';
-import type { LlmCallResult } from '../translation_graph/engine/batched_extraction';
+import type { LlmCallResult } from '../translation_graph/engine/batched_extraction/llm_call';
 import type { FileRef } from '../translation_graph/adapter';
 import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { Effort, ExtractionCallSettings, TierModel } from './ai_tiers';

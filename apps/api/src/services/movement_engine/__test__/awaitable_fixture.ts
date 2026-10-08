@@ -7,7 +7,7 @@ import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { AwaitResolution } from '../../translation_graph/awaitable';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { TenantId } from 'engine-contracts';
 import type { AwaitWakeRequest, EngineHost, Scoped } from '../host';
 import type { QueuedWake } from '../host_kit';
 
@@ -17,6 +17,7 @@ import { snapshotOverManifests, staticCatalogFromManifests } from '../../transla
 import { positionData } from '../../translation_graph/types';
 import { makeTestHost } from '../test_host';
 import { runMovement, type ParkSink } from '../run';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const AWAITING = 'ask';
 
@@ -120,7 +121,7 @@ export function makeAwaitingAdapter(answers: Array<AwaitResolution | Error>): { 
 }
 
 export function runAwaiting(input: {
-  teamId: TeamId;
+  teamId: TenantId;
   source: string;
   adapter: Adapter;
   parkSink: ParkSink;
@@ -132,7 +133,7 @@ export function runAwaiting(input: {
   wrapHost?: (host: EngineHost) => EngineHost;
 }) {
   const wrap = input.wrapHost ?? ((host: EngineHost) => host);
-  const manual = createManualAdapter({ teamId: input.teamId });
+  const manual = createManualAdapter({ teamId: teamOfTenant(input.teamId) });
   const event: TriggerEvent = {
     pipelineInputId: 'trigger:manual-await',
     adapterType: 'manual',

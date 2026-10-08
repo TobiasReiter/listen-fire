@@ -99,17 +99,17 @@ import type {
 } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { RecordMutationEvent } from '../../translation_graph/mutation_context';
+import type { RecordMutationEvent } from '../../translation_graph/triggers/record_mutation_event';
 import {
   makeStablePosition,
   positionData,
   positionRecordId,
 } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const COMPANY_NODE_ID = '00000000-0000-0000-0000-00000000c001' as NodeId;
 
 function permissiveCaps(): RuntimeCapabilities {

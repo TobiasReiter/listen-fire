@@ -52,10 +52,8 @@ import { pollTriggerNow } from '../../services/poll_source/worker';
 import { EVERTRACE_API_VERSION } from '../../adapters/evertrace/apiClient';
 import { dispatchTriggerByIdEvent } from '../../services/translation_graph/triggers/router';
 import { dispatchMutationEvent } from '../../services/translation_graph/triggers/mutation_dispatch';
-import {
-  userEditContext,
-  type RecordMutationEvent,
-} from '../../services/translation_graph/mutation_context';
+import { userEditContext } from '../../services/translation_graph/mutation_context';
+import type { RecordMutationEvent } from '../../services/translation_graph/triggers/record_mutation_event';
 import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';

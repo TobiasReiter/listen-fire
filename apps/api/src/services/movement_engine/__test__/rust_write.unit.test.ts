@@ -8,7 +8,7 @@
 
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
@@ -30,7 +30,7 @@ import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } fr
 import type { ParkedScopeState } from '../serialize';
 import { parsePinned } from '../program_check';
 
-const TEAM_ID = '00000000-0000-0000-0000-0000000000b2' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b2');
 
 const emailSchema: InstanceSchema = {
   positions: { message: { properties: { subject: 'text', text: 'text', missing: 'text', when: 'date', meta: 'json' }, edges: {} } },

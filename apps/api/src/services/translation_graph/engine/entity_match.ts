@@ -29,7 +29,9 @@ import { logger } from '../../logger';
 import type { ExternalRecordRef } from '../adapter';
 import { arbitrateWithoutJudge, type UniquenessConstraints } from '../uniqueness';
 import { aiExpressionSettings, claudeModelId } from '../../movement_engine/ai_tiers';
-import type { Costed, Priced } from '../../movement_engine/host';
+import type { ArbitrationAnswer, Costed, EntityArbitration, Priced } from '../../movement_engine/host';
+
+export type { ArbitrationAnswer, EntityArbitration };
 
 // The judge runs on the SAME model `AI()`'s "careful" tier names — reused
 // rather than hard-coded so a self-hosted deployment with only
@@ -365,25 +367,8 @@ export async function judgeEntityMatch(input: {
   return judgeEntityMatchGenerative(input);
 }
 
-/** One write's identity question: which of its search's candidates the
- *  asserted record IS. */
-export interface EntityArbitration {
-  asserted: Record<string, unknown>;
-  candidates: ExternalRecordRef[];
-  recordType: string;
-  constraints: UniquenessConstraints;
-  /** The pin of the run asking: whether a blank key is a key. */
-  languageVersion: LanguageVersion;
-}
-
-/** The judge's answer: the candidate the write IS, or null to create — and,
- *  when the judge could not be asked at all (its call failed), why, so the
- *  write can say so instead of reading as a considered decline. */
-export interface ArbitrationAnswer {
-  index: number | null;
-  /** The judge's failure, in its own words. */
-  judgeUnavailable?: string;
-}
+// `EntityArbitration` and `ArbitrationAnswer` are the host family's
+// (`llm.arbitrateEntities`, movement_engine/host.ts).
 
 /**
  * Engine-side arbitration over an adapter's flat candidate shortlist —

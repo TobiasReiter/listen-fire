@@ -13,11 +13,11 @@
 // adapter-minimalism is what `findMatchingOrganisation`/email matching express.
 
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
 import type {
   ResolveEntityInput,
   ResolveEntityResult,
   ExternalRecordRef,
+  LinkedObjectCandidate,
 } from '../../adapter';
 import { AFFINITY_ADAPTER_TYPE, listEntityKind, type DecodedTypeId } from './types';
 import { AFFINITY_LIST_ENTRIES_EDGE, AFFINITY_LIST_NAME_FIELD } from './schema_catalog';
@@ -108,7 +108,7 @@ async function resolveListEntry(input: {
 function resolveByBridge(resolve: ResolveEntityInput): ResolveEntityResult | null {
   if (resolve.candidates.length === 0) return null;
   const matching = resolve.candidates
-    .filter((c: LinkedObject) => c.external_object_type === resolve.recordType)
+    .filter((c: LinkedObjectCandidate) => c.external_object_type === resolve.recordType)
     .sort(
       (a, b) =>
         new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),

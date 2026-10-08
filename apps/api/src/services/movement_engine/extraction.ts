@@ -67,8 +67,8 @@ import type {
 import { neverAsAny } from '../../lib/utils/types';
 import { languageVersionOf, runLogFields, throwIfCancelled, type RunFacts } from './run_context';
 import { matchOption } from '../../lib/utils/string';
-import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction';
-import { selectModel } from '../translation_graph/engine/batched_extraction/schema_synthesis';
+import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
+import { selectModel } from '../translation_graph/engine/batched_extraction/model_choice';
 import { extractionCallSettings, type ExtractionCallSettings, type TierModel } from './ai_tiers';
 import { logger } from '../logger';
 import type { FileRef, Resource } from '../translation_graph/adapter';

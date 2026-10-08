@@ -1,5 +1,5 @@
 // RemoteAdapter — implements the in-process `Adapter` interface by forwarding
-// every call over the wire protocol (`protocol/schema.ts` + `protocol/client.ts`).
+// every call over the wire protocol (the `engine-contracts` protocol schema + `protocol/client.ts`).
 // A third-party (or out-of-process) adapter server speaks the same method
 // registry; this class lets the TG engine drive it as if it were local.
 //
@@ -85,8 +85,8 @@ import type { Expression } from '#shared/expression/types';
 import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
 import type { AuthStrategy } from '../../protocol/client';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import { METHODS, WireManifestProtocolVersion } from '../../protocol/schema';
-import type { MethodName } from '../../protocol/schema';
+import { METHODS, WireManifestProtocolVersion } from 'engine-contracts';
+import type { MethodName } from 'engine-contracts';
 import {
   isFileRef,
   iterateRelatedPages,

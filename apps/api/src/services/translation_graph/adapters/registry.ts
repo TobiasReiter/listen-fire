@@ -5,6 +5,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type { Adapter, AdapterManifest, BrandIcon } from '../adapter';
 import { WRITE_METHODS } from '../adapter';
+import { credentialTypeOf } from './credential_type';
 import type { PollSource, PollSourceFactory } from '../poll_source';
 import type { ConfigBlock, TextBlock } from '../triggerConfig';
 import { KG_ADAPTER_TYPE, KG_MANIFEST, createKnowledgeGraphAdapter } from './knowledge_graph';
@@ -507,7 +508,7 @@ export function getBrandIcon(adapterType: string): BrandIcon | null {
 export function adapterRequiredCredentialType(
   adapterType: string,
 ): ExternalServiceType | null {
-  return getAdapterManifest(adapterType)?.requiredCredentialType ?? null;
+  return credentialTypeOf(getAdapterManifest(adapterType)?.requiredCredentialType);
 }
 
 /**
@@ -555,7 +556,7 @@ export function listAdapterCapabilities(): AdapterCapabilitySummary[] {
     displayName: m.displayName,
     canSource: m.supportedTriggers.length > 0,
     canTarget: m.methods.some((x) => (WRITE_METHODS as readonly string[]).includes(x)),
-    requiredCredentialType: m.requiredCredentialType ?? null,
+    requiredCredentialType: credentialTypeOf(m.requiredCredentialType),
     triggerKinds: m.triggerKinds ?? [],
   }));
 }

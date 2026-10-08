@@ -1,0 +1,29 @@
+{
+  "name": "engine-contracts",
+  "private": true,
+  "license": "Apache-2.0",
+  "version": "0.0.1",
+  "description": "The contracts the movement engine speaks: the tenant id, the host families and entry-point inputs, the parked state, file descriptors and the adapter protocol",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "scripts": {
+    "code:type-check": "tsc --pretty --noEmit && node __embed_smoke__/check.cjs",
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+  },
+  "main": "index.ts",
+  "types": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./package.json": "./package.json"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "movement-lang": "workspace:*",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.5",
+    "typescript": "5.5.4"
+  }
+}

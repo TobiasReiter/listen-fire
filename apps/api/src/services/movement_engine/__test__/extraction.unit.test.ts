@@ -146,10 +146,10 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MutationContext } from '../../translation_graph/mutation_context';
 import { positionData } from '../../translation_graph/types';
 import { candidateIsAllExact } from '../../translation_graph/uniqueness';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
 /** A description as the parser hands it over: the quoted literal, so the
  *  engine desugars it through the same bridge a written movement uses. */

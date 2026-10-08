@@ -23,6 +23,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import ResourceType from '../../../generated/kysely/knowledge/ResourceType';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
 import type { Resource } from '../adapter';
+import { resourceIdSchema } from '../../../lib/resource_id';
 import { kgFetch } from './kg_client';
 import type { WriteConnection } from './knowledge_graph_writes';
 
@@ -81,11 +82,12 @@ async function persistKgResource(input: {
     : resource.metadata ?? {};
 
   let resolvedId: ResourceId | undefined;
+  const ownId = resource.id !== undefined ? resourceIdSchema.parse(resource.id) : undefined;
 
-  if (resource.id !== undefined) {
+  if (ownId !== undefined) {
     const byId = await pqb
       .selectFrom('resource')
-      .where('resource.id', '=', resource.id)
+      .where('resource.id', '=', ownId)
       .select(['resource.id'])
       .executeTakeFirst();
     if (byId) resolvedId = byId.id;
@@ -106,7 +108,7 @@ async function persistKgResource(input: {
     const inserted = await pqb
       .insertInto('resource')
       .values({
-        ...(resource.id !== undefined ? { id: resource.id } : {}),
+        ...(ownId !== undefined ? { id: ownId } : {}),
         team_id: input.teamId,
         type: resourceTypeValue,
         url: resource.url ?? null,

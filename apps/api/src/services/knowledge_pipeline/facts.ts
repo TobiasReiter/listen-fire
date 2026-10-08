@@ -8,6 +8,7 @@ import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
 import type { Resource } from '../translation_graph/adapter';
+import { resourceIdSchema } from '../../lib/resource_id';
 
 // ---------------------------------------------------------------------------
 // Prompt
@@ -359,7 +360,7 @@ async function extractFactsForResource(resource: Resource): Promise<Fact[]> {
         // still in-flight (writeResource hasn't yet minted an id). The
         // fact-cache write path tolerates `undefined` — extractFacts
         // uses it for downstream provenance only.
-        resourceId: resource.id,
+        resourceId: resource.id !== undefined ? resourceIdSchema.parse(resource.id) : undefined,
         contextText: content,
       });
       logger.debug('[extractFactsForResource] Extracted', {

@@ -8,7 +8,7 @@
 
 import { EMPTY_CATALOG_SNAPSHOT, openEngineSegment } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 
 import { openRunContext } from '../run_context';
 import { driveEngine, openWasmEngine, RustShimError } from '../rust_engine';
@@ -74,7 +74,7 @@ describe('the Rust engine artifact', () => {
   it('is driven by the shim against a host: the check is the TypeScript checker, and its failure ends the run', async () => {
     // Parses, and fails the check: no adapter `nope` in the snapshot.
     const host = makeTestHost();
-    const context = await openRunContext({ host, teamId: 'team-1' as TeamId, languageVersion: 3, spend: {} });
+    const context = await openRunContext({ host, teamId: tenantIdOf('team-1'), languageVersion: 3, spend: {} });
     await expect(
       driveEngine(openWasmEngine(), JSON.parse(segmentStart('import { nope } from adapters', context.segmentId)), {
         host,

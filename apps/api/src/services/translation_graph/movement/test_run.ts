@@ -29,6 +29,7 @@ import type { TriggerEvent } from '../triggers/types';
 import { loadTriggerById } from '../storage/tg_table';
 import { runCatalogSnapshotForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';
+import { tenantOfTeam } from './tenant';
 import { inMemoryRawTextStore } from './raw_text_store';
 import { InMemoryWriteLocks } from '../../write_locks/write_locks';
 import { getMovementRow } from './store';
@@ -168,7 +169,7 @@ export async function runMovementTestRun(
         ? { movementName: trigger.firedMovementName }
         : {}),
       event,
-      teamId: input.teamId,
+      teamId: tenantOfTeam(input.teamId),
       costCapMicrodollars: runCostCapFromEnv(),
       catalog: teamCatalog.snapshot,
       credentialIds: teamCatalog.credentialIds,

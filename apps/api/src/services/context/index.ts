@@ -14,6 +14,7 @@ import { sessionContextArgs as coreSessionContextArgs } from '../../lib/core/ses
 import { sessionContextArgs } from '../../lib/valuations/session';
 import { sessionContextArgs as knowledgeSessionContextArgs } from '../../lib/knowledge/session';
 import { sessionContextArgs as automationsSessionContextArgs } from '../../lib/automations/session';
+import { readContextIdFrom } from './current_id';
 /**
  * The identity surface the residual Context still exposes (C-10). It is now a
  * PROJECTION of the ambient Principal, not a second copy of it: there is one
@@ -51,6 +52,7 @@ interface ClsStorage {
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<Context>();
+readContextIdFrom(() => asyncLocalStorage.getStore()?.id);
 
 /**
  * Context

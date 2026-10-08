@@ -9,7 +9,7 @@ Every call is made inside a segment. Each `segment.open` opens exactly one segme
 Two tests hold the contract to this document (`movement_engine/__test__/seam_guard.unit.test.ts`):
 
 - **The import rules.** An engine file that starts importing host code fails.
-- **The round trip.** Every method of every family is wrapped in a JSON round trip (each request and answer serialised and parsed, anything JSON cannot carry refused by path), and representative programs reach every method. The set of methods is the manifest `HOST_FAMILIES` (`host.ts`), which the compiler holds equal to `EngineHost`, and which the test holds equal to the method headings below.
+- **The round trip.** Every method of every family is wrapped in a JSON round trip (each request and answer serialised and parsed, anything JSON cannot carry refused by path), and representative programs reach every method. The set of methods is the manifest `HOST_FAMILIES` (`packages/engine-contracts/host_families.ts`), which the compiler holds equal to `EngineHost` (`host.ts`), and which the test holds equal to the method headings below.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ The shapes are TypeScript-ish. These rules apply to every one of them.
 ## Shared shapes
 
 ```ts
-type TeamId = string;            // a UUID
+type TeamId = string;            // the tenant: an opaque id the host mints (`TenantId` in `engine-contracts`)
 type LanguageVersion = number;   // the movement's pin (1 = "Quiet Heron", …)
 
 // Priced calls
@@ -85,7 +85,7 @@ interface TriggerEvent {
   occurredAt?: string;
 }
 
-// A parked flow's whole state (movement_engine/serialize.ts), opaque to the host
+// A parked flow's whole state (`ParkedScopeState` in `engine-contracts`), opaque to the host
 interface ParkedScopeState { version: 1; address: string; bindingName: string | null; scopeChain: unknown[]; /* … */ }
 ```
 
@@ -302,7 +302,7 @@ answer:
   | { error: HostCallError & { kind: 'call_ceiling' | 'adapter_error' } }
 ```
 
-- **`args` and `result`** are the adapter protocol's `params` and `result` for the method (`translation_graph/protocol/schema.ts`, `METHODS`; prose in `docs/adapter-protocol.md`). Three spellings are this boundary's own:
+- **`args` and `result`** are the adapter protocol's `params` and `result` for the method (`packages/engine-contracts/protocol.ts`, `METHODS`; prose in `docs/adapter-protocol.md`). Three spellings are this boundary's own:
   - `describe` takes `{ typeId: string }`; a method with no input takes `{}`.
   - `iterateRelatedPage` takes the `getRelated` input plus `cursor?: unknown` (absent on the first page, then the last page's `nextCursor`), and answers `{ items: RelatedResult[]; nextCursor?: unknown }` (absent `nextCursor`: the last page). An instance that only streams is drained into one page.
   - `removeEventSubscription` answers `null`.

@@ -23,10 +23,11 @@ import { diagnoseMovementSource } from '../../translation_graph/movement/authori
 import type { Adapter, RuntimeCapabilities, UpdateInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 // A release other than this one, so the deprecated path is reachable while
 // this release deprecates nothing. Only the ENGINE's view is redirected; the
@@ -41,9 +42,9 @@ jest.mock('movement-lang', () => {
   };
 });
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000041');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };

@@ -6,6 +6,8 @@
 
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TenantId } from 'engine-contracts';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MovementTraceEntry } from '../../movement_engine/expression';
 import type { ExtractCallLlmClient } from '../../movement_engine/extraction_call';
@@ -53,6 +55,7 @@ import { meteredArbitration } from '../engine/entity_match';
 import { adapterTable, type LiveAdapterResolver } from '../engine/adapter_table';
 import { hostSegments, segmentScopedCalls } from '../segment_scope';
 import { renderFileArtifact } from './file_render';
+import { teamOfTenant } from './tenant';
 import { makeFileTextResolver, type FileTextReader } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
 import { postgresRawTextStore, type RawTextStore } from './raw_text_store';
@@ -91,7 +94,8 @@ export function productionEngineHost(input: {
   const usage = usageScope({ teamId: input.teamId, triggerRunId: input.triggerRunId, cancel });
   // Every call names its segment; the team it is for is the segment's.
   const segments = new SegmentDirectory();
-  const teamOf = (segmentId: string): TeamId => segments.facts(segmentId).teamId;
+  const tenantOf = (segmentId: string): TenantId => segments.facts(segmentId).teamId;
+  const teamOf = (segmentId: string): TeamId => teamOfTenant(tenantOf(segmentId));
   // The live instances, per segment. Production resolution is per (type,
   // credential, construction args); the role is a test seam. Each call runs
   // inside the segment it was resolved for.
@@ -102,7 +106,7 @@ export function productionEngineHost(input: {
       (({ adapterType, teamId, credentialsId, constructionArgs }) =>
         resolveAdapter({
           adapterType,
-          teamId,
+          teamId: teamOfTenant(teamId),
           credentialsId,
           ...(constructionArgs !== undefined ? { constructionArgs } : {}),
         })),
@@ -167,7 +171,7 @@ export function productionEngineHost(input: {
       // its segment, only when the trigger does not already decide the user.
       resolveActingUser: ({ triggerId, segmentId, instance, event }) =>
         resolveTeamActingUser({
-          teamId: teamOf(segmentId),
+          teamId: tenantOf(segmentId),
           ...(triggerId !== undefined ? { triggerId } : {}),
           getCandidates: () => adapters.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
         }),
@@ -279,7 +283,7 @@ function lockDatabaseUrl(): string {
 async function resolveTeamActingUser(input: ActingUserLookup): Promise<ActingUser | null> {
   const trigger = input.triggerId !== undefined ? await loadActingUserTrigger(input.triggerId) : undefined;
   return resolveActingUser({
-    teamId: input.teamId,
+    teamId: teamOfTenant(input.teamId),
     ...(trigger !== undefined ? { trigger } : {}),
     getCandidates: input.getCandidates,
   });

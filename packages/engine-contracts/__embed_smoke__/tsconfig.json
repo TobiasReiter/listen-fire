@@ -1,0 +1,19 @@
+// The embedder's compile: strict, its own, and with the contracts resolved by
+// package name. `check.cjs` runs it.
+{
+  "compilerOptions": {
+    "lib": ["es2022"],
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "typeRoots": ["../node_modules/@types"],
+    "baseUrl": ".",
+    "paths": { "engine-contracts": ["../index.ts"] }
+  },
+  "files": ["embed.ts"]
+}

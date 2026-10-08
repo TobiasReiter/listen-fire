@@ -109,10 +109,10 @@ import {
 import { containerAssociation } from '../../adapter';
 import type { TriggerEvent } from '../../triggers/types';
 import { makeUnstablePosition, positionData } from '../../types';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../../../movement_engine/test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 
 // ── Fake adapters (the calls-suite harness) ──────────────────────────────────
 

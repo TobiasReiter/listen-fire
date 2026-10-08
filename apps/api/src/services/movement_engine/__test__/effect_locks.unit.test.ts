@@ -103,11 +103,11 @@ import {
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData, type SchemaTypeDescriptor } from '../../translation_graph/types';
 import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000052');
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 

@@ -16,7 +16,7 @@
 import { registerLocalMutationSubscriber } from '../../knowledge/mutation_outbox/worker';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
-import { recordMutationEventSchema, type RecordMutationEvent } from '../mutation_context';
+import { recordMutationEventSchema, type RecordMutationEvent } from './record_mutation_event';
 import { dispatchMutationEvent } from './mutation_dispatch';
 import { logger } from '../../logger';
 

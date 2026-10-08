@@ -25,13 +25,14 @@ import type {
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, positionRecordId } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };

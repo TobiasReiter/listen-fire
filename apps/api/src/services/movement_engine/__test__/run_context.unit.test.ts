@@ -5,7 +5,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { Adapter, WriteInput } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
@@ -25,9 +25,10 @@ import {
   runLogFields,
   throwIfCancelled,
 } from '../run_context';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const DOLLAR = 1_000_000;
-const TEAM_ID = '00000000-0000-0000-0000-000000000061' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000061');
 const SCRAPE = 'service:brightdata.web_unlocker';
 
 function caught(fn: () => void): unknown {
@@ -336,7 +337,7 @@ function kgAdapter(onCreate: (write: WriteInput) => void): Adapter {
 }
 
 function runOnce(input: { body: string; kg: Adapter; locks: WriteLocks; closes: string[] }) {
-  const manual = createManualAdapter({ teamId: TEAM_ID });
+  const manual = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
   return runMovement({
     source: [
       'import { manual, kg } from adapters',

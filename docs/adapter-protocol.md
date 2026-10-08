@@ -6,7 +6,7 @@ model, to read and write your records, and to wait on things that happen in
 your system. Your server calls Listen-Fire back when something happens.
 
 This document is the contract. The source of truth is the zod schema in
-`apps/api/src/services/translation_graph/protocol/schema.ts`; where this page
+`packages/engine-contracts/protocol.ts`; where this page
 and the schema disagree, the schema wins. The reference adapter is the fake
 CRM in `apps/api/src/scripts/dev/fake_crm_adapter.ts` (see
 [Build your first adapter](#build-your-first-adapter)).

@@ -97,10 +97,10 @@ import { positionData } from '../../translation_graph/types';
 import type { Adapter, ParentLink, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000011' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000011');
 const MESSAGE = 'Slack Message';
 const TS = '1752700000.000100';
 

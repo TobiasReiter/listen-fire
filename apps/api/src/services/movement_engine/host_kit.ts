@@ -3,7 +3,7 @@
 // (`test_host.ts`). Host side: none of this crosses the boundary, it is how a
 // host serves the families that do.
 
-import type { TeamId } from '../../generated/kysely/core/Team';
+import type { TenantId } from 'engine-contracts';
 import type { CostLine } from '../../lib/run_cost';
 import type { ActorCandidate } from '../translation_graph/adapter';
 import type { SegmentWriteLocks } from '../write_locks/write_locks';
@@ -20,7 +20,7 @@ export const NEVER_CANCELLED: CancelGate = {
 /** What a host knows of a segment it opened: the run and the team every call
  *  made in it is for. */
 export interface SegmentFacts {
-  teamId: TeamId;
+  teamId: TenantId;
   runId?: string;
 }
 
@@ -56,14 +56,14 @@ export class SegmentDirectory {
 /** A wake as a host queues it: the request's key, for the segment's team. */
 export interface QueuedWake {
   adapterType: string;
-  teamId: TeamId;
+  teamId: TenantId;
   correlationKey: string;
 }
 
 /** An acting-user lookup with the source's candidates as a call: what the
  *  host's resolver works from, and what a test's lookup is handed. */
 export interface ActingUserLookup {
-  teamId: TeamId;
+  teamId: TenantId;
   triggerId?: string;
   getCandidates: () => Promise<ActorCandidate[]>;
 }

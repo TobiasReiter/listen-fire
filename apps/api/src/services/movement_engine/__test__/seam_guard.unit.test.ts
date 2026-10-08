@@ -61,6 +61,8 @@ import {
 import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 import { methodPaths, notJsonAt, roundTripHost } from './round_trip_host';
+import { tenantIdOf } from 'engine-contracts';
+import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 
 const ENGINE_DIR = path.resolve(__dirname, '..');
 const SRC_DIR = path.resolve(__dirname, '../../..');
@@ -71,7 +73,6 @@ const PURE_FILES = [
   'ai_tiers.ts',
   'builtins.ts',
   'call_depth.ts',
-  'callback_types.ts',
   'effect_locks.ts',
   'errors.ts',
   'expression.ts',
@@ -163,6 +164,8 @@ const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }>
 
 const ALLOWED: Array<(module: string) => boolean> = [
   (m) => m === 'movement-lang' || m.startsWith('movement-lang/'),
+  // The contracts the engine speaks: data shapes and the protocol schema.
+  (m) => m === 'engine-contracts',
   (m) => m === 'zod',
   (m) => m.startsWith('node:') || builtinModules.includes(m),
   (m) => m.startsWith('#shared/'),
@@ -176,7 +179,7 @@ const ALLOWED: Array<(module: string) => boolean> = [
   // resource stamping and filtering, the model choice for an extraction's
   // size.
   (m) => m === 'services/translation_graph/engine/files/resources',
-  (m) => m === 'services/translation_graph/engine/batched_extraction/schema_synthesis',
+  (m) => m === 'services/translation_graph/engine/batched_extraction/model_choice',
   under('services/translation_graph/uniqueness'),
   under('services/translation_graph/required_fields'),
   under('services/translation_graph/types'),
@@ -323,6 +326,141 @@ describe('the engine/host seam', () => {
   });
 });
 
+// ── Generated database code ─────────────────────────────────────────────────
+//
+// The engine, the contracts it speaks, the test host and the adapter
+// protocol's server kit are what an embedder imports without the run host.
+// None of them may reach the run host's generated database code, not even by
+// a type: a type import still loads the module for the compiler, so an
+// embedder compiling against them would need the run host's schema.
+
+const REPO_DIR = path.resolve(SRC_DIR, '../../..');
+const CONTRACTS_DIR = path.join(REPO_DIR, 'packages/engine-contracts');
+
+/** The roots an embedder imports. */
+const EMBEDDABLE_ROOTS = [
+  ...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)),
+  path.join(ENGINE_DIR, 'test_host.ts'),
+  path.join(SRC_DIR, 'services/translation_graph/protocol/server.ts'),
+  path.join(CONTRACTS_DIR, 'index.ts'),
+];
+
+/** A resolved file or bare specifier that is generated database code or a
+ *  database client. */
+function isDatabaseCode(resolvedOrSpecifier: string): boolean {
+  return (
+    /\/src\/generated\//.test(resolvedOrSpecifier) ||
+    /\/src\/prisma(\/|\.ts$|$)/.test(resolvedOrSpecifier) ||
+    /\/src\/lib\/kysely\.ts$/.test(resolvedOrSpecifier) ||
+    /\/node_modules\/(\.pnpm\/[^/]+\/node_modules\/)?(kysely|@prisma|\.prisma)\//.test(resolvedOrSpecifier) ||
+    /^(kysely|@prisma\/|prisma$)/.test(resolvedOrSpecifier)
+  );
+}
+
+/** Every specifier the file names, type-only ones included. */
+function allImports(file: string): string[] {
+  return ts.preProcessFile(fs.readFileSync(file, 'utf8'), true, true).importedFiles.map((f) => f.fileName);
+}
+
+const RESOLUTION: ts.CompilerOptions = {
+  module: ts.ModuleKind.CommonJS,
+  moduleResolution: ts.ModuleResolutionKind.Node10,
+};
+
+function resolved(specifier: string, fromFile: string): string | undefined {
+  return ts.resolveModuleName(specifier, fromFile, RESOLUTION, ts.sys).resolvedModule?.resolvedFileName;
+}
+
+/** Source files this repo owns: followed. A library's own files are not. */
+function isRepoSource(file: string): boolean {
+  if (file.endsWith('.d.ts')) return false;
+  const real = fs.realpathSync(file);
+  return real.startsWith(REPO_DIR) && !real.includes('/node_modules/');
+}
+
+/** Every chain from a root to database code, as `root <= … <= file → specifier`. */
+function databaseReach(roots: readonly string[]): string[] {
+  const parent = new Map<string, string>();
+  const seen = new Set(roots.map((r) => fs.realpathSync(r)));
+  const queue = [...seen];
+  const reach: string[] = [];
+  while (queue.length > 0) {
+    const file = queue.shift();
+    if (file === undefined) break;
+    for (const specifier of allImports(file)) {
+      const target = resolved(specifier, file);
+      if (isDatabaseCode(specifier) || (target !== undefined && isDatabaseCode(target))) {
+        const chain = [file];
+        for (let at = parent.get(file); at !== undefined; at = parent.get(at)) chain.push(at);
+        reach.push(`${chain.map((f) => path.relative(REPO_DIR, f)).join(' <= ')} → '${specifier}'`);
+        continue;
+      }
+      if (target === undefined || !isRepoSource(target)) continue;
+      const real = fs.realpathSync(target);
+      if (seen.has(real)) continue;
+      seen.add(real);
+      parent.set(real, file);
+      queue.push(real);
+    }
+  }
+  return reach;
+}
+
+function contractFiles(): string[] {
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '__embed_smoke__') continue;
+      const at = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(at);
+      else if (entry.name.endsWith('.ts')) files.push(at);
+    }
+  };
+  walk(CONTRACTS_DIR);
+  return files;
+}
+
+describe('generated database code stays out of what an embedder imports', () => {
+  it('no pure engine file and no contract file imports database code, not even a type', () => {
+    const violations: string[] = [];
+    for (const file of [...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)), ...contractFiles()]) {
+      for (const specifier of allImports(file)) {
+        const target = resolved(specifier, file);
+        if (isDatabaseCode(specifier) || (target !== undefined && isDatabaseCode(target))) {
+          violations.push(`${path.relative(REPO_DIR, file)} imports '${specifier}'`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('the contracts package imports nothing of the run host', () => {
+    const violations: string[] = [];
+    for (const file of contractFiles()) {
+      for (const specifier of allImports(file)) {
+        const target = resolved(specifier, file);
+        if (target !== undefined && fs.realpathSync(target).startsWith(path.join(REPO_DIR, 'apps/'))) {
+          violations.push(`${path.relative(REPO_DIR, file)} imports '${specifier}'`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('the engine, the contracts, the test host and the server kit reach no database code, by any path', () => {
+    expect(databaseReach(EMBEDDABLE_ROOTS)).toEqual([]);
+  });
+
+  it('a type import of generated code counts as reaching it', () => {
+    const probe = path.join(ENGINE_DIR, 'probe.ts');
+    expect(isDatabaseCode(resolved('../../generated/kysely/core/Team', probe) ?? '')).toBe(true);
+    expect(allImports(path.join(SRC_DIR, 'services/translation_graph/movement/tenant.ts'))).toContain(
+      '../../../generated/kysely/core/Team',
+    );
+    expect(databaseReach([path.join(SRC_DIR, 'services/translation_graph/movement/tenant.ts')])).not.toEqual([]);
+  });
+});
+
 describe('the engine/host seam carries data', () => {
   // DESIGN §6: every host call is request/response with JSON-serialisable
   // arguments. The await park and its wake are the calls that used to carry a
@@ -346,7 +484,7 @@ describe('the engine/host seam carries data', () => {
     ]);
 
     await runAwaiting({
-      teamId: '00000000-0000-0000-0000-000000000042' as TeamId,
+      teamId: tenantIdOf('00000000-0000-0000-0000-000000000042'),
       source: awaitingSource(),
       adapter: awaiting.adapter,
       parkSink: recording,
@@ -416,7 +554,7 @@ describe('the engine/host seam carries data', () => {
         payload: { firedAt: '2026-10-07T09:00:00.000Z' },
         occurredAt: '2026-10-07T09:00:00.000Z',
       },
-      teamId,
+      teamId: tenantOfTeam(teamId),
       catalog: staticCatalogSnapshot({ credentials: {} }),
       host: makeTestHost({
         segment,
@@ -524,7 +662,7 @@ describe('the engine/host seam carries data', () => {
         payload: { firedAt: '2026-10-07T09:00:00.000Z' },
         occurredAt: '2026-10-07T09:00:00.000Z',
       },
-      teamId,
+      teamId: tenantOfTeam(teamId),
       catalog: staticCatalogSnapshot({
         credentials: { kg_cred: { adapters: ['kg'] } },
         instanceSchemas: {
@@ -653,7 +791,7 @@ describe('the engine/host seam carries data', () => {
         payload: { firedAt: '2026-10-07T09:00:00.000Z' },
         occurredAt: '2026-10-07T09:00:00.000Z',
       },
-      teamId,
+      teamId: tenantOfTeam(teamId),
       firedAt: '2026-10-07T09:00:00.000Z',
       catalog: staticCatalogSnapshot({
         credentials: { kg_cred: { adapters: ['kg'] } },
@@ -958,7 +1096,7 @@ function roundTrip(
     ),
     movementName: 'intake',
     event: roundTripEvent(),
-    teamId: ROUND_TRIP_TEAM,
+    teamId: tenantOfTeam(ROUND_TRIP_TEAM),
     catalog: roundTripCatalog,
     credentialIds: { acme_main: 'cred-attio-1' },
     firedAt: '2026-10-07T09:00:00.000Z',
@@ -1270,7 +1408,7 @@ describe('every family crosses as JSON', () => {
     const { sink } = joiningParkSink();
     const wakes: QueuedWake[] = [];
     const result = await runAwaiting({
-      teamId: ROUND_TRIP_TEAM,
+      teamId: tenantOfTeam(ROUND_TRIP_TEAM),
       source: awaitingSource(),
       adapter: makeAwaitingAdapter([
         { status: 'pending', correlationKey: 'req-1' },
@@ -1441,7 +1579,7 @@ describe('the production host crosses as JSON', () => {
           },
         ],
       }),
-      teamId: ROUND_TRIP_TEAM,
+      teamId: tenantOfTeam(ROUND_TRIP_TEAM),
       catalog: manifestCatalog,
       credentialIds: { acme_main: 'cred-attio-1' },
       host,

@@ -71,6 +71,7 @@ import {
 } from '../types';
 import { connectMethodForType } from '../../credentials/connect_link';
 import { isLegacyApp } from '../../credentials/app_id';
+import { isCredentialType } from '../adapters/credential_type';
 import { indexManifestsByName, listAdapterManifests } from '../adapters/registry';
 import { listRemoteAdapters } from '../adapters/remote/store';
 import { teamAdapterManifests } from '../adapters/team_manifests';
@@ -1750,9 +1751,9 @@ function skeletonAdapters(input: {
     // SAME derivation connectCredential applies — 'oauth'/'key-entry'/
     // 'intrinsic'/'handshake' when a link can be minted, else 'app-only' (a
     // credential is needed but connects in-app). Absent ⇒ no credential needed.
-    const connect = manifest.requiredCredentialType
-      ? connectMethodForType(manifest.requiredCredentialType)
-      : undefined;
+    const declared = manifest.requiredCredentialType;
+    const connect =
+      declared === undefined ? undefined : isCredentialType(declared) ? connectMethodForType(declared) : 'app-only';
     adapters[manifest.adapterType] = {
       // The full construction signature — credential (if any) folded in, plus
       // every position arg. The skeleton is the surface `listConnections` serves

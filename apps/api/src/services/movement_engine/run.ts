@@ -194,8 +194,7 @@ import {
   pureLeafReads,
 } from '#shared/expression/filter';
 import { neverAsAny } from '../../lib/utils/types';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { LinkedObject } from '../../generated/kysely/knowledge/LinkedObject';
+import type { CallbackBodyInput, ResumeInput, RunInput, SettleRaceInput } from 'engine-contracts';
 import type {
   Adapter,
   ExternalRecordRef,
@@ -228,7 +227,7 @@ import {
   mergeUniqueness,
   type UniquenessConstraints,
 } from '../translation_graph/uniqueness';
-import type { LlmClient } from '../translation_graph/engine/batched_extraction';
+import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import {
   matchesResourceFilter,
   resolvePositionResources,
@@ -284,7 +283,7 @@ import {
 } from './extraction_call';
 import { extractionCallSettings, type ExtractionCallSettings } from './ai_tiers';
 import { parseChatModelName } from '../../lib/models/registry';
-import { selectModel } from '../translation_graph/engine/batched_extraction/schema_synthesis';
+import { selectModel } from '../translation_graph/engine/batched_extraction/model_choice';
 import {
   buildDeclarationSpec,
   buildExtractSpec,
@@ -335,7 +334,7 @@ import {
   isCallbackParamType,
   type CallbackCall,
   type CallbackParamSpec,
-} from './callback_types';
+} from 'engine-contracts';
 import { checkPinned, parsePinned, type CheckInput } from './program_check';
 import { engineChoice, resumeSegmentInRust, runSegmentInRust, rustCanResume, rustCanRun } from './rust_engine';
 import {
@@ -361,88 +360,10 @@ import {
 const CALLBACK_LANDING_SHAPE = 'callback';
 // ── Public surface ──────────────────────────────────────────────────────────
 
-export interface RunMovementInput {
-  /** The movement program text (`.mvt` source). */
-  source: string;
-  /**
-   * The language version the movement is pinned to — the run compiles and
-   * executes under it, it is the segment's pin (`RunContext.languageVersion`),
-   * and every adapter answers under it (the host segment opened with it). Absent ⇒
-   * the current version. A version this release does not support is refused
-   * (MOVENG_LANGUAGE_VERSION), never run as the current one.
-   */
-  languageVersion?: LanguageVersion;
-  /** Which movement to run; optional when the program declares exactly one. */
-  movementName?: string;
-  /** The triggering event — the movement parameter's position. */
-  event: TriggerEvent;
-  teamId: TeamId;
-  /**
-   * When this run FIRED — the instant every clock read in it answers from
-   * (`@current_date`, `@current_timestamp`, `DATE.TODAY(zone)`). The host
-   * passes the run row's `started_at`, which a resume reads back unchanged, so
-   * a run that parks for a day still computes the window it started with.
-   *
-   * An ISO 8601 instant. Absent ⇒ the interpreter pins `new Date()` once at
-   * construction: still one instant for the whole run, just not one that
-   * survives a park. Every path that can park supplies it.
-   */
-  firedAt?: string;
-  /**
-   * The most the run may spend on priced work (model calls, paid services,
-   * priced plugins), in microdollars — the run host reads its deployment's cap
-   * once and hands it over as data. Absent ⇒ no cap.
-   */
-  costCapMicrodollars?: number;
-  /**
-   * What this run spent in its EARLIER segments, in microdollars — the host
-   * reads it back off the run's record when it resumes a parked run, so the
-   * cost cap holds across every park. Absent ⇒ a fresh run, which has spent
-   * nothing.
-   */
-  priorSpentMicrodollars?: number;
-  /**
-   * What the run had spent when it was last resumed from a limit pause — the
-   * cost cap counts only what it spent after this (resuming a run paused at
-   * its cap resets its usage). Absent ⇒ never resumed from one: the cap
-   * counts everything.
-   */
-  capBaselineMicrodollars?: number;
-  /**
-   * The run is PAUSED at a limit (its cost cap) and this segment was woken by
-   * an ordinary event for one of its branches — an answer, a reply, a timer.
-   * The pause holds: the woken branch takes its event (binds the answer, steps
-   * past the sleep) and then suspends before its next statement, like every
-   * other branch of a paused run, until the run itself is resumed.
-   */
-  limitPaused?: boolean;
-  /** The checker's catalog (adapters / credentials / instance schemas), as
-   *  data built for this firing — the engine never holds a live catalog. */
-  catalog: CatalogSnapshot;
-  /** Everything the run reaches outside its program (`host.ts`). */
+/** A run's input: the data is the contract's (`engine-contracts`), and the
+ *  host is everything the run reaches outside its program (`host.ts`). */
+export interface RunMovementInput extends RunInput {
   host: EngineHost;
-  /** The run this is (the host's trigger-run id), named on the engine's log
-   *  lines. Absent ⇒ the lines carry none (a test run, a script). */
-  runId?: string;
-  /** Rehearse every target: each is resolved `dryRun`, so the host captures
-   *  its writes (into the host's write sink) rather than performing them. */
-  dryRun?: boolean;
-  /**
-   * Where to suspend the run's flows, by address: just before a statement, or
-   * just before the k-th call a statement makes (an address ending in that
-   * call's `c k` step). The first flow to reach a listed address parks there,
-   * once for the segment, to re-run the statement on resume. The cost cap needs none of this —
-   * the engine suspends on its own ledger; it is for a host that wants a run
-   * paused at a known point. Absent ⇒ nowhere.
-   */
-  suspendAt?: readonly string[];
-  /**
-   * Imported credential name → its credential id
-   * (`external_service_credentials.id`), as the run host read them with the
-   * catalog snapshot. Ids never go into the snapshot itself. A name absent
-   * here ⇒ the instance is constructed with no credential.
-   */
-  credentialIds?: Readonly<Record<string, string>>;
 }
 
 /** Why a run paused: the limit it met, with what it had spent against it and
@@ -792,37 +713,9 @@ function parseAndCheck(input: RunMovementInput, parsed?: Program): { program: Pr
   return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
 }
 
-export interface ResumeMovementInput extends RunMovementInput {
-  /** The parked leaf's serialised scope state (`parked_run.state`) — chunk 4's
-   *  `ParkedScopeState`. Re-parsed source + this rebuild the env. */
-  state: ParkedScopeState;
-  /** The validated answer value (already checked against the ask's result type
-   *  by `recordAnswer`). For a scalar result (`Check<boolean>` / an enum) this
-   *  is the JSON scalar; it binds as the ask's result `r` at the ask's binding
-   *  name (§4.4 — scalar answer → a value binding). Absent under `reenter` (a
-   *  cost / error park has no answer to bind). */
-  answer?: unknown;
-  /**
-   * Resume-at-statement mode (the GENERAL re-enter primitive, §4.4). Optional,
-   * DEFAULTING to the ask behaviour (false):
-   *
-   *   - false / absent (ASK resume): the parked leaf's address is the ASK's own
-   *     statement; the ask's effect IS the answer, so resume binds `answer` at the
-   *     ask's binding name and steps FORWARD from the statement AFTER it
-   *     (`stmtIndex + 1`). Every existing caller (`interaction/resume.ts`) keeps
-   *     this behaviour unchanged.
-   *   - true (RE-ENTER resume): the parked leaf's address is a statement whose
-   *     effect must be RE-EVALUATED rather than stepped past — an `await` that
-   *     re-checks live, or a recurring `until` timer. Resume binds NO answer and
-   *     RE-ENTERS AT that statement (`stmtIndex`), running it and the rest of its
-   *     branch forward.
-   */
-  reenter?: boolean;
-  /** Batch mode (F18/F21): the await-resume worker sets this so a race branch's
-   *  completion is DEFERRED (recorded in the result's `deferredRaceFrames`)
-   *  instead of settling inline — the worker settles once, post-batch, with every
-   *  winner. Inline resumers (timer/ask) omit it. */
-  deferRaceSettlement?: boolean;
+/** A resume's input: the contract's (`engine-contracts`), and the host. */
+export interface ResumeMovementInput extends ResumeInput {
+  host: EngineHost;
 }
 
 /**
@@ -881,7 +774,7 @@ function resumeInterpreter(
  * race's parent — the settlement re-enters at the race statement, not the leaf).
  */
 export async function settleRaceFrame(
-  input: ResumeMovementInput & { frameAddress: string },
+  input: SettleRaceInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>
@@ -901,7 +794,7 @@ export async function settleRaceFrame(
  * address resolves to the same expression it was minted from.
  */
 export async function fireCallbackBody(
-  input: ResumeMovementInput & { values: Record<string, unknown>; callIndex: number },
+  input: CallbackBodyInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>

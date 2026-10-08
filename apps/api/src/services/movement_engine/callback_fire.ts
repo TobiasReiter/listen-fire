@@ -35,7 +35,7 @@ import type { WorkHandler } from '../work/kinds';
 import { notifyWork, registerWorkHandler, WorkDeferred } from '../work/drain';
 import { enqueueWork } from '../work/store';
 import { enqueueAwaitWake } from './await_wake';
-import { CALLBACK_AWAIT_TYPE } from './callback_types';
+import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 import {
   claimCallbackFire,
   coerceCallbackValues,
@@ -44,7 +44,7 @@ import {
   markCallbackBodyStarted,
   type CallbackRecord,
 } from './callback_store';
-import type { CallbackParamSpec } from './callback_types';
+import type { CallbackParamSpec } from 'engine-contracts';
 
 /** How long after a fire its durable rows (the body's, the wake's) come due.
  *  The body and the prompt wake run in this process right after the claim;

@@ -30,6 +30,7 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json apps/api/
 COPY packages/principal/package.json packages/principal/
+COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/shared/package.json packages/shared/
 COPY packages/movement-lang/package.json packages/movement-lang/
 COPY packages/story-view/package.json packages/story-view/
@@ -55,9 +56,10 @@ RUN cp deploy/init/with-generated-env.sh /usr/local/bin/with-generated-env \
 WORKDIR /srv/listen-fire/apps/api
 RUN pnpm prisma generate
 
-# The compiled artifact. Nothing here runs ts-node: `principal` is vendored into
-# the api's own build output by this step (see packages/principal/
-# tsconfig.build.json), which is what makes `node build/server.js` resolvable.
+# The compiled artifact. Nothing here runs ts-node: `principal` and
+# `engine-contracts` are vendored into the api's own build output by this step
+# (see each package's tsconfig.build.json), which is what makes
+# `node build/server.js` resolvable.
 ARG BUILD_HEAP_MB=6144
 RUN NODE_OPTIONS=--max-old-space-size=${BUILD_HEAP_MB} pnpm build
 

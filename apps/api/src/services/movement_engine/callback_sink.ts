@@ -20,7 +20,7 @@ import {
 } from './callback_store';
 import type { CallbackSink } from './host';
 
-import { CALLBACK_AWAIT_TYPE } from './callback_types';
+import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 
 // Re-exported only for the conformance corpora; live code imports it from
 // `host.ts`.

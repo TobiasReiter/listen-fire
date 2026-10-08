@@ -4,7 +4,7 @@ import {
   RemoteTransportError,
   RemoteProtocolError,
 } from '../client';
-import { PROTOCOL_VERSION } from '../schema';
+import { PROTOCOL_VERSION } from 'engine-contracts';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 function mockFetchOnce(impl: (url: string, init: RequestInit) => Response | Promise<Response>) {

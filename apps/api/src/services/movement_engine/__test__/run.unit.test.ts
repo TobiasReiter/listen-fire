@@ -156,13 +156,13 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { LlmClient } from '../../translation_graph/engine/batched_extraction';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { EngineHost } from '../host';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 import type { ActingUserLookup } from '../host_kit';
 import type { ActingUser } from '../../translation_graph/adapter';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
 // ── Fake adapters (per-action-target.unit.test.ts pattern) ──────────────────
 

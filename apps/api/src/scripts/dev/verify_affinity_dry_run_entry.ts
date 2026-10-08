@@ -28,6 +28,7 @@ import type { CapturedWrite } from '../../services/translation_graph/engine/dry_
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
+import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6291/affinity';
 const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
@@ -144,7 +145,7 @@ async function main() {
       triggerType: 'webhook',
       payload: {},
     },
-    teamId: TEAM_ID,
+    teamId: tenantOfTeam(TEAM_ID),
     catalog: snap,
     credentialIds: everyCredential(snap, 'creds-verify'),
     host: probeEngineHost({

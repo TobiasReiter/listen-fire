@@ -16,6 +16,7 @@ import { loadCorrelatedParks } from '../../translation_graph/adapters/await_corr
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 import { claimParkedLeaf, claimRunLease, finishResumedLeaf, RunLeaseLost } from '../run_lease';
 import { dropRunLeaves } from '../lease_fence';
+import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 
 let teamId: TeamId;
 let runId: TriggerRunId;
@@ -186,7 +187,7 @@ describe('commitAwaitPark', () => {
     ]);
 
     const result = await runAwaiting({
-      teamId,
+      teamId: tenantOfTeam(teamId),
       source: awaitingSource(),
       adapter: awaiting.adapter,
       parkSink: makeRecorderParkSink(makeStubRecorder({ teamId, runId })),

@@ -95,10 +95,10 @@ import type { FileRef } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000020' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000020');
 
 // ── Fake adapters ────────────────────────────────────────────────────────────
 

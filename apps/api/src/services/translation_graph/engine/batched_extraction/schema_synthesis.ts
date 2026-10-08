@@ -24,8 +24,8 @@
 // rebinding stage (C8) can flow them into the consolidation /
 // `resolveEntity` call.
 //
-// Entity-density model selection (Opus threshold) lives here too —
-// `selectModel(entityCount)` is the single decision point.
+// Entity-density model selection (Opus threshold) is `selectModel(entityCount)`
+// in `./model_choice`, the single decision point.
 
 import { z } from 'zod';
 import type { ExpressionType } from '../../types';
@@ -33,14 +33,9 @@ import type { StoredUniquenessConstraints } from '../../../knowledge_pipeline/un
 import type { Bundle } from './bundle';
 import type { ExtractInvocation, ExtractValueInvocation } from '../evaluator/batcher';
 
-/**
- * Inherited from legacy `extract.ts`. Entity-count threshold above
- * which the pipeline routes to Opus (rather than Sonnet) for the
- * main extraction call. The two-phase skeleton+expand path is
- * triggered by the same threshold when no transform dictates a
- * skeleton pass.
- */
-export const ENTITY_DENSITY_OPUS_THRESHOLD = 30;
+// The density model choice is its own module (`./model_choice`), so the
+// engine can make it without this module's storage types.
+export { ENTITY_DENSITY_OPUS_THRESHOLD, selectModel } from './model_choice';
 
 /**
  * One declared scalar/structural field the LLM should emit for an
@@ -323,10 +318,3 @@ function buildEntityGuide(entities: Record<string, EntityShape>): string {
   return sections.join('\n\n');
 }
 
-/**
- * Model selection by entity density — direct port of legacy
- * `useOpus = entityCount >= ENTITY_DENSITY_OPUS_THRESHOLD`.
- */
-export function selectModel(entityCount: number): 'opus' | 'sonnet' {
-  return entityCount >= ENTITY_DENSITY_OPUS_THRESHOLD ? 'opus' : 'sonnet';
-}

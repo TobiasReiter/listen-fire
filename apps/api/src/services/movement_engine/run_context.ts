@@ -27,10 +27,10 @@
 
 import { CURRENT_LANGUAGE_VERSION, type FileArtifactType, type LanguageVersion } from 'movement-lang';
 
-import type { TeamId } from '../../generated/kysely/core/Team';
+import type { TenantId } from 'engine-contracts';
 import type { ActingUser, FileRef } from '../translation_graph/adapter';
-import type { LlmClient } from '../translation_graph/engine/batched_extraction';
-import type { ArbitrationAnswer, EntityArbitration } from '../translation_graph/engine/entity_match';
+import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
+import type { ArbitrationAnswer, EntityArbitration } from './host';
 import type { CrossRunLocks } from './effect_locks';
 import type { FileTextResolution, MovementTraceEntry } from './expression';
 import type { ExtractCallLlmClient } from './extraction_call';
@@ -73,7 +73,7 @@ export interface RunFacts {
 
 /** One segment's engine state. */
 export interface RunContext extends RunFacts {
-  readonly teamId: TeamId;
+  readonly teamId: TenantId;
   /** The host segment this one opened (`host.segment.open`): every host call
    *  names it. */
   readonly segmentId: string;
@@ -358,7 +358,7 @@ function bindParkSink(sink: NonNullable<EngineHost['park']['sink']>, segmentId: 
  *  it. */
 export async function openRunContext(input: {
   host: EngineHost;
-  teamId: TeamId;
+  teamId: TenantId;
   runId?: string;
   languageVersion: LanguageVersion;
   spend: ConstructorParameters<typeof RunLedger>[0];

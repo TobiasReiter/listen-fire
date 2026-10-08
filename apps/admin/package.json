@@ -1,7 +1,7 @@
 {
   "name": "admin",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "version": "0.1.0",
   "scripts": {
     "dev": "next dev -p ${ADMIN_PORT:-3004}",

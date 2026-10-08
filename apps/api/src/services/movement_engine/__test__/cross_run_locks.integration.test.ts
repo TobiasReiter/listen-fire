@@ -77,7 +77,7 @@ import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { InstanceSchema } from 'movement-lang';
 import type { MovementTransformInvoker } from '../extraction';
 
@@ -242,7 +242,7 @@ function webhookEvent(subject: string): TriggerEvent {
 function runsAgainst(writeLocks: WriteLocks, whileWaiting: () => Promise<void> = async () => {}) {
   const crm = makeCrm();
   const email = inertAdapter('email');
-  const teamId = randomUUID() as TeamId;
+  const teamId = tenantIdOf(randomUUID());
   const runOnce = (subject: string, movementName = 'intake') =>
     runMovement({
       source: SOURCE,
@@ -412,7 +412,7 @@ describe('two runs whose parallel members update the same two records in opposit
         };
       },
     };
-    const teamId = randomUUID() as TeamId;
+    const teamId = tenantIdOf(randomUUID());
     const updates: string[] = [];
     const runWith = (order: readonly string[]) =>
       runMovement({

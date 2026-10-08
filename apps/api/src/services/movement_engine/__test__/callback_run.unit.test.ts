@@ -17,9 +17,9 @@
 import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { CallbackSink } from '../host';
-import type { CallbackCall } from '../callback_types';
+import type { CallbackCall } from 'engine-contracts';
 import type { ParkedScopeState } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
@@ -27,10 +27,11 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import { snapshotOverManifests, staticCatalogFromManifests, staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { runMovement, fireCallbackBody, type ParkSink } from '../run';
 import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000041');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };

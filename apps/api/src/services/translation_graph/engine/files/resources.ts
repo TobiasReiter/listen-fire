@@ -22,7 +22,6 @@ import type {
   ResourceFilter,
 } from '../../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../../adapter';
-import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
 import type { SourcePosition } from '../../types';
 import { positionData } from '../../types';
 
@@ -62,7 +61,7 @@ export async function resolvePositionResources(input: {
  */
 export function stampResourceId(resource: Resource): Resource {
   if (resource.id) return resource;
-  return { ...resource, id: randomUUID() as ResourceId };
+  return { ...resource, id: randomUUID() };
 }
 
 /**
