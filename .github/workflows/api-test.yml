@@ -7,6 +7,7 @@ on:
       # contracts' drift guards (the step below).
       - "docs/contracts/**"
       - "packages/engine-contracts/**"
+      - "packages/shared/**"
   workflow_dispatch:
 
 jobs:
@@ -69,6 +70,8 @@ jobs:
       # and the index table against packages/engine-contracts. Seconds, no DB.
       - name: Contract docs drift guards
         run: pnpm --filter engine-contracts test
+      - name: Shared package tests
+        run: pnpm --filter @listen-fire/shared test
       - name: Smoke tests
         env:
           NODE_OPTIONS: --max-old-space-size=4096
