@@ -170,11 +170,16 @@ describe('the Rust engine shim', () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let reached: () => void = () => undefined;
+    const atHost = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
     let secondSettled = false;
     const served = await hostWith({
       control: {
         cancel: {
           cancelled: async () => {
+            reached();
             await held;
             secondSettled = true;
             return false;
@@ -199,8 +204,11 @@ describe('the Rust engine shim', () => {
         return error;
       },
     );
-    // The fault has settled; the drive waits on the second request.
-    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    // The second request is at the host. Past a macrotask every microtask
+    // has run, the first request's fault included: the drive now waits on
+    // the second alone.
+    await atHost;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect({ rejected, secondSettled }).toEqual({ rejected: false, secondSettled: false });
     release();
     const error = await observed;

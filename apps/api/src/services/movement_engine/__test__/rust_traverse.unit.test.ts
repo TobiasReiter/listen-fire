@@ -696,11 +696,10 @@ describe("5A's engine fixes, on both engines", () => {
     expect(targets).toHaveLength(1);
   });
 
-  it('settles every key read of an ORDER BY before failing on one, with the TypeScript engine’s error', async () => {
+  // After the second merge (sortByOrderKey settled on TypeScript): hold one key read at the host and assert the run has not failed until it is released; fail two reads out of order and assert the lower index's error; eviction on rejection where a Rust-routed program can observe it.
+  it('issues every key read of an ORDER BY when one fails, and fails with the TypeScript engine’s error', async () => {
     const { ts, rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY c.`name`'), graph: { failOn: 'n-2/name' } });
     expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
-    // Every record's key was read, the failing one's among them, before the
-    // run failed: nothing was left in flight.
     const keyReads = (o: Outcome) => calls(o).filter(([m, input]) => m === 'getFieldValue' && input.fieldId === 'name');
     expect(keyReads(rust)).toHaveLength(COMPANIES.length);
     expect(keyReads(ts)).toHaveLength(COMPANIES.length);

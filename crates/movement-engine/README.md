@@ -610,15 +610,15 @@ calls. The flow suspends:
   flow woken while its run's pause holds). A sink that cannot suspend lets
   the flow run on.
 - **at a `suspendAt` address**, once each. A sink that cannot suspend fails
-  the run (`MOVENG_RUNTIME`).
+  the run (`MOVENG_RUNTIME`). An address before a call (`… .c k`) is never
+  reached: this engine runs no calls.
 
 Whether the sink can suspend, or park a timer, is read off the input's
 `serves` (the methods the host serves, as the recorder lists them), as
 run.ts `canSuspend` reads the host object: a host that cannot is asked
 nothing, so its run makes the TypeScript engine's requests and no other.
 A `sleep` asks `clock.now` once its state is written and before its
-duration is read, and wakes at the answer plus the sleep. An address before a call (`… .c k`) is never
-  reached: this engine runs no calls.
+duration is read, and wakes at the answer plus the sleep.
 
 An operator's limit resume is an ordinary resume with `reenter`: the
 statement runs again, from the run's spend with the cap counted afresh
