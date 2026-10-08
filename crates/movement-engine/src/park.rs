@@ -62,7 +62,7 @@ pub struct ResumeInput {
 /// `{version: 1, address, bindingName, presenceBind?, scopeChain}`, as the
 /// JavaScript object the TypeScript writes: every key in its order (it
 /// crosses to the host on the eval wire).
-pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Js {
+pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Result<Js, Failure> {
     let mut state = vec![
         ("version", Js::Number(1.0)),
         ("address", Js::str(address)),
@@ -71,49 +71,49 @@ pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>,
     if presence.is_some() {
         state.push(("presenceBind", Js::Bool(true)));
     }
-    state.push(("scopeChain", scope_chain(run, scope)));
-    object_of(state)
+    state.push(("scopeChain", scope_chain(run, scope)?));
+    Ok(object_of(state))
 }
 
 /// `{version: 1, address, bindingName: null, suspended: true, journal: [],
 /// scopeChain}`, as `suspendFlow` writes it.
-pub(crate) fn suspended_state(run: &Run<'_>, address: &str, scope: &Rc<Scope>) -> Js {
-    object_of(vec![
+pub(crate) fn suspended_state(run: &Run<'_>, address: &str, scope: &Rc<Scope>) -> Result<Js, Failure> {
+    Ok(object_of(vec![
         ("version", Js::Number(1.0)),
         ("address", Js::str(address)),
         ("bindingName", Js::Null),
         ("suspended", Js::Bool(true)),
         ("journal", Js::array(Vec::new())),
-        ("scopeChain", scope_chain(run, scope)),
-    ])
+        ("scopeChain", scope_chain(run, scope)?),
+    ]))
 }
 
 /// The scopes root first, as one park writes them.
-fn scope_chain(run: &Run<'_>, scope: &Rc<Scope>) -> Js {
+fn scope_chain(run: &Run<'_>, scope: &Rc<Scope>) -> Result<Js, Failure> {
     // One table for the whole state: a node two scopes hold is written once.
     let mut park = Vec::new();
-    Js::array(scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect())
+    Ok(Js::array(scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect::<Result<_, _>>()?))
 }
 
 /// The nodes one park has written, numbered as first reached (`ParkWriter`).
 type ParkWriter = Vec<*const RefCell<Node>>;
 
-fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Js {
+fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Result<Js, Failure> {
     let mut bindings = JsObject::new();
     for (name, binding) in scope.own_bindings() {
-        bindings.set(name.clone(), serialize_binding(run, &name, &binding, park));
+        bindings.set(name.clone(), serialize_binding(run, &name, &binding, park)?);
     }
-    object_of(vec![("bindings", Js::object(bindings))])
+    Ok(object_of(vec![("bindings", Js::object(bindings))]))
 }
 
 /// `serializeBinding`, for the kinds this engine binds.
-fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut ParkWriter) -> Js {
+fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut ParkWriter) -> Result<Js, Failure> {
     let kind = |k: &str| ("kind", Js::str(k));
-    match binding {
+    Ok(match binding {
         Binding::Node(node) => {
             let address = Rc::as_ptr(node);
             if let Some(id) = park.iter().position(|p| *p == address) {
-                return object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))]);
+                return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))]));
             }
             // Numbered before its edges are walked: an edge back here is a
             // reference, not another lap.
@@ -122,7 +122,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             let node = node.borrow();
             let mut edges = JsObject::new();
             for (edge, landings) in &node.edges {
-                let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect();
+                let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
                 edges.set(edge.clone(), object_of(vec![kind("landed"), ("landings", Js::array(landings))]));
             }
             let mut provenance = JsObject::new();
@@ -161,13 +161,19 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         }
         // A landing is bound only in a block iteration's own scope, and
         // admission refuses every park and suspension inside a block, so no
-        // state this engine writes ever holds one.
-        Binding::Landed(_) => unreachable!("no park is written inside a block"),
+        // state this engine writes holds one. A guard that missed fails the
+        // run loudly, before anything is committed.
+        Binding::Landed(_) => {
+            return Err(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("a park inside a block reached the parker (the hop alias '{name}' is in scope); admission should have refused it"),
+            ));
+        }
         Binding::Positions(landings) => {
-            let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect();
+            let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
             object_of(vec![kind("positions"), ("landings", Js::array(landings))])
         }
-    }
+    })
 }
 
 /// `serializeInstanceIdentity`.
@@ -332,7 +338,7 @@ impl Run<'_> {
     /// `at`, or `None` from a sink that cannot suspend.
     async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Option<Stop>, Stop> {
         let address = at.encode();
-        let state = suspended_state(self, &address, scope);
+        let state = suspended_state(self, &address, scope).map_err(Stop::Thrown)?;
         let request = host::park::commit_suspension(self.segment(), &address, encode_plain(&state));
         let answer = self.ask(request).await.map_err(Stop::Thrown)?;
         if no_sink(answer.as_ref()) {
@@ -725,6 +731,63 @@ mod tests {
         assert_eq!(duration_ms("2d"), Some(172_800_000.0));
         assert_eq!(duration_ms("h"), None);
         assert_eq!(duration_ms("30"), None);
+    }
+
+    /// A landing in a scope a park writes is a guard that missed: the run
+    /// fails loudly, naming it, rather than trapping.
+    #[test]
+    fn a_park_that_reaches_a_landing_fails_the_run_loudly() {
+        let input: crate::run::SegmentInput = serde_json::from_value(serde_json::json!({
+            "source": "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}", "languageVersion": 3, "event": null,
+            "segmentId": "g1", "now": "2026-03-12T12:00:00.000Z",
+            "catalog": { "adapters": {}, "credentials": {}, "plugins": {} },
+        }))
+        .unwrap();
+        let ledger = crate::ledger::Ledger::new(&input.spend);
+        let host = crate::executor::Host::default();
+        let root = crate::program::parse(&input.source, 3).unwrap();
+        let checked = crate::program::join_check(root, &serde_json::json!({ "diagnostics": [], "stamps": [] }), 3).unwrap();
+        let run = Run {
+            host: &host,
+            input: &input,
+            ledger: &ledger,
+            event: Js::Undefined,
+            now_ms: 0.0,
+            catalog: movement_parser::catalog::types::CatalogSnapshot::load(input.catalog.get()).unwrap(),
+            checked,
+            import_originals: RefCell::default(),
+            source: RefCell::default(),
+            source_instance: RefCell::default(),
+            origins: RefCell::default(),
+            misses: RefCell::default(),
+            trace: crate::trace::FlowTrace::default(),
+            movement_name: RefCell::default(),
+            writes: RefCell::default(),
+            targets: RefCell::default(),
+            mutation_context: RefCell::new(Js::Undefined),
+            limit_paused: std::cell::Cell::new(false),
+            pending_suspensions: RefCell::default(),
+            cannot_suspend: std::cell::Cell::default(),
+            source_reads: RefCell::default(),
+            positions: RefCell::default(),
+        };
+        let read = Rc::new(crate::traverse::Read {
+            instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },
+            adapter_type: "graph".into(),
+            instance_name: "kg".into(),
+            schema: None,
+            start_surface_type: None,
+            incoming: false,
+            edge_properties: false,
+            streams: false,
+        });
+        let scope = Scope::root();
+        scope.declare("c", Binding::Landed(Rc::new(crate::bindings::Landed::new(Js::Undefined, None, read))));
+        for state in [parked_state(&run, "s0", None, &scope), suspended_state(&run, "s0", &scope)] {
+            let Err(Failure::Engine { message, .. }) = state else { panic!("a landing was written into a park") };
+            assert!(message.contains("a park inside a block reached the parker"), "{message}");
+            assert!(message.contains("'c'"), "{message}");
+        }
     }
 
     #[test]

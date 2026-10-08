@@ -642,8 +642,9 @@ fails); none produces a different answer.
   likely case — an event field the source's schema types as a date or a
   datetime (read by an expression, or written by a `...msg` spread as the
   checker's stamp names its fields) — is declined before the version warning
-  is traced and before the source is resolved, read off the catalog snapshot (a `describe` would be an
-  adapter call, after which nothing may decline).
+  is traced and before the source is resolved, read off the catalog
+  snapshot (a `describe` would be an adapter call, after which nothing may
+  decline).
 - A value held in a binding is shaped like an engine binding (an object
   whose `kind` names one, the TypeScript's `bindingOf`): reading its field,
   comparing it by `==`, or spreading it fails with MOVENG_UNSUPPORTED ("this
@@ -653,6 +654,9 @@ fails); none produces a different answer.
   `value[field] ?? null` finds the prototype's member.
 - A record compared by identity (`a == b` where either is binding-shaped):
   MOVENG_UNSUPPORTED. TypeScript compares two records by identity.
+- A hop's ORDER BY over more than 64 records whose keys mix numbers with
+  other kinds: MOVENG_UNSUPPORTED ("Spec the tail" below). TypeScript orders
+  them by V8's merge.
 
 None of the first four is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
@@ -793,14 +797,15 @@ The rule for what this engine reproduces of JavaScript:
   `ασʕ` in TypeScript. This is an accepted divergence, pinned by
   `stdlib::tests::case_mapping_follows_rusts_unicode_tables`, and is not
   handed back.
-- **One more may differ: a hop's ORDER BY over keys of mixed types, past
-  64 records.** The sort is V8's (crate::order_limit): binary insertion up
-  to 64 items, which reproduces V8 exactly for any comparator; past 64 this
-  engine merges the runs stably, which agrees with V8's TimSort for every
-  total order. Mixed text and number keys are not one (the comparator has
-  cycles), and there the two merges can place records differently. Ruled:
-  specified, not mirrored (the order_limit pin holds every set of 64 or
-  fewer, mixed included).
+- **One reading fails loudly: a hop's ORDER BY over keys that mix numbers
+  with other kinds, past 64 records.** The sort is V8's (crate::order_limit):
+  binary insertion up to 64 items, which reproduces V8 exactly for any
+  comparator; past 64 V8 merges its runs, which this engine reproduces for
+  every total order. Mixed number and text keys are not one (the comparator
+  has cycles), so there V8's merge alone decides where records land. Rather
+  than order them differently, the run fails with MOVENG_UNSUPPORTED naming
+  the ORDER BY and the record count. Ruled: no silent divergence (the
+  order_limit pin holds every set of 64 or fewer, mixed included).
 - **The specification lands as a language-version change.** A version
   conditional at the point of difference, and a checker diagnostic under the
   new version for any construct whose meaning changes. Saved movements keep

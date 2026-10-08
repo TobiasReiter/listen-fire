@@ -163,17 +163,41 @@ pub fn pushable_scalar(value: &Js) -> Option<Js> {
 
 /// `applyHopOrderLimit` over `count` items whose ORDER BY keys `keys` holds
 /// (read only when the hop orders): the items' indices, sorted and sliced.
-pub fn apply_hop_order_limit(count: usize, cardinality: Option<&Cardinality>, keys: Option<&[Js]>) -> Vec<usize> {
+pub fn apply_hop_order_limit(count: usize, cardinality: Option<&Cardinality>, keys: Option<&[Js]>) -> Result<Vec<usize>, MixedKeys> {
     let mut order: Vec<usize> = (0..count).collect();
-    let Some(cardinality) = cardinality else { return order };
+    let Some(cardinality) = cardinality else { return Ok(order) };
     if cardinality.order_by.is_some() {
         let keys = keys.expect("an ordered hop's keys are read before it is sorted");
+        if keys.len() > INSERTION_SORTED && mixed_kinds(keys) {
+            return Err(MixedKeys { count: keys.len() });
+        }
         order = sort_by_order_key(keys, cardinality.order_direction);
     }
     if let Some(limit) = cardinality.limit {
         order.truncate(slice_end(limit.0, order.len()));
     }
-    order
+    Ok(order)
+}
+
+/// The most items V8 sorts by binary insertion alone, which this engine
+/// reproduces for any comparator.
+const INSERTION_SORTED: usize = 64;
+
+/// An ORDER BY over more than 64 records whose keys mix numbers with other
+/// kinds: the comparator is no total order, V8's merge of its runs decides
+/// where records land, and this engine does not reproduce that merge. The run
+/// fails rather than order them differently (the language-version bump gives
+/// mixed keys one total order).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MixedKeys {
+    pub count: usize,
+}
+
+/// Whether the keys that are not empty mix numbers with other kinds (two
+/// numbers compare as numbers, anything else as text).
+fn mixed_kinds(keys: &[Js]) -> bool {
+    let present = || keys.iter().filter(|k| !k.is_nullish());
+    present().any(|k| matches!(k, Js::Number(_))) && present().any(|k| !matches!(k, Js::Number(_)))
 }
 
 /// `slice(0, limit)`'s end: the limit truncated toward zero, counted from
@@ -327,6 +351,21 @@ mod tests {
         let keys = [Js::Number(10.0), Js::Null, Js::Number(30.0), Js::Number(10.0), Js::Undefined, Js::Number(20.0)];
         assert_eq!(sort_by_order_key(&keys, None), [0, 3, 5, 2, 1, 4]);
         assert_eq!(sort_by_order_key(&keys, Some(OrderDirection::Desc)), [2, 5, 0, 3, 1, 4]);
+    }
+
+    #[test]
+    fn mixed_keys_past_64_records_are_refused_not_ordered() {
+        let cardinality = Cardinality {
+            mode: movement_parser::lowering::expression::CardinalityMode::All,
+            limit: None,
+            order_by: Some(Box::new(Expression::Property { property_type_id: "k".into() })),
+            order_direction: None,
+        };
+        let mixed = |n: usize| -> Vec<Js> { (0..n).map(|i| if i % 2 == 0 { Js::Number(i as f64) } else { Js::str(format!("{i}")) }).collect() };
+        assert!(apply_hop_order_limit(64, Some(&cardinality), Some(&mixed(64))).is_ok(), "64 or fewer: V8's insertion sort, reproduced");
+        assert_eq!(apply_hop_order_limit(65, Some(&cardinality), Some(&mixed(65))), Err(MixedKeys { count: 65 }));
+        let numbers: Vec<Js> = (0..100).map(|i| Js::Number(f64::from(100 - i))).chain([Js::Null]).collect();
+        assert!(apply_hop_order_limit(101, Some(&cardinality), Some(&numbers)).is_ok(), "one kind and empties: a total order");
     }
 
     #[test]

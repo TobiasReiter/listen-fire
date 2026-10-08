@@ -55,7 +55,7 @@ const graphSchema: InstanceSchema = {
     [MASTER]: { properties: { listName: 'text' }, edges: {} },
     [HANDOVER]: { properties: { listName: 'text' }, edges: {} },
     'list_entry "Portfolio"': { properties: { listName: 'text' }, edges: {} },
-    deal: { properties: { title: 'text' }, edges: {} },
+    deal: { properties: { title: 'text', stage: 'text' }, edges: {} },
     lead: { properties: { name: 'text', score: 'number' }, edges: {} },
     note: { properties: { text: 'text' }, edges: {} },
   },
@@ -115,7 +115,8 @@ interface GraphOptions {
   unstable?: boolean;
   /** What the adapter says it can traverse (`runtimeCapabilities().traversal`). */
   traversal?: { incoming?: boolean; edgeProperties?: boolean };
-  /** A record whose every field read fails, by its id. */
+  /** A record whose every field read fails, by its id (`d-1`), or one field
+   *  of it (`d-1/stage`). */
   failOn?: string;
   /** The inline properties of the edge each record is landed by, by its id. */
   edgeProperties?: Record<string, Record<string, unknown>>;
@@ -182,7 +183,7 @@ function fakeGraph(options: GraphOptions = {}) {
     async getFieldValue(input) {
       calls.push(['getFieldValue', input]);
       const id = positionRecordId(input.position);
-      if (id !== undefined && id === options.failOn) throw new Error(`graph: ${id} is unreadable`);
+      if (id !== undefined && (id === options.failOn || `${id}/${input.fieldId}` === options.failOn)) throw new Error(`graph: ${id} is unreadable`);
       if (id !== undefined) return byId.get(id)?.fields[input.fieldId] ?? null;
       return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId] ?? null;
     },
@@ -571,6 +572,15 @@ describe('traversal blocks in the Rust engine', () => {
       expect(String(runFailureCause(rust.error))).toContain('graph: d-3 is unreadable');
       expect(rust.error instanceof MovementRunFailed ? rust.error.partial.writes.length : -1).toBe(5);
     });
+
+    it('fails in an inner iteration’s body after the one before it wrote, as the TypeScript engine does', async () => {
+      // The inner WHERE reads `title`; only the body reads `stage`, so the
+      // failure is d-1's body, after d-2's iteration wrote.
+      const body = NESTED.replace('      t = d.`title`', '      t = d.`title`\n      s = d.`stage`');
+      const { rust } = await agree({ body, graph: graph({ failOn: 'd-1/stage' }) });
+      expect(String(runFailureCause(rust.error))).toContain('graph: d-1 is unreadable');
+      expect(rust.error instanceof MovementRunFailed ? rust.error.partial.writes.map((w) => w.writtenValues.text) : []).toEqual(['co Acme', 'Acme: Series A!']);
+    });
   });
 
   describe('bound blocks', () => {
@@ -605,6 +615,17 @@ describe('traversal blocks in the Rust engine', () => {
       });
       expect(written(rust)).toEqual(['0 0 true']);
     });
+  });
+
+  it('fails loudly on an ORDER BY over more than 64 records whose keys mix numbers and text, where the TypeScript engine orders them', async () => {
+    const rows: Row[] = Array.from({ length: 65 }, (_, i) => ({ id: `m-${i}`, fields: { name: `co ${i}`, revenue: i % 2 === 0 ? i : `${i}` } }));
+    const c: Case = { body: NOTE_PER_COMPANY('company ORDER BY `revenue`'), graph: { collections: { company: rows } } };
+    expect((await runOn('ts', c)).failed).toBe(false);
+    resetRustRunStats();
+    const rust = await runOn('rust', c);
+    expect(rustRunStats).toMatchObject({ ranWhole: 1, notAdmitted: {}, declined: {} });
+    expect(String(runFailureCause(rust.error))).toContain('ORDER BY over 65 records whose keys mix numbers with text or other kinds is not supported');
+    expect(rust.captured).toEqual([]);
   });
 
   describe('edge properties', () => {

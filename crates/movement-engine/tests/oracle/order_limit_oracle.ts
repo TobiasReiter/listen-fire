@@ -127,6 +127,8 @@ export async function writeOrderLimitOracle(rand: () => number): Promise<void> {
       });
     }
   }
+  // A generator that silently lost its brackets would pin nothing.
+  if (cases.length < 600) throw new Error(`order_limit.json: only ${cases.length} cases, fewer than the 600 the pin holds`);
   writeFileSync(path.join(__dirname, 'order_limit.json'), `[\n${cases.map((c) => JSON.stringify(c)).join(',\n')}\n]\n`);
   console.log(`order_limit.json: ${cases.length} cases`);
 }

@@ -78,8 +78,9 @@ export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
 const ROUTES: Record<string, Route> = {
   /** The TypeScript checker over the pinned source (program_check.ts):
    *  every diagnostic, the import link and the checker's AST stamps as
-   *  data, and the run's version warning for a deprecated pin. A program that fails its check ends the run with the check's
-   *  error, exactly as parseAndCheck throws it. */
+   *  data, and the run's version warning for a deprecated pin. A program
+   *  that fails its check ends the run with the check's error, exactly as
+   *  parseAndCheck throws it. */
   async 'check.program'(request, context) {
     const languageVersion = request.languageVersion;
     if (typeof languageVersion !== 'number') throw new RustShimError('check.program languageVersion must be a number');

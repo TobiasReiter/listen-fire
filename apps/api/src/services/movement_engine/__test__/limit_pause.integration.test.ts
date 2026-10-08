@@ -503,7 +503,13 @@ describe('a run paused at its cost cap (real DB)', () => {
     // The second write is judged and lands; the first is not done again.
     expect(mockJudgements).toBe(2);
     expect(target.updates).toEqual(['m-1', 'm-1']);
-    if (process.env.MOVEMENT_ENGINE === 'rust') expect(rustRunStats.shimFaults).toBe(0);
+    if (process.env.MOVEMENT_ENGINE === 'rust') {
+      // The resume ran whole in the Rust engine too.
+      expect(rustRunStats.ranWhole).toBe(2);
+      expect(rustRunStats.notAdmitted).toEqual({});
+      expect(rustRunStats.declined).toEqual({});
+      expect(rustRunStats.shimFaults).toBe(0);
+    }
     const after = await getAutomationsQb(['trigger_run'])
       .selectFrom('trigger_run')
       .where('id', '=', run.id)

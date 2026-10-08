@@ -443,7 +443,12 @@ impl Run<'_> {
             }
             None => None,
         };
-        let plan = order_limit::apply_hop_order_limit(kept.len(), cardinality, keys.as_deref());
+        let plan = order_limit::apply_hop_order_limit(kept.len(), cardinality, keys.as_deref()).map_err(|mixed| {
+            Failure::unsupported(
+                &format!("ORDER BY over {} records whose keys mix numbers with text or other kinds", mixed.count),
+                "past 64 records the order of mixed keys is the JavaScript sort's own; give the key one kind, or run this movement on the TypeScript engine",
+            )
+        })?;
         Ok(plan.into_iter().map(|i| kept[i].clone()).collect())
     }
 

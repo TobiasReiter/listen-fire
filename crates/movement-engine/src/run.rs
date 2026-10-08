@@ -1030,7 +1030,7 @@ impl Run<'_> {
             return Ok(());
         }
         let address = at.encode();
-        let state = crate::park::parked_state(self, &address, presence, scope);
+        let state = crate::park::parked_state(self, &address, presence, scope).map_err(Stop::Thrown)?;
         let ms = crate::park::duration_ms(&duration.raw).ok_or_else(|| {
             Stop::Thrown(Failure::Engine {
                 class: ErrorClass::Error,
@@ -1578,6 +1578,10 @@ mod tests {
                 json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "nodePosition", "fields": {}, "fieldProvenance": {}, "edges": { "e": { "kind": "deferred" } } })) }),
                 "resume_state_deferred_edge",
             ),
+            (
+                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "positions", "landings": [{ "kind": "handle" }] })) }),
+                "resume_state_returned_records",
+            ),
         ] {
             let input = json!({
                 "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
@@ -1593,6 +1597,7 @@ mod tests {
         let resumable = json!({
             "version": 1, "address": "s2.b0.s0", "bindingName": null,
             "scopeChain": [{ "bindings": {
+                "none": { "kind": "positions", "landings": [] },
                 "v": { "kind": "value", "value": { "a": 1 }, "provenance": { "origins": [{ "kind": "literal" }] } },
                 "e": { "kind": "event" },
                 "g": { "kind": "nodePosition", "fields": {}, "fieldProvenance": {}, "edges": { "owner": { "kind": "landed", "landings": [{ "kind": "nodeRef", "id": 0 }] } } },
