@@ -16,8 +16,8 @@ import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapt
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MovementTraceEntry } from '../expression';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
-import { positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
+import { makeStablePosition, positionData } from '../../translation_graph/types';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks, type TestHostOverrides } from '../test_host';
 import {
   MovementRunFailed,
   resumeMovement,
@@ -86,6 +86,10 @@ interface Store {
   describe?: (recordType: string) => SchemaTypeDescriptor | null;
   association?: 'made' | 'already' | 'unsupported';
   failCreate?: string;
+  /** The records any traversal lands on, by id. */
+  landings?: Record<string, Record<string, unknown>>;
+  /** The adapter links existing records. */
+  links?: boolean;
 }
 
 /** An adapter recording every call it gets, as `[method, input]`. */
@@ -117,7 +121,20 @@ function fake(adapterType: string, store: Store = {}) {
       calls.push(['getFieldValue', input.fieldId]);
       return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId];
     },
-    getRelated: async () => [],
+    async getRelated(read) {
+      calls.push(['getRelated', read.fieldId]);
+      return Object.entries(store.landings ?? {}).map(([recordId, data]) => ({
+        position: makeStablePosition({ adapterType, recordType: 'company', recordId, data }),
+      }));
+    },
+    ...(store.links === true
+      ? {
+          async linkRecords(input: Parameters<NonNullable<Adapter['linkRecords']>>[0]) {
+            calls.push(['linkRecords', input]);
+            return { created: true };
+          },
+        }
+      : {}),
     async createRecord(input) {
       calls.push(['createRecord', input]);
       if (store.failCreate !== undefined) throw new Error(store.failCreate);
@@ -163,6 +180,8 @@ interface Case {
 /** What one run did: its result or the error it failed with, and the world. */
 interface Outcome {
   failed: boolean;
+  /** Every `locks.acquire`'s names, in order. */
+  locks: string[][];
   result?: MovementRunResult;
   error?: unknown;
   email: Array<[string, unknown]>;
@@ -181,6 +200,7 @@ interface Outcome {
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
+  const locks: string[][] = [];
   const email = fake('email');
   const attio = fake('attio', c.attio);
   const resolved: unknown[] = [];
@@ -223,6 +243,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     ...(c.limitPaused === true ? { limitPaused: true } : {}),
     ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
     host: makeTestHost({
+        locks: recordingWriteLocks(locks),
       ...(c.dryRun === true ? { writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
       adapters: {
         resolve: (request) => {
@@ -239,6 +260,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     }),
   };
   const world = () => ({
+    locks,
     email: email.calls,
     attio: attio.calls,
     resolved,
@@ -595,6 +617,66 @@ describe('parks in the Rust engine', () => {
       // An empty list, written to a field the adapter does not describe as
       // many: the joined text of nothing.
       expect(resumed.rust.result?.writes[0]?.writtenValues).toEqual({ name: 'after', blob: '' });
+    }
+  });
+
+  describe('the park state of every binding a record verb or a bound block makes', () => {
+    const FOUND: ExternalRecordRef[] = [
+      { adapterType: 'attio', externalId: 'co-1', url: 'https://x/co-1', data: { name: 'Acme', stage: 'Seed' } },
+    ];
+    const cases: Array<[string, string[], Store]> = [
+      [
+        'a match',
+        ['  co = match crm-[:companies]-> { unique by (`name`), name: msg.`subject` }', '  await sleep(30s)', '  write co-[:notes]-> { body: co.`stage` }'],
+        { candidates: () => FOUND, current: { 'co-1': { domain: 'acme.dev' } } },
+      ],
+      [
+        'a link whose body matches',
+        [
+          '  co = write crm-[:companies]-> { name: msg.`subject` }',
+          '  found = link co -[:notes]-> { unique by (`body`), body: "hello" }',
+          '  await sleep(30s)',
+          '  write crm-[:companies]-> { name: "${found.externalId} ${found.`body`}" }',
+        ],
+        { candidates: (record) => (record.body === 'hello' ? [{ adapterType: 'attio', externalId: 'n-9', data: { body: 'hello' } }] : []), links: true },
+      ],
+      [
+        'a write with a target WHERE, bound',
+        [
+          '  co = write crm-[c:companies WHERE c.`stage` == "Seed"]-> { unique by (`name`), name: msg.`subject` }',
+          '  await sleep(30s)',
+          '  write co-[:notes]-> { body: co.`name` }',
+        ],
+        { candidates: () => FOUND, current: { 'co-1': { stage: 'Seed' } } },
+      ],
+      [
+        'a bound block returning values over three landings',
+        [
+          '  names = crm-[c:companies ORDER BY `name` DESC]-> {',
+          '    return "${c.`name`}/${msg.`subject`}"',
+          '  }',
+          '  await sleep(30s)',
+          '  write crm-[:companies]-> { name: "${AT(names, 0)}", tags: names }',
+        ],
+        { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' }, 'co-3': { name: 'Initech' } } },
+      ],
+    ];
+    for (const [what, lines, attio] of cases) {
+      it(`${what}: parked as one string on both engines, resumed by either from either`, async () => {
+        const source = ['movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
+        const event = webhook({ subject: 'Acme' });
+        const { ts, rust } = await agree({ source, event, attio });
+        expect(rust.result).toMatchObject({ parked: true });
+        const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
+        expect(text(rust)).toBe(text(ts));
+        const fromTs = JSON.parse(text(ts)) as ParkedScopeState;
+        const fromRust = JSON.parse(text(rust)) as ParkedScopeState;
+        for (const state of [fromTs, fromRust]) {
+          const resumed = await agree({ source, event, attio, resume: state });
+          expect(resumed.rust.result?.parked).toBeUndefined();
+          expect(JSON.stringify(resumed.rust.result)).toBe(JSON.stringify(resumed.ts.result));
+        }
+      });
     }
   });
 

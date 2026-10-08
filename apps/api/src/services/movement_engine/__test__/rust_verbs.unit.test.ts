@@ -16,7 +16,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } from '../../translation_graph/types';
 import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from '../run';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
-import { credentialIdsFor, makeTestHost, type TestHostOverrides } from '../test_host';
+import { credentialIdsFor, makeTestHost, recordingWriteLocks, type TestHostOverrides } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-0000000000c5' as TeamId;
 
@@ -76,6 +76,8 @@ interface Store {
   candidates?: Record<string, ExternalRecordRef[]>;
   /** The records a `companies` walk lands on. */
   companies?: Array<{ id: string; fields: Record<string, unknown> }>;
+  /** Mint numeric record ids, as some systems answer them. */
+  numeric?: boolean;
   /** Which edge methods the adapter has. */
   verbs?: Array<'linkRecords' | 'unlinkRecords' | 'deleteRecord'>;
 }
@@ -117,7 +119,9 @@ function fakeCrm(store: Store) {
     async createRecord(input) {
       calls.push(['createRecord', input]);
       minted += 1;
-      return { adapterType: 'attio', externalId: `attio-${minted}`, data: {} };
+      // A numeric id crosses as the number the adapter answered.
+      const externalId = store.numeric === true ? (100 + minted as unknown as string) : `attio-${minted}`;
+      return { adapterType: 'attio', externalId, data: {} };
     },
     async updateRecord(input) {
       calls.push(['updateRecord', input]);
@@ -187,6 +191,8 @@ interface Case {
 
 interface Outcome {
   failed: boolean;
+  /** Every `locks.acquire`'s names, in order. */
+  locks: string[][];
   result?: MovementRunResult;
   error?: unknown;
   crm: string;
@@ -199,13 +205,15 @@ interface Outcome {
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
+  const locks: string[][] = [];
   const crm = fakeCrm(c.crm ?? {});
   const email = fakeEmail();
   const resolved: unknown[] = [];
   const trace: unknown[] = [];
   const captured: CapturedWrite[] = [];
   const asked: unknown[] = [];
-  const world = () => ({ crm: JSON.stringify(crm.calls), resolved, trace, captured, asked });
+  const world = () => ({
+    locks, crm: JSON.stringify(crm.calls), resolved, trace, captured, asked });
   try {
     const result = await runMovement({
       source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`,
@@ -217,6 +225,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
       ...(c.dryRun === true ? { dryRun: true } : {}),
       host: makeTestHost({
+        locks: recordingWriteLocks(locks),
         ...(c.dryRun === true ? { writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
         adapters: {
           resolve: (request) => {
@@ -423,4 +432,33 @@ describe('writes and deletes off a traversed record', () => {
     const refused = await agree({ body, crm: { verbs: [] } });
     expect(String(runFailureCause(refused.rust.error))).toContain('cannot delete records (no deleteRecord capability)');
   });
+
+describe('lock names', () => {
+  // effect_locks.ts `part` is JSON.stringify of the id as the adapter
+  // answered it: a numeric id locks as `42`, not `"42"`, on both engines.
+  const flat = (o: Outcome) => o.locks.flat();
+
+  it('an update by a numeric id locks the record by the number', async () => {
+    const numeric = { adapterType: 'attio', externalId: 7 as unknown as string, data: { name: 'Example Labs' } };
+    const { rust } = await agree({
+      body: '  write crm-[:companies]-> { unique by (`name`), name: msg.`subject`, summary: "seen" }',
+      crm: { candidates: { company: [numeric] } },
+    });
+    expect(flat(rust)).toContain('record "attio" 7');
+  });
+
+  it('a delete, a link and an unlink of numeric ids lock by the numbers', async () => {
+    const { rust } = await agree({
+      body: [
+        '  p = write crm-[:people]-> { name: msg.`subject`, email: msg.`text` }',
+        '  co = write crm-[:companies]-> { name: msg.`subject` }',
+        '  link p -[:company]-> co',
+        '  unlink p -[:company]-> co',
+        '  delete co',
+      ].join('\n'),
+      crm: { numeric: true },
+    });
+    expect(flat(rust)).toEqual(['edge "attio" 101 "company" 102', 'edge "attio" 101 "company" 102', 'record "attio" 102']);
+  });
+});
 });

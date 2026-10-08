@@ -19,7 +19,7 @@ import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionDat
 import type { MovementTraceEntry } from '../expression';
 import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from '../run';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+import { credentialIdsFor, makeTestHost, recordingWriteLocks } from '../test_host';
 
 const TEAM_ID = '00000000-0000-0000-0000-0000000000c4' as TeamId;
 
@@ -257,6 +257,8 @@ interface Case {
 
 interface Outcome {
   failed: boolean;
+  /** Every `locks.acquire`'s names, in order. */
+  locks: string[][];
   result?: MovementRunResult;
   error?: unknown;
   graph: string;
@@ -270,6 +272,7 @@ interface Outcome {
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
+  const locks: string[][] = [];
   const graph = fakeGraph(c.graph);
   const email = fakeEmail();
   const resolved: unknown[] = [];
@@ -277,6 +280,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const appends: MovementTraceEntry[][] = [];
   const captured: CapturedWrite[] = [];
   const world = () => ({
+    locks,
     // As JSON text: the key order of every argument object is compared too.
     graph: JSON.stringify(graph.calls),
     email: JSON.stringify(email.calls),
@@ -297,6 +301,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       ...(c.costCapMicrodollars !== undefined ? { costCapMicrodollars: c.costCapMicrodollars } : {}),
       ...(c.suspendAt !== undefined ? { suspendAt: [...c.suspendAt] } : {}),
       host: makeTestHost({
+        locks: recordingWriteLocks(locks),
         writeSink: (w: CapturedWrite) => captured.push(w),
         adapters: {
           resolve: (request) => {

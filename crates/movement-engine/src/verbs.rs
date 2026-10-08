@@ -65,9 +65,9 @@ fn edge_lock_name(adapter_type: &str, from_id: &Js, edge: &str, to_id: &Js) -> S
     format!(
         "edge {} {} {} {}",
         js::json_quote(adapter_type),
-        js::json_quote(&from_id.to_js_string()),
+        unique::lock_part(from_id),
         js::json_quote(edge),
-        js::json_quote(&to_id.to_js_string())
+        unique::lock_part(to_id)
     )
 }
 
@@ -385,7 +385,7 @@ impl Run<'_> {
             ("externalId", external_id.clone()),
             ("mutationContext", self.mutation_context.borrow().clone()),
         ]);
-        let lock = unique::record_lock_name(&adapter.adapter_type, &external_id.to_js_string());
+        let lock = unique::record_lock_name(&adapter.adapter_type, &external_id);
         self.with_locks(vec![lock], async { self.call_adapter(&adapter.instance, "deleteRecord", args).await.map_err(thrown) }).await?;
         let mut record = JsObject::new();
         record.set("kind".into(), Js::str("delete"));

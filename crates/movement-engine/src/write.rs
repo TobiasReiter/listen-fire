@@ -754,7 +754,7 @@ impl Run<'_> {
     /// `applyUpdate`: the record held while its current values are read and
     /// merged into. `None` when the adapter reports it gone.
     async fn apply_update(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js]) -> Result<Option<Js>, Stop> {
-        let name = unique::record_lock_name(&target.adapter.adapter_type, &external_id.to_js_string());
+        let name = unique::record_lock_name(&target.adapter.adapter_type, external_id);
         self.with_locks(vec![name], self.merge_into_record(target, external_id, fields, parent_links)).await
     }
 

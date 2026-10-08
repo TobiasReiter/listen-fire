@@ -211,6 +211,24 @@ function renderIntoNowhere(): RenderFile {
   });
 }
 
+/** In-memory write locks that record the names of every acquire, in order:
+ *  what a test compares between two runs of one program. */
+export function recordingWriteLocks(acquired: string[][]): WriteLocks {
+  const inner = new InMemoryWriteLocks();
+  return {
+    holder(scope) {
+      const holder = inner.holder(scope);
+      return {
+        acquire: (names) => {
+          acquired.push([...names]);
+          return holder.acquire(names);
+        },
+        release: (names) => holder.release(names),
+      };
+    },
+  };
+}
+
 /** An in-memory park sink: timer and await parks and join counts are recorded
  *  for the test to read; nothing is woken. A park's `state` is what the engine
  *  serialized, a `ParkedScopeState`. */

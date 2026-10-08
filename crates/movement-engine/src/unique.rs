@@ -373,8 +373,18 @@ fn foldable(value: &Js) -> bool {
 }
 
 /// `recordLock`'s name.
-pub fn record_lock_name(adapter_type: &str, external_id: &str) -> String {
-    format!("record {} {}", js::json_quote(adapter_type), js::json_quote(external_id))
+pub fn record_lock_name(adapter_type: &str, external_id: &Js) -> String {
+    format!("record {} {}", js::json_quote(adapter_type), lock_part(external_id))
+}
+
+/// effect_locks.ts `part`: `JSON.stringify` of the value as the adapter
+/// answered it — a numeric id is `42`, not `"42"` — and, inside the
+/// template literal, `undefined` for an absent one.
+pub fn lock_part(value: &Js) -> String {
+    match value {
+        Js::Undefined => "undefined".into(),
+        other => js::json_stringify(other, 0),
+    }
 }
 
 #[cfg(test)]
@@ -421,6 +431,9 @@ mod tests {
         let named = object(&[("name", Js::str("Acme"))]);
         let blank = object(&[("name", Js::str("  "))]);
         assert_eq!(identity_lock_names("attio", "company", &constraints, &named, &named, 2), [r#"identity "attio" "company""#]);
+        // A record's lock names its id as the adapter answered it.
+        assert_eq!(record_lock_name("attio", &Js::Number(42.0)), r#"record "attio" 42"#);
+        assert_eq!(record_lock_name("attio", &Js::str("42")), r#"record "attio" "42""#);
         assert!(identity_lock_names("attio", "company", &constraints, &blank, &blank, 2).is_empty());
         assert!(identity_lock_names("attio", "company", &merge(&Js::Undefined, vec![]), &named, &named, 2).is_empty());
         let listed = object(&[("name", Js::array(vec![Js::str("a")]))]);
