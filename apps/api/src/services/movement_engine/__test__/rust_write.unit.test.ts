@@ -25,10 +25,9 @@ import {
   type ResumeMovementInput,
   type RunMovementInput,
 } from '../run';
-import { rustCanResume, rustCanRun } from '../rust_engine';
+import { rustRunRefusal } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 import type { ParkedScopeState } from '../serialize';
-import { parsePinned } from '../program_check';
 
 const TEAM_ID = '00000000-0000-0000-0000-0000000000b2' as TeamId;
 
@@ -227,7 +226,7 @@ async function agree(c: Case) {
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, declined: {} });
+  expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
   expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   const world = ({ failed: _failed, result: _result, error: _error, ...rest }: Outcome) => rest;
   expect(sameIds(world(rust))).toEqual(sameIds(world(ts)));
@@ -451,15 +450,23 @@ describe('writes in the Rust engine', () => {
     expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
-  it('declines nothing it admitted: a date-typed event field is declined before the source is resolved', async () => {
-    resetRustRunStats();
-    const before = await runOn('rust', {
-      source: ['movement m(msg: <inbox-[:message]->>) {', '  write crm-[:companies]-> { name: msg.`when` }', '}'].join('\n'),
-      event: webhook({ when: '2026-01-01' }),
-    });
-    expect(rustRunStats.declined).toEqual({ "the event's `when` is a date, which an adapter may answer as a Date": 1 });
-    // It ran on the TypeScript engine instead, and the source was resolved once.
-    expect(before.resolved).toHaveLength(2);
+  it('declines, after its check and before it resolves the source, what the check\'s stamps say it does not run', async () => {
+    for (const [body, reason] of [
+      // A date-typed event field (read by name here; by a spread's stamp in
+      // the crate's own tests).
+      ['  write crm-[:companies]-> { name: msg.`when` }', 'event_field_dated'],
+      // A graph copy whose plan walks edges is stamped only on a graph with a
+      // shape, which admission refuses: the crate's own tests decline one.
+    ] as const) {
+      resetRustRunStats();
+      const run = await runOn('rust', { source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, event: webhook({ when: '2026-01-01' }) });
+      expect([body, rustRunStats.declined]).toEqual([body, { [reason]: 1 }]);
+      expect(rustRunStats.notAdmitted).toEqual({});
+      // Nothing but the check was asked of the host...
+      expect(rustRunStats.hostCalls).toEqual({ 'check.program': 1 });
+      // ...and the TypeScript engine ran it instead: the source resolved once.
+      expect(run.resolved.filter((r) => (r as { role?: string }).role === 'source')).toHaveLength(1);
+    }
   });
 });
 
@@ -497,8 +504,6 @@ describe('parks in the Rust engine', () => {
     };
     const [fromTs, fromRust] = [await parkedBy('ts'), await parkedBy('rust')];
     expect(fromRust).toEqual(fromTs);
-    const parsed = parsePinned({ source: PRELUDE + PARKS });
-    expect(rustCanResume(parsed, { state: fromTs })).toBe(true);
     // A state parked by the TypeScript engine, resumed by the Rust one, and
     // the reverse: each resume agrees with the TypeScript engine's own.
     for (const state of [fromTs, fromRust]) {
@@ -534,18 +539,21 @@ describe('parks in the Rust engine', () => {
     expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}');
   });
 
-  it('leaves to the TypeScript engine a state it does not resume', () => {
-    const parsed = parsePinned({ source: PRELUDE + PARKS });
+  it('leaves to the TypeScript engine a state it does not resume, refused before it asks its host anything', async () => {
+    const event = webhook({ subject: 'Acme' });
     const state: ParkedScopeState = { version: 1, address: 's2.b0.s0', bindingName: null, scopeChain: [], journal: [] };
-    expect(rustCanResume(parsed, { state })).toBe(false);
-    expect(rustCanResume(parsed, { state: { ...state, journal: undefined, address: 's1.i0.s0' } })).toBe(false);
-    expect(rustCanRun(parsed, {})).toBe(true);
-    // The judge is a priced call: with a cost cap, a `unique by` write stays
-    // on the TypeScript engine, which can suspend at the cap.
-    const identity = parsePinned({
-      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { unique by (\`name\`) name: "a" }\n}`,
-    });
-    expect(rustCanRun(identity, {})).toBe(true);
-    expect(rustCanRun(identity, { costCapMicrodollars: 1_000 })).toBe(false);
+    for (const [resume, reason] of [
+      [state, 'resume_state_journal'],
+      [{ ...state, journal: undefined, address: 's1.i0.s0' }, 'resume_state_address'],
+    ] as const) {
+      resetRustRunStats();
+      await runOn('rust', { source: PARKS, event, resume });
+      expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
+      expect(rustRunStats.hostCalls).toEqual({});
+    }
+    // The judge is a priced call: with a cost cap, a run stays on the
+    // TypeScript engine, which can suspend at the cap.
+    expect(rustRunRefusal({})).toBeUndefined();
+    expect(rustRunRefusal({ costCapMicrodollars: 1_000 })).toBe('cost_cap_present');
   });
 });

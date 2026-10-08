@@ -34,6 +34,11 @@ function isWholeCorpus(globalConfig) {
   );
 }
 
+/** `counts` largest first, for reading. */
+function sorted(counts) {
+  return Object.fromEntries(Object.entries(counts).sort(([, a], [, b]) => b - a));
+}
+
 /** Which corpus this run is, from its test match. */
 function corpusOf(projectConfig) {
   const match = (projectConfig?.testMatch ?? []).join(' ');
@@ -46,7 +51,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
-  const runs = { routed: 0, ranWhole: 0, shimFaults: 0, declined: {}, hostCalls: {} };
+  const runs = { routed: 0, ranWhole: 0, shimFaults: 0, notAdmitted: {}, declined: {}, hostCalls: {} };
   const byFile = {};
   const add = (into, from) => {
     for (const [key, count] of Object.entries(from ?? {})) into[key] = (into[key] ?? 0) + count;
@@ -62,6 +67,7 @@ async function globalTeardown(globalConfig, projectConfig) {
       runs.ranWhole += stats.runs?.ranWhole ?? 0;
       runs.shimFaults += stats.runs?.shimFaults ?? 0;
       if ((stats.runs?.ranWhole ?? 0) > 0 && stats.file) byFile[stats.file] = (byFile[stats.file] ?? 0) + stats.runs.ranWhole;
+      add(runs.notAdmitted, stats.runs?.notAdmitted);
       add(runs.declined, stats.runs?.declined);
       add(runs.hostCalls, stats.runs?.hostCalls);
     }
@@ -69,6 +75,9 @@ async function globalTeardown(globalConfig, projectConfig) {
   rmSync(dir, { recursive: true, force: true });
   console.log(`\nRust evaluator: ${JSON.stringify(total)}`);
   console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, ranWhole: runs.ranWhole, shimFaults: runs.shimFaults, declined: runs.declined, hostCalls: runs.hostCalls })}`);
+  // Why every run that did not run in Rust ran on the TypeScript engine: the
+  // shim's input checks and the engine's own admission, by reason.
+  console.log(`Rust runs not admitted: ${JSON.stringify(sorted(runs.notAdmitted))}`);
   // Which files' runs the Rust engine ran whole, for a report.
   if (process.env.MOVEMENT_RUST_RUNS_BY_FILE === '1') console.log(`Rust runs by file: ${JSON.stringify(byFile)}`);
   if (total.answered === 0) {

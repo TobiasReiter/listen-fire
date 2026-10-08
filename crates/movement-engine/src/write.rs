@@ -267,29 +267,15 @@ impl Run<'_> {
         })
     }
 
-    /// `singleWriteEdge`: the one edge step a linked path walks, and whether
-    /// it carries a WHERE.
+    /// `singleWriteEdge`: the one edge step a linked path walks.
     fn single_edge(&self, path: &ast::PathHead, detail: &str) -> Result<(String, bool), Stop> {
-        let root = match &path.root {
-            Some(PathRoot::Name { name }) => spell_name(name),
-            Some(PathRoot::Expression { .. }) => "__movement_expression_root__".into(),
-            None => String::new(),
-        };
-        let probe = format!("{root}{}.`__movement_engine_probe__`", path.hops_raw);
-        let invalid = |e: String| thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}")));
-        let tree = movement_parser::expr::parse_expression(&probe).map_err(|e| invalid(format!("{e:?}")))?;
-        let expr = movement_parser::lowering::lower_expression(&tree, &probe).map_err(|e| invalid(format!("{e:?}")))?;
-        match &expr {
-            Expression::Traverse { steps, .. } if steps.len() == 1 => match &steps[0] {
-                TraversalStep::Edge(step) => {
-                    if step.expression_filter.is_some() {
-                        return Err(thrown(Failure::unsupported("a WHERE on a write's target", "the Rust engine runs unnarrowed targets")));
-                    }
-                    Ok((step.edge_type_id.clone(), false))
-                }
-                _ => Err(thrown(Failure::unsupported("multi-hop linked writes", detail))),
-            },
-            _ => Err(thrown(Failure::unsupported("multi-hop linked writes", detail))),
+        match edge_shape(path) {
+            EdgeShape::One { edge } => Ok((edge, false)),
+            EdgeShape::Narrowed => Err(thrown(Failure::unsupported("a WHERE on a write's target", "the Rust engine runs unnarrowed targets"))),
+            EdgeShape::MultiHop => Err(thrown(Failure::unsupported("multi-hop linked writes", detail))),
+            EdgeShape::Invalid(e) => {
+                Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"))))
+            }
         }
     }
 
@@ -1163,6 +1149,40 @@ pub fn describe_binding(binding: &Binding) -> &'static str {
 }
 
 /// `spellName`: bare when an ASCII identifier, backticked otherwise.
+/// What a linked write's path walks: one edge (with or without a WHERE),
+/// more, or nothing a probe reads. Admission (crate::admit) and the write
+/// read the same probe.
+pub(crate) enum EdgeShape {
+    One { edge: String },
+    Narrowed,
+    MultiHop,
+    Invalid(String),
+}
+
+pub(crate) fn edge_shape(path: &ast::PathHead) -> EdgeShape {
+    let root = match &path.root {
+        Some(PathRoot::Name { name }) => spell_name(name),
+        Some(PathRoot::Expression { .. }) => "__movement_expression_root__".into(),
+        None => String::new(),
+    };
+    let probe = format!("{root}{}.`__movement_engine_probe__`", path.hops_raw);
+    let expr = match movement_parser::expr::parse_expression(&probe) {
+        Ok(tree) => match movement_parser::lowering::lower_expression(&tree, &probe) {
+            Ok(expr) => expr,
+            Err(e) => return EdgeShape::Invalid(format!("{e:?}")),
+        },
+        Err(e) => return EdgeShape::Invalid(format!("{e:?}")),
+    };
+    match &expr {
+        Expression::Traverse { steps, .. } if steps.len() == 1 => match &steps[0] {
+            TraversalStep::Edge(step) if step.expression_filter.is_some() => EdgeShape::Narrowed,
+            TraversalStep::Edge(step) => EdgeShape::One { edge: step.edge_type_id.clone() },
+            _ => EdgeShape::MultiHop,
+        },
+        _ => EdgeShape::MultiHop,
+    }
+}
+
 pub fn spell_name(name: &str) -> String {
     let mut chars = name.chars();
     let ident = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');

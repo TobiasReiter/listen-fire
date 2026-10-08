@@ -25,24 +25,39 @@ export function resetRustEvalStats(): void {
 }
 
 /**
- * Whole runs the shim sent to the Rust engine (`routed`), of those the ones
- * it ran to their end (`ranWhole`) and declined before touching an adapter,
- * by its reason (`declined`, which
- * then ran on the TypeScript engine), and the host calls segments made, by
- * `family.method` (`hostCalls`).
+ * What happened to each whole run under `MOVEMENT_ENGINE=rust`, by where it
+ * was decided:
+ *
+ * - `notAdmitted`: never run in Rust, by reason — refused by the shim's input
+ *   checks before a segment opened (a limit pause, a cost cap, an input that
+ *   cannot cross the eval wire), or by the engine's own admission on its own
+ *   parse before it asked its host for anything (crates/movement-engine's
+ *   README lists every reason);
+ * - `routed`: segments the Rust engine started (its admission refusals
+ *   among them);
+ * - `ranWhole`: routed runs it ran to their end (a run's own failure
+ *   included);
+ * - `declined`: routed runs it admitted and then declined, after the check
+ *   and before anything the host can see, by reason;
+ * - `shimFaults`: routed runs that ended in a fault of the shim's own
+ *   (`RustShimError`);
+ * - `hostCalls`: the host calls segments made, by `family.method`.
+ *
+ * Every run that `notAdmitted` or `declined` counts ran on the TypeScript
+ * engine instead.
  */
 export const rustRunStats: {
   routed: number;
-  /** Routed runs the Rust engine ran to their end (not declined). */
   ranWhole: number;
-  /** Routed runs that ended in a fault of the shim's own (`RustShimError`). */
   shimFaults: number;
+  notAdmitted: Record<string, number>;
   declined: Record<string, number>;
   hostCalls: Record<string, number>;
 } = {
   routed: 0,
   ranWhole: 0,
   shimFaults: 0,
+  notAdmitted: {},
   declined: {},
   hostCalls: {},
 };
@@ -51,6 +66,7 @@ export function resetRustRunStats(): void {
   rustRunStats.routed = 0;
   rustRunStats.ranWhole = 0;
   rustRunStats.shimFaults = 0;
+  rustRunStats.notAdmitted = {};
   rustRunStats.declined = {};
   rustRunStats.hostCalls = {};
 }

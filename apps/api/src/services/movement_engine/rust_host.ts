@@ -17,7 +17,7 @@
 // handed exactly the JavaScript values (key order, `undefined`) the TypeScript
 // engine hands it in process, and an adapter's result comes back the same way.
 
-import { applyStdlib, stdlibFunctionById, type CatalogSnapshot, type Program } from 'movement-lang';
+import { applyStdlib, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
@@ -51,9 +51,6 @@ export interface RouteContext {
   context: RunContext;
   catalog: CatalogSnapshot;
   hostErrors: unknown[];
-  /** The program the run host parsed, for `check.program` to check as it
-   *  is. Checked at most once: the checker stamps the tree it checks. */
-  parsed?: { source: string; languageVersion: number; program: Program };
 }
 
 type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
@@ -85,25 +82,14 @@ const ROUTES: Record<string, Route> = {
       throw new RustShimError('check.program upgradingFrom must be a number');
     }
     const source = string(request.source, 'check.program source');
-    // The run host's own parse of this very source, when it has one: used
-    // once, then forgotten, since checking stamps it.
-    const reuse = context.parsed;
-    const parsed =
-      reuse !== undefined && reuse.source === source && reuse.languageVersion === languageVersion && upgradingFrom === undefined
-        ? reuse.program
-        : undefined;
-    if (parsed !== undefined) context.parsed = undefined;
     let checked;
     try {
-      checked = checkPinned(
-        {
-          source,
-          catalog: context.catalog,
-          languageVersion,
-          ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
-        },
-        parsed,
-      );
+      checked = checkPinned({
+        source,
+        catalog: context.catalog,
+        languageVersion,
+        ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
+      });
     } catch (error) {
       throw new RunAborted(error);
     }

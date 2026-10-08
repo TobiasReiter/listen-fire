@@ -15,8 +15,9 @@
 //!   enclosing body finished from the statement after its container.
 //!
 //! A state holding anything else (frames, a journal, a suspension, an
-//! `until`, a binding of another kind) is not this engine's to resume: the
-//! shim's `rustCanResume` leaves it to the TypeScript engine.
+//! `until`, a binding of another kind) is not this engine's to resume:
+//! `resume_refusal` refuses it, before the run asks its host for anything,
+//! and the shim resumes it on the TypeScript engine.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -157,6 +158,77 @@ fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
     object_of(provenance)
 }
 
+/// Why this engine does not resume `state` (on the eval wire), or `None`
+/// when it does: a timer park's state of version 1 — no frames, no journal,
+/// no suspension, no `until` — whose address steps only into `if` arms, and
+/// whose scopes hold only the binding kinds this engine binds, with no
+/// extraction among their origins and no record held in a value.
+pub fn resume_refusal(state: &Json) -> Option<String> {
+    let Ok(state) = crate::env::decode(state) else { return Some("resume_state_does_not_read".into()) };
+    if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == 1.0) {
+        return Some("resume_state_version".into());
+    }
+    for (key, reason) in [
+        ("frames", "resume_state_frames"),
+        ("journal", "resume_state_journal"),
+        ("suspended", "resume_state_suspended"),
+        ("until", "resume_state_until"),
+    ] {
+        if at(&state, key).is_some() {
+            return Some(reason.into());
+        }
+    }
+    if !text(at(&state, "address")).is_some_and(steps_only_into_if_arms) {
+        return Some("resume_state_address".into());
+    }
+    items(at(&state, "scopeChain"))
+        .iter()
+        .flat_map(|scope| pairs(at(scope, "bindings")))
+        .find_map(|(_, descriptor)| descriptor_refusal(descriptor))
+}
+
+/// `/^s\d+(\.b\d+\.s\d+)*$/`.
+fn steps_only_into_if_arms(address: &str) -> bool {
+    let steps: Vec<&str> = address.split('.').collect();
+    steps.len() % 2 == 1
+        && steps.iter().enumerate().all(|(i, step)| {
+            let kind = if i % 2 == 0 { 's' } else { 'b' };
+            step.strip_prefix(kind).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+fn descriptor_refusal(descriptor: &Js) -> Option<String> {
+    let plain = |provenance: Option<&Js>| {
+        let Some(provenance) = provenance else { return true };
+        items(at(provenance, "origins")).iter().chain(at(provenance, "direct")).all(|o| text(at(o, "kind")) != Some("extraction"))
+    };
+    match text(at(descriptor, "kind")) {
+        Some("event" | "instance" | "opaque" | "movement" | "handle" | "nodeRef") => None,
+        Some("value") => {
+            if !plain(at(descriptor, "provenance")) {
+                return Some("resume_state_extraction_origin".into());
+            }
+            let value = at(descriptor, "value").unwrap_or(&Js::Undefined);
+            crate::eval::holds_binding(value, true).then(|| "resume_state_value_holds_record".into())
+        }
+        Some("nodePosition") => {
+            if !pairs(at(descriptor, "fieldProvenance")).iter().all(|(_, p)| plain(Some(p))) {
+                return Some("resume_state_extraction_origin".into());
+            }
+            for (_, edge) in pairs(at(descriptor, "edges")) {
+                if text(at(edge, "kind")) != Some("landed") || at(edge, "landing").is_some() || at(edge, "landingShape").is_some() {
+                    return Some("resume_state_deferred_edge".into());
+                }
+                if let Some(reason) = items(at(edge, "landings")).iter().find_map(descriptor_refusal) {
+                    return Some(reason);
+                }
+            }
+            None
+        }
+        other => Some(format!("resume_state_kind:{}", other.unwrap_or("undefined"))),
+    }
+}
+
 // ── Resume ──
 
 impl Run<'_> {
@@ -201,8 +273,8 @@ impl Run<'_> {
         while i + 1 < address.len() {
             let (kind, index) = address[i];
             let (descent, branch) = address[i + 1];
-            // The shim resumes no other address (`rustCanResume`), and runs no
-            // other container (`rustCanRun`).
+            // Admission resumes no other address (`resume_refusal`), and runs
+            // no other container (crate::admit).
             if kind != 's' || descent != 'b' {
                 return Err(malformed(&format!("step {} is '{descent}', which this engine does not descend", i + 1)));
             }

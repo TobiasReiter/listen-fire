@@ -493,7 +493,7 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
 
 /// Whether `value` is, or (for a whole-value argument) holds anywhere, a
 /// dict the TypeScript reads as a record.
-fn holds_binding(value: &Js, deep: bool) -> bool {
+pub(crate) fn holds_binding(value: &Js, deep: bool) -> bool {
     if stdlib::is_binding_shaped(value) {
         return true;
     }
@@ -507,7 +507,8 @@ fn holds_binding(value: &Js, deep: bool) -> bool {
     }
 }
 
-fn kind_of(expr: &Expression) -> String {
+/// The lowered expression's own `type`.
+pub(crate) fn kind_of(expr: &Expression) -> String {
     serde_json::to_value(expr)
         .ok()
         .and_then(|json| json.get("type").and_then(|t| t.as_str()).map(String::from))

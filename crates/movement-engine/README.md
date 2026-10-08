@@ -10,7 +10,8 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 
 - **an expression** over value bindings, which the TypeScript evaluator hands
   to `eval_expression` (slice 1, "The evaluator" below);
-- **a whole run** of a program the shim's `rustCanRun` admits: bindings, `if`
+- **a whole run** of a program it admits on its own parse ("Admission"
+  below): bindings, `if`
   and `return` over reads of the event and of values (slice 2a), writes with
   identity (`unique by`) and the nodes a run builds (slice 2b), and `sleep`,
   parked and resumed in the TypeScript engine's own state (slice 2b) — "The
@@ -25,6 +26,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight |
 | `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `park.sink`, `control.cancel`, `locks`, `trace`), plus the engine's own (`check`, `builtins`); every host request names the segment |
 | `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the charges handed back with `done` |
+| `admit` | admission: the allow-list walk over this engine's own parse, before the check; a refusal's stable reason (below) |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
@@ -71,6 +73,7 @@ Measured 2026-10-07 (gzip -9):
 | slice 2b, fix round 1 | 1,978,540 | 555,330 |
 | the chunk 4A host contract (segments, the ledger, the clock) | 1,994,270 | 559,928 |
 | the probe entries test-only, the dead value model removed | 1,987,389 | 557,438 |
+| admission on the engine's own parse (chunk 5B) | 2,018,914 | 565,647 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -192,6 +195,136 @@ not admitted, admitted, answered, fallback by reason). Under
 `MOVEMENT_ENGINE=rust` the conformance runs print the totals and fail when Rust
 answered nothing.
 
+## Admission
+
+Whether this engine runs a program whole is decided in three places, in
+this order, and the program is parsed once, here:
+
+1. **The shim's input checks** (rust_engine.ts `rustRunRefusal`,
+   `rustResumeRefusal`), on what the run is handed, before a segment opens.
+2. **This engine's admission** (`admit.rs`, and `park::resume_refusal` for a
+   resume), on its own parse, before the catalog loads, before
+   `check.program`, before any request: a refused run costs one parse and
+   one walk, and no host call (`rustRunStats.hostCalls` stays `{}`).
+3. **The stamp declines** (`Run::stamp_decline`), after the check and
+   before anything the host can see (the version warning's trace entry
+   included): what only the checker's stamps say.
+
+Either way the shim runs the program on the TypeScript engine.
+
+### The reasons
+
+Each is a stable snake_case string: the one log line per run names it, and
+`rustRunStats` counts it (`notAdmitted` for the first two places,
+`declined` for the third).
+
+**The shim's input checks** (`notAdmitted`):
+
+| reason | the input |
+|---|---|
+| `limit_paused` | a run entered while its limit pause holds (`limitPaused`) |
+| `suspend_at` | a run that must suspend at an address (`suspendAt`) |
+| `cost_cap_present` | a run with a cost cap: the judge is a priced call, and a run that meets its cap must suspend, which this engine cannot yet |
+| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a `Date`, a class instance, a lone surrogate) |
+| `resume_answer` | a resume that answers into its leaf (an ask) |
+| `resume_defers_race_settlement` | a resume that defers a race's settlement |
+
+**Admission: the file** (`notAdmitted`):
+
+| reason | the construct |
+|---|---|
+| `source_does_not_parse` | the source does not parse here (the TypeScript engine throws the parse error) |
+| `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters` and `credentials` (`import_from_plugins`) |
+| `file_assignment` | a file-level binding that is not an instance construction |
+| `file_call` | a file-level construction spelled with a movement's name (a call) |
+| `file_statement:<kind>` | any other file-level statement, by the AST's `kind` (`shape` for `node <Name> { … }`, `type`, `write`, …) |
+| `movement_value_param` | a movement taking a value (`n: <number[]>`) |
+
+**Admission: a body** (`notAdmitted`; every movement in the file is walked):
+
+| reason | the construct |
+|---|---|
+| `name_shadowed` | a body binds a name the movement's parameters or the file bind |
+| `name_rebound` | a body binds one name as two kinds (a value and a handle, …) |
+| `statement:<kind>` | a statement other than a binding, `write`, `if`, `await sleep(…)` and `return` (`block`, `link`, `unlink`, `delete`, `match`, `call`, `combinator`, `collection`, `error`, `refresh`) |
+| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `block`, `callback`, `match`, `link`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node` and `write` |
+| `await_not_sleep` | an `await` of anything but `sleep(…)` |
+| `movement_call` | a construction in a body spelled with a movement's name |
+| `function_call` | a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 |
+| `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read |
+| `write_bind` | a write with `bind` |
+| `write_tuple` | a tuple write |
+| `write_position_not_handle` | `write x { … }` where `x` is not a write's handle |
+| `write_root_expression` | a linked write rooted at an expression |
+| `write_root_not_held` | a linked write rooted at a name that is not an instance, a handle or the event |
+| `write_target_where` | a WHERE on a write's target edge |
+| `write_multi_hop` | a linked write that walks more (or less) than one edge |
+| `unique_by_without_key` | a `unique by` clause with no key (no bare field, parent or `field == value`) |
+| `unique_by_reads_beyond_candidate` | a `unique by` conjunct that is not a pure predicate over the candidate |
+| `write_spread_source` | a write spread of a name that is not a value, a handle, a node or the event |
+| `graph_shape` | `graph<Shape> { … }` |
+| `node_spread` | a spread in a `node { … }` literal |
+| `node_spread_source` | a graph spread of a name that is not a value, a handle or a node |
+| `node_event_entry` | a node entry holding the event itself |
+| `node_declared_entry` | a declared edge entry (`kids: <T>`) |
+| `node_traversal_entry` | a traversal entry |
+| `is_test` | an `IS` condition |
+| `condition_does_not_lower`, `expression_does_not_lower` | a slot that does not lower (the checker's miss) |
+| `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance) |
+| `traversal_root` | a field read rooted at a name that is not the event, a value, a handle or a node |
+| `traversal_steps` | a field read that walks an edge (`msg-[:replies]->.x`) |
+| `traversal_terminal` | a walk ending in anything but a field |
+| `static_number` | a numeric literal JSON cannot carry (`Infinity`, `-0`) |
+| `proto_key` | a `__proto__` key written in an object literal |
+| `within_compare` | `WITHIN` |
+| `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, …) |
+| `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `aggregate`, `meta`, `exists`, `resource_traverse`, `kg_value`, …) |
+
+**Admission: a parked state** (`notAdmitted`; `park::resume_refusal`):
+
+| reason | the state |
+|---|---|
+| `resume_state_does_not_read` | it does not read off the wire |
+| `resume_state_version` | a version other than 1 |
+| `resume_state_frames`, `resume_state_journal`, `resume_state_suspended`, `resume_state_until` | frames, a journal, a suspension, an `until` |
+| `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) |
+| `resume_state_kind:<kind>` | a binding of a kind this engine does not bind (`extraction`, `shape`, …) |
+| `resume_state_extraction_origin` | an extraction among a binding's origins |
+| `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) |
+| `resume_state_deferred_edge` | a node's edge that is not landed, or names a landing |
+
+**After the check** (`declined`):
+
+| reason | what the stamps say |
+|---|---|
+| `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` |
+| `graph_copy_walks_edges` | a graph's record spread whose copy plan walks the record's edges (the checker stamps one only on a shaped graph, which admission refuses: a guard) |
+| `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read (a shim fault in all but name) |
+
+### What admission cannot decide
+
+These depend on what a value holds, not on what the program says, and stay
+mid-run failures ("Errors a run can meet mid-run" below): a `__proto__` key
+spread in from a value, a record compared by identity, a binding-shaped
+dict read or spread, a field that is `Object.prototype`'s. Two mid-run
+MOVENG_UNSUPPORTED errors are the TypeScript engine's own, mirrored, and
+are not refusals: a movement parameter typed against something that is not
+an instance, and a trigger type other than webhook, poll, snapshot and
+mutation — the TypeScript engine throws the same.
+
+### The evidence
+
+- **One log line per run**, at the decision point, at info:
+  `movement engine: engine=rust|ts run=<id> reason=<reason|admitted>`
+  (`admitted` for a run this engine ran, to its end or its own failure;
+  `shim_fault` for one the shim faulted; `movement_engine_ts` when
+  `MOVEMENT_ENGINE` did not choose this engine).
+- **`rustRunStats`** (rust_stats.ts): `notAdmitted` and `declined` by reason,
+  `routed`, `ranWhole`, `shimFaults`, `hostCalls` by `family.method`.
+- **`GET /api/v1/system/engine-stats`** (system scope, like `/tg-runs`):
+  `{engine, uptimeSeconds, since, runs, evaluator}`, this process's counters
+  since it started.
+
 ## The run
 
 `run::segment` takes run.ts's steps in run.ts's order, and every step the
@@ -199,7 +332,7 @@ TypeScript takes through its host is a host request here:
 
 | request | when | answered by the shim from |
 |---|---|---|
-| `check.program` | first | program_check.ts (below) |
+| `check.program` | first, once admitted ("Admission" above) | program_check.ts (below) |
 | `adapters.resolve` | the source instance (`prepareMovement`); each write's target, once per instance (`targetAdapterFor`) | `host.adapters.resolve`: the instance as data (its opaque id, its `adapterType`, the `methods` it implements); a rehearsed target is resolved `dryRun`, and the host captures its writes. The credential id is the run's input (`credentialIds`), by the import's credential name |
 | `adapters.call` `listEntryPoints` | a discriminated event (`naturalRootTypeName`) | `host.adapters.call` |
 | `trace.append` | each trace entry, as it lands | the segment's trace (the result's), handed on to `host.trace` |
@@ -280,8 +413,9 @@ TypeScript's is. A resume
 (`input.resume = {state, reenter?}`) re-layers the movement's scope, descends
 the `if` arms the address names, steps past (or re-enters) the leaf, and
 finishes each enclosing body. A state either engine wrote resumes on either;
-the shim leaves anything else (frames, a journal, a suspension, `until`, other
-binding kinds, extraction origins) to the TypeScript engine.
+admission refuses anything else (frames, a journal, a suspension, `until`,
+other binding kinds, extraction origins: `resume_state_*` above), and the
+TypeScript engine resumes it.
 
 - An expression is evaluated by the one evaluator. What it cannot answer
   itself it asks (`eval::Reader`); the evaluation stops, the run asks the
@@ -293,12 +427,10 @@ binding kinds, extraction origins) to the TypeScript engine.
   the keys in it), `undefined` and the numbers JSON cannot say cross as the
   JavaScript has them. The event itself arrives on the wire too.
 - Addresses are address.ts's (`s1.b0.s2`), kept for the parks to come.
-- `done` is one of four shapes (below). Before it touches anything the host
-  can see, the engine refuses what it does not run (`run::declined_by`, its
-  own guard behind the shim's allow-list) as `declined`, and the shim runs
-  the program on the TypeScript engine.
-- `rustRunStats` counts what the shim routed, declined and asked (by
-  `family.method`); the conformance teardown prints it beside the evaluator's.
+- `done` is one of five shapes (below). What the engine does not run it
+  refuses before any request, or declines after the check and before
+  anything the host can see ("Admission" above), and the shim runs the
+  program on the TypeScript engine.
 
 ### Errors a run can meet mid-run
 
@@ -325,8 +457,8 @@ fails); none produces a different answer.
 
 - A priced call refused as `budget`: the statement fails with the host's
   message, where the TypeScript engine would suspend the run at its cap. It
-  cannot happen with no cap (the budget is unlimited), and a capped run whose
-  program can make a priced call is declined by the shim's allow-list.
+  cannot happen with no cap (the budget is unlimited), and the shim routes
+  no capped run (`cost_cap_present`).
 
 None of the first four is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
@@ -399,8 +531,10 @@ name?, ref?}}` for a call the host threw on.
 - `{failed: {error, result}}`: the body failed, and `result` is what the run
   had when it did (the shim throws `MovementRunFailed`);
 - `{thrown: error}`: it failed before the body ran;
-- `{declined: reason}`: nothing the host can see has happened; run the
-  program another way.
+- `{refused: reason}`: admission refused the program or its parked state
+  on this engine's own parse; nothing was asked of the host;
+- `{declined: reason}`: past the check, nothing the host can see has
+  happened; run the program another way.
 
 Beside any of the first three, `cost: [{source, microdollars}]` is what the
 segment's priced calls spent, by source, for the run's account.
@@ -549,8 +683,9 @@ MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # pe
 ```
 
 The teardown prints `Rust evaluator: {…}` (expressions not admitted,
-admitted, answered, fallbacks by reason) and `Rust runs: {runsRouted,
-ranWhole, shimFaults, declined, hostCalls}`, and fails a run in which Rust
+admitted, answered, fallbacks by reason), `Rust runs: {runsRouted,
+ranWhole, shimFaults, declined, hostCalls}` and `Rust runs not admitted:
+{reason: count}` (largest first), and fails a run in which Rust
 answered nothing, any decline or shim fault, or a whole-corpus run under its
 routing floor (v1 60, v2 70). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor

@@ -23,7 +23,8 @@ import {
   engineChoice,
   readRunResult,
   runSegmentInRust,
-  rustCanRun,
+  rustResumeRefusal,
+  rustRunRefusal,
   EVENT_DOES_NOT_CROSS,
   RustShimError,
   type EngineProtocol,
@@ -340,6 +341,7 @@ describe('the Rust engine shim', () => {
     expect(readRunResult(reported, { context: charged, hostErrors: [] })).toMatchObject({ ran: { movementName: 'm' } });
     expect(() => readRunResult(reported, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(readRunResult({ declined: 'a shape' }, { context: context(), hostErrors: [] })).toEqual({ declined: 'a shape' });
+    expect(readRunResult({ refused: 'statement:block' }, { context: context(), hostErrors: [] })).toEqual({ refused: 'statement:block' });
     const original = new TypeError('the adapter broke');
     expect(() => readRunResult({ thrown: { hostError: 0 } }, { context: context(), hostErrors: [original] })).toThrow(original);
     expect(() =>
@@ -399,7 +401,7 @@ describe('the check host call', () => {
 });
 
 describe('the segment input', () => {
-  it('is read before the engine starts: an event or source that cannot cross declines, and starts nothing', async () => {
+  it('is read before the engine starts: an event or source that cannot cross is not admitted, and starts nothing', async () => {
     const asked: unknown[] = [];
     const served = await hostWith({ adapters: { resolve: (r) => (asked.push(r), fakeAdapter()) } });
     const crossing = (input: { source: string; event: unknown }) =>
@@ -414,7 +416,7 @@ describe('the segment input', () => {
       expect(started).toEqual([]);
       expect(finished()).toBe(false);
     }
-    expect(rustRunStats).toMatchObject({ routed: 2, ranWhole: 0, declined: { [EVENT_DOES_NOT_CROSS]: 2 }, hostCalls: {} });
+    expect(rustRunStats).toMatchObject({ routed: 0, ranWhole: 0, notAdmitted: { [EVENT_DOES_NOT_CROSS]: 2 }, declined: {}, hostCalls: {} });
     expect(asked).toEqual([]);
   });
 });
@@ -432,9 +434,20 @@ describe('choosing the engine', () => {
     expect(() => assertEngineChoiceConfigured({})).not.toThrow();
   });
 
-  it('admits no run that could suspend', () => {
-    expect(rustCanRun({ statements: [] }, {})).toBe(true);
-    expect(rustCanRun({ statements: [] }, { limitPaused: true })).toBe(false);
-    expect(rustCanRun({ statements: [] }, { suspendAt: ['s0'] })).toBe(false);
+  it('admits no run that could suspend, reading its input alone, and counts each refusal by its reason', () => {
+    resetRustRunStats();
+    expect(rustRunRefusal({})).toBeUndefined();
+    expect(rustRunRefusal({ limitPaused: true })).toBe('limit_paused');
+    expect(rustRunRefusal({ suspendAt: ['s0'] })).toBe('suspend_at');
+    // Until the Rust engine suspends at a cost cap, a capped run is the
+    // TypeScript engine's.
+    expect(rustRunRefusal({ costCapMicrodollars: 1_000 })).toBe('cost_cap_present');
+    expect(rustResumeRefusal({ answer: true })).toBe('resume_answer');
+    expect(rustResumeRefusal({ deferRaceSettlement: true })).toBe('resume_defers_race_settlement');
+    expect(rustResumeRefusal({})).toBeUndefined();
+    expect(rustRunStats.notAdmitted).toEqual({
+      limit_paused: 1, suspend_at: 1, cost_cap_present: 1, resume_answer: 1, resume_defers_race_settlement: 1,
+    });
+    expect(rustRunStats.routed).toBe(0);
   });
 });

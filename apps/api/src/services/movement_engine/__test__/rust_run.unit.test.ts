@@ -8,7 +8,7 @@
 // `if`, interpolation, `return`, the built-ins, the cancel gate. Writes and
 // parks are rust_write.unit.test.ts's.
 
-import { mockCatalogSnapshot, parseProgram, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { Adapter } from '../../translation_graph/adapter';
@@ -20,7 +20,7 @@ import { openRunContext } from '../run_context';
 import { credentialIdsFor, makeTestHost, type TestHostOverrides } from '../test_host';
 import { AdapterCallFailed } from '../host_adapter';
 import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import { rustCanRun, runSegmentInRust } from '../rust_engine';
+import { runSegmentInRust } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 
 const TEAM_ID = '00000000-0000-0000-0000-0000000000a1' as TeamId;
@@ -155,7 +155,7 @@ async function agree(c: Case) {
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, declined: {} });
+  expect(rustRunStats).toMatchObject({ routed: 1, notAdmitted: {}, declined: {} });
   expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   expect(rust.calls).toEqual(ts.calls);
   expect(rust.resolved).toEqual(ts.resolved);
@@ -195,17 +195,16 @@ const BINDINGS_AND_IF = [
 ].join('\n');
 
 describe('a whole run in the Rust engine', () => {
-  it('is admitted for reads, bindings, if and return, and refused for anything more', () => {
-    const host = {};
-    const program = (body: string) => parseProgram(`${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, { languageVersion: 3 });
-    expect(rustCanRun(parseProgram(PRELUDE + BINDINGS_AND_IF, { languageVersion: 3 }), host)).toBe(true);
-    expect(rustCanRun(program('  write crm-[:companies]-> { name: msg.`subject` }'), host)).toBe(true);
-    expect(rustCanRun(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'), host)).toBe(false);
-    expect(rustCanRun(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'), host)).toBe(false);
-    expect(rustCanRun(program('  x = msg'), host)).toBe(false);
-    expect(rustCanRun(program('  x = AI("why?")'), host)).toBe(false);
-    expect(rustCanRun(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), host)).toBe(false);
-    expect(rustCanRun(program('  x = crm.`name`'), host)).toBe(false);
+  it('is admitted for reads, bindings, if and return, and refused for anything more', async () => {
+    const program = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+    expect(await admission(BINDINGS_AND_IF)).toBe('admitted');
+    expect(await admission(program('  write crm-[:companies]-> { name: msg.`subject` }'))).toBe('admitted');
+    expect(await admission(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'))).toBe('write_target_where');
+    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'))).toBe('name_not_value');
+    expect(await admission(program('  x = msg'))).toBe('name_not_value');
+    expect(await admission(program('  x = AI("why?")'))).toBe('expression:llm');
+    expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('is_test');
+    expect(await admission(program('  x = crm.`name`'))).toBe('traversal_root');
   });
 
   it('reads the event, binds, interpolates and branches as the TypeScript engine does', async () => {
@@ -317,24 +316,63 @@ describe('a whole run in the Rust engine', () => {
     expect(late.result?.cancelled).toBe(true);
   });
 
-  it('declines, before it touches an adapter, what it does not run', async () => {
-    resetRustRunStats();
-    const resolved: unknown[] = [];
-    const host = makeTestHost({ adapters: { resolve: (r) => (resolved.push(r), fakeEmail().adapter) } });
-    const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
-    const outcome = await runSegmentInRust({
-      input: {
-        source: `${PRELUDE}type Stage = <"a" | "b">\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
-        event: webhook({}),
-        teamId: TEAM_ID,
-        catalog,
-        host,
-      },
-      context,
-    });
-    expect(outcome).toEqual({ declined: 'a file-level statement this engine does not run' });
-    expect(resolved).toEqual([]);
-    expect(rustRunStats.declined).toEqual({ 'a file-level statement this engine does not run': 1 });
-    expect(rustRunStats.hostCalls).toEqual({ 'check.program': 1 });
+  it('refuses, on its own parse and before it asks its host anything, what it does not run', async () => {
+    const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+    // One program per construct admission refuses: each costs a parse and
+    // the walk, never a check, an adapter or a trace entry.
+    for (const [source, reason] of [
+      [`type Stage = <"a" | "b">\n${movement('  x = 1')}`, 'file_statement:type'],
+      [`node Deal { name: <text> }\n${movement('  x = 1')}`, 'file_statement:shape'],
+      [`y = 1\n${movement('  x = 1')}`, 'file_assignment'],
+      [`movement v(n: <number[]>) {\n  x = 1\n}\n${movement('  x = 1')}`, 'movement_value_param'],
+      [movement('  inbox = 1'), 'name_shadowed'],
+      [movement('  x = 1\n  x = write crm-[:companies]-> { name: "a" }'), 'name_rebound'],
+      [movement('  msg-[:replies]-> {\n    x = 1\n  }'), 'statement:block'],
+      [movement('  x = await inbox-[:message]->'), 'await_not_sleep'],
+      [movement('  r = m(msg: msg)'), 'movement_call'],
+      [movement('  r = M(msg)'), 'function_call'],
+      [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
+      [movement('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'), 'write_target_where'],
+      [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
+      [movement('  write crm-[:companies]-> { ...crm }'), 'write_spread_source'],
+      [movement('  g = graph { owner: msg }'), 'node_event_entry'],
+      [movement('  x = msg-[:replies]->.`subject`'), 'traversal_steps'],
+      [movement('  x = { __proto__: 1 }'), 'proto_key'],
+      [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
+      [movement('  x = FIRST(msg.`subject`)'), 'expression:aggregate'],
+      [movement('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), 'is_test'],
+    ] as const) {
+      resetRustRunStats();
+      const { outcome, resolved } = await segmentOf(source);
+      expect([source, outcome]).toEqual([source, { declined: reason }]);
+      expect(resolved).toEqual([]);
+      expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
+      expect(rustRunStats.declined).toEqual({});
+      expect(rustRunStats.hostCalls).toEqual({});
+    }
   });
 });
+
+/** One segment of `source` (after the prelude) in the Rust engine, on a
+ *  webhook with an empty payload: its outcome, or the error it ended in,
+ *  and what the resolver was asked. */
+async function segmentOf(source: string) {
+  const resolved: unknown[] = [];
+  const host = makeTestHost({ adapters: { resolve: (r) => (resolved.push(r), fakeEmail().adapter) } });
+  const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
+  const input = { source: PRELUDE + source, event: webhook({}), teamId: TEAM_ID, catalog, host };
+  try {
+    return { outcome: await runSegmentInRust({ input, context }), resolved };
+  } catch (error) {
+    return { outcome: { error }, resolved };
+  }
+}
+
+/** Whether the Rust engine admits `source`: `admitted`, or its refusal's
+ *  reason. */
+async function admission(source: string): Promise<string> {
+  resetRustRunStats();
+  await segmentOf(source);
+  const [reason] = Object.keys(rustRunStats.notAdmitted);
+  return reason ?? 'admitted';
+}

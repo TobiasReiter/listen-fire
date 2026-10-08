@@ -7,49 +7,28 @@
 // it, in the shapes docs/engine-host.md freezes, and the shim forwards each one
 // to the run's `EngineHost` (rust_host.ts).
 //
-// Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`)
-// and by `rustCanRun`, the allow-list of what the Rust engine can already run
-// whole (bindings, `if` and `return` over reads of the event and of values,
-// slice 2a). It grows one slice at a time, each proven against the TypeScript
-// engine on the same programs.
+// Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`),
+// by this shim's input checks (`rustRunRefusal`, `rustResumeRefusal`: what the
+// run is handed, never what its program says), and then by the Rust engine
+// itself: its admission walks its own parse of the program before it asks for
+// anything (crates/movement-engine/src/admit.rs). What it refuses or declines
+// runs on the TypeScript engine. Each decision is logged once per run
+// (`noteEngine`) and counted (`rustRunStats`).
 //
 // Below a whole program, one expression can already run in Rust: `evalInRust`
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import {
-  callEvalExpression,
-  readCall,
-  resolveCallee,
-  conditionOfSlot,
-  CURRENT_LANGUAGE_VERSION,
-  expressionOfSlot,
-  openEngineSegment,
-  identityKeyOf,
-  parseMovementExpression,
-  probePathHead,
-  splitUniquenessConjuncts,
-  type CallStatement,
-  type ExprSlot,
-  type LanguageVersion,
-  type MovementCondition,
-  type NodeLiteral,
-  type PathHead,
-  type Program,
-  type Statement,
-  type WriteExpression,
-} from 'movement-lang';
+import { callEvalExpression, CURRENT_LANGUAGE_VERSION, openEngineSegment } from 'movement-lang';
 
-import { isPurePredicate } from '#shared/expression/filter';
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
-import { neverAsAny } from '../../lib/utils/types';
+import { logger } from '../logger';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
 import type { RunContext } from './run_context';
-import type { BindingDescriptor } from './serialize';
 import { serve, type RouteContext } from './rust_host';
 import { rustEvalStats, rustRunStats } from './rust_stats';
 import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
@@ -101,18 +80,16 @@ export function assertEngineChoiceConfigured(env: Record<string, string | undefi
   engineChoice(env);
 }
 
-/** What a segment in the Rust engine runs: the run's input, the segment the
- *  run host opened, and the program as the run host already parsed it (the
- *  `check.program` call checks that tree rather than parsing a third time). */
+/** What a segment in the Rust engine runs: the run's input and the segment
+ *  the run host opened. */
 export interface RustSegment<Input extends RunMovementInput = RunMovementInput> {
   input: Input;
   context: RunContext;
-  parsed?: Program;
 }
 
-/** A segment of `input`'s run in the Rust engine: its result, or that the
- *  engine declined it (before it touched an adapter) for the TypeScript
- *  engine to run. */
+/** A segment of `input`'s run in the Rust engine: its result, or why the
+ *  engine refused or declined it (before it touched an adapter) for the
+ *  TypeScript engine to run. */
 export async function runSegmentInRust(
   segment: RustSegment,
   engine?: EngineProtocol,
@@ -120,8 +97,8 @@ export async function runSegmentInRust(
   return segmentInRust(segment, undefined, engine);
 }
 
-/** A parked run resumed in the Rust engine (`rustCanResume` admits its
- *  state): its result, or that the engine declined it before touching an
+/** A parked run resumed in the Rust engine: its result, or why the engine
+ *  refused (its state reader decides) or declined it before touching an
  *  adapter. */
 export async function resumeSegmentInRust(
   segment: RustSegment<ResumeMovementInput>,
@@ -132,38 +109,46 @@ export async function resumeSegmentInRust(
 }
 
 async function segmentInRust(
-  { input, context, parsed }: RustSegment,
+  { input, context }: RustSegment,
   resume: { state: unknown; reenter?: true } | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  rustRunStats.routed += 1;
   // Read before the instance opens. An event, source or state that cannot
   // cross the eval wire as itself (a `Date` in a payload, a lone surrogate)
-  // declines here, before the engine has asked the host for anything.
+  // is refused here, before the engine has asked the host for anything.
   const start = segmentInput(input, context, resume);
-  if (start === undefined) return declined(EVENT_DOES_NOT_CROSS);
+  if (start === undefined) return notAdmitted(input, EVENT_DOES_NOT_CROSS);
+  rustRunStats.routed += 1;
   const hostErrors: unknown[] = [];
-  let outcome: { ran: MovementRunResult } | { declined: string };
+  let outcome: RunOutcome;
   try {
     const done = await driveEngine(engine ?? openWasmEngine(), start, {
       host: input.host,
       context,
       catalog: input.catalog,
       hostErrors,
-      ...(parsed !== undefined
-        ? { parsed: { source: input.source, languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION, program: parsed } }
-        : {}),
     });
     outcome = readRunResult(done, { context, hostErrors });
   } catch (error) {
     // The run's own failure, which the Rust engine ran to as the TypeScript
     // engine would have; a shim fault is not one.
-    if (error instanceof RustShimError) rustRunStats.shimFaults += 1;
-    else rustRunStats.ranWhole += 1;
+    if (error instanceof RustShimError) {
+      rustRunStats.shimFaults += 1;
+      noteEngine(input, 'rust', 'shim_fault');
+    } else {
+      rustRunStats.ranWhole += 1;
+      noteEngine(input, 'rust', ADMITTED);
+    }
     throw error;
   }
-  if ('declined' in outcome) return declined(outcome.declined);
+  if ('refused' in outcome) return notAdmitted(input, outcome.refused);
+  if ('declined' in outcome) {
+    rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
+    noteEngine(input, 'ts', outcome.declined);
+    return outcome;
+  }
   rustRunStats.ranWhole += 1;
+  noteEngine(input, 'rust', ADMITTED);
   return outcome;
 }
 
@@ -185,12 +170,68 @@ function canonicalJson(bySource: Record<string, number>): string {
   return JSON.stringify(Object.entries(bySource).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
-/** Why a run whose input cannot cross the eval wire is declined. */
-export const EVENT_DOES_NOT_CROSS = 'the event does not cross';
+/** Why a run whose event, source or parked state cannot cross the eval wire
+ *  is not admitted. */
+export const EVENT_DOES_NOT_CROSS = 'event_does_not_cross';
 
-function declined(reason: string): { declined: string } {
-  rustRunStats.declined[reason] = (rustRunStats.declined[reason] ?? 0) + 1;
+/** The reason a run the Rust engine ran is logged with. */
+const ADMITTED = 'admitted';
+
+/** A run that never ran in Rust: counted by its reason, and logged. */
+function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string): { declined: string } {
+  rustRunStats.notAdmitted[reason] = (rustRunStats.notAdmitted[reason] ?? 0) + 1;
+  noteEngine(input, 'ts', reason);
   return { declined: reason };
+}
+
+/**
+ * The one log line per run that says which engine ran it, and why: `admitted`
+ * for a run the Rust engine ran (to its end or its own failure), else the
+ * reason it ran on the TypeScript engine — the shim's input check, the Rust
+ * engine's refusal or decline, or `movement_engine_ts` when the Rust engine
+ * was not chosen.
+ */
+export function noteEngine(input: Pick<RunMovementInput, 'runId'>, engine: EngineChoice, reason: string): void {
+  logger.info(`movement engine: engine=${engine} run=${input.runId ?? '-'} reason=${reason}`);
+}
+
+/** Why the TypeScript engine runs a run that `MOVEMENT_ENGINE` did not route. */
+export const ENGINE_CHOICE_TS = 'movement_engine_ts';
+
+/**
+ * Why the Rust engine must not run this run, read off its input alone (what
+ * the program says is the engine's own admission to decide): a run that
+ * resumes after a limit pause or must suspend at an address, and — until the
+ * Rust engine suspends at a cost cap — a run with a cap. Counted and logged
+ * as not admitted; undefined to route the run.
+ */
+export function rustRunRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'runId'>): string | undefined {
+  const reason = inputRefusal(input);
+  if (reason !== undefined) notAdmitted(input, reason);
+  return reason;
+}
+
+/** `rustRunRefusal` for a resume, which also must not answer into its leaf or
+ *  defer a race's settlement. The parked state itself is the Rust engine's
+ *  to read (crates/movement-engine/src/park.rs `resume_refusal`). */
+export function rustResumeRefusal(
+  input: Pick<ResumeMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'runId' | 'answer' | 'deferRaceSettlement'>,
+): string | undefined {
+  const reason =
+    input.answer !== undefined ? 'resume_answer'
+    : input.deferRaceSettlement === true ? 'resume_defers_race_settlement'
+    : inputRefusal(input);
+  if (reason !== undefined) notAdmitted(input, reason);
+  return reason;
+}
+
+function inputRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars'>): string | undefined {
+  if (input.limitPaused === true) return 'limit_paused';
+  if ((input.suspendAt?.length ?? 0) > 0) return 'suspend_at';
+  // The judge is a priced call, and a run that meets its cap there suspends,
+  // which the Rust engine cannot yet.
+  if (input.costCapMicrodollars !== undefined) return 'cost_cap_present';
+  return undefined;
 }
 
 /**
@@ -270,17 +311,23 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
   );
 }
 
+/** What a segment ended in: its result, a refusal by its admission (nothing
+ *  ran but its parse), or a decline after its check (nothing the host can
+ *  see happened). */
+type RunOutcome = { ran: MovementRunResult } | { refused: string } | { declined: string };
+
 /**
  * The segment's `done` (crates/movement-engine/src/run.rs says its shapes):
  * the run's result, the error it failed with (a body's failure wrapped in
  * `MovementRunFailed`, carrying what the run did, as the interpreter wraps
- * it), or that it declined.
+ * it), or that it refused or declined.
  */
 export function readRunResult(
   done: unknown,
   run: { context: Pick<RunContext, 'trace' | 'ledger'>; hostErrors: unknown[] },
-): { ran: MovementRunResult } | { declined: string } {
+): RunOutcome {
   const outcome = record(done, 'the Rust engine result');
+  if ('refused' in outcome) return { refused: string(outcome.refused, 'the Rust engine refused') };
   if ('declined' in outcome) return { declined: string(outcome.declined, 'the Rust engine declined') };
   // What the segment's priced calls spent was charged to the run's account
   // as each answer passed through the shim (rust_host.ts), so a fault cannot
@@ -353,362 +400,6 @@ function failureOf(value: unknown, hostErrors: unknown[]): unknown {
   return thrownBy(error);
 }
 
-// ── What the Rust engine runs whole ───────────────────────────────────────────
-
-/**
- * Whether the Rust engine runs `input`'s run whole: an explicit allow-list,
- * read off the parsed program (crates/movement-engine/src/run.rs runs what
- * it admits, and declines, before touching an adapter, what it finds it
- * cannot):
- *
- * - file scope: imports from `adapters` and `credentials`, instance
- *   constructions, `listen`s, movement declarations;
- * - every movement body: `name = <expression>` (a built-in's call among
- *   them, `n = UPPER(x)`, which reads as the expression it is), `if` /
- *   `else if` / `else` with expression conditions (no `IS`), `return
- *   <expression>`, nested arms alike;
- * - writes (`write …` and `name = write …`): to a collection of a constructed
- *   instance, along one edge (no WHERE) off a write's handle or the event, or
- *   onto a held handle (`write co { … }`); with no `bind`; whose `unique by`
- *   clauses are keys only (no conjunct that narrows); whose fields and spreads
- *   read what an expression may;
- * - `await sleep(…)`, bare or bound;
- * - every expression one `rustCanEval` admits, where a name read is a value
- *   the bodies bind, plus `p.field` with no hops on the movement's event
- *   parameter, on such a value, or on a write's handle;
- * - a run that cannot suspend (no `limitPaused`, no `suspendAt`);
- * - with a cost cap, no `unique by` write: the judge is a priced call, and a
- *   run that meets its cap there suspends, which this engine cannot.
- *
- * Whether the event and source cross the eval wire is not read here: the
- * segment declines one that does not (`EVENT_DOES_NOT_CROSS`).
- */
-export function rustCanRun(
-  program: Program,
-  input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'languageVersion'>,
-): boolean {
-  if (input.limitPaused === true || (input.suspendAt?.length ?? 0) > 0) return false;
-  const fileNames = new Set<string>();
-  const instances = new Set<string>();
-  const movements: Extract<Statement, { kind: 'movement' }>[] = [];
-  for (const statement of program.statements) {
-    switch (statement.kind) {
-      case 'import':
-        if (statement.source.kind !== 'builtin') return false;
-        if (statement.source.namespace !== 'adapters' && statement.source.namespace !== 'credentials') return false;
-        for (const name of statement.names) fileNames.add(name.alias ?? name.name);
-        break;
-      case 'assign':
-        if (statement.value.kind !== 'construct') return false;
-        fileNames.add(statement.name);
-        instances.add(statement.name);
-        break;
-      case 'listen':
-        break;
-      case 'movement':
-        fileNames.add(statement.name);
-        movements.push(statement);
-        break;
-      default:
-        return false;
-    }
-  }
-  return movements.every((movement) => {
-    const events = new Set(movement.params.map((p) => p.name));
-    const values = new Set<string>();
-    const handles = new Set<string>();
-    const bodyInstances = new Set<string>();
-    const nodes = new Set<string>();
-    collectBound(movement.body, { values, handles, instances: bodyInstances, nodes });
-    const bodyNames = [...values, ...handles, ...bodyInstances, ...nodes];
-    for (const name of bodyNames) if (events.has(name) || fileNames.has(name)) return false;
-    if (new Set(bodyNames).size !== bodyNames.length) return false;
-    const functions = movements.map((m) => m.name);
-    const bound = (name: string) =>
-      events.has(name) || values.has(name) || handles.has(name) || nodes.has(name) || bodyInstances.has(name) || fileNames.has(name);
-    return bodyRuns(movement.body, {
-      events,
-      values,
-      handles,
-      nodes,
-      instances: new Set([...instances, ...bodyInstances]),
-      movements: new Set(functions),
-      capped: input.costCapMicrodollars !== undefined,
-      languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
-      scope: {
-        binds: bound,
-        functionSpelled: (name) => functions.find((f) => f.toLowerCase() === name.toLowerCase()),
-      },
-    });
-  });
-}
-
-interface RunNames {
-  /** The movement's parameters: the event. */
-  events: ReadonlySet<string>;
-  /** Every name the body binds to a value. */
-  values: ReadonlySet<string>;
-  /** Every name the body binds to a write's handle. */
-  handles: ReadonlySet<string>;
-  /** Every name the body binds to a node it builds (`{ … }`, `graph { … }`). */
-  nodes: ReadonlySet<string>;
-  /** The constructed instances, the file's and the body's. */
-  instances: ReadonlySet<string>;
-  /** The file's movements: a construction spelled with one is a call. */
-  movements: ReadonlySet<string>;
-  /** The run has a cost cap, so no priced call may be reached. */
-  capped: boolean;
-  languageVersion: LanguageVersion;
-  /** What a call's callee resolves against: every name the file and the
-   *  body bind (a superset of any one point's scope), the file's functions. */
-  scope: Parameters<typeof resolveCallee>[1];
-}
-
-function collectBound(
-  statements: Statement[],
-  into: { values: Set<string>; handles: Set<string>; instances: Set<string>; nodes: Set<string> },
-): void {
-  for (const statement of statements) {
-    if (statement.kind === 'assign') {
-      const kind = statement.value.kind;
-      const set = kind === 'write' ? into.handles : kind === 'construct' ? into.instances : kind === 'node' ? into.nodes : into.values;
-      set.add(statement.name);
-    }
-    if (statement.kind === 'if') {
-      for (const arm of statement.arms) collectBound(arm.body, into);
-      if (statement.elseArm) collectBound(statement.elseArm.body, into);
-    }
-  }
-}
-
-function bodyRuns(statements: Statement[], names: RunNames): boolean {
-  return statements.every((statement) => {
-    switch (statement.kind) {
-      case 'assign':
-        if (statement.value.kind === 'write') return writeRuns(statement.value.write, names);
-        if (statement.value.kind === 'await') return statement.value.await.source.kind === 'sleep';
-        if (statement.value.kind === 'construct') return !names.movements.has(statement.value.construct.callee);
-        if (statement.value.kind === 'node') return nodeRuns(statement.value.node, names, statement.value.node.graph !== undefined);
-        return rvalueRuns(statement.value, names);
-      case 'return':
-        return rvalueRuns(statement.value, names);
-      case 'write':
-        return writeRuns(statement.write, names);
-      case 'await':
-        return statement.await.source.kind === 'sleep';
-      case 'if':
-        return (
-          statement.arms.every((arm) => conditionRuns(arm.condition, names) && bodyRuns(arm.body, names))
-          && (statement.elseArm === undefined || bodyRuns(statement.elseArm.body, names))
-        );
-      default:
-        return false;
-    }
-  });
-}
-
-function rvalueRuns(value: Extract<Statement, { kind: 'assign' }>['value'], names: RunNames): boolean {
-  if (value.kind === 'expr') return slotRuns(value.expr, names);
-  const slot = value.kind === 'call' ? builtinValueSlot(value.call, names) : undefined;
-  return slot !== undefined && slotRuns(slot, names);
-}
-
-/** A write the Rust engine runs (`write.rs`). */
-function writeRuns(write: WriteExpression, names: RunNames): boolean {
-  if (write.bind !== undefined) return false;
-  const target = write.target;
-  switch (target.kind) {
-    case 'tuple':
-      return false;
-    case 'position':
-      if (!names.handles.has(target.alias)) return false;
-      break;
-    case 'linked': {
-      const root = target.path.root?.kind === 'name' ? target.path.root.name : undefined;
-      if (root === undefined) return false;
-      if (!names.instances.has(root) && !names.handles.has(root) && !names.events.has(root)) return false;
-      if (!singleUnnarrowedEdge(target.path)) return false;
-      break;
-    }
-    default:
-      return neverAsAny(target);
-  }
-  if (!write.uniqueBy.every((clause) => keyOnly(clause.predicate.raw))) return false;
-  if (names.capped && write.uniqueBy.length > 0) return false;
-  const spreadsRun = (write.spreads ?? []).every(
-    (spread) =>
-      names.values.has(spread.source) || names.handles.has(spread.source) || names.nodes.has(spread.source) || names.events.has(spread.source),
-  );
-  return spreadsRun && write.fields.every((field) => slotRuns(field.value, names));
-}
-
-/** A node or graph literal the Rust engine builds (node.rs): value entries,
- *  nested literals, and in a graph a reference to a record the run holds and
- *  a spread of a value, a handle or a node; no shape, no traversal entry. */
-function nodeRuns(literal: NodeLiteral, names: RunNames, graph: boolean): boolean {
-  if (literal.graph?.shape !== undefined) return false;
-  if (!graph && literal.spreads !== undefined) return false;
-  const records = (name: string) => names.handles.has(name) || names.nodes.has(name);
-  const spreadsRun = (literal.spreads ?? []).every((spread) => names.values.has(spread.source) || records(spread.source));
-  return spreadsRun && literal.entries.every((entry) => {
-    switch (entry.kind) {
-      case 'value': {
-        const bare = entry.value.raw.trim();
-        if (graph && records(bare)) return true;
-        if (names.events.has(bare)) return false;
-        return slotRuns(entry.value, names);
-      }
-      case 'nodes':
-        return entry.nodes.every((nested) => nodeRuns(nested, names, graph));
-      case 'declared':
-      case 'traversal':
-        return false;
-      default:
-        return neverAsAny(entry);
-    }
-  });
-}
-
-/** One edge step, with no WHERE (`singleWriteEdge`). */
-function singleUnnarrowedEdge(path: PathHead): boolean {
-  try {
-    const probe = parseMovementExpression(`${probePathHead(path)}.\`__movement_engine_probe__\``);
-    if (probe.type !== 'traverse' || probe.steps.length !== 1) return false;
-    const [step] = probe.steps;
-    return step.type === 'edge' && step.expressionFilter === undefined;
-  } catch {
-    return false;
-  }
-}
-
-/** A `unique by` clause with a key (`identityKeyOf`), whose other
- *  conjuncts read only the candidate (`isPurePredicate`). */
-function keyOnly(raw: string): boolean {
-  try {
-    const conjuncts = splitUniquenessConjuncts(raw).flatMap((part) => andConjuncts(parseMovementExpression(part.raw)));
-    const narrowing = conjuncts.filter((c) => identityKeyOf(c) === undefined);
-    return conjuncts.length > narrowing.length && narrowing.every(isPurePredicate);
-  } catch {
-    return false;
-  }
-}
-
-function andConjuncts(expr: Expression): Expression[] {
-  return expr.type === 'logical' && expr.op === 'and' ? expr.operands.flatMap(andConjuncts) : [expr];
-}
-
-/** A bound call to a built-in, as the expression it reads as (run.ts
- *  `resolvedRValue`); undefined for any other call. */
-function builtinValueSlot(call: CallStatement, names: RunNames): ExprSlot | undefined {
-  const reading = readCall(call, (callee) => resolveCallee(callee, names.scope, names.languageVersion), 'value');
-  return reading.kind === 'value' ? reading.expr : undefined;
-}
-
-function slotRuns(slot: ExprSlot, names: RunNames): boolean {
-  try {
-    return runExpressionRuns(expressionOfSlot(slot), names);
-  } catch {
-    return false;
-  }
-}
-
-function conditionRuns(slot: ExprSlot, names: RunNames): boolean {
-  let condition: MovementCondition;
-  try {
-    condition = conditionOfSlot(slot);
-  } catch {
-    return false;
-  }
-  const runs = (c: MovementCondition): boolean => {
-    switch (c.kind) {
-      case 'and':
-        return c.conjuncts.every(runs);
-      case 'expr':
-        return runExpressionRuns(c.expr, names);
-      case 'isTest':
-        return false;
-      default:
-        return neverAsAny(c);
-    }
-  };
-  return runs(condition);
-}
-
-/** `rustCanEval`'s nodes, a name read being a bound value, and a field read
- *  off the event, a bound value or a write's handle. */
-function runExpressionRuns(expr: Expression, names: RunNames): boolean {
-  switch (expr.type) {
-    case 'alias_ref':
-      return names.values.has(expr.name) && rustCanEval(expr);
-    case 'property':
-      return names.values.has(expr.propertyTypeId) && rustCanEval(expr);
-    case 'traverse':
-      return (
-        expr.aliasRoot !== undefined
-        && (names.events.has(expr.aliasRoot)
-          || names.values.has(expr.aliasRoot)
-          || names.handles.has(expr.aliasRoot)
-          || names.nodes.has(expr.aliasRoot))
-        && expr.steps.length === 0
-        && expr.expression.type === 'property'
-        && !LONE_SURROGATE.test(expr.expression.propertyTypeId)
-      );
-    default:
-      return rustCanEval(expr, (child) => runExpressionRuns(child, names));
-  }
-}
-
-/**
- * Whether the Rust engine resumes this parked state: a timer park's state
- * of version 1 (no frames, no journal, no suspension, no `until`), whose
- * address steps only into `if` arms, and whose scopes hold only the binding
- * kinds the engine binds — values that hold no records, write handles, the
- * event, instances, imports and movements — with provenance it summarises.
- * The program itself must be one `rustCanRun` admits, and nothing may be
- * answered into the leaf.
- */
-export function rustCanResume(
-  program: Program,
-  input: Pick<
-    ResumeMovementInput,
-    'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'languageVersion' | 'state' | 'answer' | 'deferRaceSettlement'
-  >,
-): boolean {
-  const state = input.state;
-  if (input.answer !== undefined || input.deferRaceSettlement === true) return false;
-  if (state.version !== 1 || state.frames !== undefined || state.journal !== undefined) return false;
-  if (state.suspended !== undefined || state.until !== undefined) return false;
-  if (!/^s\d+(\.b\d+\.s\d+)*$/.test(state.address)) return false;
-  const plainOrigins = (provenance: Provenance | undefined): boolean =>
-    provenance === undefined
-    || [...provenance.origins, ...(provenance.direct !== undefined ? [provenance.direct] : [])].every(
-      (origin) => origin.kind !== 'extraction',
-    );
-  const holds = (descriptor: BindingDescriptor): boolean => {
-    switch (descriptor.kind) {
-      case 'event':
-      case 'instance':
-      case 'opaque':
-      case 'movement':
-      case 'handle':
-      case 'nodeRef':
-        return true;
-      case 'value':
-        return plainOrigins(descriptor.provenance) && new WireOut().value(descriptor.value) !== REFUSED;
-      case 'nodePosition':
-        return (
-          Object.values(descriptor.fieldProvenance).every(plainOrigins)
-          && Object.values(descriptor.edges).every((edge) => edge.kind === 'landed' && edge.landing === undefined && edge.landingShape === undefined && edge.landings.every(holds))
-        );
-      default:
-        return false;
-    }
-  };
-  const resumable =
-    state.scopeChain.every((scope) => Object.values(scope.bindings).every(holds)) && new WireOut({ asData: true }).value(state) !== REFUSED;
-  return resumable && rustCanRun(program, input);
-}
-
 // ── The WASM engine ───────────────────────────────────────────────────────────
 
 /** A segment in a fresh instance of the movement artifact. */
@@ -761,9 +452,9 @@ const RUST_FUNCTIONS: ReadonlySet<string> = new Set([
  * Whether the Rust evaluator runs `expr`: every node a kind it evaluates (no
  * host reads, no model, no traversal), every function one of its built-ins,
  * and every literal and name one JSON carries as itself into a Rust string.
- * `child` judges the sub-expressions (a whole run's admission widens it).
  */
-export function rustCanEval(expr: Expression, child: (expr: Expression) => boolean = rustCanEval): boolean {
+export function rustCanEval(expr: Expression): boolean {
+  const child = rustCanEval;
   switch (expr.type) {
     case 'static':
       if (typeof expr.value === 'string') return !LONE_SURROGATE.test(expr.value);
