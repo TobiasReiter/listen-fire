@@ -568,6 +568,40 @@ describe('traversal blocks in the Rust engine', () => {
     });
   });
 
+  describe('bound blocks', () => {
+    it('binds what the iterations return as one list, its trail the union of theirs', async () => {
+      const { rust } = await agree({
+        body: [
+          '  names = kg-[c:company WHERE `revenue` >= 20 ORDER BY `name`]-> {',
+          '    if c.`stage` == "Late" {',
+          '      return "late ${c.`name`}"',
+          '    }',
+          '    return c.`name`',
+          '  }',
+          '  write kg-[:note]-> { text: "${LENGTH(names)}: ${AT(names, 0)}, ${AT(names, 1)}" }',
+        ].join('\n'),
+      });
+      expect(written(rust)).toEqual(['3: Globex, late Initech']);
+    });
+
+    it('binds no returned records when nothing returns, read as an empty list and a null field', async () => {
+      const { rust } = await agree({
+        body: [
+          '  none = kg-[c:company WHERE `stage` == "Nowhere"]-> {',
+          '    return c.`name`',
+          '  }',
+          '  quiet = kg-[c:company]-> {',
+          '    if c.`stage` == "Nowhere" {',
+          '      return c.`name`',
+          '    }',
+          '  }',
+          '  write kg-[:note]-> { text: "${LENGTH(none)} ${LENGTH(quiet)} ${none.`name` == null}" }',
+        ].join('\n'),
+      });
+      expect(written(rust)).toEqual(['0 0 true']);
+    });
+  });
+
   describe('edge properties', () => {
     const DEALS: Row[] = [
       { id: 'd-1', fields: { title: 'Seed round' } },

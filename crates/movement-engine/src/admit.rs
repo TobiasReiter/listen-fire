@@ -138,6 +138,7 @@ fn writes_in_block(statements: &[Statement], in_block: bool) -> bool {
                     RValue::Link { link } => judged_link(link),
                     _ => false,
                 }
+                || matches!(&assign.value, RValue::Block { block } if writes_in_block(&block.body, true))
         }
         Statement::If(statement) => {
             statement.arms.iter().any(|arm| writes_in_block(&arm.body, in_block))
@@ -238,6 +239,7 @@ impl Bound {
                     match &assign.value {
                         RValue::Write { write } => self.target_alias(&write.target, scope),
                         RValue::Match { r#match } => self.target_alias(&r#match.target, scope),
+                        RValue::Block { block } => self.block(block, scope),
                         _ => {}
                     }
                 }
@@ -253,18 +255,22 @@ impl Bound {
                         self.collect(&arm.body, &inner);
                     }
                 }
-                Statement::Block(statement) => {
-                    let inner = self.enter(scope);
-                    if let Ok(step) = crate::traverse::head_step(&statement.block.head)
-                        && let Some(alias) = step.alias
-                    {
-                        self.bind(&alias, Kind::Landing, &inner);
-                    }
-                    self.collect(&statement.block.body, &inner);
-                }
+                Statement::Block(statement) => self.block(&statement.block, scope),
                 _ => {}
             }
         }
+    }
+
+    /// A block's hop alias and its body, in the block's own scope (its
+    /// iteration's).
+    fn block(&mut self, block: &TraversalBlock, scope: &[usize]) {
+        let inner = self.enter(scope);
+        if let Ok(step) = crate::traverse::head_step(&block.head)
+            && let Some(alias) = step.alias
+        {
+            self.bind(&alias, Kind::Landing, &inner);
+        }
+        self.collect(&block.body, &inner);
     }
 
     /// A target WHERE's hop alias (`crm-[c:companies WHERE c.\`region\` ==
@@ -359,6 +365,8 @@ impl Names<'_> {
                 RValue::Write { write } => self.write(write),
                 RValue::Match { r#match } => self.match_(r#match),
                 RValue::Link { link } => self.link(link),
+                // A bound block: what its iterations return is the binding.
+                RValue::Block { block } => self.block(block),
                 RValue::Await { r#await } => sleep(&r#await.source),
                 RValue::Construct { construct } if self.movements.contains(&construct.callee) => refuse("movement_call"),
                 RValue::Construct { .. } => Ok(()),
@@ -799,6 +807,7 @@ mod tests {
             "  co = write crm-[:companies]-> { name: \"a\" }\n  co-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }",
             "  msg-[a:attachments]-> {\n    write crm-[:notes]-> { body: a.`name` }\n  }",
             "  crm-[:companies]-> {\n    write crm-[:notes]-> { body: \"one\" }\n  }",
+            "  names = crm-[c:companies]-> {\n    if c.`stage` == \"x\" {\n      return \"x\"\n    }\n    return c.`name`\n  }\n  write crm-[:notes]-> { body: \"${LENGTH(names)}\" }",
             "  crm-[c:companies]-> {\n    write crm-[:notes]-> { body: c.`name` }\n    c-[d:deals WHERE `title` != c.`name`]-> {\n      x = d.`title`\n      write crm-[:notes]-> { body: x }\n    }\n  }",
         ] {
             assert_eq!(refused(body), None, "{body}");
@@ -816,7 +825,7 @@ mod tests {
             ("  crm-[c:companies ORDER BY c-[:owner]->.`joined`]-> {\n    x = 1\n  }", "traversal_steps"),
             ("  crm-[c:companies WHERE `name` == @current_date]-> {\n    x = 1\n  }", "expression:meta"),
             ("  crm-[c:companies]-> {\n    x = c\n  }", "name_not_value"),
-            ("  x = crm-[c:companies]-> {\n    return c\n  }", "rvalue:block"),
+            ("  x = crm-[c:companies]-> {\n    return c\n  }", "name_not_value"),
             ("  crm-[c:companies]-> {\n    x = COUNT(c-[:deals]->)\n  }", "expression:aggregate"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");

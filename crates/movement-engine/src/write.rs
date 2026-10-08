@@ -1046,6 +1046,8 @@ impl Run<'_> {
         let handle = match scope.resolve(root) {
             Some(Binding::Handle(handle)) => handle,
             Some(Binding::Node(node)) => return crate::node::node_field(&node.borrow(), field),
+            // A field of no returned records is nothing (`collapse([])`).
+            Some(Binding::Positions(landings)) if landings.is_empty() => return Ok(Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) }),
             _ => return Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not a record in scope"))),
         };
         let value = handle.record.field(field)?;
@@ -1330,6 +1332,7 @@ pub fn describe_binding(binding: &Binding) -> &'static str {
         Binding::Handle(_) => "a write handle",
         Binding::Node(_) => "a synthesised node",
         Binding::Landed(_) => "a traversed source record",
+        Binding::Positions(_) => "a block's returned records",
     }
 }
 

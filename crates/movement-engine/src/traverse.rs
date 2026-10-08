@@ -260,14 +260,16 @@ fn list_items(value: &Js) -> Result<Vec<Js>, Failure> {
 }
 
 impl Run<'_> {
-    /// `interpretBlock` for an unbound block whose head walks one hop.
-    pub(crate) async fn block(&self, block: &TraversalBlock, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
+    /// `interpretBlock` for a block whose head walks one hop; bound
+    /// (`x = … { return … }`), the iterations' returned values are `x`.
+    pub(crate) async fn block(&self, block: &TraversalBlock, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
         let step = head_step(&block.head)
             .map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"))))?;
         let span = env::js_of_serialized(&block.head.span);
         let landings = self.head_landings(&block.head, &step, scope, &span).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Block { root: spell_path_head(&block.head), positions: landings.len() });
         let body = format!("{path}/block/body");
+        let mut returned: Vec<Binding> = Vec::new();
         for (index, landed) in landings.into_iter().enumerate() {
             // Per-landing isolation: an iteration's bindings never reach the
             // next, and the only way a value leaves one is its `return`,
@@ -276,12 +278,21 @@ impl Run<'_> {
             if let Some(alias) = &step.alias {
                 iteration.declare(alias.clone(), Binding::Landed(landed));
             }
-            match self.body(&block.body, &iteration, &at.iter(index), &body, 0).await {
+            let flow = match self.body(&block.body, &iteration, &at.iter(index), &body, 0).await {
                 // A match inside found nothing: this iteration skips, the
                 // next runs.
                 Err(Stop::EndedQuietly) => continue,
                 other => other?,
             };
+            // The one way a value leaves an iteration is its `return`.
+            if let Flow::Returned = flow
+                && let Some(value) = iteration.resolve_own(crate::run::RETURN_SLOT)
+            {
+                returned.push(value);
+            }
+        }
+        if let Some(name) = binding_name {
+            scope.declare(name, block_value(returned));
         }
         Ok(Flow::FellThrough)
     }
@@ -666,6 +677,32 @@ impl PositionTable {
         self.held.push(object.clone());
         self.by_address.insert(Rc::as_ptr(object), reference);
         (reference, true)
+    }
+}
+
+/// run.ts `blockValue`: values returned bind as the list of them, their
+/// trails unioned; anything else (here: nothing returned) as the returned
+/// records.
+fn block_value(returned: Vec<Binding>) -> Binding {
+    let values: Option<Vec<crate::env::ValueBinding>> =
+        returned.iter().map(|b| if let Binding::Value(v) = b { Some(v.clone()) } else { None }).collect();
+    match values {
+        Some(values) if !values.is_empty() => {
+            let mut origins: Vec<u32> = Vec::new();
+            for value in &values {
+                for &origin in value.trail.as_ref().map_or(&[][..], |t| &t.origins[..]) {
+                    if !origins.contains(&origin) {
+                        origins.push(origin);
+                    }
+                }
+            }
+            Binding::Value(crate::env::ValueBinding {
+                value: Js::array(values.into_iter().map(|v| v.value).collect()),
+                trail: Some(crate::env::Trail { origins, direct: None }),
+                many: false,
+            })
+        }
+        _ => Binding::Positions(returned),
     }
 }
 

@@ -261,7 +261,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `block_multi_hop` | a head that walks more than one hop (`crm-[c:companies]->-[d:deals]->`) |
 | `block_head_resources`, `block_head_step`, `block_head_does_not_lower` | a `_resources` head, a hop that is not an edge, a head the probe cannot read |
 | `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame, which this engine does not keep |
-| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a match, a link, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `block`, `callback`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node`, `write`, `match` and `link` |
+| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a match, a link, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `callback`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node`, `write`, `match` and `link` |
 | `await_not_sleep` | an `await` of anything but `sleep(…)` |
 | `movement_call` | a construction in a body spelled with a movement's name |
 | `function_call` | a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 |
@@ -323,6 +323,7 @@ parse, before anything is asked):
 | `resume_state_suspended` | a `suspended` other than `true` |
 | `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) |
 | `resume_state_kind:<kind>` | a binding of a kind this engine does not bind (`extraction`, `shape`, …) |
+| `resume_state_returned_records` | a bound block's returned records (this engine binds none but the empty set) |
 | `resume_state_extraction_origin` | an extraction among a binding's origins |
 | `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) |
 | `resume_state_deferred_edge` | a node's edge that is not landed, or names a landing |
@@ -486,7 +487,7 @@ aggregates in a target WHERE (traversal inside an expression).
 ### Traversal blocks
 
 `traverse.rs` is run.ts `interpretBlock` with its head walk
-(`headIterationsFrom` → `walkSourceHeadPaths`) for an unbound block of one
+(`headIterationsFrom` → `walkSourceHeadPaths`) for a block (bound or not) of one
 hop off a constructed instance (from its meta position), a write's handle
 (from its record), the event (from the seeded position) or an enclosing
 block's hop alias (a nested block: from that landing's own position,
@@ -534,8 +535,17 @@ adapter (or the wrapper's restamp) answered; reading its field is
 `field_miss` traced for a raw-payload landing that does not carry it, a
 `source_field` origin.
 
-What stays the TypeScript engine's (refused, "Admission" above): bound
-blocks (`x = … { return … }`), heads of more than one hop, heads off a value, a node, an expression or
+**Bound blocks** (`x = … { return … }`, `blockValue`): what each iteration
+returns (a `return` in an `if` arm returns from the body, its value landing
+in the body's scope) is collected in order; values bind as one list, their
+trails unioned. A block that returned nothing binds no returned records
+(`{kind: "positions", landings: []}`): read bare it is an empty list, a
+field of it is null, and a park writes it as the TypeScript does. Every
+`return` admission lets into a bound block returns a value (a record is
+`name_not_value`), so returned records are never more than that.
+
+What stays the TypeScript engine's (refused, "Admission" above): returning a
+record from a bound block, heads of more than one hop, heads off a value, a node, an expression or
 `_resources`, extraction heads (an extract is refused), a park in a body,
 EXISTS and any traversal inside an expression.
 
@@ -909,6 +919,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 114, v2 136). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 117, v2 139). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

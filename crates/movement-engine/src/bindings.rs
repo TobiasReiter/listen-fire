@@ -33,6 +33,10 @@ pub enum Binding {
     /// A record a traversal landed on (`kind: 'sourcePosition'`): a block
     /// head's hop alias, one landing per iteration (crate::traverse).
     Landed(Rc<Landed>),
+    /// A bound block's returned records (`kind: 'positions'`, run.ts
+    /// `blockValue`). This engine binds one only when nothing returned: every
+    /// `return` it admits returns a value, and values bind as a list.
+    Positions(Vec<Binding>),
 }
 
 /// `{kind: 'sourcePosition', position, edgeProperties?, read?}`.
@@ -116,6 +120,11 @@ impl Scope {
         }
     }
 
+    /// A binding this scope itself holds, not one it sees from outside.
+    pub fn resolve_own(&self, name: &str) -> Option<Binding> {
+        self.bindings.borrow().iter().find(|(n, _)| n == name).map(|(_, b)| b.clone())
+    }
+
     pub fn resolve(&self, name: &str) -> Option<Binding> {
         if let Some((_, found)) = self.bindings.borrow().iter().find(|(n, _)| n == name) {
             return Some(found.clone());
@@ -143,6 +152,11 @@ impl Names for Scope {
     fn value(&self, name: &str) -> Option<ValueBinding> {
         match self.resolve(name)? {
             Binding::Value(value) => Some(value),
+            // Read bare, a block's returned records are the list of them
+            // (empty: the only one this engine binds), with no origins.
+            Binding::Positions(landings) if landings.is_empty() => {
+                Some(ValueBinding { value: Js::array(Vec::new()), trail: Some(crate::env::Trail::default()), many: false })
+            }
             _ => None,
         }
     }
@@ -152,7 +166,7 @@ impl Names for Scope {
     }
 
     fn is_record(&self, name: &str) -> bool {
-        matches!(self.resolve(name), Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_)))
+        matches!(self.resolve(name), Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_) | Binding::Positions(_)))
     }
 }
 

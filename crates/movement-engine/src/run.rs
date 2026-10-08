@@ -71,6 +71,10 @@ use crate::stdlib::{self, Surroundings};
 use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
 
+/// The slot a `return` binds its value into (run.ts `RETURN_SLOT`): a name
+/// the grammar cannot spell.
+pub(crate) const RETURN_SLOT: &str = "#return";
+
 /// What the shim sends (rust_engine.ts `segmentInput`).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -743,6 +747,9 @@ impl Run<'_> {
                         self.match_record(r#match, Some(&assign.name), scope).await?;
                     }
                     RValue::Link { link } => self.link(link, Some(&assign.name), scope).await?,
+                    RValue::Block { block } => {
+                        self.block(block, Some(&assign.name), scope, at, &format!("{path}/value")).await?;
+                    }
                     RValue::Node { node } => {
                         let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
                         scope.declare(assign.name.clone(), Binding::Node(built));
@@ -803,20 +810,20 @@ impl Run<'_> {
             Statement::Return(ret) => {
                 let expr = self.value_slot(&ret.value, scope)?;
                 let bound = self.bind_slot(expr, scope).await?;
-                scope.declare("#return", Binding::Value(bound));
+                scope.declare(RETURN_SLOT, Binding::Value(bound));
                 Ok(Flow::Returned)
             }
-            Statement::Block(statement) => self.block(&statement.block, scope, at, path).await,
+            Statement::Block(statement) => self.block(&statement.block, None, scope, at, path).await,
             Statement::If(statement) => {
                 for (index, arm) in statement.arms.iter().enumerate() {
                     let taken = self.condition(&arm.condition, scope).await?;
                     self.trace(TraceEntry::Gate { outcome: taken });
                     if taken {
-                        return self.body(&arm.body, &scope.child(), &at.branch(index), &format!("{path}/arms/{index}/body"), 0).await;
+                        return self.arm(&arm.body, scope, &at.branch(index), &format!("{path}/arms/{index}/body")).await;
                     }
                 }
                 match &statement.else_arm {
-                    Some(arm) => self.body(&arm.body, &scope.child(), &at.branch(statement.arms.len()), &format!("{path}/elseArm/body"), 0).await,
+                    Some(arm) => self.arm(&arm.body, scope, &at.branch(statement.arms.len()), &format!("{path}/elseArm/body")).await,
                     None => Ok(Flow::FellThrough),
                 }
             }
@@ -825,6 +832,19 @@ impl Run<'_> {
                 "the Rust engine runs bindings, writes, matches, links, unlinks, deletes, blocks, `if`, `sleep` and `return`",
             ))),
         }
+    }
+
+    /// An `if` arm, in a scope of its own; a `return` in it returns from the
+    /// body the `if` is in, its value landing in that body's scope too.
+    async fn arm(&self, body: &[Statement], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
+        let inner = scope.child();
+        let flow = self.body(body, &inner, at, path, 0).await?;
+        if let Flow::Returned = flow
+            && let Some(value) = inner.resolve_own(RETURN_SLOT)
+        {
+            scope.declare(RETURN_SLOT, value);
+        }
+        Ok(flow)
     }
 
     /// The expression a right-hand side reads as: itself, or a bound call

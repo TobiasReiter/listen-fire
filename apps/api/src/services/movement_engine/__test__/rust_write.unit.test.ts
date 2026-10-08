@@ -575,6 +575,29 @@ describe('parks in the Rust engine', () => {
     expect(onTs.attio).toEqual(ownTs.attio);
   });
 
+  it('parks and resumes a bound block that returned nothing (no returned records), on either engine', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  rows = crm-[c:companies]-> {',
+      '    return c.`name`',
+      '  }',
+      '  await sleep(30s)',
+      '  write crm-[:companies]-> { name: "after", blob: rows }',
+      '}',
+    ].join('\n');
+    const event = webhook({ subject: 'Acme' });
+    const { ts, rust } = await agree({ source, event });
+    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
+    expect(JSON.stringify(rust.parks[0]?.state)).toContain('"rows":{"kind":"positions","landings":[]}');
+    for (const parked of [ts, rust]) {
+      const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
+      const resumed = await agree({ source, event, resume: state });
+      // An empty list, written to a field the adapter does not describe as
+      // many: the joined text of nothing.
+      expect(resumed.rust.result?.writes[0]?.writtenValues).toEqual({ name: 'after', blob: '' });
+    }
+  });
+
   it('resumes a parked object in the order it was stored, not sorted', async () => {
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',

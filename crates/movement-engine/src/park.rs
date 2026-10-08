@@ -163,6 +163,10 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         // admission refuses every park and suspension inside a block, so no
         // state this engine writes ever holds one.
         Binding::Landed(_) => unreachable!("no park is written inside a block"),
+        Binding::Positions(landings) => {
+            let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect();
+            object_of(vec![kind("positions"), ("landings", Js::array(landings))])
+        }
     }
 }
 
@@ -263,6 +267,10 @@ fn descriptor_refusal(descriptor: &Js) -> Option<String> {
             }
             None
         }
+        // A bound block that returned nothing; returned records are the
+        // TypeScript engine's to resume.
+        Some("positions") if items(at(descriptor, "landings")).is_empty() => None,
+        Some("positions") => Some("resume_state_returned_records".into()),
         other => Some(format!("resume_state_kind:{}", other.unwrap_or("undefined"))),
     }
 }
@@ -521,6 +529,13 @@ impl Run<'_> {
                 }
                 *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, edges };
                 Ok(Binding::Node(node))
+            }
+            Some("positions") => {
+                let mut landings = Vec::new();
+                for landing in items(at(descriptor, "landings")) {
+                    landings.push(self.rehydrate(landing, park)?);
+                }
+                Ok(Binding::Positions(landings))
             }
             Some("event") => Ok(Binding::Event),
             Some("opaque") => Ok(Binding::Opaque),

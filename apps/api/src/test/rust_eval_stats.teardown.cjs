@@ -17,11 +17,11 @@ const path = require('node:path');
 // v1 93, v2 101 with nested blocks and heads off a hop alias (chunk 5B task
 // 5: hop_narrowing's six), then to v1 114, v2 136 with the record verbs in
 // and out of blocks (match, link, unlink, delete, a target's WHERE, writes
-// off a traversed record). A floor
+// off a traversed record), then to v1 117, v2 139 with bound blocks. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 114, v2: 136 };
+const RAN_WHOLE_FLOOR = { v1: 117, v2: 139 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

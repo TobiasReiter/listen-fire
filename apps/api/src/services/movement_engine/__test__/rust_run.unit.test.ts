@@ -442,7 +442,7 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = 1\n  x = write crm-[:companies]-> { name: "a" }'), 'name_rebound'],
       [movement('  crm-[c:companies]-> {\n    x = 1\n  }\n  c = 1'), 'name_rebound'],
       [movement('  crm-[c:companies]-> {\n    await sleep(1h)\n  }'), 'block_park'],
-      [movement('  rows = crm-[c:companies]-> {\n    return c\n  }'), 'rvalue:block'],
+      [movement('  rows = crm-[c:companies]-> {\n    return c\n  }'), 'name_not_value'],
       [movement('  x = await inbox-[:message]->'), 'await_not_sleep'],
       [movement('  r = m(msg: msg)'), 'movement_call'],
       [movement('  r = M(msg)'), 'function_call'],
