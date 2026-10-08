@@ -742,7 +742,7 @@ answer:  void
 
 ### `clock`
 
-The engine reads no clock of its own. Every instant it needs that is not the run's firing instant comes from here: a sleep's wake time and an `every` timer's, a callback's expiry, the pin of a segment handed no `firedAt`, and every measured duration on the trace (a plugin invocation's, a model call's).
+The engine reads no clock of its own. Every instant it needs that is not the run's firing instant comes from here: a sleep's wake time and an `every` timer's, a callback's expiry, the pin of a segment handed no `firedAt`, the instant a `WITHIN` measures recency from (asked once per comparison or filter that holds one), and every measured duration on the trace (a plugin invocation's, a model call's).
 
 #### `clock.now`
 
@@ -751,7 +751,8 @@ request: { segmentId: string }
 answer:  { nowIso: string }   // ISO 8601
 ```
 
-- The engine adds a sleep's duration to the answer for `commitTimerPark`'s `wakeAt`, and a callback's `ttl` for `mint`'s `expiresAt`. A duration is the difference of two answers.
+- The engine adds a sleep's duration to the answer for `commitTimerPark`'s `wakeAt`, and a callback's `ttl` for `mint`'s `expiresAt`.
+- A measured duration is the difference of two answers, so each costs two `clock.now` requests: one before the plugin invocation or model call it measures, one after.
 - A host may answer one instant for the whole segment (the test host answers the instant the segment opened at), or the wall clock (production). The engine refuses an answer that names no instant.
 - **Persist:** nothing. **Retry:** idempotent.
 

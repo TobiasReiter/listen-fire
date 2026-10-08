@@ -22,7 +22,7 @@ import {
   type RecordedRequest,
 } from 'engine-contracts/conformance';
 
-import { NotJson, notJsonAt } from '../__test__/round_trip_host';
+import { NotJson, notJsonAt } from './not_json';
 import { VOID_HOST_METHODS, hostMethodPaths, type EngineHost } from '../host';
 import { MovementRunFailed } from '../errors';
 

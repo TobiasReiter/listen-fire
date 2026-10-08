@@ -534,6 +534,42 @@ describe('what concurrent members leave behind does not depend on which finished
     });
   });
 
+  it('a resolution that failed is asked again by the next member, not remembered', async () => {
+    const email = makeFakeAdapter('email');
+    const attio = makeFakeAdapter('attio');
+    let attioResolutions = 0;
+    const result = await runMovement({
+      source:
+        PRELUDE +
+        [
+          'movement intake(m: <inbox-[:message]->>) {',
+          `  MAP(${MEMBERS}, { onError: "ignore" }, (u) => {`,
+          '    write crm-[:companies]-> { name: u }',
+          '  })',
+          '}',
+        ].join('\n'),
+      movementName: 'intake',
+      event: webhookEvent(),
+      teamId: TEAM_ID,
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
+      host: makeTestHost({
+        adapters: {
+          resolve: ({ adapterType }: { adapterType: string }) => {
+            if (adapterType === 'email') return email.adapter;
+            attioResolutions += 1;
+            if (attioResolutions === 1) throw new Error('attio is down');
+            return attio.adapter;
+          },
+        },
+      }),
+    });
+    // The first member's resolution failed and it was left out; the second
+    // asked again, and every later member shared that one.
+    expect(attioResolutions).toBe(2);
+    expect(result.writes.map((w) => w.writtenValues.name)).toEqual(['b', 'c', 'd', 'e']);
+  });
+
   it('members resolving the same instance at once share one resolution', async () => {
     const { resolutions } = await runCounting(WRITING, delayedInvoker().invoker);
     expect(resolutions.filter((r) => r === 'attio as target')).toHaveLength(1);

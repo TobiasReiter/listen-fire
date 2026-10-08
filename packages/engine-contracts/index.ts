@@ -11,6 +11,7 @@ export * from './callback';
 export * from './cost';
 export * from './event';
 export * from './file_ref';
+export * from './guids';
 export * from './host_families';
 export * from './park_state';
 export * from './position';

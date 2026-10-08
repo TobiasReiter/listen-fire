@@ -16,7 +16,7 @@ import { openRunContext, RunLedger } from '../run_context';
 import { ENGINE_OWN_ROUTES, shimRoutePaths } from '../rust_host';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
 import { WireOut } from '../rust_wire';
-import { makeTestHost, type TestHostOverrides } from '../test_host';
+import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
 import {
   assertEngineChoiceConfigured,
   driveEngine,
@@ -108,6 +108,40 @@ function inSegment(segmentId: string, args: Record<string, unknown>): Record<str
 const RESOLVE = { adapterType: 'fake', role: 'source' };
 
 describe('the Rust engine shim', () => {
+  it("re-bases a timer's wake on the host's clock: clock.now plus what the engine slept past the pinned instant", async () => {
+    // Bridge — delete with the Rust engine merge (5B), with the re-base.
+    const park = makeFakeParkSink();
+    const host = makeTestHost({
+      park: { sink: park.sink },
+      clock: { now: async () => ({ nowIso: '2026-10-07T12:00:00.000Z' }) },
+    });
+    const context = await openRunContext({
+      host,
+      teamId: TEAM,
+      languageVersion: 3,
+      firedAt: '2026-10-07T09:00:00.000Z',
+      spend: {},
+    });
+    const segmentId = context.segmentId;
+    const { engine } = scriptedEngine((seen) =>
+      seen.length === 0
+        ? {
+            pending: [
+              request(1, 'park.sink', 'commitTimerPark', inSegment(segmentId, {
+                address: 's0',
+                state: new WireOut().value({ version: 1, address: 's0', bindingName: null, scopeChain: [] }),
+                // The engine's own clock is held at the pin: the pin plus an hour.
+                wakeAt: '2026-10-07T10:00:00.000Z',
+                wire: true,
+              })),
+            ],
+          }
+        : { done: { ok: true } },
+    );
+    await driveEngine(engine, { entry: 'test' }, { host, context, catalog: EMPTY_CATALOG_SNAPSHOT });
+    expect(park.timerParks.map((p) => p.wakeAt)).toEqual(['2026-10-07T13:00:00.000Z']);
+  });
+
   it('forwards adapters.resolve and adapters.call, naming the segment, and answers the instance as data', async () => {
     const resolved: unknown[] = [];
     const served = await hostWith({

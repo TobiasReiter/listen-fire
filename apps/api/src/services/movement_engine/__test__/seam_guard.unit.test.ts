@@ -202,6 +202,17 @@ const PURE_HELPERS = [path.join(SRC_DIR, 'services/translation_graph/engine/file
  *  segment's (`RunContext.pinnedNow`). */
 const OUT_OF_RUN_CLOCK = { file: path.join(ENGINE_DIR, 'expression.ts'), fn: 'pinnedNow' };
 
+/** `a.b.c` for a chain of property reads off an identifier; undefined for
+ *  anything else (a call, an element access). */
+function propertyPath(node: ts.Expression): string | undefined {
+  if (ts.isIdentifier(node)) return node.text;
+  if (ts.isPropertyAccessExpression(node)) {
+    const base = propertyPath(node.expression);
+    return base === undefined ? undefined : `${base}.${node.name.text}`;
+  }
+  return undefined;
+}
+
 /** Every place `file` reads a clock or mints an id itself, as `line: what`.
  *  The engine asks the host for both (`clock.now`, `ids.mint`), so a
  *  recorded run replays to the same instants and ids. */
@@ -218,30 +229,40 @@ function entropyReads(file: string, text = fs.readFileSync(file, 'utf8')): strin
     }
     return false;
   };
+  // Local names bound to the crypto module itself (a default or namespace
+  // import): a `random*` member read off one is a mint.
+  const cryptoNames = new Set(['crypto']);
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const module = node.moduleSpecifier.text;
       if (module === 'uuid' || module === 'nanoid' || module.startsWith('uuid/')) at(node, `imports '${module}'`);
       if (module === 'crypto' || module === 'node:crypto') {
-        const bindings = node.importClause?.namedBindings;
+        const clause = node.importClause;
+        if (clause?.name !== undefined) cryptoNames.add(clause.name.text);
+        const bindings = clause?.namedBindings;
         if (bindings !== undefined && ts.isNamedImports(bindings)) {
           for (const element of bindings.elements) {
             const name = (element.propertyName ?? element.name).text;
             if (name.startsWith('random')) at(node, `imports ${name} from '${module}'`);
           }
-        } else if (bindings !== undefined) {
-          at(node, `imports all of '${module}'`);
+        } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+          cryptoNames.add(bindings.name.text);
         }
       }
-    } else if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
-      const read = `${node.expression.text}.${node.name.text}`;
+    } else if (ts.isPropertyAccessExpression(node)) {
+      const read = propertyPath(node);
+      const [head, second, third] = read?.split('.') ?? [];
       if (
         read === 'Date.now' ||
         read === 'Math.random' ||
         read === 'performance.now' ||
-        (node.expression.text === 'crypto' && node.name.text.startsWith('random'))
+        read === 'process.hrtime' ||
+        read === 'process.hrtime.bigint' ||
+        (head !== undefined && cryptoNames.has(head) && second?.startsWith('random') === true && third === undefined) ||
+        (head === 'globalThis' && second === 'crypto' && third !== undefined)
       ) {
-        at(node, read);
+        at(node, read ?? '');
+        return;
       }
     } else if (
       ts.isNewExpression(node) &&
@@ -251,6 +272,8 @@ function entropyReads(file: string, text = fs.readFileSync(file, 'utf8')): strin
       !exempt(node)
     ) {
       at(node, 'new Date()');
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'Date') {
+      at(node, 'Date()');
     }
     ts.forEachChild(node, visit);
   };
@@ -381,6 +404,14 @@ describe('the engine/host seam', () => {
       'const e = performance.now();',
       "const f = new Date('2026-10-07T09:00:00.000Z');",
       'function pinnedNow() { return new Date(); }',
+      "import nodeCrypto from 'node:crypto';",
+      'const g = nodeCrypto.randomBytes(4);',
+      'const h = globalThis.crypto.getRandomValues(new Uint8Array(4));',
+      'const i = Date();',
+      'const j = process.hrtime();',
+      'const k = process.hrtime.bigint();',
+      "import * as cryptoModule from 'crypto';",
+      'const l = cryptoModule.randomInt(3);',
     ].join('\n');
     expect(entropyReads(path.join(ENGINE_DIR, 'probe.ts'), probe)).toEqual([
       "1: imports randomUUID from 'node:crypto'",
@@ -391,6 +422,12 @@ describe('the engine/host seam', () => {
       '6: crypto.randomUUID',
       '7: performance.now',
       '9: new Date()',
+      '11: nodeCrypto.randomBytes',
+      '12: globalThis.crypto.getRandomValues',
+      '13: Date()',
+      '14: process.hrtime',
+      '15: process.hrtime.bigint',
+      '17: cryptoModule.randomInt',
     ]);
     expect(entropyReads(OUT_OF_RUN_CLOCK.file, 'function pinnedNow() { return new Date(); }')).toEqual([]);
   });

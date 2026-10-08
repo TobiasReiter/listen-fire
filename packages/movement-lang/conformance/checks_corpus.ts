@@ -28,7 +28,7 @@ export function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) => {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       return Object.fromEntries(
-        Object.entries(v as Record<string, unknown>)
+        Object.entries(v)
           .filter(([, x]) => x !== undefined)
           .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
       );

@@ -233,6 +233,39 @@ describe('priced host calls under the run budget', () => {
 });
 
 describe("a segment's opening and closing", () => {
+  it('refuses a host written before the clock and ids families, naming what it lacks, and opens nothing', async () => {
+    const opened: unknown[] = [];
+    const host = makeTestHost({
+      segment: {
+        open: async (input) => {
+          opened.push(input);
+          return { segmentId: 'seg-old' };
+        },
+      },
+    });
+    const { clock: _clock, ids: _ids, ...older } = host;
+    const refusal: unknown = await openRunContext({
+      // A JavaScript host built against the earlier manifest: the compiler
+      // would refuse it, so it is handed over as an embedder's would be.
+      host: older as unknown as typeof host,
+      teamId: TEAM_ID,
+      languageVersion: 2,
+      spend: {},
+    }).catch((error: unknown) => error);
+    expect(refusal).toMatchObject({
+      code: 'MOVENG_UNSUPPORTED',
+      message:
+        'MOVENG_UNSUPPORTED: the host does not serve clock.now, ids.mint, which host families version 1 requires ' +
+        '(the clock, ids families); no segment was opened',
+    });
+    expect(opened).toEqual([]);
+    const { ids: _onlyIds, ...withoutIds } = host;
+    await expect(
+      openRunContext({ host: withoutIds as unknown as typeof host, teamId: TEAM_ID, languageVersion: 2, spend: {} }),
+    ).rejects.toThrow('the host does not serve ids.mint, which host families version 1 requires (the ids family)');
+    expect(opened).toEqual([]);
+  });
+
   it('opens a host segment under the pin and the run, and closes it however the segment ends', async () => {
     const opened: unknown[] = [];
     const closed: string[] = [];

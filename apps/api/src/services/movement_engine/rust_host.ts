@@ -194,9 +194,10 @@ const ROUTES: Record<string, Route> = {
     const sink = host.park.sink;
     if (sink === undefined) return { noSink: true };
     if (request.wire !== true) throw new RustShimError('park.sink.commitTimerPark carries its state on the eval wire');
-    // The engine computed the wake from its environment clock, held at the
-    // segment's pinned instant (rust_engine.ts): re-based on the host's clock,
-    // as the TypeScript engine computes it.
+    // Bridge — delete with the Rust engine merge (5B). The engine computed
+    // the wake from its environment clock, held at the segment's pinned
+    // instant (rust_engine.ts): re-based on the host's clock, as the
+    // TypeScript engine computes it.
     const sleptMs = new Date(instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt')).getTime() - context.pinnedNow.getTime();
     const wakeAt = new Date((await context.clock.now()).getTime() + sleptMs).toISOString();
     await sink.commitTimerPark({
@@ -237,11 +238,13 @@ const ROUTES: Record<string, Route> = {
     return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
   },
   /** The shared comparator, likewise. */
-  async 'builtins.compare'(request) {
+  async 'builtins.compare'(request, { context }) {
     const op = filterOperator(request.op);
     const left = new WireOut().read(request.left);
     const right = new WireOut().read(request.right);
-    return builtinAnswer(() => compareValues(left, op, right));
+    // `WITHIN` measures from the host's clock, as the TypeScript engine's does.
+    const now = op === 'within' ? (await context.clock.now()).getTime() : undefined;
+    return builtinAnswer(() => compareValues(left, op, right, now !== undefined ? { now } : {}));
   },
 };
 

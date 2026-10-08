@@ -158,7 +158,7 @@ import { makeStablePosition, makeUnstablePosition, positionData } from '../../tr
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import { tenantIdOf, type ActingPrincipal } from 'engine-contracts';
 import type { EngineHost } from '../host';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+import { credentialIdsFor, makeTestHost, TEST_HOST_NOW } from '../test_host';
 import type { ActingUserLookup } from '../host_kit';
 import type { ActingUser } from '../../translation_graph/adapter';
 
@@ -4281,7 +4281,6 @@ describe('sleep — durable timer park', () => {
     const { sink, timerParks } = makeFakeParkSink();
     const crm = makeFakeAdapter('attio');
 
-    const before = Date.now();
     const result = await runMovement({
       source: SLEEP_THEN_WRITE,
       event: webhookEvent('slack', { user: 'Acme' }),
@@ -4298,17 +4297,15 @@ describe('sleep — durable timer park', () => {
         park: { sink: sink },
       }),
     });
-    const after = Date.now();
 
     // The branch froze at the sleep — the run is parked.
     expect(result.parked).toBe(true);
     expect(timerParks).toHaveLength(1);
     expect(timerParks[0].address).toBe('s0');
 
-    // wake_at is now + 30s, bounded by the wall-clock window of the call.
+    // wake_at is the host's now + 30s (the test host's clock is fixed).
     const wakeMs = new Date(timerParks[0].wakeAt).getTime();
-    expect(wakeMs).toBeGreaterThanOrEqual(before + 30_000);
-    expect(wakeMs).toBeLessThanOrEqual(after + 30_000);
+    expect(wakeMs).toBe(Date.parse(TEST_HOST_NOW) + 30_000);
 
     // The serialized scope chain rides along, keyed at the sleep's address.
     const state = JSON.parse(JSON.stringify(timerParks[0].state)) as ParkedScopeState;

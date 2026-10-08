@@ -19,6 +19,7 @@
  *      transcript: the entry with an address is fetched, the bare one is
  *      researched, and the resolved address has to land on it.
  */
+import { BARE_HOST } from '../../services/movement_engine/host_kit';
 import './_profile_loader';
 
 // Composition root — registers the services the fetch path reaches.
@@ -212,6 +213,8 @@ async function runEndToEnd(userId: string | null): Promise<void> {
         extract,
         spec: await buildExtractSpec(extract),
         runtime: {
+          // Outside a run: a bare host's wall clock and random ids.
+          world: BARE_HOST,
           llm: makeAnthropicLlmClient(),
           transformInvoker: registryTransformInvoker,
           plugins: registeredPluginSpecs(),

@@ -66,12 +66,22 @@ export class RecordedConversation {
   private readonly served: boolean[];
   private made = 0;
   private divergence: string | undefined;
+  /** The request the first divergence was about, when it was a request with
+   *  no recorded counterpart: what the replay asked, in full. */
+  private unmatchedRequest: { path: string; args: unknown } | undefined;
   private waiting: Waiting[] = [];
   private progress = 0;
   private watchdog: ReturnType<typeof setTimeout> | undefined;
 
+  /** Each request's answer, canonical: what makes two equal requests
+   *  interchangeable. */
+  private readonly answerKeys: string[];
+  /** Served requests that have stood in for a later equal one (`servable`). */
+  private readonly stoodIn = new Set<number>();
+
   constructor(private readonly requests: readonly RecordedRequest[]) {
     this.keys = requests.map((request) => keyOf(pathOf(request), request.args));
+    this.answerKeys = requests.map((request) => canonicalJson(servedAnswerOf(request)) ?? '');
     this.served = requests.map(() => false);
   }
 
@@ -82,6 +92,7 @@ export class RecordedConversation {
     this.progress += 1;
     const key = keyOf(path, args);
     if (!this.keys.some((recorded, i) => !this.served[i] && recorded === key)) {
+      if (this.divergence === undefined) this.unmatchedRequest = { path, args };
       return Promise.reject(this.diverge(this.unmatched(made, path, args)));
     }
     return new Promise<ServedAnswer>((resolve, reject) => {
@@ -107,12 +118,18 @@ export class RecordedConversation {
       : `recorded request #${unmade + 1} ${pathOf(request)} ${shown(request.args)} was never made`;
   }
 
+  /** The request with no recorded counterpart that the first divergence
+   *  names, in full; undefined when the first divergence was another. */
+  firstUnmatched(): { path: string; args: unknown } | undefined {
+    return this.firstDivergence() === this.divergence ? this.unmatchedRequest : undefined;
+  }
+
   /** Serve every waiting request the recording now allows, until none is. */
   private release(): void {
     for (let releasing = true; releasing; ) {
       releasing = false;
       for (const waiting of [...this.waiting]) {
-        const index = this.keys.findIndex((recorded, i) => !this.served[i] && recorded === waiting.key && this.ready(i));
+        const index = this.servable(waiting.key);
         if (index < 0) continue;
         this.served[index] = true;
         this.progress += 1;
@@ -123,6 +140,32 @@ export class RecordedConversation {
     }
     if (this.waiting.length > 0) this.watch();
     else this.stopWatching();
+  }
+
+  /** The recorded request to serve a request of `key` with, or -1 to wait:
+   *  the earliest unserved counterpart that is ready. Failing that, the
+   *  earliest unserved one with the same answer as an earlier counterpart
+   *  already served: equal requests answered alike are indistinguishable, so
+   *  which concurrent branch the recording gave the earlier slot is not
+   *  observable — two branches making the same request in the other order
+   *  swap slots, and the one already answered takes this slot's place. */
+  private servable(key: string): number {
+    const ready = this.keys.findIndex((recorded, i) => !this.served[i] && recorded === key && this.ready(i));
+    if (ready >= 0) return ready;
+    return this.keys.findIndex((recorded, i) => {
+      if (this.served[i] || recorded !== key) return false;
+      const standIn = this.keys.findIndex(
+        (other, j) =>
+          j !== i &&
+          other === key &&
+          this.served[j] === true &&
+          !this.stoodIn.has(j) &&
+          this.answerKeys[j] === this.answerKeys[i],
+      );
+      if (standIn < 0) return false;
+      this.stoodIn.add(standIn);
+      return true;
+    });
   }
 
   private ready(index: number): boolean {
@@ -218,7 +261,9 @@ export class ReplayDivergence extends Error {
 /** How a replay against one target went. */
 export type ReplayVerdict =
   | { kind: 'same' }
-  | { kind: 'diverged'; divergence: string }
+  /** `unmatched`: the replayed request the divergence names, when it had no
+   *  recorded counterpart. */
+  | { kind: 'diverged'; divergence: string; unmatched?: { path: string; args: unknown } }
   /** The target cannot take this recording (an engine that does not run its
    *  program), with why: never a failure. */
   | { kind: 'skipped'; reason: string };
@@ -238,7 +283,10 @@ export function verdictOf(
   replayed: RecordedOutcome,
 ): ReplayVerdict {
   const divergence = conversation.firstDivergence();
-  if (divergence !== undefined) return { kind: 'diverged', divergence };
+  if (divergence !== undefined) {
+    const unmatched = conversation.firstUnmatched();
+    return { kind: 'diverged', divergence, ...(unmatched !== undefined ? { unmatched } : {}) };
+  }
   const difference = outcomeDifference(outcomeOf(recording), replayed);
   return difference === undefined ? { kind: 'same' } : { kind: 'diverged', divergence: difference };
 }

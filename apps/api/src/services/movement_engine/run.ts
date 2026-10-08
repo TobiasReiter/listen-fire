@@ -188,7 +188,6 @@ import type {
 } from 'movement-lang';
 import type { Expression, TraversalStep } from '#shared/expression/types';
 import {
-  evaluatePredicate,
   isPurePredicate,
   leafReadKey,
   pureLeafReads,
@@ -239,6 +238,7 @@ import {
   bindingOf,
   closedHopPushdown,
   decidePurePredicate,
+  decideWithClock,
   describeBinding,
   evalMovementExpr,
   evaluateMovementExpression,
@@ -344,6 +344,7 @@ import {
   publishTrace,
   pricedCalls,
   stopwatch,
+  type EngineClock,
   type PricedCalls,
   type RunContext,
   type RunLedger,
@@ -1392,6 +1393,9 @@ function awaitHopFilter(head: PathHead): Expression | undefined {
  */
 export async function awaitLandingMatches(input: {
   filter: Expression;
+  /** The host's clock, which a `WITHIN` measures from; absent, the wall
+   *  clock. */
+  clock?: EngineClock;
   adapter: Adapter;
   adapterType: string;
   landing: { recordType?: string; fields: Record<string, unknown> };
@@ -1409,7 +1413,7 @@ export async function awaitLandingMatches(input: {
       // landing, so strip it to the field name the adapter keys by.
       const field = dot >= 0 ? key.slice(dot + 1) : key;
       return input.adapter.getFieldValue({ position, fieldId: field });
-    }),
+    }, input.clock),
   );
 }
 
@@ -2370,6 +2374,10 @@ class Interpreter {
         return adapter;
       })();
       this.resolutions.set(key, resolving);
+      // A resolution that failed is not remembered: the next asks again.
+      resolving.catch(() => {
+        if (this.resolutions.get(key) === resolving) this.resolutions.delete(key);
+      });
       return resolving;
     };
     this.currentImports = prepared.link?.imports;
@@ -4457,16 +4465,6 @@ class Interpreter {
   }
 
   /**
-   * `parallel { … }` — env fork + join. Every sibling statement runs in
-   * its OWN child environment, all siblings concurrently (Promise.all):
-   * sibling bindings are invisible to each other while the block runs
-   * (the checker already rejects cross-sibling reads — `parallelSibling`
-   * scope poisoning), and the block's writes land on the firing record in
-   * program order, sibling by sibling (`write_ledger.ts`). After the join, each sibling's bindings
-   * hoist into the enclosing scope in program order — exactly the
-   * checker's "sibling bindings come into scope after the block".
-   */
-  /**
    * `await race([…])` / `await parallel([…])` — the two concurrency combinators
    * (core calculus v2 R5). The arms are FUNCTION values and this is what calls
    * them: each runs concurrently in its own `branch k` frame, and the value is
@@ -6256,7 +6254,7 @@ class Interpreter {
           for (const landing of resolution.landings) {
             if (
               hopFilter === undefined ||
-              (await awaitLandingMatches({ filter: hopFilter, adapter, adapterType, landing }))
+              (await awaitLandingMatches({ filter: hopFilter, adapter, adapterType, landing, clock: this.context.clock }))
             ) {
               return { status: 'bind', landing };
             }
@@ -6354,8 +6352,12 @@ class Interpreter {
       );
     }
 
-    const firstMatch = async (): Promise<CallbackCall | undefined> =>
-      (await sink.calls({ callbackId: binding.callbackId })).find((call) => this.callbackCallMatches(call, input.hopFilter));
+    const firstMatch = async (): Promise<CallbackCall | undefined> => {
+      for (const call of await sink.calls({ callbackId: binding.callbackId })) {
+        if (await this.callbackCallMatches(call, input.hopFilter)) return call;
+      }
+      return undefined;
+    };
     const matched = await firstMatch();
     if (matched !== undefined) {
       // The resolved shortcut (S2): a fire already landed — continue inline.
@@ -6502,7 +6504,7 @@ class Interpreter {
   /** The awaited hop's pure WHERE against one recorded call. A call's fields are
    *  plain data (no adapter translates them), so the predicate reads them
    *  directly — the same values the bound landing will read. */
-  private callbackCallMatches(call: CallbackCall, filter: Expression | undefined): boolean {
+  private async callbackCallMatches(call: CallbackCall, filter: Expression | undefined): Promise<boolean> {
     if (filter === undefined) return true;
     const fields: Record<string, unknown> = { [CALLBACK_CALL_AT]: call.at, ...call.values };
     const reads = new Map<string, unknown>();
@@ -6511,7 +6513,7 @@ class Interpreter {
       const dot = key.indexOf('.');
       reads.set(key, fields[dot >= 0 ? key.slice(dot + 1) : key]);
     }
-    return Boolean(evaluatePredicate(filter, { read: (name) => reads.get(name) }));
+    return Boolean(await decideWithClock(filter, (name) => reads.get(name), this.context.clock));
   }
 
   /**
@@ -7602,9 +7604,11 @@ class Interpreter {
           'this run has no callback sink — a callback needs the durable trigger-run substrate',
         );
       }
-      const calls = await sink.calls({ callbackId: rootBinding.callbackId });
+      const calls: CallbackCall[] = [];
+      for (const call of await sink.calls({ callbackId: rootBinding.callbackId })) {
+        if (await this.callbackCallMatches(call, step.expressionFilter)) calls.push(call);
+      }
       return calls
-        .filter((call) => this.callbackCallMatches(call, step.expressionFilter))
         .map((call) => {
           const landing = this.callbackCallBinding(call);
           const bindings = new Map<string, Binding>();
@@ -10909,7 +10913,7 @@ class Interpreter {
         data = { ...data, ...(current ?? {}) };
       }
       const read = data;
-      if (evaluatePredicate(predicate, { read: (name) => read[name] })) kept.push(candidate);
+      if (await decideWithClock(predicate, (name) => read[name], this.context.clock)) kept.push(candidate);
     }
     return kept;
   }
@@ -11293,6 +11297,7 @@ class Interpreter {
   private exprContext(env: Environment): MovementExprContext {
     return {
       env,
+      clock: this.context.clock,
       languageVersion: this.languageVersion,
       source: this.source,
       graphRead: (name, binding) => this.graphReadFor(name, binding),

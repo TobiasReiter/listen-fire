@@ -12,7 +12,6 @@ export {
   openEngineSegment,
   type EngineSegment,
 } from './wasm/loader';
-export { withEnvNow } from './wasm/env_services';
 export * from './parser/duration';
 export * from './expression/bridge';
 export * from './expression/stdlib';

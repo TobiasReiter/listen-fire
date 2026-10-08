@@ -27,7 +27,7 @@
 
 import { CURRENT_LANGUAGE_VERSION, type FileArtifactType, type LanguageVersion } from 'movement-lang';
 
-import { HOST_FAMILIES_VERSION, missingHostMethods, type ActingPrincipal, type TenantId } from 'engine-contracts';
+import { HOST_FAMILIES_VERSION, guidSequence, missingHostMethods, type ActingPrincipal, type TenantId } from 'engine-contracts';
 import type { FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import type { ArbitrationAnswer, EntityArbitration } from './host';
@@ -85,10 +85,25 @@ export interface IdMint {
   mint(count: number): Promise<string[]>;
 }
 
+/** The host's clock and ids as a piece of the engine called outside a run
+ *  asks them: a script hands a bare host's (`BARE_HOST`, host_kit.ts). */
+export interface ClockAndIds {
+  readonly clock: EngineClock;
+  readonly ids: IdMint;
+}
+
+/** For a caller that hands neither a run nor a host (a test driving the
+ *  extraction directly): one fixed instant, so every duration reads 0, and
+ *  a fresh GUID sequence. */
+export function hostless(): ClockAndIds {
+  const instant = new Date('2026-01-01T00:00:00.000Z');
+  const guids = guidSequence();
+  return { clock: { now: async () => instant }, ids: { mint: async (count) => guids.take(count) } };
+}
+
 /** A stopwatch on `clock`, started now: each read answers the milliseconds
- *  since. Outside a run there is no clock, and every read is 0. */
-export async function stopwatch(clock: EngineClock | undefined): Promise<() => Promise<number>> {
-  if (clock === undefined) return async () => 0;
+ *  since. */
+export async function stopwatch(clock: EngineClock): Promise<() => Promise<number>> {
   const started = (await clock.now()).getTime();
   return async () => (await clock.now()).getTime() - started;
 }

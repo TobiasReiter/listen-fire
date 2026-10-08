@@ -26,6 +26,10 @@ import { listElementExpression, mapListElement } from './types';
  *  Returns `undefined` for an unknown name (treated as a null read). */
 export interface FilterScope {
   read(name: string): unknown;
+  /** The instant `WITHIN` measures recency from (epoch milliseconds), read
+   *  only when a `WITHIN` is evaluated; absent, the wall clock. The movement
+   *  engine answers it from its host's `clock.now`. */
+  now?: () => number;
 }
 
 /**
@@ -304,7 +308,7 @@ export function evaluatePredicate(expr: Expression, scope: FilterScope): unknown
       const right = evaluatePredicate(expr.right, scope);
       if (isNullLiteral(expr.left)) return compareToNull(expr.op, right);
       if (isNullLiteral(expr.right)) return compareToNull(expr.op, left);
-      return compareValues(left, expr.op, right);
+      return compareValues(left, expr.op, right, expr.op === 'within' && scope.now !== undefined ? { now: scope.now() } : {});
     }
 
     case 'logical': {
@@ -397,7 +401,12 @@ export function compareToNull(op: FilterOperator, value: unknown): boolean {
  * (`movement_engine/expression.ts`) so the engine, this shared unit, and
  * adapters all decide a comparison identically. The engine re-imports this.
  */
-export function compareValues(left: unknown, op: FilterOperator, right: unknown): boolean {
+export function compareValues(
+  left: unknown,
+  op: FilterOperator,
+  right: unknown,
+  options: { now?: number } = {},
+): boolean {
   switch (op) {
     case 'eq':
       if (Array.isArray(left) && Array.isArray(right)) return setEquals(left, right);
@@ -430,14 +439,15 @@ export function compareValues(left: unknown, op: FilterOperator, right: unknown)
       if (Array.isArray(left)) return left.includes(right);
       return false;
     case 'within': {
-      // `field WITHIN 30d` — the field's timestamp is at most `30d` old. The
-      // wall clock is inherent to recency, so this is the one operator that
-      // isn't a pure function of its operands. A non-timestamp left or an
+      // `field WITHIN 30d` — the field's timestamp is at most `30d` old, as
+      // of `options.now` (the wall clock when absent). Recency needs a clock,
+      // so this is the one operator that isn't a pure function of its
+      // operands. A non-timestamp left or an
       // unparseable duration filters the row OUT (false), never throws.
       const ts = toEpochMs(left);
       const ms = durationToMs(right);
       if (ts === null || ms === null) return false;
-      return Date.now() - ts <= ms;
+      return (options.now ?? Date.now()) - ts <= ms;
     }
     default:
       return false;

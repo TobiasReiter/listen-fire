@@ -12,6 +12,7 @@ import type { SegmentWriteLocks } from '../write_locks/write_locks';
 import type { MovementTraceEntry } from './expression';
 import type { EngineHost, SegmentOpening } from './host';
 import type { CancelGate } from './run';
+import type { ClockAndIds } from './run_context';
 
 /** The gate of a run nothing can cancel. */
 export const NEVER_CANCELLED: CancelGate = {
@@ -27,6 +28,14 @@ export const WALL_CLOCK: EngineHost['clock'] = {
 /** Random UUIDs, as a host serves `ids`. */
 export const RANDOM_IDS: EngineHost['ids'] = {
   mint: async ({ count }) => Array.from({ length: count }, () => randomUUID()),
+};
+
+/** A bare host's clock and ids, for a script that drives a piece of the
+ *  engine outside a run (`ExtractRuntime.world`): the wall clock and random
+ *  UUIDs. */
+export const BARE_HOST: ClockAndIds = {
+  clock: { now: async () => new Date() },
+  ids: { mint: async (count) => Array.from({ length: count }, () => randomUUID()) },
 };
 
 /** What a host knows of a segment it opened: the run and the team every call

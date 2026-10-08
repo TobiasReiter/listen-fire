@@ -129,6 +129,8 @@ export function numberFormat(value: number, locale: string, options: NumberOptio
   }
 }
 
+// Bridge — delete with the Rust engine merge (5B), when the Rust engine asks
+// the host's `clock.now` itself.
 /** The instant `now` answers while a caller holds it (`withEnvNow`); the
  *  wall clock otherwise. */
 let heldNowMs: number | undefined;
@@ -138,7 +140,9 @@ let heldNowMs: number | undefined;
  * service answering `nowMs`. A run host that takes its time from its own host
  * (`clock.now`) holds the engine's environment clock at the segment's pinned
  * instant, and re-bases what the engine computed from it on the host's answer.
- * Synchronous, so no other segment's step can run inside it.
+ * Synchronous, so no other segment's step can run inside it. Internal: the
+ * movement engine's Rust shim imports it from this module, not the package.
+ * Bridge — delete with the Rust engine merge (5B).
  */
 export function withEnvNow<T>(nowMs: number, body: () => T): T {
   const previous = heldNowMs;

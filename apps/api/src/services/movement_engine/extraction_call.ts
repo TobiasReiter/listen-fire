@@ -65,7 +65,7 @@ import {
   type MovementTraceEntry,
 } from './expression';
 import { fromOrigin, NO_PROVENANCE, type ExtractSiteRef, type Provenance, type ProvenanceOrigin } from './provenance';
-import { stopwatch, throwIfCancelled, type RunFacts } from './run_context';
+import { hostless, stopwatch, throwIfCancelled, type ClockAndIds, type RunFacts } from './run_context';
 
 // ── The model seam ──────────────────────────────────────────────────────────
 
@@ -181,6 +181,9 @@ export interface ExtractCallRuntime {
   /** The run this call is in — its cancel gate and its id for log lines.
    *  Absent ⇒ outside a run: nothing to cancel. */
   run?: RunFacts;
+  /** Outside a run, the clock to ask (a script's bare host); neither this
+   *  nor `run` ⇒ `hostless()`. */
+  world?: ClockAndIds;
 }
 
 // ── The prompt ──────────────────────────────────────────────────────────────
@@ -710,7 +713,7 @@ export async function runExtractCall(input: ExtractCallInput): Promise<Binding> 
   const schema = responseSchema(spec, sink, finds);
   const usage: ExtractCallUsage[] = [];
   let lastReply: ExtractCallLlmResult | undefined;
-  const elapsed = await stopwatch(runtime.run?.clock);
+  const elapsed = await stopwatch((runtime.run ?? runtime.world ?? hostless()).clock);
   // The reply is third-party content, so a run keeps only a few digests of it;
   // the budget is counted off the entries already on the run's trace.
   const digestOf = (why: Array<'no_entities' | 'dropped_records' | 'retried' | 'failed'>) => {

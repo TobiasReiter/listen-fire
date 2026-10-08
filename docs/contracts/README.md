@@ -60,11 +60,11 @@ A host recording is one entry into the engine as data: what it was handed, every
 **Replaying.** An engine under replay is handed the recorded input and a host that answers from the recording. It conforms when:
 
 - every request it makes has a recorded counterpart: the earliest recorded request not yet served with the same family, method and canonical args (keys sorted, undefined dropped);
-- a request is served only once every request in its counterpart's `after` has been served. A request made sooner than the recording made it waits for those; concurrency is allowed, and branches may interleave differently from the recording. A request that waits on one the replay never makes (the engine waits for its answer before making it) is a causal reordering: once the replay has made no progress for two quiet spells, it diverges, naming both requests;
+- a request is served only once every request in its counterpart's `after` has been served. A request made sooner than the recording made it waits for those; concurrency is allowed, and branches may interleave differently from the recording. Equal requests answered alike are interchangeable: when two concurrent branches make the same request in the other order, the one answered first takes the earlier slot, and the other may take the later slot without waiting on what the later slot was recorded after. A request that waits on one the replay never makes (the engine waits for its answer before making it) is a causal reordering: once the replay has made no progress for two quiet spells, it diverges, naming both requests;
 - every recorded request is made;
 - it ends the same way: the same result as canonical JSON, or a failure with the same class, code and message.
 
-The first divergence is named: the request with no counterpart and the nearest recorded one, the request reordered and the one it waited on, the recorded request never made, or the path where the results first differ. The rules are `packages/engine-contracts/conformance/replay.ts`.
+A divergence over a request with no recorded counterpart also carries that request in full (`unmatched` on the verdict). The first divergence is named: the request with no counterpart and the nearest recorded one, the request reordered and the one it waited on, the recorded request never made, or the path where the results first differ. The rules are `packages/engine-contracts/conformance/replay.ts`.
 
 **Replaying ours against your engine or host.** Our corpora are `apps/api/src/services/movement_engine/conformance/__fixtures__/engine-runs.v1.json` and `.v2.json`, one recording per line: every distinct conversation the v1 and v2 engine corpora have (the entry, its input and its requests). Each line replays on its own.
 
@@ -78,7 +78,7 @@ The first divergence is named: the request with no counterpart and the nearest r
 cd apps/api && pnpm harvest:engine-runs
 ```
 
-This records both corpora (`UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v<n>`), then checks that every recording replays on the TypeScript engine, in process and over the HTTP double. A recording that does not fails the harvest, naming it and its first divergence, unless a known reason accounts for it (`UNPORTABLE` in `conformance/__test__/engine_runs_replay.ts`, each reason with its exact count per corpus); those are dropped from the fixture.
+This records both corpora (`UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v<n>`) with the tests' own wall clock held at one instant and their own random UUIDs numbered per test file (the inputs a test builds and the ids its host invents), so two harvests write the same bytes. It then checks that every recording replays on the TypeScript engine, in process and over the HTTP double. A recording that does not fails the harvest, naming it and its first divergence, unless a known reason accounts for it (`UNPORTABLE` in `conformance/__test__/engine_runs_replay.ts`, each reason with its exact count per corpus); those are dropped from the fixture.
 
 ### The language kit: checked programs
 

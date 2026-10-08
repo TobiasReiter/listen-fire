@@ -49,6 +49,7 @@
  *   pnpm dev:extraction-bakeoff --conditions A,B,C \
  *     --fixtures reconcile_long,nested_synthesis --reps 3 --out /tmp/round2
  */
+import { BARE_HOST } from '../../services/movement_engine/host_kit';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -563,6 +564,8 @@ async function runOne(
       extract: fixture.extract,
       spec: await fixtureSpec(fixture.extract),
       runtime: {
+        // Outside a run: a bare host's wall clock and random ids.
+        world: BARE_HOST,
         llm,
         transformInvoker: stubInvoker(fixture),
         plugins: registeredPluginSpecs(),

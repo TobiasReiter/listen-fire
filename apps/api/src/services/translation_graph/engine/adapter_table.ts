@@ -147,10 +147,11 @@ class SegmentInstances {
   constructor(
     private readonly segmentId: string,
     private readonly writeSink: DryRunWriteSink | undefined,
+    private readonly rehearsalIds: (() => string) | undefined,
   ) {}
 
   private get rehearsal(): DryRunRehearsal {
-    return (this.rehearsalState ??= newDryRunRehearsal(this.writeSink));
+    return (this.rehearsalState ??= newDryRunRehearsal(this.writeSink, this.rehearsalIds));
   }
 
   async resolve(
@@ -245,6 +246,8 @@ export function adapterTable(options: {
   classify?: ClassifyHostError;
   /** Receives each write a rehearsed instance captured. */
   writeSink?: DryRunWriteSink;
+  /** Mints the ids a rehearsal invents; absent, random UUIDs. */
+  rehearsalIds?: () => string;
 }): AdapterTable {
   const instances = new Map<string, SegmentInstances>();
   const around = options.around ?? (<T>(_segmentId: string, call: () => Promise<T>) => call());
@@ -253,7 +256,7 @@ export function adapterTable(options: {
   const segmentNamed = (segmentId: string): SegmentInstances => {
     let segment = instances.get(segmentId);
     if (segment === undefined) {
-      segment = new SegmentInstances(segmentId, options.writeSink);
+      segment = new SegmentInstances(segmentId, options.writeSink, options.rehearsalIds);
       instances.set(segmentId, segment);
     }
     return segment;

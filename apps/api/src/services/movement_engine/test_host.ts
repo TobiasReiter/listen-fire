@@ -3,6 +3,7 @@
 // engine reaches them through `adapters.call` as it reaches any.
 
 import type { CatalogSnapshot, FileArtifactType } from 'movement-lang';
+import { guidSequence } from 'engine-contracts';
 import type { ActingUser } from '../translation_graph/adapter';
 import type { DryRunWriteSink } from '../translation_graph/engine/dry_run_adapter';
 import type { MovementTraceEntry } from './expression';
@@ -47,12 +48,19 @@ export interface TestHostOverrides {
   wakes?: QueuedWake[];
   /** Receives each write a rehearsed (`dryRun`) instance captured. */
   writeSink?: DryRunWriteSink;
-  /** The clock; by default each segment reads the instant it opened at,
-   *  throughout. */
+  /** The one instant the default clock answers, throughout every entry
+   *  (ISO 8601); absent, `TEST_HOST_NOW`. A test that reads the run's time
+   *  sets it, and compares against it, never against the wall clock. */
+  now?: string;
+  /** The clock in full, in place of the fixed one. */
   clock?: EngineHost['clock'];
-  /** The id minting; by default `id-1`, `id-2`, … in the order asked. */
+  /** The id minting; by default a fresh GUID sequence per host
+   *  (`00000000-0000-4000-8000-000000000001`, …) in the order asked. */
   ids?: EngineHost['ids'];
 }
+
+/** The instant a test host's clock answers unless the test sets another. */
+export const TEST_HOST_NOW = '2026-01-01T00:00:00.000Z';
 
 function notProvided(piece: string): Error {
   return new Error(`EngineHost.${piece} not provided`);
@@ -83,34 +91,25 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     ...(adapters.around !== undefined ? { around: adapters.around } : {}),
     ...(adapters.classify !== undefined ? { classify: adapters.classify } : {}),
     ...(overrides.writeSink !== undefined ? { writeSink: overrides.writeSink } : {}),
+    // A rehearsal's invented ids, deterministic too: their own sequence, so
+    // they never meet the ids `ids.mint` answers.
+    rehearsalIds: guidSequence(1).next,
   });
   const locks = segmentWriteLocks(overrides.locks ?? new InMemoryWriteLocks());
   const open = segment.open ?? (async () => ({ segmentId: `test-segment-${++opened}` }));
   const close = segment.close ?? (async () => ({}));
   const teamOf = (segmentId: string) => segments.facts(segmentId).teamId;
-  // Deterministic by default: one instant per segment (the moment it opened,
-  // so a test's fake timers set it), and ids numbered in the order asked.
-  const openedAt = new Map<string, string>();
-  let minted = 0;
+  // Deterministic by default, so a recorded run is the same run every time:
+  // one fixed instant, and ids from a GUID sequence in the order asked.
+  const nowIso = overrides.now ?? TEST_HOST_NOW;
+  const guids = guidSequence();
   return {
     segment: {
-      open: async (input) => {
-        const opening = await openSegmentWith(input, { segments, locks, open });
-        openedAt.set(opening.segmentId, new Date().toISOString());
-        return opening;
-      },
+      open: (input) => openSegmentWith(input, { segments, locks, open }),
       close: async (input) => closeSegmentWith(input, { segments, table, locks, close }),
     },
-    clock: overrides.clock ?? {
-      now: async ({ segmentId }) => {
-        const nowIso = openedAt.get(segmentId);
-        if (nowIso === undefined) throw new Error(`clock.now: segment ${segmentId} was never opened on this host`);
-        return { nowIso };
-      },
-    },
-    ids: overrides.ids ?? {
-      mint: async ({ count }) => Array.from({ length: count }, () => `id-${++minted}`),
-    },
+    clock: overrides.clock ?? { now: async () => ({ nowIso }) },
+    ids: overrides.ids ?? { mint: async ({ count }) => guids.take(count) },
     adapters: { resolve: (input) => table.resolve(input), call: (input) => table.call(input) },
     llm: {
       client: llm.client ?? {

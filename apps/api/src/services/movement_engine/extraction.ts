@@ -66,7 +66,15 @@ import type {
 } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
 import { mapConcurrent, settledAll } from './fans';
-import { languageVersionOf, runLogFields, stopwatch, throwIfCancelled, type IdMint, type RunFacts } from './run_context';
+import {
+  hostless,
+  languageVersionOf,
+  runLogFields,
+  stopwatch,
+  throwIfCancelled,
+  type ClockAndIds,
+  type RunFacts,
+} from './run_context';
 import { matchOption } from '../../lib/utils/string';
 import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import { selectModel } from '../translation_graph/engine/batched_extraction/model_choice';
@@ -805,6 +813,9 @@ export interface ExtractRuntime {
    *  its id for log lines. Absent ⇒ outside a run (a script, a test): the
    *  current version, nothing to cancel. */
   run?: RunFacts;
+  /** Outside a run, the clock and ids to ask (a script's bare host);
+   *  neither this nor `run` ⇒ `hostless()`. */
+  world?: ClockAndIds;
 }
 
 // ── Materialisation ─────────────────────────────────────────────────────────
@@ -927,13 +938,6 @@ interface FenceWalk {
   trace: TraceSink;
 }
 
-/** Outside a run (a script, a test calling the extraction directly) no host
- *  mints ids: resources are numbered within the process instead. */
-let mintedOutsideARun = 0;
-const OUTSIDE_A_RUN_IDS: IdMint = {
-  mint: async (count) => Array.from({ length: count }, () => `local-${++mintedOutsideARun}`),
-};
-
 export async function materializeExtract(input: {
   extract: ExtractExpression;
   /** The resolved spec (`buildExtractSpec`, annotations resolved live). */
@@ -963,7 +967,13 @@ class Materializer {
    *  read it — is only answerable if each entry says so itself. */
   private sourceFiles: ExtractionTraceFile[] = [];
 
-  constructor(private readonly runtime: ExtractRuntime) {}
+  /** The clock and ids this extraction asks: its run's, a script's host's,
+   *  or a hostless caller's. */
+  private readonly world: ClockAndIds;
+
+  constructor(private readonly runtime: ExtractRuntime) {
+    this.world = runtime.run ?? runtime.world ?? hostless();
+  }
 
   private get languageVersion(): LanguageVersion {
     return languageVersionOf(this.runtime.run);
@@ -972,7 +982,7 @@ class Materializer {
   /** Each resource with no id, given one: in a run, by the host
    *  (`ids.mint`), all of them in one request. */
   private stamp(resources: readonly Resource[]): Promise<Resource[]> {
-    return stampResourceIds(resources, (count) => (this.runtime.run?.ids ?? OUTSIDE_A_RUN_IDS).mint(count));
+    return stampResourceIds(resources, (count) => this.world.ids.mint(count));
   }
 
   private async stampOne(resource: Resource): Promise<Resource> {
@@ -980,14 +990,38 @@ class Materializer {
     return stamped ?? resource;
   }
 
-  /** The files a stage's plugins fetched, joined onto the record they ran for. */
-  private async addResources(
+  /** The files a stage's plugins fetched, joined onto the record they ran
+   *  for — without ids yet: the fan of entities that fetched them lands in
+   *  any order, so the ids are minted once it has (`stampTree`), in the
+   *  tree's own order. */
+  private addResources(
     emission: WorkingEmission,
     enrichments: Array<{ plugin: string; result: TransformInvocationResult }>,
-  ): Promise<void> {
+  ): void {
     const fetched = enrichments.flatMap(({ result }) => pluginFileResources(result, this.languageVersion));
     if (fetched.length === 0) return;
-    emission.resources = [...(emission.resources ?? []), ...(await this.stamp(fetched))];
+    emission.resources = [...(emission.resources ?? []), ...fetched];
+  }
+
+  /** Every record's fetched files given their ids, in one request: the
+   *  records in the tree's order (a record, then its children by name in
+   *  the order they were attached, each in order), so the ids follow the
+   *  program, not which branch of a fan finished first. */
+  private async stampTree(root: WorkingEmission): Promise<void> {
+    const records: WorkingEmission[] = [];
+    const walk = (emission: WorkingEmission): void => {
+      records.push(emission);
+      for (const children of emission.children.values()) for (const child of children) walk(child);
+    };
+    walk(root);
+    const unstamped = records.flatMap((record) => record.resources ?? []);
+    const stamped = await this.stamp(unstamped);
+    let next = 0;
+    for (const record of records) {
+      if (record.resources === undefined) continue;
+      record.resources = stamped.slice(next, next + record.resources.length);
+      next += record.resources.length;
+    }
   }
 
   async run(extract: ExtractExpression, spec: ExtractNodeSpec): Promise<ExtractEmission> {
@@ -1050,6 +1084,7 @@ class Materializer {
         children: new Map(),
       } satisfies WorkingEmission);
     await this.resolveFences(root, { segments, baseSources, ancestorContext: {}, trace });
+    await this.stampTree(root);
     return exportEmission(root, {
       inherited: [...fromData.resources, ...pipelineResources],
       languageVersion: this.languageVersion,
@@ -1517,7 +1552,7 @@ class Materializer {
     // this method drives (one call per region, then one per entity per stage)
     // is the extraction's to gate. Both share the one debounced read.
     await throwIfCancelled(this.runtime.run);
-    const elapsed = await stopwatch(this.runtime.run?.clock);
+    const elapsed = await stopwatch(this.world.clock);
     const first = await this.runtime.llm.call({
       system: opts.system,
       userMessage: opts.userMessage,
@@ -1572,7 +1607,7 @@ class Materializer {
       );
       // A fetched file is this record's source whether or not the stage goes on
       // to read anything — a deck with no readable text still carries forward.
-      await this.addResources(emission, enrichments);
+      this.addResources(emission, enrichments);
       // A stage fenced behind plugins that all came back with nothing has
       // nothing new for this entity to be read from: the prompt would carry
       // the same source text and the same fields the previous stage already
@@ -1679,7 +1714,7 @@ class Materializer {
         );
         // The child's stage ran once for all of its records, so each carries
         // what it fetched.
-        for (const extracted of children) await this.addResources(extracted, enrichments);
+        for (const extracted of children) this.addResources(extracted, enrichments);
         return children;
       });
       specs.forEach((child, i) => emission.children.set(child.name, extracted[i]));
@@ -1803,7 +1838,7 @@ class Materializer {
       return SKIPPED;
     }
 
-    const elapsed = await stopwatch(this.runtime.run?.clock);
+    const elapsed = await stopwatch(this.world.clock);
     const result = await this.runtime.transformInvoker.invoke({
       plugin: plugin.plugin,
       config,

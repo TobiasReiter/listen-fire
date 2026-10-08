@@ -38,8 +38,9 @@ import {
   type Program,
   type Statement,
   type WriteExpression,
-  withEnvNow,
 } from 'movement-lang';
+// Internal to movement-lang: the Rust bridge below (delete with 5B).
+import { withEnvNow } from 'movement-lang/wasm/env_services';
 
 import { isPurePredicate } from '#shared/expression/filter';
 import type { Expression } from '#shared/expression/types';
@@ -729,6 +730,8 @@ export function openWasmEngine(): EngineProtocol {
 }
 
 /**
+ * Bridge — delete with the Rust engine merge (5B).
+ *
  * `engine` with its environment clock held at the segment's pinned instant
  * through every step. The Rust engine still reads its own clock for a timer's
  * wake time; held there, what it computes is the pinned instant plus the

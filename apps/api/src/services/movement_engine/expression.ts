@@ -135,7 +135,7 @@ import type {
 } from '../translation_graph/adapter';
 import { fileHandle, isFileRef } from '../translation_graph/adapter';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
-import type { SegmentHost } from './run_context';
+import type { EngineClock, SegmentHost } from './run_context';
 import { hostInstanceOf } from './host_adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import {
@@ -684,6 +684,9 @@ export interface SourceRead {
 
 export interface MovementExprContext {
   env: Environment;
+  /** The host's clock, which `WITHIN` measures from. Absent outside a run:
+   *  the wall clock. */
+  clock?: EngineClock;
   /** The movement's pin, for the evaluation rules a version changed
    *  (`COALESCE` reaches only the arguments it needs from version 3). Absent
    *  ⇒ the oldest behaviour. */
@@ -1309,8 +1312,10 @@ export async function evalMovementExpr(
       // Answered before `compareValues`, which is the shared SCALAR comparator
       // and would compare two object references.
       const asRecords = compareRecords(left.value, expr.op, right.value);
+      // `WITHIN` measures from the host's clock, asked only for it.
+      const now = expr.op === 'within' && ctx.clock !== undefined ? (await ctx.clock.now()).getTime() : undefined;
       return {
-        value: asRecords ?? compareValues(left.value, expr.op, right.value),
+        value: asRecords ?? compareValues(left.value, expr.op, right.value, now !== undefined ? { now } : {}),
         provenance: unionProvenance([left.provenance, right.provenance]),
       };
     }
@@ -3072,6 +3077,36 @@ export async function hopFilterKeeps(input: {
   return Boolean(await evalScopedFilter(filter, scopeOf(landed), { ...ctx, env }));
 }
 
+const NEEDS_THE_CLOCK = Symbol('a WITHIN needs the clock');
+
+/**
+ * A pure predicate decided with `read`, its `WITHIN` measured from the host's
+ * clock: asked only when a `WITHIN` is reached, as the Rust engine asks it
+ * at the comparison. Deciding a pure predicate twice is safe (it reads
+ * nothing but `read`), so the first try runs without the clock and the
+ * second, only if the first reached a `WITHIN`, with it. Outside a run (no
+ * clock), the wall clock.
+ */
+export async function decideWithClock(
+  filter: Expression,
+  read: (name: string) => unknown,
+  clock: EngineClock | undefined,
+): Promise<unknown> {
+  if (clock === undefined) return evaluatePredicate(filter, { read });
+  try {
+    return evaluatePredicate(filter, {
+      read,
+      now: () => {
+        throw NEEDS_THE_CLOCK;
+      },
+    });
+  } catch (error) {
+    if (error !== NEEDS_THE_CLOCK) throw error;
+    const now = (await clock.now()).getTime();
+    return evaluatePredicate(filter, { read, now: () => now });
+  }
+}
+
 async function evalScopedFilter(
   filter: Expression,
   scope: PositionScope,
@@ -3084,7 +3119,7 @@ async function evalScopedFilter(
   // `evalMovementExpr` resolves every leaf form — including a zero-step
   // traverse (`t.firedAt`) via its alias-rooted read seam — so the value (and
   // therefore the decision) is identical to the full async evaluator.
-  return decidePurePredicate(filter, async (leaf) => (await evalMovementExpr(leaf, scopedCtx)).value);
+  return decidePurePredicate(filter, async (leaf) => (await evalMovementExpr(leaf, scopedCtx)).value, ctx.clock);
 }
 
 /**
@@ -3098,6 +3133,7 @@ async function evalScopedFilter(
 export async function decidePurePredicate(
   filter: Expression,
   readLeaf: (leaf: LeafRead) => Promise<unknown>,
+  clock?: EngineClock,
 ): Promise<unknown> {
   const reads = new Map<string, unknown>();
   let last: unknown = true;
@@ -3106,7 +3142,7 @@ export async function decidePurePredicate(
       const name = leafReadKey(leaf);
       if (!reads.has(name)) reads.set(name, await readLeaf(leaf));
     }
-    last = evaluatePredicate(conjunct, { read: (name) => reads.get(name) });
+    last = await decideWithClock(conjunct, (name) => reads.get(name), clock);
     if (!last) return last;
   }
   return last;
