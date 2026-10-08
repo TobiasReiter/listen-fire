@@ -54,7 +54,7 @@ describe('GET /system/engine-stats', () => {
   it("answers this process's counters, the reasons runs were not admitted among them, and its uptime", async () => {
     rustRunStats.routed = 3;
     rustRunStats.ranWhole = 2;
-    rustRunStats.notAdmitted = { 'statement:block': 4, cost_cap_present: 1 };
+    rustRunStats.notAdmitted = { 'statement:block': 4, limit_paused: 1 };
     rustRunStats.declined = { event_field_dated: 1 };
     const res = await fetch(`${baseUrl}/system/engine-stats`);
     expect(res.status).toBe(200);
@@ -63,9 +63,10 @@ describe('GET /system/engine-stats', () => {
       engine: process.env.MOVEMENT_ENGINE === 'rust' ? 'rust' : 'ts',
       runs: {
         routed: 3,
+        admitted: 0,
         ranWhole: 2,
         shimFaults: 0,
-        notAdmitted: { 'statement:block': 4, cost_cap_present: 1 },
+        notAdmitted: { 'statement:block': 4, limit_paused: 1 },
         declined: { event_field_dated: 1 },
         hostCalls: {},
       },

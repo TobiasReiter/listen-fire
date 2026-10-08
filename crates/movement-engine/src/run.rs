@@ -239,7 +239,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
     let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
-    if let Some(reason) = crate::admit::refusal(&root.program, version) {
+    if let Some(reason) = crate::admit::refusal(&root.program, version, input.spend.cap_microdollars.is_some()) {
         return Err(Stop::Refused(reason));
     }
     if let Some(resume) = &input.resume
@@ -1420,6 +1420,104 @@ mod tests {
             } }],
         });
         assert_eq!(crate::park::resume_refusal(&wire(resumable)), None);
+    }
+
+    #[test]
+    fn a_malformed_state_of_a_known_kind_fails_the_resume_loudly() {
+        // Its kinds are all this engine's, so admission lets it by; the
+        // handle carries no record, so rehydrating it fails the run rather
+        // than resume it wrong.
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
+        let state = json!({ "version": 1, "address": "s0", "bindingName": null, "scopeChain": [
+            { "bindings": {} },
+            { "bindings": { "co": { "kind": "handle", "targetType": "company" } } },
+        ] });
+        assert_eq!(crate::park::resume_refusal(&wire(state.clone())), None);
+        let input = json!({
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({ "adapterType": "email", "triggerType": "webhook", "payload": {} })),
+            "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(), "resume": { "state": wire(state) },
+        });
+        let host = plain_host(json!({}));
+        let mut segment = crate::begin(&input.to_string()).unwrap();
+        let mut step = segment.start().unwrap();
+        let done = loop {
+            match step {
+                Step::Done(done) => break done,
+                Step::Pending(pending) => {
+                    let request = pending.into_iter().next().expect("one request at a time");
+                    let answer = crate::read_answer(&host(&request).to_string()).unwrap();
+                    step = segment.answer(request.id, answer).unwrap();
+                }
+            }
+        };
+        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_RUNTIME"), "{done}");
+        assert_eq!(done["failed"]["error"]["message"], json!("a handle descriptor without its record"));
+    }
+
+    #[test]
+    fn a_write_searches_creates_and_records_through_its_host() {
+        let schema = |position: &str, collections: Json| {
+            json!({ "constructionArgs": [], "schemas": { "": {
+                "positions": { position: { "properties": { "subject": "text", "name": "text" }, "edges": {} } },
+                "collections": collections, "writableRoots": {},
+            } } })
+        };
+        let catalog = json!({
+            "adapters": { "email": schema("message", json!({})), "attio": schema("company", json!({ "companies": { "target": "company" } })) },
+            "credentials": {}, "plugins": {},
+        });
+        let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (`name`)\n    name: msg.`subject`\n  }\n}";
+        let input = json!({
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "now": "2026-03-12T12:00:00.000Z",
+            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
+            "catalog": catalog,
+        });
+        let mut segment = crate::begin(&input.to_string()).unwrap();
+        let mut seen = Vec::new();
+        let mut step = segment.start().unwrap();
+        let done = loop {
+            match step {
+                Step::Done(done) => break done,
+                Step::Pending(pending) => {
+                    let request = pending.into_iter().next().expect("one request at a time");
+                    let method = request.args.get("method").and_then(Json::as_str).unwrap_or("").to_string();
+                    let answer = match (request.family, request.method.as_str()) {
+                        ("check", _) => json!({ "value": { "diagnostics": [], "stamps": [] } }),
+                        ("adapters", "resolve") => json!({ "value": {
+                            "instance": format!("i{}", seen.len() + 1), "adapterType": request.args["adapterType"], "methods": [],
+                        } }),
+                        ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
+                            "getFieldValue" => json!("Acme"),
+                            "describe" => json!(null),
+                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, []]]]]),
+                            "createRecord" => json!(["o", 0, [["externalId", "co-1"], ["data", ["o", 1, []]]]]),
+                            other => panic!("unexpected call {other}"),
+                        } } }),
+                        ("locks", "acquire") => json!({ "value": { "token": "k1" } }),
+                        ("control.cancel", _) => json!({ "value": false }),
+                        _ => json!({}),
+                    };
+                    seen.push(if method.is_empty() { format!("{}.{}", request.family, request.method) } else { method });
+                    step = segment.answer(request.id, crate::read_answer(&answer.to_string()).unwrap()).unwrap();
+                }
+            }
+        };
+        assert_eq!(
+            seen,
+            [
+                "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.resolve", "describe", "getFieldValue",
+                "locks.acquire", "resolveEntity", "createRecord", "locks.release", "control.cancel.cancelledNow",
+            ]
+        );
+        let writes = env::decode(&done["result"]["writes"]).unwrap();
+        let Js::Array(writes) = writes else { panic!("a list of writes") };
+        let record = crate::env::json_of_js(&writes.items[0]);
+        assert_eq!(record["externalId"], json!("co-1"));
+        assert_eq!(record["bindingName"], json!("co"));
+        assert_eq!(record["origin"], json!({ "kind": "write", "writeIndex": 0, "externalId": "co-1" }));
+        assert_eq!(record["provenance"]["name"][0]["kind"], json!("source_field"));
     }
 
     #[test]

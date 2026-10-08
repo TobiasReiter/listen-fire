@@ -25,7 +25,6 @@ import {
   type ResumeMovementInput,
   type RunMovementInput,
 } from '../run';
-import { rustRunRefusal } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 import type { ParkedScopeState } from '../serialize';
 
@@ -144,6 +143,7 @@ interface Case {
   judge?: (asked: unknown[]) => NonNullable<TestHostOverrides['llm']>['arbitrateEntities'];
   /** Resume this state rather than run. */
   resume?: ParkedScopeState;
+  costCapMicrodollars?: number;
 }
 
 /** One run on one engine: what it returned or threw, and everything the
@@ -180,6 +180,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
     firedAt: '2026-05-01T09:00:00.000Z',
     ...(c.dryRun === true ? { dryRun: true } : {}),
+    ...(c.costCapMicrodollars !== undefined ? { costCapMicrodollars: c.costCapMicrodollars } : {}),
     host: makeTestHost({
       ...(c.dryRun === true ? { writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
       adapters: {
@@ -465,7 +466,7 @@ describe('writes in the Rust engine', () => {
       // Nothing but the check was asked of the host...
       expect(rustRunStats.hostCalls).toEqual({ 'check.program': 1 });
       // ...and the TypeScript engine ran it instead: the source resolved once.
-      expect(run.resolved.filter((r) => (r as { role?: string }).role === 'source')).toHaveLength(1);
+      expect(run.resolved.filter(isSourceResolve)).toHaveLength(1);
     }
   });
 });
@@ -551,9 +552,22 @@ describe('parks in the Rust engine', () => {
       expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
       expect(rustRunStats.hostCalls).toEqual({});
     }
-    // The judge is a priced call: with a cost cap, a run stays on the
-    // TypeScript engine, which can suspend at the cap.
-    expect(rustRunRefusal({})).toBeUndefined();
-    expect(rustRunRefusal({ costCapMicrodollars: 1_000 })).toBe('cost_cap_present');
+  });
+
+  it('refuses, with a cost cap, a write whose judge is a priced call, and routes a capped run without one', async () => {
+    const event = webhook({ subject: 'Acme' });
+    const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+    // The judge is a priced call: with a cost cap, a `unique by` write stays
+    // on the TypeScript engine, which can suspend at the cap.
+    resetRustRunStats();
+    await runOn('rust', { source: movement('  write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }'), event, costCapMicrodollars: 1_000 });
+    expect(rustRunStats).toMatchObject({ notAdmitted: { cost_cap_with_priced_call: 1 }, admitted: 0, hostCalls: {} });
+    // A capped run that reaches no priced call is the Rust engine's.
+    await agree({ source: movement('  write crm-[:companies]-> { name: msg.`subject` }'), event, costCapMicrodollars: 1_000 });
   });
 });
+
+/** An `adapters.resolve` request for the event's source. */
+function isSourceResolve(request: unknown): request is { role: 'source' } {
+  return typeof request === 'object' && request !== null && Reflect.get(request, 'role') === 'source';
+}

@@ -33,8 +33,10 @@ export function resetRustEvalStats(): void {
  *   cannot cross the eval wire), or by the engine's own admission on its own
  *   parse before it asked its host for anything (crates/movement-engine's
  *   README lists every reason);
- * - `routed`: segments the Rust engine started (its admission refusals
- *   among them);
+ * - `routed`: segments the Rust engine started, its admission refusals
+ *   among them;
+ * - `admitted`: routed segments its admission let by (`routed` less its
+ *   refusals);
  * - `ranWhole`: routed runs it ran to their end (a run's own failure
  *   included);
  * - `declined`: routed runs it admitted and then declined, after the check
@@ -48,6 +50,7 @@ export function resetRustEvalStats(): void {
  */
 export const rustRunStats: {
   routed: number;
+  admitted: number;
   ranWhole: number;
   shimFaults: number;
   notAdmitted: Record<string, number>;
@@ -55,6 +58,7 @@ export const rustRunStats: {
   hostCalls: Record<string, number>;
 } = {
   routed: 0,
+  admitted: 0,
   ranWhole: 0,
   shimFaults: 0,
   notAdmitted: {},
@@ -64,6 +68,7 @@ export const rustRunStats: {
 
 export function resetRustRunStats(): void {
   rustRunStats.routed = 0;
+  rustRunStats.admitted = 0;
   rustRunStats.ranWhole = 0;
   rustRunStats.shimFaults = 0;
   rustRunStats.notAdmitted = {};

@@ -439,14 +439,11 @@ describe('choosing the engine', () => {
     expect(rustRunRefusal({})).toBeUndefined();
     expect(rustRunRefusal({ limitPaused: true })).toBe('limit_paused');
     expect(rustRunRefusal({ suspendAt: ['s0'] })).toBe('suspend_at');
-    // Until the Rust engine suspends at a cost cap, a capped run is the
-    // TypeScript engine's.
-    expect(rustRunRefusal({ costCapMicrodollars: 1_000 })).toBe('cost_cap_present');
     expect(rustResumeRefusal({ answer: true })).toBe('resume_answer');
     expect(rustResumeRefusal({ deferRaceSettlement: true })).toBe('resume_defers_race_settlement');
     expect(rustResumeRefusal({})).toBeUndefined();
     expect(rustRunStats.notAdmitted).toEqual({
-      limit_paused: 1, suspend_at: 1, cost_cap_present: 1, resume_answer: 1, resume_defers_race_settlement: 1,
+      limit_paused: 1, suspend_at: 1, resume_answer: 1, resume_defers_race_settlement: 1,
     });
     expect(rustRunStats.routed).toBe(0);
   });

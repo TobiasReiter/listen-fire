@@ -74,6 +74,7 @@ Measured 2026-10-07 (gzip -9):
 | the chunk 4A host contract (segments, the ledger, the clock) | 1,994,270 | 559,928 |
 | the probe entries test-only, the dead value model removed | 1,987,389 | 557,438 |
 | admission on the engine's own parse (chunk 5B) | 2,018,914 | 565,647 |
+| chunk 5B task 1, fix round 1 (the cap rule in admission) | 2,018,987 | 565,747 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -224,7 +225,6 @@ Each is a stable snake_case string: the one log line per run names it, and
 |---|---|
 | `limit_paused` | a run entered while its limit pause holds (`limitPaused`) |
 | `suspend_at` | a run that must suspend at an address (`suspendAt`) |
-| `cost_cap_present` | a run with a cost cap: the judge is a priced call, and a run that meets its cap must suspend, which this engine cannot yet |
 | `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a `Date`, a class instance, a lone surrogate) |
 | `resume_answer` | a resume that answers into its leaf (an ask) |
 | `resume_defers_race_settlement` | a resume that defers a race's settlement |
@@ -262,6 +262,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `unique_by_without_key` | a `unique by` clause with no key (no bare field, parent or `field == value`) |
 | `unique_by_reads_beyond_candidate` | a `unique by` conjunct that is not a pure predicate over the candidate |
 | `write_spread_source` | a write spread of a name that is not a value, a handle, a node or the event |
+| `cost_cap_with_priced_call` | in a run with a cost cap (`spend.capMicrodollars`), a `unique by` write: its judge is a priced call, and a run that meets its cap there must suspend, which this engine cannot yet. A capped run with no such write is admitted |
 | `graph_shape` | `graph<Shape> { … }` |
 | `node_spread` | a spread in a `node { … }` literal |
 | `node_spread_source` | a graph spread of a name that is not a value, a handle or a node |
@@ -314,13 +315,16 @@ mutation — the TypeScript engine throws the same.
 
 ### The evidence
 
-- **One log line per run**, at the decision point, at info:
+- **One log line per run**, at the decision point:
   `movement engine: engine=rust|ts run=<id> reason=<reason|admitted>`
   (`admitted` for a run this engine ran, to its end or its own failure;
   `shim_fault` for one the shim faulted; `movement_engine_ts` when
-  `MOVEMENT_ENGINE` did not choose this engine).
-- **`rustRunStats`** (rust_stats.ts): `notAdmitted` and `declined` by reason,
-  `routed`, `ranWhole`, `shimFaults`, `hostCalls` by `family.method`.
+  `MOVEMENT_ENGINE` did not choose this engine). At info under
+  `MOVEMENT_ENGINE=rust`; at debug under `ts`.
+- **`rustRunStats`** (rust_stats.ts): `notAdmitted` and `declined` by reason;
+  `routed`, the segments this engine started, its admission's refusals
+  among them; `admitted`, those its admission let by (`routed` less the
+  refusals); `ranWhole`; `shimFaults`; `hostCalls` by `family.method`.
 - **`GET /api/v1/system/engine-stats`** (system scope, like `/tg-runs`):
   `{engine, uptimeSeconds, since, runs, evaluator}`, this process's counters
   since it started.
@@ -457,8 +461,9 @@ fails); none produces a different answer.
 
 - A priced call refused as `budget`: the statement fails with the host's
   message, where the TypeScript engine would suspend the run at its cap. It
-  cannot happen with no cap (the budget is unlimited), and the shim routes
-  no capped run (`cost_cap_present`).
+  cannot happen with no cap (the budget is unlimited), and admission refuses
+  a capped run's `unique by` write (`cost_cap_with_priced_call`), the only
+  priced call this engine makes.
 
 None of the first four is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
@@ -684,9 +689,10 @@ MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # pe
 
 The teardown prints `Rust evaluator: {…}` (expressions not admitted,
 admitted, answered, fallbacks by reason), `Rust runs: {runsRouted,
-ranWhole, shimFaults, declined, hostCalls}` and `Rust runs not admitted:
-{reason: count}` (largest first), and fails a run in which Rust
-answered nothing, any decline or shim fault, or a whole-corpus run under its
-routing floor (v1 60, v2 70). Any filter (a path or name pattern, related or
+runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
+segments admission refused too; admitted does not) and `Rust runs not
+admitted: {reason: count}` (largest first), and fails a run in which Rust
+answered nothing, admitted runs none of which ran whole, any decline or
+shim fault, or a whole-corpus run under its routing floor (v1 69, v2 75). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

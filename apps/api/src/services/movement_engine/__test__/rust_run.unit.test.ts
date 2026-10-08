@@ -374,5 +374,8 @@ async function admission(source: string): Promise<string> {
   resetRustRunStats();
   await segmentOf(source);
   const [reason] = Object.keys(rustRunStats.notAdmitted);
-  return reason ?? 'admitted';
+  if (reason !== undefined) return reason;
+  // Admitted: it ran in Rust, to its end or its own failure.
+  expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ranWhole: 1 });
+  return 'admitted';
 }

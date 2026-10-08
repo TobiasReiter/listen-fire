@@ -130,6 +130,8 @@ async function segmentInRust(
     });
     outcome = readRunResult(done, { context, hostErrors });
   } catch (error) {
+    // Anything but a refusal ends in a `done` past admission.
+    rustRunStats.admitted += 1;
     // The run's own failure, which the Rust engine ran to as the TypeScript
     // engine would have; a shim fault is not one.
     if (error instanceof RustShimError) {
@@ -142,6 +144,7 @@ async function segmentInRust(
     throw error;
   }
   if ('refused' in outcome) return notAdmitted(input, outcome.refused);
+  rustRunStats.admitted += 1;
   if ('declined' in outcome) {
     rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
     noteEngine(input, 'ts', outcome.declined);
@@ -189,10 +192,13 @@ function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string): { 
  * for a run the Rust engine ran (to its end or its own failure), else the
  * reason it ran on the TypeScript engine — the shim's input check, the Rust
  * engine's refusal or decline, or `movement_engine_ts` when the Rust engine
- * was not chosen.
+ * was not chosen. At info under `MOVEMENT_ENGINE=rust`, where it is the
+ * evidence of what the Rust engine takes; at debug otherwise.
  */
 export function noteEngine(input: Pick<RunMovementInput, 'runId'>, engine: EngineChoice, reason: string): void {
-  logger.info(`movement engine: engine=${engine} run=${input.runId ?? '-'} reason=${reason}`);
+  const line = `movement engine: engine=${engine} run=${input.runId ?? '-'} reason=${reason}`;
+  if (reason === ENGINE_CHOICE_TS) logger.debug(line);
+  else logger.info(line);
 }
 
 /** Why the TypeScript engine runs a run that `MOVEMENT_ENGINE` did not route. */
@@ -200,12 +206,12 @@ export const ENGINE_CHOICE_TS = 'movement_engine_ts';
 
 /**
  * Why the Rust engine must not run this run, read off its input alone (what
- * the program says is the engine's own admission to decide): a run that
- * resumes after a limit pause or must suspend at an address, and — until the
- * Rust engine suspends at a cost cap — a run with a cap. Counted and logged
- * as not admitted; undefined to route the run.
+ * the program says is the engine's own admission to decide, a capped run's
+ * priced calls among it): a run that resumes after a limit pause or must
+ * suspend at an address. Counted and logged as not admitted; undefined to
+ * route the run.
  */
-export function rustRunRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'runId'>): string | undefined {
+export function rustRunRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'runId'>): string | undefined {
   const reason = inputRefusal(input);
   if (reason !== undefined) notAdmitted(input, reason);
   return reason;
@@ -215,7 +221,7 @@ export function rustRunRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'su
  *  defer a race's settlement. The parked state itself is the Rust engine's
  *  to read (crates/movement-engine/src/park.rs `resume_refusal`). */
 export function rustResumeRefusal(
-  input: Pick<ResumeMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars' | 'runId' | 'answer' | 'deferRaceSettlement'>,
+  input: Pick<ResumeMovementInput, 'limitPaused' | 'suspendAt' | 'runId' | 'answer' | 'deferRaceSettlement'>,
 ): string | undefined {
   const reason =
     input.answer !== undefined ? 'resume_answer'
@@ -225,12 +231,9 @@ export function rustResumeRefusal(
   return reason;
 }
 
-function inputRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'costCapMicrodollars'>): string | undefined {
+function inputRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt'>): string | undefined {
   if (input.limitPaused === true) return 'limit_paused';
   if ((input.suspendAt?.length ?? 0) > 0) return 'suspend_at';
-  // The judge is a priced call, and a run that meets its cap there suspends,
-  // which the Rust engine cannot yet.
-  if (input.costCapMicrodollars !== undefined) return 'cost_cap_present';
   return undefined;
 }
 
