@@ -18,7 +18,7 @@ import { HOUR } from '../../constants';
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import type { WorkHandler } from '../work/kinds';
-import { registerWorkHandler } from '../work/drain';
+import type { WorkKindRegistration } from '../work/units';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
 import { MOVEMENT_LISTEN_PROVISIONER } from '../translation_graph/movement/listen_subscriptions';
@@ -117,6 +117,16 @@ const airtableWebhookRefreshHandler: WorkHandler = {
   },
 };
 
-export function registerAirtableWebhookRefreshWork(): void {
-  registerWorkHandler('airtable_webhook_refresh', airtableWebhookRefreshHandler);
+// The Airtable adapter's own periodic kind: its webhook subscriptions expire
+// unless refreshed. The adapter registry hands it to the process that drains
+// (`adapterWorkKinds`).
+
+declare module '../work/kinds' {
+  interface UnitWorkKinds {
+    airtable_webhook_refresh: true;
+  }
 }
+
+export const AIRTABLE_WORK_KINDS: readonly WorkKindRegistration[] = [
+  { kind: 'airtable_webhook_refresh', handler: airtableWebhookRefreshHandler, intervalMs: AIRTABLE_WEBHOOK_SCAN_INTERVAL },
+];

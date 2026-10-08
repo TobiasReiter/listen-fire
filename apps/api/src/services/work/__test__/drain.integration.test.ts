@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import type { WorkContext } from '../kinds';
 
-import { drainWork, registerWorkHandler, resetWorkHandlersForTests } from '../drain';
+import { drainWork, resetWorkHandlersForTests } from '../drain';
+import { registerWorkKinds } from '../units';
 import { enqueueWork, removeWork } from '../store';
 
-// exposed_file_sweep is a real kind no other suite registers a handler for.
+// exposed_file_sweep is a real unit kind no other suite registers a handler
+// for; registering it the way its unit does makes this process claim it.
 const KIND = 'exposed_file_sweep';
 
 // Due times live in 2001 so only rows this file backdates are due (see store.integration.test.ts).
@@ -39,12 +41,13 @@ afterEach(async () => {
 describe('drainWork against the real store', () => {
   it('two concurrent drainers execute each row exactly once between them', async () => {
     const executed: { key: string; owner: string }[] = [];
-    registerWorkHandler(KIND, {
-      run: async (payload, ctx: WorkContext) => {
+    const handler = {
+      run: async (payload: unknown, ctx: WorkContext) => {
         executed.push({ key: keyOf(payload), owner: ctx.owner });
         await sleep(50);
       },
-    });
+    };
+    registerWorkKinds([{ kind: KIND, handler }]);
     const mine: string[] = [];
     for (let i = 0; i < 20; i++) mine.push(await enqueueMine());
 
@@ -63,12 +66,13 @@ describe('drainWork against the real store', () => {
 
   it('a hung holder loses its lapsed lease and the next drainer recovers with attempts 2', async () => {
     const recovered: number[] = [];
-    registerWorkHandler(KIND, {
+    const handler = {
       run: () => new Promise<void>(() => {}),
-      recover: async (_payload, ctx) => {
+      recover: async (_payload: unknown, ctx: WorkContext) => {
         recovered.push(ctx.attempts);
       },
-    });
+    };
+    registerWorkKinds([{ kind: KIND, handler }]);
     await enqueueMine();
 
     void drainWork({ owner: 'hung', leaseMs: 200, heartbeatMs: false, now });

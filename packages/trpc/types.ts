@@ -131,55 +131,6 @@ export type TeamInviteId = string & {
     __brand: 'core.team_invite';
 };
 
-/** Represents the enum knowledge.node_type_category */
-export const enum NodeTypeCategory {
-    message = "message",
-    object = "object",
-    scoped_object = "scoped_object"
-}
-
-/** Identifier type for knowledge.node_type */
-export type NodeTypeId = string & {
-    __brand: 'knowledge.node_type';
-};
-
-/** Identifier type for knowledge.node */
-export type NodeId = string & {
-    __brand: 'knowledge.node';
-};
-
-/** Represents the enum knowledge.LinkedObjectSource */
-export const enum LinkedObjectSource {
-    retrieval = "retrieval",
-    output = "output",
-    manual = "manual",
-    input = "input"
-}
-
-/** Identifier type for knowledge.linked_object */
-export type LinkedObjectId = string & {
-    __brand: 'knowledge.linked_object';
-};
-
-/** Represents the enum knowledge.ResourceType */
-export const enum ResourceType {
-    URL = "URL",
-    EMAIL = "EMAIL",
-    WHATSAPP = "WHATSAPP",
-    FILE = "FILE",
-    TEXT = "TEXT"
-}
-
-/** Identifier type for knowledge.document */
-export type DocumentId = string & {
-    __brand: 'knowledge.document';
-};
-
-/** Identifier type for knowledge.resource */
-export type ResourceId = string & {
-    __brand: 'knowledge.resource';
-};
-
 /**
  * Free-text / slug value collection. `input` and `slug` share a field set and
  * differ only in validation — `slug` enforces {@link TRIGGER_SLUG_PATTERN}.
@@ -1395,6 +1346,19 @@ export type AgentUpdate = {
     timestamp: number;
 };
 
+/** Identifier type for knowledge.document */
+export type DocumentId = string & {
+    __brand: 'knowledge.document';
+};
+
+/** Represents the enum knowledge.LinkedObjectSource */
+export const enum LinkedObjectSource {
+    retrieval = "retrieval",
+    output = "output",
+    manual = "manual",
+    input = "input"
+}
+
 /** Represents the enum knowledge.change_source */
 export const enum ChangeSource {
     pipeline = "pipeline",
@@ -1414,6 +1378,23 @@ export const enum ChangeKind {
     node_created = "node_created",
     node_removed = "node_removed"
 }
+
+/** Represents the enum knowledge.node_type_category */
+export const enum NodeTypeCategory {
+    message = "message",
+    object = "object",
+    scoped_object = "scoped_object"
+}
+
+/** Identifier type for knowledge.node_type */
+export type NodeTypeId = string & {
+    __brand: 'knowledge.node_type';
+};
+
+/** Identifier type for knowledge.node */
+export type NodeId = string & {
+    __brand: 'knowledge.node';
+};
 
 /** Identifier type for knowledge.edge_type */
 export type EdgeTypeId = string & {
@@ -1472,6 +1453,11 @@ export type PropertyId = string & {
     __brand: 'knowledge.property';
 };
 
+/** Identifier type for knowledge.linked_object */
+export type LinkedObjectId = string & {
+    __brand: 'knowledge.linked_object';
+};
+
 /** Identifier type for knowledge.evidence */
 export type EvidenceId = string & {
     __brand: 'knowledge.evidence';
@@ -1480,6 +1466,20 @@ export type EvidenceId = string & {
 /** Identifier type for knowledge.change */
 export type ChangeId = string & {
     __brand: 'knowledge.change';
+};
+
+/** Represents the enum knowledge.ResourceType */
+export const enum ResourceType {
+    URL = "URL",
+    EMAIL = "EMAIL",
+    WHATSAPP = "WHATSAPP",
+    FILE = "FILE",
+    TEXT = "TEXT"
+}
+
+/** Identifier type for knowledge.resource */
+export type ResourceId = string & {
+    __brand: 'knowledge.resource';
 };
 
 /** Identifier type for knowledge.saved_filter */
@@ -4920,6 +4920,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
             }, {
+                failure_reason: string | null;
                 appliedActionPlans: unknown[];
                 executedVersion: ExecutedMovementVersion | null;
                 costMicrodollars: number;
@@ -4934,7 +4935,6 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 errors: unknown;
                 trigger_id: string;
                 trigger_type: string;
-                failure_reason: string | null;
                 diagnostics: unknown;
                 record_id: string | null;
                 movement_version_id: MovementVersionId | null;
@@ -4952,6 +4952,9 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 cost_cap_baseline_microdollars: string;
                 last_heartbeat_at: Date | null;
                 trigger_event_id: TriggerEventId | null;
+                lease_owner: string | null;
+                lease_until: Date | null;
+                lease_token: string | null;
             }>;
         }>;
         controlTower: _trpc_server.CreateRouterInner<_trpc_server.RootConfig<{

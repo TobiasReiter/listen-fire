@@ -34,7 +34,7 @@ jest.mock('../../translation_graph/adapters/await_correlation', () => ({
   dropAwaitCorrelation: jest.fn(),
 }));
 jest.mock('../../interaction/run_failure', () => ({ settleCancelledRun: jest.fn() }));
-jest.mock('../../translation_graph/adapters/ask/await_store', () => ({ abandonAskAwaits: jest.fn() }));
+jest.mock('../../translation_graph/adapters/packages', () => ({ awaitKeepers: () => [] }));
 jest.mock('../timer_wake', () => ({ armTimerWake: jest.fn() }));
 jest.mock('../limit_pause', () => ({ markRunLimitPaused: jest.fn() }));
 jest.mock('../join_pending', () => ({}));

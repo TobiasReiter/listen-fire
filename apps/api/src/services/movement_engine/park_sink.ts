@@ -11,6 +11,7 @@
 // as an injected dependency, exactly like `resolveAdapter`/`writeSink`).
 
 import { sql } from 'kysely';
+import type { CoreParkReason } from 'engine-contracts';
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { settleCancelledRun } from '../interaction/run_failure';
@@ -28,7 +29,7 @@ import {
   dropAwaitCorrelation,
   registerAwaitCorrelation,
 } from '../translation_graph/adapters/await_correlation';
-import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
+import { awaitKeepers } from '../translation_graph/adapters/packages';
 import { armTimerWake } from './timer_wake';
 import { RunLeaseLost } from './run_lease';
 
@@ -201,11 +202,11 @@ export function makeRecorderParkSink(recorder: TriggerRunRecorder, opts: { lease
  * Deliver the race cancellation cascade (asks-as-adapter chunk C, P17): every
  * park at-or-below one of the loser subtree prefixes is cleaned. The prefix
  * algebra runs on the PARSED address (not raw string prefix — `s1.b1` must not
- * match `s1.b10`). Each cancelled leaf's correlation is dropped, and an ask a
- * cancelled leaf was awaiting is CLOSED with it (`abandonAskAwaits`) — the arm
- * lost, so nothing is left to consume an answer and the ask's link must stop
- * offering one. The `parked_run` row and any `join_pending` frame inside the
- * subtree go with it (S19). Idempotent.
+ * match `s1.b10`). Each cancelled leaf's correlation is dropped, and a record a
+ * cancelled leaf was awaiting is CLOSED with it by the adapter that keeps it
+ * (an `AwaitKeeper`'s `abandon`) — the arm lost, so nothing is left to consume
+ * an answer and the record must stop offering one. The `parked_run` row and
+ * any `join_pending` frame inside the subtree go with it (S19). Idempotent.
  */
 async function cancelRaceSubtrees(
   runId: TriggerRunId,
@@ -232,10 +233,10 @@ async function cancelRaceSubtrees(
   const doomed = parked.map((r) => r.address).filter(inSubtree);
   if (doomed.length === 0) return;
 
-  // The loser parks awaiting an ask are withdrawn record-and-all: correlation
-  // dropped AND the ask closed, so its link renders the already-closed page
-  // rather than a live form promising a workflow that is over.
-  await abandonAskAwaits({ runId, addresses: doomed });
+  // The loser parks awaiting a record-backed await (an ask) are withdrawn
+  // record-and-all by the adapter that keeps them: correlation dropped AND the
+  // record closed, so nothing offers an answer to a workflow that is over.
+  for (const keeper of awaitKeepers()) await keeper.abandon({ runId, addresses: doomed });
 
   // Then the one signal per remaining loser park: drop its correlation,
   // adapter-agnostic — the generic map is keyed on the park, so this reaps a
@@ -318,7 +319,9 @@ function jsonb(value: unknown): unknown {
 interface ParkedLeaf {
   runId: TriggerRunId;
   address: string;
-  reason: 'timer' | 'await' | 'limit';
+  /** The core's sink writes only the core's reasons; a unit's park is the
+   *  unit's to write. */
+  reason: CoreParkReason;
   wakeAt: Date | null;
   state: unknown;
   /** Stamp `updated_at` on a rewrite: how the limit resume tells a flow that

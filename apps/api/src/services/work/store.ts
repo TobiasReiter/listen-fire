@@ -3,7 +3,7 @@ import { sql, type QueryExecutorProvider } from 'kysely';
 import type { Work } from '../../generated/kysely/automations/Work';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { isWorkKind, WORK_KINDS, type WorkKind, type WorkRow } from './kinds';
+import { claimableWorkKinds, isWorkKind, type WorkKind, type WorkRow } from './kinds';
 
 function toWorkRow(row: Work): WorkRow {
   if (!isWorkKind(row.kind))
@@ -113,7 +113,7 @@ export async function claimDueWork(input: {
     WITH c AS MATERIALIZED (
       SELECT id FROM automations.work
       WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < now())
-        AND kind = ANY(${[...WORK_KINDS]}::text[])
+        AND kind = ANY(${claimableWorkKinds()}::text[])
         ${ofTeam}
       ORDER BY due_at
       LIMIT ${input.limit}

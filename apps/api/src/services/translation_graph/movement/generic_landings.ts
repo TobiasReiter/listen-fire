@@ -35,27 +35,21 @@ import type {
   WritableRootSchema,
 } from 'movement-lang';
 import type { SchemaTypeDescriptor } from '../types';
-import { ASK_ADAPTER_TYPE } from '../adapters/ask/type';
-import { askResponseDescriptorFor } from '../adapters/ask';
+import { landingSynthesizerFor } from '../adapters/packages';
 import { instanceSchemaFromDescriptors } from './schema_projection';
 
 /**
  * What a set of authored literals MEANS for a given written type — the one
  * piece of this that is the adapter's knowledge rather than the graph's, so it
- * lives with the adapter and is looked up by adapter type. An adapter that
- * declares no `genericOver` never reaches here.
+ * lives with the adapter and is looked up by adapter type in the adapter
+ * registry. An adapter that declares no `genericOver` never reaches here.
  */
-type LandingSynthesizer = (input: {
-  /** The written record type (an ask family). */
+export type LandingSynthesizer = (input: {
+  /** The written record type (e.g. an ask family). */
   writtenType: string;
   /** The parameter's literal values, in authored order. */
   values: readonly string[];
 }) => SchemaTypeDescriptor | null;
-
-const SYNTHESIZERS: Record<string, LandingSynthesizer> = {
-  [ASK_ADAPTER_TYPE]: ({ writtenType, values }) =>
-    askResponseDescriptorFor({ family: writtenType, values }),
-};
 
 export interface GenericLandingInstance {
   adapterType: string;
@@ -105,7 +99,7 @@ export function graftGenericLandings(input: {
   chains: InstanceChain[];
 }): { schema: InstanceSchema } {
   const { instance } = input;
-  const synthesize = SYNTHESIZERS[instance.adapterType];
+  const synthesize = landingSynthesizerFor(instance.adapterType);
   if (synthesize === undefined) return { schema: instance.schema };
 
   let schema = instance.schema;

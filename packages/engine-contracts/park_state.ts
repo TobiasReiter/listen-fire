@@ -232,33 +232,30 @@ export type ResourceDescriptor = Omit<Resource, 'fileRef'> & {
 
 /**
  * A serialised scope-node: the bindings declared in ONE lexical scope, keyed by
- * name. For the single-ask linear body (the only case that parks today) the
- * parked state is one chain of these from the movement body's root scope to the
- * ask's scope — §4.6's "the bindings feeding the parked ask". The multi-leaf
- * shared-ancestor frontier (fan-out, chunk 3.2) keys these by address-prefix; a
- * single chain is the degenerate one-branch case, so the shape generalises.
+ * name. A parked leaf's state is one chain of these from the movement body's
+ * root scope to the leaf's own — the bindings feeding the parked statement.
  */
 export interface SerializedScope {
   bindings: Record<string, BindingDescriptor>;
 }
 
 /**
- * The full parked-run state (§4.6) — what `parked_run.state` holds. Versioned so
- * chunk 5's resume + chunk 3.2's multi-leaf can evolve the shape compatibly. The
- * `scopeChain` is root-first: index 0 is the movement body's own scope, the last
- * entry is the ask's immediate scope. Resume rebuilds the `Environment` chain by
- * rehydrating each scope in order, chaining child envs (4.1 / §4.6).
+ * A parked leaf's whole state, version 1: what a host's park sink stores and
+ * hands back. The `scopeChain` is root-first: index 0 is the movement body's
+ * own scope, the last entry is the parked statement's immediate scope. Resume
+ * rebuilds the scope chain by rehydrating each scope in order.
  */
 export interface ParkedScopeState {
   /** Schema version of this state blob. */
   version: 1;
-  /** The parked ask's canonical lexical address (§4.3) — the resume entry point. */
+  /** The parked statement's canonical lexical address — the resume entry
+   *  point. */
   address: string;
-  /** The ask's binding name (`a = ask …`), so resume binds the answer back. Null
-   *  for a value-less ask. */
+  /** The parked statement's binding name (`r = await …`), so a step-past
+   *  resume binds the answer back. Null for a value-less one. */
   bindingName: string | null;
   /**
-   * A PRESENCE-marker bind (asks-as-adapter chunk C): `expired = await sleep(2d)`
+   * A PRESENCE-marker bind: `expired = await sleep(2d)`
    * binds nothing of value, but the completed branch must escape `expired` onto
    * the race receipt as an edge (`r-[:expired]->`, S4). When set, the timer
    * resume declares `bindingName` as a presence value (`true`) at wake, so the
@@ -266,14 +263,14 @@ export interface ParkedScopeState {
    * value-less sleep (which binds nothing at all). */
   presenceBind?: boolean;
   /**
-   * An `await until(…)` recurring-clock park (asks-as-adapter chunk D, F12). A
-   * timer park (`park_reason='timer'`) whose resume RE-ENTERS the `until`
+   * An `await until(…)` recurring-clock park. A
+   * timer park (reason `timer`) whose resume RE-ENTERS the `until`
    * statement (`reenter=true`) to RE-EVALUATE the condition rather than stepping
-   * past it: unmet ⇒ it re-parks at the same address with a fresh `wake_at`
+   * past it: unmet ⇒ it re-parks at the same address with a fresh wake time
    * (re-armed); met ⇒ it binds and continues. The timer-resume worker reads this
    * flag to choose re-enter over step-past, and to leave a re-armed leaf alone. */
   until?: boolean;
-  /** Root-first chain of lexical scopes feeding the ask (§4.6). When the
+  /** Root-first chain of lexical scopes feeding the parked statement. When the
    *  address crosses into a called body or a collection op's member
    *  (`frames`), this is the INNERMOST body's chain — the one the leaf runs in;
    *  each outer body's chain rides on the frame that leaves it. */

@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
 import { sql } from 'kysely';
+import type { ParkReason } from 'engine-contracts';
 
 import { SECOND } from '../../constants';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
@@ -215,7 +216,9 @@ export async function withRunLease<T>(
 export async function claimParkedLeaf(input: {
   runId: TriggerRunId;
   address: string;
-  parkReason?: 'await' | 'timer' | 'limit';
+  /** Claim only a leaf parked for this reason — one of the core's, or one a
+   *  unit owns. */
+  parkReason?: ParkReason;
 }): Promise<{ state: unknown } | null> {
   let claim = getAutomationsQb(['parked_run'])
     .updateTable('parked_run')

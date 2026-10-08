@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
-import type { WorkContext, WorkHandler, WorkKind, WorkRow } from './kinds';
+import { forgetUnitWorkKinds, type WorkContext, type WorkHandler, type WorkKind, type WorkRow } from './kinds';
 
 import { logger } from '../logger';
 import { claimDueWork, completeWork, deferWork, heartbeatWork, releaseWork } from './store';
@@ -51,9 +51,10 @@ export function registerWorkHandler(kind: WorkKind, handler: WorkHandler): void 
   handlers.set(kind, handler);
 }
 
-/** Test-only: forget every registered handler. */
+/** Test-only: forget every registered handler and unit kind. */
 export function resetWorkHandlersForTests(): void {
   handlers.clear();
+  forgetUnitWorkKinds();
 }
 
 function emptyResult(): DrainResult {

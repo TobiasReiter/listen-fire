@@ -11,7 +11,7 @@ import { sql } from 'kysely';
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { clearJoins } from '../movement_engine/join_pending';
 import { dropAwaitCorrelationsForRun } from '../translation_graph/adapters/await_correlation';
-import { abandonAskAwaits } from '../translation_graph/adapters/ask/await_store';
+import { awaitKeepers } from '../translation_graph/adapters/packages';
 import { revokeRunCallbacks } from '../movement_engine/callback_store';
 import { withRunLease } from '../movement_engine/run_lease';
 import { logger } from '../logger';
@@ -179,7 +179,7 @@ export async function failRunAndCancelRequests(input: {
   // its link offering a live form and promising a workflow that has already
   // settled. (This closes an ask the run ASKED and still awaited — an ask
   // already answered is untouched by the store's `WHERE state = 'open'` guard.)
-  await abandonAskAwaits({ runId: input.runId });
+  for (const keeper of awaitKeepers()) await keeper.abandon({ runId: input.runId });
 
   // The ONE cancellation signal to every remaining in-flight AWAIT of the run
   // (P17): drop EVERY awaitable adapter's correlation entries in one

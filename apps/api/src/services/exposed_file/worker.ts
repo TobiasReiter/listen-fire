@@ -14,7 +14,7 @@ import { MINUTE } from '../../constants';
 import { logger } from '../logger';
 import { services } from '../../adapters/registry';
 import type { WorkHandler } from '../work/kinds';
-import { registerWorkHandler } from '../work/drain';
+import { registerWorkKinds } from '../work/units';
 
 const SWEEP_INTERVAL = 5 * MINUTE;
 const SWEEP_BATCH = 100;
@@ -49,8 +49,16 @@ const exposedFileSweepHandler: WorkHandler = {
   },
 };
 
+// This unit's own periodic kind: the sweep that deletes expired exposures.
+
+declare module '../work/kinds' {
+  interface UnitWorkKinds {
+    exposed_file_sweep: true;
+  }
+}
+
 function registerExposedFileWork(): void {
-  registerWorkHandler('exposed_file_sweep', exposedFileSweepHandler);
+  registerWorkKinds([{ kind: 'exposed_file_sweep', handler: exposedFileSweepHandler, intervalMs: SWEEP_INTERVAL }]);
 }
 
 export { SWEEP_INTERVAL as EXPOSED_FILE_SWEEP_INTERVAL, registerExposedFileWork, sweepExpiredFiles };

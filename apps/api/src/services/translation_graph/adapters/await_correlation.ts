@@ -11,10 +11,11 @@
 // which is exactly the generalization the chunk-C fix-up flagged as owed once a
 // second awaitable adapter (Slack) landed.
 //
-// Resolvability is NOT here: it is per-adapter and lives outside this map. The
-// `ask` poll joins these rows to `ask.state`; `slack` is event-driven, looking
-// up a thread's parks by `correlationKey` when an inbound reply arrives. This
-// module only holds the map and the two adapter-agnostic reaps.
+// Resolvability is NOT here: it is per-adapter and lives outside this map — an
+// adapter whose awaits are backed by records of its own serves it as an
+// `AwaitKeeper`; one that is event-driven (Slack) looks up a thread's parks by
+// `correlationKey` when an inbound reply arrives. This module only holds the
+// map, the two adapter-agnostic reaps, and the keeper contract.
 
 import { getAutomationsQb, getQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -28,6 +29,28 @@ export interface ResolvableAwait {
   runId: TriggerRunId;
   teamId: TeamId;
   address: string;
+}
+
+/**
+ * The run host's half of an awaitable adapter whose awaits are backed by
+ * records of its own (an ask is: the ask record settles, the await resolves).
+ * The core reaches it only through the adapter registry (`awaitKeepers`), so
+ * it never names the adapter: the resume driver loads each keeper's settled
+ * leaves, and whatever withdraws parks (a lost race arm, a run that ended)
+ * hands them to every keeper to close what stood behind them.
+ */
+export interface AwaitKeeper {
+  /** The adapter type its correlation rows carry. */
+  adapterType: string;
+  /** The run's parked leaves whose records have settled. */
+  loadResolvable(input: { runId: TriggerRunId }): Promise<ResolvableAwait[]>;
+  /** Withdraw parks that will never be consumed and close the records behind
+   *  them — the run's parks at `addresses`, or every one when absent. A park
+   *  that is not this keeper's is left alone. */
+  abandon(input: { runId: TriggerRunId; addresses?: string[] }): Promise<void>;
+  /** What each correlated await is waiting on, in plain language, by its
+   *  correlation key; a key it cannot describe is left out. */
+  describe?(correlationKeys: string[]): Promise<Map<string, string>>;
 }
 
 /** Register (or re-register) a park's correlation. Idempotent on (run, address)

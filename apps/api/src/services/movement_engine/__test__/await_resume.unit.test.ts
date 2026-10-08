@@ -115,8 +115,16 @@ jest.mock('../join_pending', () => ({
   runHasPendingJoins: (...a: unknown[]) => runHasPendingJoinsMock(...a),
   clearJoins: (...a: unknown[]) => clearJoinsMock(...a),
 }));
-jest.mock('../../translation_graph/adapters/ask/await_store', () => ({
-  loadResolvableAskAwaits: (...a: unknown[]) => loadResolvableAskAwaitsMock(...a),
+// The record-backed awaits a run host keeps, as the adapter registry serves
+// them: one keeper here, standing in for the ask unit's.
+jest.mock('../../translation_graph/adapters/packages', () => ({
+  awaitKeepers: () => [
+    {
+      adapterType: 'ask',
+      loadResolvable: (...a: unknown[]) => loadResolvableAskAwaitsMock(...a),
+      abandon: jest.fn(async () => {}),
+    },
+  ],
 }));
 jest.mock('../../translation_graph/adapters/await_correlation', () => ({
   dropAwaitCorrelation: (...a: unknown[]) => dropAwaitCorrelationMock(...a),
