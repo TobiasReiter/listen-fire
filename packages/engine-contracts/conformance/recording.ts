@@ -56,7 +56,10 @@ const languageVersionSchema = z.number().int();
 
 const runInputSchema = z.object({
   source: z.string(),
-  languageVersion: languageVersionSchema.optional(),
+  // Optional on the contract (absent: the current version), but a recording
+  // must replay under the pin it ran with on any later release, so the
+  // recorder stamps the version the entry ran under.
+  languageVersion: languageVersionSchema,
   movementName: z.string().optional(),
   event: eventSchema,
   teamId: tenantIdSchema,
@@ -143,7 +146,7 @@ const common = {
   /** Every method the recorded host served, by path. A family or method a
    *  host leaves out changes what the engine does (no park sink: a run that
    *  parks raises), so a replay serves exactly these. */
-  methods: z.array(z.string()),
+  methods: z.array(z.string().refine((path) => METHODS.has(path), 'a method of a host family on the manifest')),
   requests: z.array(recordedRequestSchema),
   /** The entry's result, as it crossed back. */
   result: z.unknown().optional(),

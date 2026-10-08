@@ -100,11 +100,11 @@ interface TriggerEvent {
   objectType?: string;
   triggerEntryId?: string;
   changeType?: 'create' | 'update' | 'delete';
-  actor?: unknown;
+  actor?: { type: 'user' | 'api-token' | 'system'; id: string | null };   // who acted, as the producing system asserts it; the opaque principal reference comes later
   snapshotRunId?: string;
   snapshotComplete?: boolean;
   recordId?: string;
-  externalRecordRef?: unknown;
+  externalRecordRef?: { adapterType: string; externalId: string; recordType?: string };  // the source system's id for the record
   rootRecordType?: string;
   changedFields?: string[];
   idempotencyKey?: string;
