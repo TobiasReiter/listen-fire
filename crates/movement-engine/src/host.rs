@@ -143,6 +143,28 @@ pub mod adapters {
             args: in_segment(segment, json!({ "instance": instance.id, "method": method, "args": args, "wire": true })),
         }
     }
+
+    /// A call whose argument object leads with a `position`, sent by handle:
+    /// `positionRef` names a position the segment registered with its host,
+    /// and `position` (on the eval wire) registers it, on the first call that
+    /// names it. `args` is the rest of the argument object; the host's
+    /// adapter receives `{position, ...args}` (the shim, rust_host.ts, keeps
+    /// the segment's positions). A read re-sends a handle, not the record.
+    pub fn call_at(segment: &str, instance: &Instance, method: &str, position: PositionArg, args: Json) -> Request {
+        let mut request = call(segment, instance, method, args);
+        request.args["positionRef"] = json!(position.reference);
+        if let Some(value) = position.value {
+            request.args["position"] = value;
+        }
+        request
+    }
+
+    /// A position by handle: its number in the segment, and the position
+    /// itself the first time it is named.
+    pub struct PositionArg {
+        pub reference: u32,
+        pub value: Option<Json>,
+    }
 }
 
 pub mod llm {

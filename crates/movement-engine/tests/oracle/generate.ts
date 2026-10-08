@@ -8,7 +8,9 @@
 //     hex), the 17-digit ties included;
 //   - regex.json: `new RegExp(pattern).exec(text)` for seeded patterns over
 //     backreferences, lazy quantifiers, lookaheads, \b, classes, anchors,
-//     alternation and empty iterations.
+//     alternation and empty iterations;
+//   - order_limit.json: a hop's pushdown and ORDER BY / LIMIT plan
+//     (./order_limit.ts).
 // Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
 // read local time (an offset-less date-time is local to `new Date`), so the
 // process runs in UTC wherever it is started.
@@ -32,6 +34,7 @@ import {
 } from '../../../../packages/movement-lang/expression/stdlib';
 import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
 import { compareValues } from '../../../../packages/shared/expression/filter';
+import { writeOrderLimitOracle } from './order_limit';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
 function wire(value: unknown): unknown {
@@ -271,3 +274,5 @@ writeFileSync(
   `[\n${regexCases.map((c) => JSON.stringify(c)).join(',\n')}\n]\n`,
 );
 console.log(`regex.json: ${regexCases.length} cases`);
+
+void writeOrderLimitOracle(mulberry32(5));

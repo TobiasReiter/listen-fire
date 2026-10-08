@@ -12,10 +12,12 @@ const path = require('node:path');
 // Measured at slice 2b (2026-10-07): v1 69, v2 75. Raised to exactly those
 // with chunk 5B's admission in Rust (2026-10-08), which proved it admits what
 // the shim's old allow-list did, run for run: any run lost now is a
-// regression. A floor applies to a run of the whole corpus only: a run
-// narrowed to some files or cases checks the rest (nothing declined, no shim
-// fault, something admitted ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 69, v2: 75 };
+// regression. Raised to v1 87, v2 95 with traversal blocks over adapter edges
+// (chunk 5B task 4, 2026-10-08), exactly the counts they route. A floor
+// applies to a run of the whole corpus only: a run narrowed to some files or
+// cases checks the rest (nothing declined, no shim fault, something admitted
+// ran whole) but not it.
+const RAN_WHOLE_FLOOR = { v1: 87, v2: 95 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

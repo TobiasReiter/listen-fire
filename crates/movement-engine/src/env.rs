@@ -301,6 +301,65 @@ pub fn js_of_json(json: &Json) -> Js {
     }
 }
 
+/// A serialized value read as the JavaScript object `JSON.parse` makes of
+/// its text: keys in the order written (serde_json's own map sorts them).
+pub fn js_of_serialized<T: serde::Serialize>(value: &T) -> Js {
+    let text = serde_json::to_string(value).expect("the value serializes");
+    let mut deserializer = serde_json::Deserializer::from_str(&text);
+    serde::Deserializer::deserialize_any(&mut deserializer, InOrder).expect("serde_json reads back what it wrote")
+}
+
+/// `JSON.parse`'s reading, key order kept.
+struct InOrder;
+
+impl<'de> serde::de::Visitor<'de> for InOrder {
+    type Value = Js;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("JSON")
+    }
+    fn visit_unit<E>(self) -> Result<Js, E> {
+        Ok(Js::Null)
+    }
+    fn visit_bool<E>(self, v: bool) -> Result<Js, E> {
+        Ok(Js::Bool(v))
+    }
+    fn visit_i64<E>(self, v: i64) -> Result<Js, E> {
+        Ok(Js::Number(v as f64))
+    }
+    fn visit_u64<E>(self, v: u64) -> Result<Js, E> {
+        Ok(Js::Number(v as f64))
+    }
+    fn visit_f64<E>(self, v: f64) -> Result<Js, E> {
+        Ok(Js::Number(v))
+    }
+    fn visit_str<E>(self, v: &str) -> Result<Js, E> {
+        Ok(Js::str(v))
+    }
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Js, A::Error> {
+        let mut items = Vec::new();
+        while let Some(item) = seq.next_element_seed(InOrder)? {
+            items.push(item);
+        }
+        Ok(Js::array(items))
+    }
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Js, A::Error> {
+        let mut object = JsObject::new();
+        while let Some(key) = map.next_key::<String>()? {
+            object.set(key, map.next_value_seed(InOrder)?);
+        }
+        Ok(Js::object(object))
+    }
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for InOrder {
+    type Value = Js;
+
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<Js, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

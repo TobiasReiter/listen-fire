@@ -216,35 +216,15 @@ pub(crate) struct Source {
     /// The live adapter's own `adapterType`.
     pub(crate) adapter_type: String,
     pub(crate) instance_name: String,
-    /// The parameter's declared position, which names a typeless root.
-    pub(crate) start_surface_type: Option<String>,
     pub(crate) position: Position,
+    /// The seeded position as the read wrapper stamps it for a read: one
+    /// object, so every read of the event names it by one handle.
+    pub(crate) surface: Js,
+    /// The source as a graph a block head walks (crate::traverse).
+    pub(crate) read: Rc<crate::traverse::Read>,
 }
 
-/// A lexical address (address.ts): `s1.b0.s2`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Address(Vec<(char, usize)>);
-
-impl Address {
-    pub fn stmt(&self, index: usize) -> Address {
-        self.child('s', index)
-    }
-
-    pub fn branch(&self, index: usize) -> Address {
-        self.child('b', index)
-    }
-
-    fn child(&self, kind: char, index: usize) -> Address {
-        let mut steps = self.0.clone();
-        steps.push((kind, index));
-        Address(steps)
-    }
-
-    /// `encodeAddress`.
-    pub fn encode(&self) -> String {
-        self.0.iter().map(|(kind, index)| format!("{kind}{index}")).collect::<Vec<_>>().join(".")
-    }
-}
+pub use crate::address::Address;
 
 pub(crate) struct Run<'a> {
     pub(crate) host: &'a Host,
@@ -282,6 +262,12 @@ pub(crate) struct Run<'a> {
     /// The park sink answered that it cannot suspend (it has no
     /// `commitSuspension`): run.ts `canSuspend` is false for the run.
     pub(crate) cannot_suspend: std::cell::Cell<bool>,
+    /// The graphs block heads read through, resolved as sources, by
+    /// instance identity (`sourceAdapterCache`).
+    pub(crate) source_reads: RefCell<Vec<(String, Rc<crate::traverse::Read>)>>,
+    /// The positions registered with the host, by handle number (crate::host
+    /// `call_at`): held, so a handle's object is never another's.
+    pub(crate) positions: RefCell<Vec<Rc<JsObject>>>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -290,6 +276,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // state) it does not run costs no catalog load, no check, no request.
     let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
     if let Some(reason) = crate::admit::refusal(&root.program, version) {
+        return Err(Stop::Refused(reason));
+    }
+    if let Some(reason) = crate::admit::input_refusal(&root.program, input.spend.cap_microdollars.is_some(), &input.suspend_at) {
         return Err(Stop::Refused(reason));
     }
     if let Some(resume) = &input.resume
@@ -330,6 +319,8 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         limit_paused: std::cell::Cell::new(input.limit_paused),
         pending_suspensions: RefCell::new(input.suspend_at.clone()),
         cannot_suspend: std::cell::Cell::default(),
+        source_reads: RefCell::default(),
+        positions: RefCell::default(),
     };
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
@@ -663,12 +654,15 @@ impl Run<'_> {
         };
         let address = event_seed_address(schema, &self.event, root_surface_type.as_deref());
         let position = seed_event_position(&self.event, &instance.adapter_slug, root_surface_type, address.as_ref())?;
+        let surface = restamp(&position, position.record_type.clone().or_else(|| type_ref.position.clone()), &adapter_type).to_js();
+        let read = Rc::new(crate::traverse::Read::of_resolved(&resolved, handle.clone(), instance, type_ref.position.clone()));
         *self.source.borrow_mut() = Some(Rc::new(Source {
             instance: handle,
             adapter_type,
             instance_name: instance.name.clone(),
-            start_surface_type: type_ref.position.clone(),
             position,
+            surface,
+            read,
         }));
         Ok(())
     }
@@ -789,6 +783,7 @@ impl Run<'_> {
                 scope.declare("#return", Binding::Value(bound));
                 Ok(Flow::Returned)
             }
+            Statement::Block(statement) => self.block(&statement.block, scope, at, path).await,
             Statement::If(statement) => {
                 for (index, arm) in statement.arms.iter().enumerate() {
                     let taken = self.condition(&arm.condition, scope).await?;
@@ -867,22 +862,46 @@ impl Run<'_> {
     /// One expression, evaluated as one walk: each read it makes of the host
     /// is awaited where it is made, and the walk resumes there.
     pub(crate) async fn evaluate(&self, expr: &Expression, scope: &Rc<Scope>, slot: &ExprSlot) -> Result<Evaluated, Stop> {
-        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
         // Each literal the evaluation reads is an origin in the program text:
         // the slot's span.
         let span = env::js_of_json(&serde_json::to_value(slot.span).expect("a span is JSON"));
-        let reader = Reading { run: self, scope, span };
-        let evaluator = Evaluator::in_run(scope.as_ref(), Some(self.version()), around, &reader);
+        self.evaluate_in(expr, scope, Some(span), None).await
+    }
+
+    /// One walk, its literals' origins at `span`; scoped at `landed` (a
+    /// hop's WHERE or ORDER BY key) when given.
+    pub(crate) async fn evaluate_in(
+        &self,
+        expr: &Expression,
+        scope: &Rc<Scope>,
+        span: Option<Js>,
+        landed: Option<Rc<crate::bindings::Landed>>,
+    ) -> Result<Evaluated, Stop> {
+        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
+        let scoped = landed.is_some();
+        let reader = Reading { run: self, scope, span, landed };
+        let evaluator = if scoped {
+            Evaluator::scoped_in_run(scope.as_ref(), Some(self.version()), around, &reader)
+        } else {
+            Evaluator::in_run(scope.as_ref(), Some(self.version()), around, &reader)
+        };
         evaluator.eval(expr).await.map_err(|error| {
             Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
         })
     }
 
     /// What an evaluation asked, answered by the host.
-    async fn answer(&self, ask: Ask, scope: &Scope) -> Result<Result<Evaluated, EvalError>, Failure> {
+    async fn answer(&self, ask: Ask, scope: &Scope, landed: Option<&crate::bindings::Landed>) -> Result<Result<Evaluated, EvalError>, Failure> {
         match ask {
             Ask::EventField { field } => self.event_field(&field).await.map(Ok),
-            Ask::RecordField { root, field } => Ok(self.record_field(&root, &field, scope)),
+            Ask::RecordField { root, field } => match scope.resolve(&root) {
+                Some(Binding::Landed(record)) => self.landed_field(&record, &field).await.map(Ok),
+                _ => Ok(self.record_field(&root, &field, scope)),
+            },
+            Ask::ScopedField { field, edge } => {
+                let landed = landed.expect("a scoped read is asked only of a scoped evaluation");
+                self.scoped_field(landed, &field, edge, scope).await.map(Ok)
+            }
             Ask::Function { id, args } => {
                 let args = args.iter().map(env::encode_plain).collect();
                 let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
@@ -923,13 +942,9 @@ impl Run<'_> {
     async fn event_field(&self, field: &str) -> Result<Evaluated, Failure> {
         let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
         let seed = &source.position;
-        let position = restamp(seed, seed.record_type.clone().or_else(|| source.start_surface_type.clone()), &source.adapter_type);
-        let mut read = JsObject::new();
-        read.set("position".into(), position.to_js());
-        read.set("fieldId".into(), Js::str(field));
-        let value = self.call_adapter(&source.instance, "getFieldValue", Js::object(read)).await?;
+        let value = self.call_adapter_at(&source.instance, "getFieldValue", &source.surface, vec![("fieldId", Js::str(field))]).await?;
         if value.is_nullish() && !seed.is_stable() {
-            self.trace_miss(&source, field);
+            self.trace_miss_in(&source.instance_name, &seed.data, field);
         }
         // In the TypeScript's key order (`readSourcePositionField`).
         let mut entries = vec![
@@ -991,8 +1006,9 @@ impl Run<'_> {
         Err(Stop::Parked(address))
     }
 
-    fn trace_miss(&self, source: &Source, field: &str) {
-        let data = &source.position.data;
+    /// A `field_miss` for `field` read null off a raw payload `data` that
+    /// does not carry it, once per instance and field.
+    pub(crate) fn trace_miss_in(&self, instance_name: &str, data: &Js, field: &str) {
         let keys: Vec<String> = match data {
             Js::Object(object) => object.entries().iter().map(|(k, _)| k.clone()).collect(),
             Js::Array(list) => (0..list.items.len()).map(|i| i.to_string()).collect(),
@@ -1002,13 +1018,13 @@ impl Run<'_> {
         let carried = keys.iter().any(|k| k == field)
             || stdlib::is_object_prototype_name(field)
             || (matches!(data, Js::Array(_)) && (field == "length" || ARRAY_PROTOTYPE_NAMES.contains(&field)));
-        let seen = self.misses.borrow().iter().any(|(b, f)| *b == source.instance_name && f == field);
+        let seen = self.misses.borrow().iter().any(|(b, f)| b == instance_name && f == field);
         if carried || seen {
             return;
         }
-        self.misses.borrow_mut().push((source.instance_name.clone(), field.to_string()));
+        self.misses.borrow_mut().push((instance_name.to_string(), field.to_string()));
         let available = keys.into_iter().take(30).collect();
-        self.trace(TraceEntry::FieldMiss { binding: source.instance_name.clone(), field: field.to_string(), available });
+        self.trace(TraceEntry::FieldMiss { binding: instance_name.to_string(), field: field.to_string(), available });
     }
 
     // ── Host calls ──
@@ -1055,16 +1071,23 @@ const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
 struct Reading<'r, 'h> {
     run: &'r Run<'h>,
     scope: &'r Scope,
-    span: Js,
+    /// Where the evaluation's literals are written (`literalSpan`).
+    span: Option<Js>,
+    /// The landed record a position-scoped evaluation reads.
+    landed: Option<Rc<crate::bindings::Landed>>,
 }
 
 impl Reader for Reading<'_, '_> {
     fn ask(&self, ask: Ask) -> Evaluating<'_> {
-        Box::pin(async move { self.run.answer(ask, self.scope).await.map_err(Failure::into_eval)? })
+        Box::pin(async move { self.run.answer(ask, self.scope, self.landed.as_deref()).await.map_err(Failure::into_eval)? })
     }
 
     fn literal(&self) -> u32 {
-        self.run.mint_origin(env::object_of(vec![("kind", Js::str("literal")), ("span", self.span.clone())]))
+        let mut origin = vec![("kind", Js::str("literal"))];
+        if let Some(span) = &self.span {
+            origin.push(("span", span.clone()));
+        }
+        self.run.mint_origin(env::object_of(origin))
     }
 }
 
@@ -1409,10 +1432,25 @@ mod tests {
         assert!(seen.iter().filter(|r| r.family != "check").all(|r| r.args["segmentId"] == json!("g1")));
         // The source adapter reads the payload under the parameter's
         // declared position.
-        let read = env::decode(&seen[3].args["args"]).unwrap();
-        let Js::Object(read) = read else { panic!("a read") };
-        let Some(Js::Object(position)) = read.get("position") else { panic!("a position") };
+        let Js::Object(position) = env::decode(&seen[3].args["position"]).unwrap() else { panic!("a position") };
         assert!(matches!(position.get("recordType"), Some(Js::String(t)) if t == "message"));
+    }
+
+    /// The event's position crosses once, registered by handle on its first
+    /// read; every later read names the handle, and carries only the rest of
+    /// its arguments.
+    #[test]
+    fn a_position_crosses_once_and_is_named_by_handle_after() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = \"${msg.`subject`} ${msg.`text`}\"\n}";
+        let payload = json!({ "subject": "Hi", "text": "there" });
+        let (_, seen) = drive(source, json!(["o", 1, [["subject", "Hi"], ["text", "there"]]]), plain_host(payload));
+        let reads: Vec<&PendingRequest> = seen.iter().filter(|r| r.args.get("method") == Some(&json!("getFieldValue"))).collect();
+        assert_eq!(reads.len(), 2);
+        assert_eq!((reads[0].args["positionRef"].clone(), reads[1].args["positionRef"].clone()), (json!(0), json!(0)));
+        assert!(reads[0].args.get("position").is_some());
+        assert!(reads[1].args.get("position").is_none(), "a handle already registered is not re-sent");
+        let Js::Object(read) = env::decode(&reads[1].args["args"]).unwrap() else { panic!("a read") };
+        assert_eq!(read.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["fieldId"]);
     }
 
     #[test]
@@ -1763,13 +1801,6 @@ mod tests {
         assert!(dated(json!({ "kind": "record" })));
         assert!(dated(json!({ "kind": "record", "position": "nowhere" })));
         assert!(!dated(json!({ "kind": "enum", "options": ["a"] })));
-    }
-
-    #[test]
-    fn addresses_encode_as_address_ts_does() {
-        let root = Address::default();
-        assert_eq!(root.encode(), "");
-        assert_eq!(root.stmt(1).branch(0).stmt(2).encode(), "s1.b0.s2");
     }
 
     #[test]

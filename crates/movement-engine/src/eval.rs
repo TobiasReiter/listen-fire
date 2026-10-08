@@ -131,6 +131,12 @@ pub enum Ask {
     Function { id: String, args: Vec<Js> },
     /// The shared comparator, likewise.
     Compare { op: FilterOperator, left: Js, right: Js },
+    /// A bare name inside a hop's WHERE or ORDER BY (a position-scoped
+    /// evaluation) that no value binding answers: the landed record's field.
+    /// `edge` for the bracket grammar's `edge_property`, which reads the
+    /// walked edge's own inline property first, then a value binding of
+    /// that name, then the record's field.
+    ScopedField { field: String, edge: bool },
 }
 
 /// An evaluation in progress, or a host answer it awaits.
@@ -152,6 +158,9 @@ pub struct Evaluator<'a> {
     language_version: Option<u32>,
     around: Surroundings<'a>,
     mode: Mode<'a>,
+    /// Position-scoped (`MovementExprContext.scope`): a hop's WHERE or ORDER
+    /// BY key, whose bare names read the landed record.
+    scoped: bool,
 }
 
 enum Mode<'a> {
@@ -169,12 +178,18 @@ impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
     pub fn new(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, first_literal: u32) -> Self {
-        Evaluator { env, language_version, around, mode: Mode::Pure { next_literal: Cell::new(first_literal) } }
+        Evaluator { env, language_version, around, mode: Mode::Pure { next_literal: Cell::new(first_literal) }, scoped: false }
     }
 
     /// Inside a run: what the evaluation cannot answer itself, it asks.
     pub fn in_run(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
-        Evaluator { env, language_version, around, mode: Mode::Run(reader) }
+        Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: false }
+    }
+
+    /// Inside a run, scoped at a landed record (its reader answers
+    /// `Ask::ScopedField`).
+    pub fn scoped_in_run(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
+        Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: true }
     }
 
     fn reader(&self) -> Option<&'a dyn Reader> {
@@ -222,8 +237,19 @@ impl<'a> Evaluator<'a> {
                 Ok(Evaluated { value: static_value(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
             // A bare name: the value binding's value and trail. Outside a
-            // hop's WHERE a rootless `property` read is the same read.
-            Expression::AliasRef { name } | Expression::Property { property_type_id: name } => self.read_name(name),
+            // hop's WHERE a rootless `property` read is the same read; inside
+            // one it is the landed record's field, unless a value binding of
+            // that name stands in for it (`scopedBinding`).
+            Expression::AliasRef { name } => self.read_name(name),
+            Expression::Property { property_type_id: name } if self.scoped && self.env.value(name).is_none() => {
+                self.ask_scoped(name, false).await
+            }
+            Expression::Property { property_type_id: name } => self.read_name(name),
+            Expression::EdgeProperty { property_type_id: name } if self.scoped => self.ask_scoped(name, true).await,
+            Expression::EdgeProperty { .. } => Err(EvalError::unsupported(
+                "edge-property reads outside a traversal WHERE",
+                "edge properties exist only on a walked hop",
+            )),
             Expression::At { expression, index } => {
                 let inner = self.eval(expression).await?;
                 let index = self.eval(index).await?;
@@ -367,7 +393,11 @@ impl<'a> Evaluator<'a> {
             }
             Expression::Function { fn_, args } => self.function(fn_, args).await,
             Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => {
-                let Expression::Property { property_type_id: field } = expression.as_ref() else {
+                // The bracket grammar reads `t.\`f\`` as an edge property;
+                // either terminal is the root's field (`fieldTerminalId`).
+                let (Expression::Property { property_type_id: field } | Expression::EdgeProperty { property_type_id: field }) =
+                    expression.as_ref()
+                else {
                     return Err(EvalError::Fallback("a traversal terminal other than a field".into()));
                 };
                 self.traverse(root, field).await
@@ -413,6 +443,13 @@ impl<'a> Evaluator<'a> {
         // A field projected out of a value keeps the taint union but drops
         // `direct`: it is not the whole value's quote.
         Ok(Evaluated { value, prov: self.union(&[&Prov::Binding(root.to_string())]) })
+    }
+
+    async fn ask_scoped(&self, field: &str, edge: bool) -> Eval {
+        match self.reader() {
+            Some(reader) => reader.ask(Ask::ScopedField { field: field.to_string(), edge }).await,
+            None => Err(EvalError::Fallback("a landed record is the run's".into())),
+        }
     }
 
     fn read_name(&self, name: &str) -> Eval {

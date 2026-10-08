@@ -13,9 +13,9 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 - **a whole run** of a program it admits on its own parse ("Admission"
   below): bindings, `if`
   and `return` over reads of the event and of values (slice 2a), writes with
-  identity (`unique by`) and the nodes a run builds (slice 2b), and `sleep`,
-  parked and resumed in the TypeScript engine's own state (slice 2b) — "The
-  run" below. apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
+  identity (`unique by`) and the nodes a run builds (slice 2b), `sleep`,
+  parked and resumed in the TypeScript engine's own state (slice 2b), and
+  traversal blocks over adapter edges (chunk 5B) — "The run" below. apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
   hold these runs to the TypeScript engine; the conformance corpora route
   their admitted cases whole.
 
@@ -32,11 +32,14 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
 | `run` | the `segment` entry: `runMovement` / `resumeMovement` for the programs the shim admits (below) |
 | `write` | the `write` statement: targets, fields, identity, update or create, the firing record |
+| `traverse` | traversal blocks over adapter edges: the head's graph, the hop's fetch, the member gate, the WHERE per landed record, ORDER BY / LIMIT, the body per landing |
+| `order_limit` | packages/shared/expression/order_limit.ts: a hop's pushdown (closed over its scope) and its ORDER BY / LIMIT over what came back, sorted as V8 sorts |
+| `address` | address.ts's lexical addresses: `s`, `b` and fan-out `i` steps |
 | `unique` | `unique by`: the clauses split into keys and narrowings, the search record, the rules that decide without a judge, the identity lock |
 | `node` | node and graph literals: value entries, nested nodes, reference entries and record copies (the checker's stamps) |
 | `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
-| `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`), and the per-flow buffer they wait in until their statement ends |
+| `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`), and the per-flow buffer they wait in until their statement ends |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation and the wall clock, from the JavaScript runtime (WASM) or natively (below) |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
@@ -80,6 +83,7 @@ Measured 2026-10-07 (gzip -9):
 | the closing trace hand-over marked | 2,029,738 | 569,885 |
 | limit pause (the cap, suspensions, `limitPaused`, `suspendAt`) | 2,038,536 | 573,184 |
 | a half-answering sink fails on its cap | 2,038,402 | 573,114 |
+| traversal blocks over adapter edges (heads, hops, filters, order and limit; positions by handle) | 2,096,297 | 593,352 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -250,7 +254,13 @@ Each is a stable snake_case string: the one log line per run names it, and
 |---|---|
 | `name_shadowed` | a body binds a name the movement's parameters or the file bind |
 | `name_rebound` | a body binds one name as two kinds (a value and a handle, …) |
-| `statement:<kind>` | a statement other than a binding, `write`, `if`, `await sleep(…)` and `return` (`block`, `link`, `unlink`, `delete`, `match`, `call`, `combinator`, `collection`, `error`, `refresh`) |
+| `statement:<kind>` | a statement other than a binding, `write`, `if`, a traversal block, `await sleep(…)` and `return` (`link`, `unlink`, `delete`, `match`, `call`, `combinator`, `collection`, `error`, `refresh`) |
+| `block_head_rootless`, `block_head_expression_root` | a block head with no root, or rooted at an expression (`AT(rows, 0)-[c:company]->`) |
+| `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle or the event |
+| `block_nested` | a block inside a block's body, or a head rooted at a block's hop alias (fan-out bodies with blocks in them come next) |
+| `block_multi_hop` | a head that walks more than one hop (`crm-[c:companies]->-[d:deals]->`) |
+| `block_head_resources`, `block_head_step`, `block_head_does_not_lower` | a `_resources` head, a hop that is not an edge, a head the probe cannot read |
+| `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame, which this engine does not keep |
 | `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `block`, `callback`, `match`, `link`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node` and `write` |
 | `await_not_sleep` | an `await` of anything but `sleep(…)` |
 | `movement_call` | a construction in a body spelled with a movement's name |
@@ -275,14 +285,27 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `is_test` | an `IS` condition |
 | `condition_does_not_lower`, `expression_does_not_lower` | a slot that does not lower (the checker's miss) |
 | `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance) |
-| `traversal_root` | a field read rooted at a name that is not the event, a value, a handle or a node |
-| `traversal_steps` | a field read that walks an edge (`msg-[:replies]->.x`) |
+| `traversal_root` | a field read rooted at a name that is not the event, a value, a handle, a node or a block's hop alias |
+| `traversal_steps` | a field read that walks an edge (`msg-[:replies]->.x`), in a body, a hop's WHERE or its ORDER BY key: traversal inside an expression |
 | `traversal_terminal` | a walk ending in anything but a field |
 | `static_number` | a numeric literal JSON cannot carry (`Infinity`, `-0`) |
 | `proto_key` | a `__proto__` key written in an object literal |
 | `within_compare` | `WITHIN` |
 | `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, …) |
-| `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `aggregate`, `meta`, `exists`, `resource_traverse`, `kg_value`, …) |
+| `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `aggregate`, `meta`, `exists`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); `EXISTS(…)` anywhere, a hop's WHERE included, is `expression:exists` |
+
+A hop's WHERE and ORDER BY key are walked as expressions scoped at the
+landed record: a bare name (`property`, `edge_property`) is the record's
+field (or a value the body binds of that name), and the rest is the
+expression walk above.
+
+**Admission: the input** (`notAdmitted`; `admit::input_refusal`, on the
+parse, before anything is asked):
+
+| reason | what the input would make the run do |
+|---|---|
+| `cost_cap_inside_block` | a capped run with a write in a block's body: the cap can be met at any judged write, and a flow suspended in an iteration is joined by the fan-out's frame, which this engine does not keep |
+| `suspend_at_inside_block` | a `suspendAt` address with an `i` step: likewise |
 
 **Admission: a parked state** (`notAdmitted`; `park::resume_refusal`):
 
@@ -346,7 +369,9 @@ TypeScript takes through its host is a host request here:
 | `adapters.call` `listEntryPoints` | a discriminated event (`naturalRootTypeName`) | `host.adapters.call` |
 | `trace.append` | after each statement that traced anything, at any depth, its entries in one request; once more as the segment ends, for what a park or a failure left (run.ts publishes the same way, `interpretBody`) | the segment's trace (the result's), handed on to `host.trace` |
 | `control.cancel.cancelled` | before each statement | `host.control.cancel.cancelled` |
-| `adapters.call` `getFieldValue` | each read of an event field, in evaluation order | `host.adapters.call`, through the surface-read wrapper's restamp (done here) |
+| `adapters.call` `getFieldValue` | each read of an event field or a landed record's, in evaluation order; the position by handle (below) | `host.adapters.call`, through the surface-read wrapper's restamp (done here) |
+| `adapters.resolve` (`role: "source"`) | a block head rooted at an instance or a write's handle, once per instance (`instanceSourceRead`) | `host.adapters.resolve` |
+| `adapters.call` `getRelated` / `iterateRelatedPage` | a block head's hop: `getRelated` through the read wrapper, or, for an instance whose `methods` list `iterateRelated`, `iterateRelatedPage` a page at a time | `host.adapters.call` |
 | `adapters.call` `describe`, `resolveEntity`, `readRecord`, `createRecord`, `updateRecord` | a write, in run.ts's order (below); `readRecord` only when the instance's `methods` list it | `host.adapters.call` |
 | `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`, with the run's budget (`ledger`); its cost is charged |
 | `locks.acquire`, `locks.release` | around an identity search and an update by id | `host.locks`: a token per acquire, released by token |
@@ -400,6 +425,65 @@ writes the origins themselves. The order of a trail is the order of
 evaluation in both engines (a literal minted once per evaluation, an event
 or handle read once per ask), and deduplication is by origin, which a fresh
 id per mint reproduces exactly (identity, in the TypeScript).
+
+### Traversal blocks
+
+`traverse.rs` is run.ts `interpretBlock` with its head walk
+(`headIterationsFrom` → `walkSourceHeadPaths`) for an unbound block of one
+hop off a constructed instance (from its meta position), a write's handle
+(from its record) or the event (from the seeded position):
+
+1. the head's graph: the instance resolved as a source, once per
+   instance (`instanceSourceRead`); the event's source for the event;
+2. the hop's fetch, `closedHopPushdown` (crate::order_limit): its WHERE when
+   pure, with every leaf the scope already holds as a string, number or
+   boolean swapped for that `static` (a body binding by name, a field of the
+   event or of a record read now, before the fetch; never the hop's own
+   alias, a bare name on an edge that carries inline properties, an
+   ambient, or a read that fails); its ORDER BY when the key is a bare
+   field; its LIMIT when the sort is pushed with it. `getRelated`'s argument
+   object is `{position, fieldId, direction, where?, orderBy?, limit?}`, key
+   for key the TypeScript's;
+3. `getRelated` through the read wrapper (kg.ts `surfaceReadAdapter`): off
+   the meta root a collection scan, each landing stamped with the
+   collection's target type unless the adapter's own stamp names a
+   position; off a record, the origin stamped with its natural type and each
+   landing with the declared edge's target. An instance that streams is
+   walked `iterateRelatedPage` by page, cursor echoed, through no wrapper (the
+   wrapper forwards a stream untouched), each page's records filtered before
+   the next page is asked for; a cursor handed back unchanged, or a walk past
+   10,000 pages, fails with `iterateRelatedPages`' own errors;
+4. per landed record: the member gate of a narrowed polymorphic hop
+   (`hopMemberGate`, the schema's `selectedMembers` by `refinementKey`), then
+   the WHERE with the hop's alias naming the record (`hopFilterKeeps`): a pure
+   WHERE decided a top-level conjunct at a time, each leaf read once when its
+   conjunct is reached (`decidePurePredicate`), any other evaluated whole;
+5. ORDER BY / LIMIT over what was kept (`applyHopOrderLimit`): every key read
+   at once (`Promise.all`), the sort V8's (empty keys last, ties in arrival
+   order, a comparator's NaN read as 0, the leading run reversed when
+   strictly descending, then binary insertion), the limit `slice(0, n)`;
+6. a `block` trace entry (`{root, positions}`, the head as written), then the
+   body once per landing, in order, at `…i<j>…`, in a scope of its own
+   holding the alias.
+
+A landed record (`Landed`, `sourcePosition`) is the very position object the
+adapter (or the wrapper's restamp) answered; reading its field is
+`readSourcePositionField`: `getFieldValue` through the wrapper, a
+`field_miss` traced for a raw-payload landing that does not carry it, a
+`source_field` origin.
+
+What stays the TypeScript engine's (refused, "Admission" above): bound
+blocks (`x = … { return … }`), nested blocks and heads off a hop alias,
+heads of more than one hop, heads off a value, a node, an expression or
+`_resources`, extraction heads (an extract is refused), a park in a body,
+EXISTS and any traversal inside an expression, writes rooted at a hop alias.
+
+**tests/order_limit_pin.rs** holds `order_limit` to the TypeScript's own
+answers (tests/oracle/order_limit.json, 601 seeded brackets: the pushdown's
+JSON text with seeded leaves substituted, and the items kept in order for
+seeded keys of every kind, mixed text and numbers included), written by
+tests/oracle/order_limit.ts through generate.ts; CI regenerates and diffs it
+with the rest of the oracle.
 
 ### Nodes
 
@@ -470,7 +554,7 @@ statement runs again, from the run's spend with the cap counted afresh
   the eval wire (below): an event payload's key order (a `field_miss` lists
   the keys in it), `undefined` and the numbers JSON cannot say cross as the
   JavaScript has them. The event itself arrives on the wire too.
-- Addresses are address.ts's (`s1.b0.s2`), kept for the parks to come.
+- Addresses are address.ts's (`s1.b0.s2`; a block's iteration `j` is `…i<j>…`, `s1.i0.s0`).
 - `done` is one of five shapes (below). What the engine does not run it
   refuses before any request, or declines after the check and before
   anything the host can see ("Admission" above), and the shim runs the
@@ -543,19 +627,34 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 |---|---|
 | `check.program {source, languageVersion, upgradingFrom?}` | `{diagnostics, link?, stamps}` (below); a program that fails its check gets no answer: the host ends the run with the check's error |
 | `adapters.resolve {segmentId, adapterType, credentialsId?, constructionArgs?, role: "source" \| "target", dryRun?: true}` | the instance as data: `{instance, adapterType, methods, capabilities, …}` |
-| `adapters.call {segmentId, instance, method, args, wire: true}` | `{result}` (on the eval wire) or `{error: {kind: "call_ceiling" \| "adapter_error", message, name?, detail?, ref}}`; `ref` numbers the very error the engine's TypeScript twin raises for it |
+| `adapters.call {segmentId, instance, method, args, wire: true, positionRef?, position?}` | `{result}` (on the eval wire) or `{error: {kind: "call_ceiling" \| "adapter_error", message, name?, detail?, ref}}`; `ref` numbers the very error the engine's TypeScript twin raises for it. With `positionRef` the call's argument object is `{position, ...args}`: the position by handle (below) |
 | `llm.arbitrateEntities {segmentId, asserted, candidates, recordType, constraints, languageVersion, budget}` (the first four on the eval wire) | `{index: number \| null, judgeUnavailable?, cost?}`, or a budget refusal `{error: {kind: "budget", message}, cost?}` |
 | `locks.acquire {segmentId, names}` / `locks.release {segmentId, token}` | `{token}` once held / `undefined` once let go |
 | `park.sink.commitTimerPark {segmentId, address, state, wakeAt, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
 | `park.sink.commitSuspension {segmentId, address, state, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a sink that cannot suspend |
 | `park.sink.commitLimitPause {segmentId, limit: "cost", capMicrodollars, spentMicrodollars}` | `undefined`, or `{noSink: true}` for a sink that cannot suspend (nothing is committed) |
 | `control.cancel.cancelled {segmentId}` / `control.cancel.cancelledNow {segmentId}` | a boolean: the cancel gate, debounced / not |
-| `trace.append {segmentId, entries, closing?: true}` (one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
+| `trace.append {segmentId, entries, closing?: true}` (one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}`, `{kind: "field_miss", binding, field, available: [key…]}` or `{kind: "block", root, positions}` |
 | `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
 | `builtins.compare {op, left, right}` | the same two shapes, for `compareValues(left, op, right)`; `op` a `FilterOperator` |
 
 A host answer is `{value}`, `{}` for `undefined`, or `{error: {message,
 name?, ref?}}` for a call the host threw on.
+
+**Positions by handle.** A read re-sends a handle, not the record: a
+`getFieldValue`, `getRelated` or `iterateRelatedPage` names its position by
+`positionRef`, a number the segment gives each position object the first
+time it sends it, and that first call carries the position itself
+(`position`, on the eval wire), which the host keeps for the segment. Every
+later call naming it carries only the number; the host hands its adapter
+`{position, ...args}` — the position leads each of those argument objects,
+so the key order is the TypeScript engine's — and the very object it
+registered. A hop WHERE reading k fields of n records sends each record
+once, not k times; the event's payload crosses once per segment. The
+shim's dispatch is rust_host.ts `withPosition`, in the one module that
+routes host requests. (The cheaper of the two shapes the review named:
+batching the reads would change when each is asked, and a WHERE reads its
+conjuncts' fields in order, a false one ending the reads.)
 
 **How a failure is encoded.** Four places, one rule each:
 
@@ -733,6 +832,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 69, v2 75). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 87, v2 95). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

@@ -155,6 +155,9 @@ async fn predicate_in_place<'p>(expr: &'p Expression, read: &'p dyn Fn(&str) -> 
         Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => read(property_type_id),
         Expression::AliasRef { name } => read(name),
         Expression::Meta { key } => read(&format!("@{key}")),
+        // A zero-step walk (`t.\`field\``) is a leaf the caller read
+        // already, under its `t.field` key.
+        Expression::Traverse { steps, .. } if steps.is_empty() => read(&leaf_read_key(expr)),
         Expression::List { elements } => {
             let mut items = Vec::new();
             for element in elements {
@@ -222,6 +225,67 @@ async fn predicate_in_place<'p>(expr: &'p Expression, read: &'p dyn Fn(&str) -> 
         }
         _ => return Err(EvalError::Fallback("not a pure predicate kind this unit evaluates".into())),
     })
+}
+
+/// `isPurePredicate` then `pureLeafReads`: the leaf read nodes a pure
+/// predicate references, in traversal order (callers dedupe by
+/// `leaf_read_key`); `None` for one that is not pure.
+pub fn pure_leaf_reads(expr: &Expression) -> Option<Vec<&Expression>> {
+    let mut leaves = Vec::new();
+    leaf_reads(expr, &mut leaves).then_some(leaves)
+}
+
+fn leaf_reads<'e>(expr: &'e Expression, into: &mut Vec<&'e Expression>) -> bool {
+    fn all<'e>(items: &'e [Expression], into: &mut Vec<&'e Expression>) -> bool {
+        items.iter().all(|e| leaf_reads(e, into))
+    }
+    match expr {
+        Expression::Static { .. } => true,
+        Expression::Property { .. } | Expression::EdgeProperty { .. } | Expression::AliasRef { .. } | Expression::Meta { .. } => {
+            into.push(expr);
+            true
+        }
+        Expression::Traverse { steps, expression, .. } if steps.is_empty() => {
+            if !matches!(expression.as_ref(), Expression::Property { .. } | Expression::EdgeProperty { .. } | Expression::AliasRef { .. }) {
+                return false;
+            }
+            into.push(expr);
+            true
+        }
+        Expression::List { elements } => elements.iter().all(|e| match e {
+            ListElement::Expression(e) => leaf_reads(e, into),
+            ListElement::Spread(spread) => leaf_reads(&spread.expression, into),
+        }),
+        Expression::Concat { parts } => all(parts, into),
+        Expression::Conditional { condition, then, else_ } => {
+            leaf_reads(condition, into) && leaf_reads(then, into) && leaf_reads(else_, into)
+        }
+        Expression::Compare { left, right, .. } | Expression::Arithmetic { left, right, .. } => leaf_reads(left, into) && leaf_reads(right, into),
+        Expression::Logical { operands, .. } => all(operands, into),
+        Expression::Not { expression } | Expression::Negate { expression } => leaf_reads(expression, into),
+        Expression::At { expression, index } => leaf_reads(expression, into) && leaf_reads(index, into),
+        _ => false,
+    }
+}
+
+/// `leafReadKey`: the name a pure leaf read is resolved under and read back
+/// by (`t.field` for a zero-step traversal, `@key` for an ambient).
+pub fn leaf_read_key(leaf: &Expression) -> String {
+    match leaf {
+        Expression::AliasRef { name } => name.clone(),
+        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+        Expression::Meta { key } => format!("@{key}"),
+        Expression::Traverse { alias_root, expression, .. } => {
+            let inner = match expression.as_ref() {
+                Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+                Expression::AliasRef { name } => name.clone(),
+                Expression::Traverse { .. } => leaf_read_key(expression),
+                _ => String::new(),
+            };
+            format!("{}.{inner}", alias_root.as_deref().unwrap_or(""))
+        }
+        _ => String::new(),
+    }
 }
 
 /// `isPurePredicate` then `pureLeafReads(…).map(leafReadKey)`: the names a

@@ -159,6 +159,10 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             }
             object_of(descriptor)
         }
+        // A landing is bound only in a block iteration's own scope, and
+        // admission refuses every park and suspension inside a block, so no
+        // state this engine writes ever holds one.
+        Binding::Landed(_) => unreachable!("no park is written inside a block"),
     }
 }
 

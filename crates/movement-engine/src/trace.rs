@@ -23,6 +23,9 @@ pub enum TraceEntry {
     /// A null read of a field a raw-payload position does not carry, with
     /// the first 30 keys it does.
     FieldMiss { binding: String, field: String, available: Vec<String> },
+    /// A traversal block's head, as written, and how many landings it
+    /// yielded: the body runs once per landing.
+    Block { root: String, positions: usize },
 }
 
 /// One flow's trace entries not yet handed to the host, in the order they

@@ -30,6 +30,21 @@ pub enum Binding {
     /// literal. Shared, as the TypeScript's object is: two places holding it
     /// hold one node.
     Node(Rc<RefCell<Node>>),
+    /// A record a traversal landed on (`kind: 'sourcePosition'`): a block
+    /// head's hop alias, one landing per iteration (crate::traverse).
+    Landed(Rc<Landed>),
+}
+
+/// `{kind: 'sourcePosition', position, edgeProperties?, read?}`.
+#[derive(Debug)]
+pub struct Landed {
+    /// The position as the adapter (or the read wrapper's restamp) answered
+    /// it, kept as that very object: it is what the next call is handed.
+    pub position: Js,
+    /// The walked edge's inline properties, when the adapter answered any.
+    pub edge_properties: Option<Js>,
+    /// The graph it was landed in, which its fields are read through.
+    pub read: Rc<crate::traverse::Read>,
 }
 
 /// `{kind: 'nodePosition', fields, fieldOrder, fieldProvenance, edges}`, the
@@ -126,7 +141,7 @@ impl Names for Scope {
     }
 
     fn is_record(&self, name: &str) -> bool {
-        matches!(self.resolve(name), Some(Binding::Handle(_) | Binding::Node(_)))
+        matches!(self.resolve(name), Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_)))
     }
 }
 

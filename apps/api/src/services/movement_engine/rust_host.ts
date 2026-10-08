@@ -53,6 +53,10 @@ export interface RouteContext {
   context: RunContext;
   catalog: CatalogSnapshot;
   hostErrors: unknown[];
+  /** The positions the segment registered, by handle (`adapters.call`'s
+   *  `positionRef`): each crossed once, and is handed to the host's adapter
+   *  as that one object on every call that names it. */
+  positions: Map<number, unknown>;
 }
 
 type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
@@ -118,11 +122,12 @@ const ROUTES: Record<string, Route> = {
    *  error the TypeScript's stand-in raises for it (host_adapter.ts), under
    *  the `ref` its answer carries, so a run that fails with it fails with an
    *  equal error. */
-  async 'adapters.call'(request, { host, hostErrors }) {
+  async 'adapters.call'(request, { host, hostErrors, positions }) {
     const method = adapterMethod(request.method);
     if (request.wire !== true) throw new RustShimError('adapters.call carries its args on the eval wire');
-    const args = new WireOut().read(request.args);
-    if (!isCallArgs(args)) throw new RustShimError(`adapters.call ${method}: args are one object`);
+    const rest = new WireOut().read(request.args);
+    if (!isCallArgs(rest)) throw new RustShimError(`adapters.call ${method}: args are one object`);
+    const args = withPosition(request, rest, positions);
     const answer = await host.adapters.call({
       segmentId: segmentOf(request),
       instance: string(request.instance, 'adapters.call instance'),
@@ -293,6 +298,30 @@ function isCallArgs(value: unknown): value is AdapterCall['args'] {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * A call whose position the engine sent by handle: `positionRef` numbers a
+ * position of the segment's, and `position` (on the eval wire) registers it
+ * the first time. The adapter receives `{position, ...args}` — the position
+ * leads every argument object that has one (`getFieldValue`, `getRelated`,
+ * `iterateRelatedPage`), so the key order is the TypeScript engine's. Read
+ * before the call awaits anything, so a registration and a call naming it
+ * that are in flight together are served in the order the engine made them.
+ */
+function withPosition(request: Record<string, unknown>, rest: AdapterCall['args'], positions: Map<number, unknown>): AdapterCall['args'] {
+  const reference = request.positionRef;
+  if (reference === undefined) return rest;
+  if (typeof reference !== 'number' || !Number.isInteger(reference)) throw new RustShimError('adapters.call positionRef is an integer');
+  if (request.position !== undefined) {
+    if (positions.has(reference)) throw new RustShimError(`adapters.call registered position ${reference} twice`);
+    positions.set(reference, new WireOut().read(request.position));
+  }
+  if (!positions.has(reference)) throw new RustShimError(`adapters.call named position ${reference}, which was never registered`);
+  const position = positions.get(reference);
+  const args = { position, ...rest };
+  if (!isCallArgs(args)) throw new RustShimError('adapters.call args are one object');
+  return args;
+}
+
 function adapterMethod(value: unknown): AdapterMethod {
   const method = ADAPTER_METHODS.find((m) => m === value);
   if (method === undefined) throw new RustShimError(`adapters.call method ${JSON.stringify(value)} is not an adapter method`);
@@ -420,6 +449,11 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
       return { kind: 'gate', outcome: entry.outcome };
     case 'warning':
       return { kind: 'warning', code: string(entry.code, 'a warning code'), message: string(entry.message, 'a warning message') };
+    case 'block': {
+      const positions = entry.positions;
+      if (typeof positions !== 'number' || !Number.isInteger(positions)) throw new RustShimError('a block trace entry counts its positions');
+      return { kind: 'block', root: string(entry.root, 'a block root'), positions };
+    }
     case 'field_miss': {
       const available = entry.available;
       if (!Array.isArray(available) || !available.every((key) => typeof key === 'string')) {

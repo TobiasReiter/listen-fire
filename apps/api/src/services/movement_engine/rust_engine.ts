@@ -232,12 +232,12 @@ export function rustResumeRefusal(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Omit<RouteContext, 'hostErrors'> & {
+  input: Omit<RouteContext, 'hostErrors' | 'positions'> & {
     /** The errors host calls failed with, by the `ref` their answers carry. */
     hostErrors?: unknown[];
   },
 ): Promise<unknown> {
-  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [] };
+  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [], positions: new Map() };
   const inFlight = new Map<number, Promise<{ id: number; answer: HostAnswer }>>();
   try {
     let step = engine.start(start);

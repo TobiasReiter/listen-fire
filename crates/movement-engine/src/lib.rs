@@ -12,6 +12,7 @@
 //! semantics are `js`'s, and values cross on `env`'s wire.
 
 pub mod abi;
+pub mod address;
 pub mod admit;
 pub mod bindings;
 pub mod env;
@@ -25,11 +26,13 @@ pub mod js_date;
 pub mod js_regex;
 pub mod ledger;
 pub mod node;
+pub mod order_limit;
 pub mod park;
 pub mod program;
 pub mod run;
 pub mod stdlib;
 pub mod trace;
+pub mod traverse;
 pub mod unique;
 pub mod write;
 

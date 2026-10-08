@@ -890,6 +890,12 @@ impl Run<'_> {
     /// the shim holds that very error, under the `ref` the error carries.
     pub(crate) async fn call_adapter(&self, instance: &Instance, method: &str, args: Js) -> Result<Js, Failure> {
         let answer = self.ask(host::adapters::call(self.segment(), instance, method, env::encode_plain(&args))).await?;
+        self.adapter_answer(answer)
+    }
+
+    /// An `adapters.call` answer: the result off the eval wire, or the
+    /// host's error as the stand-in raises it.
+    pub(crate) fn adapter_answer(&self, answer: Option<Json>) -> Result<Js, Failure> {
         match host::call_answer(answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))? {
             host::CallAnswer::Result(Some(wire)) => env::decode(&wire).map_err(|e| Failure::engine("MOVENG_RUNTIME", e)),
             host::CallAnswer::Result(None) => Ok(Js::Undefined),
@@ -1133,6 +1139,7 @@ pub fn describe_binding(binding: &Binding) -> &'static str {
         Binding::Movement(_) => "a movement declaration",
         Binding::Handle(_) => "a write handle",
         Binding::Node(_) => "a synthesised node",
+        Binding::Landed(_) => "a traversed source record",
     }
 }
 
@@ -1179,7 +1186,7 @@ pub fn spell_name(name: &str) -> String {
 }
 
 /// `unquoteConstructionArg`.
-fn unquote_construction_arg(raw: &str) -> String {
+pub(crate) fn unquote_construction_arg(raw: &str) -> String {
     let t = js::trim(raw);
     if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
         return t[1..t.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\");

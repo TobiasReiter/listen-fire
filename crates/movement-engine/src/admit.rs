@@ -19,11 +19,11 @@
 use std::collections::BTreeSet;
 
 use movement_parser::ast::{
-    self, AwaitSource, CallArg, CallStatement, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef, PathRoot, RValue, Statement,
-    WriteExpression, WriteTarget,
+    self, AwaitSource, CallArg, CallStatement, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue,
+    Statement, TraversalBlock, WriteExpression, WriteTarget,
 };
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{Expression, FilterOperator, ListElement, ObjectMember, StaticValue};
+use movement_parser::lowering::expression::{Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
 use crate::write::{EdgeShape, edge_shape};
 
@@ -84,7 +84,7 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
         let mut bound = Bound::default();
         bound.collect(&movement.body);
         let body_names: Vec<&String> =
-            bound.values.iter().chain(&bound.handles).chain(&bound.instances).chain(&bound.nodes).collect();
+            bound.values.iter().chain(&bound.handles).chain(&bound.instances).chain(&bound.nodes).chain(&bound.landings).collect();
         if body_names.iter().any(|n| events.contains(*n) || file_names.contains(*n)) {
             return Some("name_shadowed".into());
         }
@@ -96,17 +96,48 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
             values: &bound.values,
             handles: &bound.handles,
             nodes: &bound.nodes,
+            landings: &bound.landings,
             instances: instances.union(&bound.instances).cloned().collect(),
             body_instances: &bound.instances,
             file_names: &file_names,
             movements: &movement_names,
             language_version,
         };
-        if let Err(reason) = names.body(&movement.body) {
+        if let Err(reason) = names.body(&movement.body, Within::Body) {
             return Some(reason);
         }
     }
     None
+}
+
+/// Why this engine does not run `program` with this input, or `None`: a
+/// flow this engine runs must not suspend inside a traversal block, where
+/// the TypeScript engine records the iteration's park and joins the fan-out
+/// later (`interpretBlock`), which this engine does not do. A cost cap can
+/// be met at any judged write, so a capped run with a write in a block is
+/// refused; so is a `suspendAt` address inside one (an `i` step).
+pub fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]) -> Option<String> {
+    if suspend_at.iter().any(|address| address.split('.').any(|step| step.starts_with('i'))) {
+        return Some("suspend_at_inside_block".into());
+    }
+    if capped && program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if writes_in_block(&m.body, false))) {
+        return Some("cost_cap_inside_block".into());
+    }
+    None
+}
+
+/// Whether a write sits in a traversal block's body, at any depth.
+fn writes_in_block(statements: &[Statement], in_block: bool) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::Write(_) => in_block,
+        Statement::Assign(assign) => in_block && matches!(assign.value, RValue::Write { .. }),
+        Statement::If(statement) => {
+            statement.arms.iter().any(|arm| writes_in_block(&arm.body, in_block))
+                || statement.else_arm.as_ref().is_some_and(|arm| writes_in_block(&arm.body, in_block))
+        }
+        Statement::Block(statement) => writes_in_block(&statement.block.body, true),
+        _ => false,
+    })
 }
 
 /// The AST's own `kind` for a statement.
@@ -159,13 +190,15 @@ fn rvalue_kind(value: &RValue) -> &'static str {
     }
 }
 
-/// Every name a body binds, by what it holds; `if` arms included.
+/// Every name a body binds, by what it holds; `if` arms and block bodies
+/// included, and a block head's hop alias (`landings`).
 #[derive(Default)]
 struct Bound {
     values: BTreeSet<String>,
     handles: BTreeSet<String>,
     instances: BTreeSet<String>,
     nodes: BTreeSet<String>,
+    landings: BTreeSet<String>,
 }
 
 impl Bound {
@@ -189,10 +222,27 @@ impl Bound {
                         self.collect(&arm.body);
                     }
                 }
+                Statement::Block(statement) => {
+                    if let Ok(step) = crate::traverse::head_step(&statement.block.head)
+                        && let Some(alias) = step.alias
+                    {
+                        self.landings.insert(alias);
+                    }
+                    self.collect(&statement.block.body);
+                }
                 _ => {}
             }
         }
     }
+}
+
+/// Where a statement sits: the movement's body (or an `if` arm of it), or a
+/// traversal block's body, where a park or a suspension would leave the
+/// fan-out's other iterations to a join this engine does not keep.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Within {
+    Body,
+    Block,
 }
 
 type Admitted = Result<(), String>;
@@ -208,6 +258,8 @@ struct Names<'n> {
     values: &'n BTreeSet<String>,
     handles: &'n BTreeSet<String>,
     nodes: &'n BTreeSet<String>,
+    /// Block heads' hop aliases: a record the walk landed on.
+    landings: &'n BTreeSet<String>,
     /// The file's constructed instances and the body's.
     instances: BTreeSet<String>,
     body_instances: &'n BTreeSet<String>,
@@ -218,15 +270,19 @@ struct Names<'n> {
 }
 
 impl Names<'_> {
-    fn body(&self, statements: &[Statement]) -> Admitted {
-        statements.iter().try_for_each(|statement| self.statement(statement))
+    fn body(&self, statements: &[Statement], within: Within) -> Admitted {
+        statements.iter().try_for_each(|statement| self.statement(statement, within))
     }
 
-    fn statement(&self, statement: &Statement) -> Admitted {
+    fn statement(&self, statement: &Statement, within: Within) -> Admitted {
+        let sleep = |source: &AwaitSource| {
+            sleep_only(source)?;
+            if within == Within::Block { refuse("block_park") } else { Ok(()) }
+        };
         match statement {
             Statement::Assign(assign) => match &assign.value {
                 RValue::Write { write } => self.write(write),
-                RValue::Await { r#await } => sleep_only(&r#await.source),
+                RValue::Await { r#await } => sleep(&r#await.source),
                 RValue::Construct { construct } if self.movements.contains(&construct.callee) => refuse("movement_call"),
                 RValue::Construct { .. } => Ok(()),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
@@ -234,19 +290,67 @@ impl Names<'_> {
             },
             Statement::Return(ret) => self.rvalue(&ret.value),
             Statement::Write(statement) => self.write(&statement.write),
-            Statement::Await(statement) => sleep_only(&statement.r#await.source),
+            Statement::Await(statement) => sleep(&statement.r#await.source),
             Statement::If(statement) => {
                 for arm in &statement.arms {
                     self.condition(&arm.condition)?;
-                    self.body(&arm.body)?;
+                    self.body(&arm.body, within)?;
                 }
                 match &statement.else_arm {
-                    Some(arm) => self.body(&arm.body),
+                    Some(arm) => self.body(&arm.body, within),
                     None => Ok(()),
                 }
             }
+            Statement::Block(_) if within == Within::Block => refuse("block_nested"),
+            Statement::Block(statement) => self.block(&statement.block),
             other => refuse(format!("statement:{}", statement_kind(other))),
         }
+    }
+
+    /// A traversal block over an adapter edge (crate::traverse): one hop
+    /// off a constructed instance, a write's handle or the event, its WHERE
+    /// and ORDER BY key position-scoped expressions the evaluator runs, its
+    /// body in the slice and with no park in it.
+    fn block(&self, block: &TraversalBlock) -> Admitted {
+        self.head(&block.head)?;
+        self.body(&block.body, Within::Block)
+    }
+
+    fn head(&self, head: &PathHead) -> Admitted {
+        let root = match &head.root {
+            None => return refuse("block_head_rootless"),
+            Some(PathRoot::Expression { .. }) => return refuse("block_head_expression_root"),
+            Some(PathRoot::Name { name }) => name,
+        };
+        if self.landings.contains(root) {
+            return refuse("block_nested");
+        }
+        if self.values.contains(root) {
+            return refuse("block_head_value_root");
+        }
+        if self.nodes.contains(root) {
+            return refuse("block_head_node_root");
+        }
+        if !self.instances.contains(root) && !self.handles.contains(root) && !self.events.contains(root) {
+            return refuse("block_head_root");
+        }
+        let probe = format!("{}{}.`__movement_engine_probe__`", crate::write::spell_name(root), head.hops_raw);
+        let Ok(tree) = movement_parser::expr::parse_expression(&probe) else { return refuse("block_head_does_not_lower") };
+        let Ok(walk) = movement_parser::lowering::lower_expression(&tree, &probe) else { return refuse("block_head_does_not_lower") };
+        let steps = match &walk {
+            Expression::Traverse { steps, .. } => steps,
+            Expression::ResourceTraverse { .. } => return refuse("block_head_resources"),
+            _ => return refuse("block_head_does_not_lower"),
+        };
+        let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
+        let TraversalStep::Edge(step) = step else { return refuse("block_head_step") };
+        if let Some(filter) = &step.expression_filter {
+            self.scoped(filter)?;
+        }
+        if let Some(key) = step.cardinality.as_ref().and_then(|c| c.order_by.as_deref()) {
+            self.scoped(key)?;
+        }
+        Ok(())
     }
 
     /// `name = <expression>`, or a built-in's call read as the expression it is.
@@ -398,14 +502,31 @@ impl Names<'_> {
     /// name read being a value the body binds, and a field read with no
     /// hops off the event, a value, a write's handle or a node.
     fn expression(&self, expr: &Expression) -> Admitted {
-        let each = |items: &[Expression]| items.iter().try_for_each(|e| self.expression(e));
+        self.walk(expr, false)
+    }
+
+    /// A hop's WHERE or ORDER BY key, scoped at the landed record: its bare
+    /// names (`property`, `edge_property`) read the record's fields.
+    fn scoped(&self, expr: &Expression) -> Admitted {
+        self.walk(expr, true)
+    }
+
+    fn walk(&self, expr: &Expression, scoped: bool) -> Admitted {
+        let each = |items: &[Expression]| items.iter().try_for_each(|e| self.walk(e, scoped));
         match expr {
+            Expression::Property { .. } | Expression::EdgeProperty { .. } if scoped => Ok(()),
             Expression::AliasRef { name } | Expression::Property { property_type_id: name } => {
                 if self.values.contains(name) { Ok(()) } else { refuse("name_not_value") }
             }
+            // `EXISTS(x-[:e]->)` lowers as a walk ending in the quantifier.
+            Expression::Traverse { expression, .. } if matches!(expression.as_ref(), Expression::Exists { .. }) => refuse("expression:exists"),
             Expression::Traverse { alias_root, steps, expression } => {
                 let held = alias_root.as_ref().is_some_and(|root| {
-                    self.events.contains(root) || self.values.contains(root) || self.handles.contains(root) || self.nodes.contains(root)
+                    self.events.contains(root)
+                        || self.values.contains(root)
+                        || self.handles.contains(root)
+                        || self.nodes.contains(root)
+                        || self.landings.contains(root)
                 });
                 if !held {
                     return refuse("traversal_root");
@@ -414,7 +535,7 @@ impl Names<'_> {
                     return refuse("traversal_steps");
                 }
                 match expression.as_ref() {
-                    Expression::Property { .. } => Ok(()),
+                    Expression::Property { .. } | Expression::EdgeProperty { .. } => Ok(()),
                     _ => refuse("traversal_terminal"),
                 }
             }
@@ -423,31 +544,31 @@ impl Names<'_> {
             }
             Expression::Static { .. } => Ok(()),
             Expression::At { expression, index } => {
-                self.expression(expression)?;
-                self.expression(index)
+                self.walk(expression, scoped)?;
+                self.walk(index, scoped)
             }
             Expression::List { elements } => elements.iter().try_for_each(|element| match element {
-                ListElement::Expression(e) => self.expression(e),
-                ListElement::Spread(spread) => self.expression(&spread.expression),
+                ListElement::Expression(e) => self.walk(e, scoped),
+                ListElement::Spread(spread) => self.walk(&spread.expression, scoped),
             }),
             Expression::Object { entries } => entries.iter().try_for_each(|member| match member {
                 ObjectMember::Entry { key, .. } if key == "__proto__" => refuse("proto_key"),
-                ObjectMember::Entry { value, .. } => self.expression(value),
-                ObjectMember::Spread(spread) => self.expression(&spread.expression),
+                ObjectMember::Entry { value, .. } => self.walk(value, scoped),
+                ObjectMember::Spread(spread) => self.walk(&spread.expression, scoped),
             }),
             Expression::Concat { parts } => each(parts),
             Expression::Conditional { condition, then, else_ } => {
-                self.expression(condition)?;
-                self.expression(then)?;
-                self.expression(else_)
+                self.walk(condition, scoped)?;
+                self.walk(then, scoped)?;
+                self.walk(else_, scoped)
             }
             Expression::Compare { op: FilterOperator::Within, .. } => refuse("within_compare"),
             Expression::Compare { left, right, .. } | Expression::Arithmetic { left, right, .. } => {
-                self.expression(left)?;
-                self.expression(right)
+                self.walk(left, scoped)?;
+                self.walk(right, scoped)
             }
             Expression::Logical { operands, .. } => each(operands),
-            Expression::Not { expression } | Expression::Negate { expression } => self.expression(expression),
+            Expression::Not { expression } | Expression::Negate { expression } => self.walk(expression, scoped),
             Expression::Function { fn_, args } => {
                 if !FUNCTIONS.contains(&fn_.as_str()) {
                     return refuse(format!("function:{fn_}"));
@@ -546,6 +667,54 @@ mod tests {
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
+    }
+
+    #[test]
+    fn admits_one_hop_blocks_whose_body_is_in_the_slice() {
+        for body in [
+            "  crm-[c:companies WHERE `name` == \"Acme\" ORDER BY `name` DESC LIMIT 2]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }",
+            "  wanted = msg.`subject`\n  crm-[c:companies WHERE c.`name` == wanted AND `stage` != msg.`text`]-> {\n    n = c.`name`\n    if n != \"x\" {\n      write crm-[:notes]-> { body: n }\n    }\n    return n\n  }",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  co-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }",
+            "  msg-[a:attachments]-> {\n    write crm-[:notes]-> { body: a.`name` }\n  }",
+            "  crm-[:companies]-> {\n    write crm-[:notes]-> { body: \"one\" }\n  }",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn refuses_each_block_construct_it_does_not_run_with_its_reason() {
+        for (body, reason) in [
+            ("  crm-[c:companies]-> {\n    await sleep(1h)\n  }", "block_park"),
+            ("  crm-[c:companies]-> {\n    c-[d:deals]-> {\n      x = d.`title`\n    }\n  }", "block_nested"),
+            ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
+            ("  v = 1\n  v-[c:companies]-> {\n    x = 1\n  }", "block_head_value_root"),
+            ("  n = node { a: 1 }\n  n-[c:kids]-> {\n    x = 1\n  }", "block_head_node_root"),
+            ("  crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> {\n    x = 1\n  }", "expression:exists"),
+            ("  crm-[c:companies ORDER BY c-[:owner]->.`joined`]-> {\n    x = 1\n  }", "traversal_steps"),
+            ("  crm-[c:companies WHERE `name` == @current_date]-> {\n    x = 1\n  }", "expression:meta"),
+            ("  crm-[c:companies]-> {\n    write c-[:notes]-> { body: \"x\" }\n  }", "write_root_not_held"),
+            ("  crm-[c:companies]-> {\n    x = c\n  }", "name_not_value"),
+            ("  x = crm-[c:companies]-> {\n    return c\n  }", "rvalue:block"),
+            ("  crm-[c:companies]-> {\n    x = COUNT(c-[:deals]->)\n  }", "expression:aggregate"),
+        ] {
+            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_suspension_a_block_would_have_to_join() {
+        let program = |body: &str| {
+            let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses")
+        };
+        let in_block = program("  crm-[c:companies]-> {\n    if c.`name` != \"\" {\n      write crm-[:notes]-> { body: c.`name` }\n    }\n  }");
+        let outside = program("  write crm-[:notes]-> { body: \"x\" }\n  crm-[c:companies]-> {\n    x = c.`name`\n  }");
+        assert_eq!(input_refusal(&in_block, true, &[]).as_deref(), Some("cost_cap_inside_block"));
+        assert_eq!(input_refusal(&in_block, false, &[]), None);
+        assert_eq!(input_refusal(&outside, true, &[]), None);
+        assert_eq!(input_refusal(&outside, false, &["s1.i0.s0".into()]).as_deref(), Some("suspend_at_inside_block"));
+        assert_eq!(input_refusal(&outside, false, &["s1".into()]), None);
     }
 
     #[test]
