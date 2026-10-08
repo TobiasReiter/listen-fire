@@ -29,10 +29,11 @@ export function resetRustEvalStats(): void {
  * was decided:
  *
  * - `notAdmitted`: never run in Rust, by reason — refused by the shim's input
- *   checks before a segment opened (a limit pause, a cost cap, an input that
- *   cannot cross the eval wire), or by the engine's own admission on its own
- *   parse before it asked its host for anything (crates/movement-engine's
- *   README lists every reason);
+ *   checks before a segment opened (a limit pause, a suspension, an input
+ *   that cannot cross the eval wire, a resume this engine does not answer),
+ *   or by the engine's own admission on its own parse before it asked its
+ *   host for anything (a cost cap over a priced call among them;
+ *   crates/movement-engine's README lists every reason);
  * - `routed`: segments the Rust engine started, its admission refusals
  *   among them;
  * - `admitted`: routed segments its admission let by (`routed` less its
