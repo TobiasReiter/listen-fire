@@ -79,6 +79,7 @@ Measured 2026-10-07 (gzip -9):
 | the evaluator awaits host reads in place | 2,029,485 | 569,630 |
 | the closing trace hand-over marked | 2,029,738 | 569,885 |
 | limit pause (the cap, suspensions, `limitPaused`, `suspendAt`) | 2,038,536 | 573,184 |
+| a half-answering sink fails on its cap | 2,038,402 | 573,114 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -442,7 +443,8 @@ calls. The flow suspends:
   `suspendAtLimit` does. The first time, the run is marked paused
   (`commitLimitPause`) and says so on its trace (`RUN_PAUSED_COST_CAP`); a
   sink that cannot suspend is not paused, and the run fails with
-  `RunCostCapExceeded`.
+  `RunCostCapExceeded`; so does a run whose sink took the pause and then
+  answered `noSink` to the suspension (a host whose two answers disagree).
 - **before each statement of a paused run** (`limitPaused` in the input: a
   flow woken while its run's pause holds). A sink that cannot suspend lets
   the flow run on.

@@ -383,7 +383,7 @@ describe('a whole run in the Rust engine', () => {
   });
 
   it('logs, and never fails on, a trace hand-over lost as the segment ends', async () => {
-    const warned = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+    const logged = jest.spyOn(logger, 'error').mockImplementation(() => logger);
     const previous = process.env.MOVEMENT_ENGINE;
     process.env.MOVEMENT_ENGINE = 'rust';
     try {
@@ -405,14 +405,14 @@ describe('a whole run in the Rust engine', () => {
         host,
       }).catch((e: unknown) => e);
       expect(runFailureCause(error)).toBeInstanceOf(AdapterCallFailed);
-      expect(warned).toHaveBeenCalledWith(
+      expect(logged).toHaveBeenCalledWith(
         '[movement] a segment that ended could not hand the host the rest of its trace',
         expect.objectContaining({ error: 'the trace store is down' }),
       );
     } finally {
       if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
       else process.env.MOVEMENT_ENGINE = previous;
-      warned.mockRestore();
+      logged.mockRestore();
     }
   });
 

@@ -310,8 +310,10 @@ impl Run<'_> {
             self.limit_paused.set(true);
             self.trace(TraceEntry::Warning { code: "RUN_PAUSED_COST_CAP".into(), message: cap.paused_message() });
         }
-        let address = at.encode();
-        Ok(self.suspend_flow(at, scope).await?.unwrap_or_else(|| nowhere_to_park(&address)))
+        // A sink that took the pause but then cannot suspend answers the two
+        // halves of `canSuspend` differently; the run cannot park, so it
+        // fails on its cap, as TypeScript's does where it cannot suspend.
+        Ok(self.suspend_flow(at, scope).await?.unwrap_or_else(fails))
     }
 
     /// `suspendFlow`: the suspended state committed and the flow parked at

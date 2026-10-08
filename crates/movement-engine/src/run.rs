@@ -1591,6 +1591,73 @@ mod tests {
         assert_eq!(record["provenance"]["name"][0]["kind"], json!("source_field"));
     }
 
+    /// A sink that takes the pause (`commitLimitPause`) and then cannot
+    /// suspend (`commitSuspension` answers `noSink`) answers the two halves
+    /// of `canSuspend` differently: the run cannot park, so it fails on its
+    /// cap rather than with a suspension it never made.
+    #[test]
+    fn a_sink_that_pauses_but_cannot_suspend_fails_the_run_on_its_cap() {
+        let schema = |position: &str, collections: Json, roots: Json| {
+            json!({ "constructionArgs": [], "schemas": { "": {
+                "positions": { position: { "properties": { "subject": "text", "name": "text" }, "edges": {} } },
+                "collections": collections, "writableRoots": roots,
+            } } })
+        };
+        let catalog = json!({
+            "adapters": {
+                "email": schema("message", json!({}), json!({})),
+                "attio": schema("company", json!({ "companies": { "target": "company" } }), json!({
+                    "company": { "fields": { "name": "text" }, "resultShape": { "externalId": "text", "name": "text" }, "fuzzyResolution": true },
+                })),
+            },
+            "credentials": {}, "plugins": {},
+        });
+        let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (FUZZY `name`)\n    name: msg.`subject`\n  }\n}";
+        let input = json!({
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "now": "2026-03-12T12:00:00.000Z",
+            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
+            "catalog": catalog,
+            "spend": { "priorMicrodollars": 1200, "capBaselineMicrodollars": 0, "capMicrodollars": 1000 },
+        });
+        let mut segment = crate::begin(&input.to_string()).unwrap();
+        let mut seen = Vec::new();
+        let mut step = segment.start().unwrap();
+        let candidate = |id: &str, name: &str| json!(["o", 0, [["adapterType", "attio"], ["externalId", id], ["data", ["o", 1, [["name", name]]]]]]);
+        let done = loop {
+            match step {
+                Step::Done(done) => break done,
+                Step::Pending(pending) => {
+                    let request = pending.into_iter().next().expect("one request at a time");
+                    let method = request.args.get("method").and_then(Json::as_str).unwrap_or("").to_string();
+                    let answer = match (request.family, request.method.as_str()) {
+                        ("check", _) => json!({ "value": { "diagnostics": [], "stamps": [] } }),
+                        ("adapters", "resolve") => json!({ "value": {
+                            "instance": format!("i{}", seen.len() + 1), "adapterType": request.args["adapterType"], "methods": [],
+                        } }),
+                        ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
+                            "getFieldValue" => json!("Acme"),
+                            "describe" => json!(null),
+                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, [candidate("co-1", "Acme Inc"), candidate("co-2", "Acme Labs")]]]]]),
+                            other => panic!("unexpected call {other}"),
+                        } } }),
+                        ("llm", "arbitrateEntities") => json!({ "value": { "error": { "kind": "budget", "message": "spent" }, "cost": [] } }),
+                        ("locks", "acquire") => json!({ "value": { "token": "k1" } }),
+                        ("park.sink", "commitLimitPause") => json!({}),
+                        ("park.sink", "commitSuspension") => json!({ "value": { "noSink": true } }),
+                        ("control.cancel", _) => json!({ "value": false }),
+                        _ => json!({}),
+                    };
+                    seen.push(if method.is_empty() { format!("{}.{}", request.family, request.method) } else { method });
+                    step = segment.answer(request.id, crate::read_answer(&answer.to_string()).unwrap()).unwrap();
+                }
+            }
+        };
+        assert!(seen.iter().any(|s| s == "park.sink.commitLimitPause"), "{seen:?}");
+        assert!(seen.iter().any(|s| s == "park.sink.commitSuspension"), "{seen:?}");
+        assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
+    }
+
     #[test]
     fn the_event_fields_a_body_reads_are_found() {
         let body = json!([{ "kind": "write", "write": { "fields": [{ "value": { "raw": "COALESCE(msg.`when`, x.`y`)", "span": {} } }] } }]).to_string();

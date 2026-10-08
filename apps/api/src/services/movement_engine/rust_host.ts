@@ -244,7 +244,7 @@ const ROUTES: Record<string, Route> = {
       // engine moves on, and the loss is logged, as run_context.ts
       // `closeRunContext` logs its own.
       if (request.closing === true) {
-        logger.warn('[movement] a segment that ended could not hand the host the rest of its trace', {
+        logger.error('[movement] a segment that ended could not hand the host the rest of its trace', {
           segmentId: context.segmentId,
           error: getErrorMessage(error),
           ...runLogFields(context),

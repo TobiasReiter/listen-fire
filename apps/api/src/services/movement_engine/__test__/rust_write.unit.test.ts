@@ -711,6 +711,8 @@ describe('the cost cap in the Rust engine', () => {
     for (const state of [fromTs, fromRust]) {
       const { rust } = await agree(resume(state));
       expect(rust.result?.parked).toBeUndefined();
+      // The pause was the operator's to clear: the resumed run marks none.
+      expect(rust.limitPauses).toEqual([]);
       expect(rust.result?.writes.map((w) => w.writtenValues.name ?? w.writtenValues.body)).toEqual(['Acme two', 'Acme three']);
       expect(rust.asked).toEqual([{ budget: { remainingMicrodollars: 1_000 } }]);
     }
@@ -723,6 +725,17 @@ describe('the cost cap in the Rust engine', () => {
     const again = await agree(capped({ resume: fromRust, reenter: true, priorSpentMicrodollars: 1_500 }));
     expect(again.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(again.rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
+    expect(again.rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+  });
+
+  it('pauses at a capped PLAIN write whose search finds several candidates, as the TypeScript engine does', async () => {
+    // No `unique by`: the descriptor's fuzzy resolution searches by name, two
+    // candidates come back, and the judge decides — a priced call all the same.
+    const { rust } = await agree(capped({ source: PRICED.replaceAll('unique by (FUZZY `name`) ', '') }));
+    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0', spentMicrodollars: 1_500 });
+    expect(rust.asked).toHaveLength(2);
+    expect(rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+    expect(rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
   });
 
   it('fails on the cap where the sink cannot suspend, and suspends unmarked where it keeps no pause', async () => {
