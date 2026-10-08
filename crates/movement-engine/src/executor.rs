@@ -256,6 +256,17 @@ impl Segment {
     }
 }
 
+/// A future that asks nothing of the host, run to its end on the spot: an
+/// evaluation with no reader, a predicate whose comparator answers itself.
+/// Polled once; waiting on anything would be a bug in the caller.
+pub fn ready<F: Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    match future.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("a future that asks nothing of the host waited"),
+    }
+}
+
 /// Every future to completion, polled together, so their host requests are
 /// in flight at once (the TypeScript engine's `Promise.all`). Outputs come
 /// back in input order whatever order the answers arrived in.

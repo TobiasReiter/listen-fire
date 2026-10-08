@@ -130,7 +130,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
     let envelope = env::read_envelope(bindings)?;
     let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now };
     let evaluator = Evaluator::new(&envelope.env, envelope.language_version, around, envelope.origins);
-    Ok(match evaluator.eval(&expr) {
+    Ok(match evaluator.eval_pure(&expr) {
         Ok(result) => json!({
             "value": env::encode(&result.value),
             "provenance": match result.prov {
@@ -147,7 +147,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
             ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
         } }),
         Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
-        Err(EvalError::Suspend) => unreachable!("an evaluation with no reader never suspends"),
+        Err(EvalError::Host(_)) => unreachable!("an evaluation with no reader asks no host"),
     })
 }
 

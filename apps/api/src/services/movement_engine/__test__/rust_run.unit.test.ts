@@ -27,7 +27,19 @@ import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } fr
 const TEAM_ID = '00000000-0000-0000-0000-0000000000a1' as TeamId;
 
 const emailSchema: InstanceSchema = {
-  positions: { message: { properties: { subject: 'text', text: 'text', missing: 'text', meta: 'json' }, edges: {} } },
+  positions: {
+    message: {
+      properties: {
+        subject: 'text',
+        text: 'text',
+        missing: 'text',
+        meta: 'json',
+        // Fields a case reads many of at once.
+        ...Object.fromEntries(['a', 'b', 'c', 'd', 'e', ...Array.from({ length: 20 }, (_, i) => `f${i}`)].map((f) => [f, 'text'])),
+      },
+      edges: {},
+    },
+  },
   collections: {},
   writableRoots: {},
 };
@@ -95,6 +107,10 @@ function fakeEmail(options: { failOn?: string; entryPoints?: Array<{ typeId: str
   return { adapter, calls };
 }
 
+/** The fields the adapter was asked for, in order. */
+function fieldsRead(calls: Array<{ method: string; input: unknown }>): unknown[] {
+  return calls.filter((c) => c.method === 'getFieldValue').map((c) => (c.input as { fieldId?: unknown }).fieldId);
+}
 
 function webhook(payload: Record<string, unknown>, extra: Partial<TriggerEvent> = {}): TriggerEvent {
   return { pipelineInputId: 'pi-rust-run', adapterType: 'email', triggerType: 'webhook', payload, ...extra };
@@ -296,6 +312,60 @@ describe('a whole run in the Rust engine', () => {
     });
     expect(rust.result).toBeDefined();
     expect(rustRunStats.hostCalls).toMatchObject({ 'builtins.function': 2, 'builtins.compare': 1 });
+  });
+
+  it('reads twenty event fields in one expression, in order, one walk', async () => {
+    // Each read is awaited where it is made: twenty reads, in the order the
+    // TypeScript makes them, and the missing one traced as it is read.
+    const fields = Array.from({ length: 20 }, (_, i) => `f${i}`);
+    const payload = Object.fromEntries(fields.filter((f) => f !== 'f7').map((f) => [f, f.toUpperCase()]));
+    const { rust } = await agree({
+      source: [
+        'movement m(msg: <inbox-[:message]->>) {',
+        `  all = CONCAT("<", ${fields.map((f) => `msg.\`${f}\``).join(', ')}, ">")`,
+        '  return all',
+        '}',
+      ].join('\n'),
+      event: webhook(payload),
+    });
+    expect('result' in rust).toBe(true);
+    expect(fieldsRead(rust.calls)).toEqual(fields);
+    expect(rustRunStats.hostCalls).toMatchObject({ 'adapters.call': 20, 'trace.append': 1 });
+    expect(rust.trace).toEqual([expect.objectContaining({ kind: 'field_miss', field: 'f7' })]);
+  });
+
+  it('reads only the arm a conditional takes, at any depth', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  pick = IF msg.`a` == "A" THEN IF msg.`b` == "B" THEN msg.`c` ELSE msg.`d` END ELSE msg.`e` END',
+      '  if msg.`a` == "A" AND msg.`b` == "B" {',
+      '    left = msg.`c`',
+      '  } else if msg.`e` == "E" {',
+      '    right = msg.`d`',
+      '  }',
+      '  return pick',
+      '}',
+    ].join('\n');
+    for (const [taken, reads] of [
+      [{ a: 'A', b: 'B' }, 'a b c a b c'],
+      [{ a: 'A', b: 'x' }, 'a b d a b e d'],
+      [{ a: 'z', b: 'B' }, 'a e a e d'],
+    ] as const) {
+      const { rust } = await agree({ source, event: webhook({ c: 'C', d: 'D', e: 'E', ...taken }) });
+      expect(fieldsRead(rust.calls).join(' ')).toBe(reads);
+    }
+  });
+
+  it('awaits a read inside a function argument before the function', async () => {
+    await agree({
+      source: [
+        'movement m(msg: <inbox-[:message]->>) {',
+        '  slug = LOWER(CONCAT(TRIM(msg.`subject`), "-", COALESCE(msg.`missing`, UPPER(msg.`text`))))',
+        '  n = LENGTH(TEXT.SLUG(msg.`subject`)) + LENGTH(msg.`text`)',
+        '}',
+      ].join('\n'),
+      event: webhook({ subject: '  Big Deal ', text: 'hi' }),
+    });
   });
 
   it('fails as the TypeScript engine fails: before the body, in it, and at the check', async () => {

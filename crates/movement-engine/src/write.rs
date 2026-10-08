@@ -499,40 +499,21 @@ impl Run<'_> {
     /// `evaluatePredicate` over one record, a comparison this engine hands
     /// back (`WITHIN`) answered by the TypeScript comparator.
     async fn predicate_holds(&self, predicate: &Expression, data: &JsObject) -> Result<bool, Stop> {
-        let answers: std::cell::RefCell<Vec<bool>> = std::cell::RefCell::default();
-        loop {
-            let cursor = std::cell::Cell::new(0usize);
-            let pending: std::cell::RefCell<Option<(movement_parser::lowering::expression::FilterOperator, Js, Js)>> = std::cell::RefCell::default();
-            let read = |name: &str| data.get(name).cloned().unwrap_or(Js::Undefined);
-            let compare = |l: &Js, op, r: &Js| match crate::filter::compare_values(l, op, r) {
-                Err(EvalError::Fallback(_)) => {
-                    let at = cursor.get();
-                    if let Some(&answer) = answers.borrow().get(at) {
-                        cursor.set(at + 1);
-                        return Ok(answer);
-                    }
-                    *pending.borrow_mut() = Some((op, l.clone(), r.clone()));
-                    Err(EvalError::Suspend)
-                }
-                other => other,
-            };
-            match crate::filter::evaluate_predicate_with(predicate, &read, &compare) {
-                Ok(value) => return Ok(value.truthy()),
-                Err(EvalError::Suspend) => {
-                    let (op, l, r) = pending.borrow_mut().take().expect("a suspended predicate asked");
-                    let op = serde_json::to_value(op).expect("an operator is JSON");
-                    let request = host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(&l), env::encode_plain(&r));
-                    let answer = self.ask(request).await.map_err(thrown)?.unwrap_or(Json::Null);
-                    let value = answer.get("value").and_then(|v| env::decode(v).ok()).ok_or_else(|| {
-                        thrown(Failure::engine("MOVENG_RUNTIME", format!("the comparator answered {answer}")))
-                    })?;
-                    answers.borrow_mut().push(value.truthy());
-                }
-                Err(EvalError::Thrown { class, message }) => return Err(thrown(Failure::Engine { class, message })),
-                Err(EvalError::Fallback(reason)) => {
-                    return Err(thrown(Failure::unsupported(&format!("this reading ({reason})"), "the Rust engine does not reproduce it")));
-                }
-            }
+        let read = |name: &str| data.get(name).cloned().unwrap_or(Js::Undefined);
+        let ask = |op: movement_parser::lowering::expression::FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
+            Box::pin(async move {
+                let op = serde_json::to_value(op).expect("an operator is JSON");
+                let request = host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(&l), env::encode_plain(&r));
+                let answer = self.ask(request).await.map_err(Failure::into_eval)?.unwrap_or(Json::Null);
+                let value = answer.get("value").and_then(|v| env::decode(v).ok()).ok_or_else(|| {
+                    EvalError::engine("MOVENG_RUNTIME", format!("the comparator answered {answer}"))
+                })?;
+                Ok(value.truthy())
+            })
+        };
+        match crate::filter::evaluate_predicate_with(predicate, &read, Some(&ask)).await {
+            Ok(value) => Ok(value.truthy()),
+            Err(error) => Err(thrown(Failure::of_eval(error, "the Rust engine does not reproduce it"))),
         }
     }
 

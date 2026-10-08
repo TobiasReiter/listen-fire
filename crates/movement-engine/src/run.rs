@@ -16,11 +16,11 @@
 //! 4. the last cancel check (`control.cancelledNow`) and the result: the
 //!    writes, and where the run parked.
 //!
-//! An expression is evaluated by `eval::Evaluator`. What it cannot answer
-//! itself — a field of the event, read through the source adapter; a
-//! built-in reading this engine hands back — it asks, and the expression is
-//! evaluated again with the answer, so the host sees the TypeScript's calls
-//! in the TypeScript's order, short-circuits included.
+//! An expression is evaluated by `eval::Evaluator`, one walk per
+//! expression. What it cannot answer itself — a field of the event, read
+//! through the source adapter; a built-in reading this engine hands back — it
+//! asks, and awaits the answer where it asked, so the host sees the
+//! TypeScript's calls in the TypeScript's order, short-circuits included.
 //!
 //! `done` is one of:
 //!
@@ -41,7 +41,7 @@
 //! "Error" | "RangeError", message}`, or `{hostError: ref}`: the very error a
 //! host call failed with, which the shim holds and rethrows.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use movement_parser::ast::{self, AwaitSource, ExprSlot, MovementDeclaration, ParamTypeRef, RValue, Statement};
@@ -57,7 +57,7 @@ use serde_json::{Value as Json, json};
 use crate::bindings::{Binding, InstanceBinding, Position, Scope};
 use crate::write::{TargetAdapter, WriteRecord};
 use crate::env::{self, Trail, ValueBinding};
-use crate::eval::{Ask, ErrorClass, EvalError, Evaluated, Evaluator, Prov, Reader};
+use crate::eval::{Ask, ErrorClass, EvalError, Evaluated, Evaluating, Evaluator, Prov, Reader};
 use crate::executor::{Host, HostError};
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
@@ -149,6 +149,24 @@ impl Failure {
 
     pub(crate) fn unsupported(construct: &str, detail: &str) -> Failure {
         Failure::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet ({detail})"))
+    }
+
+    /// The failure as an evaluation carries it out of a read it awaited.
+    pub(crate) fn into_eval(self) -> EvalError {
+        match self {
+            Failure::Engine { class, message } => EvalError::Thrown { class, message },
+            Failure::Host(error) => EvalError::Host(error),
+        }
+    }
+
+    /// What an evaluation failed with; a reading this engine hands back
+    /// fails the run, `unreproduced` saying so.
+    pub(crate) fn of_eval(error: EvalError, unreproduced: &str) -> Failure {
+        match error {
+            EvalError::Thrown { class, message } => Failure::Engine { class, message },
+            EvalError::Host(error) => Failure::Host(error),
+            EvalError::Fallback(reason) => Failure::unsupported(&format!("this reading ({reason})"), unreproduced),
+        }
     }
 
     fn to_json(&self) -> Json {
@@ -802,41 +820,18 @@ impl Run<'_> {
         })
     }
 
-    /// One expression, evaluated until it needs nothing more of the host:
-    /// each ask answered in order, the evaluation replayed with the answers
-    /// so far.
+    /// One expression, evaluated as one walk: each read it makes of the host
+    /// is awaited where it is made, and the walk resumes there.
     pub(crate) async fn evaluate(&self, expr: &Expression, scope: &Rc<Scope>, slot: &ExprSlot) -> Result<Evaluated, Stop> {
-        let replay = Replay::default();
         let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
-        loop {
-            replay.cursor.set(0);
-            let first_literal = self.origins.borrow().len() as u32;
-            let evaluator = Evaluator::new(scope.as_ref(), Some(self.version()), around, first_literal).with_reader(&replay);
-            match evaluator.eval(expr) {
-                Ok(evaluated) => {
-                    // Each literal the evaluation read is an origin in the
-                    // program text: the slot's span.
-                    let span = serde_json::to_value(slot.span).expect("a span is JSON");
-                    let mut origins = self.origins.borrow_mut();
-                    for _ in first_literal..evaluator.next_literal() {
-                        origins.push(env::object_of(vec![("kind", Js::str("literal")), ("span", env::js_of_json(&span))]));
-                    }
-                    return Ok(evaluated);
-                }
-                Err(EvalError::Suspend) => {
-                    let ask = replay.pending.borrow_mut().take().expect("a suspended evaluation asked");
-                    let answer = self.answer(ask, scope).await.map_err(Stop::Thrown)?;
-                    replay.answers.borrow_mut().push(answer);
-                }
-                Err(EvalError::Thrown { class, message }) => return Err(Stop::Thrown(Failure::Engine { class, message })),
-                Err(EvalError::Fallback(reason)) => {
-                    return Err(Stop::Thrown(Failure::unsupported(
-                        &format!("this reading ({reason})"),
-                        "the Rust engine does not reproduce it; run this movement on the TypeScript engine",
-                    )));
-                }
-            }
-        }
+        // Each literal the evaluation reads is an origin in the program text:
+        // the slot's span.
+        let span = env::js_of_json(&serde_json::to_value(slot.span).expect("a span is JSON"));
+        let reader = Reading { run: self, scope, span };
+        let evaluator = Evaluator::in_run(scope.as_ref(), Some(self.version()), around, &reader);
+        evaluator.eval(expr).await.map_err(|error| {
+            Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
+        })
     }
 
     /// What an evaluation asked, answered by the host.
@@ -1006,23 +1001,20 @@ const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
     "toSpliced", "unshift", "values", "with", "toString",
 ];
 
-/// The answers an evaluation's asks have had, handed out in the order asked.
-#[derive(Default)]
-struct Replay {
-    answers: RefCell<Vec<Result<Evaluated, EvalError>>>,
-    cursor: Cell<usize>,
-    pending: RefCell<Option<Ask>>,
+/// One evaluation's reads, answered by its run in the scope it reads.
+struct Reading<'r, 'h> {
+    run: &'r Run<'h>,
+    scope: &'r Scope,
+    span: Js,
 }
 
-impl Reader for Replay {
-    fn ask(&self, ask: Ask) -> Result<Evaluated, EvalError> {
-        let at = self.cursor.get();
-        if let Some(answer) = self.answers.borrow().get(at) {
-            self.cursor.set(at + 1);
-            return answer.clone();
-        }
-        *self.pending.borrow_mut() = Some(ask);
-        Err(EvalError::Suspend)
+impl Reader for Reading<'_, '_> {
+    fn ask(&self, ask: Ask) -> Evaluating<'_> {
+        Box::pin(async move { self.run.answer(ask, self.scope).await.map_err(Failure::into_eval)? })
+    }
+
+    fn literal(&self) -> u32 {
+        self.run.mint_origin(env::object_of(vec![("kind", Js::str("literal")), ("span", self.span.clone())]))
     }
 }
 

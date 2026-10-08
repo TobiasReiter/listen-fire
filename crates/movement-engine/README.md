@@ -76,6 +76,7 @@ Measured 2026-10-07 (gzip -9):
 | admission on the engine's own parse (chunk 5B) | 2,018,914 | 565,647 |
 | chunk 5B task 1, fix round 1 (the cap rule in admission) | 2,018,987 | 565,747 |
 | the trace batched per statement | 2,018,749 | 565,685 |
+| the evaluator awaits host reads in place | 2,029,485 | 569,630 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -422,11 +423,16 @@ admission refuses anything else (frames, a journal, a suspension, `until`,
 other binding kinds, extraction origins: `resume_state_*` above), and the
 TypeScript engine resumes it.
 
-- An expression is evaluated by the one evaluator. What it cannot answer
-  itself it asks (`eval::Reader`); the evaluation stops, the run asks the
-  host, and the expression is evaluated again from the start with the answers
-  so far. So the host sees the TypeScript's calls in the TypeScript's order,
-  short-circuits included, and no expression needs to be async.
+- An expression is evaluated by the one evaluator, as one async walk (as
+  `evalMovementExpr` is). What it cannot answer itself it asks
+  (`eval::Reader`): the read is a host request the walk awaits where it is
+  made, and the walk resumes there once answered. So the host sees the
+  TypeScript's calls in the TypeScript's order, short-circuits included; a
+  `CONCAT` of twenty event fields is twenty reads and one walk. Its literals
+  are minted in the run's origin table as the walk reaches them. A walk
+  waits on one read at a time, but it is an ordinary future: walks joined
+  (parallel arms, later) have their reads in flight together. A unique by
+  narrowing's predicate (crate::filter) awaits the comparator the same way.
 - `adapters.call` with `wire: true` carries its arguments and its answer on
   the eval wire (below): an event payload's key order (a `field_miss` lists
   the keys in it), `undefined` and the numbers JSON cannot say cross as the
