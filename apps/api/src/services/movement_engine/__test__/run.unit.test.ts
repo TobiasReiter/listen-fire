@@ -124,7 +124,7 @@ jest.mock('../../../lib/anthropic', () => ({
 }));
 
 import type { InstanceSchema } from 'movement-lang';
-import { mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import {
   MovementRunFailed,
@@ -1870,7 +1870,7 @@ describe('array indexing — the `at` expression node, frozen semantics mirrored
       expression: { type: 'alias_ref', name: 'xs' },
       index: { type: 'static', value: index },
     };
-    return (await evalMovementExpr(expr, { env })).value;
+    return (await evalMovementExpr(expr, { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
   }
 
   it('indexes forward and backward, nulls out of range and non-integer indexes, scalar acts as a one-element list', async () => {
@@ -1895,7 +1895,7 @@ describe('array indexing — the `at` expression node, frozen semantics mirrored
 describe('bare coercers — DATE() / DATETIME() / NUMBER() built-ins', () => {
   async function evalCoercer(text: string): Promise<unknown> {
     const expr = parseMovementExpression(text);
-    return (await evalMovementExpr(expr, { env: new Environment() })).value;
+    return (await evalMovementExpr(expr, { env: new Environment(), languageVersion: CURRENT_LANGUAGE_VERSION })).value;
   }
 
   it('DATE() truncates a readable instant to a midnight-UTC calendar day', async () => {
@@ -1922,6 +1922,7 @@ describe('bare coercers — DATE() / DATETIME() / NUMBER() built-ins', () => {
   it('the bare coercers carry transformed provenance (a pure transform)', async () => {
     const result = await evalMovementExpr(parseMovementExpression('NUMBER("42")'), {
       env: new Environment(),
+      languageVersion: CURRENT_LANGUAGE_VERSION,
     });
     expect(result.value).toBe(42);
     expect(result.provenance).toBeDefined();

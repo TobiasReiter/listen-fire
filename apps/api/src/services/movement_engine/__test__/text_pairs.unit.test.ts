@@ -2,14 +2,14 @@
 // interpolation — the Project A composer-row case from the handbook.
 
 import { Environment, evalMovementExpr } from '../expression';
-import { parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) {
     env.declare(name, { kind: 'value', value });
   }
-  return (await evalMovementExpr(parseMovementExpression(text), { env })).value;
+  return (await evalMovementExpr(parseMovementExpression(text), { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
 }
 
 describe('TEXT.PAIRS evaluation', () => {

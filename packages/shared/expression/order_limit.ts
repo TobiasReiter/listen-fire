@@ -74,9 +74,18 @@ export async function sortByOrderKey<T>(
   direction: 'asc' | 'desc' | undefined,
   options: { value: (item: T) => Promise<unknown> },
 ): Promise<T[]> {
-  const keyed = await Promise.all(
+  // Every key read settles before any failure is thrown, and the failure is
+  // the earliest by position, not the first to arrive: the Rust engine and
+  // apps/api's settle-all (fans.ts, which this package cannot import) fail the
+  // same way, so a run fails identically whatever order the reads land in.
+  const outcomes = await Promise.allSettled(
     items.map(async (item, index) => ({ item, index, key: await options.value(item) })),
   );
+  const keyed: Array<{ item: T; index: number; key: unknown }> = [];
+  for (const outcome of outcomes) {
+    if (outcome.status === 'rejected') throw outcome.reason;
+    keyed.push(outcome.value);
+  }
   const sign = direction === 'desc' ? -1 : 1;
   keyed.sort((a, b) => {
     const byKey = compareOrderValues(a.key, b.key);

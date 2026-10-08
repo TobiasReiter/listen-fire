@@ -3,7 +3,24 @@
 // its own form, not a call; the scan reads that form, so a v1 or v2 program
 // demands the schemas it demanded when the scan parsed it as a call.
 
+import { parseProgram } from '../../parser/parse';
 import { scanInstanceChains } from '../selectors';
+
+// The grammar a scan's program is parsed under, when a test needs a program
+// the pin's own grammar cannot produce: the v1 form of a collection op in a
+// program pinned to version 3.
+let mockParseUnder: number | undefined;
+jest.mock('../../parser/parse', () => {
+  const actual = jest.requireActual<typeof import('../../parser/parse')>('../../parser/parse');
+  return {
+    ...actual,
+    parseProgram: (...[source, options]: Parameters<typeof actual.parseProgram>) =>
+      actual.parseProgram(source, mockParseUnder !== undefined ? { ...options, languageVersion: mockParseUnder } : options),
+  };
+});
+afterEach(() => {
+  mockParseUnder = undefined;
+});
 
 const PRELUDE = [
   'import { email, attio } from adapters',
@@ -70,6 +87,25 @@ describe('the demand scan reads a pre-version-3 collection op', () => {
       expect(paths(movement(body), 3)).toEqual(v3);
     });
   }
+});
+
+describe('the demand scan walks a collection op whatever the pin', () => {
+  // The node kind says which grammar wrote it, so the scan needs no version
+  // test of its own to read it: a v3 program holding the old form is walked.
+  const body = ['names = MAP(crm-[:Companies]->, tagit)'];
+
+  it('the v1 parse holds the op as its own form, not a call', () => {
+    const program = parseProgram(movement(body), { languageVersion: 1 });
+    const intake = program.statements.find((statement) => statement.kind === 'movement' && statement.name === 'intake');
+    expect(intake?.kind === 'movement' ? intake.body.map((statement) => statement.kind === 'assign' && statement.value.kind) : []).toEqual([
+      'collection',
+    ]);
+  });
+
+  it('a v3-pinned program holding that form demands what the op reads', () => {
+    mockParseUnder = 1;
+    expect(paths(movement(body), 3)).toEqual(['attio: Companies']);
+  });
 });
 
 describe('the demand scan parses under the pin', () => {

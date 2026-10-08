@@ -197,6 +197,29 @@ describe('adapter conformance CLI', () => {
     }
   });
 
+  it('records a push to a path that is neither door and names it in the FAIL', async () => {
+    const crm = await startFakeCrmServer({ secret: SECRET });
+    try {
+      const results = await runConformance({
+        baseUrl: crm.baseUrl,
+        authStrategy: { kind: 'bearer' },
+        secret: SECRET,
+        hostPort: 0,
+        waitForPushSeconds: 1,
+        onWaitingForPush: async ({ hostUrl, adapterType }) => {
+          await fetch(`${hostUrl}/api/public/adapter/${adapterType}/emitt`, { method: 'POST', body: '{}' });
+        },
+      });
+      for (const door of ['door-emit', 'door-wake']) {
+        const check = byName(results, door);
+        expect(check.status).toBe('FAIL');
+        expect(check.detail).toMatch(/pushes arrived at other paths: \/api\/public\/adapter\/[^/]+\/emitt$/);
+      }
+    } finally {
+      await crm.close();
+    }
+  });
+
   it('fails a wrong secret at the manifest, naming the transport error', async () => {
     const crm = await startFakeCrmServer({ secret: SECRET });
     try {

@@ -8,14 +8,14 @@
 
 import { Environment, evalMovementExpr } from '../expression';
 import { listUnsupportedConstructs } from '../interpretable';
-import { parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) {
     env.declare(name, { kind: 'value', value });
   }
-  return (await evalMovementExpr(parseMovementExpression(text), { env })).value;
+  return (await evalMovementExpr(parseMovementExpression(text), { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
 }
 
 describe('object literal evaluation', () => {
@@ -59,7 +59,7 @@ describe('object literal evaluation', () => {
   it('carries the provenance of every value read', async () => {
     const env = new Environment();
     env.declare('subject', { kind: 'value', value: 'Acme' });
-    const result = await evalMovementExpr(parseMovementExpression('{ text: subject }'), { env });
+    const result = await evalMovementExpr(parseMovementExpression('{ text: subject }'), { env, languageVersion: CURRENT_LANGUAGE_VERSION });
     expect(result.value).toEqual({ text: 'Acme' });
     expect(result.provenance).toBeDefined();
   });

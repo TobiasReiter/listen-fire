@@ -6,7 +6,7 @@
 // version (plans/functional-extract-2026-10-02/2_one_grammar.md).
 
 import { Environment, evalMovementExpr } from '../expression';
-import { parseMovementCondition, parseMovementExpression, type MovementCondition } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseMovementCondition, parseMovementExpression, type MovementCondition } from 'movement-lang';
 
 /** A condition's truth as the run reads it: every top-level conjunct holds. */
 async function holds(condition: MovementCondition, env: Environment): Promise<boolean> {
@@ -15,7 +15,7 @@ async function holds(condition: MovementCondition, env: Environment): Promise<bo
       for (const conjunct of condition.conjuncts) if (!(await holds(conjunct, env))) return false;
       return true;
     case 'expr':
-      return Boolean((await evalMovementExpr(condition.expr, { env })).value);
+      return Boolean((await evalMovementExpr(condition.expr, { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value);
     case 'isTest':
       throw new Error('no type tests here');
   }
@@ -40,7 +40,7 @@ describe('a condition reads as the same expression would', () => {
   it.each(cases)('%s with %j → %s', async (raw, bindings, expected) => {
     const env = envOf(bindings);
     await expect(holds(parseMovementCondition(raw), env)).resolves.toBe(expected);
-    await expect(evalMovementExpr(parseMovementExpression(raw), { env }).then(r => Boolean(r.value))).resolves.toBe(
+    await expect(evalMovementExpr(parseMovementExpression(raw), { env, languageVersion: CURRENT_LANGUAGE_VERSION }).then(r => Boolean(r.value))).resolves.toBe(
       expected,
     );
   });

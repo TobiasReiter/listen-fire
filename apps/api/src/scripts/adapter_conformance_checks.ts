@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
 import { PROTOCOL_VERSION } from 'engine-contracts';
+import { canonicalJson } from 'engine-contracts/conformance';
 
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { MutationContext } from '../services/translation_graph/mutation_context';
@@ -501,7 +502,9 @@ async function checkRecords(input: {
     };
     const value = await adapter.getFieldValue({ position, fieldId });
     const expected = first.fields[fieldId];
-    if (JSON.stringify(value) !== JSON.stringify(expected)) {
+    // A server may hand an object field back in any key order; its values
+    // must still match exactly.
+    if (canonicalJson(value) !== canonicalJson(expected)) {
       throw new Error(`field ${fieldId}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(value) ?? 'nothing'}`);
     }
     return `${fieldId} = ${JSON.stringify(value)}, as written`;
