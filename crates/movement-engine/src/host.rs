@@ -229,9 +229,15 @@ pub mod control {
 pub mod trace {
     use super::*;
 
-    /// Entries appended to the run's trace as they land.
-    pub fn append(segment: &str, entries: &[crate::trace::TraceEntry]) -> Request {
-        Request { family: Family::Trace, method: "append".into(), args: in_segment(segment, json!({ "entries": entries })) }
+    /// Entries appended to the run's trace as they land. `closing` marks the
+    /// hand-over as the segment ends (the shim's own marker, never the
+    /// host's): its failure is logged, not the run's.
+    pub fn append(segment: &str, entries: &[crate::trace::TraceEntry], closing: bool) -> Request {
+        let mut args = json!({ "entries": entries });
+        if closing {
+            args["closing"] = json!(true);
+        }
+        Request { family: Family::Trace, method: "append".into(), args: in_segment(segment, args) }
     }
 }
 

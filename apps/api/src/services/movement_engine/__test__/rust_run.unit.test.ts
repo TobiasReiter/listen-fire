@@ -15,6 +15,7 @@ import type { Adapter } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MovementTraceEntry } from '../expression';
 
+import { logger } from '../../logger';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { positionData } from '../../translation_graph/types';
 import { openRunContext } from '../run_context';
@@ -109,7 +110,9 @@ function fakeEmail(options: { failOn?: string; entryPoints?: Array<{ typeId: str
 
 /** The fields the adapter was asked for, in order. */
 function fieldsRead(calls: Array<{ method: string; input: unknown }>): unknown[] {
-  return calls.filter((c) => c.method === 'getFieldValue').map((c) => (c.input as { fieldId?: unknown }).fieldId);
+  return calls
+    .filter((c) => c.method === 'getFieldValue')
+    .map((c) => (typeof c.input === 'object' && c.input !== null ? Reflect.get(c.input, 'fieldId') : undefined));
 }
 
 function webhook(payload: Record<string, unknown>, extra: Partial<TriggerEvent> = {}): TriggerEvent {
@@ -377,6 +380,40 @@ describe('a whole run in the Rust engine', () => {
     expect(cause).toBeInstanceOf(AdapterCallFailed);
     expect(cause).toMatchObject({ name: 'FakeAdapterError', message: 'no text today' });
     await agree({ source: BINDINGS_AND_IF.replace('msg.`subject`', 'msg.`nope`'), event: webhook({}) });
+  });
+
+  it('logs, and never fails on, a trace hand-over lost as the segment ends', async () => {
+    const warned = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+    const previous = process.env.MOVEMENT_ENGINE;
+    process.env.MOVEMENT_ENGINE = 'rust';
+    try {
+      const email = fakeEmail({ failOn: 'text' });
+      const host = makeTestHost({ adapters: { resolve: () => email.adapter } });
+      host.trace = {
+        append: async () => {
+          throw new Error('the trace store is down');
+        },
+      };
+      // The gate is traced, then the arm fails: the gate is handed over only
+      // as the segment ends, and that hand-over fails.
+      const error = await runMovement({
+        source: PRELUDE + 'movement m(msg: <inbox-[:message]->>) {\n  if msg.`subject` == "Acme" {\n    t = msg.`text`\n  }\n}',
+        event: webhook({ subject: 'Acme', text: 'x' }),
+        teamId: TEAM_ID,
+        catalog,
+        credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+        host,
+      }).catch((e: unknown) => e);
+      expect(runFailureCause(error)).toBeInstanceOf(AdapterCallFailed);
+      expect(warned).toHaveBeenCalledWith(
+        '[movement] a segment that ended could not hand the host the rest of its trace',
+        expect.objectContaining({ error: 'the trace store is down' }),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+      else process.env.MOVEMENT_ENGINE = previous;
+      warned.mockRestore();
+    }
   });
 
   it('stops at the cancel gate, keeping what it traced', async () => {

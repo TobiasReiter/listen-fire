@@ -2,7 +2,7 @@
 // corpus only: every way jest has of running part of it is narrowing. And a
 // run that admitted something yet ran nothing whole fails, floor or not.
 
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -36,7 +36,9 @@ describe('the routing floor', () => {
 
 describe('the teardown', () => {
   const saved = { engine: process.env.MOVEMENT_ENGINE, dir: process.env.MOVEMENT_RUST_EVAL_STATS_DIR };
+  const made: string[] = [];
   afterEach(() => {
+    for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
     for (const [key, value] of [['MOVEMENT_ENGINE', saved.engine], ['MOVEMENT_RUST_EVAL_STATS_DIR', saved.dir]] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -47,6 +49,7 @@ describe('the teardown', () => {
   /** The teardown of a v2 run narrowed to some files, over one file's stats. */
   function tearDownWith(runs: { routed: number; admitted: number; ranWhole: number }) {
     const dir = mkdtempSync(path.join(tmpdir(), 'rust-stats-'));
+    made.push(dir);
     const stats = { notAdmitted: 0, admitted: 1, answered: 1, fallback: {}, runs: { ...runs, shimFaults: 0, notAdmitted: {}, declined: {}, hostCalls: {} }, file: 'x.unit.test.ts' };
     writeFileSync(path.join(dir, '1.jsonl'), `${JSON.stringify(stats)}\n`);
     process.env.MOVEMENT_ENGINE = 'rust';

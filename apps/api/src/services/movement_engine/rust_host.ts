@@ -21,6 +21,8 @@ import { applyStdlib, stdlibFunctionById, type CatalogSnapshot } from 'movement-
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
+import { getErrorMessage } from '../../lib/utils/error';
+import { logger } from '../logger';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
 import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
@@ -28,7 +30,7 @@ import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost 
 import { hostCallFailure } from './host_adapter';
 import { checkAnswer, checkPinned } from './program_check';
 import type { MovementRunResult } from './run';
-import { publishTrace, type RunContext } from './run_context';
+import { publishTrace, runLogFields, type RunContext } from './run_context';
 import type { HostAnswer, HostRequest } from './rust_engine';
 import { rustRunStats } from './rust_stats';
 import {
@@ -203,8 +205,23 @@ const ROUTES: Record<string, Route> = {
     segmentOf(request);
     const entries = request.entries;
     if (!Array.isArray(entries)) throw new RustShimError('trace.append entries are a list');
+    if (request.closing !== undefined && request.closing !== true) throw new RustShimError('trace.append closing is true or absent');
     context.trace.entries.push(...entries.map(traceEntry));
-    await publishTrace(context, host);
+    try {
+      await publishTrace(context, host);
+    } catch (error) {
+      // The hand-over as the segment ends is never the run's failure: the
+      // engine moves on, and the loss is logged, as run_context.ts
+      // `closeRunContext` logs its own.
+      if (request.closing === true) {
+        logger.warn('[movement] a segment that ended could not hand the host the rest of its trace', {
+          segmentId: context.segmentId,
+          error: getErrorMessage(error),
+          ...runLogFields(context),
+        });
+      }
+      throw error;
+    }
     return undefined;
   },
   /** A built-in the Rust engine hands back for these arguments, answered by

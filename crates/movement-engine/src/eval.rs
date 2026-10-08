@@ -661,6 +661,15 @@ mod tests {
     }
 
     #[test]
+    fn a_true_left_operand_of_or_reads_nothing_on_its_right() {
+        let reader = Counting::default();
+        let (result, waits) = drive(&in_run(&reader), &expression("msg.`a` == \"A\" OR msg.`b` == \"B\""));
+        assert!(matches!(result.unwrap().value, Js::Bool(true)));
+        assert_eq!(*reader.asked.borrow(), ["a"]);
+        assert_eq!(waits, 1);
+    }
+
+    #[test]
     fn a_read_inside_a_function_argument_is_awaited_before_the_function() {
         let reader = Counting::default();
         let (result, waits) = drive(&in_run(&reader), &expression("LOWER(CONCAT(msg.`x`, \"-\", TRIM(msg.`y`)))"));

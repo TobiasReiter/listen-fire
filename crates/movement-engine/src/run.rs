@@ -318,8 +318,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // What the segment traced after its last statement's hand-over (a park,
     // a failure, a body that never ran). The TypeScript hands it over as its
     // segment closes, where a failure to is logged and never the run's
-    // (run_context.ts `closeRunContext`); so it is not this run's either.
-    let _ = run.publish_trace().await;
+    // (run_context.ts `closeRunContext`); so it is not this run's either:
+    // the shim logs it.
+    let _ = run.hand_over_trace(true).await;
     outcome
 }
 
@@ -977,11 +978,17 @@ impl Run<'_> {
     /// The run's flow's buffered entries, in one `trace.append`; nothing
     /// asked when there are none.
     async fn publish_trace(&self) -> Result<(), Failure> {
+        self.hand_over_trace(false).await
+    }
+
+    /// `closing`: the hand-over as the segment ends, whose failure is the
+    /// shim's to log and never the run's.
+    async fn hand_over_trace(&self, closing: bool) -> Result<(), Failure> {
         let entries = self.trace.take();
         if entries.is_empty() {
             return Ok(());
         }
-        self.ask(host::trace::append(self.segment(), &entries)).await.map(|_| ())
+        self.ask(host::trace::append(self.segment(), &entries, closing)).await.map(|_| ())
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
