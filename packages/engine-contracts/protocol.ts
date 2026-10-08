@@ -578,6 +578,19 @@ export const WireDiscriminableEvent = z.object({
   changedFields: z.array(z.string()).optional(),
 });
 
+/** The most items one push to either host door may carry; a larger set is
+ *  split by its sender. */
+export const ADAPTER_DOOR_MAX_BATCH = 1000;
+
+/** The bodies the host's two push doors accept — shared with the conformance
+ *  CLI's host double so a vendor is checked against the door's own shapes. */
+export const AdapterEmitBody = z.object({
+  events: z.array(WireDiscriminableEvent).min(1).max(ADAPTER_DOOR_MAX_BATCH),
+});
+export const AdapterWakeBody = z.object({
+  keys: z.array(z.string().min(1)).min(1).max(ADAPTER_DOOR_MAX_BATCH),
+});
+
 export const WireEventType = z.object({
   tag: z.string(),
   positionType: z.string(),

@@ -46,6 +46,7 @@
     "dev:eval-research": "cd apps/api && pnpm run dev:eval-research",
     "dev:eval-system-agent": "cd apps/api && pnpm run dev:eval-system-agent",
     "dev:probe-thinking": "cd apps/api && pnpm run dev:probe-thinking",
+    "adapter:conformance": "cd apps/api && pnpm run adapter:conformance",
     "dev:remote-verify": "cd apps/api && pnpm run dev:remote-verify",
     "dev:measure-write": "cd apps/api && pnpm run dev:measure-write",
     "carve:export-team": "cd apps/api && pnpm run carve:export-team",
