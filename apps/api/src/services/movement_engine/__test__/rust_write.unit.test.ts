@@ -291,7 +291,9 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
  *  as the same placeholders. */
 function sameIds<T>(value: T): T {
   const ids = new Map<string, string>();
-  const text = JSON.stringify(value, (key, v) => (key === 'wakeAt' ? undefined : v));
+  // Every wake is the host clock's answer plus the sleep on both engines,
+  // so it is compared too.
+  const text = JSON.stringify(value);
   const normal = text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
     if (!ids.has(id)) ids.set(id, `uuid-${ids.size + 1}`);
     return ids.get(id)!;

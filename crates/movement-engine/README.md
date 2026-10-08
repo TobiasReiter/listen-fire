@@ -42,7 +42,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`), and the per-flow buffer they wait in until their statement ends |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
-| `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation and the wall clock, from the JavaScript runtime (WASM) or natively (below) |
+| `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers and Unicode normalisation, from the JavaScript runtime (WASM) or natively (below); never a clock |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
 | `js`, `js_date`, `js_regex` | the JavaScript semantics the TypeScript leans on, written out (below) |
@@ -153,7 +153,8 @@ eval_expression(expr, bindings) → {value, provenance} | {error: {class, code?,
 - Errors carry the class the TypeScript throws (`MovementEngineError` with
   its code, `Error`, `RangeError`); the shim rebuilds them.
 - `now` is the run's pinned instant (a `toISOString` text): `DATE.TODAY(zone)`
-  reads it in the zone through the environment services.
+  reads it in the zone through the environment services. The engine reads
+  no clock of its own.
 
 The wire (env.rs has the details) carries what JSON cannot: `undefined`,
 `NaN`, `±Infinity`, `-0`, key order, and identity. Identity matters because
@@ -381,11 +382,17 @@ TypeScript takes through its host is a host request here:
 | `adapters.call` `describe`, `resolveEntity`, `readRecord`, `createRecord`, `updateRecord` | a write, in run.ts's order (below); `readRecord` only when the instance's `methods` list it | `host.adapters.call` |
 | `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`, with the run's budget (`ledger`); its cost is charged |
 | `locks.acquire`, `locks.release` | around an identity search and an update by id | `host.locks`: a token per acquire, released by token |
-| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature, `WITHIN`) | the TypeScript member itself |
-| `park.sink.commitTimerPark` | a `sleep` in a run that is not a rehearsal | `host.park.sink`; `wakeAt` is this engine's wall clock plus the sleep |
-| `park.sink.commitLimitPause` | the first time the run meets its cost cap (a budget refusal, charged, that the ledger says is the cap) | `host.park.sink.commitLimitPause`, skipped when the sink has none; `{noSink: true}` when the sink cannot suspend, and the run fails on its cap |
-| `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address | `host.park.sink.commitSuspension`; `{noSink: true}` when the sink has none |
+| `clock.now` | a `sleep`'s wake time; a `WITHIN` the comparator measures (once per comparison in an expression, once per conjunct of a hop's WHERE and once per record of a `unique by` narrowing that reaches one, as expression.ts `decideWithClock`) | `host.clock.now`, its answer read as the TypeScript engine reads it |
+| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature, `WITHIN` with the clock's answer) | the TypeScript member itself |
+| `park.sink.commitTimerPark` | a `sleep` in a run that is not a rehearsal, on a host that serves it | `host.park.sink`; `wakeAt` is `clock.now`'s answer plus the sleep |
+| `park.sink.commitLimitPause` | the first time the run meets its cost cap (a budget refusal, charged, that the ledger says is the cap), on a host that serves it and can suspend | `host.park.sink.commitLimitPause` |
+| `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address; on a host that serves it | `host.park.sink.commitSuspension` |
 | `control.cancel.cancelledNow` | the last check (not after a park) | `host.control.cancel.cancelledNow` |
+
+**`ids.mint` is never asked**: this engine mints no id a host or a result
+sees (an origin id is an index in the run's own table, below), and what it
+does not run that mints one (an extraction's resources, a callback) it
+refuses at admission.
 
 **A lost run lease** is the run host's (docs/contracts/host-families.md "Failure"): the
 cancel gate, or a park the lease fence refuses, throws `RunLeaseLost`; that
@@ -596,15 +603,21 @@ calls. The flow suspends:
   host's message. So the call that crosses the cap is kept, and the run
   pauses at the next priced call, just before its statement, as run.ts
   `suspendAtLimit` does. The first time, the run is marked paused
-  (`commitLimitPause`) and says so on its trace (`RUN_PAUSED_COST_CAP`); a
-  sink that cannot suspend is not paused, and the run fails with
-  `RunCostCapExceeded`; so does a run whose sink took the pause and then
-  answered `noSink` to the suspension (a host whose two answers disagree).
+  (`commitLimitPause`, where the host serves it) and says so on its trace
+  (`RUN_PAUSED_COST_CAP`); a sink that cannot suspend is not paused, and the
+  run fails with `RunCostCapExceeded`.
 - **before each statement of a paused run** (`limitPaused` in the input: a
   flow woken while its run's pause holds). A sink that cannot suspend lets
   the flow run on.
 - **at a `suspendAt` address**, once each. A sink that cannot suspend fails
-  the run (`MOVENG_RUNTIME`). An address before a call (`… .c k`) is never
+  the run (`MOVENG_RUNTIME`).
+
+Whether the sink can suspend, or park a timer, is read off the input's
+`serves` (the methods the host serves, as the recorder lists them), as
+run.ts `canSuspend` reads the host object: a host that cannot is asked
+nothing, so its run makes the TypeScript engine's requests and no other.
+A `sleep` asks `clock.now` once its state is written and before its
+duration is read, and wakes at the answer plus the sleep. An address before a call (`… .c k`) is never
   reached: this engine runs no calls.
 
 An operator's limit resume is an ordinary resume with `reenter`: the
@@ -685,7 +698,7 @@ writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, catalog, dryRun?,
-resume?, limitPaused?, suspendAt?}`. `segmentId` is the segment the run host opened (`segment.open`),
+resume?, limitPaused?, suspendAt?, serves}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
@@ -696,7 +709,9 @@ the addresses to suspend at (both "Parks" above). `languageVersion` is the pin,
 written out (the engine does not know the release's current one); `event`
 is the `TriggerEvent` on the eval wire; `now` is the run's pinned instant as
 a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
-`CatalogSnapshot`. Other members are ignored.
+`CatalogSnapshot`; `serves` lists every host method the run's host serves,
+by path (`park.sink.commitTimerPark`): the engine asks an optional one only
+when it is listed. Other members are ignored.
 
 **Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or
 `{error: {message, name?, ref?}}`; `ref` numbers the very error object the
@@ -713,13 +728,14 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 | `adapters.call {segmentId, instance, method, args, wire: true, positionRef?, position?}` | `{result}` (on the eval wire) or `{error: {kind: "call_ceiling" \| "adapter_error", message, name?, detail?, ref}}`; `ref` numbers the very error the engine's TypeScript twin raises for it. With `positionRef` the call's argument object is `{position, ...args}`: the position by handle (below) |
 | `llm.arbitrateEntities {segmentId, asserted, candidates, recordType, constraints, languageVersion, budget}` (the first four on the eval wire) | `{index: number \| null, judgeUnavailable?, cost?}`, or a budget refusal `{error: {kind: "budget", message}, cost?}` |
 | `locks.acquire {segmentId, names}` / `locks.release {segmentId, token}` | `{token}` once held / `undefined` once let go |
-| `park.sink.commitTimerPark {segmentId, address, state, wakeAt, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
-| `park.sink.commitSuspension {segmentId, address, state, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a sink that cannot suspend |
-| `park.sink.commitLimitPause {segmentId, limit: "cost", capMicrodollars, spentMicrodollars}` | `undefined`, or `{noSink: true}` for a sink that cannot suspend (nothing is committed) |
+| `park.sink.commitTimerPark {segmentId, address, state, wakeAt, wire: true}` (`state` on the eval wire) | `undefined`; asked only of a host that serves it |
+| `park.sink.commitSuspension {segmentId, address, state, wire: true}` (`state` on the eval wire) | `undefined`; asked only of a host that serves it |
+| `park.sink.commitLimitPause {segmentId, limit: "cost", capMicrodollars, spentMicrodollars}` | `undefined`; asked only of a host that serves it and `commitSuspension` |
+| `clock.now {segmentId}` | `{nowIso}`, an ISO 8601 instant; any other answer fails the run |
 | `control.cancel.cancelled {segmentId}` / `control.cancel.cancelledNow {segmentId}` | a boolean: the cancel gate, debounced / not |
 | `trace.append {segmentId, entries, closing?: true}` (one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}`, `{kind: "field_miss", binding, field, available: [key…]}` or `{kind: "block", root, positions}` |
 | `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
-| `builtins.compare {op, left, right}` | the same two shapes, for `compareValues(left, op, right)`; `op` a `FilterOperator` |
+| `builtins.compare {op, left, right, now?}` | the same two shapes, for `compareValues(left, op, right, {now})`; `op` a `FilterOperator`; `now` (the `clock.now` answer the engine asked) on a `within` and only there |
 
 A host answer is `{value}`, `{}` for `undefined`, or `{error: {message,
 name?, ref?}}` for a call the host threw on.
@@ -861,7 +877,9 @@ among the diagnostics.
 
 What the language leans on JavaScript's runtime for — the zone database,
 WHATWG URL parsing, locale number formatting, Unicode normalisation — the
-engine asks of `EnvServices` (src/env_services.rs), five operations:
+engine asks of `EnvServices` (src/env_services.rs), four operations. No
+clock: every instant the engine needs comes from the run's pin or the host's
+`clock.now`.
 
 | operation | answers | JavaScript |
 |---|---|---|
@@ -869,7 +887,6 @@ engine asks of `EnvServices` (src/env_services.rs), five operations:
 | `url_parse {text}` | `{href, protocol, username, password, host, hostname, port, pathname, search, hash}` or null | `new URL(text)` |
 | `number_format {value, locale, options}` | text, or null | `Intl.NumberFormat` (decimal; `minimumFractionDigits`, `maximumFractionDigits`, `useGrouping`) |
 | `normalize {text, form}` | text | `String.prototype.normalize` |
-| `now {}` | milliseconds since the epoch | `Date.now()`: the wall clock, read only for a timer park's `wakeAt` (every clock read a program makes answers from the run's pinned instant) |
 
 Two implementations:
 
@@ -882,8 +899,7 @@ Two implementations:
   wasm32): `jiff` with its bundled zone data, the `url` crate, ICU4X's
   normaliser and decimal formatter.
 
-tests/env_services.rs holds the native one to tests/env/fixture.json (every
-operation but `now`, whose answer is the moment it is asked):
+tests/env_services.rs holds the native one to tests/env/fixture.json:
 8,457 requests answered by Node 22.20 through the very module the loader
 imports (generate.ts; seeded; every IANA zone at seven instants including a
 European daylight-saving week and one before the common era; every half

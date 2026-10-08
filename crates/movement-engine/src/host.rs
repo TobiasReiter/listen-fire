@@ -25,6 +25,7 @@ pub enum Family {
     ControlCancel,
     Locks,
     Trace,
+    Clock,
     Check,
     Builtins,
     #[cfg(test)]
@@ -38,6 +39,7 @@ const FAMILIES: &[Family] = &[
     Family::ControlCancel,
     Family::Locks,
     Family::Trace,
+    Family::Clock,
     Family::Check,
     Family::Builtins,
     #[cfg(test)]
@@ -53,6 +55,7 @@ impl Family {
             Family::ControlCancel => "control.cancel",
             Family::Locks => "locks",
             Family::Trace => "trace",
+            Family::Clock => "clock",
             Family::Check => "check",
             Family::Builtins => "builtins",
             #[cfg(test)]
@@ -233,8 +236,8 @@ pub mod park {
     }
 
     /// An engine-initiated suspension (`suspendFlow`): the leaf's address and
-    /// its suspended `ParkedScopeState`, on the eval wire. `{noSink: true}`
-    /// answers a sink that cannot suspend.
+    /// its suspended `ParkedScopeState`, on the eval wire. Asked only of a
+    /// host that serves it (`SegmentInput::serves`).
     pub fn commit_suspension(segment: &str, address: &str, state: Json) -> Request {
         Request {
             family: Family::ParkSink,
@@ -244,8 +247,7 @@ pub mod park {
     }
 
     /// The run is pausing at its cost cap: what it spent against the cap.
-    /// `{noSink: true}` answers a sink that cannot suspend, which is not
-    /// paused at all (run.ts `canSuspend`): the run fails on its cap.
+    /// Asked only of a host that serves it and can suspend.
     pub fn commit_limit_pause(segment: &str, cap: &crate::ledger::CapExceeded) -> Request {
         Request {
             family: Family::ParkSink,
@@ -288,6 +290,25 @@ pub mod trace {
     }
 }
 
+pub mod clock {
+    use super::*;
+
+    /// The host's instant now, answered `{nowIso}`: the engine reads no
+    /// clock of its own.
+    pub fn now(segment: &str) -> Request {
+        Request { family: Family::Clock, method: "now".into(), args: in_segment(segment, json!({})) }
+    }
+
+    /// The instant a `clock.now` answer names, in milliseconds since the
+    /// epoch; `None` for an answer that names none.
+    pub fn instant_of(answer: Option<&Json>) -> Option<f64> {
+        match crate::js_date::parse(answer?.get("nowIso")?.as_str()?) {
+            crate::js_date::Parsed::Valid(ms) => Some(ms),
+            _ => None,
+        }
+    }
+}
+
 pub mod builtins {
     use super::*;
 
@@ -302,9 +323,15 @@ pub mod builtins {
         }
     }
 
-    /// The shared comparator (`compareValues`), likewise.
-    pub fn compare(op: &str, left: Json, right: Json) -> Request {
-        Request { family: Family::Builtins, method: "compare".into(), args: json!({ "op": op, "left": left, "right": right }) }
+    /// The shared comparator (`compareValues`), likewise. `now` (an ISO
+    /// 8601 instant, the host clock's answer) is what a `WITHIN` measures
+    /// recency from, and only a `WITHIN` carries it.
+    pub fn compare(op: &str, left: Json, right: Json, now: Option<&str>) -> Request {
+        let mut args = json!({ "op": op, "left": left, "right": right });
+        if let Some(now) = now {
+            args["now"] = json!(now);
+        }
+        Request { family: Family::Builtins, method: "compare".into(), args }
     }
 }
 
@@ -379,6 +406,14 @@ mod tests {
         let cancel = control::cancelled("g1");
         assert_eq!((cancel.family.as_str(), cancel.args.clone()), ("control.cancel", json!({ "segmentId": "g1" })));
         assert_eq!(park::commit_timer_park("g1", "s0", json!(null), "2026-01-01T00:00:00.000Z").family.as_str(), "park.sink");
+        let now = clock::now("g1");
+        assert_eq!((now.family.as_str(), now.method.as_str(), now.args.clone()), ("clock", "now", json!({ "segmentId": "g1" })));
+        assert_eq!(clock::instant_of(Some(&json!({ "nowIso": "2026-01-01T00:00:01.000Z" }))), Some(1_767_225_601_000.0));
+        assert_eq!(clock::instant_of(Some(&json!({ "nowIso": "soon" }))), None);
+        assert_eq!(clock::instant_of(Some(&json!({ "now": "2026-01-01T00:00:01.000Z" }))), None);
+        let within = builtins::compare("within", json!(1), json!("1d"), Some("2026-01-01T00:00:00.000Z"));
+        assert_eq!(within.args["now"], json!("2026-01-01T00:00:00.000Z"));
+        assert!(builtins::compare("eq", json!(1), json!(1), None).args.get("now").is_none());
         let check = check::program("src", 3, None);
         assert_eq!((check.family.as_str(), check.method.as_str()), ("check", "program"));
         assert_eq!(check.args, json!({ "source": "src", "languageVersion": 3 }));
@@ -395,7 +430,7 @@ mod tests {
 
     #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "park.sink", "control.cancel", "locks", "trace", "check", "builtins", "echo"] {
+        for name in ["adapters", "llm", "park.sink", "control.cancel", "locks", "trace", "clock", "check", "builtins", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);

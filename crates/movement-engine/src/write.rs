@@ -553,19 +553,14 @@ impl Run<'_> {
     }
 
     /// `evaluatePredicate` over one record, a comparison this engine hands
-    /// back (`WITHIN`) answered by the TypeScript comparator.
+    /// back (`WITHIN`) answered by the TypeScript comparator, the host's
+    /// clock asked once for the record (run.ts `decideWithClock`).
     async fn predicate_holds(&self, predicate: &Expression, data: &JsObject) -> Result<bool, Stop> {
         let read = |name: &str| data.get(name).cloned().unwrap_or(Js::Undefined);
+        let now = std::cell::RefCell::new(None);
+        let now = &now;
         let ask = |op: movement_parser::lowering::expression::FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
-            Box::pin(async move {
-                let op = serde_json::to_value(op).expect("an operator is JSON");
-                let request = host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(&l), env::encode_plain(&r));
-                let answer = self.ask(request).await.map_err(Failure::into_eval)?.unwrap_or(Json::Null);
-                let value = answer.get("value").and_then(|v| env::decode(v).ok()).ok_or_else(|| {
-                    EvalError::engine("MOVENG_RUNTIME", format!("the comparator answered {answer}"))
-                })?;
-                Ok(value.truthy())
-            })
+            Box::pin(async move { self.compare(op, l, r, now).await })
         };
         match crate::filter::evaluate_predicate_with(predicate, &read, Some(&ask)).await {
             Ok(value) => Ok(value.truthy()),

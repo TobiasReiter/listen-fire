@@ -19,15 +19,14 @@
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import { callEvalExpression, CURRENT_LANGUAGE_VERSION, openEngineSegment } from 'movement-lang';
-// Internal to movement-lang: the Rust bridge below (delete with 5B).
-import { withEnvNow } from 'movement-lang/wasm/env_services';
+import { callEvalExpression, openEngineSegment } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
 import { RunCostCapExceeded } from '../../lib/run_cost';
 import { logger } from '../logger';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
+import { servedHostMethods } from './host';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
 import { pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
@@ -126,7 +125,7 @@ async function segmentInRust(
   const hostErrors: unknown[] = [];
   let outcome: RunOutcome;
   try {
-    const done = await driveEngine(withPinnedEnvClock(engine ?? openWasmEngine(), context.pinnedNow), start, {
+    const done = await driveEngine(engine ?? openWasmEngine(), start, {
       host: input.host,
       context,
       catalog: input.catalog,
@@ -346,6 +345,10 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
       // The run's pinned instant, as the TypeScript interpreter pins it.
       now: input.firedAt ?? context.pinnedNow.toISOString(),
       catalog: input.catalog,
+      // What the host serves: the engine asks an optional family's method
+      // only of a host that serves it, as the TypeScript engine reads its
+      // host object (a park sink's, `canSuspend`).
+      serves: servedHostMethods(input.host),
     },
     'the segment input',
   );
@@ -449,25 +452,6 @@ export function openWasmEngine(): EngineProtocol {
     start: (input) => readStep(segment.start(JSON.stringify(input)), 'start'),
     answer: (id, answer) => readStep(segment.answer(id, JSON.stringify(answer)), `answer ${id}`),
     finish: () => segment.finish(),
-  };
-}
-
-/**
- * Bridge — delete with the Rust engine merge (5B).
- *
- * `engine` with its environment clock held at the segment's pinned instant
- * through every step. The Rust engine still reads its own clock for a timer's
- * wake time; held there, what it computes is the pinned instant plus the
- * sleep, which the shim re-bases on the host's `clock.now` as it commits the
- * park (rust_host.ts) — the request the TypeScript engine makes there. (The
- * Rust engine asking `clock.now` itself lands with its merge.)
- */
-function withPinnedEnvClock(engine: EngineProtocol, pinnedNow: Date): EngineProtocol {
-  const at = pinnedNow.getTime();
-  return {
-    start: (input) => withEnvNow(at, () => engine.start(input)),
-    answer: (id, answer) => withEnvNow(at, () => engine.answer(id, answer)),
-    finish: () => engine.finish(),
   };
 }
 

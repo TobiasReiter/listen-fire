@@ -19,15 +19,16 @@ const SOURCE = 'import { manual } from adapters';
 
 /** A `segment` entry's input: the smallest run, which asks its host for
  *  the check first. */
-function segmentStart(source: string, segmentId = 'g1'): string {
+function segmentStart(source: string, segmentId = 'g1', catalog: object = EMPTY_CATALOG_SNAPSHOT): string {
   return JSON.stringify({
     entry: 'segment',
     source,
     languageVersion: 3,
     event: ['o', 0, [['pipelineInputId', 'p'], ['adapterType', 'manual'], ['triggerType', 'webhook'], ['payload', ['o', 1, []]]]],
     segmentId,
+    serves: [],
     now: '2026-10-07T09:00:00.000Z',
-    catalog: EMPTY_CATALOG_SNAPSHOT,
+    catalog,
   });
 }
 
@@ -60,6 +61,21 @@ describe('the Rust engine artifact', () => {
     expect(b.answer(1, JSON.stringify({ error: { message: 'b', ref: 4 } })).json).toEqual({ done: { thrown: { hostError: 4 } } });
     a.finish();
     b.finish();
+  });
+
+  it('reads a snapshot carrying a contract version it reads, and declines one it does not before asking anything', () => {
+    const read = openEngineSegment();
+    expect(read.start(segmentStart(SOURCE, 'g1', { ...EMPTY_CATALOG_SNAPSHOT, contractVersion: 1 })).json).toMatchObject({
+      pending: [{ family: 'check', method: 'program' }],
+    });
+    read.finish();
+    // Declined, so the TypeScript engine runs it, and refuses the snapshot
+    // with the message both readers share.
+    const unread = openEngineSegment();
+    expect(unread.start(segmentStart(SOURCE, 'g1', { ...EMPTY_CATALOG_SNAPSHOT, contractVersion: 2 })).json).toEqual({
+      done: { declined: 'catalog_does_not_load' },
+    });
+    unread.finish();
   });
 
   it('ships no probe entries', () => {

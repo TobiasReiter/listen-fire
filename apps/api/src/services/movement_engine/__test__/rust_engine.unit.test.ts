@@ -12,7 +12,7 @@ import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { hostMethodPaths } from '../host';
 import { AdapterCallFailed } from '../host_adapter';
-import { MovementRunFailed, runFailureCause, type RunMovementInput } from '../run';
+import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
 import { openRunContext, RunLedger } from '../run_context';
 import { ENGINE_OWN_ROUTES, shimRoutePaths } from '../rust_host';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
@@ -109,8 +109,7 @@ function inSegment(segmentId: string, args: Record<string, unknown>): Record<str
 const RESOLVE = { adapterType: 'fake', role: 'source' };
 
 describe('the Rust engine shim', () => {
-  it("re-bases a timer's wake on the host's clock: clock.now plus what the engine slept past the pinned instant", async () => {
-    // Bridge — delete with the Rust engine merge (5B), with the re-base.
+  it("answers clock.now with the host's clock, not the pin, and commits the wake the engine computed from that answer", async () => {
     const park = makeFakeParkSink();
     const host = makeTestHost({
       park: { sink: park.sink },
@@ -124,23 +123,90 @@ describe('the Rust engine shim', () => {
       spend: {},
     });
     const segmentId = context.segmentId;
-    const { engine } = scriptedEngine((seen) =>
-      seen.length === 0
-        ? {
-            pending: [
-              request(1, 'park.sink', 'commitTimerPark', inSegment(segmentId, {
-                address: 's0',
-                state: new WireOut().value({ version: 1, address: 's0', bindingName: null, scopeChain: [] }),
-                // The engine's own clock is held at the pin: the pin plus an hour.
-                wakeAt: '2026-10-07T10:00:00.000Z',
-                wire: true,
-              })),
-            ],
-          }
-        : { done: { ok: true } },
-    );
+    const { engine, answers } = scriptedEngine((seen) => {
+      if (seen.length === 0) return { pending: [request(1, 'clock', 'now', inSegment(segmentId, {}))] };
+      if (seen.length === 1) {
+        const answer = seen[0]?.answer;
+        const nowIso = answer !== undefined && 'value' in answer ? String(Reflect.get(Object(answer.value), 'nowIso')) : '';
+        // The engine's arithmetic: the answer plus an hour's sleep.
+        const wakeAt = new Date(new Date(nowIso).getTime() + 3_600_000).toISOString();
+        return {
+          pending: [
+            request(2, 'park.sink', 'commitTimerPark', inSegment(segmentId, {
+              address: 's0',
+              state: new WireOut().value({ version: 1, address: 's0', bindingName: null, scopeChain: [] }),
+              wakeAt,
+              wire: true,
+            })),
+          ],
+        };
+      }
+      return { done: { ok: true } };
+    });
     await driveEngine(engine, { entry: 'test' }, { host, context, catalog: EMPTY_CATALOG_SNAPSHOT });
+    expect(answers[0]).toEqual({ id: 1, answer: { value: { nowIso: '2026-10-07T12:00:00.000Z' } } });
+    // Committed as the engine computed it: nothing re-bases it on the way.
     expect(park.timerParks.map((p) => p.wakeAt)).toEqual(['2026-10-07T13:00:00.000Z']);
+  });
+
+  it("fails the run on a clock answer naming no instant, read as the TypeScript engine reads it", async () => {
+    const host = makeTestHost({ clock: { now: async () => ({ nowIso: 'soon' }) } });
+    const context = await openRunContext({ host, teamId: TEAM, languageVersion: 3, firedAt: '2026-10-07T09:00:00.000Z', spend: {} });
+    const { engine, answers } = scriptedEngine((seen) =>
+      seen.length === 0 ? { pending: [request(1, 'clock', 'now', inSegment(context.segmentId, {}))] } : { done: { ok: true } },
+    );
+    await driveEngine(engine, {}, { host, context, catalog: EMPTY_CATALOG_SNAPSHOT });
+    const answer = answers[0]?.answer;
+    expect(answer !== undefined && 'error' in answer ? answer.error.message : answer).toBe(
+      'clock.now answered {"nowIso":"soon"}, which is not { nowIso: <an ISO 8601 instant> }',
+    );
+  });
+
+  it('settles every request in flight before a shim fault ends the segment', async () => {
+    // Two requests in flight: the first faults the shim (a route that
+    // refuses its args) while the second is still at the host. The drive
+    // rethrows only once the second has settled.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let secondSettled = false;
+    const served = await hostWith({
+      control: {
+        cancel: {
+          cancelled: async () => {
+            await held;
+            secondSettled = true;
+            return false;
+          },
+          cancelledNow: async () => false,
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
+    const { engine, finished } = scriptedEngine(() => ({
+      pending: [
+        request(1, 'locks', 'acquire', inSegment(segmentId, { names: 'not a list' })),
+        request(2, 'control.cancel', 'cancelled', inSegment(segmentId, {})),
+      ],
+    }));
+    const drive = driveEngine(engine, {}, served);
+    let rejected = false;
+    const observed = drive.then(
+      () => undefined,
+      (error: unknown) => {
+        rejected = true;
+        return error;
+      },
+    );
+    // The fault has settled; the drive waits on the second request.
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect({ rejected, secondSettled }).toEqual({ rejected: false, secondSettled: false });
+    release();
+    const error = await observed;
+    expect(error).toBeInstanceOf(RustShimError);
+    expect(secondSettled).toBe(true);
+    expect(finished()).toBe(true);
   });
 
   it('forwards adapters.resolve and adapters.call, naming the segment, and answers the instance as data', async () => {
@@ -512,6 +578,32 @@ describe('choosing the engine', () => {
     expect(engineChoice({ MOVEMENT_ENGINE: 'ts' })).toBe('ts');
     expect(engineChoice({ MOVEMENT_ENGINE: 'rust' })).toBe('rust');
     expect(() => engineChoice({ MOVEMENT_ENGINE: 'Rust' })).toThrow('MOVEMENT_ENGINE is "Rust"');
+  });
+
+  it('refuses, under rust as under ts, a host without the clock and ids, before any segment opens', async () => {
+    const previous = process.env.MOVEMENT_ENGINE;
+    try {
+      for (const engine of ['ts', 'rust']) {
+        process.env.MOVEMENT_ENGINE = engine;
+        resetRustRunStats();
+        const { clock: _clock, ids: _ids, ...host } = makeTestHost();
+        const run = runMovement({
+          source: 'movement m() {\n  x = 1\n}',
+          event: { pipelineInputId: 'p', adapterType: 'manual', triggerType: 'webhook', payload: {} },
+          teamId: TEAM,
+          catalog: EMPTY_CATALOG_SNAPSHOT,
+          // A host from before the clock and ids, as a remote embedder's may be.
+          host: host as unknown as RunMovementInput['host'],
+        });
+        await expect(run).rejects.toThrow(
+          'the host does not serve clock.now, ids.mint, which host families version 1 requires (the clock, ids families); no segment was opened',
+        );
+        expect(rustRunStats.routed).toBe(0);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+      else process.env.MOVEMENT_ENGINE = previous;
+    }
   });
 
   it('refuses a bad MOVEMENT_ENGINE at boot', () => {

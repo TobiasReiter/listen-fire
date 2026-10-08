@@ -189,33 +189,26 @@ const ROUTES: Record<string, Route> = {
     await host.locks.release({ segmentId: segmentOf(request), token: string(request.token, 'locks.release token') });
     return undefined;
   },
-  /** A timer park. A run with no park sink is told so, and fails as the
-   *  interpreter fails it. */
-  async 'park.sink.commitTimerPark'(request, { host, context }) {
+  /** A timer park, its wake the host clock's answer plus the sleep (the
+   *  engine asked `clock.now`). Asked only of a host that serves it. */
+  async 'park.sink.commitTimerPark'(request, { host }) {
     const sink = host.park.sink;
-    if (sink === undefined) return { noSink: true };
+    if (sink?.commitTimerPark === undefined) throw notServed('park.sink.commitTimerPark');
     if (request.wire !== true) throw new RustShimError('park.sink.commitTimerPark carries its state on the eval wire');
-    // Bridge — delete with the Rust engine merge (5B). The engine computed
-    // the wake from its environment clock, held at the segment's pinned
-    // instant (rust_engine.ts): re-based on the host's clock, as the
-    // TypeScript engine computes it.
-    const sleptMs = new Date(instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt')).getTime() - context.pinnedNow.getTime();
-    const wakeAt = new Date((await context.clock.now()).getTime() + sleptMs).toISOString();
     await sink.commitTimerPark({
       segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitTimerPark address'),
       // On the eval wire: the state's objects in the order the engine wrote them.
       state: new WireOut().read(request.state),
-      wakeAt,
+      wakeAt: instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt'),
     });
     return undefined;
   },
-  /** An engine-initiated suspension (run.ts `suspendFlow`). A sink that
-   *  cannot suspend is told so: the run goes on, or fails, as run.ts
-   *  `canSuspend` decides. */
+  /** An engine-initiated suspension (run.ts `suspendFlow`), asked only of a
+   *  sink that can suspend (run.ts `canSuspend`). */
   async 'park.sink.commitSuspension'(request, { host }) {
     const sink = host.park.sink;
-    if (sink?.commitSuspension === undefined) return { noSink: true };
+    if (sink?.commitSuspension === undefined) throw notServed('park.sink.commitSuspension');
     if (request.wire !== true) throw new RustShimError('park.sink.commitSuspension carries its state on the eval wire');
     await sink.commitSuspension({
       segmentId: segmentOf(request),
@@ -224,21 +217,25 @@ const ROUTES: Record<string, Route> = {
     });
     return undefined;
   },
-  /** The run is pausing at its cost cap. A sink that cannot suspend
-   *  (run.ts `canSuspend`) is not paused at all: it is told so, and the run
-   *  fails on its cap. A sink that can suspend but keeps no pause is
-   *  skipped, as `commitLimitPause?.` skips it. */
+  /** The run is pausing at its cost cap, asked only of a sink that can
+   *  suspend and keeps a pause. */
   async 'park.sink.commitLimitPause'(request, { host }) {
     const sink = host.park.sink;
-    if (sink?.commitSuspension === undefined) return { noSink: true };
+    if (sink?.commitLimitPause === undefined) throw notServed('park.sink.commitLimitPause');
     if (request.limit !== 'cost') throw new RustShimError('park.sink.commitLimitPause limit is "cost"');
-    await sink.commitLimitPause?.({
+    await sink.commitLimitPause({
       segmentId: segmentOf(request),
       limit: 'cost',
       capMicrodollars: microdollars(request.capMicrodollars, 'park.sink.commitLimitPause capMicrodollars'),
       spentMicrodollars: microdollars(request.spentMicrodollars, 'park.sink.commitLimitPause spentMicrodollars'),
     });
     return undefined;
+  },
+  /** The host's instant now, read at the boundary as the TypeScript engine
+   *  reads it (run_context.ts): an answer naming no instant fails the run. */
+  async 'clock.now'(request, { context }) {
+    segmentOf(request);
+    return { nowIso: (await context.clock.now()).toISOString() };
   },
   /** The cancel gate at a statement boundary. */
   async 'control.cancel.cancelled'(request, { host }) {
@@ -283,13 +280,16 @@ const ROUTES: Record<string, Route> = {
     const spec = stdlibFunctionById(id);
     return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
   },
-  /** The shared comparator, likewise. */
-  async 'builtins.compare'(request, { context }) {
+  /** The shared comparator, likewise. A `WITHIN` measures from `now`, the
+   *  host clock's answer the engine asked for it. */
+  async 'builtins.compare'(request) {
     const op = filterOperator(request.op);
     const left = new WireOut().read(request.left);
     const right = new WireOut().read(request.right);
-    // `WITHIN` measures from the host's clock, as the TypeScript engine's does.
-    const now = op === 'within' ? (await context.clock.now()).getTime() : undefined;
+    if ((op === 'within') !== (request.now !== undefined)) {
+      throw new RustShimError('builtins.compare carries `now` for a WITHIN, and only for one');
+    }
+    const now = op === 'within' ? new Date(instant(request.now, 'builtins.compare now')).getTime() : undefined;
     return builtinAnswer(() => compareValues(left, op, right, now !== undefined ? { now } : {}));
   },
 };
@@ -355,6 +355,12 @@ function budgetOf(value: unknown): { remainingMicrodollars: number | null } {
 function microdollars(value: unknown, what: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new RustShimError(`${what} is a finite number`);
   return value;
+}
+
+/** A method the engine asked of a host that does not serve it: the engine
+ *  asks an optional one only where the segment input says it is served. */
+function notServed(path: string): RustShimError {
+  return new RustShimError(`the engine asked ${path} of a host that does not serve it`);
 }
 
 function instant(value: unknown, what: string): string {

@@ -16,7 +16,8 @@
 //!   about to spend: `suspendAtLimit`, which first marks the run paused,
 //!   `commitLimitPause`, and says so on the trace), at each statement of a
 //!   run already paused (`limitPaused`), and at a `suspendAt` address. A
-//!   sink that cannot suspend answers `noSink`, and the run goes on (a
+//!   host whose sink cannot suspend (it serves no `commitSuspension`, read
+//!   off `SegmentInput::serves`) is asked nothing, and the run goes on (a
 //!   pause), fails on its cap, or fails for want of a park (`suspendAt`), as
 //!   the TypeScript does.
 //! - **Resume** (`resumeAlongAddress`): the movement's scope re-layered from
@@ -287,11 +288,8 @@ impl Run<'_> {
     /// Before a statement (run.ts `interpretBody`): a paused run's flow
     /// suspends where it can, and a `suspendAt` address suspends it, once.
     pub(crate) async fn suspend_before(&self, at: &Address, scope: &Rc<Scope>) -> Result<(), Stop> {
-        if self.limit_paused.get()
-            && !self.cannot_suspend.get()
-            && let Some(parked) = self.suspend_flow(at, scope).await?
-        {
-            return Err(parked);
+        if self.limit_paused.get() && self.can_suspend() {
+            return Err(self.suspend_flow(at, scope).await?);
         }
         let address = at.encode();
         let pending = {
@@ -299,7 +297,7 @@ impl Run<'_> {
             pending.iter().position(|a| *a == address).map(|i| pending.remove(i))
         };
         if pending.is_some() {
-            return Err(self.suspend_flow(at, scope).await?.unwrap_or_else(|| nowhere_to_park(&address)));
+            return Err(if self.can_suspend() { self.suspend_flow(at, scope).await? } else { nowhere_to_park(&address) });
         }
         Ok(())
     }
@@ -315,43 +313,36 @@ impl Run<'_> {
     }
 
     async fn pause_at_limit(&self, cap: CapExceeded, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
-        let fails = || Stop::Thrown(Failure::CapExceeded(cap));
-        if self.cannot_suspend.get() {
-            return Ok(fails());
+        if !self.can_suspend() {
+            return Ok(Stop::Thrown(Failure::CapExceeded(cap)));
         }
         if !self.limit_paused.get() {
-            let answer = self.ask(host::park::commit_limit_pause(self.segment(), &cap)).await.map_err(Stop::Thrown)?;
-            if no_sink(answer.as_ref()) {
-                self.cannot_suspend.set(true);
-                return Ok(fails());
+            // A sink that can suspend but keeps no pause is skipped, as
+            // `commitLimitPause?.` skips it.
+            if self.serves("park.sink.commitLimitPause") {
+                self.ask(host::park::commit_limit_pause(self.segment(), &cap)).await.map_err(Stop::Thrown)?;
             }
             self.limit_paused.set(true);
             self.trace(TraceEntry::Warning { code: "RUN_PAUSED_COST_CAP".into(), message: cap.paused_message() });
         }
-        // A sink that took the pause but then cannot suspend answers the two
-        // halves of `canSuspend` differently; the run cannot park, so it
-        // fails on its cap, as TypeScript's does where it cannot suspend.
-        Ok(self.suspend_flow(at, scope).await?.unwrap_or_else(fails))
+        self.suspend_flow(at, scope).await
+    }
+
+    /// run.ts `canSuspend`: the host's park sink commits suspensions.
+    fn can_suspend(&self) -> bool {
+        self.serves("park.sink.commitSuspension")
     }
 
     /// `suspendFlow`: the suspended state committed and the flow parked at
-    /// `at`, or `None` from a sink that cannot suspend.
-    async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Option<Stop>, Stop> {
+    /// `at`. Asked only where the sink can suspend.
+    async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
         let address = at.encode();
         let state = suspended_state(self, &address, scope).map_err(Stop::Thrown)?;
         let request = host::park::commit_suspension(self.segment(), &address, encode_plain(&state));
-        let answer = self.ask(request).await.map_err(Stop::Thrown)?;
-        if no_sink(answer.as_ref()) {
-            self.cannot_suspend.set(true);
-            return Ok(None);
-        }
+        self.ask(request).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Gate { outcome: false });
-        Ok(Some(Stop::Parked(address)))
+        Ok(Stop::Parked(address))
     }
-}
-
-fn no_sink(answer: Option<&Json>) -> bool {
-    answer.and_then(|a| a.get("noSink")).is_some()
 }
 
 fn nowhere_to_park(address: &str) -> Stop {
@@ -739,7 +730,7 @@ mod tests {
     fn a_park_that_reaches_a_landing_fails_the_run_loudly() {
         let input: crate::run::SegmentInput = serde_json::from_value(serde_json::json!({
             "source": "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}", "languageVersion": 3, "event": null,
-            "segmentId": "g1", "now": "2026-03-12T12:00:00.000Z",
+            "segmentId": "g1", "serves": [], "now": "2026-03-12T12:00:00.000Z",
             "catalog": { "adapters": {}, "credentials": {}, "plugins": {} },
         }))
         .unwrap();
@@ -767,7 +758,6 @@ mod tests {
             mutation_context: RefCell::new(Js::Undefined),
             limit_paused: std::cell::Cell::new(false),
             pending_suspensions: RefCell::default(),
-            cannot_suspend: std::cell::Cell::default(),
             source_reads: RefCell::default(),
             positions: RefCell::default(),
         };

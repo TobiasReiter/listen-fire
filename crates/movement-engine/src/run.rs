@@ -54,7 +54,7 @@ use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::Expression;
+use movement_parser::lowering::expression::{Expression, FilterOperator};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Value as Json, json};
@@ -118,6 +118,10 @@ pub struct SegmentInput {
     /// before a call (`… .c k`) is never reached: this engine runs no calls.
     #[serde(default)]
     pub suspend_at: Vec<String>,
+    /// Every host method the run's host serves, by path
+    /// (`park.sink.commitTimerPark`): the optional ones it serves are what
+    /// the engine may ask, as the TypeScript engine asks its host object.
+    pub serves: Vec<String>,
 }
 
 /// The segment entry: the run, and its `done`.
@@ -269,9 +273,6 @@ pub(crate) struct Run<'a> {
     pub(crate) limit_paused: std::cell::Cell<bool>,
     /// The `suspendAt` addresses not yet suspended at.
     pub(crate) pending_suspensions: RefCell<Vec<String>>,
-    /// The park sink answered that it cannot suspend (it has no
-    /// `commitSuspension`): run.ts `canSuspend` is false for the run.
-    pub(crate) cannot_suspend: std::cell::Cell<bool>,
     /// The graphs block heads read through, resolved as sources, by
     /// instance identity (`sourceAdapterCache`).
     pub(crate) source_reads: RefCell<Vec<(String, Rc<crate::traverse::Read>)>>,
@@ -328,7 +329,6 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         mutation_context: RefCell::new(mutation_context(&event, now_ms)),
         limit_paused: std::cell::Cell::new(input.limit_paused),
         pending_suspensions: RefCell::new(input.suspend_at.clone()),
-        cannot_suspend: std::cell::Cell::default(),
         source_reads: RefCell::default(),
         positions: RefCell::default(),
     };
@@ -361,6 +361,37 @@ impl Run<'_> {
     /// The segment every host request names.
     pub(crate) fn segment(&self) -> &str {
         &self.input.segment_id
+    }
+
+    /// Whether the host serves the method at `path`.
+    pub(crate) fn serves(&self, path: &str) -> bool {
+        self.input.serves.iter().any(|served| served == path)
+    }
+
+    /// The host's instant now (`clock.now`), in milliseconds.
+    pub(crate) async fn clock_now(&self) -> Result<f64, Failure> {
+        let answer = self.ask(host::clock::now(self.segment())).await?;
+        host::clock::instant_of(answer.as_ref()).ok_or_else(|| {
+            let shown = answer.map_or_else(|| "nothing".to_string(), |a| a.to_string());
+            Failure::engine("MOVENG_RUNTIME", format!("clock.now answered {shown}, which is not {{ nowIso: <an ISO 8601 instant> }}"))
+        })
+    }
+
+    /// The comparator's request for a reading `compare_values` hands back.
+    /// A `WITHIN` measures from the host's clock, asked for it alone, as the
+    /// TypeScript engine asks it at the comparison.
+    pub(crate) async fn compare_request(&self, op: FilterOperator, left: &Js, right: &Js) -> Result<host::Request, Failure> {
+        let now = match op {
+            FilterOperator::Within => Some(js_date::to_iso_string(self.clock_now().await?)),
+            _ => None,
+        };
+        Ok(self.compare_request_at(op, left, right, now.as_deref()))
+    }
+
+    /// The comparator's request, a `WITHIN`'s instant given.
+    pub(crate) fn compare_request_at(&self, op: FilterOperator, left: &Js, right: &Js, now: Option<&str>) -> host::Request {
+        let op = serde_json::to_value(op).expect("an operator is JSON");
+        host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(left), env::encode_plain(right), now)
     }
 
     /// The credential id the run was handed for `name`, if any.
@@ -954,8 +985,7 @@ impl Run<'_> {
                 self.builtin(request).await
             }
             Ask::Compare { op, left, right } => {
-                let op = serde_json::to_value(op).expect("an operator is JSON");
-                let request = host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(&left), env::encode_plain(&right));
+                let request = self.compare_request(op, &left, &right).await?;
                 self.builtin(request).await
             }
         }
@@ -1030,24 +1060,25 @@ impl Run<'_> {
             return Ok(());
         }
         let address = at.encode();
+        if !self.serves("park.sink.commitTimerPark") {
+            return Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("sleep reached at '{address}' with no park sink — the run cannot suspend on a timer without the durable trigger-run substrate"),
+            )));
+        }
         let state = crate::park::parked_state(self, &address, presence, scope).map_err(Stop::Thrown)?;
+        // When to wake: the host's clock plus the sleep, its clock asked
+        // before the duration is read, as the TypeScript engine asks it.
+        let now = self.clock_now().await.map_err(Stop::Thrown)?;
         let ms = crate::park::duration_ms(&duration.raw).ok_or_else(|| {
             Stop::Thrown(Failure::Engine {
                 class: ErrorClass::Error,
                 message: format!("invalid duration literal '{}' — use unit-suffixed literals like 4h, 2d, 90m, 1h30m", duration.raw),
             })
         })?;
-        // When to wake, by the engine's own wall clock, as the TypeScript
-        // reads `Date.now()` (an environment service, not a host call).
-        let wake_at = js_date::to_iso_string(env_services::current().now_ms() + ms);
+        let wake_at = js_date::to_iso_string(now + ms);
         let request = host::park::commit_timer_park(self.segment(), &address, env::encode_plain(&state), &wake_at);
-        let answer = self.ask(request).await.map_err(Stop::Thrown)?;
-        if answer.as_ref().and_then(|a| a.get("noSink")).is_some() {
-            return Err(Stop::Thrown(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("sleep reached at '{address}' with no park sink — the run cannot suspend on a timer without the durable trigger-run substrate"),
-            )));
-        }
+        self.ask(request).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Gate { outcome: false });
         Err(Stop::Parked(address))
     }
@@ -1412,8 +1443,13 @@ mod tests {
     /// A segment driven to its end, each request answered by `serve`; the
     /// requests in the order they came.
     fn drive(source: &str, payload: Json, serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
+        drive_serving(source, payload, &[], serve)
+    }
+
+    /// `drive`, for a host that serves the optional methods `serves`.
+    fn drive_serving(source: &str, payload: Json, serves: &[&str], serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": serves,
             "now": "2026-03-12T12:00:00.000Z",
             "event": env::encode_plain(&env::decode(&json!(["o", 0, [
                 ["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload],
@@ -1455,6 +1491,53 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    const SLEEPS: &str = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
+
+    /// The engine reads no clock: a sleep asks the host's `clock.now` and
+    /// wakes at its answer plus the sleep.
+    #[test]
+    fn a_sleep_wakes_at_the_host_clocks_answer_plus_the_sleep() {
+        let host = plain_host(json!({}));
+        let (done, seen) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+            match (request.family, request.method.as_str()) {
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                ("park.sink", "commitTimerPark") => json!({}),
+                _ => host(request),
+            }
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let calls: Vec<String> = seen.iter().map(|r| format!("{}.{}", r.family, r.method)).collect();
+        let clock = calls.iter().position(|c| c == "clock.now").expect("the clock was asked");
+        assert_eq!(calls[clock + 1], "park.sink.commitTimerPark");
+        assert_eq!(seen[clock].args, json!({ "segmentId": "g1" }));
+        assert_eq!(seen[clock + 1].args["wakeAt"], json!("2026-10-07T13:00:00.000Z"));
+    }
+
+    /// A clock answer that names no instant fails the run, as the TypeScript
+    /// engine's read of it does.
+    #[test]
+    fn a_clock_answer_naming_no_instant_fails_the_run() {
+        let host = plain_host(json!({}));
+        let (done, _) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+            match (request.family, request.method.as_str()) {
+                ("clock", "now") => json!({ "value": { "now": "2026-10-07T12:00:00.000Z" } }),
+                _ => host(request),
+            }
+        });
+        let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
+        assert!(message.contains("clock.now answered") && message.contains("nowIso"), "{done}");
+    }
+
+    /// A host that serves no timer park is asked neither its clock nor a
+    /// park: the sleep fails the run first, as the TypeScript engine's does.
+    #[test]
+    fn a_sleep_on_a_host_with_no_timer_park_asks_nothing_and_fails() {
+        let (done, seen) = drive(SLEEPS, json!(["o", 1, []]), plain_host(json!({})));
+        assert!(!seen.iter().any(|r| r.family == "clock" || r.family == "park.sink"));
+        let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
+        assert!(message.contains("with no park sink"), "{done}");
     }
 
     #[test]
@@ -1584,7 +1667,7 @@ mod tests {
             ),
         ] {
             let input = json!({
-                "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+                "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
                 "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({})), "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
                 "resume": { "state": wire(state) },
             });
@@ -1623,7 +1706,7 @@ mod tests {
         ] });
         assert_eq!(crate::park::resume_refusal(&wire(state.clone())), None);
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({ "adapterType": "email", "triggerType": "webhook", "payload": {} })),
             "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(), "resume": { "state": wire(state) },
         });
@@ -1658,7 +1741,7 @@ mod tests {
         });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (`name`)\n    name: msg.`subject`\n  }\n}";
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
             "catalog": catalog,
@@ -1709,12 +1792,11 @@ mod tests {
         assert_eq!(record["provenance"]["name"][0]["kind"], json!("source_field"));
     }
 
-    /// A sink that takes the pause (`commitLimitPause`) and then cannot
-    /// suspend (`commitSuspension` answers `noSink`) answers the two halves
-    /// of `canSuspend` differently: the run cannot park, so it fails on its
-    /// cap rather than with a suspension it never made.
+    /// A host whose sink keeps pauses (`commitLimitPause`) but cannot suspend
+    /// (it serves no `commitSuspension`) is not paused at all (run.ts
+    /// `canSuspend`): the run fails on its cap, asking its sink nothing.
     #[test]
-    fn a_sink_that_pauses_but_cannot_suspend_fails_the_run_on_its_cap() {
+    fn a_sink_that_keeps_pauses_but_cannot_suspend_fails_the_run_on_its_cap() {
         let schema = |position: &str, collections: Json, roots: Json| {
             json!({ "constructionArgs": [], "schemas": { "": {
                 "positions": { position: { "properties": { "subject": "text", "name": "text" }, "edges": {} } },
@@ -1732,7 +1814,7 @@ mod tests {
         });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (FUZZY `name`)\n    name: msg.`subject`\n  }\n}";
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": ["park.sink.commitLimitPause"],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
             "catalog": catalog,
@@ -1761,8 +1843,6 @@ mod tests {
                         } } }),
                         ("llm", "arbitrateEntities") => json!({ "value": { "error": { "kind": "budget", "message": "spent" }, "cost": [] } }),
                         ("locks", "acquire") => json!({ "value": { "token": "k1" } }),
-                        ("park.sink", "commitLimitPause") => json!({}),
-                        ("park.sink", "commitSuspension") => json!({ "value": { "noSink": true } }),
                         ("control.cancel", _) => json!({ "value": false }),
                         _ => json!({}),
                     };
@@ -1771,8 +1851,7 @@ mod tests {
                 }
             }
         };
-        assert!(seen.iter().any(|s| s == "park.sink.commitLimitPause"), "{seen:?}");
-        assert!(seen.iter().any(|s| s == "park.sink.commitSuspension"), "{seen:?}");
+        assert!(!seen.iter().any(|s| s.starts_with("park.sink")), "{seen:?}");
         assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
     }
 
@@ -1801,7 +1880,7 @@ mod tests {
             "credentials": {}, "plugins": {},
         });
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, []]]]],
             "catalog": catalog,

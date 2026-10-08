@@ -37,12 +37,13 @@
 //! where it stands: the iterations before it keep their writes, the rest
 //! never run.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use movement_parser::ast::{PathHead, PathRoot, TraversalBlock};
 use movement_parser::catalog::types::InstanceSchema;
-use movement_parser::lowering::expression::{EdgeDirection, EdgeStep, Expression, TraversalStep};
+use movement_parser::lowering::expression::{EdgeDirection, EdgeStep, Expression, FilterOperator, TraversalStep};
 use serde_json::Value as Json;
 
 use crate::address::Address;
@@ -52,6 +53,7 @@ use crate::eval::{ErrorClass, EvalError, Evaluated, Prov};
 use crate::executor::join_all;
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js};
+use crate::js_date;
 use crate::order_limit::{self, Substitution};
 use crate::run::{Failure, Flow, Run, Stop};
 use crate::trace::TraceEntry;
@@ -553,8 +555,12 @@ impl Run<'_> {
                 }
             }
             let read = |name: &str| reads.get(name).cloned().unwrap_or(Js::Undefined);
-            let ask = |op: movement_parser::lowering::expression::FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
-                Box::pin(async move { self.compare(op, l, r).await })
+            // The host's clock is asked once per conjunct that reaches a
+            // `WITHIN` (expression.ts `decideWithClock`), not per `WITHIN`.
+            let now: RefCell<Option<String>> = RefCell::new(None);
+            let now = &now;
+            let ask = |op: FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
+                Box::pin(async move { self.compare(op, l, r, now).await })
             };
             last = crate::filter::evaluate_predicate_with(conjunct, &read, Some(&ask))
                 .await
@@ -584,10 +590,22 @@ impl Run<'_> {
         }
     }
 
-    /// The shared comparator for a reading `compare_values` hands back.
-    async fn compare(&self, op: movement_parser::lowering::expression::FilterOperator, left: Js, right: Js) -> Result<bool, EvalError> {
-        let op = serde_json::to_value(op).expect("an operator is JSON");
-        let request = host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(&left), env::encode_plain(&right));
+    /// The shared comparator for a reading `compare_values` hands back, in a
+    /// pure predicate's decision; a `WITHIN` measures from `now`, the host's
+    /// clock asked the first time the decision reaches one.
+    pub(crate) async fn compare(
+        &self,
+        op: FilterOperator,
+        left: Js,
+        right: Js,
+        now: &RefCell<Option<String>>,
+    ) -> Result<bool, EvalError> {
+        let within = matches!(op, FilterOperator::Within);
+        if within && now.borrow().is_none() {
+            let asked = self.clock_now().await.map_err(Failure::into_eval)?;
+            *now.borrow_mut() = Some(js_date::to_iso_string(asked));
+        }
+        let request = self.compare_request_at(op, &left, &right, if within { now.borrow().clone() } else { None }.as_deref());
         let answer = self.ask(request).await.map_err(Failure::into_eval)?.unwrap_or(Json::Null);
         let value = answer
             .get("value")

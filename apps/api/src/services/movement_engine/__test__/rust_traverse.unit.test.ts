@@ -669,3 +669,40 @@ describe('traversal blocks in the Rust engine', () => {
     });
   });
 });
+
+// chunk 5A's three engine fixes (the write ledger in program order; fans that
+// settle before failing; resolutions memoised), on a program both engines run.
+describe("5A's engine fixes, on both engines", () => {
+  it('writes the ledger in program order, iteration by iteration, each record citing its place there', async () => {
+    const { rust } = await agree({
+      body: [
+        '  kg-[c:company]-> {',
+        '    co = write kg-[:company]-> { name: "copy of ${c.`name`}" }',
+        '    write kg-[:note]-> { text: co.`name` }',
+        '  }',
+      ].join('\n'),
+    });
+    const writes = rust.result?.writes ?? [];
+    expect(writes.map((w) => `${w.recordType} ${String(w.writtenValues.name ?? w.writtenValues.text)}`)).toEqual(
+      COMPANIES.flatMap(({ fields }) => [`company copy of ${String(fields.name)}`, `note copy of ${String(fields.name)}`]),
+    );
+    writes.forEach((write, index) => expect(write.origin?.writeIndex).toBe(index));
+  });
+
+  it('resolves the instance every iteration writes once for the segment', async () => {
+    const { rust } = await agree({ body: NOTE_PER_COMPANY('company') });
+    expect(written(rust)).toHaveLength(COMPANIES.length);
+    const targets = rust.resolved.filter((r) => typeof r === 'object' && r !== null && Reflect.get(r, 'role') === 'target');
+    expect(targets).toHaveLength(1);
+  });
+
+  it('settles every key read of an ORDER BY before failing on one, with the TypeScript engine’s error', async () => {
+    const { ts, rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY c.`name`'), graph: { failOn: 'n-2/name' } });
+    expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
+    // Every record's key was read, the failing one's among them, before the
+    // run failed: nothing was left in flight.
+    const keyReads = (o: Outcome) => calls(o).filter(([m, input]) => m === 'getFieldValue' && input.fieldId === 'name');
+    expect(keyReads(rust)).toHaveLength(COMPANIES.length);
+    expect(keyReads(ts)).toHaveLength(COMPANIES.length);
+  });
+});

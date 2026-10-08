@@ -92,17 +92,6 @@ pub trait EnvServices {
     fn number_format(&self, value: f64, locale: &str, options: &NumberOptions) -> Option<String>;
     /// `text.normalize(form)`.
     fn normalize(&self, text: &str, form: NormalForm) -> String;
-    /// `Date.now()`: the wall clock, in milliseconds since the epoch. Only a
-    /// park's wake time reads it; every clock read a program makes answers
-    /// from the run's pinned instant instead.
-    fn now_ms(&self) -> f64;
-}
-
-/// The wall clock of a native build.
-#[cfg(not(target_arch = "wasm32"))]
-fn system_now_ms() -> f64 {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    since.as_millis() as f64
 }
 
 /// One request on the wire.
@@ -114,7 +103,6 @@ pub fn request_json(op: &Op<'_>) -> Json {
             json!({ "op": "number_format", "value": value, "locale": locale, "options": options })
         }
         Op::Normalize { text, form } => json!({ "op": "normalize", "text": text, "form": form }),
-        Op::Now => json!({ "op": "now" }),
     }
 }
 
@@ -125,7 +113,6 @@ pub enum Op<'a> {
     UrlParse { text: &'a str },
     NumberFormat { value: f64, locale: &'a str, options: NumberOptions },
     Normalize { text: &'a str, form: NormalForm },
-    Now,
 }
 
 impl Op<'_> {
@@ -145,7 +132,6 @@ impl Op<'_> {
                 let form: NormalForm = serde_json::from_value(json!(text("form")?)).map_err(|e| e.to_string())?;
                 json!(services.normalize(text("text")?, form))
             }
-            "now" => json!(services.now_ms()),
             other => return Err(format!("no environment service `{other}`")),
         })
     }
@@ -185,9 +171,6 @@ impl EnvServices for Missing {
     }
     fn normalize(&self, _: &str, _: NormalForm) -> String {
         panic!("this movement engine was built without its environment services (the native-env feature)")
-    }
-    fn now_ms(&self) -> f64 {
-        system_now_ms()
     }
 }
 
@@ -234,9 +217,6 @@ impl EnvServices for HostImports {
     }
     fn normalize(&self, text: &str, form: NormalForm) -> String {
         self.ask(&Op::Normalize { text, form })
-    }
-    fn now_ms(&self) -> f64 {
-        self.ask(&Op::Now)
     }
 }
 
@@ -407,10 +387,6 @@ pub mod native {
                 NormalForm::Nfd => DecomposingNormalizerBorrowed::new_nfd().normalize(text).into_owned(),
                 NormalForm::Nfkd => DecomposingNormalizerBorrowed::new_nfkd().normalize(text).into_owned(),
             }
-        }
-
-        fn now_ms(&self) -> f64 {
-            super::system_now_ms()
         }
     }
 }

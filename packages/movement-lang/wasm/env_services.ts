@@ -40,10 +40,7 @@ export type EnvRequest =
   | { op: 'tz_convert'; instantIso: string; zone: string }
   | { op: 'url_parse'; text: string }
   | { op: 'number_format'; value: number; locale: string; options: NumberOptions }
-  | { op: 'normalize'; text: string; form: NormalForm }
-  /** The wall clock (or the instant `withEnvNow` holds), which only a park's
-   *  wake time reads. */
-  | { op: 'now' };
+  | { op: 'normalize'; text: string; form: NormalForm };
 
 export interface NumberOptions {
   minimumFractionDigits?: number;
@@ -129,31 +126,6 @@ export function numberFormat(value: number, locale: string, options: NumberOptio
   }
 }
 
-// Bridge — delete with the Rust engine merge (5B), when the Rust engine asks
-// the host's `clock.now` itself.
-/** The instant `now` answers while a caller holds it (`withEnvNow`); the
- *  wall clock otherwise. */
-let heldNowMs: number | undefined;
-
-/**
- * Run `body` — one synchronous step of an engine segment — with the `now`
- * service answering `nowMs`. A run host that takes its time from its own host
- * (`clock.now`) holds the engine's environment clock at the segment's pinned
- * instant, and re-bases what the engine computed from it on the host's answer.
- * Synchronous, so no other segment's step can run inside it. Internal: the
- * movement engine's Rust shim imports it from this module, not the package.
- * Bridge — delete with the Rust engine merge (5B).
- */
-export function withEnvNow<T>(nowMs: number, body: () => T): T {
-  const previous = heldNowMs;
-  heldNowMs = nowMs;
-  try {
-    return body();
-  } finally {
-    heldNowMs = previous;
-  }
-}
-
 /** One request's answer, `{value}`. Throws for a request it cannot read. */
 export function answerEnvRequest(request: unknown): { value: unknown } {
   const r = readRequest(request);
@@ -166,8 +138,6 @@ export function answerEnvRequest(request: unknown): { value: unknown } {
       return { value: numberFormat(r.value, r.locale, r.options) };
     case 'normalize':
       return { value: r.text.normalize(r.form) };
-    case 'now':
-      return { value: heldNowMs ?? Date.now() };
     default: {
       const unread: never = r;
       throw new Error(`no environment service ${JSON.stringify(unread)}`);
@@ -202,8 +172,6 @@ function readRequest(request: unknown): EnvRequest {
       }
       return { op, text: text('text'), form };
     }
-    case 'now':
-      return { op };
     default:
       throw new Error(`no environment service ${op}`);
   }
