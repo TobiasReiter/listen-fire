@@ -51,6 +51,7 @@ import type {
   CombinatorExpression,
   ExprSlot,
   ExtractExpression,
+  LanguageVersion,
   MExpr,
   MatchExpression,
   NodeLiteral,
@@ -132,23 +133,29 @@ const EXPRESSION_KIND_LABEL: Partial<Record<Expression['type'], string>> = {
  * unsupported construct flags the importing file, suffixed with the
  * library path. Resolution failures stay silent: checkProgram owns those
  * diagnostics (every gate caller runs both).
+ *
+ * The scan reads the program as the engine will run it — under its pin, which
+ * a saved movement's caller must pass. Absent ⇒ the current version: text no
+ * movement is pinned to yet.
  */
 export function listUnsupportedConstructs(
   source: string,
-  options: { resolveFile?: ResolveFile } = {},
+  options: { languageVersion?: LanguageVersion; resolveFile?: ResolveFile } = {},
 ): string[] {
+  const languageVersion = options.languageVersion ?? CURRENT_LANGUAGE_VERSION;
   let program: Program;
   try {
-    program = parseProgram(source);
+    program = parseProgram(source, { languageVersion });
   } catch (e) {
     if (e instanceof MovementParseError) return [];
     throw e;
   }
-  const found = new InterpretabilityScan().scan(program);
+  const found = new InterpretabilityScan(languageVersion).scan(program);
   if (options.resolveFile) {
-    const link = linkImports(program, options.resolveFile);
+    // A library is read under the version of the program that imports it.
+    const link = linkImports(program, options.resolveFile, { languageVersion });
     for (const [path, file] of link.files) {
-      for (const construct of new InterpretabilityScan().scan(file.program)) {
+      for (const construct of new InterpretabilityScan(languageVersion).scan(file.program)) {
         const labelled = `${construct} (in "${path}")`;
         if (!found.includes(labelled)) found.push(labelled);
       }
@@ -185,6 +192,8 @@ class InterpretabilityScan {
    *  meets them, without scopes: which binding a call reaches is the
    *  checker's to say, and this only has to know a call RUNS. */
   private readonly closureNames = new Set<string>();
+
+  constructor(private readonly languageVersion: LanguageVersion) {}
 
   scan(program: Program): string[] {
     const file = programCallScope(program);
@@ -539,9 +548,9 @@ class InterpretabilityScan {
   }
 
   /** How a call reads once its callee is resolved, as the checker and the
-   *  engine read it. Scanned at the version a program parses at here. */
+   *  engine read it. */
   private reading(call: CallStatement, position: CallPosition): CallReading {
-    return readCall(call, (callee) => resolveCallee(callee, this.callScope, CURRENT_LANGUAGE_VERSION), position);
+    return readCall(call, (callee) => resolveCallee(callee, this.callScope, this.languageVersion), position);
   }
 
   /** A bound or returned call to a built-in, as the form it resolves to;
@@ -674,7 +683,7 @@ class InterpretabilityScan {
       hoistingMemberReads(tree, (call) =>
         runsAsCall(
           call,
-          (callee) => resolveCallee(callee, this.callScope, CURRENT_LANGUAGE_VERSION),
+          (callee) => resolveCallee(callee, this.callScope, this.languageVersion),
           // The file call scope binds only functions.
           () => true,
         ),
@@ -683,7 +692,7 @@ class InterpretabilityScan {
     if (calls.length === 0) return slot;
     for (const call of calls) {
       try {
-        this.scanValue(parseNestedCall(slot, call.at, CURRENT_LANGUAGE_VERSION));
+        this.scanValue(parseNestedCall(slot, call.at, this.languageVersion));
       } catch (e) {
         if (!(e instanceof MovementParseError)) throw e; // checker territory
       }

@@ -154,7 +154,7 @@ async function segmentInRust(
       catalog: input.catalog,
       hostErrors,
       ...(parsed !== undefined
-        ? { parsed: { source: input.source, languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION, program: parsed } }
+        ? { parsed: { source: input.source, languageVersion: context.languageVersion, program: parsed } }
         : {}),
     });
     outcome = readRunResult(done, { context, hostErrors });
@@ -258,7 +258,7 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
       source: input.source,
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
-      languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+      languageVersion: context.languageVersion,
       ...(input.movementName !== undefined ? { movementName: input.movementName } : {}),
       event,
       // The segment the run host opened: every host request names it.

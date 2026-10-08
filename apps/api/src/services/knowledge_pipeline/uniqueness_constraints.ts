@@ -454,6 +454,7 @@ async function searchCandidatesByConstraints(options: {
         }
         if (entry.expr.type === 'property') {
           const extractedVal = extractedPropertyValues.get(entry.expr.propertyTypeId);
+          // The pipeline's own matcher: no movement runs here, so no pin — the release's version.
           if (isBlankIdentityValue(extractedVal, CURRENT_LANGUAGE_VERSION)) { allMatch = false; break; }
           const candidateVals = propValuesByNode.get(nodeId)?.get(entry.expr.propertyTypeId);
           if (!candidateVals || candidateVals.size === 0) { allMatch = false; break; }
@@ -527,6 +528,7 @@ function compileEntry(
 
   if (expr.type === 'property') {
     const value = extractedPropertyValues.get(expr.propertyTypeId);
+    // The pipeline's own matcher: no movement runs here, so no pin — the release's version.
     if (isBlankIdentityValue(value, CURRENT_LANGUAGE_VERSION)) return null;
     const lowerVal = String(value).toLowerCase();
 

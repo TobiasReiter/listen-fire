@@ -10,10 +10,6 @@
 // the Rust engine runs whole; the rest are skipped, with the reason, never
 // failed. Its floor, like the corpora's routing floors, catches a regression
 // that hands the runs quietly back to the TypeScript engine.
-//
-// The corpus was recorded with the current language version mocked to 2, as
-// its corpus setup does; the replay mocks it the same way
-// (engine_runs_replay.ts says why).
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -22,10 +18,6 @@ process.env.DATABASE_URL_TEST_READONLY ??= 'postgresql://unit:unit@localhost:543
 
 jest.mock('../../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
-jest.mock('../../../../../../../packages/movement-lang/language_version', () => ({
-  ...jest.requireActual('../../../../../../../packages/movement-lang/language_version'),
-  CURRENT_LANGUAGE_VERSION: 2,
 }));
 
 import { replayCorpus } from './engine_runs_replay';

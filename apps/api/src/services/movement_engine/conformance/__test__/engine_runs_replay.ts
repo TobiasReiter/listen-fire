@@ -1,9 +1,5 @@
 // The replay of one corpus's recorded runs against the three targets, shared
-// by engine_runs.v1 and engine_runs.v2 (see either for what it proves). Each
-// runs in its own file because each corpus was recorded with its own current
-// language version mocked (the corpus setups do it). Some engine code reads
-// the current version rather than the run's pin; no recording kept exercises
-// that, so mocking it here as well is a precaution, not a need.
+// by engine_runs.v1 and engine_runs.v2 (see either for what it proves).
 //
 // Under UPDATE_ENGINE_RUNS=1 the replay checks the harvest instead of judging
 // it: every recording must replay on the TypeScript engine both in process

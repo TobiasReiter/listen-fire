@@ -7,7 +7,8 @@
 //   2. a pin this release does not support is refused — before the source is
 //      read, naming the version and the fix, never run as the current one;
 //   3. a deprecated pin runs, with a warning on the run's own trace;
-//   4. validation (`diagnoseMovementSource`) honours the same pin.
+//   4. validation (`diagnoseMovementSource`) honours the same pin — the
+//      engine's dry interpretability scan included.
 
 import {
   CURRENT_LANGUAGE_VERSION,
@@ -218,5 +219,36 @@ describe('validation honours the pin', () => {
     });
     expect(validation.ok).toBe(false);
     expect(validation.diagnostics.map((d) => d.code)).toEqual(['MOV_LANGUAGE_VERSION_UNSUPPORTED']);
+  });
+
+  it('the engine gate scans under the pin: a v1 movement is refused what v1 cannot run, under the v3 release', () => {
+    // A call written in another letter case reaches the file's function from
+    // version 3; under version 1 it names a function the engine does not know.
+    const source = `import { manual, kg } from adapters
+import { kg_cred } from credentials
+runs = manual()
+graph = kg(credentials: kg_cred)
+movement label(x: <text>) {
+  return x
+}
+movement reopen(go: <runs-[:Invocation]->>) {
+  graph-[c:company]-> {
+    if Label("Open") == "Open" {
+      write c { status: "Open" }
+    }
+  }
+}
+listen to runs {} fire reopen
+`;
+    const engineGate = (languageVersion: number) => {
+      const { diagnostics } = diagnoseMovementSource(source, { catalog: fromCatalogSnapshot(catalog), languageVersion });
+      // An unparsed source scans clean; this one parses under both.
+      expect(diagnostics.map((d) => d.code)).not.toContain('MOV_PARSE');
+      return diagnostics.filter((d) => d.code === 'MOV_ENGINE_UNSUPPORTED').map((d) => d.message);
+    };
+    expect(engineGate(3)).toEqual([]);
+    expect(engineGate(1)).toEqual([
+      'the engine does not support non-built-in function calls (LABEL()) yet — remove it to save this file live',
+    ]);
   });
 });
