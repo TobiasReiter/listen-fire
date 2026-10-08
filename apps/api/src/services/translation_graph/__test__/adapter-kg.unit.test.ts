@@ -557,7 +557,7 @@ async function getResourcesVia(
 }
 
 const MSG_NODE_ID = 'msg-node-1' as NodeId;
-const RESOURCE_ID = 'resource-1' as ResourceId;
+const RESOURCE_ID = '00000000-0000-4000-8000-000000000001' as ResourceId;
 
 beforeEach(() => {
   resetDbState();
@@ -883,7 +883,7 @@ describe('KnowledgeGraphAdapter — getResources / writeResource / writeEvidence
   it('getResources filters by resourceType', async () => {
     dbState.resources.push(
       {
-        id: 'r-text',
+        id: '00000000-0000-4000-8000-000000000002',
         team_id: TEAM_ID as string,
         type: 'TEXT',
         url: null,
@@ -891,7 +891,7 @@ describe('KnowledgeGraphAdapter — getResources / writeResource / writeEvidence
         metadata: {},
       },
       {
-        id: 'r-file',
+        id: '00000000-0000-4000-8000-000000000003',
         team_id: TEAM_ID as string,
         type: 'FILE',
         url: 'https://files/x.pdf',
@@ -900,8 +900,8 @@ describe('KnowledgeGraphAdapter — getResources / writeResource / writeEvidence
       },
     );
     dbState.nodeResources.push(
-      { id: 'nr-a', team_id: TEAM_ID as string, node_id: MSG_NODE_ID as string, resource_id: 'r-text' },
-      { id: 'nr-b', team_id: TEAM_ID as string, node_id: MSG_NODE_ID as string, resource_id: 'r-file' },
+      { id: 'nr-a', team_id: TEAM_ID as string, node_id: MSG_NODE_ID as string, resource_id: '00000000-0000-4000-8000-000000000002' },
+      { id: 'nr-b', team_id: TEAM_ID as string, node_id: MSG_NODE_ID as string, resource_id: '00000000-0000-4000-8000-000000000003' },
     );
 
     const adapter = makeAdapter();
@@ -912,6 +912,6 @@ describe('KnowledgeGraphAdapter — getResources / writeResource / writeEvidence
     });
 
     expect(onlyFiles).toHaveLength(1);
-    expect(onlyFiles[0].id).toBe('r-file');
+    expect(onlyFiles[0].id).toBe('00000000-0000-4000-8000-000000000003');
   });
 });
