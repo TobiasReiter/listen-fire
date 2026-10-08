@@ -14,7 +14,9 @@ name: movement-wasm
 #    checker corpus makes as the TypeScript one does; and the engine's
 #    TypeScript shim, against a double and through the committed artifact;
 #    the Rust engine's oracle regenerated from the TypeScript and diffed;
-#    and both conformance corpora run with MOVEMENT_ENGINE=rust.
+#    and both conformance corpora run with MOVEMENT_ENGINE=rust; and the
+#    corpora's recorded engine runs replay on the TypeScript engine, the
+#    Rust engine and over the HTTP host double.
 #
 # The committed artifact was built on macOS; the path remapping and pinned
 # toolchain in scripts/build-movement-wasm.sh are meant to make Linux produce the
@@ -38,6 +40,8 @@ on:
       - "apps/api/src/test/rust_eval_stats*"
       - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
+      # The host-conformance kit's format and replay rules.
+      - "packages/engine-contracts/conformance/**"
       - ".github/workflows/movement-wasm.yml"
   push:
     branches:
@@ -59,6 +63,8 @@ on:
       - "apps/api/src/test/rust_eval_stats*"
       - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
+      # The host-conformance kit's format and replay rules.
+      - "packages/engine-contracts/conformance/**"
       - ".github/workflows/movement-wasm.yml"
 
 permissions:
@@ -167,6 +173,12 @@ jobs:
         run: |
           pnpm run test:conformance:v1
           pnpm run test:conformance:v2
+      # Review Focus 3: every recorded run of both corpora replays identically
+      # against the TypeScript engine in process, the Rust engine through its
+      # shim, and the TypeScript engine against the HTTP host double.
+      - name: Host conformance, recorded engine runs on three targets
+        working-directory: apps/api
+        run: pnpm run test:unit --testPathPattern 'movement_engine/conformance/__test__/'
       # Each artifact's download size in view: the parser's ships to every
       # browser, the engine's to the API only.
       - name: Size budgets

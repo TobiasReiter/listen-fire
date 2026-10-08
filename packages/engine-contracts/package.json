@@ -15,6 +15,7 @@
   "types": "index.ts",
   "exports": {
     ".": "./index.ts",
+    "./conformance": "./conformance/index.ts",
     "./package.json": "./package.json"
   },
   "type": "commonjs",

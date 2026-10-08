@@ -4,5 +4,5 @@
     "types": [],
     "typeRoots": ["./node_modules/@types", "./src/types"]
   },
-  "exclude": ["src/test", "src/**/*.test.ts"]
+  "exclude": ["src/test", "src/**/*.test.ts", "src/services/movement_engine/conformance/__fixtures__"]
 }
