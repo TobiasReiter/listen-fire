@@ -11,6 +11,12 @@
 //
 // The network seams (catalog introspection, adapter I/O) are mocked as in
 // timer_resume.integration.test.ts; the plugin is a priced stand-in.
+//
+// The second case pauses where the priced call is the identity judge — a
+// `unique by` write whose fuzzy search finds two candidates — with no plugin
+// in the program, so the Rust engine runs it whole (MOVEMENT_ENGINE=rust):
+// the same pause row, the same `parked_run` leaf, the same operator resume.
+// The judge's model call is a priced stand-in at the prompt seam.
 
 import { randomUUID } from 'node:crypto';
 
@@ -39,7 +45,26 @@ jest.mock('../../translation_graph/movement/transform_invoker', () => {
   };
 });
 
+// The identity judge's model call: one dollar a judgement, refused before it
+// starts once the run's budget is spent (as the metered model call is).
+let mockJudgements = 0;
+jest.mock('../../../lib/prompts/execute', () => {
+  const actual = jest.requireActual('../../../lib/prompts/execute');
+  const runSpend = jest.requireActual('../../../lib/run_spend');
+  return {
+    ...actual,
+    async execute(name: string, ...rest: unknown[]) {
+      if (name !== 'tg_entity_match') return actual.execute(name, ...rest);
+      runSpend.assertRunBudget();
+      mockJudgements += 1;
+      runSpend.reportRunCost({ source: { kind: 'model', name: 'test.judge' }, microdollars: 1_000_000 });
+      return { match_index: 0, confidence: 0.9, reasoning: 'test' };
+    },
+  };
+});
+
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
+import { resetRustRunStats, rustRunStats } from '../rust_stats';
 import { resumeRun } from '../../interaction/operator';
 import { claimRunLease, releaseRunLease, RunBusy } from '../run_lease';
 import { getMovementRunStatus } from '../../translation_graph/movement/run_now';
@@ -94,7 +119,21 @@ const ATTIO_SCHEMA: InstanceSchema = {
   eventPositions: [{ position: EVENT }],
 };
 
-function buildCatalog(): CatalogSnapshot {
+/** A message target whose search is fuzzy, so a `unique by (FUZZY …)` key
+ *  that finds two near matches asks the judge. */
+const JUDGED_SLACK_SCHEMA: InstanceSchema = {
+  positions: { message: { properties: { channel: 'text', text: 'text' }, edges: {} } },
+  collections: { messages: { target: 'message' } },
+  writableRoots: {
+    message: {
+      fields: { channel: 'text', text: 'text' },
+      resultShape: { externalId: 'text', channel: 'text', text: 'text' },
+      fuzzyResolution: true,
+    },
+  },
+};
+
+function buildCatalog(options: { judgedSlack?: boolean } = {}): CatalogSnapshot {
   const base = staticCatalogFromManifests({
     credentials: {
       acme_main: { adapters: ['attio'] },
@@ -105,6 +144,7 @@ function buildCatalog(): CatalogSnapshot {
     ...base,
     instantiate(name, args) {
       if (name === 'attio') return ATTIO_SCHEMA;
+      if (name === 'slack' && options.judgedSlack === true) return JUDGED_SLACK_SCHEMA;
       return base.instantiate(name, args);
     },
   });
@@ -177,6 +217,31 @@ function makeSlackTargetFake(): { adapter: Adapter; creates: Record<string, unkn
     },
   };
   return { adapter, creates };
+}
+
+/** A message target whose search finds two messages near the asserted one:
+ *  neither is it exactly, so the rules cannot decide and the judge is asked. */
+function makeJudgedSlackFake(): { adapter: Adapter; updates: string[] } {
+  const updates: string[] = [];
+  const { adapter } = makeSlackTargetFake();
+  return {
+    adapter: {
+      ...adapter,
+      async resolveEntity() {
+        return {
+          candidates: [
+            { adapterType: 'slack', externalId: 'm-1', data: { channel: '#a', text: 'Example Labs' } },
+            { adapterType: 'slack', externalId: 'm-2', data: { channel: '#a', text: 'Example Ltd' } },
+          ],
+        };
+      },
+      async updateRecord(input) {
+        updates.push(input.externalId);
+        return { adapterType: 'slack', externalId: input.externalId, data: {}, association: containerAssociation(input) };
+      },
+    },
+    updates,
+  };
 }
 
 async function seedMovement(
@@ -367,5 +432,90 @@ describe('a run paused at its cost cap (real DB)', () => {
 
     // A run that is not paused at a limit cannot be resumed.
     await expect(resumeRun({ runId: run.id, teamId })).rejects.toThrow(/not paused at a limit/);
+  });
+
+  it('pauses at a judged unique-by write, and the operator resume carries it on — whole in the Rust engine under MOVEMENT_ENGINE=rust', async () => {
+    const JUDGED_TWICE = [
+      'import { attio, slack } from adapters',
+      'import { acme_main, acme_slack } from credentials',
+      '',
+      'crm = attio(credentials: acme_main)',
+      'chat = slack(credentials: acme_slack)',
+      '',
+      'movement judged_twice(ev: <crm-[:`Webhook Event`]->>) {',
+      '  write chat-[:messages]-> {',
+      '    unique by (FUZZY `text`)',
+      '    channel: "#a"',
+      '    text: "Example"',
+      '  }',
+      '  write chat-[:messages]-> {',
+      '    unique by (FUZZY `text`)',
+      '    channel: "#b"',
+      '    text: "Example"',
+      '  }',
+      '}',
+      '',
+      'listen to crm { events: ["record.created"] } fire judged_twice',
+    ].join('\n');
+    const catalog = buildCatalog({ judgedSlack: true });
+    mockedCatalog.mockResolvedValue({
+      snapshot: catalog,
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
+      notes: [],
+    });
+    const target = makeJudgedSlackFake();
+    mockedResolve.mockImplementation(async ({ adapterType }: { adapterType: string }) => {
+      if (adapterType === 'attio') return makeAttioSourceFake();
+      if (adapterType === 'slack') return target.adapter;
+      throw new Error(`test: no fake for '${adapterType}'`);
+    });
+    mockJudgements = 0;
+    resetRustRunStats();
+    const { triggerId } = await seedMovement(teamId, { source: JUDGED_TWICE, firedName: 'judged_twice', name: 'Judged twice' });
+
+    await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
+    // The first judgement spent the cap and its write stands; the second was
+    // refused before it started, and the run paused before that write.
+    expect(mockJudgements).toBe(1);
+    expect(target.updates).toEqual(['m-1']);
+    if (process.env.MOVEMENT_ENGINE === 'rust') {
+      expect(rustRunStats.ranWhole).toBe(1);
+      expect(rustRunStats.notAdmitted).toEqual({});
+      expect(rustRunStats.declined).toEqual({});
+    }
+
+    const run = await getAutomationsQb(['trigger_run'])
+      .selectFrom('trigger_run')
+      .where('team_id', '=', teamId)
+      .select(['id', 'status', 'limit_pause'])
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('parked');
+    expect(run.limit_pause).toMatchObject({ limit: 'cost', capMicrodollars: 1_000_000, spentMicrodollars: 1_000_000 });
+    const leaves = await getAutomationsQb(['parked_run'])
+      .selectFrom('parked_run')
+      .where('run_id', '=', run.id)
+      .select(['address', 'park_reason', 'status'])
+      .execute();
+    expect(leaves).toEqual([{ address: 's1', park_reason: 'limit', status: 'parked' }]);
+
+    const resumed = await resumeRun({ runId: run.id, teamId });
+    expect(resumed).toEqual({ runId: run.id, resumed: 1 });
+    // The second write is judged and lands; the first is not done again.
+    expect(mockJudgements).toBe(2);
+    expect(target.updates).toEqual(['m-1', 'm-1']);
+    if (process.env.MOVEMENT_ENGINE === 'rust') {
+      // The resume ran whole in the Rust engine too.
+      expect(rustRunStats.ranWhole).toBe(2);
+      expect(rustRunStats.notAdmitted).toEqual({});
+      expect(rustRunStats.declined).toEqual({});
+      expect(rustRunStats.shimFaults).toBe(0);
+    }
+    const after = await getAutomationsQb(['trigger_run'])
+      .selectFrom('trigger_run')
+      .where('id', '=', run.id)
+      .select(['status', 'limit_pause'])
+      .executeTakeFirstOrThrow();
+    expect(after.status).toBe('success');
+    expect(after.limit_pause).toBeNull();
   });
 });

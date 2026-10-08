@@ -1,10 +1,10 @@
 //! A segment of a run, executed whole: run.ts's `runMovement` for the
-//! programs the shim's `rustCanRun` admits (apps/api/src/services/
-//! movement_engine/rust_engine.ts says which). The same steps in the same
-//! order, every one the TypeScript takes through its host taken here as a
-//! host request:
+//! programs this engine admits (crate::admit says which). The same steps in
+//! the same order, every one the TypeScript takes through its host taken
+//! here as a host request:
 //!
-//! 1. the pinned source parsed, and checked (`check.program`, program.rs);
+//! 1. the pinned source parsed and admitted (crate::admit, before any
+//!    request), then checked (`check.program`, program.rs);
 //! 2. `prepareMovement`: the file scope (imports, instances from the
 //!    snapshot's `instantiate`), the movement picked, the source adapter
 //!    resolved (`adapters.resolve`), the event seeded (`seedEventPosition`);
@@ -16,11 +16,11 @@
 //! 4. the last cancel check (`control.cancelledNow`) and the result: the
 //!    writes, and where the run parked.
 //!
-//! An expression is evaluated by `eval::Evaluator`. What it cannot answer
-//! itself — a field of the event, read through the source adapter; a
-//! built-in reading this engine hands back — it asks, and the expression is
-//! evaluated again with the answer, so the host sees the TypeScript's calls
-//! in the TypeScript's order, short-circuits included.
+//! An expression is evaluated by `eval::Evaluator`, one walk per
+//! expression. What it cannot answer itself — a field of the event, read
+//! through the source adapter; a built-in reading this engine hands back — it
+//! asks, and awaits the answer where it asked, so the host sees the
+//! TypeScript's calls in the TypeScript's order, short-circuits included.
 //!
 //! `done` is one of:
 //!
@@ -28,15 +28,25 @@
 //! - `{failed: {error, result}}`: the body failed (`MovementRunFailed`,
 //!   which carries what the run did before it);
 //! - `{thrown: error}`: it failed before the body ran;
-//! - `{declined: reason}`: before any adapter was touched, the program
-//!   turned out to need what this engine does not run; the shim runs it on
-//!   the TypeScript engine instead.
+//! - `{refused: reason}`: admission (crate::admit) found, on this engine's
+//!   own parse and before any host request, that the program or its parked
+//!   state needs what this engine does not run;
+//! - `{declined: reason}`: past admission, before anything the host can see
+//!   happened, the check's stamps or the run's input turned out to need what
+//!   this engine does not run.
+//!
+//! For either the shim runs the program on the TypeScript engine instead.
 //!
 //! `error` is `{class: "MovementEngineError", code, message}`, `{class:
-//! "Error" | "RangeError", message}`, or `{hostError: ref}`: the very error a
-//! host call failed with, which the shim holds and rethrows.
+//! "Error" | "RangeError", message}`, `{class: "RunCostCapExceeded",
+//! capMicrodollars, spentMicrodollars}` (a run that met its cap where it
+//! cannot suspend), or `{hostError: ref}`: the very error a host call failed
+//! with, which the shim holds and rethrows.
+//!
+//! A run that meets its cost cap where it can suspend pauses instead
+//! (crate::park): its `done` is a parked result, as a timer park's is.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use movement_parser::ast::{self, AwaitSource, ExprSlot, MovementDeclaration, ParamTypeRef, RValue, Statement};
@@ -44,7 +54,7 @@ use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::Expression;
+use movement_parser::lowering::expression::{Expression, FilterOperator};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Value as Json, json};
@@ -52,14 +62,18 @@ use serde_json::{Value as Json, json};
 use crate::bindings::{Binding, InstanceBinding, Position, Scope};
 use crate::write::{TargetAdapter, WriteRecord};
 use crate::env::{self, Trail, ValueBinding};
-use crate::eval::{Ask, ErrorClass, EvalError, Evaluated, Evaluator, Prov, Reader};
+use crate::eval::{Ask, ErrorClass, EvalError, Evaluated, Evaluating, Evaluator, Prov, Reader};
 use crate::executor::{Host, HostError};
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
 use crate::program::{self, Checked, Stamp};
 use crate::stdlib::{self, Surroundings};
-use crate::trace::TraceEntry;
+use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
+
+/// The slot a `return` binds its value into (run.ts `RETURN_SLOT`): a name
+/// the grammar cannot spell.
+pub(crate) const RETURN_SLOT: &str = "#return";
 
 /// What the shim sends (rust_engine.ts `segmentInput`).
 #[derive(Deserialize)]
@@ -94,6 +108,20 @@ pub struct SegmentInput {
     /// Resume a parked run from its state (crate::park), rather than run it.
     #[serde(default)]
     pub resume: Option<crate::park::ResumeInput>,
+    /// The run is paused at its cost cap, and this segment was woken for one
+    /// of its flows: the flow suspends before its next statement
+    /// (`RunMovementInput.limitPaused`).
+    #[serde(default)]
+    pub limit_paused: bool,
+    /// Where to suspend, by address, once each (`RunMovementInput.suspendAt`):
+    /// a statement's address suspends the flow just before it. An address
+    /// before a call (`… .c k`) is never reached: this engine runs no calls.
+    #[serde(default)]
+    pub suspend_at: Vec<String>,
+    /// Every host method the run's host serves, by path
+    /// (`park.sink.commitTimerPark`): the optional ones it serves are what
+    /// the engine may ask, as the TypeScript engine asks its host object.
+    pub serves: Vec<String>,
 }
 
 /// The segment entry: the run, and its `done`.
@@ -101,10 +129,13 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
     let ledger = crate::ledger::Ledger::new(&input.spend);
     let mut done = match run(&host, &input, &ledger).await {
         Ok(result) => json!({ "result": result }),
+        Err(Stop::Refused(reason)) => return json!({ "refused": reason }),
         Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
         Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
         Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
-        Err(Stop::Cancelled | Stop::Parked(_)) => unreachable!("a cancel or a park ends the body, and the run returns its result"),
+        Err(Stop::Cancelled | Stop::Parked(_) | Stop::EndedQuietly) => {
+            unreachable!("a cancel, a park or a quiet end ends the body, and the run returns its result")
+        }
     };
     // What this segment's priced calls spent, by source, for the run host's
     // account (the run's figures are the run host's to report).
@@ -117,6 +148,9 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
 
 /// How a run stops early.
 pub(crate) enum Stop {
+    /// Not admitted: nothing but the parse and the walk happened.
+    Refused(String),
+    /// Past admission, before any host-visible effect.
     Declined(String),
     Thrown(Failure),
     /// The body failed; the result so far rides with it.
@@ -125,12 +159,19 @@ pub(crate) enum Stop {
     Cancelled,
     /// The flow parked at this address (`RunParked`): its state is durable.
     Parked(String),
+    /// A match found nothing (`ScopeEndedQuietly`): the enclosing scope ends
+    /// with nothing thrown — a block's iteration skips, the movement's body
+    /// stops, and the run completes.
+    EndedQuietly,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum Failure {
     Engine { class: ErrorClass, message: String },
     Host(HostError),
+    /// The run met its cost cap (`RunCostCapExceeded`): the statement
+    /// suspends where it can, and fails the run where it cannot.
+    CapExceeded(crate::ledger::CapExceeded),
 }
 
 impl Failure {
@@ -142,6 +183,26 @@ impl Failure {
         Failure::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet ({detail})"))
     }
 
+    /// The failure as an evaluation carries it out of a read it awaited.
+    pub(crate) fn into_eval(self) -> EvalError {
+        match self {
+            Failure::Engine { class, message } => EvalError::Thrown { class, message },
+            Failure::Host(error) => EvalError::Host(error),
+            Failure::CapExceeded(cap) => EvalError::CapExceeded(cap),
+        }
+    }
+
+    /// What an evaluation failed with; a reading this engine hands back
+    /// fails the run, `unreproduced` saying so.
+    pub(crate) fn of_eval(error: EvalError, unreproduced: &str) -> Failure {
+        match error {
+            EvalError::Thrown { class, message } => Failure::Engine { class, message },
+            EvalError::Host(error) => Failure::Host(error),
+            EvalError::CapExceeded(cap) => Failure::CapExceeded(cap),
+            EvalError::Fallback(reason) => Failure::unsupported(&format!("this reading ({reason})"), unreproduced),
+        }
+    }
+
     fn to_json(&self) -> Json {
         match self {
             Failure::Engine { class: ErrorClass::Engine(code), message } => {
@@ -150,6 +211,7 @@ impl Failure {
             Failure::Engine { class: ErrorClass::Error, message } => json!({ "class": "Error", "message": message }),
             Failure::Engine { class: ErrorClass::RangeError, message } => json!({ "class": "RangeError", "message": message }),
             Failure::Host(error) => json!({ "hostError": error.detail.get("ref").cloned().unwrap_or(Json::Null) }),
+            Failure::CapExceeded(cap) => cap.to_json(),
         }
     }
 }
@@ -168,35 +230,15 @@ pub(crate) struct Source {
     /// The live adapter's own `adapterType`.
     pub(crate) adapter_type: String,
     pub(crate) instance_name: String,
-    /// The parameter's declared position, which names a typeless root.
-    pub(crate) start_surface_type: Option<String>,
     pub(crate) position: Position,
+    /// The seeded position as the read wrapper stamps it for a read: one
+    /// object, so every read of the event names it by one handle.
+    pub(crate) surface: Js,
+    /// The source as a graph a block head walks (crate::traverse).
+    pub(crate) read: Rc<crate::traverse::Read>,
 }
 
-/// A lexical address (address.ts): `s1.b0.s2`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Address(Vec<(char, usize)>);
-
-impl Address {
-    pub fn stmt(&self, index: usize) -> Address {
-        self.child('s', index)
-    }
-
-    pub fn branch(&self, index: usize) -> Address {
-        self.child('b', index)
-    }
-
-    fn child(&self, kind: char, index: usize) -> Address {
-        let mut steps = self.0.clone();
-        steps.push((kind, index));
-        Address(steps)
-    }
-
-    /// `encodeAddress`.
-    pub fn encode(&self) -> String {
-        self.0.iter().map(|(kind, index)| format!("{kind}{index}")).collect::<Vec<_>>().join(".")
-    }
-}
+pub use crate::address::Address;
 
 pub(crate) struct Run<'a> {
     pub(crate) host: &'a Host,
@@ -216,6 +258,8 @@ pub(crate) struct Run<'a> {
     pub(crate) origins: RefCell<Vec<Js>>,
     /// The fields a `field_miss` was traced for, by instance: once each.
     pub(crate) misses: RefCell<Vec<(String, String)>>,
+    /// The run's own flow's trace, not yet handed to the host.
+    pub(crate) trace: FlowTrace,
     pub(crate) movement_name: RefCell<String>,
     /// The writes, in program order (`MovementRunResult.writes`).
     pub(crate) writes: RefCell<Vec<Rc<WriteRecord>>>,
@@ -223,25 +267,48 @@ pub(crate) struct Run<'a> {
     pub(crate) targets: RefCell<Vec<(String, Rc<TargetAdapter>)>>,
     /// What every write tells its adapter about where it came from.
     pub(crate) mutation_context: RefCell<Js>,
+    /// The run is paused at a limit: the flow suspends at its next statement
+    /// boundary. From the input, or set as the run meets its cap; never
+    /// cleared within a segment (run.ts `limitPaused`).
+    pub(crate) limit_paused: std::cell::Cell<bool>,
+    /// The `suspendAt` addresses not yet suspended at.
+    pub(crate) pending_suspensions: RefCell<Vec<String>>,
+    /// The graphs block heads read through, resolved as sources, by
+    /// instance identity (`sourceAdapterCache`).
+    pub(crate) source_reads: RefCell<Vec<(String, Rc<crate::traverse::Read>)>>,
+    /// The positions registered with the host this segment (crate::host
+    /// `call_at`), by handle number.
+    pub(crate) positions: RefCell<crate::traverse::PositionTable>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
     let version = input.language_version;
-    let catalog = CatalogSnapshot::load(input.catalog.get())
-        .map_err(|e| Stop::Declined(format!("the catalog snapshot does not load: {e}")))?;
-    let root = program::parse(&input.source, version)
-        .map_err(|e| Stop::Declined(format!("the source does not parse here as it did for the shim: {e}")))?;
+    // Admission first, on this engine's own parse: a program (or a parked
+    // state) it does not run costs no catalog load, no check, no request.
+    let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
+    if let Some(reason) = crate::admit::refusal(&root.program, version) {
+        return Err(Stop::Refused(reason));
+    }
+    if let Some(reason) = crate::admit::input_refusal(&root.program, input.spend.cap_microdollars.is_some(), &input.suspend_at) {
+        return Err(Stop::Refused(reason));
+    }
+    if let Some(resume) = &input.resume
+        && let Some(reason) = crate::park::resume_refusal(&resume.state)
+    {
+        return Err(Stop::Refused(reason));
+    }
+    let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
+    let event = env::decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
+    let now_ms = match js_date::parse(&input.now) {
+        js_date::Parsed::Valid(ms) => ms,
+        _ => return Err(Stop::Declined("instant_does_not_read".into())),
+    };
     let answer = host
         .request(host::check::program(&input.source, version, None))
         .await
         .map_err(|e| Stop::Thrown(Failure::Host(e)))?
-        .ok_or_else(|| Stop::Declined("check.program answered nothing".into()))?;
-    let checked = program::join_check(root, &answer, version).map_err(Stop::Declined)?;
-    let event = env::decode(&input.event).map_err(|e| Stop::Declined(format!("the event does not read: {e}")))?;
-    let now_ms = match js_date::parse(&input.now) {
-        js_date::Parsed::Valid(ms) => ms,
-        _ => return Err(Stop::Declined(format!("the pinned instant {:?} is not an instant", input.now))),
-    };
+        .ok_or_else(|| Stop::Declined("check_answer_malformed".into()))?;
+    let checked = program::join_check(root, &answer, version).map_err(|_| Stop::Declined("check_answer_malformed".into()))?;
     let run = Run {
         host,
         input,
@@ -255,32 +322,35 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         source_instance: RefCell::default(),
         origins: RefCell::default(),
         misses: RefCell::default(),
+        trace: FlowTrace::default(),
         movement_name: RefCell::default(),
         writes: RefCell::default(),
         targets: RefCell::default(),
         mutation_context: RefCell::new(mutation_context(&event, now_ms)),
+        limit_paused: std::cell::Cell::new(input.limit_paused),
+        pending_suspensions: RefCell::new(input.suspend_at.clone()),
+        source_reads: RefCell::default(),
+        positions: RefCell::default(),
     };
-    // Whatever this engine does not run is declined before anything the
-    // host can see happens: no trace entry, no adapter.
-    if let Some(reason) = declined_by(&run.checked.root.program) {
-        return Err(Stop::Declined(reason));
+    // What the check's stamps say this engine does not run is declined
+    // before every host-visible effect, the version warning's trace entry
+    // among them.
+    if let Some(reason) = run.stamp_decline() {
+        return Err(Stop::Declined(reason.into()));
     }
-    // Every decline precedes every host-visible effect, the version
-    // warning's trace entry among them.
-    if let Some(reason) = run.date_decline() {
-        return Err(Stop::Declined(reason));
+    // A deprecated pin runs, and says so on the run's own record (the check
+    // answer's version warning; an unsupported pin never got an answer).
+    if let Some((code, message)) = run.checked.version_warning.clone() {
+        run.trace(TraceEntry::Warning { code, message });
     }
-    // A deprecated pin runs, and says so on the run's own record (the check's
-    // version diagnostic; an unsupported one never got an answer).
-    let version_warning = run.checked.diagnostics.iter().find_map(|d| {
-        let code = d.get("code")?.as_str()?;
-        let message = d.get("message")?.as_str()?;
-        code.starts_with("MOV_LANGUAGE_VERSION_").then(|| (code.to_string(), message.to_string()))
-    });
-    if let Some((code, message)) = version_warning {
-        run.trace(TraceEntry::Warning { code, message }).await.map_err(Stop::Thrown)?;
-    }
-    run.execute().await
+    let outcome = run.execute().await;
+    // What the segment traced after its last statement's hand-over (a park,
+    // a failure, a body that never ran). The TypeScript hands it over as its
+    // segment closes, where a failure to is logged and never the run's
+    // (run_context.ts `closeRunContext`); so it is not this run's either:
+    // the shim logs it.
+    let _ = run.hand_over_trace(true).await;
+    outcome
 }
 
 impl Run<'_> {
@@ -291,6 +361,37 @@ impl Run<'_> {
     /// The segment every host request names.
     pub(crate) fn segment(&self) -> &str {
         &self.input.segment_id
+    }
+
+    /// Whether the host serves the method at `path`.
+    pub(crate) fn serves(&self, path: &str) -> bool {
+        self.input.serves.iter().any(|served| served == path)
+    }
+
+    /// The host's instant now (`clock.now`), in milliseconds.
+    pub(crate) async fn clock_now(&self) -> Result<f64, Failure> {
+        let answer = self.ask(host::clock::now(self.segment())).await?;
+        host::clock::instant_of(answer.as_ref()).ok_or_else(|| {
+            let shown = answer.map_or_else(|| "nothing".to_string(), |a| a.to_string());
+            Failure::engine("MOVENG_RUNTIME", format!("clock.now answered {shown}, which is not {{ nowIso: <an ISO 8601 instant> }}"))
+        })
+    }
+
+    /// The comparator's request for a reading `compare_values` hands back.
+    /// A `WITHIN` measures from the host's clock, asked for it alone, as the
+    /// TypeScript engine asks it at the comparison.
+    pub(crate) async fn compare_request(&self, op: FilterOperator, left: &Js, right: &Js) -> Result<host::Request, Failure> {
+        let now = match op {
+            FilterOperator::Within => Some(js_date::to_iso_string(self.clock_now().await?)),
+            _ => None,
+        };
+        Ok(self.compare_request_at(op, left, right, now.as_deref()))
+    }
+
+    /// The comparator's request, a `WITHIN`'s instant given.
+    pub(crate) fn compare_request_at(&self, op: FilterOperator, left: &Js, right: &Js, now: Option<&str>) -> host::Request {
+        let op = serde_json::to_value(op).expect("an operator is JSON");
+        host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(left), env::encode_plain(right), now)
     }
 
     /// The credential id the run was handed for `name`, if any.
@@ -321,7 +422,9 @@ impl Run<'_> {
             Some(resume) => self.resume(resume, &movement, &scope, &path).await,
         };
         let (cancelled, parked) = match ran {
-            Ok(()) => (false, None),
+            // Find-on-missing at the top scope: the body simply stops, its
+            // earlier writes stand, and the run completes.
+            Ok(()) | Err(Stop::EndedQuietly) => (false, None),
             Err(Stop::Cancelled) => (true, None),
             Err(Stop::Parked(address)) => (false, Some(address)),
             Err(Stop::Thrown(failure)) => return Err(Stop::Failed(failure, self.result(false, None))),
@@ -380,7 +483,7 @@ impl Run<'_> {
                 )));
             }
             Some(ParamTypeRef::Name(type_ref)) => type_ref,
-            Some(ParamTypeRef::Value(_)) => unreachable!("declined_by refuses a value-typed parameter"),
+            Some(ParamTypeRef::Value(_)) => unreachable!("admission refuses a value-typed parameter"),
         };
         let Some(Binding::Instance(source_instance)) = file.resolve(&type_ref.graph) else {
             return Err(Stop::Thrown(Failure::unsupported(
@@ -410,13 +513,18 @@ impl Run<'_> {
         Ok((movement, index, movement_scope))
     }
 
-    /// `prepareMovement`'s picks — the movement, its event parameter and the
-    /// source instance it is typed against — made with no effect, so that a
-    /// field the program reads off the event that the source's schema types
-    /// as a date declines the run before anything the host can see. The
-    /// adapter may answer such a field as a `Date`, which no value of this
-    /// engine is. Anything `prepare` would fail on is left for it to fail.
-    fn date_decline(&self) -> Option<String> {
+    /// What the checker's stamps on the dispatched movement say this engine
+    /// does not run, found with no effect:
+    ///
+    /// - `graph_copy_walks_edges`: a graph's record spread whose copy plan
+    ///   walks the record's edges (node.rs copies fields);
+    /// - `event_field_dated`: a field the program reads off the event — by
+    ///   name, or as a `...msg` spread's stamp names it — that the source's
+    ///   schema types as a date. The adapter may answer it as a `Date`, which
+    ///   no value of this engine is. `prepareMovement`'s picks (the
+    ///   movement, its event parameter, the source instance) are made here
+    ///   with no effect; anything `prepare` would fail on is left for it.
+    fn stamp_decline(&self) -> Option<&'static str> {
         let statements = &self.checked.root.program.statements;
         let movements: Vec<&MovementDeclaration> = statements
             .iter()
@@ -427,6 +535,14 @@ impl Run<'_> {
             .collect();
         let movement: &MovementDeclaration = self.select_movement(&movements).ok()?;
         let index = statements.iter().position(|s| matches!(s, Statement::Movement(m) if std::ptr::eq(m, movement)))?;
+        let prefix = format!("/statements/{index}/");
+        let walks_edges = self.checked.root.stamps.iter().any(|(path, stamp)| {
+            path.starts_with(&prefix)
+                && matches!(stamp, Stamp::Copy(plan) if plan.get("edges").and_then(Json::as_object).is_some_and(|edges| !edges.is_empty()))
+        });
+        if walks_edges {
+            return Some("graph_copy_walks_edges");
+        }
         let [param] = movement.params.as_slice() else { return None };
         let Some(ParamTypeRef::Name(type_ref)) = &param.type_ else { return None };
         let file = Scope::root();
@@ -446,7 +562,6 @@ impl Run<'_> {
         let text = serde_json::to_string(&movement.body).unwrap_or_default();
         event_fields_read(&text, &param.name, &mut |field| read.push(field.to_string()));
         // `...msg` in a write: the lines the checker's stamp says it writes.
-        let prefix = format!("/statements/{index}/");
         for (path, stamp) in &self.checked.root.stamps {
             if let Stamp::SpreadFields(fields) = stamp
                 && path.starts_with(&prefix)
@@ -455,9 +570,7 @@ impl Run<'_> {
                 read.extend(fields.iter().cloned());
             }
         }
-        read.into_iter()
-            .find(|field| dated(field))
-            .map(|field| format!("the event's `{field}` is a date, which an adapter may answer as a Date"))
+        read.iter().any(|field| dated(field)).then_some("event_field_dated")
     }
 
     fn select_movement<'m>(&self, movements: &[&'m MovementDeclaration]) -> Result<&'m MovementDeclaration, Stop> {
@@ -487,7 +600,7 @@ impl Run<'_> {
     }
 
     /// `interpretFileStatement`, for what this engine runs at file scope
-    /// (`declined_by` refused the rest).
+    /// (admission refused the rest).
     fn file_statement(&self, statement: &Statement, file: &Scope) {
         match statement {
             Statement::Import(import) => {
@@ -579,12 +692,15 @@ impl Run<'_> {
         };
         let address = event_seed_address(schema, &self.event, root_surface_type.as_deref());
         let position = seed_event_position(&self.event, &instance.adapter_slug, root_surface_type, address.as_ref())?;
+        let surface = restamp(&position, position.record_type.clone().or_else(|| type_ref.position.clone()), &adapter_type).to_js();
+        let read = Rc::new(crate::traverse::Read::of_resolved(&resolved, handle.clone(), instance, type_ref.position.clone()));
         *self.source.borrow_mut() = Some(Rc::new(Source {
             instance: handle,
             adapter_type,
             instance_name: instance.name.clone(),
-            start_surface_type: type_ref.position.clone(),
             position,
+            surface,
+            read,
         }));
         Ok(())
     }
@@ -631,7 +747,19 @@ impl Run<'_> {
                 if self.ask_bool(host::control::cancelled(self.segment())).await.map_err(Stop::Thrown)? {
                     return Err(Stop::Cancelled);
                 }
-                if let Flow::Returned = self.statement(statement, scope, &at, &format!("{path}/{index}")).await? {
+                // A paused run (its cap met here or before this segment)
+                // stops each flow between statements; so does a `suspendAt`
+                // address.
+                self.suspend_before(&at, scope).await?;
+                let flow = match self.statement(statement, scope, &at, &format!("{path}/{index}")).await {
+                    // The host refuses a priced call once the run has spent
+                    // its cap: this statement was about to spend, so the run
+                    // suspends just before it.
+                    Err(Stop::Thrown(Failure::CapExceeded(cap))) => return Err(self.suspend_at_limit(cap, &at, scope).await),
+                    other => other?,
+                };
+                self.publish_trace().await.map_err(Stop::Thrown)?;
+                if let Flow::Returned = flow {
                     return Ok(Flow::Returned);
                 }
             }
@@ -645,6 +773,13 @@ impl Run<'_> {
                 match &assign.value {
                     RValue::Write { write } => {
                         self.write(write, Some(&assign.name), scope, &format!("{path}/value/write")).await?;
+                    }
+                    RValue::Match { r#match } => {
+                        self.match_record(r#match, Some(&assign.name), scope).await?;
+                    }
+                    RValue::Link { link } => self.link(link, Some(&assign.name), scope).await?,
+                    RValue::Block { block } => {
+                        self.block(block, Some(&assign.name), scope, at, &format!("{path}/value")).await?;
                     }
                     RValue::Node { node } => {
                         let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
@@ -678,6 +813,22 @@ impl Run<'_> {
                 self.write(&statement.write, None, scope, &format!("{path}/write")).await?;
                 Ok(Flow::FellThrough)
             }
+            Statement::Match(statement) => {
+                self.match_record(&statement.r#match, None, scope).await?;
+                Ok(Flow::FellThrough)
+            }
+            Statement::Link(statement) => {
+                self.link(&statement.link, None, scope).await?;
+                Ok(Flow::FellThrough)
+            }
+            Statement::Unlink(statement) => {
+                self.unlink(statement, scope).await?;
+                Ok(Flow::FellThrough)
+            }
+            Statement::Delete(statement) => {
+                self.delete(&statement.name, scope).await?;
+                Ok(Flow::FellThrough)
+            }
             Statement::Await(statement) => match &statement.r#await.source {
                 AwaitSource::Sleep { duration, .. } => {
                     self.sleep(duration, at, scope, None).await?;
@@ -690,24 +841,41 @@ impl Run<'_> {
             Statement::Return(ret) => {
                 let expr = self.value_slot(&ret.value, scope)?;
                 let bound = self.bind_slot(expr, scope).await?;
-                scope.declare("#return", Binding::Value(bound));
+                scope.declare(RETURN_SLOT, Binding::Value(bound));
                 Ok(Flow::Returned)
             }
+            Statement::Block(statement) => self.block(&statement.block, None, scope, at, path).await,
             Statement::If(statement) => {
                 for (index, arm) in statement.arms.iter().enumerate() {
                     let taken = self.condition(&arm.condition, scope).await?;
-                    self.trace(TraceEntry::Gate { outcome: taken }).await.map_err(Stop::Thrown)?;
+                    self.trace(TraceEntry::Gate { outcome: taken });
                     if taken {
-                        return self.body(&arm.body, &scope.child(), &at.branch(index), &format!("{path}/arms/{index}/body"), 0).await;
+                        return self.arm(&arm.body, scope, &at.branch(index), &format!("{path}/arms/{index}/body")).await;
                     }
                 }
                 match &statement.else_arm {
-                    Some(arm) => self.body(&arm.body, &scope.child(), &at.branch(statement.arms.len()), &format!("{path}/elseArm/body"), 0).await,
+                    Some(arm) => self.arm(&arm.body, scope, &at.branch(statement.arms.len()), &format!("{path}/elseArm/body")).await,
                     None => Ok(Flow::FellThrough),
                 }
             }
-            _ => Err(Stop::Thrown(Failure::unsupported("this statement", "the Rust engine runs bindings, writes, `if`, `sleep` and `return`"))),
+            _ => Err(Stop::Thrown(Failure::unsupported(
+                "this statement",
+                "the Rust engine runs bindings, writes, matches, links, unlinks, deletes, blocks, `if`, `sleep` and `return`",
+            ))),
         }
+    }
+
+    /// An `if` arm, in a scope of its own; a `return` in it returns from the
+    /// body the `if` is in, its value landing in that body's scope too.
+    async fn arm(&self, body: &[Statement], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
+        let inner = scope.child();
+        let flow = self.body(body, &inner, at, path, 0).await?;
+        if let Flow::Returned = flow
+            && let Some(value) = inner.resolve_own(RETURN_SLOT)
+        {
+            scope.declare(RETURN_SLOT, value);
+        }
+        Ok(flow)
     }
 
     /// The expression a right-hand side reads as: itself, or a bound call
@@ -768,56 +936,56 @@ impl Run<'_> {
         })
     }
 
-    /// One expression, evaluated until it needs nothing more of the host:
-    /// each ask answered in order, the evaluation replayed with the answers
-    /// so far.
+    /// One expression, evaluated as one walk: each read it makes of the host
+    /// is awaited where it is made, and the walk resumes there.
     pub(crate) async fn evaluate(&self, expr: &Expression, scope: &Rc<Scope>, slot: &ExprSlot) -> Result<Evaluated, Stop> {
-        let replay = Replay::default();
+        // Each literal the evaluation reads is an origin in the program text:
+        // the slot's span.
+        let span = env::js_of_json(&serde_json::to_value(slot.span).expect("a span is JSON"));
+        self.evaluate_in(expr, scope, Some(span), None).await
+    }
+
+    /// One walk, its literals' origins at `span`; scoped at `landed` (a
+    /// hop's WHERE or ORDER BY key) when given.
+    pub(crate) async fn evaluate_in(
+        &self,
+        expr: &Expression,
+        scope: &Rc<Scope>,
+        span: Option<Js>,
+        landed: Option<Rc<crate::bindings::Landed>>,
+    ) -> Result<Evaluated, Stop> {
         let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
-        loop {
-            replay.cursor.set(0);
-            let first_literal = self.origins.borrow().len() as u32;
-            let evaluator = Evaluator::new(scope.as_ref(), self.version(), around, first_literal).with_reader(&replay);
-            match evaluator.eval(expr) {
-                Ok(evaluated) => {
-                    // Each literal the evaluation read is an origin in the
-                    // program text: the slot's span.
-                    let span = serde_json::to_value(slot.span).expect("a span is JSON");
-                    let mut origins = self.origins.borrow_mut();
-                    for _ in first_literal..evaluator.next_literal() {
-                        origins.push(env::object_of(vec![("kind", Js::str("literal")), ("span", env::js_of_json(&span))]));
-                    }
-                    return Ok(evaluated);
-                }
-                Err(EvalError::Suspend) => {
-                    let ask = replay.pending.borrow_mut().take().expect("a suspended evaluation asked");
-                    let answer = self.answer(ask, scope).await.map_err(Stop::Thrown)?;
-                    replay.answers.borrow_mut().push(answer);
-                }
-                Err(EvalError::Thrown { class, message }) => return Err(Stop::Thrown(Failure::Engine { class, message })),
-                Err(EvalError::Fallback(reason)) => {
-                    return Err(Stop::Thrown(Failure::unsupported(
-                        &format!("this reading ({reason})"),
-                        "the Rust engine does not reproduce it; run this movement on the TypeScript engine",
-                    )));
-                }
-            }
-        }
+        let scoped = landed.is_some();
+        let reader = Reading { run: self, scope, span, landed };
+        let evaluator = if scoped {
+            Evaluator::scoped_in_run(scope.as_ref(), self.version(), around, &reader)
+        } else {
+            Evaluator::in_run(scope.as_ref(), self.version(), around, &reader)
+        };
+        evaluator.eval(expr).await.map_err(|error| {
+            Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
+        })
     }
 
     /// What an evaluation asked, answered by the host.
-    async fn answer(&self, ask: Ask, scope: &Scope) -> Result<Result<Evaluated, EvalError>, Failure> {
+    async fn answer(&self, ask: Ask, scope: &Scope, landed: Option<&crate::bindings::Landed>) -> Result<Result<Evaluated, EvalError>, Failure> {
         match ask {
             Ask::EventField { field } => self.event_field(&field).await.map(Ok),
-            Ask::RecordField { root, field } => Ok(self.record_field(&root, &field, scope)),
+            Ask::RecordField { root, field } => match scope.resolve(&root) {
+                Some(Binding::Landed(record)) => self.landed_field(&record, &field).await.map(Ok),
+                _ => Ok(self.record_field(&root, &field, scope)),
+            },
+            Ask::ScopedField { field, edge } => {
+                let landed = landed.expect("a scoped read is asked only of a scoped evaluation");
+                self.scoped_field(landed, &field, edge, scope).await.map(Ok)
+            }
             Ask::Function { id, args } => {
                 let args = args.iter().map(env::encode_plain).collect();
                 let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
                 self.builtin(request).await
             }
             Ask::Compare { op, left, right } => {
-                let op = serde_json::to_value(op).expect("an operator is JSON");
-                let request = host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(&left), env::encode_plain(&right));
+                let request = self.compare_request(op, &left, &right).await?;
                 self.builtin(request).await
             }
         }
@@ -850,13 +1018,9 @@ impl Run<'_> {
     async fn event_field(&self, field: &str) -> Result<Evaluated, Failure> {
         let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
         let seed = &source.position;
-        let position = restamp(seed, seed.record_type.clone().or_else(|| source.start_surface_type.clone()), &source.adapter_type);
-        let mut read = JsObject::new();
-        read.set("position".into(), position.to_js());
-        read.set("fieldId".into(), Js::str(field));
-        let value = self.call_adapter(&source.instance, "getFieldValue", Js::object(read)).await?;
+        let value = self.call_adapter_at(&source.instance, "getFieldValue", &source.surface, vec![("fieldId", Js::str(field))]).await?;
         if value.is_nullish() && !seed.is_stable() {
-            self.trace_miss(&source, field).await?;
+            self.trace_miss_in(&source.instance_name, &seed.data, field);
         }
         // In the TypeScript's key order (`readSourcePositionField`).
         let mut entries = vec![
@@ -896,52 +1060,71 @@ impl Run<'_> {
             return Ok(());
         }
         let address = at.encode();
-        let state = crate::park::parked_state(self, &address, presence, scope);
+        if !self.serves("park.sink.commitTimerPark") {
+            return Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("sleep reached at '{address}' with no park sink — the run cannot suspend on a timer without the durable trigger-run substrate"),
+            )));
+        }
+        let state = crate::park::parked_state(self, &address, presence, scope).map_err(Stop::Thrown)?;
+        // When to wake: the host's clock plus the sleep, its clock asked
+        // before the duration is read, as the TypeScript engine asks it.
+        let now = self.clock_now().await.map_err(Stop::Thrown)?;
         let ms = crate::park::duration_ms(&duration.raw).ok_or_else(|| {
             Stop::Thrown(Failure::Engine {
                 class: ErrorClass::Error,
                 message: format!("invalid duration literal '{}' — use unit-suffixed literals like 4h, 2d, 90m, 1h30m", duration.raw),
             })
         })?;
-        // When to wake, by the engine's own wall clock, as the TypeScript
-        // reads `Date.now()` (an environment service, not a host call).
-        let wake_at = js_date::to_iso_string(env_services::current().now_ms() + ms);
+        let wake_at = js_date::to_iso_string(now + ms);
         let request = host::park::commit_timer_park(self.segment(), &address, env::encode_plain(&state), &wake_at);
-        let answer = self.ask(request).await.map_err(Stop::Thrown)?;
-        if answer.as_ref().and_then(|a| a.get("noSink")).is_some() {
-            return Err(Stop::Thrown(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("sleep reached at '{address}' with no park sink — the run cannot suspend on a timer without the durable trigger-run substrate"),
-            )));
-        }
-        self.trace(TraceEntry::Gate { outcome: false }).await.map_err(Stop::Thrown)?;
+        self.ask(request).await.map_err(Stop::Thrown)?;
+        self.trace(TraceEntry::Gate { outcome: false });
         Err(Stop::Parked(address))
     }
 
-    async fn trace_miss(&self, source: &Source, field: &str) -> Result<(), Failure> {
-        let data = &source.position.data;
+    /// A `field_miss` for `field` read null off a raw payload `data` that
+    /// does not carry it, once per instance and field.
+    pub(crate) fn trace_miss_in(&self, instance_name: &str, data: &Js, field: &str) {
         let keys: Vec<String> = match data {
             Js::Object(object) => object.entries().iter().map(|(k, _)| k.clone()).collect(),
             Js::Array(list) => (0..list.items.len()).map(|i| i.to_string()).collect(),
-            _ => return Ok(()),
+            _ => return,
         };
         // `field in data`: own keys, and the prototype's.
         let carried = keys.iter().any(|k| k == field)
             || stdlib::is_object_prototype_name(field)
             || (matches!(data, Js::Array(_)) && (field == "length" || ARRAY_PROTOTYPE_NAMES.contains(&field)));
-        let seen = self.misses.borrow().iter().any(|(b, f)| *b == source.instance_name && f == field);
+        let seen = self.misses.borrow().iter().any(|(b, f)| b == instance_name && f == field);
         if carried || seen {
-            return Ok(());
+            return;
         }
-        self.misses.borrow_mut().push((source.instance_name.clone(), field.to_string()));
+        self.misses.borrow_mut().push((instance_name.to_string(), field.to_string()));
         let available = keys.into_iter().take(30).collect();
-        self.trace(TraceEntry::FieldMiss { binding: source.instance_name.clone(), field: field.to_string(), available }).await
+        self.trace(TraceEntry::FieldMiss { binding: instance_name.to_string(), field: field.to_string(), available });
     }
 
     // ── Host calls ──
 
-    async fn trace(&self, entry: TraceEntry) -> Result<(), Failure> {
-        self.ask(host::trace::append(self.segment(), &[entry])).await.map(|_| ())
+    /// An entry on the run's trace, handed to the host when its statement ends.
+    pub(crate) fn trace(&self, entry: TraceEntry) {
+        self.trace.push(entry);
+    }
+
+    /// The run's flow's buffered entries, in one `trace.append`; nothing
+    /// asked when there are none.
+    async fn publish_trace(&self) -> Result<(), Failure> {
+        self.hand_over_trace(false).await
+    }
+
+    /// `closing`: the hand-over as the segment ends, whose failure is the
+    /// shim's to log and never the run's.
+    async fn hand_over_trace(&self, closing: bool) -> Result<(), Failure> {
+        let entries = self.trace.take();
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.ask(host::trace::append(self.segment(), &entries, closing)).await.map(|_| ())
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
@@ -953,42 +1136,6 @@ impl Run<'_> {
     }
 }
 
-/// Why this engine does not run `program`, when it does not: a file-level
-/// statement it does not interpret, a construction that is a call, or a
-/// movement taking a value. The shim's `rustCanRun` admits none such; this
-/// is the engine's own guard, answered before the run does anything.
-fn declined_by(program: &ast::Program) -> Option<String> {
-    let movements: Vec<&str> = program
-        .statements
-        .iter()
-        .filter_map(|s| match s {
-            Statement::Movement(m) => Some(m.name.as_str()),
-            _ => None,
-        })
-        .collect();
-    for statement in &program.statements {
-        match statement {
-            Statement::Import(import) => match &import.source {
-                ast::ImportSource::Builtin { namespace } if namespace == "adapters" || namespace == "credentials" => {}
-                _ => return Some("an import from plugins or a file".into()),
-            },
-            Statement::Assign(assign) => match &assign.value {
-                RValue::Construct { construct } if !movements.contains(&construct.callee.as_str()) => {}
-                RValue::Construct { .. } => return Some("a file-level call".into()),
-                _ => return Some("a file-level assignment that is not a construction".into()),
-            },
-            Statement::Listen(_) => {}
-            Statement::Movement(m) => {
-                if m.params.iter().any(|p| matches!(p.type_, Some(ParamTypeRef::Value(_)))) {
-                    return Some("a movement taking a value".into());
-                }
-            }
-            _ => return Some("a file-level statement this engine does not run".into()),
-        }
-    }
-    None
-}
-
 /// `Array.prototype`'s own names, which `in` finds on any list.
 const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
     "at", "concat", "copyWithin", "entries", "every", "fill", "filter", "find", "findIndex", "findLast", "findLastIndex",
@@ -997,23 +1144,27 @@ const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
     "toSpliced", "unshift", "values", "with", "toString",
 ];
 
-/// The answers an evaluation's asks have had, handed out in the order asked.
-#[derive(Default)]
-struct Replay {
-    answers: RefCell<Vec<Result<Evaluated, EvalError>>>,
-    cursor: Cell<usize>,
-    pending: RefCell<Option<Ask>>,
+/// One evaluation's reads, answered by its run in the scope it reads.
+struct Reading<'r, 'h> {
+    run: &'r Run<'h>,
+    scope: &'r Scope,
+    /// Where the evaluation's literals are written (`literalSpan`).
+    span: Option<Js>,
+    /// The landed record a position-scoped evaluation reads.
+    landed: Option<Rc<crate::bindings::Landed>>,
 }
 
-impl Reader for Replay {
-    fn ask(&self, ask: Ask) -> Result<Evaluated, EvalError> {
-        let at = self.cursor.get();
-        if let Some(answer) = self.answers.borrow().get(at) {
-            self.cursor.set(at + 1);
-            return answer.clone();
+impl Reader for Reading<'_, '_> {
+    fn ask(&self, ask: Ask) -> Evaluating<'_> {
+        Box::pin(async move { self.run.answer(ask, self.scope, self.landed.as_deref()).await.map_err(Failure::into_eval)? })
+    }
+
+    fn literal(&self) -> u32 {
+        let mut origin = vec![("kind", Js::str("literal"))];
+        if let Some(span) = &self.span {
+            origin.push(("span", span.clone()));
         }
-        *self.pending.borrow_mut() = Some(ask);
-        Err(EvalError::Suspend)
+        self.run.mint_origin(env::object_of(origin))
     }
 }
 
@@ -1102,7 +1253,7 @@ fn mutation_context(event: &Js, now_ms: f64) -> Js {
 
 /// `ProvenanceSummariser.summariseOrigin` for the origins this engine meets:
 /// an earlier write by its index, `AI()` by its prompt, the rest as they are.
-fn summarise(origin: &Js) -> Js {
+pub(crate) fn summarise(origin: &Js) -> Js {
     let get = |key: &str| crate::unique::get(origin, key);
     match get("kind") {
         Js::String(kind) if kind == "write" => {
@@ -1292,8 +1443,13 @@ mod tests {
     /// A segment driven to its end, each request answered by `serve`; the
     /// requests in the order they came.
     fn drive(source: &str, payload: Json, serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
+        drive_serving(source, payload, &[], serve)
+    }
+
+    /// `drive`, for a host that serves the optional methods `serves`.
+    fn drive_serving(source: &str, payload: Json, serves: &[&str], serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": serves,
             "now": "2026-03-12T12:00:00.000Z",
             "event": env::encode_plain(&env::decode(&json!(["o", 0, [
                 ["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload],
@@ -1337,6 +1493,53 @@ mod tests {
         }
     }
 
+    const SLEEPS: &str = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
+
+    /// The engine reads no clock: a sleep asks the host's `clock.now` and
+    /// wakes at its answer plus the sleep.
+    #[test]
+    fn a_sleep_wakes_at_the_host_clocks_answer_plus_the_sleep() {
+        let host = plain_host(json!({}));
+        let (done, seen) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+            match (request.family, request.method.as_str()) {
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                ("park.sink", "commitTimerPark") => json!({}),
+                _ => host(request),
+            }
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let calls: Vec<String> = seen.iter().map(|r| format!("{}.{}", r.family, r.method)).collect();
+        let clock = calls.iter().position(|c| c == "clock.now").expect("the clock was asked");
+        assert_eq!(calls[clock + 1], "park.sink.commitTimerPark");
+        assert_eq!(seen[clock].args, json!({ "segmentId": "g1" }));
+        assert_eq!(seen[clock + 1].args["wakeAt"], json!("2026-10-07T13:00:00.000Z"));
+    }
+
+    /// A clock answer that names no instant fails the run, as the TypeScript
+    /// engine's read of it does.
+    #[test]
+    fn a_clock_answer_naming_no_instant_fails_the_run() {
+        let host = plain_host(json!({}));
+        let (done, _) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+            match (request.family, request.method.as_str()) {
+                ("clock", "now") => json!({ "value": { "now": "2026-10-07T12:00:00.000Z" } }),
+                _ => host(request),
+            }
+        });
+        let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
+        assert!(message.contains("clock.now answered") && message.contains("nowIso"), "{done}");
+    }
+
+    /// A host that serves no timer park is asked neither its clock nor a
+    /// park: the sleep fails the run first, as the TypeScript engine's does.
+    #[test]
+    fn a_sleep_on_a_host_with_no_timer_park_asks_nothing_and_fails() {
+        let (done, seen) = drive(SLEEPS, json!(["o", 1, []]), plain_host(json!({})));
+        assert!(!seen.iter().any(|r| r.family == "clock" || r.family == "park.sink"));
+        let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
+        assert!(message.contains("with no park sink"), "{done}");
+    }
+
     #[test]
     fn a_run_reads_binds_and_branches_through_its_host() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n  if s == \"Hi\" {\n    t = \"${s}!\"\n    return t\n  }\n  u = msg.`text`\n}";
@@ -1348,17 +1551,63 @@ mod tests {
             calls,
             [
                 "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.call", "control.cancel.cancelled",
-                "trace.append", "control.cancel.cancelled", "control.cancel.cancelled", "control.cancel.cancelledNow",
+                "control.cancel.cancelled", "trace.append", "control.cancel.cancelled", "control.cancel.cancelledNow",
             ]
         );
-        assert_eq!(seen[5].args, json!({ "entries": [{ "kind": "gate", "outcome": true }], "segmentId": "g1" }));
+        // The `if`'s gate is handed over after the arm's first statement, as
+        // the TypeScript publishes after every statement at any depth.
+        assert_eq!(seen[6].args, json!({ "entries": [{ "kind": "gate", "outcome": true }], "segmentId": "g1" }));
         // Every request the host serves names the segment.
         assert!(seen.iter().filter(|r| r.family != "check").all(|r| r.args["segmentId"] == json!("g1")));
         // The source adapter reads the payload under the parameter's
         // declared position.
-        let read = env::decode(&seen[3].args["args"]).unwrap();
-        let Js::Object(read) = read else { panic!("a read") };
-        let Some(Js::Object(position)) = read.get("position") else { panic!("a position") };
+        let Js::Object(position) = env::decode(&seen[3].args["position"]).unwrap() else { panic!("a position") };
+        assert!(matches!(position.get("recordType"), Some(Js::String(t)) if t == "message"));
+    }
+
+    /// The event's position crosses once, registered by handle on its first
+    /// read; every later read names the handle, and carries only the rest of
+    /// its arguments.
+    #[test]
+    fn a_position_crosses_once_and_is_named_by_handle_after() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = \"${msg.`subject`} ${msg.`text`}\"\n}";
+        let payload = json!({ "subject": "Hi", "text": "there" });
+        let (_, seen) = drive(source, json!(["o", 1, [["subject", "Hi"], ["text", "there"]]]), plain_host(payload));
+        let reads: Vec<&PendingRequest> = seen.iter().filter(|r| r.args.get("method") == Some(&json!("getFieldValue"))).collect();
+        assert_eq!(reads.len(), 2);
+        assert_eq!((reads[0].args["positionRef"].clone(), reads[1].args["positionRef"].clone()), (json!(0), json!(0)));
+        assert!(reads[0].args.get("position").is_some());
+        assert!(reads[1].args.get("position").is_none(), "a handle already registered is not re-sent");
+        let Js::Object(read) = env::decode(&reads[1].args["args"]).unwrap() else { panic!("a read") };
+        assert_eq!(read.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["fieldId"]);
+    }
+
+    /// A streamed landing is not restamped as it lands; the stamp a field
+    /// read gives it is made once, so the record crosses once however many of
+    /// its fields are read.
+    #[test]
+    fn a_streamed_landing_crosses_once_however_many_fields_are_read() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  msg-[a:attachments]-> {\n    s = \"${a.`name`} ${a.`subject`}\"\n  }\n}";
+        let landing = json!(["o", 1, [["adapterType", "email"], ["recordType", null], ["identity", ["o", 2, [["kind", "unstable"], ["data", ["o", 3, [["name", "a"]]]]]]]]]);
+        let (done, seen) = drive(source, json!(["o", 1, []]), move |request| match (request.family, request.method.as_str()) {
+            ("check", "program") => json!({ "value": { "diagnostics": [], "stamps": [] } }),
+            ("adapters", "resolve") => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["iterateRelated"] } }),
+            ("control.cancel", _) => json!({ "value": false }),
+            ("trace", "append") => json!({}),
+            ("adapters", "call") if request.args["method"] == json!("iterateRelatedPage") => {
+                json!({ "value": { "result": ["o", 0, [["items", ["l", 4, [["o", 5, [["position", landing.clone()]]]]]]]] } })
+            }
+            ("adapters", "call") => json!({ "value": { "result": "x" } }),
+            other => panic!("unexpected {other:?}"),
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let reads: Vec<&PendingRequest> = seen.iter().filter(|r| r.args.get("method") == Some(&json!("getFieldValue"))).collect();
+        assert_eq!(reads.len(), 2);
+        assert_eq!(reads[0].args["positionRef"], reads[1].args["positionRef"]);
+        assert!(reads[0].args.get("position").is_some());
+        assert!(reads[1].args.get("position").is_none(), "the landing's stamp is registered once");
+        // Stamped with the parameter's declared type, its inline data kept.
+        let Js::Object(position) = env::decode(&reads[0].args["position"]).unwrap() else { panic!("a position") };
         assert!(matches!(position.get("recordType"), Some(Js::String(t)) if t == "message"));
     }
 
@@ -1378,8 +1627,104 @@ mod tests {
     fn what_it_does_not_run_is_declined_before_anything_happens() {
         let source = "import { email } from adapters\ninbox = email()\ntype T = <\"a\">\nmovement m(msg: <inbox-[:message]->>) {\n  s = 1\n}";
         let (done, seen) = drive(source, json!(["o", 1, []]), plain_host(json!({})));
-        assert_eq!(done, json!({ "declined": "a file-level statement this engine does not run" }));
-        assert_eq!(seen.len(), 1);
+        // Refused on this engine's own parse: not even the check is asked.
+        assert_eq!(done, json!({ "refused": "file_statement:type" }));
+        assert!(seen.is_empty());
+    }
+
+    /// A plain JSON value on the eval wire.
+    fn wire(value: Json) -> Json {
+        env::encode_plain(&env::js_of_json(&value))
+    }
+
+    #[test]
+    fn a_parked_state_it_does_not_resume_is_refused_before_anything_happens() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
+        let scope = |binding: Json| json!([{ "bindings": { "x": binding } }]);
+        for (state, reason) in [
+            (json!({ "version": 1, "address": "s0", "journal": [{ "index": 0, "value": null, "next": 1 }] }), "resume_state_journal"),
+            (json!({ "version": 1, "address": "s0", "frames": [] }), "resume_state_frames"),
+            (json!({ "version": 1, "address": "s0", "suspended": false }), "resume_state_suspended"),
+            (json!({ "version": 1, "address": "s0", "until": {} }), "resume_state_until"),
+            (json!({ "version": 2, "address": "s0" }), "resume_state_version"),
+            (json!({ "version": 1, "address": "s1.i0.s0" }), "resume_state_address"),
+            (json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "extraction" })) }), "resume_state_kind:extraction"),
+            (
+                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "value", "value": 1, "provenance": { "origins": [{ "kind": "extraction" }] } })) }),
+                "resume_state_extraction_origin",
+            ),
+            (
+                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "value", "value": [{ "kind": "handle" }] })) }),
+                "resume_state_value_holds_record",
+            ),
+            (
+                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "nodePosition", "fields": {}, "fieldProvenance": {}, "edges": { "e": { "kind": "deferred" } } })) }),
+                "resume_state_deferred_edge",
+            ),
+            (
+                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "positions", "landings": [{ "kind": "handle" }] })) }),
+                "resume_state_returned_records",
+            ),
+        ] {
+            let input = json!({
+                "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
+                "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({})), "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
+                "resume": { "state": wire(state) },
+            });
+            let mut segment = crate::begin(&input.to_string()).unwrap();
+            match segment.start().unwrap() {
+                Step::Done(done) => assert_eq!(done, json!({ "refused": reason })),
+                Step::Pending(pending) => panic!("{reason}: asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
+            }
+        }
+        let resumable = json!({
+            "version": 1, "address": "s2.b0.s0", "bindingName": null,
+            "scopeChain": [{ "bindings": {
+                "none": { "kind": "positions", "landings": [] },
+                "v": { "kind": "value", "value": { "a": 1 }, "provenance": { "origins": [{ "kind": "literal" }] } },
+                "e": { "kind": "event" },
+                "g": { "kind": "nodePosition", "fields": {}, "fieldProvenance": {}, "edges": { "owner": { "kind": "landed", "landings": [{ "kind": "nodeRef", "id": 0 }] } } },
+            } }],
+        });
+        assert_eq!(crate::park::resume_refusal(&wire(resumable.clone())), None);
+        // A suspension's state, whose journal is empty: this engine runs no calls.
+        let mut suspended = resumable;
+        suspended["suspended"] = json!(true);
+        suspended["journal"] = json!([]);
+        assert_eq!(crate::park::resume_refusal(&wire(suspended)), None);
+    }
+
+    #[test]
+    fn a_malformed_state_of_a_known_kind_fails_the_resume_loudly() {
+        // Its kinds are all this engine's, so admission lets it by; the
+        // handle carries no record, so rehydrating it fails the run rather
+        // than resume it wrong.
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
+        let state = json!({ "version": 1, "address": "s0", "bindingName": null, "scopeChain": [
+            { "bindings": {} },
+            { "bindings": { "co": { "kind": "handle", "targetType": "company" } } },
+        ] });
+        assert_eq!(crate::park::resume_refusal(&wire(state.clone())), None);
+        let input = json!({
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
+            "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({ "adapterType": "email", "triggerType": "webhook", "payload": {} })),
+            "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(), "resume": { "state": wire(state) },
+        });
+        let host = plain_host(json!({}));
+        let mut segment = crate::begin(&input.to_string()).unwrap();
+        let mut step = segment.start().unwrap();
+        let done = loop {
+            match step {
+                Step::Done(done) => break done,
+                Step::Pending(pending) => {
+                    let request = pending.into_iter().next().expect("one request at a time");
+                    let answer = crate::read_answer(&host(&request).to_string()).unwrap();
+                    step = segment.answer(request.id, answer).unwrap();
+                }
+            }
+        };
+        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_RUNTIME"), "{done}");
+        assert_eq!(done["failed"]["error"]["message"], json!("a handle descriptor without its record"));
     }
 
     #[test]
@@ -1396,7 +1741,7 @@ mod tests {
         });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (`name`)\n    name: msg.`subject`\n  }\n}";
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
             "catalog": catalog,
@@ -1447,6 +1792,69 @@ mod tests {
         assert_eq!(record["provenance"]["name"][0]["kind"], json!("source_field"));
     }
 
+    /// A host whose sink keeps pauses (`commitLimitPause`) but cannot suspend
+    /// (it serves no `commitSuspension`) is not paused at all (run.ts
+    /// `canSuspend`): the run fails on its cap, asking its sink nothing.
+    #[test]
+    fn a_sink_that_keeps_pauses_but_cannot_suspend_fails_the_run_on_its_cap() {
+        let schema = |position: &str, collections: Json, roots: Json| {
+            json!({ "constructionArgs": [], "schemas": { "": {
+                "positions": { position: { "properties": { "subject": "text", "name": "text" }, "edges": {} } },
+                "collections": collections, "writableRoots": roots,
+            } } })
+        };
+        let catalog = json!({
+            "adapters": {
+                "email": schema("message", json!({}), json!({})),
+                "attio": schema("company", json!({ "companies": { "target": "company" } }), json!({
+                    "company": { "fields": { "name": "text" }, "resultShape": { "externalId": "text", "name": "text" }, "fuzzyResolution": true },
+                })),
+            },
+            "credentials": {}, "plugins": {},
+        });
+        let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (FUZZY `name`)\n    name: msg.`subject`\n  }\n}";
+        let input = json!({
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": ["park.sink.commitLimitPause"],
+            "now": "2026-03-12T12:00:00.000Z",
+            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
+            "catalog": catalog,
+            "spend": { "priorMicrodollars": 1200, "capBaselineMicrodollars": 0, "capMicrodollars": 1000 },
+        });
+        let mut segment = crate::begin(&input.to_string()).unwrap();
+        let mut seen = Vec::new();
+        let mut step = segment.start().unwrap();
+        let candidate = |id: &str, name: &str| json!(["o", 0, [["adapterType", "attio"], ["externalId", id], ["data", ["o", 1, [["name", name]]]]]]);
+        let done = loop {
+            match step {
+                Step::Done(done) => break done,
+                Step::Pending(pending) => {
+                    let request = pending.into_iter().next().expect("one request at a time");
+                    let method = request.args.get("method").and_then(Json::as_str).unwrap_or("").to_string();
+                    let answer = match (request.family, request.method.as_str()) {
+                        ("check", _) => json!({ "value": { "diagnostics": [], "stamps": [] } }),
+                        ("adapters", "resolve") => json!({ "value": {
+                            "instance": format!("i{}", seen.len() + 1), "adapterType": request.args["adapterType"], "methods": [],
+                        } }),
+                        ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
+                            "getFieldValue" => json!("Acme"),
+                            "describe" => json!(null),
+                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, [candidate("co-1", "Acme Inc"), candidate("co-2", "Acme Labs")]]]]]),
+                            other => panic!("unexpected call {other}"),
+                        } } }),
+                        ("llm", "arbitrateEntities") => json!({ "value": { "error": { "kind": "budget", "message": "spent" }, "cost": [] } }),
+                        ("locks", "acquire") => json!({ "value": { "token": "k1" } }),
+                        ("control.cancel", _) => json!({ "value": false }),
+                        _ => json!({}),
+                    };
+                    seen.push(if method.is_empty() { format!("{}.{}", request.family, request.method) } else { method });
+                    step = segment.answer(request.id, crate::read_answer(&answer.to_string()).unwrap()).unwrap();
+                }
+            }
+        };
+        assert!(!seen.iter().any(|s| s.starts_with("park.sink")), "{seen:?}");
+        assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
+    }
+
     #[test]
     fn the_event_fields_a_body_reads_are_found() {
         let body = json!([{ "kind": "write", "write": { "fields": [{ "value": { "raw": "COALESCE(msg.`when`, x.`y`)", "span": {} } }] } }]).to_string();
@@ -1472,7 +1880,7 @@ mod tests {
             "credentials": {}, "plugins": {},
         });
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1",
+            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, []]]]],
             "catalog": catalog,
@@ -1498,10 +1906,14 @@ mod tests {
 
     #[test]
     fn a_dated_read_declines_before_the_version_warning_is_traced() {
-        let deprecated = json!({ "diagnostics": [{ "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" }], "stamps": [] });
+        let deprecated = json!({
+            "diagnostics": [{ "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" }],
+            "stamps": [],
+            "versionWarning": { "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" },
+        });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { name: msg.`when` }\n}";
         let (done, seen) = dated_run(source, deprecated);
-        assert_eq!(done, json!({ "declined": "the event's `when` is a date, which an adapter may answer as a Date" }));
+        assert_eq!(done, json!({ "declined": "event_field_dated" }));
         assert_eq!(seen, ["check.program"]);
     }
 
@@ -1510,10 +1922,21 @@ mod tests {
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { ...msg }\n}";
         let stamp = |fields: Json| json!({ "diagnostics": [], "stamps": [{ "path": "/statements/3/body/0/write/spreads/0", "spreadFields": fields }] });
         let (done, seen) = dated_run(source, stamp(json!(["subject", "when"])));
-        assert_eq!(done, json!({ "declined": "the event's `when` is a date, which an adapter may answer as a Date" }));
+        assert_eq!(done, json!({ "declined": "event_field_dated" }));
         assert_eq!(seen, ["check.program"]);
         // Undated fields only: the run goes on to its source.
         let (_, seen) = dated_run(source, stamp(json!(["subject"])));
+        assert_eq!(seen[1], "adapters.resolve");
+    }
+
+    #[test]
+    fn a_graph_copy_that_walks_edges_declines_after_the_check() {
+        let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> { name: msg.`subject` }\n  g = graph { ...co }\n}";
+        let copy = |edges: Json| json!({ "diagnostics": [], "stamps": [{ "path": "/statements/3/body/1/value/node/spreads/0", "copy": { "fields": ["name"], "edges": edges } }] });
+        let (done, seen) = dated_run(source, copy(json!({ "notes": { "fields": [], "edges": {} } })));
+        assert_eq!(done, json!({ "declined": "graph_copy_walks_edges" }));
+        assert_eq!(seen, ["check.program"]);
+        let (_, seen) = dated_run(source, copy(json!({})));
         assert_eq!(seen[1], "adapters.resolve");
     }
 
@@ -1541,13 +1964,6 @@ mod tests {
         assert!(dated(json!({ "kind": "record" })));
         assert!(dated(json!({ "kind": "record", "position": "nowhere" })));
         assert!(!dated(json!({ "kind": "enum", "options": ["a"] })));
-    }
-
-    #[test]
-    fn addresses_encode_as_address_ts_does() {
-        let root = Address::default();
-        assert_eq!(root.encode(), "");
-        assert_eq!(root.stmt(1).branch(0).stmt(2).encode(), "s1.b0.s2");
     }
 
     #[test]

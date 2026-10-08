@@ -23,7 +23,7 @@ import {
 } from 'engine-contracts/conformance';
 
 import { NotJson, notJsonAt } from './not_json';
-import { VOID_HOST_METHODS, hostMethodPaths, type EngineHost } from '../host';
+import { VOID_HOST_METHODS, hostMethodPaths, servedHostMethods, type EngineHost } from '../host';
 import { MovementRunFailed } from '../errors';
 
 const MANIFEST: ReadonlySet<string> = new Set(hostMethodPaths());
@@ -70,18 +70,6 @@ export function recordedError(error: unknown): RecordedError {
     ...(typeof code === 'string' ? { code } : {}),
     message: error.message,
   };
-}
-
-/** Every manifest method `host` serves, by path. */
-export function servedMethods(host: EngineHost): string[] {
-  return [...MANIFEST].filter((path) => {
-    let at: unknown = host;
-    for (const key of path.split('.')) {
-      if (typeof at !== 'object' || at === null) return false;
-      at = Reflect.get(at, key);
-    }
-    return typeof at === 'function';
-  });
 }
 
 /** `host` with every manifest method recording into `conversation`. */
@@ -223,7 +211,7 @@ export async function recordEntry<E extends RecordedEntry, Result>({
     'input',
   );
   const conversation: Conversation = { requests: [], ticks: 0, ended: false, late };
-  const methods = servedMethods(host);
+  const methods = servedHostMethods(host);
   const ended = (end: { result: unknown } | { failure: RecordedError }): HostRecording => {
     conversation.ended = true;
     return hostRecordingSchema.parse({

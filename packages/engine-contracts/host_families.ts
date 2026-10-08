@@ -332,12 +332,21 @@ export function requiredHostMethodPaths(): string[] {
  *  host missing any (a host written against an earlier manifest) before it
  *  opens a segment. */
 export function missingHostMethods(host: unknown): string[] {
-  return requiredHostMethodPaths().filter((path) => {
-    let at: unknown = host;
-    for (const key of path.split('.')) {
-      if (typeof at !== 'object' || at === null) return true;
-      at = Reflect.get(at, key);
-    }
-    return typeof at !== 'function';
-  });
+  return requiredHostMethodPaths().filter((path) => !serves(host, path));
+}
+
+/** Every manifest method `host` serves, by path: what a host declares, read
+ *  off its object (a recording's served methods; what an engine may ask of
+ *  an optional family). */
+export function servedHostMethods(host: unknown): string[] {
+  return hostMethodPaths().filter((path) => serves(host, path));
+}
+
+function serves(host: unknown, path: string): boolean {
+  let at: unknown = host;
+  for (const key of path.split('.')) {
+    if (typeof at !== 'object' || at === null) return false;
+    at = Reflect.get(at, key);
+  }
+  return typeof at === 'function';
 }

@@ -60,6 +60,9 @@ pub struct Checked {
     pub files: BTreeMap<String, (File, Vec<Import>)>,
     /// Every diagnostic: none blocks (the host ended the run for those).
     pub diagnostics: Vec<Json>,
+    /// The run's warning for a deprecated pin (`{code, message}`), as the
+    /// host's engine reads its release.
+    pub version_warning: Option<(String, String)>,
 }
 
 /// `parseProgram`: the typed AST and its JSON, or the parser's refusal as
@@ -74,7 +77,14 @@ pub fn parse(source: &str, language_version: u32) -> Result<File, Json> {
 /// the program's version, and every stamp placed.
 pub fn join_check(root: File, answer: &Json, language_version: u32) -> Result<Checked, String> {
     let diagnostics = answer.get("diagnostics").and_then(Json::as_array).cloned().ok_or("the check answer has no diagnostics")?;
-    let mut checked = Checked { root, imports: Vec::new(), files: BTreeMap::new(), diagnostics };
+    let version_warning = match answer.get("versionWarning") {
+        None => None,
+        Some(warning) => {
+            let text = |key: &str| warning.get(key).and_then(Json::as_str).map(String::from);
+            Some((text("code").ok_or("a version warning has no code")?, text("message").ok_or("a version warning has no message")?))
+        }
+    };
+    let mut checked = Checked { root, imports: Vec::new(), files: BTreeMap::new(), diagnostics, version_warning };
     if let Some(link) = answer.get("link") {
         checked.imports = imports_of(link.get("imports"))?;
         for file in link.get("files").and_then(Json::as_array).ok_or("the link has no files")? {

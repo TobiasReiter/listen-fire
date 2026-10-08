@@ -79,7 +79,7 @@ fn the_standard_library_answers_as_typescript_does() {
                 ErrorClass::Error => json!({ "name": "Error", "message": message }),
                 ErrorClass::RangeError => json!({ "name": "RangeError", "message": message }),
             } }),
-            Err(EvalError::Suspend) => unreachable!("no reader, so nothing suspends"),
+            Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("no reader, so no host"),
             Err(EvalError::Fallback(_)) => {
                 *fallbacks.entry(fn_.to_string()).or_default() += 1;
                 continue;

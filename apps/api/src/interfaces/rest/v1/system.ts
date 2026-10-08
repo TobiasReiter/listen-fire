@@ -13,6 +13,8 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
+import { engineChoice } from '../../../services/movement_engine/rust_engine';
+import { rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
 import { requireScope } from './require_scope';
 
 const SYSTEM_SCOPE = 'system';
@@ -250,12 +252,30 @@ const drainAutomationsHandler: RequestHandler = async (req, res) => {
   return res.status(200).json(result);
 };
 
+/** What the movement engines did in THIS process since it started: which
+ *  engine `MOVEMENT_ENGINE` chose, and the Rust engine's counters (why each
+ *  run it did not run went to the TypeScript engine, by reason; what it ran,
+ *  declined and asked its host; what the evaluator switch answered). The
+ *  counters are per process and start at zero with it, so each instance
+ *  answers for itself, over its uptime. */
+const engineStatsHandler: RequestHandler = (_req, res) => {
+  const uptimeSeconds = Math.round(process.uptime());
+  return res.status(200).json({
+    engine: engineChoice(),
+    uptimeSeconds,
+    since: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
+    runs: rustRunStats,
+    evaluator: rustEvalStats,
+  });
+};
+
 const systemRouter: ReturnType<typeof Router> = Router();
 
 systemRouter.use(requireScope(SYSTEM_SCOPE));
 
 systemRouter.get('/tg-runs', route(listTgRunsHandler));
 systemRouter.get('/tg-runs/:id', route(getTgRunHandler));
+systemRouter.get('/engine-stats', route(engineStatsHandler));
 systemRouter.post('/conversations', route(startConversationHandler));
 systemRouter.post('/conversations/:id/messages', route(sendMessageHandler));
 // `system` is mounted on every installation, so the route gates itself the way

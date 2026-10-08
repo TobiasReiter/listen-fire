@@ -9,14 +9,27 @@
 //!   writes them for the kinds this engine holds: `event`, `instance`,
 //!   `opaque`, `movement`, `value` (its JSON round trip and its trail's
 //!   origins) and `handle` (the write record itself, its type and graph).
+//! - **Suspension** (run.ts `suspendFlow`): the flow stops just before a
+//!   statement, its state `suspended`, with a `journal` of the calls the
+//!   statement had finished — always empty here, as this engine runs no
+//!   calls. A flow suspends when the run meets its cost cap (the statement
+//!   about to spend: `suspendAtLimit`, which first marks the run paused,
+//!   `commitLimitPause`, and says so on the trace), at each statement of a
+//!   run already paused (`limitPaused`), and at a `suspendAt` address. A
+//!   host whose sink cannot suspend (it serves no `commitSuspension`, read
+//!   off `SegmentInput::serves`) is asked nothing, and the run goes on (a
+//!   pause), fails on its cap, or fails for want of a park (`suspendAt`), as
+//!   the TypeScript does.
 //! - **Resume** (`resumeAlongAddress`): the movement's scope re-layered from
 //!   the chain's second entry, each `if` arm on the address descended with
-//!   its scope rehydrated, the leaf stepped past (or re-entered), then each
-//!   enclosing body finished from the statement after its container.
+//!   its scope rehydrated, the leaf stepped past (or re-entered: a
+//!   suspension's operator resume), then each enclosing body finished from
+//!   the statement after its container.
 //!
-//! A state holding anything else (frames, a journal, a suspension, an
-//! `until`, a binding of another kind) is not this engine's to resume: the
-//! shim's `rustCanResume` leaves it to the TypeScript engine.
+//! A state holding anything else (frames, a journal with calls in it, an
+//! `until`, a binding of another kind) is not this engine's to resume:
+//! `resume_refusal` refuses it, before the run asks its host for anything,
+//! and the shim resumes it on the TypeScript engine.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -29,7 +42,10 @@ use serde_json::Value as Json;
 
 use crate::bindings::{Binding, Handle, InstanceBinding, Node, Scope};
 use crate::env::{Trail, ValueBinding};
-use crate::env::{json_round_trip, object_of};
+use crate::env::{encode_plain, json_round_trip, object_of};
+use crate::host;
+use crate::ledger::CapExceeded;
+use crate::trace::TraceEntry;
 use crate::js::{Js, JsObject};
 use crate::run::{Address, Failure, Flow, Run, Stop};
 use crate::write::WriteRecord;
@@ -47,10 +63,7 @@ pub struct ResumeInput {
 /// `{version: 1, address, bindingName, presenceBind?, scopeChain}`, as the
 /// JavaScript object the TypeScript writes: every key in its order (it
 /// crosses to the host on the eval wire).
-pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Js {
-    // One table for the whole state: a node two scopes hold is written once.
-    let mut park = Vec::new();
-    let chain: Vec<Js> = scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect();
+pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Result<Js, Failure> {
     let mut state = vec![
         ("version", Js::Number(1.0)),
         ("address", Js::str(address)),
@@ -59,29 +72,49 @@ pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>,
     if presence.is_some() {
         state.push(("presenceBind", Js::Bool(true)));
     }
-    state.push(("scopeChain", Js::array(chain)));
-    object_of(state)
+    state.push(("scopeChain", scope_chain(run, scope)?));
+    Ok(object_of(state))
+}
+
+/// `{version: 1, address, bindingName: null, suspended: true, journal: [],
+/// scopeChain}`, as `suspendFlow` writes it.
+pub(crate) fn suspended_state(run: &Run<'_>, address: &str, scope: &Rc<Scope>) -> Result<Js, Failure> {
+    Ok(object_of(vec![
+        ("version", Js::Number(1.0)),
+        ("address", Js::str(address)),
+        ("bindingName", Js::Null),
+        ("suspended", Js::Bool(true)),
+        ("journal", Js::array(Vec::new())),
+        ("scopeChain", scope_chain(run, scope)?),
+    ]))
+}
+
+/// The scopes root first, as one park writes them.
+fn scope_chain(run: &Run<'_>, scope: &Rc<Scope>) -> Result<Js, Failure> {
+    // One table for the whole state: a node two scopes hold is written once.
+    let mut park = Vec::new();
+    Ok(Js::array(scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect::<Result<_, _>>()?))
 }
 
 /// The nodes one park has written, numbered as first reached (`ParkWriter`).
 type ParkWriter = Vec<*const RefCell<Node>>;
 
-fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Js {
+fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Result<Js, Failure> {
     let mut bindings = JsObject::new();
     for (name, binding) in scope.own_bindings() {
-        bindings.set(name.clone(), serialize_binding(run, &name, &binding, park));
+        bindings.set(name.clone(), serialize_binding(run, &name, &binding, park)?);
     }
-    object_of(vec![("bindings", Js::object(bindings))])
+    Ok(object_of(vec![("bindings", Js::object(bindings))]))
 }
 
 /// `serializeBinding`, for the kinds this engine binds.
-fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut ParkWriter) -> Js {
+fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut ParkWriter) -> Result<Js, Failure> {
     let kind = |k: &str| ("kind", Js::str(k));
-    match binding {
+    Ok(match binding {
         Binding::Node(node) => {
             let address = Rc::as_ptr(node);
             if let Some(id) = park.iter().position(|p| *p == address) {
-                return object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))]);
+                return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))]));
             }
             // Numbered before its edges are walked: an edge back here is a
             // reference, not another lap.
@@ -90,7 +123,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             let node = node.borrow();
             let mut edges = JsObject::new();
             for (edge, landings) in &node.edges {
-                let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect();
+                let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
                 edges.set(edge.clone(), object_of(vec![kind("landed"), ("landings", Js::array(landings))]));
             }
             let mut provenance = JsObject::new();
@@ -127,7 +160,21 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             }
             object_of(descriptor)
         }
-    }
+        // A landing is bound only in a block iteration's own scope, and
+        // admission refuses every park and suspension inside a block, so no
+        // state this engine writes holds one. A guard that missed fails the
+        // run loudly, before anything is committed.
+        Binding::Landed(_) => {
+            return Err(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("a park inside a block reached the parker (the hop alias '{name}' is in scope); admission should have refused it"),
+            ));
+        }
+        Binding::Positions(landings) => {
+            let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
+            object_of(vec![kind("positions"), ("landings", Js::array(landings))])
+        }
+    })
 }
 
 /// `serializeInstanceIdentity`.
@@ -155,6 +202,151 @@ fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
         provenance.push(("direct", origin(direct)));
     }
     object_of(provenance)
+}
+
+/// Why this engine does not resume `state` (on the eval wire), or `None`
+/// when it does: a timer park's or a suspension's state of version 1 — no
+/// frames, no call in its journal, no `until` — whose address steps only
+/// into `if` arms, and whose scopes hold only the binding kinds this engine
+/// binds, with no extraction among their origins and no record held in a
+/// value.
+pub fn resume_refusal(state: &Json) -> Option<String> {
+    let Ok(state) = crate::env::decode(state) else { return Some("resume_state_does_not_read".into()) };
+    if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == 1.0) {
+        return Some("resume_state_version".into());
+    }
+    for (key, reason) in [("frames", "resume_state_frames"), ("until", "resume_state_until")] {
+        if at(&state, key).is_some() {
+            return Some(reason.into());
+        }
+    }
+    // A journal of calls to replay is a call this engine would have to run.
+    if at(&state, "journal").is_some_and(|journal| !matches!(journal, Js::Array(list) if list.items.is_empty())) {
+        return Some("resume_state_journal".into());
+    }
+    if at(&state, "suspended").is_some_and(|suspended| !matches!(suspended, Js::Bool(true))) {
+        return Some("resume_state_suspended".into());
+    }
+    if !text(at(&state, "address")).is_some_and(steps_only_into_if_arms) {
+        return Some("resume_state_address".into());
+    }
+    items(at(&state, "scopeChain"))
+        .iter()
+        .flat_map(|scope| pairs(at(scope, "bindings")))
+        .find_map(|(_, descriptor)| descriptor_refusal(descriptor))
+}
+
+/// `/^s\d+(\.b\d+\.s\d+)*$/`.
+fn steps_only_into_if_arms(address: &str) -> bool {
+    let steps: Vec<&str> = address.split('.').collect();
+    steps.len() % 2 == 1
+        && steps.iter().enumerate().all(|(i, step)| {
+            let kind = if i % 2 == 0 { 's' } else { 'b' };
+            step.strip_prefix(kind).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+fn descriptor_refusal(descriptor: &Js) -> Option<String> {
+    let plain = |provenance: Option<&Js>| {
+        let Some(provenance) = provenance else { return true };
+        items(at(provenance, "origins")).iter().chain(at(provenance, "direct")).all(|o| text(at(o, "kind")) != Some("extraction"))
+    };
+    match text(at(descriptor, "kind")) {
+        Some("event" | "instance" | "opaque" | "movement" | "handle" | "nodeRef") => None,
+        Some("value") => {
+            if !plain(at(descriptor, "provenance")) {
+                return Some("resume_state_extraction_origin".into());
+            }
+            let value = at(descriptor, "value").unwrap_or(&Js::Undefined);
+            crate::eval::holds_binding(value, true).then(|| "resume_state_value_holds_record".into())
+        }
+        Some("nodePosition") => {
+            if !pairs(at(descriptor, "fieldProvenance")).iter().all(|(_, p)| plain(Some(p))) {
+                return Some("resume_state_extraction_origin".into());
+            }
+            for (_, edge) in pairs(at(descriptor, "edges")) {
+                if text(at(edge, "kind")) != Some("landed") || at(edge, "landing").is_some() || at(edge, "landingShape").is_some() {
+                    return Some("resume_state_deferred_edge".into());
+                }
+                if let Some(reason) = items(at(edge, "landings")).iter().find_map(descriptor_refusal) {
+                    return Some(reason);
+                }
+            }
+            None
+        }
+        // A bound block that returned nothing; returned records are the
+        // TypeScript engine's to resume.
+        Some("positions") if items(at(descriptor, "landings")).is_empty() => None,
+        Some("positions") => Some("resume_state_returned_records".into()),
+        other => Some(format!("resume_state_kind:{}", other.unwrap_or("undefined"))),
+    }
+}
+
+// ── Suspension ──
+
+impl Run<'_> {
+    /// Before a statement (run.ts `interpretBody`): a paused run's flow
+    /// suspends where it can, and a `suspendAt` address suspends it, once.
+    pub(crate) async fn suspend_before(&self, at: &Address, scope: &Rc<Scope>) -> Result<(), Stop> {
+        if self.limit_paused.get() && self.can_suspend() {
+            return Err(self.suspend_flow(at, scope).await?);
+        }
+        let address = at.encode();
+        let pending = {
+            let mut pending = self.pending_suspensions.borrow_mut();
+            pending.iter().position(|a| *a == address).map(|i| pending.remove(i))
+        };
+        if pending.is_some() {
+            return Err(if self.can_suspend() { self.suspend_flow(at, scope).await? } else { nowhere_to_park(&address) });
+        }
+        Ok(())
+    }
+
+    /// `suspendAtLimit`: the run met its cost cap in the statement at `at`.
+    /// The first time, the run is marked paused and says so; then the flow
+    /// suspends just before the statement. What the statement ends with: the
+    /// park, or, where the sink cannot suspend, the cap as the run's failure.
+    pub(crate) async fn suspend_at_limit(&self, cap: CapExceeded, at: &Address, scope: &Rc<Scope>) -> Stop {
+        match self.pause_at_limit(cap, at, scope).await {
+            Ok(stop) | Err(stop) => stop,
+        }
+    }
+
+    async fn pause_at_limit(&self, cap: CapExceeded, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
+        if !self.can_suspend() {
+            return Ok(Stop::Thrown(Failure::CapExceeded(cap)));
+        }
+        if !self.limit_paused.get() {
+            // A sink that can suspend but keeps no pause is skipped, as
+            // `commitLimitPause?.` skips it.
+            if self.serves("park.sink.commitLimitPause") {
+                self.ask(host::park::commit_limit_pause(self.segment(), &cap)).await.map_err(Stop::Thrown)?;
+            }
+            self.limit_paused.set(true);
+            self.trace(TraceEntry::Warning { code: "RUN_PAUSED_COST_CAP".into(), message: cap.paused_message() });
+        }
+        self.suspend_flow(at, scope).await
+    }
+
+    /// run.ts `canSuspend`: the host's park sink commits suspensions.
+    fn can_suspend(&self) -> bool {
+        self.serves("park.sink.commitSuspension")
+    }
+
+    /// `suspendFlow`: the suspended state committed and the flow parked at
+    /// `at`. Asked only where the sink can suspend.
+    async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
+        let address = at.encode();
+        let state = suspended_state(self, &address, scope).map_err(Stop::Thrown)?;
+        let request = host::park::commit_suspension(self.segment(), &address, encode_plain(&state));
+        self.ask(request).await.map_err(Stop::Thrown)?;
+        self.trace(TraceEntry::Gate { outcome: false });
+        Ok(Stop::Parked(address))
+    }
+}
+
+fn nowhere_to_park(address: &str) -> Stop {
+    Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the run was asked to suspend at '{address}' and has nowhere durable to park")))
 }
 
 // ── Resume ──
@@ -201,8 +393,8 @@ impl Run<'_> {
         while i + 1 < address.len() {
             let (kind, index) = address[i];
             let (descent, branch) = address[i + 1];
-            // The shim resumes no other address (`rustCanResume`), and runs no
-            // other container (`rustCanRun`).
+            // Admission resumes no other address (`resume_refusal`), and runs
+            // no other container (crate::admit).
             if kind != 's' || descent != 'b' {
                 return Err(malformed(&format!("step {} is '{descent}', which this engine does not descend", i + 1)));
             }
@@ -334,6 +526,13 @@ impl Run<'_> {
                 }
                 *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, edges };
                 Ok(Binding::Node(node))
+            }
+            Some("positions") => {
+                let mut landings = Vec::new();
+                for landing in items(at(descriptor, "landings")) {
+                    landings.push(self.rehydrate(landing, park)?);
+                }
+                Ok(Binding::Positions(landings))
             }
             Some("event") => Ok(Binding::Event),
             Some("opaque") => Ok(Binding::Opaque),
@@ -523,6 +722,62 @@ mod tests {
         assert_eq!(duration_ms("2d"), Some(172_800_000.0));
         assert_eq!(duration_ms("h"), None);
         assert_eq!(duration_ms("30"), None);
+    }
+
+    /// A landing in a scope a park writes is a guard that missed: the run
+    /// fails loudly, naming it, rather than trapping.
+    #[test]
+    fn a_park_that_reaches_a_landing_fails_the_run_loudly() {
+        let input: crate::run::SegmentInput = serde_json::from_value(serde_json::json!({
+            "source": "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}", "languageVersion": 3, "event": null,
+            "segmentId": "g1", "serves": [], "now": "2026-03-12T12:00:00.000Z",
+            "catalog": { "adapters": {}, "credentials": {}, "plugins": {} },
+        }))
+        .unwrap();
+        let ledger = crate::ledger::Ledger::new(&input.spend);
+        let host = crate::executor::Host::default();
+        let root = crate::program::parse(&input.source, 3).unwrap();
+        let checked = crate::program::join_check(root, &serde_json::json!({ "diagnostics": [], "stamps": [] }), 3).unwrap();
+        let run = Run {
+            host: &host,
+            input: &input,
+            ledger: &ledger,
+            event: Js::Undefined,
+            now_ms: 0.0,
+            catalog: movement_parser::catalog::types::CatalogSnapshot::load(input.catalog.get()).unwrap(),
+            checked,
+            import_originals: RefCell::default(),
+            source: RefCell::default(),
+            source_instance: RefCell::default(),
+            origins: RefCell::default(),
+            misses: RefCell::default(),
+            trace: crate::trace::FlowTrace::default(),
+            movement_name: RefCell::default(),
+            writes: RefCell::default(),
+            targets: RefCell::default(),
+            mutation_context: RefCell::new(Js::Undefined),
+            limit_paused: std::cell::Cell::new(false),
+            pending_suspensions: RefCell::default(),
+            source_reads: RefCell::default(),
+            positions: RefCell::default(),
+        };
+        let read = Rc::new(crate::traverse::Read {
+            instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },
+            adapter_type: "graph".into(),
+            instance_name: "kg".into(),
+            schema: None,
+            start_surface_type: None,
+            incoming: false,
+            edge_properties: false,
+            streams: false,
+        });
+        let scope = Scope::root();
+        scope.declare("c", Binding::Landed(Rc::new(crate::bindings::Landed::new(Js::Undefined, None, read))));
+        for state in [parked_state(&run, "s0", None, &scope), suspended_state(&run, "s0", &scope)] {
+            let Err(Failure::Engine { message, .. }) = state else { panic!("a landing was written into a park") };
+            assert!(message.contains("a park inside a block reached the parker"), "{message}");
+            assert!(message.contains("'c'"), "{message}");
+        }
     }
 
     #[test]

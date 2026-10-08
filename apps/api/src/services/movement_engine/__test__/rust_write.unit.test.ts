@@ -9,26 +9,29 @@
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
+
+import { RunCostCapExceeded } from '../../../lib/run_cost';
 import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { MovementTraceEntry } from '../expression';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
-import { positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
+import { makeStablePosition, positionData } from '../../translation_graph/types';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks, type TestHostOverrides } from '../test_host';
 import {
   MovementRunFailed,
   resumeMovement,
   runFailureCause,
   runMovement,
   type MovementRunResult,
+  type ParkSink,
   type ResumeMovementInput,
+  type RunLimitPause,
   type RunMovementInput,
 } from '../run';
-import { rustCanResume, rustCanRun } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 import type { ParkedScopeState } from '../serialize';
-import { parsePinned } from '../program_check';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b2');
 
@@ -84,6 +87,10 @@ interface Store {
   describe?: (recordType: string) => SchemaTypeDescriptor | null;
   association?: 'made' | 'already' | 'unsupported';
   failCreate?: string;
+  /** The records any traversal lands on, by id. */
+  landings?: Record<string, Record<string, unknown>>;
+  /** The adapter links existing records. */
+  links?: boolean;
 }
 
 /** An adapter recording every call it gets, as `[method, input]`. */
@@ -115,7 +122,20 @@ function fake(adapterType: string, store: Store = {}) {
       calls.push(['getFieldValue', input.fieldId]);
       return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId];
     },
-    getRelated: async () => [],
+    async getRelated(read) {
+      calls.push(['getRelated', read.fieldId]);
+      return Object.entries(store.landings ?? {}).map(([recordId, data]) => ({
+        position: makeStablePosition({ adapterType, recordType: 'company', recordId, data }),
+      }));
+    },
+    ...(store.links === true
+      ? {
+          async linkRecords(input: Parameters<NonNullable<Adapter['linkRecords']>>[0]) {
+            calls.push(['linkRecords', input]);
+            return { created: true };
+          },
+        }
+      : {}),
     async createRecord(input) {
       calls.push(['createRecord', input]);
       if (store.failCreate !== undefined) throw new Error(store.failCreate);
@@ -145,6 +165,15 @@ interface Case {
   judge?: (asked: unknown[]) => NonNullable<TestHostOverrides['llm']>['arbitrateEntities'];
   /** Resume this state rather than run. */
   resume?: ParkedScopeState;
+  /** Resume re-entering the parked statement (an operator's limit resume). */
+  reenter?: boolean;
+  costCapMicrodollars?: number;
+  priorSpentMicrodollars?: number;
+  capBaselineMicrodollars?: number;
+  limitPaused?: boolean;
+  suspendAt?: string[];
+  /** Which of the sink's suspension methods it has: both by default. */
+  suspends?: 'both' | 'suspension_only' | 'neither';
 }
 
 /** One run on one engine: what it returned or threw, and everything the
@@ -152,27 +181,55 @@ interface Case {
 /** What one run did: its result or the error it failed with, and the world. */
 interface Outcome {
   failed: boolean;
+  /** Every `locks.acquire`'s names, in order. */
+  locks: string[][];
   result?: MovementRunResult;
   error?: unknown;
   email: Array<[string, unknown]>;
   attio: Array<[string, unknown]>;
   resolved: unknown[];
   trace: unknown[];
+  /** The trace as the host was handed it, a statement at a time. */
+  appends: unknown[][];
   captured: CapturedWrite[];
   asked: unknown[];
   parks: Array<{ address: string; state: unknown; wakeAt: string }>;
+  suspensions: Array<{ address: string; state: unknown }>;
+  limitPauses: RunLimitPause[];
 }
 
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
+  const locks: string[][] = [];
   const email = fake('email');
   const attio = fake('attio', c.attio);
   const resolved: unknown[] = [];
   const trace: unknown[] = [];
+  const appends: MovementTraceEntry[][] = [];
   const captured: CapturedWrite[] = [];
   const asked: unknown[] = [];
   const park = makeFakeParkSink();
+  const suspensions: Outcome['suspensions'] = [];
+  const limitPauses: RunLimitPause[] = [];
+  const suspends = c.suspends ?? 'both';
+  const sink: ParkSink = {
+    ...park.sink,
+    ...(suspends !== 'neither'
+      ? {
+          async commitSuspension({ address, state }: { address: string; state: unknown }) {
+            suspensions.push({ address, state });
+          },
+        }
+      : {}),
+    ...(suspends === 'both'
+      ? {
+          async commitLimitPause({ limit, capMicrodollars, spentMicrodollars }: RunLimitPause) {
+            limitPauses.push({ limit, capMicrodollars, spentMicrodollars });
+          },
+        }
+      : {}),
+  };
   const input: RunMovementInput = {
     source: PRELUDE + c.source,
     event: c.event,
@@ -181,7 +238,13 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
     firedAt: '2026-05-01T09:00:00.000Z',
     ...(c.dryRun === true ? { dryRun: true } : {}),
+    ...(c.costCapMicrodollars !== undefined ? { costCapMicrodollars: c.costCapMicrodollars } : {}),
+    ...(c.priorSpentMicrodollars !== undefined ? { priorSpentMicrodollars: c.priorSpentMicrodollars } : {}),
+    ...(c.capBaselineMicrodollars !== undefined ? { capBaselineMicrodollars: c.capBaselineMicrodollars } : {}),
+    ...(c.limitPaused === true ? { limitPaused: true } : {}),
+    ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
     host: makeTestHost({
+        locks: recordingWriteLocks(locks),
       ...(c.dryRun === true ? { writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
       adapters: {
         resolve: (request) => {
@@ -192,13 +255,29 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
         },
       },
       ...(c.judge !== undefined ? { llm: { arbitrateEntities: c.judge(asked) } } : {}),
-      park: { sink: park.sink },
+      park: { sink },
       trace: trace as never[],
+      traceAppends: appends,
     }),
   };
-  const world = () => ({ email: email.calls, attio: attio.calls, resolved, trace, captured, asked, parks: park.timerParks });
+  const world = () => ({
+    locks,
+    email: email.calls,
+    attio: attio.calls,
+    resolved,
+    trace,
+    appends,
+    captured,
+    asked,
+    parks: park.timerParks,
+    suspensions,
+    limitPauses,
+  });
   try {
-    const result = c.resume !== undefined ? await resumeMovement({ ...input, state: c.resume } satisfies ResumeMovementInput) : await runMovement(input);
+    const result =
+      c.resume !== undefined
+        ? await resumeMovement({ ...input, state: c.resume, ...(c.reenter === true ? { reenter: true } : {}) } satisfies ResumeMovementInput)
+        : await runMovement(input);
     return { failed: false, result, ...world() };
   } catch (error) {
     return { failed: true, error, ...world() };
@@ -212,7 +291,9 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
  *  as the same placeholders. */
 function sameIds<T>(value: T): T {
   const ids = new Map<string, string>();
-  const text = JSON.stringify(value, (key, v) => (key === 'wakeAt' ? undefined : v));
+  // Every wake is the host clock's answer plus the sleep on both engines,
+  // so it is compared too.
+  const text = JSON.stringify(value);
   const normal = text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
     if (!ids.has(id)) ids.set(id, `uuid-${ids.size + 1}`);
     return ids.get(id)!;
@@ -227,7 +308,7 @@ async function agree(c: Case) {
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, declined: {} });
+  expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
   expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   const world = ({ failed: _failed, result: _result, error: _error, ...rest }: Outcome) => rest;
   expect(sameIds(world(rust))).toEqual(sameIds(world(ts)));
@@ -451,15 +532,23 @@ describe('writes in the Rust engine', () => {
     expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
-  it('declines nothing it admitted: a date-typed event field is declined before the source is resolved', async () => {
-    resetRustRunStats();
-    const before = await runOn('rust', {
-      source: ['movement m(msg: <inbox-[:message]->>) {', '  write crm-[:companies]-> { name: msg.`when` }', '}'].join('\n'),
-      event: webhook({ when: '2026-01-01' }),
-    });
-    expect(rustRunStats.declined).toEqual({ "the event's `when` is a date, which an adapter may answer as a Date": 1 });
-    // It ran on the TypeScript engine instead, and the source was resolved once.
-    expect(before.resolved).toHaveLength(2);
+  it('declines, after its check and before it resolves the source, what the check\'s stamps say it does not run', async () => {
+    for (const [body, reason] of [
+      // A date-typed event field (read by name here; by a spread's stamp in
+      // the crate's own tests).
+      ['  write crm-[:companies]-> { name: msg.`when` }', 'event_field_dated'],
+      // A graph copy whose plan walks edges is stamped only on a graph with a
+      // shape, which admission refuses: the crate's own tests decline one.
+    ] as const) {
+      resetRustRunStats();
+      const run = await runOn('rust', { source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, event: webhook({ when: '2026-01-01' }) });
+      expect([body, rustRunStats.declined]).toEqual([body, { [reason]: 1 }]);
+      expect(rustRunStats.notAdmitted).toEqual({});
+      // Nothing but the check was asked of the host...
+      expect(rustRunStats.hostCalls).toEqual({ 'check.program': 1 });
+      // ...and the TypeScript engine ran it instead: the source resolved once.
+      expect(run.resolved.filter(isSourceResolve)).toHaveLength(1);
+    }
   });
 });
 
@@ -497,8 +586,6 @@ describe('parks in the Rust engine', () => {
     };
     const [fromTs, fromRust] = [await parkedBy('ts'), await parkedBy('rust')];
     expect(fromRust).toEqual(fromTs);
-    const parsed = parsePinned({ source: PRELUDE + PARKS });
-    expect(rustCanResume(parsed, { state: fromTs })).toBe(true);
     // A state parked by the TypeScript engine, resumed by the Rust one, and
     // the reverse: each resume agrees with the TypeScript engine's own.
     for (const state of [fromTs, fromRust]) {
@@ -511,6 +598,89 @@ describe('parks in the Rust engine', () => {
     const ownTs = await runOn('ts', { source: PARKS, event, resume: fromTs });
     expect(onTs.result).toEqual(ownTs.result);
     expect(onTs.attio).toEqual(ownTs.attio);
+  });
+
+  it('parks and resumes a bound block that returned nothing (no returned records), on either engine', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  rows = crm-[c:companies]-> {',
+      '    return c.`name`',
+      '  }',
+      '  await sleep(30s)',
+      '  write crm-[:companies]-> { name: "after", blob: rows }',
+      '}',
+    ].join('\n');
+    const event = webhook({ subject: 'Acme' });
+    const { ts, rust } = await agree({ source, event });
+    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
+    expect(JSON.stringify(rust.parks[0]?.state)).toContain('"rows":{"kind":"positions","landings":[]}');
+    for (const parked of [ts, rust]) {
+      const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
+      const resumed = await agree({ source, event, resume: state });
+      // An empty list, written to a field the adapter does not describe as
+      // many: the joined text of nothing.
+      expect(resumed.rust.result?.writes[0]?.writtenValues).toEqual({ name: 'after', blob: '' });
+    }
+  });
+
+  describe('the park state of every binding a record verb or a bound block makes', () => {
+    const FOUND: ExternalRecordRef[] = [
+      { adapterType: 'attio', externalId: 'co-1', url: 'https://x/co-1', data: { name: 'Acme', stage: 'Seed' } },
+    ];
+    const cases: Array<[string, string[], Store]> = [
+      [
+        'a match',
+        ['  co = match crm-[:companies]-> { unique by (`name`), name: msg.`subject` }', '  await sleep(30s)', '  write co-[:notes]-> { body: co.`stage` }'],
+        { candidates: () => FOUND, current: { 'co-1': { domain: 'acme.dev' } } },
+      ],
+      [
+        'a link whose body matches',
+        [
+          '  co = write crm-[:companies]-> { name: msg.`subject` }',
+          '  found = link co -[:notes]-> { unique by (`body`), body: "hello" }',
+          '  await sleep(30s)',
+          '  write crm-[:companies]-> { name: "${found.externalId} ${found.`body`}" }',
+        ],
+        { candidates: (record) => (record.body === 'hello' ? [{ adapterType: 'attio', externalId: 'n-9', data: { body: 'hello' } }] : []), links: true },
+      ],
+      [
+        'a write with a target WHERE, bound',
+        [
+          '  co = write crm-[c:companies WHERE c.`stage` == "Seed"]-> { unique by (`name`), name: msg.`subject` }',
+          '  await sleep(30s)',
+          '  write co-[:notes]-> { body: co.`name` }',
+        ],
+        { candidates: () => FOUND, current: { 'co-1': { stage: 'Seed' } } },
+      ],
+      [
+        'a bound block returning values over three landings',
+        [
+          '  names = crm-[c:companies ORDER BY `name` DESC]-> {',
+          '    return "${c.`name`}/${msg.`subject`}"',
+          '  }',
+          '  await sleep(30s)',
+          '  write crm-[:companies]-> { name: "${AT(names, 0)}", tags: names }',
+        ],
+        { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' }, 'co-3': { name: 'Initech' } } },
+      ],
+    ];
+    for (const [what, lines, attio] of cases) {
+      it(`${what}: parked as one string on both engines, resumed by either from either`, async () => {
+        const source = ['movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
+        const event = webhook({ subject: 'Acme' });
+        const { ts, rust } = await agree({ source, event, attio });
+        expect(rust.result).toMatchObject({ parked: true });
+        const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
+        expect(text(rust)).toBe(text(ts));
+        const fromTs = JSON.parse(text(ts)) as ParkedScopeState;
+        const fromRust = JSON.parse(text(rust)) as ParkedScopeState;
+        for (const state of [fromTs, fromRust]) {
+          const resumed = await agree({ source, event, attio, resume: state });
+          expect(resumed.rust.result?.parked).toBeUndefined();
+          expect(JSON.stringify(resumed.rust.result)).toBe(JSON.stringify(resumed.ts.result));
+        }
+      });
+    }
   });
 
   it('resumes a parked object in the order it was stored, not sorted', async () => {
@@ -534,18 +704,190 @@ describe('parks in the Rust engine', () => {
     expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}');
   });
 
-  it('leaves to the TypeScript engine a state it does not resume', () => {
-    const parsed = parsePinned({ source: PRELUDE + PARKS });
-    const state: ParkedScopeState = { version: 1, address: 's2.b0.s0', bindingName: null, scopeChain: [], journal: [] };
-    expect(rustCanResume(parsed, { state })).toBe(false);
-    expect(rustCanResume(parsed, { state: { ...state, journal: undefined, address: 's1.i0.s0' } })).toBe(false);
-    expect(rustCanRun(parsed, {})).toBe(true);
-    // The judge is a priced call: with a cost cap, a `unique by` write stays
-    // on the TypeScript engine, which can suspend at the cap.
-    const identity = parsePinned({
-      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { unique by (\`name\`) name: "a" }\n}`,
-    });
-    expect(rustCanRun(identity, {})).toBe(true);
-    expect(rustCanRun(identity, { costCapMicrodollars: 1_000 })).toBe(false);
+  it('leaves to the TypeScript engine a state it does not resume, refused before it asks its host anything', async () => {
+    const event = webhook({ subject: 'Acme' });
+    const state: ParkedScopeState = {
+      version: 1,
+      address: 's2.b0.s0',
+      bindingName: null,
+      scopeChain: [],
+      journal: [{ index: 0, value: null, next: 1 }],
+    };
+    for (const [resume, reason] of [
+      [state, 'resume_state_journal'],
+      [{ ...state, journal: undefined, address: 's1.i0.s0' }, 'resume_state_address'],
+    ] as const) {
+      resetRustRunStats();
+      await runOn('rust', { source: PARKS, event, resume });
+      expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
+      expect(rustRunStats.hostCalls).toEqual({});
+    }
   });
 });
+
+describe('the cost cap in the Rust engine', () => {
+  // Two judged writes (two candidates each, so the rules cannot decide), the
+  // second inside an `if` arm, and a write after it that asks no judge (a
+  // note, for which the search finds no candidate).
+  const PRICED = [
+    'movement m(msg: <inbox-[:message]->>) {',
+    '  first = write crm-[:companies]-> { unique by (FUZZY `name`) name: msg.`subject` }',
+    '  label = "${first.`name`}"',
+    '  if label != "" {',
+    '    write crm-[:companies]-> { unique by (FUZZY `name`) name: "${label} two" }',
+    '    write crm-[:notes]-> { body: "${label} three" }',
+    '  }',
+    '}',
+  ].join('\n');
+  const event = webhook({ subject: 'Acme' });
+  const two = () => [
+    { adapterType: 'attio', externalId: 'co-1', data: { name: 'Acme Inc' } },
+    { adapterType: 'attio', externalId: 'co-2', data: { name: 'Acme Labs' } },
+  ];
+  /** A judge that spends `microdollars` a call, refused as the host's meter
+   *  refuses (lib/run_spend.ts): once the budget is spent, before it starts. */
+  const judge = (microdollars: number) => (asked: unknown[]) =>
+    async (input: Parameters<NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>>[0]) => {
+      asked.push({ budget: input.budget });
+      const remaining = input.budget.remainingMicrodollars;
+      if (remaining !== null && remaining <= 0) {
+        return { error: { kind: 'budget' as const, message: "this run's cost budget is spent" }, cost: [] };
+      }
+      return { index: 0, cost: [{ source: 'model:judge', microdollars }] };
+    };
+  const capped = (c: Partial<Case> = {}): Case => ({
+    source: PRICED,
+    event,
+    // A note finds none: only the companies are judged.
+    attio: { candidates: (record) => ('body' in record ? [] : two()) },
+    judge: judge(1_500),
+    costCapMicrodollars: 1_000,
+    ...c,
+  });
+
+  it('pauses where the TypeScript engine pauses: the same pause, suspension, trace and partial effects', async () => {
+    const { ts, rust } = await agree(capped());
+    // The first judge took the run past its cap and its write stands; the
+    // second was refused, and the run suspended just before its statement.
+    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0', spentMicrodollars: 1_500 });
+    expect(rust.result?.writes.map((w) => w.externalId)).toEqual(['co-1']);
+    expect(rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+    expect(rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
+    // Key for key, in order.
+    expect(JSON.stringify(rust.suspensions[0]?.state)).toBe(JSON.stringify(ts.suspensions[0]?.state));
+    expect(rust.suspensions[0]?.state).toMatchObject({ version: 1, address: 's2.b0.s0', bindingName: null, suspended: true, journal: [] });
+    expect(rust.trace).toEqual([
+      { kind: 'gate', outcome: true },
+      {
+        kind: 'warning',
+        code: 'RUN_PAUSED_COST_CAP',
+        message:
+          'Paused: cost limit reached. The run has spent $0.0015 against a limit of $0.001 (MOVEMENT_MAX_RUN_COST_USD). ' +
+          'Every branch stopped before its next statement; resume the run to carry on from there, with its usage reset.',
+      },
+      { kind: 'gate', outcome: false },
+    ]);
+    expect(rustRunStats.hostCalls).toMatchObject({ 'park.sink.commitLimitPause': 1, 'park.sink.commitSuspension': 1 });
+  });
+
+  it('meets a cap the run has spent exactly, and not one it has not', async () => {
+    const exactly = await agree(capped({ judge: judge(1_000) }));
+    expect(exactly.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
+    expect(exactly.rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_000 }]);
+    // One microdollar left: the second judge may spend, and nothing after it is priced.
+    const under = await agree(capped({ judge: judge(999) }));
+    expect(under.rust.result?.parked).toBeUndefined();
+    expect(under.rust.result).toMatchObject({ spentMicrodollars: 1_998 });
+    expect(under.rust.limitPauses).toEqual([]);
+    // Spent before this segment, past the cap: the first judge is refused.
+    const before = await agree(capped({ priorSpentMicrodollars: 1_200 }));
+    expect(before.rust.result).toMatchObject({ parked: true, parkedAddress: 's0', writes: [] });
+    expect(before.rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_200 }]);
+  });
+
+  it('resumes from its operator on either engine what either engine suspended', async () => {
+    const suspendedBy = async (engine: 'ts' | 'rust') => {
+      const run = await runOn(engine, capped());
+      return JSON.parse(JSON.stringify(run.suspensions[0]?.state)) as ParkedScopeState;
+    };
+    const [fromTs, fromRust] = [await suspendedBy('ts'), await suspendedBy('rust')];
+    expect(fromRust).toEqual(fromTs);
+    // limit_pause.ts: the statement re-entered, the run's spend carried, the
+    // cap counted afresh from it.
+    const resume = (state: ParkedScopeState): Case =>
+      capped({ resume: state, reenter: true, priorSpentMicrodollars: 1_500, capBaselineMicrodollars: 1_500 });
+    for (const state of [fromTs, fromRust]) {
+      const { rust } = await agree(resume(state));
+      expect(rust.result?.parked).toBeUndefined();
+      // The pause was the operator's to clear: the resumed run marks none.
+      expect(rust.limitPauses).toEqual([]);
+      expect(rust.result?.writes.map((w) => w.writtenValues.name ?? w.writtenValues.body)).toEqual(['Acme two', 'Acme three']);
+      expect(rust.asked).toEqual([{ budget: { remainingMicrodollars: 1_000 } }]);
+    }
+    const onTs = await runOn('ts', resume(fromRust));
+    const ownTs = await runOn('ts', resume(fromTs));
+    expect(onTs.result).toEqual(ownTs.result);
+    expect(onTs.attio).toEqual(ownTs.attio);
+    // Resumed still over the cap (no reset), it suspends again at the same
+    // statement, and marks the run paused again.
+    const again = await agree(capped({ resume: fromRust, reenter: true, priorSpentMicrodollars: 1_500 }));
+    expect(again.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
+    expect(again.rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
+    expect(again.rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+  });
+
+  it('pauses at a capped PLAIN write whose search finds several candidates, as the TypeScript engine does', async () => {
+    // No `unique by`: the descriptor's fuzzy resolution searches by name, two
+    // candidates come back, and the judge decides — a priced call all the same.
+    const { rust } = await agree(capped({ source: PRICED.replaceAll('unique by (FUZZY `name`) ', '') }));
+    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0', spentMicrodollars: 1_500 });
+    expect(rust.asked).toHaveLength(2);
+    expect(rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+    expect(rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
+  });
+
+  it('fails on the cap where the sink cannot suspend, and suspends unmarked where it keeps no pause', async () => {
+    const { rust } = await agree(capped({ suspends: 'neither' }));
+    const cause = runFailureCause(rust.error);
+    expect(cause).toBeInstanceOf(RunCostCapExceeded);
+    expect(cause).toMatchObject({ capMicrodollars: 1_000, spentMicrodollars: 1_500 });
+    expect(rust.limitPauses).toEqual([]);
+    const unmarked = await agree(capped({ suspends: 'suspension_only' }));
+    expect(unmarked.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
+    expect(unmarked.rust.trace).toContainEqual(expect.objectContaining({ code: 'RUN_PAUSED_COST_CAP' }));
+  });
+
+  it('joins a pause that holds: a woken flow steps past its sleep and suspends before its next statement', async () => {
+    const SLEEPS = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  co = write crm-[:companies]-> { name: msg.`subject` }',
+      '  await sleep(30s)',
+      '  write crm-[:companies]-> { name: "${co.`name`} later" }',
+      '}',
+    ].join('\n');
+    const parked = await runOn('ts', { source: SLEEPS, event });
+    const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
+    const { rust } = await agree({ source: SLEEPS, event, resume: state, limitPaused: true });
+    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2', writes: [] });
+    expect(rust.suspensions.map((s) => s.address)).toEqual(['s2']);
+    // The pause is already marked: no flow marks it again.
+    expect(rust.limitPauses).toEqual([]);
+    // A paused run whose sink cannot suspend runs on.
+    const runsOn = await agree({ source: SLEEPS, event, resume: state, limitPaused: true, suspends: 'neither' });
+    expect(runsOn.rust.result?.writes).toHaveLength(1);
+  });
+
+  it('suspends at a suspendAt address, once, and fails where it has nowhere to park', async () => {
+    const source = PRICED.replaceAll('unique by (FUZZY `name`) ', '');
+    const { rust } = await agree({ source, event, suspendAt: ['s2.b0.s1', 's1'] });
+    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's1' });
+    expect(rust.result?.writes).toHaveLength(1);
+    const nowhere = await agree({ source, event, suspendAt: ['s1'], suspends: 'neither' });
+    expect(String(runFailureCause(nowhere.rust.error))).toContain("the run was asked to suspend at 's1' and has nowhere durable to park");
+  });
+});
+
+/** An `adapters.resolve` request for the event's source. */
+function isSourceResolve(request: unknown): request is { role: 'source' } {
+  return typeof request === 'object' && request !== null && Reflect.get(request, 'role') === 'source';
+}

@@ -9,10 +9,19 @@ const path = require('node:path');
 // allow-list, a decline, a shim fault) that leaves every case green because
 // the TypeScript engine quietly took the runs back. Raise them deliberately,
 // with the slice that routes more; never lower one to make a run pass.
-// Measured at slice 2b (2026-10-07): v1 69, v2 75. A floor applies to a run
-// of the whole corpus only: a run narrowed to some files or cases checks the
-// rest (nothing declined, no shim fault, something ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 60, v2: 70 };
+// Measured at slice 2b (2026-10-07): v1 69, v2 75. Raised to exactly those
+// with chunk 5B's admission in Rust (2026-10-08), which proved it admits what
+// the shim's old allow-list did, run for run: any run lost now is a
+// regression. Raised to v1 87, v2 95 with traversal blocks over adapter edges
+// (chunk 5B task 4, 2026-10-08), exactly the counts they route. Raised to
+// v1 93, v2 101 with nested blocks and heads off a hop alias (chunk 5B task
+// 5: hop_narrowing's six), then to v1 114, v2 136 with the record verbs in
+// and out of blocks (match, link, unlink, delete, a target's WHERE, writes
+// off a traversed record), then to v1 117, v2 139 with bound blocks. A floor
+// applies to a run of the whole corpus only: a run narrowed to some files or
+// cases checks the rest (nothing declined, no shim fault, something admitted
+// ran whole) but not it.
+const RAN_WHOLE_FLOOR = { v1: 117, v2: 139 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
@@ -34,6 +43,11 @@ function isWholeCorpus(globalConfig) {
   );
 }
 
+/** `counts` largest first, for reading. */
+function sorted(counts) {
+  return Object.fromEntries(Object.entries(counts).sort(([, a], [, b]) => b - a));
+}
+
 /** Which corpus this run is, from its test match. */
 function corpusOf(projectConfig) {
   const match = (projectConfig?.testMatch ?? []).join(' ');
@@ -46,8 +60,9 @@ async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
-  const runs = { routed: 0, ranWhole: 0, shimFaults: 0, declined: {}, hostCalls: {} };
+  const runs = { routed: 0, admitted: 0, ranWhole: 0, shimFaults: 0, notAdmitted: {}, declined: {}, hostCalls: {} };
   const byFile = {};
+  const refusedByFile = {};
   const add = (into, from) => {
     for (const [key, count] of Object.entries(from ?? {})) into[key] = (into[key] ?? 0) + count;
   };
@@ -59,25 +74,37 @@ async function globalTeardown(globalConfig, projectConfig) {
       total.answered += stats.answered;
       add(total.fallback, stats.fallback);
       runs.routed += stats.runs?.routed ?? 0;
+      runs.admitted += stats.runs?.admitted ?? 0;
       runs.ranWhole += stats.runs?.ranWhole ?? 0;
       runs.shimFaults += stats.runs?.shimFaults ?? 0;
       if ((stats.runs?.ranWhole ?? 0) > 0 && stats.file) byFile[stats.file] = (byFile[stats.file] ?? 0) + stats.runs.ranWhole;
+      add(runs.notAdmitted, stats.runs?.notAdmitted);
+      if (Object.keys(stats.runs?.notAdmitted ?? {}).length > 0 && stats.file) add((refusedByFile[stats.file] ??= {}), stats.runs.notAdmitted);
       add(runs.declined, stats.runs?.declined);
       add(runs.hostCalls, stats.runs?.hostCalls);
     }
   }
   rmSync(dir, { recursive: true, force: true });
   console.log(`\nRust evaluator: ${JSON.stringify(total)}`);
-  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, ranWhole: runs.ranWhole, shimFaults: runs.shimFaults, declined: runs.declined, hostCalls: runs.hostCalls })}`);
+  // Routed: segments the Rust engine started, its own admission's refusals
+  // among them. Admitted: those its admission let by.
+  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, runsAdmitted: runs.admitted, ranWhole: runs.ranWhole, shimFaults: runs.shimFaults, declined: runs.declined, hostCalls: runs.hostCalls })}`);
+  // Why every run that did not run in Rust ran on the TypeScript engine: the
+  // shim's input checks and the engine's own admission, by reason.
+  console.log(`Rust runs not admitted: ${JSON.stringify(sorted(runs.notAdmitted))}`);
   // Which files' runs the Rust engine ran whole, for a report.
-  if (process.env.MOVEMENT_RUST_RUNS_BY_FILE === '1') console.log(`Rust runs by file: ${JSON.stringify(byFile)}`);
+  if (process.env.MOVEMENT_RUST_RUNS_BY_FILE === '1') {
+    console.log(`Rust runs by file: ${JSON.stringify(byFile)}`);
+    // And why each file's other runs went to the TypeScript engine.
+    console.log(`Rust runs not admitted by file: ${JSON.stringify(refusedByFile)}`);
+  }
   if (total.answered === 0) {
     throw new Error('MOVEMENT_ENGINE=rust, and the Rust evaluator answered no expression in the whole run');
   }
   const corpus = corpusOf(projectConfig);
   if (corpus === undefined) return;
   const failures = [];
-  if (runs.routed > 0 && runs.ranWhole === 0) failures.push(`${runs.routed} runs were routed and none ran whole`);
+  if (runs.admitted > 0 && runs.ranWhole === 0) failures.push(`${runs.admitted} runs were admitted and none ran whole`);
   if (Object.keys(runs.declined).length > 0) failures.push(`the corpus expects no declines, and these happened: ${JSON.stringify(runs.declined)}`);
   if (runs.shimFaults > 0) failures.push(`${runs.shimFaults} runs ended in a shim fault`);
   if (isWholeCorpus(globalConfig) && runs.ranWhole < RAN_WHOLE_FLOOR[corpus]) {

@@ -2,9 +2,13 @@
 //! `compareValues`, `compareToNull` and `evaluatePredicate`, the scalar
 //! comparison semantics the engine and adapters decide filters by.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use movement_parser::lowering::expression::{ArithmeticOp, Expression, FilterOperator, ListElement, LogicalOp};
 
 use crate::eval::{EvalError, static_value};
+use crate::executor::ready;
 use crate::js::{self, Js};
 use crate::js_date;
 
@@ -124,29 +128,42 @@ pub fn is_null_literal(expr: &Expression) -> bool {
 /// (absent for a name it does not know). The engine evaluates through
 /// `eval`, whose semantics this mirrors; adapters filter through this.
 pub fn evaluate_predicate(expr: &Expression, read: &dyn Fn(&str) -> Js) -> Result<Js, EvalError> {
-    evaluate_predicate_with(expr, read, &compare_values)
+    ready(evaluate_predicate_with(expr, read, None))
 }
 
-/// `evaluatePredicate` with the comparator supplied: a run answers what
-/// `compare_values` hands back (`WITHIN`, which reads the wall clock) by
-/// asking the TypeScript member.
-pub fn evaluate_predicate_with(
-    expr: &Expression,
-    read: &dyn Fn(&str) -> Js,
-    compare: &dyn Fn(&Js, FilterOperator, &Js) -> Result<bool, EvalError>,
-) -> Result<Js, EvalError> {
-    let eval = |e: &Expression| evaluate_predicate_with(e, read, compare);
+/// A comparison `compare_values` handed back, being answered by the host.
+pub type Comparing<'p> = Pin<Box<dyn Future<Output = Result<bool, EvalError>> + 'p>>;
+
+/// What answers a comparison `compare_values` hands back.
+pub type AskCompare<'p> = dyn Fn(FilterOperator, Js, Js) -> Comparing<'p> + 'p;
+
+/// `evaluatePredicate`, with what `compare_values` hands back (`WITHIN`,
+/// which reads the wall clock) answered by `ask` where given: a run asks the
+/// TypeScript member, and the walk resumes where it asked.
+pub fn evaluate_predicate_with<'p>(
+    expr: &'p Expression,
+    read: &'p dyn Fn(&str) -> Js,
+    ask: Option<&'p AskCompare<'p>>,
+) -> Pin<Box<dyn Future<Output = Result<Js, EvalError>> + 'p>> {
+    Box::pin(async move { predicate_in_place(expr, read, ask).await })
+}
+
+async fn predicate_in_place<'p>(expr: &'p Expression, read: &'p dyn Fn(&str) -> Js, ask: Option<&'p AskCompare<'p>>) -> Result<Js, EvalError> {
+    let eval = |e: &'p Expression| evaluate_predicate_with(e, read, ask);
     Ok(match expr {
         Expression::Static { value } => static_value(value),
         Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => read(property_type_id),
         Expression::AliasRef { name } => read(name),
         Expression::Meta { key } => read(&format!("@{key}")),
+        // A zero-step walk (`t.\`field\``) is a leaf the caller read
+        // already, under its `t.field` key.
+        Expression::Traverse { steps, .. } if steps.is_empty() => read(&leaf_read_key(expr)),
         Expression::List { elements } => {
             let mut items = Vec::new();
             for element in elements {
                 match element {
-                    ListElement::Expression(e) => items.push(eval(e)?),
-                    ListElement::Spread(spread) => match eval(&spread.expression)? {
+                    ListElement::Expression(e) => items.push(eval(e).await?),
+                    ListElement::Spread(spread) => match eval(&spread.expression).await? {
                         Js::Array(list) => items.extend(list.items.iter().cloned()),
                         other => {
                             let what = if other.is_nullish() { "null" } else { other.type_of() };
@@ -160,7 +177,7 @@ pub fn evaluate_predicate_with(
         Expression::Concat { parts } => {
             let mut text = String::new();
             for part in parts {
-                let v = eval(part)?;
+                let v = eval(part).await?;
                 if !v.is_nullish() {
                     text.push_str(&v.to_js_string());
                 }
@@ -168,43 +185,107 @@ pub fn evaluate_predicate_with(
             Js::String(text)
         }
         Expression::Conditional { condition, then, else_ } => {
-            if eval(condition)?.truthy() { eval(then)? } else { eval(else_)? }
+            if eval(condition).await?.truthy() { eval(then).await? } else { eval(else_).await? }
         }
         Expression::Compare { op, left, right } => {
             // Both sides are read first, as the TypeScript does.
-            let l = eval(left)?;
-            let r = eval(right)?;
+            let l = eval(left).await?;
+            let r = eval(right).await?;
             Js::Bool(if is_null_literal(left) {
                 compare_to_null(*op, &r)
             } else if is_null_literal(right) {
                 compare_to_null(*op, &l)
             } else {
-                compare(&l, *op, &r)?
+                match (compare_values(&l, *op, &r), ask) {
+                    (Err(EvalError::Fallback(_)), Some(ask)) => ask(*op, l, r).await?,
+                    (other, _) => other?,
+                }
             })
         }
         Expression::Logical { op, operands } => {
             let wanted = matches!(op, LogicalOp::Or);
             for operand in operands {
-                if eval(operand)?.truthy() == wanted {
+                if eval(operand).await?.truthy() == wanted {
                     return Ok(Js::Bool(wanted));
                 }
             }
             Js::Bool(!wanted)
         }
-        Expression::Not { expression } => Js::Bool(!eval(expression)?.truthy()),
-        Expression::Negate { expression } => Js::Number(-eval(expression)?.to_number()),
+        Expression::Not { expression } => Js::Bool(!eval(expression).await?.truthy()),
+        Expression::Negate { expression } => Js::Number(-eval(expression).await?.to_number()),
         Expression::Arithmetic { op, left, right } => {
-            let l = eval(left)?.to_number();
-            let r = eval(right)?.to_number();
+            let l = eval(left).await?.to_number();
+            let r = eval(right).await?.to_number();
             arithmetic(*op, l, r)
         }
         Expression::At { expression, index } => {
-            let value = eval(expression)?;
-            let index = eval(index)?.to_number();
+            let value = eval(expression).await?;
+            let index = eval(index).await?.to_number();
             at_index(&value, index)
         }
         _ => return Err(EvalError::Fallback("not a pure predicate kind this unit evaluates".into())),
     })
+}
+
+/// `isPurePredicate` then `pureLeafReads`: the leaf read nodes a pure
+/// predicate references, in traversal order (callers dedupe by
+/// `leaf_read_key`); `None` for one that is not pure.
+pub fn pure_leaf_reads(expr: &Expression) -> Option<Vec<&Expression>> {
+    let mut leaves = Vec::new();
+    leaf_reads(expr, &mut leaves).then_some(leaves)
+}
+
+fn leaf_reads<'e>(expr: &'e Expression, into: &mut Vec<&'e Expression>) -> bool {
+    fn all<'e>(items: &'e [Expression], into: &mut Vec<&'e Expression>) -> bool {
+        items.iter().all(|e| leaf_reads(e, into))
+    }
+    match expr {
+        Expression::Static { .. } => true,
+        Expression::Property { .. } | Expression::EdgeProperty { .. } | Expression::AliasRef { .. } | Expression::Meta { .. } => {
+            into.push(expr);
+            true
+        }
+        Expression::Traverse { steps, expression, .. } if steps.is_empty() => {
+            if !matches!(expression.as_ref(), Expression::Property { .. } | Expression::EdgeProperty { .. } | Expression::AliasRef { .. }) {
+                return false;
+            }
+            into.push(expr);
+            true
+        }
+        Expression::List { elements } => elements.iter().all(|e| match e {
+            ListElement::Expression(e) => leaf_reads(e, into),
+            ListElement::Spread(spread) => leaf_reads(&spread.expression, into),
+        }),
+        Expression::Concat { parts } => all(parts, into),
+        Expression::Conditional { condition, then, else_ } => {
+            leaf_reads(condition, into) && leaf_reads(then, into) && leaf_reads(else_, into)
+        }
+        Expression::Compare { left, right, .. } | Expression::Arithmetic { left, right, .. } => leaf_reads(left, into) && leaf_reads(right, into),
+        Expression::Logical { operands, .. } => all(operands, into),
+        Expression::Not { expression } | Expression::Negate { expression } => leaf_reads(expression, into),
+        Expression::At { expression, index } => leaf_reads(expression, into) && leaf_reads(index, into),
+        _ => false,
+    }
+}
+
+/// `leafReadKey`: the name a pure leaf read is resolved under and read back
+/// by (`t.field` for a zero-step traversal, `@key` for an ambient).
+pub fn leaf_read_key(leaf: &Expression) -> String {
+    match leaf {
+        Expression::AliasRef { name } => name.clone(),
+        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+        Expression::Meta { key } => format!("@{key}"),
+        Expression::Traverse { alias_root, expression, .. } => {
+            let inner = match expression.as_ref() {
+                Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+                Expression::AliasRef { name } => name.clone(),
+                Expression::Traverse { .. } => leaf_read_key(expression),
+                _ => String::new(),
+            };
+            format!("{}.{inner}", alias_root.as_deref().unwrap_or(""))
+        }
+        _ => String::new(),
+    }
 }
 
 /// `isPurePredicate` then `pureLeafReads(…).map(leafReadKey)`: the names a

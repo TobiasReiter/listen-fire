@@ -20,11 +20,12 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
 
 /** The fewest recordings each corpus's fixture holds, and the fewest of them
  *  the Rust engine replays whole. Measured at chunk 5A, Task 3b fix round 1
- *  (2026-10-08): v1 443 recordings, 62 on Rust; v2 542, 68 on Rust. Raise
- *  them deliberately; never lower one to pass. */
+ *  (2026-10-08): v1 443 recordings, 62 on Rust; v2 542, 68 on Rust. Raised
+ *  at 5B Task 6, the Rust engine on 5A's contracts (2026-10-08): 109 and 126
+ *  on Rust, less a margin. Raise them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 62 },
-  v2: { recordings: 542, rust: 68 },
+  v1: { recordings: 443, rust: 105 },
+  v2: { recordings: 542, rust: 120 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);

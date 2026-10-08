@@ -7,11 +7,13 @@
 //! Two things run here: the pure evaluator (`eval`, with `stdlib` and
 //! `filter`), which the TypeScript evaluator calls synchronously through
 //! `abi::eval_expression` for an expression over value bindings; and a whole
-//! run, the `segment` entry (`run`), for the programs the shim admits
-//! (apps/api/src/services/movement_engine/rust_engine.ts). JavaScript's value
+//! run, the `segment` entry (`run`), for the programs `admit` admits
+//! (apps/api/src/services/movement_engine/rust_engine.ts drives it). JavaScript's value
 //! semantics are `js`'s, and values cross on `env`'s wire.
 
 pub mod abi;
+pub mod address;
+pub mod admit;
 pub mod bindings;
 pub mod env;
 pub mod env_services;
@@ -24,12 +26,15 @@ pub mod js_date;
 pub mod js_regex;
 pub mod ledger;
 pub mod node;
+pub mod order_limit;
 pub mod park;
 pub mod program;
 pub mod run;
 pub mod stdlib;
 pub mod trace;
+pub mod traverse;
 pub mod unique;
+pub mod verbs;
 pub mod write;
 
 use movement_parser::lowering::expression::Expression;
@@ -129,7 +134,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
     let envelope = env::read_envelope(bindings)?;
     let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now };
     let evaluator = Evaluator::new(&envelope.env, envelope.language_version, around, envelope.origins);
-    Ok(match evaluator.eval(&expr) {
+    Ok(match evaluator.eval_pure(&expr) {
         Ok(result) => json!({
             "value": env::encode(&result.value),
             "provenance": match result.prov {
@@ -146,7 +151,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
             ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
         } }),
         Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
-        Err(EvalError::Suspend) => unreachable!("an evaluation with no reader never suspends"),
+        Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("an evaluation with no reader asks no host"),
     })
 }
 

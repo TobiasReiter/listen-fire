@@ -9,14 +9,23 @@
 //! origin (one per evaluation), a name passes its binding's trail through
 //! untouched, a branch or a `COALESCE` passes the chosen value's trail
 //! through, and everything else is the taint union of what it read.
+//!
+//! The walk is async, as `evalMovementExpr` is: inside a run, a read the
+//! host answers (an event field, a built-in this engine hands back) is
+//! awaited where it is made and the walk resumes there, so an expression is
+//! evaluated once however many reads it makes, in the TypeScript's order.
+//! With no run nothing is awaited, and `eval_pure` runs the walk on the spot.
 
 use std::cell::Cell;
+use std::future::Future;
+use std::pin::Pin;
 
 use movement_parser::lowering::expression::{
     Expression, FilterOperator, ListElement, LogicalOp, ObjectMember, StaticValue,
 };
 
 use crate::env::{Env, Trail, ValueBinding};
+use crate::executor::{HostError, ready};
 use crate::filter::{arithmetic, at_index, compare_to_null, compare_values, is_null_literal};
 use crate::js::{Js, JsObject};
 use crate::stdlib::{self, Surroundings};
@@ -38,9 +47,12 @@ pub enum EvalError {
     /// reproduce (a text only V8's date parser reads, a regex feature): the
     /// TypeScript evaluator answers it instead.
     Fallback(String),
-    /// The evaluation needs an answer from the host it does not have yet
-    /// (`Reader`): the caller asks, and evaluates the expression again.
-    Suspend,
+    /// A host request the evaluation awaited failed (`Reader`): the run
+    /// fails with the host's own error.
+    Host(HostError),
+    /// A priced call the evaluation awaited met the run's cost cap: the
+    /// statement suspends (run.rs `body`).
+    CapExceeded(crate::ledger::CapExceeded),
 }
 
 impl EvalError {
@@ -119,21 +131,45 @@ pub enum Ask {
     Function { id: String, args: Vec<Js> },
     /// The shared comparator, likewise.
     Compare { op: FilterOperator, left: Js, right: Js },
+    /// A bare name inside a hop's WHERE or ORDER BY (a position-scoped
+    /// evaluation) that no value binding answers: the landed record's field.
+    /// `edge` for the bracket grammar's `edge_property`, which reads the
+    /// walked edge's own inline property first, then a value binding of
+    /// that name, then the record's field.
+    ScopedField { field: String, edge: bool },
 }
 
-/// The host's answers to an evaluation's asks. An evaluation is replayed
-/// from the start after each new answer, so the answers are handed out in
-/// the order asked; one not answered yet is `Suspend`.
+/// An evaluation in progress, or a host answer it awaits.
+pub type Evaluating<'s> = Pin<Box<dyn Future<Output = Eval> + 's>>;
+
+/// What an evaluation inside a run asks of its run. The evaluation awaits
+/// each answer where it asked and resumes there, so the host sees the reads
+/// in evaluation order, one evaluation however many it reads.
 pub trait Reader {
-    fn ask(&self, ask: Ask) -> Result<Evaluated, EvalError>;
+    fn ask(&self, ask: Ask) -> Evaluating<'_>;
+    /// A literal's origin, minted in the run's table as the evaluation
+    /// reaches it: one per literal evaluated, as the TypeScript makes one
+    /// `literal` origin object each time.
+    fn literal(&self) -> u32;
 }
 
 pub struct Evaluator<'a> {
     env: &'a dyn Names,
     language_version: u32,
     around: Surroundings<'a>,
-    next_literal: Cell<u32>,
-    reader: Option<&'a dyn Reader>,
+    mode: Mode<'a>,
+    /// Position-scoped (`MovementExprContext.scope`): a hop's WHERE or ORDER
+    /// BY key, whose bare names read the landed record.
+    scoped: bool,
+}
+
+enum Mode<'a> {
+    /// `eval_expression`: nothing to ask, and literal ids counted up from
+    /// the first the caller left free.
+    Pure { next_literal: Cell<u32> },
+    /// Inside a run: what the evaluation cannot answer itself it asks, and
+    /// its literals are origins in the run's table.
+    Run(&'a dyn Reader),
 }
 
 type Eval = Result<Evaluated, EvalError>;
@@ -142,41 +178,81 @@ impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
     pub fn new(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, first_literal: u32) -> Self {
-        Evaluator { env, language_version, around, next_literal: Cell::new(first_literal), reader: None }
+        Evaluator { env, language_version, around, mode: Mode::Pure { next_literal: Cell::new(first_literal) }, scoped: false }
     }
 
     /// Inside a run: what the evaluation cannot answer itself, it asks.
-    pub fn with_reader(mut self, reader: &'a dyn Reader) -> Self {
-        self.reader = Some(reader);
-        self
+    pub fn in_run(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
+        Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: false }
     }
 
-    /// The first literal origin id the evaluation has not minted.
-    pub fn next_literal(&self) -> u32 {
-        self.next_literal.get()
+    /// Inside a run, scoped at a landed record (its reader answers
+    /// `Ask::ScopedField`).
+    pub fn scoped_in_run(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
+        Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: true }
+    }
+
+    fn reader(&self) -> Option<&'a dyn Reader> {
+        match self.mode {
+            Mode::Run(reader) => Some(reader),
+            Mode::Pure { .. } => None,
+        }
     }
 
     /// `result`, or the host's answer where this engine handed it back.
-    fn or_ask(&self, result: Result<Js, EvalError>, ask: impl FnOnce() -> Ask) -> Result<Js, EvalError> {
-        match (result, self.reader) {
-            (Err(EvalError::Fallback(_)), Some(reader)) => reader.ask(ask()).map(|answered| answered.value),
+    async fn or_ask(&self, result: Result<Js, EvalError>, ask: impl FnOnce() -> Ask) -> Result<Js, EvalError> {
+        match (result, self.reader()) {
+            (Err(EvalError::Fallback(_)), Some(reader)) => reader.ask(ask()).await.map(|answered| answered.value),
             (other, _) => other,
         }
     }
 
-    pub fn eval(&self, expr: &Expression) -> Eval {
+    fn literal(&self) -> u32 {
+        match &self.mode {
+            Mode::Run(reader) => reader.literal(),
+            Mode::Pure { next_literal } => {
+                let id = next_literal.get();
+                next_literal.set(id + 1);
+                id
+            }
+        }
+    }
+
+    /// An evaluation with no run, which asks nothing and so never waits.
+    pub fn eval_pure(&self, expr: &Expression) -> Eval {
+        debug_assert!(self.reader().is_none(), "an evaluation in a run is awaited");
+        ready(self.eval(expr))
+    }
+
+    /// The walk, in the TypeScript's evaluation order: a read the run
+    /// answers is awaited where it is made.
+    pub fn eval<'s>(&'s self, expr: &'s Expression) -> Evaluating<'s> {
+        Box::pin(async move { self.eval_in_place(expr).await })
+    }
+
+    async fn eval_in_place(&self, expr: &Expression) -> Eval {
         match expr {
             Expression::Static { value } => {
-                let id = self.next_literal.get();
-                self.next_literal.set(id + 1);
+                let id = self.literal();
                 Ok(Evaluated { value: static_value(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
             // A bare name: the value binding's value and trail. Outside a
-            // hop's WHERE a rootless `property` read is the same read.
-            Expression::AliasRef { name } | Expression::Property { property_type_id: name } => self.read_name(name),
+            // hop's WHERE a rootless `property` read is the same read; inside
+            // one it is the landed record's field, unless a value binding of
+            // that name stands in for it (`scopedBinding`).
+            Expression::AliasRef { name } => self.read_name(name),
+            Expression::Property { property_type_id: name } if self.scoped && self.env.value(name).is_none() => {
+                self.ask_scoped(name, false).await
+            }
+            Expression::Property { property_type_id: name } => self.read_name(name),
+            Expression::EdgeProperty { property_type_id: name } if self.scoped => self.ask_scoped(name, true).await,
+            Expression::EdgeProperty { .. } => Err(EvalError::unsupported(
+                "edge-property reads outside a traversal WHERE",
+                "edge properties exist only on a walked hop",
+            )),
             Expression::At { expression, index } => {
-                let inner = self.eval(expression)?;
-                let index = self.eval(index)?;
+                let inner = self.eval(expression).await?;
+                let index = self.eval(index).await?;
                 let prov = self.union(&[&inner.prov, &index.prov]);
                 // A dict is looked up by its key; a key that is not there,
                 // or one that is not text, is null.
@@ -195,12 +271,12 @@ impl<'a> Evaluator<'a> {
                 for element in elements {
                     match element {
                         ListElement::Expression(e) => {
-                            let member = self.eval(e)?;
+                            let member = self.eval(e).await?;
                             values.push(member.value);
                             provs.push(member.prov);
                         }
                         ListElement::Spread(spread) => {
-                            let evaluated = self.eval(&spread.expression)?;
+                            let evaluated = self.eval(&spread.expression).await?;
                             let members = if self.is_many_valued(&spread.expression) {
                                 members_of(&evaluated.value)
                             } else {
@@ -230,7 +306,7 @@ impl<'a> Evaluator<'a> {
                 for member in entries {
                     match member {
                         ObjectMember::Entry { key, value } => {
-                            let result = self.eval(value)?;
+                            let result = self.eval(value).await?;
                             if key == "__proto__" {
                                 return Err(EvalError::Fallback("a `__proto__` key sets a prototype".into()));
                             }
@@ -238,7 +314,7 @@ impl<'a> Evaluator<'a> {
                             provs.push(result.prov);
                         }
                         ObjectMember::Spread(spread) => {
-                            let result = self.eval(&spread.expression)?;
+                            let result = self.eval(&spread.expression).await?;
                             spread_keys(&result.value, &mut object)?;
                             provs.push(result.prov);
                         }
@@ -250,7 +326,7 @@ impl<'a> Evaluator<'a> {
                 let mut text = String::new();
                 let mut provs = Vec::new();
                 for part in parts {
-                    let part = self.eval(part)?;
+                    let part = self.eval(part).await?;
                     if !part.value.is_nullish() {
                         text.push_str(&part.value.to_js_string());
                     }
@@ -259,38 +335,40 @@ impl<'a> Evaluator<'a> {
                 Ok(Evaluated { value: Js::String(text), prov: self.union(&provs.iter().collect::<Vec<_>>()) })
             }
             Expression::Conditional { condition, then, else_ } => {
-                let condition = self.eval(condition)?;
-                self.eval(if condition.value.truthy() { then } else { else_ })
+                let condition = self.eval(condition).await?;
+                self.eval(if condition.value.truthy() { then } else { else_ }).await
             }
             Expression::Compare { op, left, right } => {
                 // `x == null` asks whether `x` has a value: answered from
                 // the subject alone, which keeps its trail.
                 if is_null_literal(right) {
-                    let subject = self.eval(left)?;
+                    let subject = self.eval(left).await?;
                     return Ok(Evaluated { value: Js::Bool(compare_to_null(*op, &subject.value)), prov: subject.prov });
                 }
                 if is_null_literal(left) {
-                    let subject = self.eval(right)?;
+                    let subject = self.eval(right).await?;
                     return Ok(Evaluated { value: Js::Bool(compare_to_null(*op, &subject.value)), prov: subject.prov });
                 }
-                let l = self.eval(left)?;
-                let r = self.eval(right)?;
+                let l = self.eval(left).await?;
+                let r = self.eval(right).await?;
                 let records = stdlib::is_binding_shaped(&l.value) || stdlib::is_binding_shaped(&r.value);
                 if records && matches!(op, FilterOperator::Eq | FilterOperator::Neq) {
                     return Err(EvalError::Fallback("a record compared by its identity".into()));
                 }
-                let value = self.or_ask(compare_values(&l.value, *op, &r.value).map(Js::Bool), || Ask::Compare {
-                    op: *op,
-                    left: l.value.clone(),
-                    right: r.value.clone(),
-                })?;
+                let value = self
+                    .or_ask(compare_values(&l.value, *op, &r.value).map(Js::Bool), || Ask::Compare {
+                        op: *op,
+                        left: l.value.clone(),
+                        right: r.value.clone(),
+                    })
+                    .await?;
                 Ok(Evaluated { value, prov: self.union(&[&l.prov, &r.prov]) })
             }
             Expression::Logical { op, operands } => {
                 let wanted = matches!(op, LogicalOp::Or);
                 let mut seen = Vec::new();
                 for operand in operands {
-                    let result = self.eval(operand)?;
+                    let result = self.eval(operand).await?;
                     let truthy = result.value.truthy();
                     seen.push(result.prov);
                     if truthy == wanted {
@@ -300,25 +378,29 @@ impl<'a> Evaluator<'a> {
                 Ok(Evaluated { value: Js::Bool(!wanted), prov: self.union(&seen.iter().collect::<Vec<_>>()) })
             }
             Expression::Not { expression } => {
-                let inner = self.eval(expression)?;
+                let inner = self.eval(expression).await?;
                 Ok(Evaluated { value: Js::Bool(!inner.value.truthy()), prov: self.union(&[&inner.prov]) })
             }
             Expression::Negate { expression } => {
-                let inner = self.eval(expression)?;
+                let inner = self.eval(expression).await?;
                 Ok(Evaluated { value: Js::Number(-inner.value.to_number()), prov: self.union(&[&inner.prov]) })
             }
             Expression::Arithmetic { op, left, right } => {
-                let l = self.eval(left)?;
-                let r = self.eval(right)?;
+                let l = self.eval(left).await?;
+                let r = self.eval(right).await?;
                 let value = arithmetic(*op, l.value.to_number(), r.value.to_number());
                 Ok(Evaluated { value, prov: self.union(&[&l.prov, &r.prov]) })
             }
-            Expression::Function { fn_, args } => self.function(fn_, args),
+            Expression::Function { fn_, args } => self.function(fn_, args).await,
             Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => {
-                let Expression::Property { property_type_id: field } = expression.as_ref() else {
+                // The bracket grammar reads `t.\`f\`` as an edge property;
+                // either terminal is the root's field (`fieldTerminalId`).
+                let (Expression::Property { property_type_id: field } | Expression::EdgeProperty { property_type_id: field }) =
+                    expression.as_ref()
+                else {
                     return Err(EvalError::Fallback("a traversal terminal other than a field".into()));
                 };
-                self.traverse(root, field)
+                self.traverse(root, field).await
             }
             other => Err(EvalError::Fallback(format!("the expression kind {:?} needs the host", kind_of(other)))),
         }
@@ -326,16 +408,16 @@ impl<'a> Evaluator<'a> {
 
     /// `root.field` with no hops: the event's field through the host, or a
     /// value binding's field projected (`readBindingField`'s value case).
-    fn traverse(&self, root: &str, field: &str) -> Eval {
+    async fn traverse(&self, root: &str, field: &str) -> Eval {
         if self.env.is_event(root) {
-            return match self.reader {
-                Some(reader) => reader.ask(Ask::EventField { field: field.to_string() }),
+            return match self.reader() {
+                Some(reader) => reader.ask(Ask::EventField { field: field.to_string() }).await,
                 None => Err(EvalError::Fallback("the event needs the host".into())),
             };
         }
         if self.env.is_record(root) {
-            return match self.reader {
-                Some(reader) => reader.ask(Ask::RecordField { root: root.to_string(), field: field.to_string() }),
+            return match self.reader() {
+                Some(reader) => reader.ask(Ask::RecordField { root: root.to_string(), field: field.to_string() }).await,
                 None => Err(EvalError::Fallback("a record the run holds is the run's".into())),
             };
         }
@@ -363,6 +445,13 @@ impl<'a> Evaluator<'a> {
         Ok(Evaluated { value, prov: self.union(&[&Prov::Binding(root.to_string())]) })
     }
 
+    async fn ask_scoped(&self, field: &str, edge: bool) -> Eval {
+        match self.reader() {
+            Some(reader) => reader.ask(Ask::ScopedField { field: field.to_string(), edge }).await,
+            None => Err(EvalError::Fallback("a landed record is the run's".into())),
+        }
+    }
+
     fn read_name(&self, name: &str) -> Eval {
         let Some(binding) = self.env.value(name) else {
             return Err(EvalError::engine(
@@ -383,12 +472,12 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn function(&self, id: &str, args: &[Expression]) -> Eval {
+    async fn function(&self, id: &str, args: &[Expression]) -> Eval {
         if stdlib::NAMESPACED.contains(&id) {
             let mut values = Vec::new();
             let mut provs = Vec::new();
             for (index, a) in args.iter().enumerate() {
-                let result = self.eval(a)?;
+                let result = self.eval(a).await?;
                 // A record (a dict the TypeScript reads as a binding) is
                 // read down to its fields there.
                 let special = stdlib::record_arg(id) == Some(index) || stdlib::whole_value_arg(id) == Some(index);
@@ -398,10 +487,9 @@ impl<'a> Evaluator<'a> {
                 values.push(result.value);
                 provs.push(result.prov);
             }
-            let value = self.or_ask(stdlib::apply_namespaced(id, &values, self.around), || Ask::Function {
-                id: id.to_string(),
-                args: values.clone(),
-            })?;
+            let value = self
+                .or_ask(stdlib::apply_namespaced(id, &values, self.around), || Ask::Function { id: id.to_string(), args: values.clone() })
+                .await?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
         if !stdlib::FLAT.contains(&id) {
@@ -411,7 +499,7 @@ impl<'a> Evaluator<'a> {
             // From version 3 COALESCE short-circuits, as `??` does.
             let mut seen = Vec::new();
             for a in args {
-                let result = self.eval(a)?;
+                let result = self.eval(a).await?;
                 if !result.value.is_nullish() {
                     return Ok(result);
                 }
@@ -421,7 +509,7 @@ impl<'a> Evaluator<'a> {
         }
         let mut results = Vec::new();
         for a in args {
-            results.push(self.eval(a)?);
+            results.push(self.eval(a).await?);
         }
         let provs: Vec<&Prov> = results.iter().map(|r| &r.prov).collect();
         if id == "coalesce" {
@@ -432,7 +520,7 @@ impl<'a> Evaluator<'a> {
             return Ok(Evaluated { value: Js::Null, prov: self.union(&provs) });
         }
         let values: Vec<Js> = results.iter().map(|r| r.value.clone()).collect();
-        let value = self.or_ask(stdlib::apply_flat(id, &values), || Ask::Function { id: id.to_string(), args: values.clone() })?;
+        let value = self.or_ask(stdlib::apply_flat(id, &values), || Ask::Function { id: id.to_string(), args: values.clone() }).await?;
         Ok(Evaluated { value, prov: self.union(&provs) })
     }
 
@@ -493,7 +581,7 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
 
 /// Whether `value` is, or (for a whole-value argument) holds anywhere, a
 /// dict the TypeScript reads as a record.
-fn holds_binding(value: &Js, deep: bool) -> bool {
+pub(crate) fn holds_binding(value: &Js, deep: bool) -> bool {
     if stdlib::is_binding_shaped(value) {
         return true;
     }
@@ -507,9 +595,149 @@ fn holds_binding(value: &Js, deep: bool) -> bool {
     }
 }
 
-fn kind_of(expr: &Expression) -> String {
+/// The lowered expression's own `type`.
+pub(crate) fn kind_of(expr: &Expression) -> String {
     serde_json::to_value(expr)
         .ok()
         .and_then(|json| json.get("type").and_then(|t| t.as_str()).map(String::from))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::task::{Context, Poll, Waker};
+
+    use super::*;
+
+    fn expression(text: &str) -> Expression {
+        let tree = movement_parser::parse_expression(text, 0).unwrap();
+        let bytes = movement_parser::lowering::lower_json_bytes(&tree.to_string(), text, movement_parser::lowering::Mode::Expression)
+            .unwrap_or_else(|e| panic!("{}", String::from_utf8_lossy(&e)));
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// `msg` is the event; nothing else is bound.
+    struct EventOnly;
+
+    impl Names for EventOnly {
+        fn value(&self, _name: &str) -> Option<ValueBinding> {
+            None
+        }
+
+        fn is_event(&self, name: &str) -> bool {
+            name == "msg"
+        }
+    }
+
+    /// Answers each event read with the field's name upper-cased, after one
+    /// poll that is not ready (the host has not answered yet); counts what
+    /// the walk does.
+    #[derive(Default)]
+    struct Counting {
+        asked: RefCell<Vec<String>>,
+        literals: Cell<u32>,
+    }
+
+    impl Reader for Counting {
+        fn ask(&self, ask: Ask) -> Evaluating<'_> {
+            let Ask::EventField { field } = ask else { panic!("only event reads here") };
+            self.asked.borrow_mut().push(field.clone());
+            let mut answered = false;
+            Box::pin(std::future::poll_fn(move |cx| {
+                if !std::mem::replace(&mut answered, true) {
+                    // Answered as soon as asked: due again on the next poll.
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Ok(Evaluated { value: Js::str(field.to_uppercase()), prov: Prov::Built(Trail::default()) }))
+            }))
+        }
+
+        fn literal(&self) -> u32 {
+            self.literals.set(self.literals.get() + 1);
+            self.literals.get() - 1
+        }
+    }
+
+    /// The walk to its end, polled once per answer, as a segment is; how many
+    /// times it waited.
+    fn drive(evaluator: &Evaluator, expr: &Expression) -> (Eval, usize) {
+        let mut walk = evaluator.eval(expr);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut waits = 0;
+        loop {
+            match walk.as_mut().poll(&mut cx) {
+                Poll::Ready(result) => return (result, waits),
+                Poll::Pending => waits += 1,
+            }
+        }
+    }
+
+    fn in_run<'a>(reader: &'a Counting) -> Evaluator<'a> {
+        Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None }, reader)
+    }
+
+    #[test]
+    fn twenty_reads_are_twenty_waits_in_one_walk() {
+        let fields: Vec<String> = (0..20).map(|i| format!("f{i}")).collect();
+        let text = format!("CONCAT(\"<\", {})", fields.iter().map(|f| format!("msg.`{f}`")).collect::<Vec<_>>().join(", "));
+        let reader = Counting::default();
+        let (result, waits) = drive(&in_run(&reader), &expression(&text));
+        let expected: String = std::iter::once("<".to_string()).chain(fields.iter().map(|f| f.to_uppercase())).collect();
+        assert!(matches!(result.unwrap().value, Js::String(s) if s == expected));
+        assert_eq!(*reader.asked.borrow(), fields);
+        assert_eq!(waits, 20);
+        // The literal before the reads was evaluated once: the walk never
+        // started over.
+        assert_eq!(reader.literals.get(), 1);
+    }
+
+    #[test]
+    fn only_the_taken_arm_reads() {
+        let reader = Counting::default();
+        let expr = expression("IF msg.`a` == \"A\" THEN IF msg.`b` == \"X\" THEN msg.`c` ELSE msg.`d` END ELSE msg.`e` END");
+        let (result, _) = drive(&in_run(&reader), &expr);
+        assert!(matches!(result.unwrap().value, Js::String(s) if s == "D"));
+        assert_eq!(*reader.asked.borrow(), ["a", "b", "d"]);
+    }
+
+    #[test]
+    fn a_true_left_operand_of_or_reads_nothing_on_its_right() {
+        let reader = Counting::default();
+        let (result, waits) = drive(&in_run(&reader), &expression("msg.`a` == \"A\" OR msg.`b` == \"B\""));
+        assert!(matches!(result.unwrap().value, Js::Bool(true)));
+        assert_eq!(*reader.asked.borrow(), ["a"]);
+        assert_eq!(waits, 1);
+    }
+
+    #[test]
+    fn a_read_inside_a_function_argument_is_awaited_before_the_function() {
+        let reader = Counting::default();
+        let (result, waits) = drive(&in_run(&reader), &expression("LOWER(CONCAT(msg.`x`, \"-\", TRIM(msg.`y`)))"));
+        assert!(matches!(result.unwrap().value, Js::String(s) if s == "x-y"));
+        assert_eq!(*reader.asked.borrow(), ["x", "y"]);
+        assert_eq!((waits, reader.literals.get()), (2, 1));
+    }
+
+    #[test]
+    fn independent_walks_wait_on_their_reads_together() {
+        // Two flows' evaluations joined (parallel arms, later): each has its
+        // first read in flight before either is answered.
+        let reader = Counting::default();
+        let evaluator = in_run(&reader);
+        let (left, right) = (expression("CONCAT(msg.`a`, msg.`b`)"), expression("CONCAT(msg.`c`, msg.`d`)"));
+        let mut both = Box::pin(crate::executor::join_all(vec![evaluator.eval(&left), evaluator.eval(&right)]));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(both.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(*reader.asked.borrow(), ["a", "c"]);
+        let results = loop {
+            if let Poll::Ready(results) = both.as_mut().poll(&mut cx) {
+                break results;
+            }
+        };
+        assert_eq!(*reader.asked.borrow(), ["a", "c", "b", "d"]);
+        let texts: Vec<String> = results.into_iter().map(|r| r.unwrap().value.to_js_string()).collect();
+        assert_eq!(texts, ["AB", "CD"]);
+    }
 }

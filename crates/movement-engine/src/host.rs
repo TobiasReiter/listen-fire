@@ -25,6 +25,7 @@ pub enum Family {
     ControlCancel,
     Locks,
     Trace,
+    Clock,
     Check,
     Builtins,
     #[cfg(test)]
@@ -38,6 +39,7 @@ const FAMILIES: &[Family] = &[
     Family::ControlCancel,
     Family::Locks,
     Family::Trace,
+    Family::Clock,
     Family::Check,
     Family::Builtins,
     #[cfg(test)]
@@ -53,6 +55,7 @@ impl Family {
             Family::ControlCancel => "control.cancel",
             Family::Locks => "locks",
             Family::Trace => "trace",
+            Family::Clock => "clock",
             Family::Check => "check",
             Family::Builtins => "builtins",
             #[cfg(test)]
@@ -143,6 +146,28 @@ pub mod adapters {
             args: in_segment(segment, json!({ "instance": instance.id, "method": method, "args": args, "wire": true })),
         }
     }
+
+    /// A call whose argument object leads with a `position`, sent by handle:
+    /// `positionRef` names a position the segment registered with its host,
+    /// and `position` (on the eval wire) registers it, on the first call that
+    /// names it. `args` is the rest of the argument object; the host's
+    /// adapter receives `{position, ...args}` (the shim, rust_host.ts, keeps
+    /// the segment's positions). A read re-sends a handle, not the record.
+    pub fn call_at(segment: &str, instance: &Instance, method: &str, position: PositionArg, args: Json) -> Request {
+        let mut request = call(segment, instance, method, args);
+        request.args["positionRef"] = json!(position.reference);
+        if let Some(value) = position.value {
+            request.args["position"] = value;
+        }
+        request
+    }
+
+    /// A position by handle: its number in the segment, and the position
+    /// itself the first time it is named.
+    pub struct PositionArg {
+        pub reference: u32,
+        pub value: Option<Json>,
+    }
 }
 
 pub mod llm {
@@ -209,6 +234,30 @@ pub mod park {
             args: in_segment(segment, json!({ "address": address, "state": state, "wakeAt": wake_at, "wire": true })),
         }
     }
+
+    /// An engine-initiated suspension (`suspendFlow`): the leaf's address and
+    /// its suspended `ParkedScopeState`, on the eval wire. Asked only of a
+    /// host that serves it (`SegmentInput::serves`).
+    pub fn commit_suspension(segment: &str, address: &str, state: Json) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "commitSuspension".into(),
+            args: in_segment(segment, json!({ "address": address, "state": state, "wire": true })),
+        }
+    }
+
+    /// The run is pausing at its cost cap: what it spent against the cap.
+    /// Asked only of a host that serves it and can suspend.
+    pub fn commit_limit_pause(segment: &str, cap: &crate::ledger::CapExceeded) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "commitLimitPause".into(),
+            args: in_segment(
+                segment,
+                json!({ "limit": "cost", "capMicrodollars": cap.cap_microdollars, "spentMicrodollars": cap.spent_microdollars }),
+            ),
+        }
+    }
 }
 
 pub mod control {
@@ -229,9 +278,34 @@ pub mod control {
 pub mod trace {
     use super::*;
 
-    /// Entries appended to the run's trace as they land.
-    pub fn append(segment: &str, entries: &[crate::trace::TraceEntry]) -> Request {
-        Request { family: Family::Trace, method: "append".into(), args: in_segment(segment, json!({ "entries": entries })) }
+    /// Entries appended to the run's trace as they land. `closing` marks the
+    /// hand-over as the segment ends (the shim's own marker, never the
+    /// host's): its failure is logged, not the run's.
+    pub fn append(segment: &str, entries: &[crate::trace::TraceEntry], closing: bool) -> Request {
+        let mut args = json!({ "entries": entries });
+        if closing {
+            args["closing"] = json!(true);
+        }
+        Request { family: Family::Trace, method: "append".into(), args: in_segment(segment, args) }
+    }
+}
+
+pub mod clock {
+    use super::*;
+
+    /// The host's instant now, answered `{nowIso}`: the engine reads no
+    /// clock of its own.
+    pub fn now(segment: &str) -> Request {
+        Request { family: Family::Clock, method: "now".into(), args: in_segment(segment, json!({})) }
+    }
+
+    /// The instant a `clock.now` answer names, in milliseconds since the
+    /// epoch; `None` for an answer that names none.
+    pub fn instant_of(answer: Option<&Json>) -> Option<f64> {
+        match crate::js_date::parse(answer?.get("nowIso")?.as_str()?) {
+            crate::js_date::Parsed::Valid(ms) => Some(ms),
+            _ => None,
+        }
     }
 }
 
@@ -249,9 +323,15 @@ pub mod builtins {
         }
     }
 
-    /// The shared comparator (`compareValues`), likewise.
-    pub fn compare(op: &str, left: Json, right: Json) -> Request {
-        Request { family: Family::Builtins, method: "compare".into(), args: json!({ "op": op, "left": left, "right": right }) }
+    /// The shared comparator (`compareValues`), likewise. `now` (an ISO
+    /// 8601 instant, the host clock's answer) is what a `WITHIN` measures
+    /// recency from, and only a `WITHIN` carries it.
+    pub fn compare(op: &str, left: Json, right: Json, now: Option<&str>) -> Request {
+        let mut args = json!({ "op": op, "left": left, "right": right });
+        if let Some(now) = now {
+            args["now"] = json!(now);
+        }
+        Request { family: Family::Builtins, method: "compare".into(), args }
     }
 }
 
@@ -326,6 +406,14 @@ mod tests {
         let cancel = control::cancelled("g1");
         assert_eq!((cancel.family.as_str(), cancel.args.clone()), ("control.cancel", json!({ "segmentId": "g1" })));
         assert_eq!(park::commit_timer_park("g1", "s0", json!(null), "2026-01-01T00:00:00.000Z").family.as_str(), "park.sink");
+        let now = clock::now("g1");
+        assert_eq!((now.family.as_str(), now.method.as_str(), now.args.clone()), ("clock", "now", json!({ "segmentId": "g1" })));
+        assert_eq!(clock::instant_of(Some(&json!({ "nowIso": "2026-01-01T00:00:01.000Z" }))), Some(1_767_225_601_000.0));
+        assert_eq!(clock::instant_of(Some(&json!({ "nowIso": "soon" }))), None);
+        assert_eq!(clock::instant_of(Some(&json!({ "now": "2026-01-01T00:00:01.000Z" }))), None);
+        let within = builtins::compare("within", json!(1), json!("1d"), Some("2026-01-01T00:00:00.000Z"));
+        assert_eq!(within.args["now"], json!("2026-01-01T00:00:00.000Z"));
+        assert!(builtins::compare("eq", json!(1), json!(1), None).args.get("now").is_none());
         let check = check::program("src", 3, None);
         assert_eq!((check.family.as_str(), check.method.as_str()), ("check", "program"));
         assert_eq!(check.args, json!({ "source": "src", "languageVersion": 3 }));
@@ -342,7 +430,7 @@ mod tests {
 
     #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "park.sink", "control.cancel", "locks", "trace", "check", "builtins", "echo"] {
+        for name in ["adapters", "llm", "park.sink", "control.cancel", "locks", "trace", "clock", "check", "builtins", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);

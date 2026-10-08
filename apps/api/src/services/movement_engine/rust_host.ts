@@ -17,10 +17,12 @@
 // handed exactly the JavaScript values (key order, `undefined`) the TypeScript
 // engine hands it in process, and an adapter's result comes back the same way.
 
-import { applyStdlib, stdlibFunctionById, type CatalogSnapshot, type Program } from 'movement-lang';
+import { applyStdlib, languageVersionDiagnostic, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
+import { getErrorMessage } from '../../lib/utils/error';
+import { logger } from '../logger';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
 import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
@@ -28,7 +30,7 @@ import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost 
 import { hostCallFailure } from './host_adapter';
 import { checkAnswer, checkPinned } from './program_check';
 import type { MovementRunResult } from './run';
-import { publishTrace, type RunContext } from './run_context';
+import { publishTrace, runLogFields, type RunContext } from './run_context';
 import type { HostAnswer, HostRequest } from './rust_engine';
 import { rustRunStats } from './rust_stats';
 import {
@@ -51,9 +53,10 @@ export interface RouteContext {
   context: RunContext;
   catalog: CatalogSnapshot;
   hostErrors: unknown[];
-  /** The program the run host parsed, for `check.program` to check as it
-   *  is. Checked at most once: the checker stamps the tree it checks. */
-  parsed?: { source: string; languageVersion: number; program: Program };
+  /** The positions the segment registered, by handle (`adapters.call`'s
+   *  `positionRef`): each crossed once, and is handed to the host's adapter
+   *  as that one object on every call that names it. */
+  positions: Map<number, unknown>;
 }
 
 type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
@@ -75,8 +78,9 @@ export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
 const ROUTES: Record<string, Route> = {
   /** The TypeScript checker over the pinned source (program_check.ts):
    *  every diagnostic, the import link and the checker's AST stamps as
-   *  data. A program that fails its check ends the run with the check's
-   *  error, exactly as parseAndCheck throws it. */
+   *  data, and the run's version warning for a deprecated pin. A program
+   *  that fails its check ends the run with the check's error, exactly as
+   *  parseAndCheck throws it. */
   async 'check.program'(request, context) {
     const languageVersion = request.languageVersion;
     if (typeof languageVersion !== 'number') throw new RustShimError('check.program languageVersion must be a number');
@@ -85,29 +89,25 @@ const ROUTES: Record<string, Route> = {
       throw new RustShimError('check.program upgradingFrom must be a number');
     }
     const source = string(request.source, 'check.program source');
-    // The run host's own parse of this very source, when it has one: used
-    // once, then forgotten, since checking stamps it.
-    const reuse = context.parsed;
-    const parsed =
-      reuse !== undefined && reuse.source === source && reuse.languageVersion === languageVersion && upgradingFrom === undefined
-        ? reuse.program
-        : undefined;
-    if (parsed !== undefined) context.parsed = undefined;
     let checked;
     try {
-      checked = checkPinned(
-        {
-          source,
-          catalog: context.catalog,
-          languageVersion,
-          ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
-        },
-        parsed,
-      );
+      checked = checkPinned({
+        source,
+        catalog: context.catalog,
+        languageVersion,
+        ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
+      });
     } catch (error) {
       throw new RunAborted(error);
     }
-    return checkAnswer(checked);
+    // The run's own version warning, read as the TypeScript engine reads it
+    // (run.ts, before the body): the release the engine runs under, not the
+    // checker's own view of it, which a host may hold apart.
+    const versionWarning = languageVersionDiagnostic(languageVersion);
+    return {
+      ...checkAnswer(checked),
+      ...(versionWarning !== undefined ? { versionWarning: { code: versionWarning.code, message: versionWarning.message } } : {}),
+    };
   },
   async 'adapters.resolve'(request, { host }) {
     const role = request.role;
@@ -130,11 +130,12 @@ const ROUTES: Record<string, Route> = {
    *  error the TypeScript's stand-in raises for it (host_adapter.ts), under
    *  the `ref` its answer carries, so a run that fails with it fails with an
    *  equal error. */
-  async 'adapters.call'(request, { host, hostErrors }) {
+  async 'adapters.call'(request, { host, hostErrors, positions }) {
     const method = adapterMethod(request.method);
     if (request.wire !== true) throw new RustShimError('adapters.call carries its args on the eval wire');
-    const args = new WireOut().read(request.args);
-    if (!isCallArgs(args)) throw new RustShimError(`adapters.call ${method}: args are one object`);
+    const rest = new WireOut().read(request.args);
+    if (!isCallArgs(rest)) throw new RustShimError(`adapters.call ${method}: args are one object`);
+    const args = withPosition(request, rest, positions);
     const answer = await host.adapters.call({
       segmentId: segmentOf(request),
       instance: string(request.instance, 'adapters.call instance'),
@@ -188,26 +189,53 @@ const ROUTES: Record<string, Route> = {
     await host.locks.release({ segmentId: segmentOf(request), token: string(request.token, 'locks.release token') });
     return undefined;
   },
-  /** A timer park. A run with no park sink is told so, and fails as the
-   *  interpreter fails it. */
-  async 'park.sink.commitTimerPark'(request, { host, context }) {
+  /** A timer park, its wake the host clock's answer plus the sleep (the
+   *  engine asked `clock.now`). Asked only of a host that serves it. */
+  async 'park.sink.commitTimerPark'(request, { host }) {
     const sink = host.park.sink;
-    if (sink === undefined) return { noSink: true };
+    if (sink?.commitTimerPark === undefined) throw notServed('park.sink.commitTimerPark');
     if (request.wire !== true) throw new RustShimError('park.sink.commitTimerPark carries its state on the eval wire');
-    // Bridge — delete with the Rust engine merge (5B). The engine computed
-    // the wake from its environment clock, held at the segment's pinned
-    // instant (rust_engine.ts): re-based on the host's clock, as the
-    // TypeScript engine computes it.
-    const sleptMs = new Date(instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt')).getTime() - context.pinnedNow.getTime();
-    const wakeAt = new Date((await context.clock.now()).getTime() + sleptMs).toISOString();
     await sink.commitTimerPark({
       segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitTimerPark address'),
       // On the eval wire: the state's objects in the order the engine wrote them.
       state: new WireOut().read(request.state),
-      wakeAt,
+      wakeAt: instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt'),
     });
     return undefined;
+  },
+  /** An engine-initiated suspension (run.ts `suspendFlow`), asked only of a
+   *  sink that can suspend (run.ts `canSuspend`). */
+  async 'park.sink.commitSuspension'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink?.commitSuspension === undefined) throw notServed('park.sink.commitSuspension');
+    if (request.wire !== true) throw new RustShimError('park.sink.commitSuspension carries its state on the eval wire');
+    await sink.commitSuspension({
+      segmentId: segmentOf(request),
+      address: string(request.address, 'park.sink.commitSuspension address'),
+      state: new WireOut().read(request.state),
+    });
+    return undefined;
+  },
+  /** The run is pausing at its cost cap, asked only of a sink that can
+   *  suspend and keeps a pause. */
+  async 'park.sink.commitLimitPause'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink?.commitLimitPause === undefined) throw notServed('park.sink.commitLimitPause');
+    if (request.limit !== 'cost') throw new RustShimError('park.sink.commitLimitPause limit is "cost"');
+    await sink.commitLimitPause({
+      segmentId: segmentOf(request),
+      limit: 'cost',
+      capMicrodollars: microdollars(request.capMicrodollars, 'park.sink.commitLimitPause capMicrodollars'),
+      spentMicrodollars: microdollars(request.spentMicrodollars, 'park.sink.commitLimitPause spentMicrodollars'),
+    });
+    return undefined;
+  },
+  /** The host's instant now, read at the boundary as the TypeScript engine
+   *  reads it (run_context.ts): an answer naming no instant fails the run. */
+  async 'clock.now'(request, { context }) {
+    segmentOf(request);
+    return { nowIso: (await context.clock.now()).toISOString() };
   },
   /** The cancel gate at a statement boundary. */
   async 'control.cancel.cancelled'(request, { host }) {
@@ -223,8 +251,23 @@ const ROUTES: Record<string, Route> = {
     segmentOf(request);
     const entries = request.entries;
     if (!Array.isArray(entries)) throw new RustShimError('trace.append entries are a list');
+    if (request.closing !== undefined && request.closing !== true) throw new RustShimError('trace.append closing is true or absent');
     context.trace.entries.push(...entries.map(traceEntry));
-    await publishTrace(context, host);
+    try {
+      await publishTrace(context, host);
+    } catch (error) {
+      // The hand-over as the segment ends is never the run's failure: the
+      // engine moves on, and the loss is logged, as run_context.ts
+      // `closeRunContext` logs its own.
+      if (request.closing === true) {
+        logger.error('[movement] a segment that ended could not hand the host the rest of its trace', {
+          segmentId: context.segmentId,
+          error: getErrorMessage(error),
+          ...runLogFields(context),
+        });
+      }
+      throw error;
+    }
     return undefined;
   },
   /** A built-in the Rust engine hands back for these arguments, answered by
@@ -237,13 +280,16 @@ const ROUTES: Record<string, Route> = {
     const spec = stdlibFunctionById(id);
     return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
   },
-  /** The shared comparator, likewise. */
-  async 'builtins.compare'(request, { context }) {
+  /** The shared comparator, likewise. A `WITHIN` measures from `now`, the
+   *  host clock's answer the engine asked for it. */
+  async 'builtins.compare'(request) {
     const op = filterOperator(request.op);
     const left = new WireOut().read(request.left);
     const right = new WireOut().read(request.right);
-    // `WITHIN` measures from the host's clock, as the TypeScript engine's does.
-    const now = op === 'within' ? (await context.clock.now()).getTime() : undefined;
+    if ((op === 'within') !== (request.now !== undefined)) {
+      throw new RustShimError('builtins.compare carries `now` for a WITHIN, and only for one');
+    }
+    const now = op === 'within' ? new Date(instant(request.now, 'builtins.compare now')).getTime() : undefined;
     return builtinAnswer(() => compareValues(left, op, right, now !== undefined ? { now } : {}));
   },
 };
@@ -268,6 +314,30 @@ function isCallArgs(value: unknown): value is AdapterCall['args'] {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * A call whose position the engine sent by handle: `positionRef` numbers a
+ * position of the segment's, and `position` (on the eval wire) registers it
+ * the first time. The adapter receives `{position, ...args}` — the position
+ * leads every argument object that has one (`getFieldValue`, `getRelated`,
+ * `iterateRelatedPage`), so the key order is the TypeScript engine's. Read
+ * before the call awaits anything, so a registration and a call naming it
+ * that are in flight together are served in the order the engine made them.
+ */
+function withPosition(request: Record<string, unknown>, rest: AdapterCall['args'], positions: Map<number, unknown>): AdapterCall['args'] {
+  const reference = request.positionRef;
+  if (reference === undefined) return rest;
+  if (typeof reference !== 'number' || !Number.isInteger(reference)) throw new RustShimError('adapters.call positionRef is an integer');
+  if (request.position !== undefined) {
+    if (positions.has(reference)) throw new RustShimError(`adapters.call registered position ${reference} twice`);
+    positions.set(reference, new WireOut().read(request.position));
+  }
+  if (!positions.has(reference)) throw new RustShimError(`adapters.call named position ${reference}, which was never registered`);
+  const position = positions.get(reference);
+  const args = { position, ...rest };
+  if (!isCallArgs(args)) throw new RustShimError('adapters.call args are one object');
+  return args;
+}
+
 function adapterMethod(value: unknown): AdapterMethod {
   const method = ADAPTER_METHODS.find((m) => m === value);
   if (method === undefined) throw new RustShimError(`adapters.call method ${JSON.stringify(value)} is not an adapter method`);
@@ -280,6 +350,17 @@ function budgetOf(value: unknown): { remainingMicrodollars: number | null } {
     throw new RustShimError('a budget is {remainingMicrodollars: number | null}');
   }
   return { remainingMicrodollars: remaining };
+}
+
+function microdollars(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new RustShimError(`${what} is a finite number`);
+  return value;
+}
+
+/** A method the engine asked of a host that does not serve it: the engine
+ *  asks an optional one only where the segment input says it is served. */
+function notServed(path: string): RustShimError {
+  return new RustShimError(`the engine asked ${path} of a host that does not serve it`);
 }
 
 function instant(value: unknown, what: string): string {
@@ -390,6 +471,11 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
       return { kind: 'gate', outcome: entry.outcome };
     case 'warning':
       return { kind: 'warning', code: string(entry.code, 'a warning code'), message: string(entry.message, 'a warning message') };
+    case 'block': {
+      const positions = entry.positions;
+      if (typeof positions !== 'number' || !Number.isInteger(positions)) throw new RustShimError('a block trace entry counts its positions');
+      return { kind: 'block', root: string(entry.root, 'a block root'), positions };
+    }
     case 'field_miss': {
       const available = entry.available;
       if (!Array.isArray(available) || !available.every((key) => typeof key === 'string')) {

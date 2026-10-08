@@ -43,6 +43,9 @@ export interface TestHostOverrides {
   locks?: WriteLocks;
   /** Where the run's trace is appended as it goes. */
   trace?: MovementTraceEntry[];
+  /** Each hand-over of the trace (one `trace.append`), its entries: when the
+   *  host saw what. */
+  traceAppends?: MovementTraceEntry[][];
   /** Where the default `park.wake` records each wake the engine asks for, as
    *  a host queues it (for the segment's team). */
   wakes?: QueuedWake[];
@@ -177,7 +180,22 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
       },
     },
     locks: { acquire: (input) => locks.acquire(input), release: (input) => locks.release(input) },
-    ...(overrides.trace !== undefined ? { trace: appendingInto(overrides.trace) } : {}),
+    ...(overrides.trace !== undefined || overrides.traceAppends !== undefined
+      ? { trace: recordingTrace(overrides.trace, overrides.traceAppends) }
+      : {}),
+  };
+}
+
+function recordingTrace(
+  trace: MovementTraceEntry[] | undefined,
+  appends: MovementTraceEntry[][] | undefined,
+): NonNullable<EngineHost['trace']> {
+  const into = appendingInto(trace ?? []);
+  return {
+    append: async (input) => {
+      appends?.push([...input.entries]);
+      await into.append(input);
+    },
   };
 }
 
@@ -210,6 +228,24 @@ function renderIntoNowhere(): RenderFile {
     ...RENDERED[type],
     source: { store: 'document', objectUri: `test-render://${++rendered}` },
   });
+}
+
+/** In-memory write locks that record the names of every acquire, in order:
+ *  what a test compares between two runs of one program. */
+export function recordingWriteLocks(acquired: string[][]): WriteLocks {
+  const inner = new InMemoryWriteLocks();
+  return {
+    holder(scope) {
+      const holder = inner.holder(scope);
+      return {
+        acquire: (names) => {
+          acquired.push([...names]);
+          return holder.acquire(names);
+        },
+        release: (names) => holder.release(names),
+      };
+    },
+  };
 }
 
 /** An in-memory park sink: timer and await parks and join counts are recorded

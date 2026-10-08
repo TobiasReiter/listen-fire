@@ -1,7 +1,15 @@
 //! The run's decision trace (expression.ts's `MovementTraceEntry`): the
-//! kinds this engine emits so far. Each is appended to the host's trace as
-//! it lands (`trace.append`), so a caller reads the run while it goes, as it
-//! reads the TypeScript engine's.
+//! kinds this engine emits so far, and the buffer a flow keeps them in.
+//!
+//! The host sees the trace as the run goes, a statement at a time, as the
+//! TypeScript engine publishes it (run.ts `interpretBody`): a flow buffers
+//! what its statement traces, and the run hands the host its own flow's
+//! buffer in one `trace.append` after each statement that traced anything,
+//! and once more as the segment ends (a park, a failure). A flow other than
+//! the run's (a `parallel` arm) will keep its own buffer until it joins,
+//! then splice it into the run's in arm order.
+
+use std::cell::RefCell;
 
 use serde::Serialize;
 
@@ -15,4 +23,26 @@ pub enum TraceEntry {
     /// A null read of a field a raw-payload position does not carry, with
     /// the first 30 keys it does.
     FieldMiss { binding: String, field: String, available: Vec<String> },
+    /// A traversal block's head, as written, and how many landings it
+    /// yielded: the body runs once per landing.
+    Block { root: String, positions: usize },
+}
+
+/// One flow's trace entries not yet handed to the host, in the order they
+/// landed.
+#[derive(Debug, Default)]
+pub struct FlowTrace {
+    pending: RefCell<Vec<TraceEntry>>,
+}
+
+impl FlowTrace {
+    pub fn push(&self, entry: TraceEntry) {
+        self.pending.borrow_mut().push(entry);
+    }
+
+    /// Everything buffered, emptying the buffer: the next `trace.append`'s
+    /// entries, or a joined flow's for its parent to splice.
+    pub fn take(&self) -> Vec<TraceEntry> {
+        std::mem::take(&mut *self.pending.borrow_mut())
+    }
 }

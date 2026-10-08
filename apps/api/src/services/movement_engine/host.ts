@@ -60,6 +60,7 @@ export {
   hostMethodPaths,
   missingHostMethods,
   requiredHostMethodPaths,
+  servedHostMethods,
 } from 'engine-contracts';
 export type {
   AdapterCallError,

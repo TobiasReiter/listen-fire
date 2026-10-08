@@ -336,8 +336,15 @@ import {
   type CallbackCall,
   type CallbackParamSpec,
 } from 'engine-contracts';
-import { checkPinned, parsePinned, type CheckInput } from './program_check';
-import { engineChoice, resumeSegmentInRust, runSegmentInRust, rustCanResume, rustCanRun } from './rust_engine';
+import { checkPinned, type CheckInput } from './program_check';
+import {
+  ENGINE_CHOICE_TS,
+  engineChoice,
+  noteEngine,
+  resumeSegmentInRust,
+  runSegmentInRust,
+  rustResumeRefusal,
+} from './rust_engine';
 import { WriteLedger, forkWriteOrder, rootWriteOrder, type WriteOrder } from './write_ledger';
 import {
   closeRunContext,
@@ -609,24 +616,31 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // the engine's import structure — validation and execution consume one
   // resolution.
   //
-  // A program the Rust engine runs whole is only parsed here, to decide: the
-  // segment asks for its own check (the `check.program` host call), which
-  // throws exactly what parseAndCheck throws. It runs inside the same segment
-  // the interpreter would: its host calls are the run's.
-  const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
-  if (parsed !== undefined && rustCanRun(parsed, input)) {
+  // Under `MOVEMENT_ENGINE=rust` the program is not parsed here: the Rust
+  // engine admits it on its own parse, then asks for its own check (the
+  // `check.program` host call), which throws exactly what parseAndCheck
+  // throws. It runs inside the same segment the interpreter would: its host
+  // calls are the run's.
+  if (routesToRust(input)) {
     return inRunContext(input, async (context) => {
-      const outcome = await runSegmentInRust({ input, context, parsed });
+      const outcome = await runSegmentInRust({ input, context });
       if ('ran' in outcome) return outcome.ran;
-      // Declined before any host-visible effect: the interpreter runs it, in
-      // the same segment, on a fresh parse (the segment's check may have
-      // stamped `parsed`).
+      // Refused or declined before any host-visible effect: the interpreter
+      // runs it, in the same segment.
       const { program, prepared } = parseAndCheck(input);
       return new Interpreter(input, { ...prepared, context }).run(program);
     });
   }
-  const { program, prepared } = parseAndCheck(input, parsed);
+  const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) => new Interpreter(input, { ...prepared, context }).run(program));
+}
+
+/** Whether `MOVEMENT_ENGINE` routes runs to the Rust engine; a run it does
+ *  not route is logged as the TypeScript engine's here. */
+function routesToRust(input: RunMovementInput): boolean {
+  if (engineChoice() === 'rust') return true;
+  noteEngine(input, 'ts', ENGINE_CHOICE_TS);
+  return false;
 }
 
 /** What the check reads of a run's input. */
@@ -691,8 +705,8 @@ interface PreparedRun {
  *  MOVENG_LANGUAGE_VERSION / MOVENG_PARSE / MOVENG_CHECK errors every entry
  *  point does. Shared by run + resume so a resume re-validates the pinned
  *  source exactly as a fresh run did. */
-function parseAndCheck(input: RunMovementInput, parsed?: Program): { program: Program; prepared: PreparedRun } {
-  const { program, catalog, link } = checkPinned(checkInputOf(input), parsed);
+function parseAndCheck(input: RunMovementInput): { program: Program; prepared: PreparedRun } {
+  const { program, catalog, link } = checkPinned(checkInputOf(input));
   return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
 }
 
@@ -710,18 +724,17 @@ export interface ResumeMovementInput extends ResumeInput {
 export async function resumeMovement(input: ResumeMovementInput): Promise<MovementRunResult> {
   refuseUnsupportedParkStateVersion(input.state.version);
   // A parked state the Rust engine resumes (its own or the TypeScript
-  // engine's: the state is one shape) is only parsed here, as `runMovement`
-  // parses a run it routes.
-  const parsed = engineChoice() === 'rust' ? parsePinned(checkInputOf(input)) : undefined;
-  if (parsed !== undefined && rustCanResume(parsed, input)) {
+  // engine's: the state is one shape) is the Rust engine's to admit, with
+  // its program, as `runMovement` routes a run.
+  if (routesToRust(input) && rustResumeRefusal(input) === undefined) {
     return inRunContext(input, async (context) => {
-      const outcome = await resumeSegmentInRust({ input, context, parsed });
+      const outcome = await resumeSegmentInRust({ input, context });
       if ('ran' in outcome) return outcome.ran;
       const { program, prepared } = parseAndCheck(input);
       return resumeInterpreter(input, { program, prepared, context });
     });
   }
-  const { program, prepared } = parseAndCheck(input, parsed);
+  const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) => resumeInterpreter(input, { program, prepared, context }));
 }
 
