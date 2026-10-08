@@ -341,9 +341,62 @@ export const inProcessNotifier: WorkNotifier = {
   },
 };
 
+/** For a deployment whose every pass comes from its schedule: a door's notify
+ *  does nothing, and the row waits for the next scheduled tick. */
+export class NoopNotifier implements WorkNotifier {
+  notify(): void {}
+}
+
+const TICK_FAILURE_LOG_EVERY_MS = 60_000;
+
+/**
+ * For external mode: a door's notify POSTs the drain tick endpoint at each URL
+ * (any instance's, or a push subscription that forwards to one). Fire and
+ * forget, because `notifyWork` is synchronous and a lost tick costs only
+ * latency — the scheduled tick drains the row anyway. So a failure is logged,
+ * at most once a minute per URL, and never thrown.
+ */
+export class HttpTickNotifier implements WorkNotifier {
+  private readonly urls: readonly string[];
+  private readonly apiKey: string;
+  private readonly lastFailureLoggedAt = new Map<string, number>();
+
+  constructor(opts: { urls: readonly string[]; apiKey: string }) {
+    this.urls = opts.urls;
+    this.apiKey = opts.apiKey;
+  }
+
+  notify(): void {
+    for (const url of this.urls) void this.tick(url);
+  }
+
+  private async tick(url: string): Promise<void> {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
+        body: '{}',
+      });
+      // Read to the end so the connection is released for the next tick.
+      await response.arrayBuffer();
+      if (!response.ok) this.logFailure(url, `HTTP ${response.status}`);
+    } catch (error) {
+      this.logFailure(url, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private logFailure(url: string, reason: string): void {
+    const now = Date.now();
+    const last = this.lastFailureLoggedAt.get(url);
+    if (last !== undefined && now - last < TICK_FAILURE_LOG_EVERY_MS) return;
+    this.lastFailureLoggedAt.set(url, now);
+    logger.warn('[work] drain tick failed; the scheduled tick will drain it', { url, reason });
+  }
+}
+
 let notifier: WorkNotifier = inProcessNotifier;
 
-/** Injection point: external shapes set a no-op or an HTTP poke. */
+/** Injection point: chosen at boot from the drain mode (startup/automations.ts). */
 export function setWorkNotifier(n: WorkNotifier): void {
   notifier = n;
 }

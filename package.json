@@ -22,6 +22,8 @@
     "dev:loop:agent2": "DEV_LOOP_PROFILE=agent2 bash dev/loop.sh",
     "dev:loop:agent3": "DEV_LOOP_PROFILE=agent3 bash dev/loop.sh",
     "dev:loop:status": "cd apps/api && pnpm run dev:loop:status",
+    "dev:system-key": "cd apps/api && pnpm run dev:system-key",
+    "drain:once": "cd apps/api && pnpm run drain:once",
     "dev:seed": "cd apps/api && pnpm run dev:seed",
     "dev:chat": "cd apps/api && pnpm run dev:chat",
     "dev:inspect": "cd apps/api && pnpm run dev:inspect",

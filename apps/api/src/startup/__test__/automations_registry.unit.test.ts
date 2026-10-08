@@ -1,18 +1,23 @@
 import { ensurePeriodicWork, removeRetiredWork } from '../../services/work/store';
 import {
+  HttpTickNotifier,
+  NoopNotifier,
+  inProcessNotifier,
   recordExternalDrainPass,
   registerWorkHandler,
   resetWorkHandlersForTests,
   setExternalDrainPassRecorder,
+  setWorkNotifier,
   startDrainLoop,
 } from '../../services/work/drain';
 import { CORE_WORK_KINDS, claimableWorkKinds } from '../../services/work/kinds';
 import { runNamedWorker, workerTick } from '../../lib/worker';
-import { automationsWorkers, registerAutomationsWork } from '../automations';
+import { TICK_KEY_VAR, TICK_URLS_VAR, automationsWorkers, registerAutomationsWork } from '../automations';
 
 jest.mock('../../services/work/drain', () => ({
   ...jest.requireActual('../../services/work/drain'),
   registerWorkHandler: jest.fn(),
+  setWorkNotifier: jest.fn(),
   startDrainLoop: jest.fn(() => async () => {}),
 }));
 jest.mock('../../services/work/store', () => ({
@@ -42,14 +47,28 @@ const UNIT_KINDS = ['ask_closed_sweep', 'airtable_webhook_refresh', 'exposed_fil
 
 const PASS = { claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false };
 
-const originalMode = process.env.AUTOMATIONS_DRAIN_MODE;
+const installNotifier = jest.mocked(setWorkNotifier);
+
+const DRAIN_ENV_VARS = ['AUTOMATIONS_DRAIN_MODE', TICK_URLS_VAR, TICK_KEY_VAR] as const;
+const originalDrainEnv = Object.fromEntries(DRAIN_ENV_VARS.map((name) => [name, process.env[name]]));
+
+function drainEnv(env: Partial<Record<(typeof DRAIN_ENV_VARS)[number], string>>): void {
+  for (const name of DRAIN_ENV_VARS) {
+    const value = env[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+}
 
 afterEach(() => {
   jest.clearAllMocks();
   resetWorkHandlersForTests();
   setExternalDrainPassRecorder(undefined);
-  if (originalMode === undefined) delete process.env.AUTOMATIONS_DRAIN_MODE;
-  else process.env.AUTOMATIONS_DRAIN_MODE = originalMode;
+  for (const name of DRAIN_ENV_VARS) {
+    const value = originalDrainEnv[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 });
 
 describe('the automations registry', () => {
@@ -129,6 +148,56 @@ describe('the automations registry', () => {
     process.env.AUTOMATIONS_DRAIN_MODE = 'sometimes';
     expect(() => automationsWorkers.workers[0].start()).toThrow(/AUTOMATIONS_DRAIN_MODE/);
     expect(startLoop).not.toHaveBeenCalled();
+  });
+});
+
+describe('where a door\'s notify goes', () => {
+  function installed() {
+    expect(installNotifier).toHaveBeenCalledTimes(1);
+    return installNotifier.mock.calls[0]?.[0];
+  }
+
+  it('loop mode: to this process\'s loop', () => {
+    drainEnv({ AUTOMATIONS_DRAIN_MODE: 'loop' });
+    automationsWorkers.workers[0].start();
+    expect(installed()).toBe(inProcessNotifier);
+  });
+
+  it('external mode with tick URLs and a key: an HTTP tick to each URL', () => {
+    drainEnv({
+      AUTOMATIONS_DRAIN_MODE: 'external',
+      [TICK_URLS_VAR]: 'http://a.test/api/v1/system/automations/drain, https://b.test/api/v1/system/automations/drain',
+      [TICK_KEY_VAR]: 'lf_key',
+    });
+    automationsWorkers.workers[0].start();
+    expect(installed()).toEqual(
+      new HttpTickNotifier({
+        urls: ['http://a.test/api/v1/system/automations/drain', 'https://b.test/api/v1/system/automations/drain'],
+        apiKey: 'lf_key',
+      }),
+    );
+  });
+
+  it('external mode with neither: nowhere, leaving every pass to the schedule', () => {
+    drainEnv({ AUTOMATIONS_DRAIN_MODE: 'external' });
+    automationsWorkers.workers[0].start();
+    expect(installed()).toBeInstanceOf(NoopNotifier);
+  });
+
+  it.each([
+    ['URLs without a key', { [TICK_URLS_VAR]: 'http://a.test/drain' }],
+    ['a key without URLs', { [TICK_KEY_VAR]: 'lf_key' }],
+  ])('external mode with %s is refused at boot, naming both', (_label, half) => {
+    drainEnv({ AUTOMATIONS_DRAIN_MODE: 'external', ...half });
+    const start = () => automationsWorkers.workers[0].start();
+    expect(start).toThrow(TICK_URLS_VAR);
+    expect(start).toThrow(TICK_KEY_VAR);
+    expect(installNotifier).not.toHaveBeenCalled();
+  });
+
+  it('refuses a tick URL that is not http(s)', () => {
+    drainEnv({ AUTOMATIONS_DRAIN_MODE: 'external', [TICK_URLS_VAR]: 'drain.internal', [TICK_KEY_VAR]: 'lf_key' });
+    expect(() => automationsWorkers.workers[0].start()).toThrow(/not an http\(s\) URL/);
   });
 });
 

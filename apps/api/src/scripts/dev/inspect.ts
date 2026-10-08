@@ -18,6 +18,7 @@
  *   pnpm dev:inspect callbacks <runId>     → one run's callbacks
  *   pnpm dev:inspect tg-runs               → recent translation-graph runs
  *   pnpm dev:inspect tg-runs <runId>       → full detail of one tg_run row
+ *   pnpm dev:inspect work                  → automations work rows (every team's): kind, key, due, lease, attempts
  *   pnpm dev:inspect all --pretty          → everything, human-readable
  *
  *   --reset              clear all fake-channels state (admin endpoint)
@@ -31,6 +32,8 @@
 // First: the active profile's env (its DATABASE_URL) must be in place before
 // the query builders read it, or this reads apps/api/.env's database instead.
 import './_profile_loader';
+
+import { sql } from 'kysely';
 
 import { getQb, getAutomationsQb, getValuationsQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
@@ -64,6 +67,7 @@ type Domain =
   | 'callbacks'
   | 'crm'
   | 'tg-runs'
+  | 'work'
   | 'all';
 
 const ALL_DOMAINS: Exclude<Domain, 'all'>[] = [
@@ -84,6 +88,7 @@ const ALL_DOMAINS: Exclude<Domain, 'all'>[] = [
   'callbacks',
   'crm',
   'tg-runs',
+  'work',
 ];
 
 async function http<T = unknown>(path: string, method: 'GET' | 'POST' | 'DELETE' = 'GET'): Promise<T> {
@@ -364,6 +369,32 @@ async function inspectTgRuns(sub?: string) {
     .limit(limit)
     .execute();
   return { service: 'tg-runs', teamId, limit, count: rows.length, rows };
+}
+
+const PAYLOAD_SUMMARY_CHARS = 120;
+
+/** The drain's queue as it stands: every work row, soonest due first, beside
+ *  the database clock the claim compares `due_at` and the lease against. */
+async function inspectWork() {
+  const qb = getAutomationsQb(['work']);
+  const clock = await sql<{ now: Date }>`select now() as now`.execute(qb);
+  const rows = await qb
+    .selectFrom('work')
+    .orderBy('due_at asc')
+    .select(['kind', 'key', 'team_id', 'due_at', 'interval_ms', 'lease_owner', 'lease_until', 'attempts', 'deferrals', 'payload'])
+    .execute();
+  return {
+    service: 'work',
+    now: clock.rows[0]?.now,
+    count: rows.length,
+    rows: rows.map(({ payload, ...row }) => {
+      const text = JSON.stringify(payload);
+      return {
+        ...row,
+        payload: text.length > PAYLOAD_SUMMARY_CHARS ? `${text.slice(0, PAYLOAD_SUMMARY_CHARS)}…` : text,
+      };
+    }),
+  };
 }
 
 /**
@@ -714,6 +745,7 @@ async function main() {
     results.push(await inspectCallbacks());
     results.push(await inspectFakeCrm());
     results.push(await inspectTgRuns());
+    results.push(await inspectWork());
   } else if (domain === 'email') {
     results.push(await inspectEmail());
   } else if (domain === 'whatsapp') {
@@ -734,6 +766,8 @@ async function main() {
     results.push(await inspectFakeCrm());
   } else if (domain === 'tg-runs') {
     results.push(await inspectTgRuns(sub));
+  } else if (domain === 'work') {
+    results.push(await inspectWork());
   } else if (domain === 'airtable') {
     results.push(await inspectAirtable());
   } else if (domain === 'granola') {

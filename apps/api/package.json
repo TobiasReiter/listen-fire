@@ -59,6 +59,8 @@
     "dev:answer": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/answer.ts",
     "dev:_test_kv": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/_test_kv.ts",
     "dev:loop:status": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/status.ts",
+    "dev:system-key": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/system_key.ts",
+    "drain:once": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/drain_once.ts",
     "tg:prune": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/tg_prune.ts",
     "parseExcel": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/parseExcel.ts",
     "email:dev": "email dev --dir src/email/templates --port 3003",

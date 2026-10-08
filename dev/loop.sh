@@ -23,6 +23,17 @@
 # out-of-band dev CLIs can pick the right stack, and `pnpm dev:loop:status`
 # can list / prune dead loops.
 #
+# Deployment shapes are controlled by $DEV_LOOP_SHAPE (independent of the
+# profile, which is only a port slot):
+#
+#   loop      — the default. The API drains automations work on its own
+#               in-process timer.
+#   push-tick — the API in external drain mode with no in-process loop: a
+#               door's notify POSTs the API's own drain tick (standing in for a
+#               Pub/Sub push subscription), and dev/scheduler.sh ticks it every
+#               5 s (standing in for Cloud Scheduler). Log:
+#               .dev-loop/scheduler.log.
+#
 # Flags:
 #   --force-kill     If any of this profile's ports are already bound, kill
 #                    the holders and continue. Default is to abort.
@@ -35,6 +46,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 PROFILE="${DEV_LOOP_PROFILE:-default}"
+SHAPE="${DEV_LOOP_SHAPE:-loop}"
 FORCE_KILL=0
 for arg in "$@"; do
   case "$arg" in
@@ -93,8 +105,17 @@ export LISTEN_FIRE_STACK="${LISTEN_FIRE_STACK:-$STACK_NAME_DEFAULT}"
 export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-$POSTGRES_HOST_PORT_DEFAULT}"
 export REDIS_HOST_PORT="${REDIS_HOST_PORT:-$REDIS_HOST_PORT_DEFAULT}"
 
+case "$SHAPE" in
+  loop|push-tick) ;;
+  *)
+    echo "[dev:loop] unknown DEV_LOOP_SHAPE='$SHAPE' (expected: loop, push-tick)"
+    exit 1
+    ;;
+esac
+
 echo "[dev:loop] Repo: $REPO_ROOT"
 echo "[dev:loop] Profile: $PROFILE"
+echo "[dev:loop] Shape: $SHAPE"
 echo "[dev:loop] Compose project: $LISTEN_FIRE_STACK"
 echo "[dev:loop] Postgres: localhost:$POSTGRES_HOST_PORT  Redis: localhost:$REDIS_HOST_PORT"
 
@@ -269,6 +290,16 @@ export RESEND_WEBHOOK_SECRET="${RESEND_WEBHOOK_SECRET:-whsec_ZGV2LWxvb3AtcmVzZW5
 # working; it is refused outright in production, whatever it says here.
 export ALLOW_UNSIGNED_WEBHOOKS="${ALLOW_UNSIGNED_WEBHOOKS:-true}"
 
+# The push-tick shape: the API drains only when its tick endpoint is called.
+# The shape owns the drain mode outright: a caller's AUTOMATIONS_DRAIN_MODE=loop
+# would make this the default shape under another name. Its key is minted
+# below, once the fake CRM is up.
+if [ "$SHAPE" = "push-tick" ]; then
+  export AUTOMATIONS_DRAIN_MODE=external
+  export AUTOMATIONS_TICK_URLS="${AUTOMATIONS_TICK_URLS:-$API_BASE_URL/api/v1/system/automations/drain}"
+  echo "[dev:loop] AUTOMATIONS_DRAIN_MODE: external  AUTOMATIONS_TICK_URLS: $AUTOMATIONS_TICK_URLS"
+fi
+
 echo "[dev:loop] API: $API_BASE_URL"
 echo "[dev:loop] WEB: $WEB_BASE_URL"
 echo "[dev:loop] FAKE_CHANNELS_URL: $FAKE_CHANNELS_URL"
@@ -313,6 +344,7 @@ STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$PROFILE_FILE" <<EOF
 {
   "profile": "$PROFILE",
+  "shape": "$SHAPE",
   "pid": $$,
   "startedAt": "$STARTED_AT",
   "env": {
@@ -355,13 +387,43 @@ FAKE_CRM_LOG="$LOG_DIR/fake-crm.log"
 FAKE_CRM_PID=$!
 echo "[dev:loop] fake CRM (acme_crm): $FAKE_REMOTE_ADAPTER_URL (pid $FAKE_CRM_PID, log $FAKE_CRM_LOG)"
 
+SCHEDULER_PID=""
 cleanup() {
   rm -f "$PROFILE_FILE"
   if [ -n "${FAKE_CRM_PID:-}" ]; then
     kill "$FAKE_CRM_PID" 2>/dev/null || true
   fi
+  if [ -n "${SCHEDULER_PID:-}" ]; then
+    kill "$SCHEDULER_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
+
+# The push-tick shape's key and scheduler. The key is minted before the API
+# boots, because the API's tick notifier reads it at boot, and after the fake
+# CRM is up, because minting provisions the dev-loop team (its owner) the way
+# `dev:seed` does, and that installs the fake CRM's adapter. The scheduler is
+# handed this loop's pid and exits once that is gone, so a loop killed without
+# its trap does not leave it ticking.
+if [ "$SHAPE" = "push-tick" ]; then
+  echo -n "[dev:loop] Waiting for the fake CRM"
+  for i in $(seq 1 60); do
+    if curl -s -o /dev/null "$FAKE_REMOTE_ADAPTER_URL"; then echo " up."; break; fi
+    echo -n "."
+    sleep 1
+    if [ "$i" -eq 60 ]; then echo; echo "[dev:loop] the fake CRM did not come up in 60s (log $FAKE_CRM_LOG)"; exit 1; fi
+  done
+  echo "[dev:loop] Minting the scheduler's system-scope key (dev-loop-scheduler)..."
+  AUTOMATIONS_TICK_KEY="$( (cd apps/api && pnpm -s run dev:system-key) | tail -n 1)" || true
+  case "$AUTOMATIONS_TICK_KEY" in
+    lf_*) export AUTOMATIONS_TICK_KEY ;;
+    *) echo "[dev:loop] minting the system-scope key failed (pnpm dev:system-key)"; exit 1 ;;
+  esac
+  SCHEDULER_LOG="$LOG_DIR/scheduler.log"
+  bash dev/scheduler.sh "$$" > "$SCHEDULER_LOG" 2>&1 &
+  SCHEDULER_PID=$!
+  echo "[dev:loop] scheduler: ticks $API_BASE_URL's drain every 5 s (pid $SCHEDULER_PID, log $SCHEDULER_LOG)"
+fi
 
 echo "[dev:loop] Starting pnpm dev (parallel: api, web, fake-channels)..."
 echo
