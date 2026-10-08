@@ -6,7 +6,8 @@
  * would, and nothing else: no HTTP, and none of the other units' loops.
  *
  * Exit 0 when the drain went idle (failed rows included: each is released to
- * retry on a later pass), 1 when the work table could not be reached.
+ * retry on a later pass), 2 when it stopped at the pass limit with work still
+ * due, 1 when the work table could not be reached or the run threw.
  *
  * Usage:
  *   node build/scripts/drain_once.js [--limit <1..100>] [--max-passes <1..50>]
@@ -20,23 +21,40 @@ import { randomUUID } from 'node:crypto';
 import { globalQb } from '../lib/kysely';
 import { prismaClient } from '../prisma';
 import { mounts } from '../products';
-import { drainUntilIdle } from '../services/work/drain';
+import { drainUntilIdle, type DrainStop } from '../services/work/drain';
 import { registerAutomationsWork } from '../startup/automations';
 
 // The tick endpoint's bounds, so a job and a tick are the same pass.
-const LIMIT_MAX = 100;
-const MAX_PASSES_MAX = 50;
+const FLAG_MAX = { '--limit': 100, '--max-passes': 50 } as const;
 
-function intFlag(argv: readonly string[], input: { flag: string; max: number }): number | undefined {
-  const index = argv.indexOf(input.flag);
-  if (index < 0) return undefined;
-  const raw = argv[index + 1] ?? '';
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > input.max) {
-    throw new Error(`${input.flag} must be a whole number from 1 to ${input.max}, not "${raw}".`);
-  }
-  return value;
+type Flag = keyof typeof FLAG_MAX;
+
+function isFlag(name: string): name is Flag {
+  return Object.hasOwn(FLAG_MAX, name);
 }
+
+/** `--limit 5` or `--limit=5`, likewise `--max-passes`; anything else is refused by name. */
+function parseFlags(argv: readonly string[]): Partial<Record<Flag, number>> {
+  const flags: Partial<Record<Flag, number>> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] ?? '';
+    const eq = arg.indexOf('=');
+    const name = eq < 0 ? arg : arg.slice(0, eq);
+    if (!isFlag(name)) throw new Error(`drain:once does not take "${arg}" (it takes --limit and --max-passes).`);
+    const raw = eq < 0 ? (argv[++i] ?? '') : arg.slice(eq + 1);
+    const value = Number(raw);
+    if (raw === '' || !Number.isInteger(value) || value < 1 || value > FLAG_MAX[name]) {
+      throw new Error(`${name} must be a whole number from 1 to ${FLAG_MAX[name]}, not "${raw}".`);
+    }
+    flags[name] = value;
+  }
+  return flags;
+}
+
+/** 0: the drain went idle. 2: it stopped at the pass limit with work still
+ *  due, so a scheduler should run it again. 1: the work table could not be
+ *  reached (or, from `drainOnceAndExit`, the run threw). */
+const EXIT_CODE: Record<DrainStop, number> = { idle: 0, pass_limit: 2, claim_failed: 1 };
 
 /** One drain-once run; resolves to the process's exit code. */
 export async function drainOnceMain(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
@@ -45,8 +63,7 @@ export async function drainOnceMain(argv: readonly string[] = process.argv.slice
   if (!mounts('automations')) {
     throw new Error('drain:once runs automations work, and LISTEN_FIRE_PRODUCTS does not mount automations.');
   }
-  const limit = intFlag(argv, { flag: '--limit', max: LIMIT_MAX });
-  const maxPasses = intFlag(argv, { flag: '--max-passes', max: MAX_PASSES_MAX });
+  const { '--limit': limit, '--max-passes': maxPasses } = parseFlags(argv);
 
   await registerAutomationsWork();
   const result = await drainUntilIdle({
@@ -55,7 +72,7 @@ export async function drainOnceMain(argv: readonly string[] = process.argv.slice
     ...(maxPasses !== undefined ? { maxPasses } : {}),
   });
   console.log(JSON.stringify(result));
-  return result.claimFailed ? 1 : 0;
+  return EXIT_CODE[result.stopped];
 }
 
 /** Run once, close the pools, and exit with the run's code. */

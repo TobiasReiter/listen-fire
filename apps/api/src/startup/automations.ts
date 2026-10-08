@@ -88,6 +88,14 @@ function workNotifierFor(mode: DrainMode, env: Env): WorkNotifier {
   }
 }
 
+/** The drain's settings, checked where the server checks its other boot-time
+ *  configuration: a bad mode or half a tick pair fails the boot, rather than
+ *  leaving an API that serves requests while nothing drains. `startDrain`
+ *  checks again, for an entry that boots without the server. */
+function assertAutomationsDrainConfigured(env: Env = process.env): void {
+  workNotifierFor(drainMode(env), env);
+}
+
 /** The worker pulse one drain pass records, in either mode. */
 function passRecorder(): ((result: DrainResult) => void) | undefined {
   const recordPass = claimLoopTick();
@@ -140,4 +148,11 @@ const automationsWorkers: WorkerRegistry = {
   lock: false,
 };
 
-export { DRAIN_MODE_VAR, TICK_KEY_VAR, TICK_URLS_VAR, automationsWorkers, registerAutomationsWork };
+export {
+  DRAIN_MODE_VAR,
+  TICK_KEY_VAR,
+  TICK_URLS_VAR,
+  assertAutomationsDrainConfigured,
+  automationsWorkers,
+  registerAutomationsWork,
+};

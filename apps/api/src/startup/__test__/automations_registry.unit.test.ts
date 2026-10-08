@@ -12,7 +12,13 @@ import {
 } from '../../services/work/drain';
 import { CORE_WORK_KINDS, claimableWorkKinds } from '../../services/work/kinds';
 import { runNamedWorker, workerTick } from '../../lib/worker';
-import { TICK_KEY_VAR, TICK_URLS_VAR, automationsWorkers, registerAutomationsWork } from '../automations';
+import {
+  TICK_KEY_VAR,
+  TICK_URLS_VAR,
+  assertAutomationsDrainConfigured,
+  automationsWorkers,
+  registerAutomationsWork,
+} from '../automations';
 
 jest.mock('../../services/work/drain', () => ({
   ...jest.requireActual('../../services/work/drain'),
@@ -201,6 +207,39 @@ describe('where a door\'s notify goes', () => {
   });
 });
 
+describe('assertAutomationsDrainConfigured (the boot-time check)', () => {
+  it.each([
+    ['no drain settings', {}],
+    ['loop mode', { AUTOMATIONS_DRAIN_MODE: 'loop' }],
+    ['external mode with neither tick setting', { AUTOMATIONS_DRAIN_MODE: 'external' }],
+    [
+      'external mode with both tick settings',
+      { AUTOMATIONS_DRAIN_MODE: 'external', [TICK_URLS_VAR]: 'http://a.test/drain', [TICK_KEY_VAR]: 'lf_key' },
+    ],
+  ])('accepts %s', (_label, env) => {
+    expect(() => assertAutomationsDrainConfigured(env)).not.toThrow();
+  });
+
+  it('refuses a drain mode it does not know', () => {
+    expect(() => assertAutomationsDrainConfigured({ AUTOMATIONS_DRAIN_MODE: 'sometimes' })).toThrow(/AUTOMATIONS_DRAIN_MODE/);
+  });
+
+  it.each([
+    ['URLs without a key', { [TICK_URLS_VAR]: 'http://a.test/drain' }],
+    ['a key without URLs', { [TICK_KEY_VAR]: 'lf_key' }],
+  ])('refuses %s in external mode, naming both', (_label, half) => {
+    const check = () => assertAutomationsDrainConfigured({ AUTOMATIONS_DRAIN_MODE: 'external', ...half });
+    expect(check).toThrow(TICK_URLS_VAR);
+    expect(check).toThrow(TICK_KEY_VAR);
+  });
+
+  it('installs nothing: it only checks', () => {
+    assertAutomationsDrainConfigured({ AUTOMATIONS_DRAIN_MODE: 'external' });
+    expect(installNotifier).not.toHaveBeenCalled();
+    expect(startLoop).not.toHaveBeenCalled();
+  });
+});
+
 describe('registerAutomationsWork', () => {
   it('registers exactly one core handler for every core kind, and every unit kind through its unit', async () => {
     await registerAutomationsWork();
@@ -237,8 +276,9 @@ describe('registerAutomationsWork', () => {
 
   it('deletes the rows of retired kinds where the periodic rows are ensured', async () => {
     await registerAutomationsWork();
-    expect(removeRetired).toHaveBeenCalledWith(['await_resume_sweep']);
+    expect(removeRetired).toHaveBeenCalledWith(['await_resume_sweep', 'ask_expiry_sweep']);
     // A retired kind is gone from the live list, not merely unscheduled.
     expect(new Set<string>(claimableWorkKinds()).has('await_resume_sweep')).toBe(false);
+    expect(new Set<string>(claimableWorkKinds()).has('ask_expiry_sweep')).toBe(false);
   });
 });

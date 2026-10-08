@@ -54,6 +54,35 @@ async function stubDrain(status: number): Promise<{ url: string; ticks: Tick[]; 
   };
 }
 
+/** A drain endpoint that answers only when told to (or never). */
+async function heldDrain(): Promise<{ url: string; count(): number; arrived(n: number): Promise<void>; answerAll(): void; close(): Promise<void> }> {
+  let count = 0;
+  const held: http.ServerResponse[] = [];
+  const watchers: Array<{ n: number; resolve: () => void }> = [];
+  const server = http.createServer((req, res) => {
+    req.resume();
+    count += 1;
+    held.push(res);
+    for (const watcher of watchers.filter((w) => w.n <= count)) watcher.resolve();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('the stub drain is not on a TCP port');
+  return {
+    url: `http://127.0.0.1:${address.port}/api/v1/system/automations/drain`,
+    count: () => count,
+    arrived: (n) => new Promise<void>((resolve) => (n <= count ? resolve() : watchers.push({ n, resolve }))),
+    answerAll: () => {
+      for (const res of held.splice(0)) res.end('{"claimed":0}');
+    },
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
 const warn = jest.mocked(logger.warn);
 
 describe('HttpTickNotifier', () => {
@@ -108,6 +137,49 @@ describe('HttpTickNotifier', () => {
     new HttpTickNotifier({ urls: [drain.url], apiKey: 'lf_key' }).notify();
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('drain tick failed'), expect.objectContaining({ url: drain.url }));
+  });
+});
+
+describe('HttpTickNotifier\'s latch and timeout', () => {
+  it('ten notifies during one slow tick make two requests: the one in flight, and one owed', async () => {
+    const drain = await heldDrain();
+    try {
+      const notifier = new HttpTickNotifier({ urls: [drain.url], apiKey: 'lf_key' });
+      notifier.notify();
+      await drain.arrived(1);
+      for (let i = 0; i < 9; i++) notifier.notify();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(drain.count()).toBe(1);
+
+      drain.answerAll();
+      await drain.arrived(2);
+      drain.answerAll();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(drain.count()).toBe(2);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      await drain.close();
+    }
+  });
+
+  it('a tick with no answer in time warns once, does not throw, and frees the URL for the owed tick', async () => {
+    const drain = await heldDrain();
+    try {
+      const notifier = new HttpTickNotifier({ urls: [drain.url], apiKey: 'lf_key', timeoutMs: 50 });
+      expect(() => notifier.notify()).not.toThrow();
+      await drain.arrived(1);
+      notifier.notify();
+      // The first times out, then the owed one is sent, and times out too.
+      await drain.arrived(2);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('drain tick failed'), {
+        url: drain.url,
+        reason: expect.stringContaining('no answer within 50 ms'),
+      });
+    } finally {
+      await drain.close();
+    }
   });
 });
 

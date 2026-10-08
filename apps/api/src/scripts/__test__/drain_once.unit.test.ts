@@ -77,7 +77,7 @@ describe('drainOnceMain', () => {
       .mockResolvedValueOnce([row('c'), row('d')])
       .mockResolvedValueOnce([row('e')]);
 
-    const code = await drainOnceMain(['--limit', '2']);
+    const code = await drainOnceMain(['--limit=2']);
 
     expect(code).toBe(0);
     expect(claimableWorkKinds()).toEqual(expect.arrayContaining([...CORE_WORK_KINDS, 'exposed_file_sweep', 'linked_object_refresh']));
@@ -97,7 +97,15 @@ describe('drainOnceMain', () => {
       failed: 0,
       deferred: 0,
       claimFailed: false,
+      stopped: 'idle',
     });
+  });
+
+  it('exits 2 when it stops at the pass limit with the last pass full: more may be due', async () => {
+    claim.mockResolvedValueOnce([row('a'), row('b')]).mockResolvedValueOnce([row('c'), row('d')]);
+    expect(await drainOnceMain(['--limit', '2', '--max-passes', '2'])).toBe(2);
+    expect(claim).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({ claimed: 4, stopped: 'pass_limit' });
   });
 
   it('exits 1 when the work table cannot be reached', async () => {
@@ -112,8 +120,14 @@ describe('drainOnceMain', () => {
     expect(claim).not.toHaveBeenCalled();
   });
 
-  it('refuses a limit outside the tick endpoint\'s bounds', async () => {
-    await expect(drainOnceMain(['--limit', '500'])).rejects.toThrow(/--limit/);
+  it.each([
+    [['--limit', '500'], /--limit must be/],
+    [['--max-passes=0'], /--max-passes must be/],
+    [['--limit'], /--limit must be/],
+    [['--limt', '5'], /does not take "--limt"/],
+    [['extra'], /does not take "extra"/],
+  ])('refuses %j before claiming anything', async (argv, message) => {
+    await expect(drainOnceMain(argv)).rejects.toThrow(message);
     expect(claim).not.toHaveBeenCalled();
   });
 });
