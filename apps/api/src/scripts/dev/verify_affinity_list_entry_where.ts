@@ -20,6 +20,7 @@
  * Usage: FAKE_BASE=http://localhost:6291/affinity ts-node … verify_affinity_list_entry_where.ts
  */
 import {
+  CURRENT_LANGUAGE_VERSION,
   checkProgram,
   fromCatalogSnapshot,
   parseProgram,
@@ -152,7 +153,8 @@ async function check(
   // (`movement/catalog.ts`), replayed here so the checker sees the same schema.
   const { schema } = await refineInstanceSchema({
     instance,
-    chains: scanInstanceChains(source),
+    // A probe written today, pinned to nothing saved: the release's version.
+    chains: scanInstanceChains(source, { languageVersion: CURRENT_LANGUAGE_VERSION }),
   });
   return checkProgram(program, fromCatalogSnapshot(snapshotOf(schema)))
     .filter((d) => (d.severity ?? 'error') === 'error')

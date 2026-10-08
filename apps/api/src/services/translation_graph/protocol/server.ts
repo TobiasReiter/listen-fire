@@ -36,8 +36,8 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:
 import type { z } from 'zod';
 
 import type { Adapter } from '../adapter';
-import { MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from './schema';
-import type { MethodName, RpcResponseShape } from './schema';
+import { MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from 'engine-contracts';
+import type { MethodName, RpcResponseShape } from 'engine-contracts';
 
 /**
  * Protocol method names that exist purely as server-side concepts (no

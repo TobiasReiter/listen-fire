@@ -927,9 +927,9 @@ impl Run<'_> {
         let scoped = landed.is_some();
         let reader = Reading { run: self, scope, span, landed };
         let evaluator = if scoped {
-            Evaluator::scoped_in_run(scope.as_ref(), Some(self.version()), around, &reader)
+            Evaluator::scoped_in_run(scope.as_ref(), self.version(), around, &reader)
         } else {
-            Evaluator::in_run(scope.as_ref(), Some(self.version()), around, &reader)
+            Evaluator::in_run(scope.as_ref(), self.version(), around, &reader)
         };
         evaluator.eval(expr).await.map_err(|error| {
             Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))

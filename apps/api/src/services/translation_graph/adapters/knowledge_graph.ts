@@ -75,7 +75,7 @@ import type {
   WriteResult,
 } from '../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID, writeParentLinks } from '../adapter';
-import { recordMutationEventSchema } from '../mutation_context';
+import { recordMutationEventSchema } from '../triggers/record_mutation_event';
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,

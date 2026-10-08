@@ -1,0 +1,19 @@
+// The embedder's compile: strict, its own, and with the contracts resolved by
+// package name through the package's own `exports` (Node's self-reference,
+// which `node16` resolution honours), as an embedder resolves them — no path
+// mapping. `check.cjs` runs it.
+{
+  "compilerOptions": {
+    "lib": ["es2022"],
+    "target": "es2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "typeRoots": ["../node_modules/@types"]
+  },
+  "files": ["embed.ts"]
+}

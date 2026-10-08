@@ -71,7 +71,20 @@ export interface AdapterSnapshot extends AdapterSpec {
   constructionArgOptions?: Record<string, Record<string, string[]>>;
 }
 
+/** The catalog snapshot contract's version (docs/contracts/catalog-snapshot.md).
+ *  A change in meaning bumps it; an additive optional field does not. */
+export const CATALOG_SNAPSHOT_VERSION = 1;
+
+/** The snapshot versions this release reads. */
+export const SUPPORTED_CATALOG_SNAPSHOT_VERSIONS: ReadonlySet<number> = new Set([1]);
+
+/** Supported snapshot versions that will be removed. */
+export const DEPRECATED_CATALOG_SNAPSHOT_VERSIONS: ReadonlySet<number> = new Set<number>();
+
 export interface CatalogSnapshot {
+  /** The contract version the builder wrote it under. Absent on a snapshot
+   *  written before snapshots carried one, which reads as version 1. */
+  contractVersion?: number;
   adapters: Record<string, AdapterSnapshot>;
   /**
    * Both `{ adapter: string }` (legacy single-adapter form) and
@@ -198,6 +211,7 @@ export function instanceSchemaNotes(
  * reported on its own).
  */
 export function fromCatalogSnapshot(snapshot: CatalogSnapshot): Catalog {
+  refuseUnsupportedSnapshotVersion(snapshot);
   return {
     adapter(name): AdapterSpec | undefined {
       const adapter = snapshot.adapters[name];
@@ -282,6 +296,17 @@ export function fromCatalogSnapshot(snapshot: CatalogSnapshot): Catalog {
   };
 }
 
+/** A snapshot written under a version this release cannot read is refused,
+ *  never read as though it were the current one. */
+function refuseUnsupportedSnapshotVersion(snapshot: CatalogSnapshot): void {
+  const seen = snapshot.contractVersion;
+  if (seen === undefined || SUPPORTED_CATALOG_SNAPSHOT_VERSIONS.has(seen)) return;
+  throw new Error(
+    `the catalog snapshot carries contract version ${JSON.stringify(seen)}, which this release does not read ` +
+      `(supported: ${[...SUPPORTED_CATALOG_SNAPSHOT_VERSIONS].join(', ')})`,
+  );
+}
+
 /**
  * A live `Catalog` read back out as a snapshot — for a holder of a catalog
  * object whose consumer takes data (the movement engine takes a snapshot).
@@ -331,7 +356,13 @@ export function catalogSnapshotOf(
     if (spec) plugins[name] = spec;
   }
   const models = catalog.models?.();
-  return { adapters, credentials, plugins, ...(models !== undefined ? { models: [...models] } : {}) };
+  return {
+    contractVersion: CATALOG_SNAPSHOT_VERSION,
+    adapters,
+    credentials,
+    plugins,
+    ...(models !== undefined ? { models: [...models] } : {}),
+  };
 }
 
 /** `mockCatalog`, as a snapshot: the fixture's own adapters and plugins. */

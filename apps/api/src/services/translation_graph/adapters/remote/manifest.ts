@@ -13,7 +13,7 @@
 
 import { z } from 'zod';
 import type { AdapterManifest } from '../../adapter';
-import { WireManifestProtocolVersion } from '../../protocol/schema';
+import { WireManifestProtocolVersion } from 'engine-contracts';
 import type { TriggerType } from '../../triggers/types';
 
 export const RemoteAdapterManifestFile = z.object({

@@ -27,11 +27,12 @@ import { fileHandle, type Adapter, type FileRef, type RuntimeCapabilities } from
 import { streamFileRef, type ResolveFileOwner } from '../../translation_graph/engine/files/retrieve';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { HostTransformInvoker } from '../host';
 import { credentialIdsFor, makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000054' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000054');
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
 const DOLLAR = 1_000_000;
 
@@ -176,7 +177,7 @@ function makeCrmAdapter(credentialsId: string | undefined) {
 function fileTextOn(resolveOwner: ResolveFileOwner) {
   return async ({ file }: { file: FileRef }): Promise<FileTextResolution> => {
     try {
-      const { stream } = await streamFileRef(file, { teamId: TEAM_ID, resolveOwner });
+      const { stream } = await streamFileRef(file, { teamId: teamOfTenant(TEAM_ID), resolveOwner });
       const chunks: Buffer[] = [];
       for await (const chunk of stream) chunks.push(Buffer.from(chunk as Buffer));
       return { text: Buffer.concat(chunks).toString('utf8') };

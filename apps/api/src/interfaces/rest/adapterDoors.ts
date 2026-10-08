@@ -15,7 +15,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { MB } from '../../constants';
-import { WireDiscriminableEvent } from '../../services/translation_graph/protocol/schema';
+import { WireDiscriminableEvent } from 'engine-contracts';
 import {
   authenticateAdapterDoor,
   emitAdapterEvents,

@@ -8,7 +8,8 @@
 
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+
 import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
@@ -18,7 +19,7 @@ import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 import { credentialIdsFor, makeTestHost, recordingWriteLocks, type TestHostOverrides } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-0000000000c5' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c5');
 
 const emailSchema: InstanceSchema = {
   positions: { message: { properties: { subject: 'text', text: 'text' }, edges: {} } },

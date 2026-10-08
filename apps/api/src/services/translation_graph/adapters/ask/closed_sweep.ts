@@ -6,7 +6,8 @@
 // have. The engine then resumes each await, which re-checks the ask live.
 
 import { enqueueAwaitWake, wakeAwaitPayloadSchema } from '../../../movement_engine/await_wake';
-import { registerWorkHandler } from '../../../work/drain';
+import { SECOND } from '../../../../constants';
+import { registerWorkKinds, type WorkKindRegistration } from '../../../work/drain';
 import type { WorkHandler } from '../../../work/kinds';
 import { loadClosedAskAwaitPage } from './await_store';
 import { ASK_ADAPTER_TYPE } from './type';
@@ -31,6 +32,18 @@ export const askClosedSweepHandler: WorkHandler = {
   },
 };
 
+// The ask unit's own periodic kind.
+
+declare module '../../../work/kinds' {
+  interface UnitWorkKinds {
+    ask_closed_sweep: true;
+  }
+}
+
+export const ASK_WORK_KINDS: readonly WorkKindRegistration[] = [
+  { kind: 'ask_closed_sweep', handler: askClosedSweepHandler, intervalMs: 30 * SECOND },
+];
+
 export function registerAskClosedSweepWork(): void {
-  registerWorkHandler('ask_closed_sweep', askClosedSweepHandler);
+  registerWorkKinds(ASK_WORK_KINDS);
 }

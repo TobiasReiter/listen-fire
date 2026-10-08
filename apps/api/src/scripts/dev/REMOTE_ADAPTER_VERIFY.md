@@ -117,7 +117,7 @@ enforces it). Two surfaces, both via `mintRemoteCredential`:
   credential-free). Follow-up: a remote-aware connected-state derived from the
   install's `credentials_id`.
 - **Inbound is covered by the dev loop, not by this harness.** The fake CRM
-  is now the reference protocol-2 adapter (`docs/adapter-protocol.md`): a
+  is now the reference protocol-2 adapter (`docs/contracts/adapter-protocol.md`): a
   `Company` comment thread an automation can `await`, and dev routes that
   push `emit` / `wake` to the API (`pnpm dev:inject crm-company`,
   `pnpm dev:inject crm-comment`, `pnpm dev:inspect crm`). The walkthrough is

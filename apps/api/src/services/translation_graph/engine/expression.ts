@@ -10,6 +10,8 @@
 // "not yet implemented" message. The full output-v3 evaluator covers them
 // today; refactoring it to accept a pluggable source backend is a follow-on.
 
+import { randomUUID } from 'node:crypto';
+
 import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
 import type { AggregationFunction, TraversalStep } from '#shared/expression/types';
 import { isObjectSpread, objectMemberExpression } from '#shared/expression/types';
@@ -806,6 +808,9 @@ export async function evalExpr(
         adapter: ctx.sourceAdapter,
         position: ctx.position,
         filter: expr.filter,
+        // The translation-graph engine records no conversation to replay, so
+        // its resource ids are random.
+        mintIds: async (count) => Array.from({ length: count }, () => randomUUID()),
       });
       if (expr.expressionFilter) {
         // The hop's WHERE as a real expression, judged per resource — the

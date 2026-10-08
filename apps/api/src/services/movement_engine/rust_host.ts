@@ -1,7 +1,7 @@
 // The Rust engine's host dispatch: every request a segment makes, by family
 // and method, answered from the run's `EngineHost`. This is the one module that
 // knows the host's shapes, so a change to the host boundary
-// (docs/engine-host.md) is adapted here and in the Rust request builders
+// (docs/contracts/host-families.md) is adapted here and in the Rust request builders
 // (crates/movement-engine/src/host.rs) and nowhere between.
 //
 // A request whose family and method are an `EngineHost` method's
@@ -191,16 +191,22 @@ const ROUTES: Record<string, Route> = {
   },
   /** A timer park. A run with no park sink is told so, and fails as the
    *  interpreter fails it. */
-  async 'park.sink.commitTimerPark'(request, { host }) {
+  async 'park.sink.commitTimerPark'(request, { host, context }) {
     const sink = host.park.sink;
     if (sink === undefined) return { noSink: true };
     if (request.wire !== true) throw new RustShimError('park.sink.commitTimerPark carries its state on the eval wire');
+    // Bridge — delete with the Rust engine merge (5B). The engine computed
+    // the wake from its environment clock, held at the segment's pinned
+    // instant (rust_engine.ts): re-based on the host's clock, as the
+    // TypeScript engine computes it.
+    const sleptMs = new Date(instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt')).getTime() - context.pinnedNow.getTime();
+    const wakeAt = new Date((await context.clock.now()).getTime() + sleptMs).toISOString();
     await sink.commitTimerPark({
       segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitTimerPark address'),
       // On the eval wire: the state's objects in the order the engine wrote them.
       state: new WireOut().read(request.state),
-      wakeAt: instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt'),
+      wakeAt,
     });
     return undefined;
   },
@@ -278,11 +284,13 @@ const ROUTES: Record<string, Route> = {
     return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
   },
   /** The shared comparator, likewise. */
-  async 'builtins.compare'(request) {
+  async 'builtins.compare'(request, { context }) {
     const op = filterOperator(request.op);
     const left = new WireOut().read(request.left);
     const right = new WireOut().read(request.right);
-    return builtinAnswer(() => compareValues(left, op, right));
+    // `WITHIN` measures from the host's clock, as the TypeScript engine's does.
+    const now = op === 'within' ? (await context.clock.now()).getTime() : undefined;
+    return builtinAnswer(() => compareValues(left, op, right, now !== undefined ? { now } : {}));
   },
 };
 

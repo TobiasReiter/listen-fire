@@ -61,6 +61,8 @@ import {
 import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 import { methodPaths, notJsonAt, roundTripHost } from './round_trip_host';
+import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
+import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 
 const ENGINE_DIR = path.resolve(__dirname, '..');
 const SRC_DIR = path.resolve(__dirname, '../../..');
@@ -71,12 +73,12 @@ const PURE_FILES = [
   'ai_tiers.ts',
   'builtins.ts',
   'call_depth.ts',
-  'callback_types.ts',
   'effect_locks.ts',
   'errors.ts',
   'expression.ts',
   'extraction.ts',
   'extraction_call.ts',
+  'fans.ts',
   'host.ts',
   'host_adapter.ts',
   'interpretable.ts',
@@ -91,6 +93,7 @@ const PURE_FILES = [
   'rust_stats.ts',
   'rust_wire.ts',
   'serialize.ts',
+  'write_ledger.ts',
 ];
 
 /** Host implementations that still live in this directory: they wire the
@@ -163,6 +166,8 @@ const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }>
 
 const ALLOWED: Array<(module: string) => boolean> = [
   (m) => m === 'movement-lang' || m.startsWith('movement-lang/'),
+  // The contracts the engine speaks: data shapes and the protocol schema.
+  (m) => m === 'engine-contracts',
   (m) => m === 'zod',
   (m) => m.startsWith('node:') || builtinModules.includes(m),
   (m) => m.startsWith('#shared/'),
@@ -176,7 +181,7 @@ const ALLOWED: Array<(module: string) => boolean> = [
   // resource stamping and filtering, the model choice for an extraction's
   // size.
   (m) => m === 'services/translation_graph/engine/files/resources',
-  (m) => m === 'services/translation_graph/engine/batched_extraction/schema_synthesis',
+  (m) => m === 'services/translation_graph/engine/batched_extraction/model_choice',
   under('services/translation_graph/uniqueness'),
   under('services/translation_graph/required_fields'),
   under('services/translation_graph/types'),
@@ -186,6 +191,95 @@ const ALLOWED: Array<(module: string) => boolean> = [
   under('services/translation_graph/adapter'),
   (m) => PURE_FILES.some((f) => m === `services/movement_engine/${f.replace(/\.ts$/, '')}`),
 ];
+
+/** Shared helpers on the engine's path that live outside this directory:
+ *  held to the same no-clock, no-mint rule as the pure files. */
+const PURE_HELPERS = [path.join(SRC_DIR, 'services/translation_graph/engine/files/resources.ts')];
+
+/** The one clock read the engine keeps: an expression evaluated outside any
+ *  run (an editor preview, a lone expression's test) has no run instant to
+ *  answer from, so it reads the wall clock. Inside a run the instant is the
+ *  segment's (`RunContext.pinnedNow`). */
+const OUT_OF_RUN_CLOCK = { file: path.join(ENGINE_DIR, 'expression.ts'), fn: 'pinnedNow' };
+
+/** `a.b.c` for a chain of property reads off an identifier; undefined for
+ *  anything else (a call, an element access). */
+function propertyPath(node: ts.Expression): string | undefined {
+  if (ts.isIdentifier(node)) return node.text;
+  if (ts.isPropertyAccessExpression(node)) {
+    const base = propertyPath(node.expression);
+    return base === undefined ? undefined : `${base}.${node.name.text}`;
+  }
+  return undefined;
+}
+
+/** Every place `file` reads a clock or mints an id itself, as `line: what`.
+ *  The engine asks the host for both (`clock.now`, `ids.mint`), so a
+ *  recorded run replays to the same instants and ids. */
+function entropyReads(file: string, text = fs.readFileSync(file, 'utf8')): string[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const reads: string[] = [];
+  const at = (node: ts.Node, what: string): void => {
+    reads.push(`${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}: ${what}`);
+  };
+  const exempt = (node: ts.Node): boolean => {
+    if (file !== OUT_OF_RUN_CLOCK.file) return false;
+    for (let up: ts.Node | undefined = node; up !== undefined; up = up.parent) {
+      if (ts.isFunctionDeclaration(up) && up.name?.text === OUT_OF_RUN_CLOCK.fn) return true;
+    }
+    return false;
+  };
+  // Local names bound to the crypto module itself (a default or namespace
+  // import): a `random*` member read off one is a mint.
+  const cryptoNames = new Set(['crypto']);
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const module = node.moduleSpecifier.text;
+      if (module === 'uuid' || module === 'nanoid' || module.startsWith('uuid/')) at(node, `imports '${module}'`);
+      if (module === 'crypto' || module === 'node:crypto') {
+        const clause = node.importClause;
+        if (clause?.name !== undefined) cryptoNames.add(clause.name.text);
+        const bindings = clause?.namedBindings;
+        if (bindings !== undefined && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) {
+            const name = (element.propertyName ?? element.name).text;
+            if (name.startsWith('random')) at(node, `imports ${name} from '${module}'`);
+          }
+        } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+          cryptoNames.add(bindings.name.text);
+        }
+      }
+    } else if (ts.isPropertyAccessExpression(node)) {
+      const read = propertyPath(node);
+      const [head, second, third] = read?.split('.') ?? [];
+      if (
+        read === 'Date.now' ||
+        read === 'Math.random' ||
+        read === 'performance.now' ||
+        read === 'process.hrtime' ||
+        read === 'process.hrtime.bigint' ||
+        (head !== undefined && cryptoNames.has(head) && second?.startsWith('random') === true && third === undefined) ||
+        (head === 'globalThis' && second === 'crypto' && third !== undefined)
+      ) {
+        at(node, read ?? '');
+        return;
+      }
+    } else if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'Date' &&
+      (node.arguments === undefined || node.arguments.length === 0) &&
+      !exempt(node)
+    ) {
+      at(node, 'new Date()');
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'Date') {
+      at(node, 'Date()');
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return reads;
+}
 
 function under(prefix: string): (module: string) => boolean {
   return (m) => m === prefix || m.startsWith(`${prefix}/`);
@@ -292,6 +386,52 @@ describe('the engine/host seam', () => {
     expect(violations).toEqual([]);
   });
 
+  it('pure engine files read no clock and mint no id of their own', () => {
+    const violations = [...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)), ...PURE_HELPERS].flatMap((file) =>
+      entropyReads(file).map((read) => `${path.relative(SRC_DIR, file)}:${read}`),
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it('flags each way of reading a clock or minting an id, but the one out-of-run clock', () => {
+    const probe = [
+      "import { randomUUID } from 'node:crypto';",
+      "import { v4 } from 'uuid';",
+      'const a = Date.now();',
+      'const b = new Date();',
+      'const c = Math.random();',
+      'const d = crypto.randomUUID();',
+      'const e = performance.now();',
+      "const f = new Date('2026-10-07T09:00:00.000Z');",
+      'function pinnedNow() { return new Date(); }',
+      "import nodeCrypto from 'node:crypto';",
+      'const g = nodeCrypto.randomBytes(4);',
+      'const h = globalThis.crypto.getRandomValues(new Uint8Array(4));',
+      'const i = Date();',
+      'const j = process.hrtime();',
+      'const k = process.hrtime.bigint();',
+      "import * as cryptoModule from 'crypto';",
+      'const l = cryptoModule.randomInt(3);',
+    ].join('\n');
+    expect(entropyReads(path.join(ENGINE_DIR, 'probe.ts'), probe)).toEqual([
+      "1: imports randomUUID from 'node:crypto'",
+      "2: imports 'uuid'",
+      '3: Date.now',
+      '4: new Date()',
+      '5: Math.random',
+      '6: crypto.randomUUID',
+      '7: performance.now',
+      '9: new Date()',
+      '11: nodeCrypto.randomBytes',
+      '12: globalThis.crypto.getRandomValues',
+      '13: Date()',
+      '14: process.hrtime',
+      '15: process.hrtime.bigint',
+      '17: cryptoModule.randomInt',
+    ]);
+    expect(entropyReads(OUT_OF_RUN_CLOCK.file, 'function pinnedNow() { return new Date(); }')).toEqual([]);
+  });
+
   it('flags a value import from host code and lets a type-only one through', () => {
     const probe = path.join(ENGINE_DIR, 'probe.ts');
     const classify = (text: string) => {
@@ -323,6 +463,141 @@ describe('the engine/host seam', () => {
   });
 });
 
+// ── Generated database code ─────────────────────────────────────────────────
+//
+// The engine, the contracts it speaks, the test host and the adapter
+// protocol's server kit are what an embedder imports without the run host.
+// None of them may reach the run host's generated database code, not even by
+// a type: a type import still loads the module for the compiler, so an
+// embedder compiling against them would need the run host's schema.
+
+const REPO_DIR = path.resolve(SRC_DIR, '../../..');
+const CONTRACTS_DIR = path.join(REPO_DIR, 'packages/engine-contracts');
+
+/** The roots an embedder imports. */
+const EMBEDDABLE_ROOTS = [
+  ...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)),
+  path.join(ENGINE_DIR, 'test_host.ts'),
+  path.join(SRC_DIR, 'services/translation_graph/protocol/server.ts'),
+  path.join(CONTRACTS_DIR, 'index.ts'),
+];
+
+/** A resolved file or bare specifier that is generated database code or a
+ *  database client. */
+function isDatabaseCode(resolvedOrSpecifier: string): boolean {
+  return (
+    /\/src\/generated\//.test(resolvedOrSpecifier) ||
+    /\/src\/prisma(\/|\.ts$|$)/.test(resolvedOrSpecifier) ||
+    /\/src\/lib\/kysely\.ts$/.test(resolvedOrSpecifier) ||
+    /\/node_modules\/(\.pnpm\/[^/]+\/node_modules\/)?(kysely|@prisma|\.prisma)\//.test(resolvedOrSpecifier) ||
+    /^(kysely|@prisma\/|prisma$)/.test(resolvedOrSpecifier)
+  );
+}
+
+/** Every specifier the file names, type-only ones included. */
+function allImports(file: string): string[] {
+  return ts.preProcessFile(fs.readFileSync(file, 'utf8'), true, true).importedFiles.map((f) => f.fileName);
+}
+
+const RESOLUTION: ts.CompilerOptions = {
+  module: ts.ModuleKind.CommonJS,
+  moduleResolution: ts.ModuleResolutionKind.Node10,
+};
+
+function resolved(specifier: string, fromFile: string): string | undefined {
+  return ts.resolveModuleName(specifier, fromFile, RESOLUTION, ts.sys).resolvedModule?.resolvedFileName;
+}
+
+/** Source files this repo owns: followed. A library's own files are not. */
+function isRepoSource(file: string): boolean {
+  if (file.endsWith('.d.ts')) return false;
+  const real = fs.realpathSync(file);
+  return real.startsWith(REPO_DIR) && !real.includes('/node_modules/');
+}
+
+/** Every chain from a root to database code, as `root <= … <= file → specifier`. */
+function databaseReach(roots: readonly string[]): string[] {
+  const parent = new Map<string, string>();
+  const seen = new Set(roots.map((r) => fs.realpathSync(r)));
+  const queue = [...seen];
+  const reach: string[] = [];
+  while (queue.length > 0) {
+    const file = queue.shift();
+    if (file === undefined) break;
+    for (const specifier of allImports(file)) {
+      const target = resolved(specifier, file);
+      if (isDatabaseCode(specifier) || (target !== undefined && isDatabaseCode(target))) {
+        const chain = [file];
+        for (let at = parent.get(file); at !== undefined; at = parent.get(at)) chain.push(at);
+        reach.push(`${chain.map((f) => path.relative(REPO_DIR, f)).join(' <= ')} → '${specifier}'`);
+        continue;
+      }
+      if (target === undefined || !isRepoSource(target)) continue;
+      const real = fs.realpathSync(target);
+      if (seen.has(real)) continue;
+      seen.add(real);
+      parent.set(real, file);
+      queue.push(real);
+    }
+  }
+  return reach;
+}
+
+function contractFiles(): string[] {
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '__embed_smoke__') continue;
+      const at = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(at);
+      else if (entry.name.endsWith('.ts')) files.push(at);
+    }
+  };
+  walk(CONTRACTS_DIR);
+  return files;
+}
+
+describe('generated database code stays out of what an embedder imports', () => {
+  it('no pure engine file and no contract file imports database code, not even a type', () => {
+    const violations: string[] = [];
+    for (const file of [...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)), ...contractFiles()]) {
+      for (const specifier of allImports(file)) {
+        const target = resolved(specifier, file);
+        if (isDatabaseCode(specifier) || (target !== undefined && isDatabaseCode(target))) {
+          violations.push(`${path.relative(REPO_DIR, file)} imports '${specifier}'`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('the contracts package imports nothing of the run host', () => {
+    const violations: string[] = [];
+    for (const file of contractFiles()) {
+      for (const specifier of allImports(file)) {
+        const target = resolved(specifier, file);
+        if (target !== undefined && fs.realpathSync(target).startsWith(path.join(REPO_DIR, 'apps/'))) {
+          violations.push(`${path.relative(REPO_DIR, file)} imports '${specifier}'`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('the engine, the contracts, the test host and the server kit reach no database code, by any path', () => {
+    expect(databaseReach(EMBEDDABLE_ROOTS)).toEqual([]);
+  });
+
+  it('a type import of generated code counts as reaching it', () => {
+    const probe = path.join(ENGINE_DIR, 'probe.ts');
+    expect(isDatabaseCode(resolved('../../generated/kysely/core/Team', probe) ?? '')).toBe(true);
+    expect(allImports(path.join(SRC_DIR, 'services/translation_graph/movement/tenant.ts'))).toContain(
+      '../../../generated/kysely/core/Team',
+    );
+    expect(databaseReach([path.join(SRC_DIR, 'services/translation_graph/movement/tenant.ts')])).not.toEqual([]);
+  });
+});
+
 describe('the engine/host seam carries data', () => {
   // DESIGN §6: every host call is request/response with JSON-serialisable
   // arguments. The await park and its wake are the calls that used to carry a
@@ -346,7 +621,7 @@ describe('the engine/host seam carries data', () => {
     ]);
 
     await runAwaiting({
-      teamId: '00000000-0000-0000-0000-000000000042' as TeamId,
+      teamId: tenantIdOf('00000000-0000-0000-0000-000000000042'),
       source: awaitingSource(),
       adapter: awaiting.adapter,
       parkSink: recording,
@@ -416,7 +691,7 @@ describe('the engine/host seam carries data', () => {
         payload: { firedAt: '2026-10-07T09:00:00.000Z' },
         occurredAt: '2026-10-07T09:00:00.000Z',
       },
-      teamId,
+      teamId: tenantOfTeam(teamId),
       catalog: staticCatalogSnapshot({ credentials: {} }),
       host: makeTestHost({
         segment,
@@ -439,7 +714,7 @@ describe('the engine/host seam carries data', () => {
       'resolveFileText',
       'segment.close',
     ]);
-    expect(made[0]?.input).toEqual({ teamId, languageVersion: CURRENT_LANGUAGE_VERSION });
+    expect(made[0]?.input).toEqual({ teamId, languageVersion: CURRENT_LANGUAGE_VERSION, hostFamiliesVersion: HOST_FAMILIES_VERSION });
     // Every call names the segment the run opened.
     expect(made[1]?.input).toEqual({ segmentId: 'seg-1', content: 'the digest', type: 'text' });
     // A priced call: the run's budget in (no cap here), what it spent out —
@@ -524,7 +799,7 @@ describe('the engine/host seam carries data', () => {
         payload: { firedAt: '2026-10-07T09:00:00.000Z' },
         occurredAt: '2026-10-07T09:00:00.000Z',
       },
-      teamId,
+      teamId: tenantOfTeam(teamId),
       catalog: staticCatalogSnapshot({
         credentials: { kg_cred: { adapters: ['kg'] } },
         instanceSchemas: {
@@ -653,7 +928,7 @@ describe('the engine/host seam carries data', () => {
         payload: { firedAt: '2026-10-07T09:00:00.000Z' },
         occurredAt: '2026-10-07T09:00:00.000Z',
       },
-      teamId,
+      teamId: tenantOfTeam(teamId),
       firedAt: '2026-10-07T09:00:00.000Z',
       catalog: staticCatalogSnapshot({
         credentials: { kg_cred: { adapters: ['kg'] } },
@@ -958,7 +1233,7 @@ function roundTrip(
     ),
     movementName: 'intake',
     event: roundTripEvent(),
-    teamId: ROUND_TRIP_TEAM,
+    teamId: tenantOfTeam(ROUND_TRIP_TEAM),
     catalog: roundTripCatalog,
     credentialIds: { acme_main: 'cred-attio-1' },
     firedAt: '2026-10-07T09:00:00.000Z',
@@ -1079,8 +1354,8 @@ describe('the round trip', () => {
     expect(methodPaths(roundTripHost(host)).sort()).toEqual(hostMethodPaths().sort());
   });
 
-  it('the manifest is the contract docs/engine-host.md documents, method by method', () => {
-    const doc = fs.readFileSync(path.resolve(SRC_DIR, '../../../docs/engine-host.md'), 'utf8');
+  it('the manifest is the contract docs/contracts/host-families.md documents, method by method', () => {
+    const doc = fs.readFileSync(path.resolve(SRC_DIR, '../../../docs/contracts/host-families.md'), 'utf8');
     const documented = [...doc.matchAll(/^#### `([A-Za-z.]+)`/gm)].map((match) => match[1]);
     expect(documented.sort()).toEqual(hostMethodPaths().sort());
     const families = [...doc.matchAll(/^### `([A-Za-z.]+)`/gm)].map((match) => match[1]);
@@ -1270,7 +1545,7 @@ describe('every family crosses as JSON', () => {
     const { sink } = joiningParkSink();
     const wakes: QueuedWake[] = [];
     const result = await runAwaiting({
-      teamId: ROUND_TRIP_TEAM,
+      teamId: tenantOfTeam(ROUND_TRIP_TEAM),
       source: awaitingSource(),
       adapter: makeAwaitingAdapter([
         { status: 'pending', correlationKey: 'req-1' },
@@ -1370,6 +1645,36 @@ describe('every family crosses as JSON', () => {
     expect(h.crm.creates).toEqual([{ recordType: 'note', fields: { title: 'the digest' } }]);
   });
 
+  familyRun('the clock and ids: a segment with no firing instant, an extraction stamping its sources', async () => {
+    const minted: number[] = [];
+    const h = roundTrip(
+      [
+        '  found = extract from [m.`subject`] {',
+        '    digest: "a one-line summary"',
+        '  }',
+        '  write crm-[:notes]-> { title: found.`digest` }',
+      ],
+      {
+        ids: {
+          mint: async ({ count }) => {
+            minted.push(count);
+            return Array.from({ length: count }, (_, i) => `resource-${i + 1}`);
+          },
+        },
+        llm: {
+          client: {
+            call: async () => {
+              throw new Error('test: no model');
+            },
+          },
+        },
+      },
+    );
+    // The source is a resource before the model is asked anything.
+    await expect(h.run({ firedAt: undefined })).rejects.toThrow('test: no model');
+    expect(minted).toEqual([1]);
+  });
+
   it('reached every method on the manifest', () => {
     const skipped = [...declared].filter((name) => !ran.has(name));
     if (skipped.length > 0) return;
@@ -1441,7 +1746,7 @@ describe('the production host crosses as JSON', () => {
           },
         ],
       }),
-      teamId: ROUND_TRIP_TEAM,
+      teamId: tenantOfTeam(ROUND_TRIP_TEAM),
       catalog: manifestCatalog,
       credentialIds: { acme_main: 'cred-attio-1' },
       host,
@@ -1455,6 +1760,8 @@ describe('the production host crosses as JSON', () => {
     expect(reached).toEqual(
       new Set([
         'segment.open',
+        // No firing instant was handed in: the segment pins the host's clock.
+        'clock.now',
         'adapters.resolve',
         'adapters.call',
         'control.cancel.cancelled',

@@ -15,13 +15,18 @@
 // Probes must parse: a non-parsing probe returns [] from the scan and
 // would vacuously satisfy a 'runs' claim, so parseability is asserted
 // first.
+//
+// Probes are read under the release's current language version: the handbook
+// teaches the language a movement saved today is pinned to.
 
-import { parseProgram } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseProgram } from 'movement-lang';
 import { listUnsupportedConstructs } from '../../../../services/movement_engine/interpretable';
 import { getMovementHandbook } from '../index';
 import type { EngineClaim } from '../types';
 import { frontPageClaims } from '../front_page';
 import { controlFormClaims } from '../language_search';
+
+const AS_TAUGHT = { languageVersion: CURRENT_LANGUAGE_VERSION };
 
 const claims: Array<EngineClaim & { chapter: string }> = Object.values(
   getMovementHandbook().chapters,
@@ -48,7 +53,7 @@ describe('movement_handbook engine claims — lockstep with interpretable.ts', (
   it.each(claims.map((c) => [c.chapter, c.construct, c] as const))(
     '%s — probe for "%s" parses',
     (_chapter, _construct, claim) => {
-      expect(() => parseProgram(claim.probe)).not.toThrow();
+      expect(() => parseProgram(claim.probe, AS_TAUGHT)).not.toThrow();
     },
   );
 
@@ -57,7 +62,7 @@ describe('movement_handbook engine claims — lockstep with interpretable.ts', (
       .filter((c) => c.status === 'runs')
       .map((c) => [c.chapter, c.construct, c] as const),
   )('%s claims "%s" runs — the scan must agree', (_chapter, _construct, claim) => {
-    expect(listUnsupportedConstructs(claim.probe)).toEqual([]);
+    expect(listUnsupportedConstructs(claim.probe, AS_TAUGHT)).toEqual([]);
   });
 
   it.each(
@@ -67,7 +72,7 @@ describe('movement_handbook engine claims — lockstep with interpretable.ts', (
   )(
     '%s claims "%s" is still pending — the scan must still flag it (a lift here means: update the chapter)',
     (_chapter, _construct, claim) => {
-      const found = listUnsupportedConstructs(claim.probe);
+      const found = listUnsupportedConstructs(claim.probe, AS_TAUGHT);
       expect(found.some((construct) => construct.includes(claim.flag))).toBe(true);
     },
   );

@@ -9,9 +9,7 @@
 // no runtime effect.
 import type { Readable } from 'stream';
 
-import type { LinkedObject } from '../../generated/kysely/knowledge/LinkedObject';
-import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
-import type ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
+import type { ExternalRecordRef, FieldEvidence, FileRef, Resource } from 'engine-contracts';
 import type { MutationContext } from './mutation_context';
 import type { TriggerType } from './triggers/types';
 import type { AwaitableCapability } from './awaitable';
@@ -28,6 +26,20 @@ import type {
 import type { Expression } from '#shared/expression/types';
 
 export type { ConfigBlock, TriggerConfigField } from './triggerConfig';
+
+// A file's descriptor and the records a run carries (a resource, an external
+// record, a value's evidence) are the contract's (`engine-contracts`).
+export { fileHandle, isFileRef, ownedFileSource } from 'engine-contracts';
+export type {
+  EarlierFileSource,
+  ExternalRecordRef,
+  Fact,
+  FieldEvidence,
+  FileRef,
+  FileSource,
+  Resource,
+  ResourceProvenance,
+} from 'engine-contracts';
 
 /**
  * Minimal user descriptor returned by Listen-Fire's `resolveActingUser`
@@ -98,103 +110,6 @@ export interface ActorCandidate {
   identity: ActorIdentity;
   /** who-sent-it (`originator`) vs forwarding/service-inbox (`relay`). */
   source: 'originator' | 'relay';
-}
-
-/**
- * A file as the engine holds it: a pure descriptor of where its bytes live,
- * never the bytes and never a closure over them. Symmetric across the
- * source→engine→target seam, and JSON as it stands, so it crosses the engine
- * boundary, a remote adapter's wire and a parked run's state unchanged.
- *
- * Metadata (`name` / `contentType` / `size`) is always carried. Bytes are a
- * host concern: whatever needs them (a target adapter's write, file-to-text)
- * redeems the descriptor's `source` on the host side (`streamFileRef`).
- *
- * Branded so a plain object can't masquerade as a FileRef in the deep field
- * walk (`isFileRef`).
- */
-export interface FileRef {
-  readonly __brand: 'FileRef';
-  /** Display name. */
-  name?: string;
-  /** MIME type when known. */
-  contentType?: string;
-  /** Byte length when known. */
-  size?: number;
-  /** Where the bytes live. Absent only for a file that has no way back to
-   *  them. A run parked before descriptors named their instance holds the
-   *  earlier spelling. */
-  source?: FileSource | EarlierFileSource;
-  /**
-   * A short-lived, fetchable Listen-Fire URL for the bytes. Set when a FileRef is
-   * written INTO a remote adapter: the `RemoteAdapter` boundary buffers the
-   * bytes to S3 (`exposeFile`) and puts the URL here so the remote server can
-   * fetch them (raw bytes can't ride the JSON wire). Nullable because adapter
-   * file VALUES carry a nullable `url` off raw JSON.
-   */
-  url?: string | null;
-}
-
-/**
- * Where a file's bytes live. An adapter-owned file names the INSTANCE that
- * owns it — its type, credential and construction args — so the host resolves
- * that same instance to redeem `handle` (`Adapter.resolveFileRef`), with the
- * credentials the file was read with. A file in Listen-Fire's own document
- * storage (a `FILE()` artifact, a plugin's output) names its store key.
- */
-export type FileSource =
-  | {
-      adapterType: string;
-      credentialId?: string;
-      constructionArgs?: Record<string, string>;
-      /** Opaque to everyone but the owner. */
-      handle: string;
-    }
-  | { store: 'document'; objectUri: string };
-
-/** The source of a file an adapter instance owns, naming that instance as it
- *  was constructed (the factory's credential and construction args). */
-export function ownedFileSource(input: {
-  adapterType: string;
-  credentialsId?: string;
-  constructionArgs?: Record<string, string>;
-  handle: string;
-}): FileSource {
-  return {
-    adapterType: input.adapterType,
-    ...(input.credentialsId !== undefined ? { credentialId: input.credentialsId } : {}),
-    ...(input.constructionArgs !== undefined ? { constructionArgs: input.constructionArgs } : {}),
-    handle: input.handle,
-  };
-}
-
-/**
- * How a file's source was spelled before it named its owning instance — the
- * owner TYPE and its handle, no credential (`'document-store'` for the
- * document store). Nothing produces it any more; it is read from runs parked
- * before descriptors changed, which resolve their owner credential-free, as
- * they did when they parked.
- */
-export interface EarlierFileSource {
-  ownerAdapterType: string;
-  handle: string;
-}
-
-/** Structural guard for a branded `FileRef`. */
-export function isFileRef(value: unknown): value is FileRef {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as { __brand?: unknown }).__brand === 'FileRef'
-  );
-}
-
-/** The file's durable identity within its owner: the owner's handle, or the
- *  store key. What a file is memoised and cited by. */
-export function fileHandle(ref: FileRef): string | undefined {
-  const source = ref.source;
-  if (source === undefined) return undefined;
-  return 'store' in source ? source.objectUri : source.handle;
 }
 
 /**
@@ -307,7 +222,7 @@ export interface AdapterManifest {
    * needs no credential (the KG is intrinsic; email / WhatsApp carry inbound
    * creds on the legacy `pipeline_input`). Relocated from `ADAPTER_CREDENTIAL_TYPE`.
    */
-  requiredCredentialType?: ExternalServiceType;
+  requiredCredentialType?: string;
   /**
    * `recordType` of the adapter's `meta` root — the signal that the adapter
    * supports a one-off meta-rooted fan-out ("sync everything now" → the Manual
@@ -1233,140 +1148,10 @@ export interface ResourceFilter {
 }
 
 /**
- * Unified resource shape carried on a resource position's `data` (resolved via
- * the `RESOURCES_REFERENCE_FIELD_ID` reference through `getRelated`) and
- * consumed by `Adapter.writeResource`. Persisted superset of the older
- * `ResourcePosition`
- * — carries the same opaque handle plus the fields the engine and downstream
- * adapters need to round-trip a resource without re-fetch.
- *
- * Per the 2026-05-21 R3 ruling, this is the single resource currency across
- * KG / Slack / email / Attio adapters. Adapters materialise the fields a
- * `resource` expression can read into `data`; the engine reads them there
- * directly (a local lookup — no bespoke resource-field method).
- */
-export interface Resource {
-  /** Internal UUID identifier, generated by the system. For persisted
-   *  resources this is the `public.resource.id` UUID; for resources that
-   *  haven't been written yet (e.g. fresh adapter `#resources` output)
-   *  this is `undefined` and the persistence layer (`writeResource`)
-   *  generates one via `gen_random_uuid()` after the lookup-by-externalId
-   *  miss.
-   *
-   *  Adapters MUST NOT stuff external identifiers (Slack `ts`, file id,
-   *  Attio attachment id, etc.) into this slot. External identifiers
-   *  belong in `externalId`. The W3-B2 separation enforces this: `id` is
-   *  a branded UUID type that Postgres will reject if any external string
-   *  leaks into it. */
-  id?: ResourceId;
-  /** Original identifier from the source system (Slack `ts`, file id,
-   *  email attachment key, Attio attachment id, MIME content-id, etc.).
-   *  Adapters populate this on `#resources` resolution; `persistKgResources`
-   *  looks up by `(team, adapterType, externalId)` for idempotent re-delivery
-   *  — same external handle → same internal UUID across re-fires. The
-   *  `(team, adapterType, externalId)` namespace's `adapterType` is taken from
-   *  `provenance.adapterType`. */
-  externalId?: string;
-  /** Resource kind. Mirrors `public."ResourceType"`. */
-  type?: 'URL' | 'EMAIL' | 'WHATSAPP' | 'FILE' | 'TEXT';
-  /** Display name. */
-  name?: string;
-  /** Stable URL when one exists (URL/FILE resources; null for inline text).
-   *  DISPLAY-ONLY per `3_model.md` — never the byte channel. Bytes for FILE
-   *  resources are named by `fileRef`; consumers that need the binary redeem
-   *  it on the host (`streamFileRef`), not `url`. */
-  url?: string | null;
-  /** The file behind a FILE resource: a descriptor naming the instance that
-   *  owns the bytes. Absent for TEXT/URL resources whose payload rides
-   *  `content` / `url`. */
-  fileRef?: FileRef;
-  /** MIME type when known. */
-  contentType?: string | null;
-  /** Materialised field bag a `resource` expression reads from (a local
-   *  lookup). Adapters populate the fields they expose; KG materialises the
-   *  standard set when it resolves the resource. */
-  data?: Record<string, unknown>;
-  /** Inline content payload — text body for TEXT resources, the raw
-   *  string for URL resources, etc. Undefined when the adapter prefers
-   *  the lazy-fetch path. */
-  content?: string;
-  /** Free-form adapter-defined metadata (mirrors `public.resource.metadata`
-   *  for the KG impl). */
-  metadata?: Record<string, unknown>;
-  /** Facts (subject-predicate-object triples) extracted from this resource.
-   *  Persisted by the target adapter in the same transaction as the resource
-   *  itself (KG: `extraction_fact` rows). Empty / absent when the resource
-   *  carries no extracted facts. */
-  facts?: Fact[];
-  /** Where this resource came from — the external record + the field on it.
-   *  Same currency as a prior match (`ExternalRecordRef`) plus the source
-   *  `field`, so "this came from the `body` of this email" /
-   *  "the `description` of this Attio record" is recorded structurally.
-   *  `provenance.adapterType` also namespaces the `externalId` for idempotent
-   *  persistence. */
-  provenance?: ResourceProvenance;
-}
-
-/**
- * Where a `Resource` originated: the external record it was read from, in the
- * same flat currency as a correspondence (`ExternalRecordRef`), plus the name
- * of the source field. Lets the persistence layer record provenance at the
- * grain of "the <field> of <record>" without a bespoke shape.
- *
- */
-export interface ResourceProvenance extends ExternalRecordRef {
-  /** The source field the resource's content was read from (e.g. `body`,
-   *  `description`, `notes`). Absent when the resource is the whole record
-   *  rather than one of its fields. */
-  field?: string;
-}
-
-/**
  * @deprecated Use `Resource`. Retained as a structural alias for
  * source-compatibility while the wave-1 R4a/b/c adapter impls migrate.
  */
 export type ResourcePosition = Resource;
-
-/**
- * A subject-predicate-object triple extracted from a resource. Carried on
- * `Resource.facts` so the adapter persists facts in the same write as the
- * resource itself (`4d_resources.md`).
- */
-export interface Fact {
-  /** Subject phrase. */
-  s: string;
-  /** Predicate phrase. */
-  p: string;
-  /** Object phrase. */
-  o: string;
-  /** Optional temporal modifier (e.g. "2024-05"). */
-  t?: string;
-}
-
-/**
- * Per-field provenance for a written value (3b §3.3). Carried inline on
- * `WriteInput.evidence`, keyed by the adapter's target field name, so the
- * record and its provenance persist as one transactional unit — no
- * post-structural `writeEvidence` call, no ephemeral-ref → node-id dance.
- *
- * The engine attaches a `FieldEvidence` to a field only when the value is
- * *provenance-faithful* — it arrived un-transformed from an extraction /
- * property read (3b §3.4). A value dropped through `AI()` or a function is no
- * longer evidence-bearing, so no evidence is attached (a misleading citation
- * is worse than none).
- *
- */
-export interface FieldEvidence {
-  /** Verbatim text that justified the value. */
-  quote?: string;
-  /** Character offsets into the source resource content, when known. */
-  startOffset?: number;
-  endOffset?: number;
-  /** Evidence kind — defaults to `extraction` when omitted. */
-  type?: 'extraction' | 'user_edit' | 'retrieval';
-  /** The resource the quote came from, when the adapter can anchor to it. */
-  sourceResourceRef?: { externalId?: string; fileRef?: FileRef };
-}
 
 /**
  * In-batch dedup rules surfaced by an adapter for one target type.
@@ -1410,6 +1195,22 @@ export interface DedupConstraintEntry {
 
 // ── Input/output types ────────────────────────────────────────────────────
 
+/** A prior correspondence the host holds for an adapter type and record
+ *  type — an external record and the node it stands for — with the fields
+ *  `resolveEntity` reads off a candidate (the protocol's `WireLinkedObject`,
+ *  plus when it was made). A stored row carries more, which an adapter does
+ *  not read. */
+export interface LinkedObjectCandidate {
+  id: string;
+  node_id: string;
+  adapter_type: string;
+  external_id: string;
+  external_object_type?: string | null;
+  data?: unknown;
+  /** When the correspondence was made; absent over the wire. */
+  created_at?: Date | string;
+}
+
 export interface ResolveEntityInput {
   /**
    * The fields the engine intends to write, keyed by the adapter's
@@ -1429,7 +1230,7 @@ export interface ResolveEntityInput {
   /** A typeId in this adapter's SchemaDescriptor. */
   recordType: string;
   /** Prior linked_objects matching adapterType + recordType. */
-  candidates: LinkedObject[];
+  candidates: LinkedObjectCandidate[];
   /**
    * Effective uniqueness constraints — the opaque union of the adapter's
    * native constraints (from `describe(recordType).uniquenessConstraints`)
@@ -1442,41 +1243,6 @@ export interface ResolveEntityInput {
   constraints: UniquenessConstraints;
 }
 
-/**
- * The single external-record currency. One flat shape returned by
- * `resolveEntity` candidates and `createRecord`/`updateRecord`.
- *
- * `adapterType` names the system the `externalId` lives in — so a link
- * store knows whose id it's recording, and a candidate/write result
- * carries its own provenance. `data` is the record's flat field bag: the
- * LLM judge compares candidates over it, the engine snapshots it onto
- * `linked_object.data` for the UI prettifier, and any relationship
- * disambiguation context folds into it as ordinary entries (e.g.
- * `data['participates in'] = 'Series A'`). `displayName` is *derived*
- * from `data` via the type's `labelTemplate` — never a separate field.
- *
- * Replaces the KG-shaped `ResolveEntityCandidate` (`matchedNodeId` /
- * `relationships` / `allEntriesExact`): the engine arbitrates from the
- * flat candidate set plus the constraint payload it already holds, and
- * bridges off `externalId` (which == the KG node id for a KG target).
- *
- */
-export interface ExternalRecordRef {
-  /** The system this `externalId` lives in (e.g. `attio`, the KG). */
-  adapterType: string;
-  /** Target-system id — the value the engine passes to `updateRecord`,
-   *  and the KG node id when the target is the KG. */
-  externalId: string;
-  /** The record's type in its own system (e.g. `attio:companies`). The KG
-   *  persists it on `linked_object.external_object_type` (which
-   *  `resolveByBridge` filters on). Optional; omitted when unknown. */
-  recordType?: string;
-  /** Canonical link to the record in its own system, when one exists. */
-  url?: string;
-  /** Flat field bag — judge comparison, UI snapshot, folded-in
-   *  relationship context. `{}` when the adapter has nothing to surface. */
-  data: Record<string, unknown>;
-}
 
 export interface ResolveEntityResult {
   /**

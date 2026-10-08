@@ -18,7 +18,7 @@ import { sql } from 'kysely';
 
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { CALLBACK_ID_PREFIX, callbackUrl, claimCallbackFire, coerceCallbackValues, getCallback, isCallbackId, listRunCallbacks, markCallbackBodyStarted, mintCallback, readCallbackCalls, revokeRunCallbacks } from '../callback_store';
-import { CALLBACK_AWAIT_TYPE, type CallbackParamSpec } from '../callback_types';
+import { CALLBACK_AWAIT_TYPE, type CallbackParamSpec } from 'engine-contracts';
 import { loadResolvableCallbackAwaits } from '../callback_sink';
 
 let teamId: TeamId;

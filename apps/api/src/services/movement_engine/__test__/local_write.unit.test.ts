@@ -90,10 +90,10 @@ import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog'
 import { containerAssociation, type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 const mockExecute = execute as jest.MockedFunction<typeof execute>;
 
 /** The judge's reply shape ({match_index, confidence, reasoning}). */

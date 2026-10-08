@@ -139,13 +139,12 @@ import type {
   RuntimeCapabilities,
 } from '../../adapter';
 import { containerAssociation } from '../../adapter';
-import type {
-  MutationContext,
-  RecordMutationEvent,
-} from '../../mutation_context';
+import type { MutationContext } from '../../mutation_context';
+import type { RecordMutationEvent } from '../record_mutation_event';
 import { makeStablePosition, positionRecordId } from '../../types';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
+import { teamOfTenant } from '../../movement/tenant';
 
 const { findTriggersByKind } = jest.requireMock('../../storage/tg_table') as {
   findTriggersByKind: jest.Mock;
@@ -160,7 +159,7 @@ const { resolveAdapter } = jest.requireMock('../../adapters/resolve') as {
   resolveAdapter: jest.Mock;
 };
 
-const TEAM = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const COMPANY_NODE = '00000000-0000-0000-0000-00000000c001' as NodeId;
 const PERSON_NODE = '00000000-0000-0000-0000-00000000d001' as NodeId;
 
@@ -443,7 +442,7 @@ describe('dispatchMutationEvent → movement firings (a graph listen, end to end
   it("config routing: a change kind outside the listen's `changes` is skipped", async () => {
     const result = await dispatchMutationEvent({
       event: companyUpdateEvent({ changeKind: 'create', changedFields: ['pt-domains'] }),
-      teamId: TEAM,
+      teamId: teamOfTenant(TEAM),
     });
     expect(result.movementFirings).toEqual([]);
     expect(kg.creates).toEqual([]);
@@ -452,7 +451,7 @@ describe('dispatchMutationEvent → movement firings (a graph listen, end to end
   it("changed-fields routing: an update not touching the listen's `fields` is skipped", async () => {
     const result = await dispatchMutationEvent({
       event: companyUpdateEvent({ changedFields: ['pt-name'] }),
-      teamId: TEAM,
+      teamId: teamOfTenant(TEAM),
     });
     expect(result.movementFirings).toEqual([]);
     expect(kg.creates).toEqual([]);
@@ -462,7 +461,7 @@ describe('dispatchMutationEvent → movement firings (a graph listen, end to end
     findTriggersByKind.mockResolvedValue([{ ...TRIGGERS[0], runMode: 'off' }]);
     const result = await dispatchMutationEvent({
       event: companyUpdateEvent(),
-      teamId: TEAM,
+      teamId: teamOfTenant(TEAM),
     });
     expect(result.movementFirings).toEqual([]);
     expect(kg.creates).toEqual([]);
@@ -486,7 +485,7 @@ describe('dispatchMutationEvent → movement firings (a graph listen, end to end
     findTriggersByKind.mockResolvedValue([TRIGGERS[0]]);
     const result = await dispatchMutationEvent({
       event: companyUpdateEvent(),
-      teamId: TEAM,
+      teamId: teamOfTenant(TEAM),
     });
     expect(result.movementFirings).toHaveLength(1);
     expect(result.movementFirings[0].ok).toBe(false);

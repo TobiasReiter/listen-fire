@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
-import type { WorkContext, WorkHandler, WorkKind, WorkRow } from './kinds';
+import {
+  admitUnitWorkKind,
+  forgetUnitWorkKinds,
+  isCoreWorkKind,
+  type CoreWorkKind,
+  type WorkContext,
+  type WorkHandler,
+  type WorkKind,
+  type WorkRow,
+} from './kinds';
 
 import { logger } from '../logger';
 import { claimDueWork, completeWork, deferWork, heartbeatWork, releaseWork } from './store';
@@ -45,15 +54,43 @@ export class WorkDeferred extends Error {
 
 const handlers = new Map<WorkKind, WorkHandler>();
 
-/** Register the handler for a kind. Throws if the kind already has one (no silent override). */
-export function registerWorkHandler(kind: WorkKind, handler: WorkHandler): void {
+function installHandler(kind: WorkKind, handler: WorkHandler): void {
   if (handlers.has(kind)) throw new Error(`work kind '${kind}' already has a handler`);
   handlers.set(kind, handler);
 }
 
-/** Test-only: forget every registered handler. */
+/** Register the handler for one of the core's kinds. Throws if the kind
+ *  already has one (no silent override), or is not the core's: a unit's kind
+ *  goes through `registerWorkKinds`, which also makes this process claim it. */
+export function registerWorkHandler(kind: CoreWorkKind, handler: WorkHandler): void {
+  if (!isCoreWorkKind(kind)) {
+    throw new Error(`work kind '${kind}' is not a core kind: a unit registers its own kinds with registerWorkKinds`);
+  }
+  installHandler(kind, handler);
+}
+
+/** A unit's work kind: its handler and, for a periodic kind, the interval its
+ *  row recurs at (the core keeps that row as it keeps its own). */
+export interface WorkKindRegistration {
+  kind: WorkKind;
+  handler: WorkHandler;
+  intervalMs?: number;
+}
+
+/** How a unit adds work of its own: each kind is declared into
+ *  `UnitWorkKinds` (kinds.ts) and registered here. From then on this process
+ *  claims and runs it, and may enqueue it. */
+export function registerWorkKinds(registrations: readonly WorkKindRegistration[]): void {
+  for (const { kind, handler, intervalMs } of registrations) {
+    installHandler(kind, handler);
+    admitUnitWorkKind(kind, intervalMs);
+  }
+}
+
+/** Test-only: forget every registered handler and unit kind. */
 export function resetWorkHandlersForTests(): void {
   handlers.clear();
+  forgetUnitWorkKinds();
 }
 
 function emptyResult(): DrainResult {

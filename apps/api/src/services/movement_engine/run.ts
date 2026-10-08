@@ -188,14 +188,12 @@ import type {
 } from 'movement-lang';
 import type { Expression, TraversalStep } from '#shared/expression/types';
 import {
-  evaluatePredicate,
   isPurePredicate,
   leafReadKey,
   pureLeafReads,
 } from '#shared/expression/filter';
 import { neverAsAny } from '../../lib/utils/types';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { LinkedObject } from '../../generated/kysely/knowledge/LinkedObject';
+import type { CallbackBodyInput, ResumeInput, RunInput, SettleRaceInput } from 'engine-contracts';
 import type {
   Adapter,
   ExternalRecordRef,
@@ -228,7 +226,7 @@ import {
   mergeUniqueness,
   type UniquenessConstraints,
 } from '../translation_graph/uniqueness';
-import type { LlmClient } from '../translation_graph/engine/batched_extraction';
+import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import {
   matchesResourceFilter,
   resolvePositionResources,
@@ -240,6 +238,7 @@ import {
   bindingOf,
   closedHopPushdown,
   decidePurePredicate,
+  decideWithClock,
   describeBinding,
   evalMovementExpr,
   evaluateMovementExpression,
@@ -284,7 +283,7 @@ import {
 } from './extraction_call';
 import { extractionCallSettings, type ExtractionCallSettings } from './ai_tiers';
 import { parseChatModelName } from '../../lib/models/registry';
-import { selectModel } from '../translation_graph/engine/batched_extraction/schema_synthesis';
+import { selectModel } from '../translation_graph/engine/batched_extraction/model_choice';
 import {
   buildDeclarationSpec,
   buildExtractSpec,
@@ -298,7 +297,7 @@ import {
   type FileTextResolution,
   type TransformInvocationResult,
 } from './extraction';
-import { RunCancelledSignal, RunLeaseLost } from './errors';
+import { MovementRunFailed, RunCancelledSignal, RunLeaseLost } from './errors';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import {
@@ -335,7 +334,7 @@ import {
   isCallbackParamType,
   type CallbackCall,
   type CallbackParamSpec,
-} from './callback_types';
+} from 'engine-contracts';
 import { checkPinned, type CheckInput } from './program_check';
 import {
   ENGINE_CHOICE_TS,
@@ -345,11 +344,14 @@ import {
   runSegmentInRust,
   rustResumeRefusal,
 } from './rust_engine';
+import { WriteLedger, forkWriteOrder, rootWriteOrder, type WriteOrder } from './write_ledger';
 import {
   closeRunContext,
   openRunContext,
   publishTrace,
   pricedCalls,
+  stopwatch,
+  type EngineClock,
   type PricedCalls,
   type RunContext,
   type RunLedger,
@@ -368,88 +370,10 @@ import {
 const CALLBACK_LANDING_SHAPE = 'callback';
 // ── Public surface ──────────────────────────────────────────────────────────
 
-export interface RunMovementInput {
-  /** The movement program text (`.mvt` source). */
-  source: string;
-  /**
-   * The language version the movement is pinned to — the run compiles and
-   * executes under it, it is the segment's pin (`RunContext.languageVersion`),
-   * and every adapter answers under it (the host segment opened with it). Absent ⇒
-   * the current version. A version this release does not support is refused
-   * (MOVENG_LANGUAGE_VERSION), never run as the current one.
-   */
-  languageVersion?: LanguageVersion;
-  /** Which movement to run; optional when the program declares exactly one. */
-  movementName?: string;
-  /** The triggering event — the movement parameter's position. */
-  event: TriggerEvent;
-  teamId: TeamId;
-  /**
-   * When this run FIRED — the instant every clock read in it answers from
-   * (`@current_date`, `@current_timestamp`, `DATE.TODAY(zone)`). The host
-   * passes the run row's `started_at`, which a resume reads back unchanged, so
-   * a run that parks for a day still computes the window it started with.
-   *
-   * An ISO 8601 instant. Absent ⇒ the interpreter pins `new Date()` once at
-   * construction: still one instant for the whole run, just not one that
-   * survives a park. Every path that can park supplies it.
-   */
-  firedAt?: string;
-  /**
-   * The most the run may spend on priced work (model calls, paid services,
-   * priced plugins), in microdollars — the run host reads its deployment's cap
-   * once and hands it over as data. Absent ⇒ no cap.
-   */
-  costCapMicrodollars?: number;
-  /**
-   * What this run spent in its EARLIER segments, in microdollars — the host
-   * reads it back off the run's record when it resumes a parked run, so the
-   * cost cap holds across every park. Absent ⇒ a fresh run, which has spent
-   * nothing.
-   */
-  priorSpentMicrodollars?: number;
-  /**
-   * What the run had spent when it was last resumed from a limit pause — the
-   * cost cap counts only what it spent after this (resuming a run paused at
-   * its cap resets its usage). Absent ⇒ never resumed from one: the cap
-   * counts everything.
-   */
-  capBaselineMicrodollars?: number;
-  /**
-   * The run is PAUSED at a limit (its cost cap) and this segment was woken by
-   * an ordinary event for one of its branches — an answer, a reply, a timer.
-   * The pause holds: the woken branch takes its event (binds the answer, steps
-   * past the sleep) and then suspends before its next statement, like every
-   * other branch of a paused run, until the run itself is resumed.
-   */
-  limitPaused?: boolean;
-  /** The checker's catalog (adapters / credentials / instance schemas), as
-   *  data built for this firing — the engine never holds a live catalog. */
-  catalog: CatalogSnapshot;
-  /** Everything the run reaches outside its program (`host.ts`). */
+/** A run's input: the data is the contract's (`engine-contracts`), and the
+ *  host is everything the run reaches outside its program (`host.ts`). */
+export interface RunMovementInput extends RunInput {
   host: EngineHost;
-  /** The run this is (the host's trigger-run id), named on the engine's log
-   *  lines. Absent ⇒ the lines carry none (a test run, a script). */
-  runId?: string;
-  /** Rehearse every target: each is resolved `dryRun`, so the host captures
-   *  its writes (into the host's write sink) rather than performing them. */
-  dryRun?: boolean;
-  /**
-   * Where to suspend the run's flows, by address: just before a statement, or
-   * just before the k-th call a statement makes (an address ending in that
-   * call's `c k` step). The first flow to reach a listed address parks there,
-   * once for the segment, to re-run the statement on resume. The cost cap needs none of this —
-   * the engine suspends on its own ledger; it is for a host that wants a run
-   * paused at a known point. Absent ⇒ nowhere.
-   */
-  suspendAt?: readonly string[];
-  /**
-   * Imported credential name → its credential id
-   * (`external_service_credentials.id`), as the run host read them with the
-   * catalog snapshot. Ids never go into the snapshot itself. A name absent
-   * here ⇒ the instance is constructed with no credential.
-   */
-  credentialIds?: Readonly<Record<string, string>>;
 }
 
 /** Why a run paused: the limit it met, with what it had spent against it and
@@ -656,32 +580,8 @@ export interface MovementRunResult {
   deferredRaceFrames?: string[];
 }
 
-/**
- * A run that DIED mid-way, carrying out the ledger of what it had already done.
- *
- * Writes hit external systems inline, so a throw after the third write leaves
- * three real records behind. Before this channel the ledger died with the stack
- * and the firing record claimed nothing happened — users re-ran and collided
- * with their own writes.
- *
- * Deliberately transparent: `message`, `name` and `stack` are the original
- * error's and it hangs off `cause`, so logs and failure reasons read exactly as
- * they did. Only genuine failures are wrapped — `RunParked`,
- * `RunCancelledSignal` and `ScopeEndedQuietly` are control flow and never reach
- * here.
- */
-export class MovementRunFailed extends Error {
-  constructor(
-    cause: unknown,
-    /** Everything the run had done when it died: writes in program order, the
-     *  extraction sites their provenance references, and the decision trace. */
-    readonly partial: MovementRunResult,
-  ) {
-    super(getErrorMessage(cause), { cause });
-    this.name = cause instanceof Error ? cause.name : 'MovementRunFailed';
-    if (cause instanceof Error && cause.stack !== undefined) this.stack = cause.stack;
-  }
-}
+// `MovementRunFailed` (a run that died, carrying its ledger) is in errors.ts.
+export { MovementRunFailed };
 
 /**
  * The error a run really died of. `MovementRunFailed` is a transparent CARRIER
@@ -690,15 +590,17 @@ export class MovementRunFailed extends Error {
  * raised before the interpreter starts (parse / check) are never wrapped and
  * pass straight back.
  */
-/** The run's pinned instant, from the ISO string it is handed. A string that
- *  names no instant is refused: a clock that read "Invalid Date" would make
- *  every date the run computes wrong without saying so. */
-function firedInstant(firedAt: string): Date {
-  const instant = new Date(firedAt);
-  if (Number.isNaN(instant.getTime())) {
-    throw new MovementEngineError('MOVENG_RUNTIME', `firedAt '${firedAt}' is not an ISO 8601 instant`);
-  }
-  return instant;
+/** A resolution's identity: what it asks for, the construction args in any
+ *  key order. */
+function resolutionKey(resolution: AdapterResolution): string {
+  const args = resolution.constructionArgs;
+  return JSON.stringify([
+    resolution.adapterType,
+    resolution.credentialsId ?? null,
+    args !== undefined ? Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) : null,
+    resolution.role,
+    resolution.dryRun === true,
+  ]);
 }
 
 export function runFailureCause(error: unknown): unknown {
@@ -769,6 +671,7 @@ async function inRunContext(
     teamId: input.teamId,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
     languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+    ...(input.firedAt !== undefined ? { firedAt: input.firedAt } : {}),
     spend: {
       priorMicrodollars: input.priorSpentMicrodollars ?? 0,
       capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
@@ -806,37 +709,9 @@ function parseAndCheck(input: RunMovementInput): { program: Program; prepared: P
   return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
 }
 
-export interface ResumeMovementInput extends RunMovementInput {
-  /** The parked leaf's serialised scope state (`parked_run.state`) — chunk 4's
-   *  `ParkedScopeState`. Re-parsed source + this rebuild the env. */
-  state: ParkedScopeState;
-  /** The validated answer value (already checked against the ask's result type
-   *  by `recordAnswer`). For a scalar result (`Check<boolean>` / an enum) this
-   *  is the JSON scalar; it binds as the ask's result `r` at the ask's binding
-   *  name (§4.4 — scalar answer → a value binding). Absent under `reenter` (a
-   *  cost / error park has no answer to bind). */
-  answer?: unknown;
-  /**
-   * Resume-at-statement mode (the GENERAL re-enter primitive, §4.4). Optional,
-   * DEFAULTING to the ask behaviour (false):
-   *
-   *   - false / absent (ASK resume): the parked leaf's address is the ASK's own
-   *     statement; the ask's effect IS the answer, so resume binds `answer` at the
-   *     ask's binding name and steps FORWARD from the statement AFTER it
-   *     (`stmtIndex + 1`). Every existing caller (`interaction/resume.ts`) keeps
-   *     this behaviour unchanged.
-   *   - true (RE-ENTER resume): the parked leaf's address is a statement whose
-   *     effect must be RE-EVALUATED rather than stepped past — an `await` that
-   *     re-checks live, or a recurring `until` timer. Resume binds NO answer and
-   *     RE-ENTERS AT that statement (`stmtIndex`), running it and the rest of its
-   *     branch forward.
-   */
-  reenter?: boolean;
-  /** Batch mode (F18/F21): the await-resume worker sets this so a race branch's
-   *  completion is DEFERRED (recorded in the result's `deferredRaceFrames`)
-   *  instead of settling inline — the worker settles once, post-batch, with every
-   *  winner. Inline resumers (timer/ask) omit it. */
-  deferRaceSettlement?: boolean;
+/** A resume's input: the contract's (`engine-contracts`), and the host. */
+export interface ResumeMovementInput extends ResumeInput {
+  host: EngineHost;
 }
 
 /**
@@ -894,7 +769,7 @@ function resumeInterpreter(
  * race's parent — the settlement re-enters at the race statement, not the leaf).
  */
 export async function settleRaceFrame(
-  input: ResumeMovementInput & { frameAddress: string },
+  input: SettleRaceInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>
@@ -914,7 +789,7 @@ export async function settleRaceFrame(
  * address resolves to the same expression it was minted from.
  */
 export async function fireCallbackBody(
-  input: ResumeMovementInput & { values: Record<string, unknown>; callIndex: number },
+  input: CallbackBodyInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>
@@ -1531,6 +1406,9 @@ function awaitHopFilter(head: PathHead): Expression | undefined {
  */
 export async function awaitLandingMatches(input: {
   filter: Expression;
+  /** The host's clock, which a `WITHIN` measures from; absent, the wall
+   *  clock. */
+  clock?: EngineClock;
   adapter: Adapter;
   adapterType: string;
   landing: { recordType?: string; fields: Record<string, unknown> };
@@ -1548,7 +1426,7 @@ export async function awaitLandingMatches(input: {
       // landing, so strip it to the field name the adapter keys by.
       const field = dot >= 0 ? key.slice(dot + 1) : key;
       return input.adapter.getFieldValue({ position, fieldId: field });
-    }),
+    }, input.clock),
   );
 }
 
@@ -1674,6 +1552,9 @@ interface FlowFrame {
    *  next to each other (`recordExtractedEntities` finds its own by
    *  position). */
   trace: MovementTraceEntry[];
+  /** Where this flow's writes fall in the ledger's program order: under the
+   *  fork that started it, by its branch index (`write_ledger.ts`). */
+  writeOrder: WriteOrder;
 }
 
 /**
@@ -2302,7 +2183,7 @@ function flattenAndConjuncts(expr: Expression): Expression[] {
 }
 
 class Interpreter {
-  private readonly writes: MovementWriteRecord[] = [];
+  private readonly writeLedger = new WriteLedger();
   /** Set when the run parked at an `ask` (caught at run() top → the result
    *  carries `parked: true`, the firing caller skips finalisation). */
   private parked = false;
@@ -2335,13 +2216,15 @@ class Interpreter {
   private readonly runTrace: MovementTraceEntry[];
   /** Interns extraction sites + projects trails to refs for the
    *  firing record (E4 — refs not blobs). */
-  private readonly summariser = new ProvenanceSummariser();
+  private readonly summariser = new ProvenanceSummariser(this.writeLedger);
   /** Aliased imports: local name → name in the source namespace (catalog / workspace key). */
   private readonly importOriginals = new Map<string, string>();
   private readonly targetAdapterCache = new Map<string, Adapter>();
   /** Source-role adapters for graph-rooted traversals (see graphReadFor). */
   private readonly sourceAdapterCache = new Map<string, Adapter>();
   private readonly resolveAdapterFn: (input: AdapterResolution) => Promise<Adapter>;
+  /** Each distinct resolution's adapter, as it resolves (`resolutionKey`). */
+  private readonly resolutions = new Map<string, Promise<Adapter>>();
   /** The engine's stand-in for each host instance, by its id: the host
    *  answers one id per instance, so an instance resolved twice is one
    *  adapter here too. */
@@ -2452,6 +2335,13 @@ class Interpreter {
     return this.flowFrames.getStore()?.callStack ?? this.runCallStack;
   }
 
+  /** Where this flow's next write falls in program order. */
+  private get writeOrder(): WriteOrder {
+    return this.flowFrames.getStore()?.writeOrder ?? this.runWriteOrder;
+  }
+
+  private readonly runWriteOrder = rootWriteOrder();
+
   private readonly catalog: Catalog;
 
   constructor(
@@ -2475,18 +2365,33 @@ class Interpreter {
     if (versionWarning !== undefined) {
       this.trace.push({ kind: 'warning', code: versionWarning.code, message: versionWarning.message });
     }
-    this.pinnedNow = input.firedAt !== undefined ? firedInstant(input.firedAt) : new Date();
+    this.pinnedNow = prepared.context.pinnedNow;
     // Every adapter is resolved for this segment, so it answers inside the
     // segment's host scope. What comes back is the instance as data; the
     // engine holds a stand-in that calls it through the host.
-    this.resolveAdapterFn = async (resolution) => {
-      const { segmentId } = prepared.context;
-      const resolved = await prepared.context.host.adapters.resolve(resolution);
-      const known = this.hostAdapters.get(resolved.instance);
-      if (known !== undefined) return known;
-      const adapter = hostAdapter({ host: input.host, segmentId, resolved });
-      this.hostAdapters.set(resolved.instance, adapter);
-      return adapter;
+    //
+    // One request per distinct resolution per segment: the memo holds the
+    // PROMISE, taken before the request is answered, so two flows racing to
+    // resolve the same instance share one request.
+    this.resolveAdapterFn = (resolution) => {
+      const key = resolutionKey(resolution);
+      const memoised = this.resolutions.get(key);
+      if (memoised !== undefined) return memoised;
+      const resolving = (async () => {
+        const { segmentId } = prepared.context;
+        const resolved = await prepared.context.host.adapters.resolve(resolution);
+        const known = this.hostAdapters.get(resolved.instance);
+        if (known !== undefined) return known;
+        const adapter = hostAdapter({ host: input.host, segmentId, resolved });
+        this.hostAdapters.set(resolved.instance, adapter);
+        return adapter;
+      })();
+      this.resolutions.set(key, resolving);
+      // A resolution that failed is not remembered: the next asks again.
+      resolving.catch(() => {
+        if (this.resolutions.get(key) === resolving) this.resolutions.delete(key);
+      });
+      return resolving;
     };
     this.currentImports = prepared.link?.imports;
     // The firing that started this run rides along in the provenance of every
@@ -3266,7 +3171,7 @@ class Interpreter {
     leafAddress: string,
   ): Promise<SpineCompletion> {
     const { op } = frame;
-    const flow = this.openFlowFrame();
+    const flow = this.openFlowFrame(forkWriteOrder(this.writeOrder)(frame.boundary.member));
     const into = this.trace;
     let answer: MemberAnswer;
     try {
@@ -3612,7 +3517,7 @@ class Interpreter {
   private assembleResult(movementName: string): MovementRunResult {
     return {
       movementName,
-      writes: this.writes,
+      writes: this.writeLedger.ordered(),
       extractionSites: this.summariser.sites,
       trace: this.runTrace,
       ...(this.parked ? { parked: true } : {}),
@@ -4573,16 +4478,6 @@ class Interpreter {
   }
 
   /**
-   * `parallel { … }` — env fork + join. Every sibling statement runs in
-   * its OWN child environment, all siblings concurrently (Promise.all):
-   * sibling bindings are invisible to each other while the block runs
-   * (the checker already rejects cross-sibling reads — `parallelSibling`
-   * scope poisoning), and the block's writes interleave in completion
-   * order on the firing record. After the join, each sibling's bindings
-   * hoist into the enclosing scope in program order — exactly the
-   * checker's "sibling bindings come into scope after the block".
-   */
-  /**
    * `await race([…])` / `await parallel([…])` — the two concurrency combinators
    * (core calculus v2 R5). The arms are FUNCTION values and this is what calls
    * them: each runs concurrently in its own `branch k` frame, and the value is
@@ -4853,6 +4748,7 @@ class Interpreter {
   }): Promise<number[]> {
     const { indices, count, settings, spelling, answers, member } = input;
     const frames: FlowFrame[] = [];
+    const memberOrder = forkWriteOrder(this.writeOrder);
     const parked: number[] = [];
     let failure: { index: number; error: unknown } | undefined;
     let next = 0;
@@ -4872,7 +4768,7 @@ class Interpreter {
     /** Run the member at `position` of `indices`; true when it parked. */
     const runOne = async (position: number): Promise<boolean> => {
       const index = indices[position];
-      const frame = this.openFlowFrame();
+      const frame = this.openFlowFrame(memberOrder(index));
       frames[position] = frame;
       try {
         answers[index] = { kept: true, value: await this.flowFrames.run(frame, () => member(index)) };
@@ -4930,9 +4826,10 @@ class Interpreter {
   }
 
   /** A frame for one concurrent flow started from this one: the enclosing
-   *  call stack copied, and an empty trace of its own. */
-  private openFlowFrame(): FlowFrame {
-    return { callStack: [...this.callStack], trace: [] };
+   *  call stack copied, an empty trace of its own, and its writes ordered
+   *  under `writeOrder` (one branch of a fork, `forkWriteOrder`). */
+  private openFlowFrame(writeOrder: WriteOrder): FlowFrame {
+    return { callStack: [...this.callStack], trace: [], writeOrder };
   }
 
   /** The function a collection op runs: written in place, or a name bound to
@@ -5020,12 +4917,13 @@ class Interpreter {
       return;
     }
 
+    const armOrder = forkWriteOrder(this.writeOrder);
     const forks = arms.map((arm, index) => ({
       arm,
       index,
       env: env.child(),
       address: childBranch(stmtAddress, index),
-      frame: this.openFlowFrame(),
+      frame: this.openFlowFrame(armOrder(index)),
     }));
     const settled = new Map<number, Binding>();
     const parked: typeof forks = [];
@@ -5876,8 +5774,9 @@ class Interpreter {
       config[arg.name] = value;
       trails.push(provenance);
     }
-    const started = Date.now();
+    const elapsed = await stopwatch(this.context.clock);
     const result = await invoker.invoke({ plugin, config, extractedContext: {} });
+    const durationMs = await elapsed();
     // What the plugin brought back is no longer justified by the quote that
     // pointed at it, so the origins survive and the direct citation does not.
     const { binding, handedBack } = pluginCallBinding(
@@ -5890,7 +5789,7 @@ class Interpreter {
       kind: 'plugin',
       plugin,
       ...(typeof config.url === 'string' ? { url: tracedUrl(config.url) } : {}),
-      durationMs: Date.now() - started,
+      durationMs,
       ...(result.text ? { chars: result.text.length } : {}),
       ...(fields.length > 0 ? { fields } : {}),
       ...(result.outcome ? { outcome: result.outcome } : {}),
@@ -6048,7 +5947,7 @@ class Interpreter {
       ...(presenceBindingName !== undefined ? { presenceBind: true } : {}),
       scopeChain: serializeScopeChain(env.chainFromRoot(), park),
     }));
-    const wakeAt = new Date(Date.now() + durationToMs(sleep.duration.raw)).toISOString();
+    const wakeAt = new Date((await this.context.clock.now()).getTime() + durationToMs(sleep.duration.raw)).toISOString();
     await parkSink.commitTimerPark({ address, state, wakeAt });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -6179,7 +6078,9 @@ class Interpreter {
         }
         case 'ttl':
           // Checker-validated duration literal, so the raw spelling parses.
-          expiresAt = new Date(Date.now() + durationToMs(entry.value.raw.trim())).toISOString();
+          expiresAt = new Date(
+            (await this.context.clock.now()).getTime() + durationToMs(entry.value.raw.trim()),
+          ).toISOString();
           break;
         default:
           throw new MovementEngineError(
@@ -6366,7 +6267,7 @@ class Interpreter {
           for (const landing of resolution.landings) {
             if (
               hopFilter === undefined ||
-              (await awaitLandingMatches({ filter: hopFilter, adapter, adapterType, landing }))
+              (await awaitLandingMatches({ filter: hopFilter, adapter, adapterType, landing, clock: this.context.clock }))
             ) {
               return { status: 'bind', landing };
             }
@@ -6464,8 +6365,12 @@ class Interpreter {
       );
     }
 
-    const firstMatch = async (): Promise<CallbackCall | undefined> =>
-      (await sink.calls({ callbackId: binding.callbackId })).find((call) => this.callbackCallMatches(call, input.hopFilter));
+    const firstMatch = async (): Promise<CallbackCall | undefined> => {
+      for (const call of await sink.calls({ callbackId: binding.callbackId })) {
+        if (await this.callbackCallMatches(call, input.hopFilter)) return call;
+      }
+      return undefined;
+    };
     const matched = await firstMatch();
     if (matched !== undefined) {
       // The resolved shortcut (S2): a fire already landed — continue inline.
@@ -6612,7 +6517,7 @@ class Interpreter {
   /** The awaited hop's pure WHERE against one recorded call. A call's fields are
    *  plain data (no adapter translates them), so the predicate reads them
    *  directly — the same values the bound landing will read. */
-  private callbackCallMatches(call: CallbackCall, filter: Expression | undefined): boolean {
+  private async callbackCallMatches(call: CallbackCall, filter: Expression | undefined): Promise<boolean> {
     if (filter === undefined) return true;
     const fields: Record<string, unknown> = { [CALLBACK_CALL_AT]: call.at, ...call.values };
     const reads = new Map<string, unknown>();
@@ -6621,7 +6526,7 @@ class Interpreter {
       const dot = key.indexOf('.');
       reads.set(key, fields[dot >= 0 ? key.slice(dot + 1) : key]);
     }
-    return Boolean(evaluatePredicate(filter, { read: (name) => reads.get(name) }));
+    return Boolean(await decideWithClock(filter, (name) => reads.get(name), this.context.clock));
   }
 
   /**
@@ -6679,7 +6584,7 @@ class Interpreter {
     await parkSink.commitTimerPark({
       address,
       state,
-      wakeAt: new Date(Date.now() + everyMs).toISOString(),
+      wakeAt: new Date((await this.context.clock.now()).getTime() + everyMs).toISOString(),
     });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -7712,9 +7617,11 @@ class Interpreter {
           'this run has no callback sink — a callback needs the durable trigger-run substrate',
         );
       }
-      const calls = await sink.calls({ callbackId: rootBinding.callbackId });
+      const calls: CallbackCall[] = [];
+      for (const call of await sink.calls({ callbackId: rootBinding.callbackId })) {
+        if (await this.callbackCallMatches(call, step.expressionFilter)) calls.push(call);
+      }
       return calls
-        .filter((call) => this.callbackCallMatches(call, step.expressionFilter))
         .map((call) => {
           const landing = this.callbackCallBinding(call);
           const bindings = new Map<string, Binding>();
@@ -7833,6 +7740,7 @@ class Interpreter {
             adapter: this.source.adapter,
             position: start,
             filter: probe.filter,
+            mintIds: (count) => this.context.ids.mint(count),
           }),
           probe,
           env,
@@ -9300,8 +9208,8 @@ class Interpreter {
       );
     }
     if (input.bindingName !== undefined) record.bindingName = input.bindingName;
-    record.origin = { kind: 'write', writeIndex: this.writes.length };
-    this.writes.push(record);
+    record.origin = { kind: 'write', writeIndex: this.writeLedger.nextIndex };
+    this.writeLedger.append(record, this.writeOrder);
   }
 
   /**
@@ -10021,8 +9929,8 @@ class Interpreter {
       const current = await adapter.readRecord({ recordType, externalId: matched.externalId });
       if (current) resultData = { ...resultData, ...current };
     }
-    const writeIndex = this.writes.length;
-    this.writes.push({
+    const writeIndex = this.writeLedger.nextIndex;
+    this.writeLedger.append({
       kind: 'link',
       adapterType: adapter.adapterType,
       recordType: fromRecordType,
@@ -10042,8 +9950,10 @@ class Interpreter {
         to: [],
       },
       ...(bindingName !== undefined ? { bindingName } : {}),
-    });
+    }, this.writeOrder);
     if (bindingName !== undefined) {
+      const origin = { kind: 'write' as const, writeIndex, externalId: matched.externalId };
+      this.writeLedger.cite(origin);
       env.declare(bindingName, {
         kind: 'handle',
         handle: {
@@ -10055,7 +9965,7 @@ class Interpreter {
           writtenValues: {},
           resultData,
           provenance: {},
-          origin: { kind: 'write', writeIndex, externalId: matched.externalId },
+          origin,
         },
         targetType: recordType,
         graph,
@@ -10339,7 +10249,7 @@ class Interpreter {
       deleteRecord({ recordType, externalId, mutationContext: this.mutationContext }),
     );
 
-    this.writes.push({
+    this.writeLedger.append({
       kind: 'delete',
       adapterType: adapter.adapterType,
       recordType,
@@ -10351,7 +10261,7 @@ class Interpreter {
         binding?.kind === 'handle'
           ? { record: this.summariser.summariseTrail(handleTrail(binding.handle)) }
           : {},
-    });
+    }, this.writeOrder);
   }
 
   /**
@@ -10440,7 +10350,7 @@ class Interpreter {
     changed: boolean;
   }): void {
     const { resolved } = input;
-    this.writes.push({
+    this.writeLedger.append({
       kind: input.kind,
       adapterType: resolved.adapter.adapterType,
       recordType: resolved.from.recordType,
@@ -10457,7 +10367,7 @@ class Interpreter {
         from: this.summariser.summariseTrail(handleTrail(resolved.fromHandle)),
         to: this.summariser.summariseTrail(handleTrail(resolved.toHandle)),
       },
-    });
+    }, this.writeOrder);
   }
 
   private resolveEdgeEndpoint(
@@ -10486,7 +10396,7 @@ class Interpreter {
    * `applyCreate` / `applyUpdate` already carries its identity and
    * write-event facts; here it gains the firing-log layer in place
    * (summarised per-field provenance, interned write origin) and is
-   * pushed onto `this.writes`. The handle binding wraps that SAME object,
+   * appended to the write ledger. The handle binding wraps that SAME object,
    * so the binding value and the firing entry are one — there is no
    * slim-handle → fuller-entry transform.
    */
@@ -10499,7 +10409,7 @@ class Interpreter {
      *  firing record for the fields that were actually written. */
     fieldProvenance: Record<string, Provenance>;
   }): Binding {
-    const writeIndex = this.writes.length;
+    const writeIndex = this.writeLedger.nextIndex;
     const record = input.write;
     for (const fieldId of Object.keys(record.writtenValues)) {
       record.provenance[fieldId] = this.summariser.summariseTrail(
@@ -10514,7 +10424,7 @@ class Interpreter {
       writeIndex,
       ...(record.externalId !== undefined ? { externalId: record.externalId } : {}),
     };
-    this.writes.push(record);
+    this.writeLedger.append(record, this.writeOrder);
     const binding: Binding = {
       kind: 'handle',
       handle: record,
@@ -11016,7 +10926,7 @@ class Interpreter {
         data = { ...data, ...(current ?? {}) };
       }
       const read = data;
-      if (evaluatePredicate(predicate, { read: (name) => read[name] })) kept.push(candidate);
+      if (await decideWithClock(predicate, (name) => read[name], this.context.clock)) kept.push(candidate);
     }
     return kept;
   }
@@ -11400,6 +11310,7 @@ class Interpreter {
   private exprContext(env: Environment): MovementExprContext {
     return {
       env,
+      clock: this.context.clock,
       languageVersion: this.languageVersion,
       source: this.source,
       graphRead: (name, binding) => this.graphReadFor(name, binding),

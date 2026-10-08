@@ -91,10 +91,14 @@ export interface DryRunRehearsal {
   /** Every externalId this rehearsal invented, so a parent link naming one can
    *  be reported as rehearsed rather than as a record that exists. */
   minted: Set<string>;
+  /** Mints each invented id: a random UUID unless the host supplies its own
+   *  (a test host's deterministic sequence, so a recorded rehearsal replays
+   *  the same). */
+  mintId: () => string;
 }
 
-export function newDryRunRehearsal(sink?: DryRunWriteSink): DryRunRehearsal {
-  return { ...(sink !== undefined ? { sink } : {}), minted: new Set<string>() };
+export function newDryRunRehearsal(sink?: DryRunWriteSink, mintId: () => string = randomUUID): DryRunRehearsal {
+  return { ...(sink !== undefined ? { sink } : {}), minted: new Set<string>(), mintId };
 }
 
 export function wrapAdapterForDryRun(adapter: Adapter, rehearsal: DryRunRehearsal): Adapter {
@@ -123,7 +127,7 @@ export function wrapAdapterForDryRun(adapter: Adapter, rehearsal: DryRunRehearsa
           // edge reference to a uuid, and a non-uuid id ("dry-run-…") fails
           // that cast. A random uuid is also a valid id for string-id targets
           // (Attio, etc.), so this is safe across adapters.
-          const externalId = randomUUID();
+          const externalId = rehearsal.mintId();
           const parents = capturedParents(input);
           rehearsal.minted.add(externalId);
           sink?.({

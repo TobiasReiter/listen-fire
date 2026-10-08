@@ -2,7 +2,7 @@
 
 The movement engine in Rust. A segment of a run executes inside one WASM
 instance and asks for everything outside the program in the host contract's
-own shapes (docs/engine-host.md); `apps/api/src/services/movement_engine/
+own shapes (docs/contracts/host-families.md); `apps/api/src/services/movement_engine/
 rust_engine.ts` drives it, and `rust_host.ts` forwards each request to the
 run's `EngineHost`.
 
@@ -387,7 +387,7 @@ TypeScript takes through its host is a host request here:
 | `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address | `host.park.sink.commitSuspension`; `{noSink: true}` when the sink has none |
 | `control.cancel.cancelledNow` | the last check (not after a park) | `host.control.cancel.cancelledNow` |
 
-**A lost run lease** is the run host's (docs/engine-host.md "Failure"): the
+**A lost run lease** is the run host's (docs/contracts/host-families.md "Failure"): the
 cancel gate, or a park the lease fence refuses, throws `RunLeaseLost`; that
 host error fails the run with the very object, and the run host's settle
 recognises it. The engine never asks whether the lease is lost.
@@ -703,7 +703,7 @@ a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
 host keeps, so a run that fails with it can name it.
 
 Every request but `check`'s and `builtins`' carries `segmentId`, and is the
-`EngineHost` method's request of the same path, in docs/engine-host.md's
+`EngineHost` method's request of the same path, in docs/contracts/host-families.md's
 shape. Where `wire: true`, the values named cross on the eval wire.
 
 | request (family.method, args) | answer |

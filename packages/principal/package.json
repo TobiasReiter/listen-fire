@@ -1,7 +1,7 @@
 {
   "name": "principal",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "version": "0.0.1",
   "description": "The identity contract every product imports: Principal + Directory types, the ambient principal store, the static single-tenant provider, and an express adapter",
   "engines": {

@@ -28,6 +28,7 @@ import type { TriggerEvent } from '../../services/translation_graph/triggers/typ
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { probeEngineHost } from './lib/probe_host';
+import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 
 const HOST = process.env.FAKE_BASE ?? 'http://localhost:6199';
 const TEAM_ID = '00000000-0000-0000-0000-000000000099' as TeamId;
@@ -125,7 +126,7 @@ async function run(label: string, body: string): Promise<void> {
   await runMovement({
     source: movementSource(body),
     event: manualEvent(),
-    teamId: TEAM_ID,
+    teamId: tenantOfTeam(TEAM_ID),
     catalog: staticCatalogSnapshot({
       credentials: { affinity_cred: { adapters: ['affinity'] } },
       instanceSchemas: { affinity: affinitySchema },

@@ -12,12 +12,16 @@ import { neverAsAny } from '../lib/utils/types';
 import { claimLoopTick } from '../lib/worker';
 import {
   drainPassFailing,
+  registerWorkKinds,
   setExternalDrainPassRecorder,
   startDrainLoop,
   type DrainResult,
   type StopDrainLoop,
 } from '../services/work/drain';
-import { ensureAutomationsPeriodicWork, registerAutomationsWork } from '../services/work/register';
+import { registerExposedFileWork } from '../services/exposed_file/worker';
+import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
+import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
+import { ensureAutomationsPeriodicWork, registerCoreWork } from '../services/work/register';
 import type { WorkerRegistry } from './registry';
 
 type Env = Record<string, string | undefined>;
@@ -67,6 +71,18 @@ function startDrain(env: Env): StopDrainLoop | undefined {
   }
 }
 
+/** Everything the drain runs: the core's kinds, then each unit's own — the
+ *  adapter packages' (through the adapter registry), file exposure's and
+ *  inbound sync's. Handlers go first, before any await, so this process's
+ *  first drain pass finds them; then every periodic row is ensured. */
+async function registerAutomationsWork(): Promise<void> {
+  registerCoreWork();
+  registerWorkKinds(adapterWorkKinds());
+  registerExposedFileWork();
+  registerLinkedObjectWork();
+  await ensureAutomationsPeriodicWork();
+}
+
 const automationsWorkers: WorkerRegistry = {
   unit: 'automations',
   workers: [{ id: DRAIN_WORKER_ID, start: () => startDrain(process.env) }],
@@ -74,4 +90,4 @@ const automationsWorkers: WorkerRegistry = {
   lock: false,
 };
 
-export { DRAIN_MODE_VAR, automationsWorkers };
+export { DRAIN_MODE_VAR, automationsWorkers, registerAutomationsWork };

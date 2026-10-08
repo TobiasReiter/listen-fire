@@ -9,8 +9,8 @@
 import { z } from 'zod';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { PROTOCOL_VERSION, RpcResponse } from './schema';
-import type { RpcErrorShape } from './schema';
+import { PROTOCOL_VERSION, RpcResponse } from 'engine-contracts';
+import type { RpcErrorShape } from 'engine-contracts';
 
 /**
  * The header naming a team, both ways: the host sends it on every call to a

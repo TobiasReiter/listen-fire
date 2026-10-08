@@ -17,20 +17,21 @@
 import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { CallbackSink } from '../host';
-import type { CallbackCall } from '../callback_types';
+import type { CallbackCall } from 'engine-contracts';
 import type { ParkedScopeState } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { snapshotOverManifests, staticCatalogFromManifests, staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { runMovement, fireCallbackBody, type ParkSink } from '../run';
-import { makeTestHost } from '../test_host';
+import { makeTestHost, TEST_HOST_NOW } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000041');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };
@@ -245,10 +246,9 @@ listen to runs {} fire m
 
     expect(callbacks.mints.map((m) => m.singleUse)).toEqual([true, false]);
     expect(callbacks.mints[0].expiresAt).toBeUndefined();
-    // 2d out, give or take the test's own clock.
-    const ttl = new Date(callbacks.mints[1].expiresAt!).getTime() - Date.now();
-    expect(ttl).toBeGreaterThan(47 * 60 * 60 * 1000);
-    expect(ttl).toBeLessThan(49 * 60 * 60 * 1000);
+    // 2d out from the host's now (the test host's clock is fixed).
+    const ttl = new Date(callbacks.mints[1].expiresAt!).getTime() - Date.parse(TEST_HOST_NOW);
+    expect(ttl).toBe(48 * 60 * 60 * 1000);
   });
 
   it('records the fire-time signature in DECLARATION order', async () => {

@@ -65,15 +65,24 @@ import type {
   ShapeNode,
 } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
-import { languageVersionOf, runLogFields, throwIfCancelled, type RunFacts } from './run_context';
+import { mapConcurrent, settledAll } from './fans';
+import {
+  hostless,
+  languageVersionOf,
+  runLogFields,
+  stopwatch,
+  throwIfCancelled,
+  type ClockAndIds,
+  type RunFacts,
+} from './run_context';
 import { matchOption } from '../../lib/utils/string';
-import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction';
-import { selectModel } from '../translation_graph/engine/batched_extraction/schema_synthesis';
+import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
+import { selectModel } from '../translation_graph/engine/batched_extraction/model_choice';
 import { extractionCallSettings, type ExtractionCallSettings, type TierModel } from './ai_tiers';
 import { logger } from '../logger';
 import type { FileRef, Resource } from '../translation_graph/adapter';
 import { fileHandle, isFileRef } from '../translation_graph/adapter';
-import { stampResourceId } from '../translation_graph/engine/files/resources';
+import { stampResourceIds } from '../translation_graph/engine/files/resources';
 import {
   isFileUnreadable,
   MovementEngineError,
@@ -285,10 +294,10 @@ async function buildNodeSpec(
     name,
     description,
     exported: [...new Set(stages.flatMap((stage) => stage.fields.map((f) => f.name)))],
-    stages: await Promise.all(
+    stages: await settledAll(
       stages.map(async (stage) => ({
         through: stage.through ?? [],
-        fields: await Promise.all(
+        fields: await settledAll(
           stage.fields.map(async (f) => {
             const type = resolveFieldType(f, options);
             return {
@@ -299,7 +308,7 @@ async function buildNodeSpec(
             };
           }),
         ),
-        children: await Promise.all(
+        children: await settledAll(
           stage.children.map(async (c) =>
             c.declared === undefined
               ? buildNodeSpec(c.name, await describeSlot(c.description, options), c.stages, options)
@@ -386,7 +395,7 @@ async function buildShapeNodeSpec(
     stages: [
       {
         through: [],
-        fields: await Promise.all(
+        fields: await settledAll(
           shape.fields.map(async (f) => {
             const type = resolveFieldType(f, options);
             return {
@@ -397,7 +406,7 @@ async function buildShapeNodeSpec(
             };
           }),
         ),
-        children: await Promise.all(
+        children: await settledAll(
           shape.children.map((c) => buildShapeNodeSpec(c.name, c, options)),
         ),
       },
@@ -489,23 +498,21 @@ function pluginFileResources(
     const name = typeof record.name === 'string' ? record.name : file.name;
     const url = typeof record.url === 'string' ? record.url : null;
     const externalId = fileHandle(file);
-    resources.push(
-      stampResourceId({
-        ...(externalId !== undefined ? { externalId } : {}),
-        type: 'FILE',
+    resources.push({
+      ...(externalId !== undefined ? { externalId } : {}),
+      type: 'FILE',
+      ...(name !== undefined ? { name } : {}),
+      url,
+      fileRef: file,
+      ...(file.contentType !== undefined ? { contentType: file.contentType } : {}),
+      data: {
+        file,
         ...(name !== undefined ? { name } : {}),
-        url,
-        fileRef: file,
+        ...(url !== null ? { url } : {}),
+        type: 'FILE',
         ...(file.contentType !== undefined ? { contentType: file.contentType } : {}),
-        data: {
-          file,
-          ...(name !== undefined ? { name } : {}),
-          ...(url !== null ? { url } : {}),
-          type: 'FILE',
-          ...(file.contentType !== undefined ? { contentType: file.contentType } : {}),
-        },
-      }),
-    );
+      },
+    });
   }
   return resources;
 }
@@ -763,37 +770,6 @@ class TraceSink {
  */
 export const STAGE_FAN_OUT = 4;
 
-/**
- * Run `job` over `items`, at most `STAGE_FAN_OUT` at a time, answering in the
- * order the items were WRITTEN. The ordering is the point: a stage's
- * enrichment blocks render in declaration order and its trace reads in walk
- * order however the fetches actually landed.
- *
- * The first rejection is what the caller sees, and nothing further is started
- * after it — the serial loop's behaviour, less the items already in flight.
- */
-async function mapConcurrent<T, R>(
-  items: readonly T[],
-  job: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = [];
-  let next = 0;
-  let failed = false;
-  const worker = async (): Promise<void> => {
-    while (!failed) {
-      const index = next++;
-      if (index >= items.length) return;
-      try {
-        results[index] = await job(items[index], index);
-      } catch (error) {
-        failed = true;
-        throw error;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(STAGE_FAN_OUT, items.length) }, worker));
-  return results;
-}
 
 // The `resolveFileText` seam's own vocabulary lives beside the trace shape it
 // feeds (./expression.ts) — `READ(file)` reads files through the same seam, so
@@ -837,6 +813,9 @@ export interface ExtractRuntime {
    *  its id for log lines. Absent ⇒ outside a run (a script, a test): the
    *  current version, nothing to cancel. */
   run?: RunFacts;
+  /** Outside a run, the clock and ids to ask (a script's bare host);
+   *  neither this nor `run` ⇒ `hostless()`. */
+  world?: ClockAndIds;
 }
 
 // ── Materialisation ─────────────────────────────────────────────────────────
@@ -988,13 +967,33 @@ class Materializer {
    *  read it — is only answerable if each entry says so itself. */
   private sourceFiles: ExtractionTraceFile[] = [];
 
-  constructor(private readonly runtime: ExtractRuntime) {}
+  /** The clock and ids this extraction asks: its run's, a script's host's,
+   *  or a hostless caller's. */
+  private readonly world: ClockAndIds;
+
+  constructor(private readonly runtime: ExtractRuntime) {
+    this.world = runtime.run ?? runtime.world ?? hostless();
+  }
 
   private get languageVersion(): LanguageVersion {
     return languageVersionOf(this.runtime.run);
   }
 
-  /** The files a stage's plugins fetched, joined onto the record they ran for. */
+  /** Each resource with no id, given one: in a run, by the host
+   *  (`ids.mint`), all of them in one request. */
+  private stamp(resources: readonly Resource[]): Promise<Resource[]> {
+    return stampResourceIds(resources, (count) => this.world.ids.mint(count));
+  }
+
+  private async stampOne(resource: Resource): Promise<Resource> {
+    const [stamped] = await this.stamp([resource]);
+    return stamped ?? resource;
+  }
+
+  /** The files a stage's plugins fetched, joined onto the record they ran
+   *  for — without ids yet: the fan of entities that fetched them lands in
+   *  any order, so the ids are minted once it has (`stampTree`), in the
+   *  tree's own order. */
   private addResources(
     emission: WorkingEmission,
     enrichments: Array<{ plugin: string; result: TransformInvocationResult }>,
@@ -1002,6 +1001,27 @@ class Materializer {
     const fetched = enrichments.flatMap(({ result }) => pluginFileResources(result, this.languageVersion));
     if (fetched.length === 0) return;
     emission.resources = [...(emission.resources ?? []), ...fetched];
+  }
+
+  /** Every record's fetched files given their ids, in one request: the
+   *  records in the tree's order (a record, then its children by name in
+   *  the order they were attached, each in order), so the ids follow the
+   *  program, not which branch of a fan finished first. */
+  private async stampTree(root: WorkingEmission): Promise<void> {
+    const records: WorkingEmission[] = [];
+    const walk = (emission: WorkingEmission): void => {
+      records.push(emission);
+      for (const children of emission.children.values()) for (const child of children) walk(child);
+    };
+    walk(root);
+    const unstamped = records.flatMap((record) => record.resources ?? []);
+    const stamped = await this.stamp(unstamped);
+    let next = 0;
+    for (const record of records) {
+      if (record.resources === undefined) continue;
+      record.resources = stamped.slice(next, next + record.resources.length);
+      next += record.resources.length;
+    }
   }
 
   async run(extract: ExtractExpression, spec: ExtractNodeSpec): Promise<ExtractEmission> {
@@ -1030,7 +1050,7 @@ class Materializer {
     // its `from` sources do: every record it produces carries them.
     const pipelineResources: Resource[] = [];
     try {
-      const results = await mapConcurrent(fromPipeline, async (plugin, i) => {
+      const results = await mapConcurrent(fromPipeline, STAGE_FAN_OUT, async (plugin, i) => {
         // The same boundary the per-entity pipeline keeps (see `runPipeline`):
         // a bundle-level fetch is as long as any other, and an operator's
         // cancel must not wait for the whole fan before it means anything.
@@ -1047,6 +1067,7 @@ class Materializer {
         baseSources.push({ kind: 'enrichment', plugin: plugin.plugin });
         pipelineResources.push(...pluginFileResources(result, this.languageVersion));
       });
+      pipelineResources.splice(0, pipelineResources.length, ...(await this.stamp(pipelineResources)));
     } finally {
       trace.absorb(fromBranches);
     }
@@ -1063,6 +1084,7 @@ class Materializer {
         children: new Map(),
       } satisfies WorkingEmission);
     await this.resolveFences(root, { segments, baseSources, ancestorContext: {}, trace });
+    await this.stampTree(root);
     return exportEmission(root, {
       inherited: [...fromData.resources, ...pipelineResources],
       languageVersion: this.languageVersion,
@@ -1133,7 +1155,7 @@ class Materializer {
         if (textResource) resources.push(textResource);
       }
     }
-    return { segments, sources, resources, files };
+    return { segments, sources, resources: await this.stamp(resources), files };
   }
 
   /**
@@ -1178,7 +1200,7 @@ class Materializer {
       ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
     };
     const resolution: FileResolution = {
-      resource: stampResourceId(fileResourceForRef(ref, read)),
+      resource: await this.stampOne(fileResourceForRef(ref, read)),
       ...(text !== undefined ? { text } : {}),
       traced: isFileUnreadable(result)
         ? {
@@ -1530,7 +1552,7 @@ class Materializer {
     // this method drives (one call per region, then one per entity per stage)
     // is the extraction's to gate. Both share the one debounced read.
     await throwIfCancelled(this.runtime.run);
-    const started = Date.now();
+    const elapsed = await stopwatch(this.world.clock);
     const first = await this.runtime.llm.call({
       system: opts.system,
       userMessage: opts.userMessage,
@@ -1538,7 +1560,7 @@ class Materializer {
       ...opts.settings,
     });
     opts.telemetry.lastReply = first;
-    opts.telemetry.durationMs = Date.now() - started;
+    opts.telemetry.durationMs = await elapsed();
     // The schema tree (and its closures) is built once and reused across
     // both attempts — reset so a successful retry doesn't inherit the first
     // attempt's coercion diagnostics.
@@ -1559,7 +1581,7 @@ class Materializer {
       ...opts.settings,
     });
     opts.telemetry.lastReply = retry;
-    opts.telemetry.durationMs = Date.now() - started;
+    opts.telemetry.durationMs = await elapsed();
     opts.coercions.reset();
     return opts.schema.parse(retry.parsedJson);
   }
@@ -1641,7 +1663,7 @@ class Materializer {
     const children = [...emission.children.values()].flat();
     const branches = children.map(() => trace.branch());
     try {
-      await mapConcurrent(children, (child, i) =>
+      await mapConcurrent(children, STAGE_FAN_OUT, (child, i) =>
         this.resolveFences(child, {
           segments,
           baseSources,
@@ -1675,7 +1697,7 @@ class Materializer {
     );
     const branches = specs.map(() => walk.trace.branch());
     try {
-      const extracted = await mapConcurrent(specs, async (child, i) => {
+      const extracted = await mapConcurrent(specs, STAGE_FAN_OUT, async (child, i) => {
         const enrichments = await this.runPipeline(
           child.stages[0].through,
           childAncestors,
@@ -1742,7 +1764,7 @@ class Materializer {
   ): Promise<Array<{ plugin: string; result: TransformInvocationResult }>> {
     const branches = pipeline.map(() => trace.branch());
     try {
-      const results = await mapConcurrent(pipeline, async (plugin, i) => {
+      const results = await mapConcurrent(pipeline, STAGE_FAN_OUT, async (plugin, i) => {
         // A retrieval plugin is the longest thing a statement does — a per-URL
         // fetch has a seven-minute backstop, and this pipeline runs once per
         // entity per stage. Checking before each launch is what keeps a cancel
@@ -1797,7 +1819,6 @@ class Materializer {
     // on the trace, because a fetch is what a slow run is usually waiting on
     // and its per-URL backstop is seven minutes.
     const url = typeof config.url === 'string' ? tracedUrl(config.url) : undefined;
-    const started = Date.now();
 
     for (const param of spec?.requiredArgs ?? []) {
       if (!isBlank(config[param])) continue;
@@ -1817,18 +1838,20 @@ class Materializer {
       return SKIPPED;
     }
 
+    const elapsed = await stopwatch(this.world.clock);
     const result = await this.runtime.transformInvoker.invoke({
       plugin: plugin.plugin,
       config,
       extractedContext: { ...context },
     });
+    const durationMs = await elapsed();
     const fields = Object.keys(result.data ?? {});
     trace.push({
       kind: 'plugin',
       plugin: plugin.plugin,
       node,
       ...(url !== undefined ? { url } : {}),
-      durationMs: Date.now() - started,
+      durationMs,
       ...(result.text ? { chars: result.text.length } : {}),
       ...(fields.length > 0 ? { fields } : {}),
       ...(result.outcome ? { outcome: result.outcome } : {}),
@@ -2785,11 +2808,11 @@ function fileResourceForRef(ref: FileRef, text: FileTextResult | undefined): Res
 function textResourceForDatum(datum: unknown): Resource | undefined {
   const segment = segmentForDatum(datum);
   if (segment.content.trim().length === 0) return undefined;
-  return stampResourceId({
+  return {
     type: 'TEXT',
     content: segment.content,
     data: { content: segment.content, type: 'TEXT' },
-  });
+  };
 }
 
 function sanitizeSiteName(name: string): string {

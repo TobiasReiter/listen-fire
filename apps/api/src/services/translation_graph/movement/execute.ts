@@ -46,6 +46,7 @@ import { recordMovementFailureIssue, resolveMovementIssues } from './issues';
 import { clearIntrospectionCache } from './instance_cache';
 import { withFiringContext } from './firing_context';
 import { productionEngineHost } from './engine_host';
+import { tenantOfTeam } from './tenant';
 import { RunLeaseLost, takeRunLease, type HeldRunLease } from '../../movement_engine/run_lease';
 
 // ── The shared engine invocation (catalog assembly + runMovement) ───────────
@@ -96,7 +97,7 @@ async function interpretMovementFiring(input: {
     languageVersion: input.movementRow.languageVersion,
     ...(input.movementName !== undefined ? { movementName: input.movementName } : {}),
     event: input.event,
-    teamId: input.teamId,
+    teamId: tenantOfTeam(input.teamId),
     firedAt: input.firedAt.toISOString(),
     // The deployment's cost cap, read once as the run starts.
     costCapMicrodollars: runCostCapFromEnv(),
@@ -586,7 +587,7 @@ async function resumeMovementFiringInContext(
       languageVersion,
       ...(movementName !== undefined ? { movementName } : {}),
       event: input.event,
-      teamId: input.teamId,
+      teamId: tenantOfTeam(input.teamId),
       // The ORIGINAL firing's instant, read back off the run row by
       // `adoptOpsRun()` above: a run that waited a day on an answer still
       // computes the window it started with.
@@ -819,7 +820,7 @@ async function fireCallbackFiringInContext(
         languageVersion,
         ...(movementName !== undefined ? { movementName } : {}),
         event: input.event,
-        teamId: input.teamId,
+        teamId: tenantOfTeam(input.teamId),
         // The run's original firing instant (see the resume path) — a callback
         // body belongs to the run that minted it, clock included.
         firedAt: recorder.firedAt.toISOString(),

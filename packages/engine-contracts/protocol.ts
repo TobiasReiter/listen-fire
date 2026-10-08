@@ -1,12 +1,13 @@
 // Wire protocol schema — the single source of truth for the remote-adapter
-// contract. Importable by both the client (Phase 4 `RemoteAdapter`) and any
-// future server SDK, with NO imports from `engine/*` internals.
+// contract. Importable by the client (`RemoteAdapter`), the server kit and any
+// third-party server, with no import from the engine or the run host.
 //
 // The protocol re-declares the adapter's input/result types as PLAIN zod,
-// decoupled from generated/kysely brands. They are structurally identical at
-// runtime to the TS types in `../adapter.ts` and `../types.ts`; the point is
-// that a third-party author depends on `protocol/schema.ts`, never on
-// `generated/kysely/*`. The schemas are strict on the envelope / error /
+// free of any database brand. They are structurally identical at runtime to
+// the in-process `Adapter` interface's types (apps/api
+// `translation_graph/adapter.ts`, `translation_graph/types.ts`); the point is
+// that a third-party author depends on this package, never on the run host's
+// generated database code. The schemas are strict on the envelope / error /
 // page / cursor / method routing and lenient (`z.unknown()` / `.passthrough()`)
 // on opaque or deeply-nested payload leaves (cursors, filters, native query
 // bodies, Expressions, deep MutationContext internals, position `data`).

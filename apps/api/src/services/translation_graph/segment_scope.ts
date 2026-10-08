@@ -39,6 +39,7 @@ import { NO_BUDGET_LIMIT, type CostLine } from '../../lib/run_cost';
 import { SpendMeter, underSpendMeter } from '../../lib/run_spend';
 import { logger } from '../logger';
 import { adapterErrorOf, type ClassifyHostError } from './engine/adapter_table';
+import { teamOfTenant, tenantOfTeam } from './movement/tenant';
 
 /** The systems that count against a ceiling. One entry per system that has its
  *  own env var below; a system not listed here is simply not capped. */
@@ -200,10 +201,11 @@ function segmentNamed(segmentId: string): SegmentScope {
   return scope;
 }
 
-/** Open a segment: a fresh memo, a fresh count. */
-export async function openSegment(input: SegmentOpening): Promise<{ segmentId: string }> {
+/** Open a segment: a fresh memo, a fresh count. The host families version is
+ *  the host's to check, before it opens one (`openSegmentWith`). */
+export async function openSegment(input: Omit<SegmentOpening, 'hostFamiliesVersion'>): Promise<{ segmentId: string }> {
   const segmentId = randomUUID();
-  openSegments.set(segmentId, new SegmentScope(input.teamId, input.languageVersion, input.runId));
+  openSegments.set(segmentId, new SegmentScope(teamOfTenant(input.teamId), input.languageVersion, input.runId));
   return { segmentId };
 }
 
@@ -232,11 +234,11 @@ export function inSegment<T>(segmentId: string, fn: () => T): T {
 /** Open a segment, run `fn` inside it, close it — for code that is a segment
  *  of its own rather than a run's (scripts, tests of the scope itself). */
 export async function withSegment<T>(
-  input: Partial<SegmentOpening> & { teamId: TeamId },
+  input: Omit<Partial<SegmentOpening>, 'teamId'> & { teamId: TeamId },
   fn: () => Promise<T>,
 ): Promise<T> {
   const { segmentId } = await openSegment({
-    teamId: input.teamId,
+    teamId: tenantOfTeam(input.teamId),
     languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
   });

@@ -29,7 +29,7 @@ import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun
 import type { ParkedScopeState } from './serialize';
 import { runHasPendingJoins } from './join_pending';
 import { dropRunLeaves } from './lease_fence';
-import { abandonAskAwaits, loadResolvableAskAwaits } from '../translation_graph/adapters/ask/await_store';
+import { awaitKeepers } from '../translation_graph/adapters/packages';
 import { loadResolvableCallbackAwaits } from './callback_sink';
 import {
   dropAwaitCorrelation,
@@ -112,10 +112,11 @@ export async function drainRunAwaits(
   lease?: HeldRunLease,
 ): Promise<void> {
   try {
-    const askLeaves = await loadResolvableAskAwaits({ runId });
+    const keptLeaves: ResolvableAwait[] = [];
+    for (const keeper of awaitKeepers()) keptLeaves.push(...(await keeper.loadResolvable({ runId })));
     const callbackLeaves = await loadResolvableCallbackAwaits({ runId });
     const byAddress = new Map<string, ResolvableAwait>();
-    for (const leaf of [...askLeaves, ...callbackLeaves, ...extraLeaves]) {
+    for (const leaf of [...keptLeaves, ...callbackLeaves, ...extraLeaves]) {
       byAddress.set(leaf.address, leaf);
     }
     const leaves = [...byAddress.values()];
@@ -354,7 +355,7 @@ async function settleFailure(runId: TriggerRunId, lease: HeldRunLease | undefine
   // holder whose lease lapsed tears down nothing of the new holder's.
   if (lease?.isLost()) return;
   if (!(await dropRunLeaves(runId, lease))) return;
-  await abandonAskAwaits({ runId });
+  for (const keeper of awaitKeepers()) await keeper.abandon({ runId });
   await dropAwaitCorrelationsForRun(runId);
 }
 

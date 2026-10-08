@@ -69,7 +69,9 @@ pub struct Envelope {
     pub env: Env,
     /// How many origin ids the caller assigned.
     pub origins: u32,
-    pub language_version: Option<u32>,
+    /// The movement's pin. Required: the engine knows no release, so it has
+    /// no version of its own to fall back to.
+    pub language_version: u32,
     /// The run's pinned instant, in milliseconds (`now`, a `toISOString`
     /// text on the wire): what `DATE.TODAY` reads.
     pub now: Option<f64>,
@@ -86,7 +88,10 @@ pub fn read_envelope(text: &str) -> Result<Envelope, String> {
         env.declare(name.clone(), ValueBinding { value, trail, many });
     }
     let origins = json.get("origins").and_then(Json::as_u64).unwrap_or(0) as u32;
-    let language_version = json.get("languageVersion").and_then(Json::as_u64).map(|v| v as u32);
+    let language_version = match json.get("languageVersion") {
+        Some(version) => version.as_u64().map(|v| v as u32).ok_or_else(|| format!("the language version is a number, not {version}"))?,
+        None => return Err("the envelope has no `languageVersion`: an expression is evaluated under its movement's pin, which the caller passes".into()),
+    };
     let now = match json.get("now") {
         None => None,
         Some(Json::String(iso)) => match crate::js_date::parse(iso) {
@@ -393,7 +398,7 @@ mod tests {
             r#"{"bindings":{
                 "x":{"value":["o",0,[["b",["u"]],["a",["n","NaN"]]]],"provenance":{"origins":[0],"direct":0}},
                 "y":{"value":["l",1,[["r",0],["n","-0"]]],"many":true}
-            },"origins":1}"#,
+            },"origins":1,"languageVersion":3}"#,
         )
         .unwrap();
         let x = &envelope.env.resolve("x").unwrap().value;

@@ -13,7 +13,7 @@
 import { mintRemoteCredential } from '../../../credentials/remote_credential';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { UserId } from '../../../../generated/kysely/core/User';
-import { MANIFEST_PROTOCOL_VERSION } from '../../protocol/schema';
+import { MANIFEST_PROTOCOL_VERSION } from 'engine-contracts';
 import { loadRemoteAdapterSecret } from '../resolve';
 import { fetchRemoteManifest } from './index';
 import { RemoteAdapterManifestFile, RemoteAdapterManifestInput } from './manifest';

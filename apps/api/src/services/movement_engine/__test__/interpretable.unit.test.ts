@@ -3,6 +3,7 @@
 // lacks is refused at save time with the constructs NAMED, instead of
 // failing firings later. Pure AST scan; no DB, no adapter registry.
 
+import { parseProgram } from 'movement-lang';
 import { listUnsupportedConstructs } from '../interpretable';
 
 const PRELUDE = `
@@ -480,5 +481,35 @@ movement intake(m: <inbox-[:message]->>) {
 }
 `;
     expect(listUnsupportedConstructs(source)).toEqual([]);
+  });
+});
+
+describe('the scan reads the program under its pin', () => {
+  // A call written in another letter case reaches a declared function from
+  // version 3 (movement-lang checker/calls.ts `resolveCallee`); before it the
+  // name resolves to nothing, so the expression calls an unknown function —
+  // which the engine, running the same pin, would refuse.
+  const source = `${PRELUDE}
+movement helper(x: <text>) {
+  return x
+}
+
+movement intake(m: <inbox-[:message]->>) {
+  if Helper(m.\`subject\`) == "deal" {
+    write crm-[:note]-> { text: "flagged" }
+  }
+}
+`;
+
+  it('under version 3 the call runs: nothing to flag', () => {
+    // A source that does not parse also scans clean; this one parses.
+    expect(() => parseProgram(source, { languageVersion: 3 })).not.toThrow();
+    expect(listUnsupportedConstructs(source, { languageVersion: 3 })).toEqual([]);
+  });
+
+  it('under version 1 the same text calls a function the engine does not know', () => {
+    expect(listUnsupportedConstructs(source, { languageVersion: 1 })).toEqual([
+      'non-built-in function calls (HELPER())',
+    ]);
   });
 });

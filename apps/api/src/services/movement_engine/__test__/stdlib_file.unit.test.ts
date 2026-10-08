@@ -120,14 +120,15 @@ import type {
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { Readable } from 'node:stream';
 import { services } from '../../../adapters/registry';
 import { makeTestHost } from '../test_host';
 import { streamFileRef } from '../../translation_graph/engine/files/retrieve';
 import { renderFileArtifact } from '../../translation_graph/movement/file_render';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
 // FILE() now persists its bytes to the document store on creation (the artifact
 // becomes a durable, source-backed FileRef — async user interaction §4.1), so
@@ -316,7 +317,7 @@ async function runDigest(artifactType: 'pdf' | 'text') {
 
 async function refBytes(ref: FileRef): Promise<Buffer> {
   expect(ref.source).toMatchObject({ store: 'document' });
-  const { stream } = await streamFileRef(ref, { teamId: TEAM_ID });
+  const { stream } = await streamFileRef(ref, { teamId: teamOfTenant(TEAM_ID) });
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks);

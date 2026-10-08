@@ -15,14 +15,12 @@
 // Resource as a node
 // Reading a resource
 
-import { randomUUID } from 'node:crypto';
 import type {
   Adapter,
   Resource,
   ResourceFilter,
 } from '../../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../../adapter';
-import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
 import type { SourcePosition } from '../../types';
 import { positionData } from '../../types';
 
@@ -39,6 +37,8 @@ export async function resolvePositionResources(input: {
   adapter: Adapter;
   position: SourcePosition;
   filter?: ResourceFilter;
+  /** Fresh ids for the resources that carry none (`stampResourceIds`). */
+  mintIds: MintIds;
 }): Promise<Resource[]> {
   const related = await input.adapter.getRelated({
     position: input.position,
@@ -47,22 +47,29 @@ export async function resolvePositionResources(input: {
   });
   const resources = related
     .map((r) => positionData(r.position) as Resource | null | undefined)
-    .filter((r): r is Resource => r != null)
-    .map(stampResourceId);
-  return resources.filter((r) => matchesResourceFilter(r, input.filter));
+    .filter((r): r is Resource => r != null);
+  return (await stampResourceIds(resources, input.mintIds)).filter((r) => matchesResourceFilter(r, input.filter));
 }
+
+/** `count` fresh ids. */
+export type MintIds = (count: number) => Promise<string[]>;
 
 /**
  * Materialisation boundary for resource identity (`4d_resources.md`:
  * "the engine stamps it"). A resource entering the run gets a stable
- * internal UUID so the same handle carries one identity to every node it
+ * internal id so the same handle carries one identity to every node it
  * contributes to and the target adapter has a non-external id to persist /
- * dedup on (KG `node_resource.resource_id` is a UUID). Resources that already
- * carry an `id` (e.g. KG's `public.resource.id`) pass through untouched.
+ * dedup on. Resources that already carry an `id` (e.g. KG's
+ * `public.resource.id`) pass through untouched. The ids come from `mint` —
+ * in a run, the host's (`ids.mint`), so a recorded run replays to the same
+ * ids — all of them in one request.
  */
-export function stampResourceId(resource: Resource): Resource {
-  if (resource.id) return resource;
-  return { ...resource, id: randomUUID() as ResourceId };
+export async function stampResourceIds(resources: readonly Resource[], mint: MintIds): Promise<Resource[]> {
+  const unstamped = resources.filter((resource) => !resource.id).length;
+  if (unstamped === 0) return [...resources];
+  const ids = await mint(unstamped);
+  let next = 0;
+  return resources.map((resource) => (resource.id ? resource : { ...resource, id: ids[next++] }));
 }
 
 /**

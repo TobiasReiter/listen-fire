@@ -156,13 +156,13 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { LlmClient } from '../../translation_graph/engine/batched_extraction';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf, type ActingPrincipal } from 'engine-contracts';
 import type { EngineHost } from '../host';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+import { credentialIdsFor, makeTestHost, TEST_HOST_NOW } from '../test_host';
 import type { ActingUserLookup } from '../host_kit';
 import type { ActingUser } from '../../translation_graph/adapter';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
 // ── Fake adapters (per-action-target.unit.test.ts pattern) ──────────────────
 
@@ -1724,6 +1724,41 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
 
     // The firing record's trail names the meta key, literal-ish.
     expect(result.writes[0].provenance.domains).toEqual([{ kind: 'meta', key: 'user_email' }]);
+  });
+
+  it('the acting user is a principal: its id and display answer @user_id and @user_name, and @user_email only a host with an email', async () => {
+    const PRINCIPAL = [
+      PRELUDE,
+      '',
+      'movement stamp(msg: <inbox-[:message]->>) {',
+      '  write crm-[:companies]-> {',
+      '    unique by (`name`)',
+      '    name:    msg.`user`',
+      '    summary: "id=${@user_id} name=${@user_name} email=${COALESCE(@user_email, "none")}"',
+      '  }',
+      '}',
+    ].join('\n');
+    const summaryWith = async (answer: ActingPrincipal | null): Promise<unknown> => {
+      const attio = makeFakeAdapter('attio');
+      const inner = makeTestHost({
+        adapters: { resolve: makeResolver({ attio: attio.adapter, slack: actorAwareSlack().adapter }) },
+      });
+      await runMovement({
+        source: PRINCIPAL,
+        event: webhookEvent('slack', { user: 'U123' }),
+        teamId: TEAM_ID,
+        catalog,
+        credentialIds: CREDENTIAL_IDS,
+        host: { ...inner, lookup: { resolveActingUser: async () => answer } },
+      });
+      return attio.creates[0]?.fields.summary;
+    };
+    // A host without emails: the reference and its display, nothing more.
+    expect(await summaryWith({ principal: { id: 'p-7', display: 'Amy' } })).toBe('id=p-7 name=Amy email=none');
+    // A host whose principals have one supplies it.
+    expect(await summaryWith({ principal: { id: 'p-7' }, email: 'amy@acme.dev' })).toBe(
+      'id=p-7 name= email=amy@acme.dev',
+    );
   });
 
   it('user/actor keys collapse to null when the source adapter has no actor surface', async () => {
@@ -4246,7 +4281,6 @@ describe('sleep — durable timer park', () => {
     const { sink, timerParks } = makeFakeParkSink();
     const crm = makeFakeAdapter('attio');
 
-    const before = Date.now();
     const result = await runMovement({
       source: SLEEP_THEN_WRITE,
       event: webhookEvent('slack', { user: 'Acme' }),
@@ -4263,17 +4297,15 @@ describe('sleep — durable timer park', () => {
         park: { sink: sink },
       }),
     });
-    const after = Date.now();
 
     // The branch froze at the sleep — the run is parked.
     expect(result.parked).toBe(true);
     expect(timerParks).toHaveLength(1);
     expect(timerParks[0].address).toBe('s0');
 
-    // wake_at is now + 30s, bounded by the wall-clock window of the call.
+    // wake_at is the host's now + 30s (the test host's clock is fixed).
     const wakeMs = new Date(timerParks[0].wakeAt).getTime();
-    expect(wakeMs).toBeGreaterThanOrEqual(before + 30_000);
-    expect(wakeMs).toBeLessThanOrEqual(after + 30_000);
+    expect(wakeMs).toBe(Date.parse(TEST_HOST_NOW) + 30_000);
 
     // The serialized scope chain rides along, keyed at the sleep's address.
     const state = JSON.parse(JSON.stringify(timerParks[0].state)) as ParkedScopeState;

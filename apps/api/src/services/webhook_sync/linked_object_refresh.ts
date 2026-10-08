@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '../logger';
 import type { WorkHandler } from '../work/kinds';
-import { registerWorkHandler } from '../work/drain';
+import { registerWorkKinds } from '../work/drain';
 import { enqueueWork } from '../work/store';
 import {
   linkedObjectRefreshSchema,
@@ -57,6 +57,14 @@ export const linkedObjectRefreshHandler: WorkHandler = {
   },
 };
 
+// Inbound sync's own kind: one row per linked record to re-read.
+
+declare module '../work/kinds' {
+  interface UnitWorkKinds {
+    linked_object_refresh: true;
+  }
+}
+
 export function registerLinkedObjectWork(): void {
-  registerWorkHandler('linked_object_refresh', linkedObjectRefreshHandler);
+  registerWorkKinds([{ kind: 'linked_object_refresh', handler: linkedObjectRefreshHandler }]);
 }

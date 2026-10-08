@@ -6,9 +6,9 @@ import path from 'node:path';
 
 import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import { RunCostCapExceeded } from '../../../lib/run_cost';
+import { tenantIdOf } from 'engine-contracts';
 
+import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { hostMethodPaths } from '../host';
 import { AdapterCallFailed } from '../host_adapter';
@@ -17,7 +17,7 @@ import { openRunContext, RunLedger } from '../run_context';
 import { ENGINE_OWN_ROUTES, shimRoutePaths } from '../rust_host';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
 import { WireOut } from '../rust_wire';
-import { makeTestHost, type TestHostOverrides } from '../test_host';
+import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
 import {
   assertEngineChoiceConfigured,
   driveEngine,
@@ -33,7 +33,7 @@ import {
   type HostRequest,
 } from '../rust_engine';
 
-const TEAM = 'team-1' as TeamId;
+const TEAM = tenantIdOf('team-1');
 
 /** A double that issues what `script` says, step by step: each reply is
  *  computed from every answer received so far, so a test can assert both
@@ -109,6 +109,40 @@ function inSegment(segmentId: string, args: Record<string, unknown>): Record<str
 const RESOLVE = { adapterType: 'fake', role: 'source' };
 
 describe('the Rust engine shim', () => {
+  it("re-bases a timer's wake on the host's clock: clock.now plus what the engine slept past the pinned instant", async () => {
+    // Bridge — delete with the Rust engine merge (5B), with the re-base.
+    const park = makeFakeParkSink();
+    const host = makeTestHost({
+      park: { sink: park.sink },
+      clock: { now: async () => ({ nowIso: '2026-10-07T12:00:00.000Z' }) },
+    });
+    const context = await openRunContext({
+      host,
+      teamId: TEAM,
+      languageVersion: 3,
+      firedAt: '2026-10-07T09:00:00.000Z',
+      spend: {},
+    });
+    const segmentId = context.segmentId;
+    const { engine } = scriptedEngine((seen) =>
+      seen.length === 0
+        ? {
+            pending: [
+              request(1, 'park.sink', 'commitTimerPark', inSegment(segmentId, {
+                address: 's0',
+                state: new WireOut().value({ version: 1, address: 's0', bindingName: null, scopeChain: [] }),
+                // The engine's own clock is held at the pin: the pin plus an hour.
+                wakeAt: '2026-10-07T10:00:00.000Z',
+                wire: true,
+              })),
+            ],
+          }
+        : { done: { ok: true } },
+    );
+    await driveEngine(engine, { entry: 'test' }, { host, context, catalog: EMPTY_CATALOG_SNAPSHOT });
+    expect(park.timerParks.map((p) => p.wakeAt)).toEqual(['2026-10-07T13:00:00.000Z']);
+  });
+
   it('forwards adapters.resolve and adapters.call, naming the segment, and answers the instance as data', async () => {
     const resolved: unknown[] = [];
     const served = await hostWith({
@@ -358,9 +392,10 @@ describe('the Rust engine shim', () => {
     for (const path of Object.keys(ENGINE_OWN_ROUTES)) expect(host.has(path)).toBe(false);
   });
 
-  it('documents its own requests in docs/engine-host.md, exactly', () => {
-    const doc = fs.readFileSync(path.resolve(__dirname, '../../../../../../docs/engine-host.md'), 'utf8');
-    const section = doc.slice(doc.indexOf("## The Rust engine's requests"), doc.indexOf('## Changes since chunk 3'));
+  it('documents its own requests in docs/contracts/host-families.md, exactly', () => {
+    const doc = fs.readFileSync(path.resolve(__dirname, '../../../../../../docs/contracts/host-families.md'), 'utf8');
+    const start = doc.indexOf("## The Rust engine's requests");
+    const section = doc.slice(start, doc.indexOf('\n## ', start + 1));
     const documented = [...section.matchAll(/^\| `([a-z]+\.[A-Za-z]+) \{/gm)].map((match) => match[1]);
     expect(documented.sort()).toEqual(Object.keys(ENGINE_OWN_ROUTES).sort());
   });

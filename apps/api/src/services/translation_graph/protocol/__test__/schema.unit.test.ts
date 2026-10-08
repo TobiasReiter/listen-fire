@@ -21,7 +21,7 @@ import {
   WireFileRef,
   WireResolveEntityResult,
   METHODS,
-} from '../schema';
+} from 'engine-contracts';
 
 // A representative source position — the wire mirror of `SourcePosition`.
 const samplePosition = {

@@ -6,7 +6,7 @@
 // at a door that authenticates by install. So no name a built-in answers to,
 // in any casing, and none of the engine's reserved await identities.
 
-import { CALLBACK_AWAIT_TYPE } from '../../../movement_engine/callback_types';
+import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 import { ASK_ADAPTER_TYPE } from '../ask/type';
 import { listAdapterManifests } from '../registry';
 

@@ -9,7 +9,7 @@
 // it throws is the whole failure surface an author sees, so its wording is
 // under test too.
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { Adapter } from '../../translation_graph/adapter';
 import { adapterTable } from '../../translation_graph/engine/adapter_table';
 import {
@@ -24,11 +24,12 @@ import {
   segmentScopedCalls,
   withSegment,
 } from '../../translation_graph/segment_scope';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const ENV_VAR = 'AFFINITY_MAX_CALLS_PER_RUN';
-const TEAM_ID = '00000000-0000-0000-0000-000000000071' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000071');
 
-const inASegment = <T>(fn: () => Promise<T>) => withSegment({ teamId: TEAM_ID }, fn);
+const inASegment = <T>(fn: () => Promise<T>) => withSegment({ teamId: teamOfTenant(TEAM_ID) }, fn);
 
 describe('the per-segment Affinity call ceiling', () => {
   const original = process.env[ENV_VAR];

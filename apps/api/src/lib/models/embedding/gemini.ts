@@ -6,24 +6,7 @@ import { recordLlmUsage } from '../../llm_usage';
 import { geminiClient } from '../providers/gemini';
 import type { Resolved } from '../map';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
-import type { EmbeddingRange } from './range';
-
-interface GeminiEmbeddingModel extends EmbeddingRange {
-  /** Per text; past it Google would silently embed a prefix. */
-  maxInputTokens: number;
-}
-
-/**
- * The widths each Gemini embedding model can produce, and the longest text
- * each takes. Source, checked 2026-09-24: gemini-embedding-001 outputs "a
- * 3072-dimensional embedding" by default, sized "128 - 3072" through
- * `outputDimensionality` (https://ai.google.dev/gemini-api/docs/embeddings);
- * the 2048 token input limit is on Vertex's text embeddings page
- * (https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/embeddings/get-text-embeddings).
- */
-export const GEMINI_EMBEDDING_MODELS: Readonly<Record<string, GeminiEmbeddingModel>> = {
-  'gemini-embedding-001': { min: 128, max: 3072, maxInputTokens: 2048 },
-};
+import { GEMINI_EMBEDDING_MODELS } from './range';
 
 /**
  * `gemini-embedding-001` truncates a vector to `outputDimensionality` WITHOUT

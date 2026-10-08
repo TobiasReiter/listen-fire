@@ -10,7 +10,7 @@
 
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { Adapter } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MovementTraceEntry } from '../expression';
@@ -25,7 +25,7 @@ import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput 
 import { runSegmentInRust } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 
-const TEAM_ID = '00000000-0000-0000-0000-0000000000a1' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000a1');
 
 const emailSchema: InstanceSchema = {
   positions: {

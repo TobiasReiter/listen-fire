@@ -109,6 +109,8 @@ Building from source is the right answer when you have changed the code, or on a
 
 [UPGRADING.md](UPGRADING.md) is what to do when you move from one tag to the next.
 
+**The contracts have versions of their own.** Beside the release tag, the five contracts the movement core speaks (the catalog snapshot, the parked run state, the engine's host families, the adapter protocol and the language) each carry an integer version, and a release states which of each it supports and deprecates. [`docs/contracts/`](../docs/contracts/README.md) is the index. It matters when you run something against this release from outside it: a remote adapter (adapter protocol 2), or your own host for the engine.
+
 ## Ports
 
 | service | host port | when |

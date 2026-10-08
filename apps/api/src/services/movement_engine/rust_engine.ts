@@ -4,7 +4,7 @@
 // from the run's `EngineHost`, several at once when the engine issues several,
 // answering each by id as it settles. The segment is the run host's
 // (`inRunContext` opened it): every request the engine makes of the host names
-// it, in the shapes docs/engine-host.md freezes, and the shim forwards each one
+// it, in the shapes docs/contracts/host-families.md freezes, and the shim forwards each one
 // to the run's `EngineHost` (rust_host.ts).
 //
 // Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`),
@@ -20,6 +20,8 @@
 // an expression `rustCanEval` admits whose every name is a value binding.
 
 import { callEvalExpression, CURRENT_LANGUAGE_VERSION, openEngineSegment } from 'movement-lang';
+// Internal to movement-lang: the Rust bridge below (delete with 5B).
+import { withEnvNow } from 'movement-lang/wasm/env_services';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
@@ -27,6 +29,7 @@ import { RunCostCapExceeded } from '../../lib/run_cost';
 import { logger } from '../logger';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
+import { pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
 import type { RunContext } from './run_context';
@@ -123,7 +126,7 @@ async function segmentInRust(
   const hostErrors: unknown[] = [];
   let outcome: RunOutcome;
   try {
-    const done = await driveEngine(engine ?? openWasmEngine(), start, {
+    const done = await driveEngine(withPinnedEnvClock(engine ?? openWasmEngine(), context.pinnedNow), start, {
       host: input.host,
       context,
       catalog: input.catalog,
@@ -257,14 +260,15 @@ export async function driveEngine(
       if (inFlight === 0) throw new RustShimError('the Rust engine is waiting with no request in flight');
       const next = await settled.next();
       inFlight -= 1;
-      if ('failure' in next) {
-        // A shim fault ends the segment, but only once every other request
-        // in flight has settled: no host call outlives the segment it named.
-        for (; inFlight > 0; inFlight -= 1) await settled.next();
-        throw next.failure;
-      }
+      if ('failure' in next) throw next.failure;
       step = engine.answer(next.id, next.answer);
     }
+  } catch (error) {
+    // The segment is ending (a shim fault, or the engine's own throw): every
+    // request still in flight settles first, so no host call outlives the
+    // segment it named.
+    for (; inFlight > 0; inFlight -= 1) await settled.next();
+    throw error;
   } finally {
     engine.finish();
   }
@@ -324,7 +328,7 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
       source: input.source,
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
-      languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+      languageVersion: context.languageVersion,
       ...(input.movementName !== undefined ? { movementName: input.movementName } : {}),
       event,
       // The segment the run host opened: every host request names it.
@@ -340,7 +344,7 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
       ...(input.limitPaused === true ? { limitPaused: true } : {}),
       ...(input.suspendAt !== undefined && input.suspendAt.length > 0 ? { suspendAt: [...input.suspendAt] } : {}),
       // The run's pinned instant, as the TypeScript interpreter pins it.
-      now: input.firedAt ?? new Date().toISOString(),
+      now: input.firedAt ?? context.pinnedNow.toISOString(),
       catalog: input.catalog,
     },
     'the segment input',
@@ -448,6 +452,25 @@ export function openWasmEngine(): EngineProtocol {
   };
 }
 
+/**
+ * Bridge — delete with the Rust engine merge (5B).
+ *
+ * `engine` with its environment clock held at the segment's pinned instant
+ * through every step. The Rust engine still reads its own clock for a timer's
+ * wake time; held there, what it computes is the pinned instant plus the
+ * sleep, which the shim re-bases on the host's `clock.now` as it commits the
+ * park (rust_host.ts) — the request the TypeScript engine makes there. (The
+ * Rust engine asking `clock.now` itself lands with its merge.)
+ */
+function withPinnedEnvClock(engine: EngineProtocol, pinnedNow: Date): EngineProtocol {
+  const at = pinnedNow.getTime();
+  return {
+    start: (input) => withEnvNow(at, () => engine.start(input)),
+    answer: (id, answer) => withEnvNow(at, () => engine.answer(id, answer)),
+    finish: () => engine.finish(),
+  };
+}
+
 function readStep(reply: { ok: boolean; json: unknown }, call: string): EngineStep {
   const json = record(reply.json, `the Rust engine's ${call}`);
   if (!reply.ok) {
@@ -541,6 +564,11 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     return undefined;
   };
   if (!rustCanEval(expr)) return notAdmitted();
+  // The Rust evaluator refuses an evaluation with no pin: it has no release
+  // version to fall back to. A context without one is the TypeScript
+  // evaluator's to answer, under its own rule for that case.
+  const languageVersion = ctx.languageVersion;
+  if (languageVersion === undefined) return notAdmitted();
   const wire = new WireOut();
   const bindings: Record<string, unknown> = {};
   const read = new Map<string, Extract<Binding, { kind: 'value' }>>();
@@ -560,9 +588,9 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
   const envelope = {
     bindings,
     origins: wire.origins.length,
-    ...(ctx.languageVersion !== undefined ? { languageVersion: ctx.languageVersion } : {}),
+    languageVersion,
     // The run's pinned instant, which DATE.TODAY reads.
-    now: (ctx.meta?.now ?? new Date()).toISOString(),
+    now: pinnedNow(ctx).toISOString(),
   };
   const reply = callEvalExpression(JSON.stringify(expr), JSON.stringify(envelope));
   const answer = record(reply.json, 'the Rust evaluator reply');

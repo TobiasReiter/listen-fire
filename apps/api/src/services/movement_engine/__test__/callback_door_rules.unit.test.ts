@@ -10,7 +10,7 @@
 // agree on.
 
 import type { CallbackRecord } from '../callback_store';
-import type { CallbackParamSpec } from '../callback_types';
+import type { CallbackParamSpec } from 'engine-contracts';
 
 import {
   bindSuppliedValue,

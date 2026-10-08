@@ -2,13 +2,13 @@ import { ensurePeriodicWork, removeRetiredWork } from '../../services/work/store
 import {
   recordExternalDrainPass,
   registerWorkHandler,
+  resetWorkHandlersForTests,
   setExternalDrainPassRecorder,
   startDrainLoop,
 } from '../../services/work/drain';
-import { WORK_KINDS } from '../../services/work/kinds';
+import { CORE_WORK_KINDS, claimableWorkKinds } from '../../services/work/kinds';
 import { runNamedWorker, workerTick } from '../../lib/worker';
-import { registerAutomationsWork } from '../../services/work/register';
-import { automationsWorkers } from '../automations';
+import { automationsWorkers, registerAutomationsWork } from '../automations';
 
 jest.mock('../../services/work/drain', () => ({
   ...jest.requireActual('../../services/work/drain'),
@@ -36,12 +36,17 @@ const PERIODIC_KINDS = [
   'run_orphan_sweep',
 ] as const;
 
+/** The kinds the units bring: the adapter packages' (asks, Airtable), file
+ *  exposure's and inbound sync's. */
+const UNIT_KINDS = ['ask_closed_sweep', 'airtable_webhook_refresh', 'exposed_file_sweep', 'linked_object_refresh'];
+
 const PASS = { claimed: 0, ran: 0, recovered: 0, failed: 0, deferred: 0, claimFailed: false };
 
 const originalMode = process.env.AUTOMATIONS_DRAIN_MODE;
 
 afterEach(() => {
   jest.clearAllMocks();
+  resetWorkHandlersForTests();
   setExternalDrainPassRecorder(undefined);
   if (originalMode === undefined) delete process.env.AUTOMATIONS_DRAIN_MODE;
   else process.env.AUTOMATIONS_DRAIN_MODE = originalMode;
@@ -128,13 +133,21 @@ describe('the automations registry', () => {
 });
 
 describe('registerAutomationsWork', () => {
-  it('registers exactly one handler for every work kind', async () => {
+  it('registers exactly one core handler for every core kind, and every unit kind through its unit', async () => {
     await registerAutomationsWork();
     const kinds = register.mock.calls.map(([kind]) => kind);
-    expect([...kinds].sort()).toEqual([...WORK_KINDS].sort());
+    expect([...kinds].sort()).toEqual([...CORE_WORK_KINDS].sort());
+    expect(claimableWorkKinds().sort()).toEqual([...CORE_WORK_KINDS, ...UNIT_KINDS].sort());
   });
 
-  it('ensures every periodic row, keyed by its bare kind', async () => {
+  it('names no unit kind in the core list: each unit registers its own', async () => {
+    for (const kind of UNIT_KINDS) expect(new Set<string>(CORE_WORK_KINDS).has(kind)).toBe(false);
+    expect(claimableWorkKinds().sort()).toEqual([...CORE_WORK_KINDS].sort());
+    await registerAutomationsWork();
+    expect(claimableWorkKinds().sort()).toEqual([...CORE_WORK_KINDS, ...UNIT_KINDS].sort());
+  });
+
+  it('ensures every periodic row, the units\' included, keyed by its bare kind', async () => {
     await registerAutomationsWork();
     const ensured = ensure.mock.calls.map(([input]) => input);
     expect(ensured.map((input) => input.kind).sort()).toEqual([...PERIODIC_KINDS].sort());
@@ -157,6 +170,6 @@ describe('registerAutomationsWork', () => {
     await registerAutomationsWork();
     expect(removeRetired).toHaveBeenCalledWith(['await_resume_sweep']);
     // A retired kind is gone from the live list, not merely unscheduled.
-    expect(new Set<string>(WORK_KINDS).has('await_resume_sweep')).toBe(false);
+    expect(new Set<string>(claimableWorkKinds()).has('await_resume_sweep')).toBe(false);
   });
 });

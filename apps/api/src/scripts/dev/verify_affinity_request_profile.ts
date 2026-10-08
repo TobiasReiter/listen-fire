@@ -54,6 +54,7 @@ import { instanceSchemaFromDescriptors } from '../../services/translation_graph/
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
+import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6412/affinity';
 const ADMIN = BASE.replace(/\/affinity$/, '/admin');
@@ -366,7 +367,7 @@ async function runOne(
     source,
     movementName,
     event,
-    teamId: TEAM_ID,
+    teamId: tenantOfTeam(TEAM_ID),
     catalog,
     credentialIds: everyCredential(catalog, 'creds-profile'),
     host: probeEngineHost({

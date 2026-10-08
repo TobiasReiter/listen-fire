@@ -1,6 +1,5 @@
 // The callback vocabulary the engine and the host share: what a fire-time
-// parameter may be, and what one recorded fire looks like. Engine-side so the
-// interpreter can name it without importing the host's callback store.
+// parameter may be, and what one recorded fire looks like.
 
 /** The correlation map's `adapter_type` for a callback await.
  *  A RESERVED engine identity, not a system: the map is keyed on opaque text and

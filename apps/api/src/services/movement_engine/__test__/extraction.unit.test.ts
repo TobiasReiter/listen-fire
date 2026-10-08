@@ -146,10 +146,10 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MutationContext } from '../../translation_graph/mutation_context';
 import { positionData } from '../../translation_graph/types';
 import { candidateIsAllExact } from '../../translation_graph/uniqueness';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
 /** A description as the parser hands it over: the quoted literal, so the
  *  engine desugars it through the same bridge a written movement uses. */
@@ -1293,6 +1293,85 @@ describe('a per-entity retrieval stage', () => {
     expect(invocations).toBeLessThanOrEqual(STAGE_FAN_OUT);
     // The bundle's own extraction call is the next boundary, and it never runs.
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('a cancel inside a fan lets the plugins already running finish before the run ends', async () => {
+    const cancelGate = makeTestCancelGate();
+    const pipeline = Array.from({ length: STAGE_FAN_OUT + 2 }, () => 'vc_url_retrieval');
+    const source = [
+      MOVEMENT_PRELUDE,
+      'import { vc_url_retrieval } from plugins',
+      '',
+      'movement intake(msg: <inbox-[:message]->>) {',
+      `  deals = extract from [msg.\`text\`] through [${pipeline.join(', ')}] {`,
+      '    node company: "each company mentioned" {',
+      '      name: "the company\'s name"',
+      '    }',
+      '  }',
+      '}',
+    ].join('\n');
+    let started = 0;
+    let finished = 0;
+    const transformInvoker: MovementTransformInvoker = {
+      async invoke() {
+        const first = started === 0;
+        started += 1;
+        // The operator hits Cancel while the first fetch is in flight, and
+        // that fetch is the slowest.
+        if (first) cancelGate.stamp();
+        await new Promise((resolve) => setTimeout(resolve, first ? 30 : 5));
+        finished += 1;
+        return { text: 'Fetched.' };
+      },
+    };
+    // Every request the host sees after the run has ended.
+    let ended = false;
+    const late: string[] = [];
+    const watched = <T extends object>(family: T, prefix: string): T =>
+      new Proxy(family, {
+        get(target, key, receiver) {
+          const value: unknown = Reflect.get(target, key, receiver);
+          if (typeof key !== 'string') return value;
+          if (typeof value === 'function') {
+            return (...args: unknown[]) => {
+              if (ended) late.push(`${prefix}${key}`);
+              return Reflect.apply(value, target, args);
+            };
+          }
+          return typeof value === 'object' && value !== null ? watched(value, `${prefix}${key}.`) : value;
+        },
+      });
+    const host = makeTestHost({
+      adapters: {
+        resolve: makeResolver({
+          email: makeFakeAdapter('email').adapter,
+          attio: makeFakeAdapter('attio').adapter,
+          slack: makeFakeAdapter('slack').adapter,
+        }),
+      },
+      llm: { client: queuedMovementLlm([]).client, transforms: transformInvoker },
+      control: { cancel: cancelGate },
+    });
+
+    const result = await runMovement({
+      source,
+      event: webhookEvent('email', { text: 'Acme (acme.com) is fundraising.' }),
+      teamId: TEAM_ID,
+      catalog: movementCatalog,
+      host: watched(host, ''),
+      dryRun: true,
+    });
+    ended = true;
+    const finishedAtEnd = finished;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(result.cancelled).toBe(true);
+    // Every fetch the fan started had finished when the run ended, and each is
+    // on the run's trace.
+    expect(finishedAtEnd).toBe(started);
+    expect(result.trace.filter((entry) => entry.kind === 'plugin')).toHaveLength(started);
+    // Nothing the fan started asked the host anything once the run was over.
+    expect(late).toEqual([]);
   });
 
   it('stops at the next LLM call once the run is cancelled', async () => {

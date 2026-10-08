@@ -92,11 +92,11 @@ import type { FileTextResolution } from '../extraction';
 import type { Adapter, FileRef } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import type { Priced, Scoped } from '../host';
 import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000052');
 const FIXTURE = path.join(__dirname, '__fixtures__', 'extract_keyword_prompts.json');
 
 function emailAdapter(): Adapter {

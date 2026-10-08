@@ -14,6 +14,9 @@
 // data (`RunMovementInput.costCapMicrodollars`).
 
 import { z } from 'zod';
+import type { Budget, CostLine } from 'engine-contracts';
+
+export type { Budget, CostLine };
 
 export const RUN_COST_CAP_ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
 
@@ -62,22 +65,10 @@ export function costSourceKey(source: CostSource): string {
 }
 
 // ── Across the seam ─────────────────────────────────────────────────────────
-
-/** What a priced host call may spend: the run's cap less what the run has
- *  spent against it, or null when the run has no cap. Zero or less ⇒ the run
- *  has spent its cap, and the call's first priced step is refused. */
-export interface Budget {
-  remainingMicrodollars: number | null;
-}
+//
+// `Budget` and `CostLine` are the contract's (`engine-contracts`).
 
 export const NO_BUDGET_LIMIT: Budget = { remainingMicrodollars: null };
-
-/** One thing a priced host call spent money on: its `costSourceKey` and what
- *  it cost, in whole microdollars. */
-export interface CostLine {
-  source: string;
-  microdollars: number;
-}
 
 /**
  * Thrown by the host at the priced step that found its call's budget already

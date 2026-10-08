@@ -56,17 +56,17 @@ export function callbackUrl(id: string): string {
 
 // ── The record ─────────────────────────────────────────────────────────────
 
-import type { CallbackCall, CallbackParamSpec } from './callback_types';
+import type { CallbackCall, CallbackParamSpec } from 'engine-contracts';
 
 // Re-exported only for the conformance corpora, which import these from here;
-// live code imports them from `callback_types.ts`.
+// live code imports them from `engine-contracts`.
 export {
   CALLBACK_PARAM_TYPES,
   isCallbackParamType,
   type CallbackCall,
   type CallbackParamSpec,
   type CallbackParamType,
-} from './callback_types';
+} from 'engine-contracts';
 
 /** A call as the ledger keeps it: the call itself, and when its body started.
  *  The mark is written BEFORE the body runs, so a body runs at most once

@@ -12,6 +12,7 @@ import path from 'path';
 import unitConfig from './jest-unit.config';
 
 const CONFORMANCE = path.resolve(__dirname, '../../../../packages/movement-lang/conformance');
+const HARVEST = 'src/services/movement_engine/conformance/harvest';
 
 // eslint-disable-next-line local-rules/bottom-exports
 export default {
@@ -25,9 +26,14 @@ export default {
     // Under MOVEMENT_ENGINE=rust: count the Rust evaluator's answers, and
     // fail a run in which it answered none.
     '<rootDir>/src/test/rust_eval_stats.setup.ts',
+    // Under UPDATE_ENGINE_RUNS=1: record every entry into the engine as a
+    // host recording, folded into movement_engine/conformance/__fixtures__/
+    // engine-runs.<version>.json by the teardown. Inert otherwise.
+    `<rootDir>/${HARVEST}/record.setup.cjs`,
   ],
-  globalSetup: '<rootDir>/src/test/rust_eval_stats.global-setup.cjs',
-  globalTeardown: '<rootDir>/src/test/rust_eval_stats.teardown.cjs',
+  // The Rust evaluator's counts, and the host-recording harvest, chained.
+  globalSetup: `<rootDir>/${HARVEST}/global_setup.cjs`,
+  globalTeardown: `<rootDir>/${HARVEST}/teardown.cjs`,
   // The corpus is typed against its own commit's tree, not today's: transpile only.
   transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true }] },
 };

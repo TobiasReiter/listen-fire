@@ -12,6 +12,7 @@ import type { QueuedWake } from '../host_kit';
 import { makeFakeParkSink } from '../test_host';
 import { logger } from '../../logger';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000042' as TeamId;
 
@@ -50,7 +51,7 @@ describe('await park — the adapter names the key, the engine keeps the correla
     const awaiting = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }]);
     const { sink, parks, wakes } = recording();
 
-    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wakes });
+    const result = await runAwaiting({ teamId: tenantOfTeam(TEAM_ID), source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wakes });
 
     expect(result.parked).toBe(true);
     expect(parks).toHaveLength(1);
@@ -63,7 +64,7 @@ describe('await park — the adapter names the key, the engine keeps the correla
     const awaiting = makeAwaitingAdapter([{ status: 'pending', correlationKey: 'req-1' }, ANSWERED(true)]);
     const { sink, wakes } = recording();
 
-    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wakes });
+    const result = await runAwaiting({ teamId: tenantOfTeam(TEAM_ID), source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wakes });
 
     expect(result.parked).toBe(true);
     expect(awaiting.checks).toBe(2);
@@ -78,7 +79,7 @@ describe('await park — the adapter names the key, the engine keeps the correla
     const { sink, parks, wakes } = recording();
     const errors = jest.spyOn(logger, 'error').mockImplementation(() => logger);
 
-    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wakes });
+    const result = await runAwaiting({ teamId: tenantOfTeam(TEAM_ID), source: awaitingSource(), adapter: awaiting.adapter, parkSink: sink, wakes });
 
     expect(result.parked).toBe(true);
     expect(parks).toHaveLength(1);
@@ -95,7 +96,7 @@ describe('await park — the adapter names the key, the engine keeps the correla
     const { sink, parks } = recording();
 
     const result = await runAwaiting({
-      teamId: TEAM_ID,
+      teamId: tenantOfTeam(TEAM_ID),
       source: awaitingSource(),
       adapter: awaiting.adapter,
       parkSink: sink,
@@ -113,7 +114,7 @@ describe('await park — the adapter names the key, the engine keeps the correla
     const { sink, parks, wakes } = recording();
 
     const result = await runAwaiting({
-      teamId: TEAM_ID,
+      teamId: tenantOfTeam(TEAM_ID),
       source: awaitingSource('r.Answer'),
       adapter,
       parkSink: sink,
@@ -142,7 +143,7 @@ describe('await park — the adapter names the key, the engine keeps the correla
     const { adapter } = makeAwaitingAdapter([unmatched, matched]);
     const { sink, parks, wakes } = recording();
 
-    const result = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource('r.Answer'), adapter, parkSink: sink, wakes });
+    const result = await runAwaiting({ teamId: tenantOfTeam(TEAM_ID), source: awaitingSource('r.Answer'), adapter, parkSink: sink, wakes });
 
     expect(result.parked).toBe(true);
     expect(parks[0]).toMatchObject({ adapterType: 'ask', correlationKey: 'thread-9' });
@@ -161,7 +162,7 @@ describe('a park the host refuses because the run lease was lost', () => {
       },
     };
 
-    const failed = await runAwaiting({ teamId: TEAM_ID, source: awaitingSource(), adapter: awaiting.adapter, parkSink: refusing }).catch(
+    const failed = await runAwaiting({ teamId: tenantOfTeam(TEAM_ID), source: awaitingSource(), adapter: awaiting.adapter, parkSink: refusing }).catch(
       (error: unknown) => error,
     );
 

@@ -1,7 +1,7 @@
 {
   "name": "api",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "version": "1.0.0",
   "engines": {
     "node": "22.20.0"
@@ -14,7 +14,7 @@
     "cli": "TZ=utc node build/interfaces/cli/cli.js",
     "cli-dev": "TZ=utc ts-node -r tsconfig-paths/register src/interfaces/cli/cli.ts",
     "clean": "rimraf build/",
-    "build": "pnpm clean && TZ=utc NODE_OPTIONS=--max-old-space-size=8192 tsc --project tsconfig.build.json && tsc --project ../../packages/principal/tsconfig.build.json --outDir build/node_modules/principal && (cd ../../packages/shared && pnpm build) && (cd ../../packages/movement-lang && pnpm build) && (cd ../../packages/story-view && pnpm bundle) && resolve-tspaths",
+    "build": "pnpm clean && TZ=utc NODE_OPTIONS=--max-old-space-size=8192 tsc --project tsconfig.build.json && tsc --project ../../packages/principal/tsconfig.build.json --outDir build/node_modules/principal && tsc --project ../../packages/engine-contracts/tsconfig.build.json --outDir build/node_modules/engine-contracts && (cd ../../packages/shared && pnpm build) && (cd ../../packages/movement-lang && pnpm build) && (cd ../../packages/story-view && pnpm bundle) && resolve-tspaths",
     "start": "TZ=UTC node build/server.js",
     "dev": "TZ=utc TSC_WATCHFILE=UseFsEventsWithFallbackDynamicPolling ts-node-dev --project tsconfig.dev.json --transpile-only --rs --inspect -r dotenv/config -r tsconfig-paths/register src/server.ts",
     "start:nocompile": "TZ=utc ts-node --project tsconfig.dev.json --swc -r dotenv/config -r tsconfig-paths/register src/server.ts",
@@ -76,6 +76,7 @@
     "test:unit": "jest --config src/test/jest-unit.config.ts",
     "test:conformance:v1": "jest --config src/test/jest-conformance-v1.config.ts",
     "test:conformance:v2": "jest --config src/test/jest-conformance-v2.config.ts",
+    "harvest:engine-runs": "UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v1 && UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v2 && UPDATE_ENGINE_RUNS=1 pnpm test:unit --testPathPattern 'movement_engine/conformance/__test__/engine_runs'",
     "db:restore": ". ./scripts/restore_db_snapshot.sh",
     "db:dump": ". ./scripts/dump_db_snapshot.sh",
     "schema:compare": "bash src/db/compare.sh",
@@ -175,6 +176,7 @@
     "dataloader": "2.2.2",
     "date-fns": "3.6.0",
     "dotenv": "16.4.5",
+    "engine-contracts": "workspace:*",
     "exceljs": "^4.4.0",
     "exponential-backoff": "3.1.1",
     "express": "4.20.0",

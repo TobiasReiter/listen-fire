@@ -18,6 +18,7 @@
  *     -r tsconfig-paths/register src/scripts/dev/verify_envelope_salvage.ts
  */
 
+import { BARE_HOST } from '../../services/movement_engine/host_kit';
 import type { ExtractExpression, Span } from 'movement-lang';
 import {
   ROOT_EXTRACT_DESCRIPTION,
@@ -94,6 +95,8 @@ async function main(): Promise<void> {
     extract,
     spec,
     runtime: {
+      // Outside a run: a bare host's wall clock and random ids.
+      world: BARE_HOST,
       llm: {
         async call(input) {
           asked.push(input.system);

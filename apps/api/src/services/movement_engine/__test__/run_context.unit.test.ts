@@ -5,7 +5,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
 import type { Adapter, WriteInput } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
@@ -25,9 +25,10 @@ import {
   runLogFields,
   throwIfCancelled,
 } from '../run_context';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const DOLLAR = 1_000_000;
-const TEAM_ID = '00000000-0000-0000-0000-000000000061' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000061');
 const SCRAPE = 'service:brightdata.web_unlocker';
 
 function caught(fn: () => void): unknown {
@@ -232,6 +233,39 @@ describe('priced host calls under the run budget', () => {
 });
 
 describe("a segment's opening and closing", () => {
+  it('refuses a host written before the clock and ids families, naming what it lacks, and opens nothing', async () => {
+    const opened: unknown[] = [];
+    const host = makeTestHost({
+      segment: {
+        open: async (input) => {
+          opened.push(input);
+          return { segmentId: 'seg-old' };
+        },
+      },
+    });
+    const { clock: _clock, ids: _ids, ...older } = host;
+    const refusal: unknown = await openRunContext({
+      // A JavaScript host built against the earlier manifest: the compiler
+      // would refuse it, so it is handed over as an embedder's would be.
+      host: older as unknown as typeof host,
+      teamId: TEAM_ID,
+      languageVersion: 2,
+      spend: {},
+    }).catch((error: unknown) => error);
+    expect(refusal).toMatchObject({
+      code: 'MOVENG_UNSUPPORTED',
+      message:
+        'MOVENG_UNSUPPORTED: the host does not serve clock.now, ids.mint, which host families version 1 requires ' +
+        '(the clock, ids families); no segment was opened',
+    });
+    expect(opened).toEqual([]);
+    const { ids: _onlyIds, ...withoutIds } = host;
+    await expect(
+      openRunContext({ host: withoutIds as unknown as typeof host, teamId: TEAM_ID, languageVersion: 2, spend: {} }),
+    ).rejects.toThrow('the host does not serve ids.mint, which host families version 1 requires (the ids family)');
+    expect(opened).toEqual([]);
+  });
+
   it('opens a host segment under the pin and the run, and closes it however the segment ends', async () => {
     const opened: unknown[] = [];
     const closed: string[] = [];
@@ -248,12 +282,31 @@ describe("a segment's opening and closing", () => {
       },
     });
     const context = await openRunContext({ host, teamId: TEAM_ID, runId: 'run-1', languageVersion: 1, spend: {} });
-    expect(opened).toEqual([{ teamId: TEAM_ID, runId: 'run-1', languageVersion: 1 }]);
+    // The engine names the host families version it speaks on every open.
+    expect(opened).toEqual([{ teamId: TEAM_ID, runId: 'run-1', languageVersion: 1, hostFamiliesVersion: HOST_FAMILIES_VERSION }]);
     expect(context.segmentId).toBe('seg-1');
     await closeRunContext(context, host);
     expect(closed).toEqual(['seg-1']);
     // What the segment's adapter calls spent is the run's too.
     expect(context.ledger.spend.bySource).toEqual({ 'model:adapter-match': 40 });
+  });
+
+  it('the test host refuses an open under a host families version it does not serve, before its own open runs', async () => {
+    const opened: unknown[] = [];
+    const host = makeTestHost({
+      segment: {
+        open: async (input) => {
+          opened.push(input);
+          return { segmentId: 'seg-1' };
+        },
+      },
+    });
+    await expect(
+      host.segment.open({ teamId: TEAM_ID, languageVersion: 1, hostFamiliesVersion: HOST_FAMILIES_VERSION + 1 }),
+    ).rejects.toThrow(
+      `segment.open carries host families version ${HOST_FAMILIES_VERSION + 1}, which this host does not serve (supported: 1)`,
+    );
+    expect(opened).toEqual([]);
   });
 
   it("a segment's locks are taken by token, and whatever it still holds is let go when it ends", async () => {
@@ -336,7 +389,7 @@ function kgAdapter(onCreate: (write: WriteInput) => void): Adapter {
 }
 
 function runOnce(input: { body: string; kg: Adapter; locks: WriteLocks; closes: string[] }) {
-  const manual = createManualAdapter({ teamId: TEAM_ID });
+  const manual = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
   return runMovement({
     source: [
       'import { manual, kg } from adapters',
@@ -437,16 +490,16 @@ describe("a run's segment ends exactly once, however the run ends", () => {
 describe('the run facts a statement carries', () => {
   it('a cancel is honoured inside a statement; outside a run there is nothing to cancel', async () => {
     const cancelled = { ...NEVER_CANCELLED, cancelled: async () => true };
-    await expect(throwIfCancelled({ languageVersion: 2, cancel: cancelled })).rejects.toBeInstanceOf(
+    await expect(throwIfCancelled({ cancel: cancelled })).rejects.toBeInstanceOf(
       RunCancelledSignal,
     );
-    await expect(throwIfCancelled({ languageVersion: 2, cancel: NEVER_CANCELLED })).resolves.toBeUndefined();
+    await expect(throwIfCancelled({ cancel: NEVER_CANCELLED })).resolves.toBeUndefined();
     await expect(throwIfCancelled(undefined)).resolves.toBeUndefined();
   });
 
   it("a log line names the run, when there is one", () => {
-    expect(runLogFields({ languageVersion: 2, cancel: NEVER_CANCELLED, runId: 'run-9' })).toEqual({ runId: 'run-9' });
-    expect(runLogFields({ languageVersion: 2, cancel: NEVER_CANCELLED })).toEqual({});
+    expect(runLogFields({ runId: 'run-9' })).toEqual({ runId: 'run-9' });
+    expect(runLogFields({})).toEqual({});
     expect(runLogFields(undefined)).toEqual({});
   });
 });

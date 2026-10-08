@@ -155,7 +155,7 @@ pub trait Reader {
 
 pub struct Evaluator<'a> {
     env: &'a dyn Names,
-    language_version: Option<u32>,
+    language_version: u32,
     around: Surroundings<'a>,
     mode: Mode<'a>,
     /// Position-scoped (`MovementExprContext.scope`): a hop's WHERE or ORDER
@@ -177,18 +177,18 @@ type Eval = Result<Evaluated, EvalError>;
 impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
-    pub fn new(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, first_literal: u32) -> Self {
+    pub fn new(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, first_literal: u32) -> Self {
         Evaluator { env, language_version, around, mode: Mode::Pure { next_literal: Cell::new(first_literal) }, scoped: false }
     }
 
     /// Inside a run: what the evaluation cannot answer itself, it asks.
-    pub fn in_run(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
+    pub fn in_run(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
         Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: false }
     }
 
     /// Inside a run, scoped at a landed record (its reader answers
     /// `Ask::ScopedField`).
-    pub fn scoped_in_run(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
+    pub fn scoped_in_run(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
         Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: true }
     }
 
@@ -495,7 +495,7 @@ impl<'a> Evaluator<'a> {
         if !stdlib::FLAT.contains(&id) {
             return Err(EvalError::Fallback(format!("{id} is not a built-in this engine runs")));
         }
-        if id == "coalesce" && self.language_version.is_some_and(|v| v >= 3) {
+        if id == "coalesce" && self.language_version >= 3 {
             // From version 3 COALESCE short-circuits, as `??` does.
             let mut seen = Vec::new();
             for a in args {
@@ -675,7 +675,7 @@ mod tests {
     }
 
     fn in_run<'a>(reader: &'a Counting) -> Evaluator<'a> {
-        Evaluator::in_run(&EventOnly, Some(3), Surroundings { services: crate::env_services::current(), now: None }, reader)
+        Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None }, reader)
     }
 
     #[test]

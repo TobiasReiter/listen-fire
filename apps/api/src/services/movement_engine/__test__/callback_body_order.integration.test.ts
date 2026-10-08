@@ -39,7 +39,7 @@ import { claimRunLease, releaseRunLease } from '../run_lease';
 import { fireCallback, registerCallbackFireWork } from '../callback_fire';
 import { registerAwaitWork, resumeAwaitsForCorrelation } from '../await_resume';
 import { getCallback, listRunCallbacks } from '../callback_store';
-import { CALLBACK_AWAIT_TYPE } from '../callback_types';
+import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 import { testWorkContext } from '../../../test/harness/work';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;

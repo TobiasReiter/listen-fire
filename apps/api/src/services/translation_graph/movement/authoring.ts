@@ -196,6 +196,7 @@ export function diagnoseMovementSource(
   // status 'error'. Spans aren't statically available from the scan;
   // the construct names carry the repair signal.
   for (const construct of listUnsupportedConstructs(source, {
+    languageVersion,
     ...(options.resolveFile !== undefined ? { resolveFile: options.resolveFile } : {}),
   })) {
     collected.push({

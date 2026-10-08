@@ -30,6 +30,7 @@ import { makeMetaPosition } from '../../services/translation_graph/types';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
+import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6293/affinity';
 const TEAM_ID = '00000000-0000-0000-0000-000000000011' as TeamId;
@@ -122,7 +123,7 @@ async function sweep(
       source: SWEEP,
       movementName: 'sweep',
       event,
-      teamId: TEAM_ID,
+      teamId: tenantOfTeam(TEAM_ID),
       catalog,
       credentialIds: everyCredential(catalog, 'creds-verify'),
       host: probeEngineHost({

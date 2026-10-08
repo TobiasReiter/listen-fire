@@ -1,7 +1,7 @@
 {
   "name": "story-view",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "version": "0.0.1",
   "description": "The movement story renderer: one React rendering of a StoryView, mounted by the workbench panel and by the standalone HTML page",
   "engines": {

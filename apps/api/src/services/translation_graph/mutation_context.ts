@@ -4,6 +4,7 @@
 // in the consolidation-authority child stub plan).
 
 import { z } from 'zod';
+import { actorSchema, triggerTypeSchema, type TriggerType } from 'engine-contracts';
 
 // ── Actor: server-asserted identity of who/what produced a change ────────
 // Modeled on Attio's actor schema (https://docs.attio.com/docs/actors).
@@ -11,18 +12,12 @@ import { z } from 'zod';
 // Server-asserted by the producing system from auth context; never caller-
 // asserted via header. Adapters that observe a source system surfacing
 // actor info normalize it into this uniform shape; adapters that don't
-// leave the field absent (correctness falls to P14.1/P14.2).
+// leave the field absent (correctness falls to P14.1/P14.2). The actor and
+// the trigger taxonomy ride the run's event, so they are the contract's
+// (`engine-contracts`).
 
-export const actorTypeSchema = z.enum(['user', 'api-token', 'system']);
-
-export type ActorType = z.infer<typeof actorTypeSchema>;
-
-export const actorSchema = z.object({
-  type: actorTypeSchema,
-  id: z.string().nullable(),
-});
-
-export type Actor = z.infer<typeof actorSchema>;
+export { actorSchema, actorTypeSchema, triggerTypeSchema } from 'engine-contracts';
+export type { Actor, ActorType, TriggerType } from 'engine-contracts';
 
 // ── Source-of-change classification ────────────────────────────────────────
 
@@ -35,18 +30,6 @@ export const mutationSourceTypeSchema = z.enum([
 ]);
 
 export type MutationSourceType = z.infer<typeof mutationSourceTypeSchema>;
-
-// Trigger taxonomy from P6 — what fired the change.
-export const triggerTypeSchema = z.enum([
-  'snapshot',
-  'poll',
-  'changes-feed',
-  'webhook',
-  'mutation',
-  'extraction',
-]);
-
-export type TriggerType = z.infer<typeof triggerTypeSchema>;
 
 // ── MutationSource: who/what produced the change ───────────────────────────
 
@@ -85,32 +68,6 @@ export const mutationContextSchema = z.object({
 });
 
 export type MutationContext = z.infer<typeof mutationContextSchema>;
-
-// ── RecordMutationEvent: post-commit, record-level event ───────────────────
-// Coalesced from per-property evidence writes within a database transaction.
-// Mutation triggers fire on these events (P15).
-
-export const recordChangeKindSchema = z.enum(['create', 'update', 'delete']);
-
-export type RecordChangeKind = z.infer<typeof recordChangeKindSchema>;
-
-export const recordMutationEventSchema = z.object({
-  recordId: z.string().uuid(),
-  nodeTypeId: z.string(),
-  changeKind: recordChangeKindSchema,
-  // PropertyTypeIds whose canonical value changed in this transaction. For
-  // 'create' events, populated initial fields. For 'delete' events, empty.
-  changedFields: z.array(z.string()),
-  context: mutationContextSchema,
-});
-
-// NodeId brand layered on recordId — see triggers/types.ts.
-export type RecordMutationEvent = Omit<
-  z.infer<typeof recordMutationEventSchema>,
-  'recordId'
-> & {
-  recordId: import('../../generated/kysely/knowledge/Node').NodeId;
-};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

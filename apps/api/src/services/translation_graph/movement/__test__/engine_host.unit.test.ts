@@ -26,16 +26,17 @@ jest.mock('../raw_text_store', () => ({
   postgresRawTextStore: (teamId: string) => postgresRawTextStore(teamId),
 }));
 
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
 import { productionEngineHost } from '../engine_host';
 import { inMemoryRawTextStore } from '../raw_text_store';
 import type { Adapter } from '../../adapter';
 import type { CapturedWrite } from '../../engine/dry_run_adapter';
 import { userEditContext } from '../../mutation_context';
+import { teamOfTenant } from '../tenant';
 
 const MUTATION_CONTEXT = userEditContext('user-1');
 
-const TEAM_ID = 'team-1' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000e1');
 
 beforeEach(() => {
   fileTextSpends = false;
@@ -45,14 +46,14 @@ beforeEach(() => {
 
 describe('productionEngineHost — file text storage', () => {
   it("a firing's host stores file text in the team's raw_text table", () => {
-    productionEngineHost({ teamId: TEAM_ID });
+    productionEngineHost({ teamId: teamOfTenant(TEAM_ID) });
     expect(postgresRawTextStore).toHaveBeenCalledWith(TEAM_ID);
     expect(resolverStores).toEqual([postgresStore]);
   });
 
   it('a host given an in-memory store never builds the Postgres one', () => {
     const rawText = inMemoryRawTextStore();
-    productionEngineHost({ teamId: TEAM_ID, rawText });
+    productionEngineHost({ teamId: teamOfTenant(TEAM_ID), rawText });
     expect(postgresRawTextStore).not.toHaveBeenCalled();
     expect(resolverStores).toEqual([rawText]);
   });
@@ -91,8 +92,8 @@ describe('productionEngineHost — adapter instances', () => {
 
   it('resolves an instance to data, and answers each call by method', async () => {
     const live = liveAdapter([]);
-    const host = productionEngineHost({ teamId: TEAM_ID, resolveLive: () => live });
-    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2 });
+    const host = productionEngineHost({ teamId: teamOfTenant(TEAM_ID), resolveLive: () => live });
+    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2, hostFamiliesVersion: HOST_FAMILIES_VERSION });
     const resolved = await host.adapters.resolve({ adapterType: 'attio', role: 'target', segmentId });
     expect(resolved).toMatchObject({
       adapterType: 'attio',
@@ -127,15 +128,22 @@ describe('productionEngineHost — adapter instances', () => {
     });
   });
 
+  it('refuses a segment open whose host families version it does not serve, and opens nothing', async () => {
+    const host = productionEngineHost({ teamId: teamOfTenant(TEAM_ID), resolveLive: () => liveAdapter([]) });
+    await expect(host.segment.open({ teamId: TEAM_ID, languageVersion: 2, hostFamiliesVersion: 2 })).rejects.toThrow(
+      'segment.open carries host families version 2, which this host does not serve (supported: 1)',
+    );
+  });
+
   it('a rehearsed instance captures its writes into the sink and never reaches the live one', async () => {
     const writes: string[] = [];
     const captured: CapturedWrite[] = [];
     const host = productionEngineHost({
-      teamId: TEAM_ID,
+      teamId: teamOfTenant(TEAM_ID),
       resolveLive: () => liveAdapter(writes),
       writeSink: (write) => captured.push(write),
     });
-    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2 });
+    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2, hostFamiliesVersion: HOST_FAMILIES_VERSION });
     const live = await host.adapters.resolve({ adapterType: 'attio', role: 'target', segmentId });
     const rehearsed = await host.adapters.resolve({
       adapterType: 'attio',
@@ -160,13 +168,13 @@ describe('productionEngineHost — adapter instances', () => {
     const asked: Array<{ teamId: string; credentialsId?: string }> = [];
     // A fresh live object every time it is asked, as a registry without a cache would hand out.
     const host = productionEngineHost({
-      teamId: TEAM_ID,
+      teamId: teamOfTenant(TEAM_ID),
       resolveLive: ({ teamId, credentialsId }) => {
         asked.push({ teamId, ...(credentialsId !== undefined ? { credentialsId } : {}) });
         return liveAdapter([]);
       },
     });
-    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2 });
+    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2, hostFamiliesVersion: HOST_FAMILIES_VERSION });
     const first = await host.adapters.resolve({
       adapterType: 'attio',
       credentialsId: 'cred-a',
@@ -205,7 +213,7 @@ describe('productionEngineHost — adapter instances', () => {
 describe('productionEngineHost — priced calls past the budget', () => {
   it('answers a budget refusal carrying what the call spent first', async () => {
     fileTextSpends = true;
-    const host = productionEngineHost({ teamId: TEAM_ID });
+    const host = productionEngineHost({ teamId: teamOfTenant(TEAM_ID) });
     const answer = await host.files.resolveFileText({
       segmentId: 'seg-1',
       file: { __brand: 'FileRef', name: 'call.mp3' },

@@ -114,10 +114,10 @@ import {
 import { containerAssociation } from '../../translation_graph/adapter';
 import { instanceSchemaFromDescriptors } from '../../translation_graph/movement/schema_projection';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const KG_ADAPTER_TYPE = 'kg';
 
 // ── The introspection fixtures (same projections as catalog.unit.test) ──────

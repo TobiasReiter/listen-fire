@@ -98,10 +98,10 @@ import type {
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000030' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000030');
 
 // ── Fake adapters ───────────────────────────────────────────────────────────
 

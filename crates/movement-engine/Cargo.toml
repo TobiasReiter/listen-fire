@@ -3,6 +3,7 @@ name = "movement-engine"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "Apache-2.0"
 description = "The movement engine, driven from TypeScript through a request/answer protocol over WASM"
 
 [lib]

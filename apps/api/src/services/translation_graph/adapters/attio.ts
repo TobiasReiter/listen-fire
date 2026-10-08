@@ -18,7 +18,6 @@ import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../lib/recording';
 import { streamFileRef } from '../engine/files/retrieve';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
-import type { LinkedObject } from '../../../generated/kysely/knowledge/LinkedObject';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import {
   attioCredsParser,
@@ -58,6 +57,7 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
+  LinkedObjectCandidate,
 } from '../adapter';
 import { fileHandle, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from '../adapter';
 import { BaseAdapter } from './base';
@@ -1701,7 +1701,7 @@ export class AttioAdapter extends BaseAdapter {
   private resolveByBridge(input: ResolveEntityInput): ResolveEntityResult | null {
     if (input.candidates.length === 0) return null;
     const matching = input.candidates
-      .filter((c: LinkedObject) => c.external_object_type === input.recordType)
+      .filter((c: LinkedObjectCandidate) => c.external_object_type === input.recordType)
       .sort(
         (a, b) =>
           new Date(b.created_at ?? 0).getTime() -

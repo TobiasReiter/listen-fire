@@ -1,26 +1,82 @@
-export const WORK_KINDS = [
+// The work kinds the core runs: dispatch, the clock, polling, wakes and
+// callbacks, and the sweeps that keep them. A unit (an adapter package, a
+// product's own upkeep) adds its own kinds: it declares each into
+// `UnitWorkKinds` and registers it with `registerWorkKinds` (drain.ts), so the
+// core names none of them.
+export const CORE_WORK_KINDS = [
   'dispatch_event', // payload: CapturedTriggerEvent (triggers/dispatch_event.ts)
   'resume_timer', // payload: { runId: string }
   'fire_cron', // payload: { triggerId: string }
   'poll_source', // payload: { triggerId: string }
   'wake_await', // payload: { adapterType: string; teamId: string; correlationKey: string }
   'fire_callback', // payload: { callbackId: string; teamId: string; callIndex: number } (callback_fire.ts)
-  'linked_object_refresh', // payload: LinkedObjectRefresh (webhook_sync/linked_object_refresh.ts)
   'cron_reconcile', // periodic, payload {}
   'poll_reconcile', // periodic, payload {}
-  'ask_closed_sweep', // periodic, payload {}
   'timer_sweep', // periodic, payload {}
-  'exposed_file_sweep', // periodic, payload {}
-  'airtable_webhook_refresh', // periodic, payload {}
   'run_orphan_sweep', // periodic, payload {}
 ] as const;
 
-export type WorkKind = (typeof WORK_KINDS)[number];
+export type CoreWorkKind = (typeof CORE_WORK_KINDS)[number];
 
-const KNOWN_KINDS: ReadonlySet<string> = new Set(WORK_KINDS);
+/**
+ * The kinds units add, by declaration merging — a unit's module says
+ *
+ *     declare module '<path>/work/kinds' {
+ *       interface UnitWorkKinds { my_sweep: true }
+ *     }
+ *
+ * and the kind is then a `WorkKind` everywhere that module is compiled in.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+export interface UnitWorkKinds {}
+
+export type WorkKind = CoreWorkKind | (keyof UnitWorkKinds & string);
+
+const CORE_KINDS: ReadonlySet<string> = new Set(CORE_WORK_KINDS);
+
+/** The unit kinds this process has registered — the only unit kinds it
+ *  claims — each with its interval when it is periodic. */
+const unitKinds = new Map<WorkKind, number | undefined>();
+
+/** Called by `registerWorkKinds` (drain.ts) for each kind a unit registers. */
+export function admitUnitWorkKind(kind: WorkKind, intervalMs?: number): void {
+  unitKinds.set(kind, intervalMs);
+}
+
+/** Called by `resetWorkHandlersForTests` (drain.ts). */
+export function forgetUnitWorkKinds(): void {
+  unitKinds.clear();
+}
+
+/** The periodic unit kinds registered so far, with their intervals: the core
+ *  keeps their rows as it keeps its own. */
+export function periodicUnitWorkKinds(): Array<{ kind: WorkKind; intervalMs: number }> {
+  return [...unitKinds].flatMap(([kind, intervalMs]) => (intervalMs === undefined ? [] : [{ kind, intervalMs }]));
+}
+
+export function isCoreWorkKind(value: string): value is CoreWorkKind {
+  return CORE_KINDS.has(value);
+}
 
 export function isWorkKind(value: string): value is WorkKind {
-  return KNOWN_KINDS.has(value);
+  return CORE_KINDS.has(value) || [...unitKinds.keys()].some((kind) => kind === value);
+}
+
+/** The kinds this process claims: the core's, and every unit kind it has
+ *  registered. A row of a unit this process does not run waits for one that
+ *  does. */
+export function claimableWorkKinds(): string[] {
+  return [...CORE_WORK_KINDS, ...unitKinds.keys()];
+}
+
+/** Refuse a kind this process would never claim: a row of it would sit in
+ *  the table unclaimed, and nothing would say so. */
+export function assertClaimable(kind: string): void {
+  if (!isWorkKind(kind)) {
+    throw new Error(
+      `work kind '${kind}' is not claimable in this process: its unit has not registered it (registerWorkKinds)`,
+    );
+  }
 }
 
 export interface WorkRow {

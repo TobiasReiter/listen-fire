@@ -14,7 +14,7 @@
 // routinely crosses systems, so the memory of what is real cannot be one
 // adapter's.
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { TenantId } from 'engine-contracts';
 import type { Adapter } from '../adapter';
 import type { SegmentFacts } from '../../movement_engine/host_kit';
 
@@ -35,7 +35,7 @@ import { newDryRunRehearsal, wrapAdapterForDryRun, type DryRunRehearsal, type Dr
 /** Where a table's live instances come from: the resolution, for the
  *  segment's team. */
 export type LiveAdapterResolver = (
-  input: AdapterResolution & { segmentId: string; teamId: TeamId },
+  input: AdapterResolution & { segmentId: string; teamId: TenantId },
 ) => Adapter | Promise<Adapter>;
 
 /** Each method, as a call into a live instance. A method the instance lacks
@@ -147,10 +147,11 @@ class SegmentInstances {
   constructor(
     private readonly segmentId: string,
     private readonly writeSink: DryRunWriteSink | undefined,
+    private readonly rehearsalIds: (() => string) | undefined,
   ) {}
 
   private get rehearsal(): DryRunRehearsal {
-    return (this.rehearsalState ??= newDryRunRehearsal(this.writeSink));
+    return (this.rehearsalState ??= newDryRunRehearsal(this.writeSink, this.rehearsalIds));
   }
 
   async resolve(
@@ -245,6 +246,8 @@ export function adapterTable(options: {
   classify?: ClassifyHostError;
   /** Receives each write a rehearsed instance captured. */
   writeSink?: DryRunWriteSink;
+  /** Mints the ids a rehearsal invents; absent, random UUIDs. */
+  rehearsalIds?: () => string;
 }): AdapterTable {
   const instances = new Map<string, SegmentInstances>();
   const around = options.around ?? (<T>(_segmentId: string, call: () => Promise<T>) => call());
@@ -253,7 +256,7 @@ export function adapterTable(options: {
   const segmentNamed = (segmentId: string): SegmentInstances => {
     let segment = instances.get(segmentId);
     if (segment === undefined) {
-      segment = new SegmentInstances(segmentId, options.writeSink);
+      segment = new SegmentInstances(segmentId, options.writeSink, options.rehearsalIds);
       instances.set(segmentId, segment);
     }
     return segment;

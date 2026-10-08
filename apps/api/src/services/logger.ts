@@ -1,7 +1,7 @@
 import winston from 'winston';
 import stringify from 'safe-stable-stringify';
 
-import { unsafeCurrentContext } from './context';
+import { currentContextId } from './context/current_id';
 
 const isDev = process.env.NODE_ENV === 'development';
 const level = isDev ? 'debug' : 'info';
@@ -36,9 +36,9 @@ const format = isDev
   ? winston.format.combine(
       winston.format.colorize(),
       winston.format((info) => {
-        const ctx = unsafeCurrentContext();
-        if (ctx) {
-          const ctxIdString = process.env.NODE_ENV === 'development' ? ctx.id.slice(0, 8) : ctx.id;
+        const ctxId = currentContextId();
+        if (ctxId !== undefined) {
+          const ctxIdString = process.env.NODE_ENV === 'development' ? ctxId.slice(0, 8) : ctxId;
           info.message = `[${ctxIdString}] ${
             info.message.toString() === '[object Object]'
               ? stringify(info.message, replacer, 2)
@@ -51,9 +51,9 @@ const format = isDev
     )
   : winston.format.combine(
       winston.format((info) => {
-        const ctx = unsafeCurrentContext();
-        if (ctx) {
-          info.message = `[${ctx.id}] ${
+        const ctxId = currentContextId();
+        if (ctxId !== undefined) {
+          info.message = `[${ctxId}] ${
             info.message.toString() === '[object Object]'
               ? stringify(info.message, replacer, 2)
               : info.message.toString()
