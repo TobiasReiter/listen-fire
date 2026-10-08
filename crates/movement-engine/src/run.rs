@@ -63,7 +63,7 @@ use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
 use crate::program::{self, Checked, Stamp};
 use crate::stdlib::{self, Surroundings};
-use crate::trace::TraceEntry;
+use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
 
 /// What the shim sends (rust_engine.ts `segmentInput`).
@@ -225,6 +225,8 @@ pub(crate) struct Run<'a> {
     pub(crate) origins: RefCell<Vec<Js>>,
     /// The fields a `field_miss` was traced for, by instance: once each.
     pub(crate) misses: RefCell<Vec<(String, String)>>,
+    /// The run's own flow's trace, not yet handed to the host.
+    pub(crate) trace: FlowTrace,
     pub(crate) movement_name: RefCell<String>,
     /// The writes, in program order (`MovementRunResult.writes`).
     pub(crate) writes: RefCell<Vec<Rc<WriteRecord>>>,
@@ -272,6 +274,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         source_instance: RefCell::default(),
         origins: RefCell::default(),
         misses: RefCell::default(),
+        trace: FlowTrace::default(),
         movement_name: RefCell::default(),
         writes: RefCell::default(),
         targets: RefCell::default(),
@@ -291,9 +294,15 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         code.starts_with("MOV_LANGUAGE_VERSION_").then(|| (code.to_string(), message.to_string()))
     });
     if let Some((code, message)) = version_warning {
-        run.trace(TraceEntry::Warning { code, message }).await.map_err(Stop::Thrown)?;
+        run.trace(TraceEntry::Warning { code, message });
     }
-    run.execute().await
+    let outcome = run.execute().await;
+    // What the segment traced after its last statement's hand-over (a park,
+    // a failure, a body that never ran). The TypeScript hands it over as its
+    // segment closes, where a failure to is logged and never the run's
+    // (run_context.ts `closeRunContext`); so it is not this run's either.
+    let _ = run.publish_trace().await;
+    outcome
 }
 
 impl Run<'_> {
@@ -654,7 +663,9 @@ impl Run<'_> {
                 if self.ask_bool(host::control::cancelled(self.segment())).await.map_err(Stop::Thrown)? {
                     return Err(Stop::Cancelled);
                 }
-                if let Flow::Returned = self.statement(statement, scope, &at, &format!("{path}/{index}")).await? {
+                let flow = self.statement(statement, scope, &at, &format!("{path}/{index}")).await?;
+                self.publish_trace().await.map_err(Stop::Thrown)?;
+                if let Flow::Returned = flow {
                     return Ok(Flow::Returned);
                 }
             }
@@ -719,7 +730,7 @@ impl Run<'_> {
             Statement::If(statement) => {
                 for (index, arm) in statement.arms.iter().enumerate() {
                     let taken = self.condition(&arm.condition, scope).await?;
-                    self.trace(TraceEntry::Gate { outcome: taken }).await.map_err(Stop::Thrown)?;
+                    self.trace(TraceEntry::Gate { outcome: taken });
                     if taken {
                         return self.body(&arm.body, &scope.child(), &at.branch(index), &format!("{path}/arms/{index}/body"), 0).await;
                     }
@@ -879,7 +890,7 @@ impl Run<'_> {
         read.set("fieldId".into(), Js::str(field));
         let value = self.call_adapter(&source.instance, "getFieldValue", Js::object(read)).await?;
         if value.is_nullish() && !seed.is_stable() {
-            self.trace_miss(&source, field).await?;
+            self.trace_miss(&source, field);
         }
         // In the TypeScript's key order (`readSourcePositionField`).
         let mut entries = vec![
@@ -937,16 +948,16 @@ impl Run<'_> {
                 format!("sleep reached at '{address}' with no park sink — the run cannot suspend on a timer without the durable trigger-run substrate"),
             )));
         }
-        self.trace(TraceEntry::Gate { outcome: false }).await.map_err(Stop::Thrown)?;
+        self.trace(TraceEntry::Gate { outcome: false });
         Err(Stop::Parked(address))
     }
 
-    async fn trace_miss(&self, source: &Source, field: &str) -> Result<(), Failure> {
+    fn trace_miss(&self, source: &Source, field: &str) {
         let data = &source.position.data;
         let keys: Vec<String> = match data {
             Js::Object(object) => object.entries().iter().map(|(k, _)| k.clone()).collect(),
             Js::Array(list) => (0..list.items.len()).map(|i| i.to_string()).collect(),
-            _ => return Ok(()),
+            _ => return,
         };
         // `field in data`: own keys, and the prototype's.
         let carried = keys.iter().any(|k| k == field)
@@ -954,17 +965,28 @@ impl Run<'_> {
             || (matches!(data, Js::Array(_)) && (field == "length" || ARRAY_PROTOTYPE_NAMES.contains(&field)));
         let seen = self.misses.borrow().iter().any(|(b, f)| *b == source.instance_name && f == field);
         if carried || seen {
-            return Ok(());
+            return;
         }
         self.misses.borrow_mut().push((source.instance_name.clone(), field.to_string()));
         let available = keys.into_iter().take(30).collect();
-        self.trace(TraceEntry::FieldMiss { binding: source.instance_name.clone(), field: field.to_string(), available }).await
+        self.trace(TraceEntry::FieldMiss { binding: source.instance_name.clone(), field: field.to_string(), available });
     }
 
     // ── Host calls ──
 
-    async fn trace(&self, entry: TraceEntry) -> Result<(), Failure> {
-        self.ask(host::trace::append(self.segment(), &[entry])).await.map(|_| ())
+    /// An entry on the run's trace, handed to the host when its statement ends.
+    fn trace(&self, entry: TraceEntry) {
+        self.trace.push(entry);
+    }
+
+    /// The run's flow's buffered entries, in one `trace.append`; nothing
+    /// asked when there are none.
+    async fn publish_trace(&self) -> Result<(), Failure> {
+        let entries = self.trace.take();
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.ask(host::trace::append(self.segment(), &entries)).await.map(|_| ())
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
@@ -1335,10 +1357,12 @@ mod tests {
             calls,
             [
                 "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.call", "control.cancel.cancelled",
-                "trace.append", "control.cancel.cancelled", "control.cancel.cancelled", "control.cancel.cancelledNow",
+                "control.cancel.cancelled", "trace.append", "control.cancel.cancelled", "control.cancel.cancelledNow",
             ]
         );
-        assert_eq!(seen[5].args, json!({ "entries": [{ "kind": "gate", "outcome": true }], "segmentId": "g1" }));
+        // The `if`'s gate is handed over after the arm's first statement, as
+        // the TypeScript publishes after every statement at any depth.
+        assert_eq!(seen[6].args, json!({ "entries": [{ "kind": "gate", "outcome": true }], "segmentId": "g1" }));
         // Every request the host serves names the segment.
         assert!(seen.iter().filter(|r| r.family != "check").all(|r| r.args["segmentId"] == json!("g1")));
         // The source adapter reads the payload under the parameter's

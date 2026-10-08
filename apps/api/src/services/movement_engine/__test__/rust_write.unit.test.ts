@@ -13,6 +13,7 @@ import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { MovementTraceEntry } from '../expression';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import { positionData } from '../../translation_graph/types';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
@@ -157,6 +158,8 @@ interface Outcome {
   attio: Array<[string, unknown]>;
   resolved: unknown[];
   trace: unknown[];
+  /** The trace as the host was handed it, a statement at a time. */
+  appends: unknown[][];
   captured: CapturedWrite[];
   asked: unknown[];
   parks: Array<{ address: string; state: unknown; wakeAt: string }>;
@@ -169,6 +172,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const attio = fake('attio', c.attio);
   const resolved: unknown[] = [];
   const trace: unknown[] = [];
+  const appends: MovementTraceEntry[][] = [];
   const captured: CapturedWrite[] = [];
   const asked: unknown[] = [];
   const park = makeFakeParkSink();
@@ -194,9 +198,10 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       ...(c.judge !== undefined ? { llm: { arbitrateEntities: c.judge(asked) } } : {}),
       park: { sink: park.sink },
       trace: trace as never[],
+      traceAppends: appends,
     }),
   };
-  const world = () => ({ email: email.calls, attio: attio.calls, resolved, trace, captured, asked, parks: park.timerParks });
+  const world = () => ({ email: email.calls, attio: attio.calls, resolved, trace, appends, captured, asked, parks: park.timerParks });
   try {
     const result = c.resume !== undefined ? await resumeMovement({ ...input, state: c.resume } satisfies ResumeMovementInput) : await runMovement(input);
     return { failed: false, result, ...world() };

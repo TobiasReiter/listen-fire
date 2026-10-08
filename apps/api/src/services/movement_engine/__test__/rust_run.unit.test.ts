@@ -13,6 +13,7 @@ import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { Adapter } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { MovementTraceEntry } from '../expression';
 
 import { containerAssociation } from '../../translation_graph/adapter';
 import { positionData } from '../../translation_graph/types';
@@ -117,6 +118,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
   const email = fakeEmail(c.email);
   const resolved: unknown[] = [];
   const trace: unknown[] = [];
+  const appends: MovementTraceEntry[][] = [];
   const input: RunMovementInput = {
     source: PRELUDE + c.source,
     event: c.event,
@@ -134,14 +136,15 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
         },
       },
       trace: trace as never[],
+      traceAppends: appends,
       ...c.host?.(),
     }),
   };
   try {
     const result = await runMovement(input);
-    return { result, calls: email.calls, resolved, trace };
+    return { result, calls: email.calls, resolved, trace, appends };
   } catch (error) {
-    return { error, calls: email.calls, resolved, trace };
+    return { error, calls: email.calls, resolved, trace, appends };
   } finally {
     if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
     else process.env.MOVEMENT_ENGINE = previous;
@@ -160,6 +163,8 @@ async function agree(c: Case) {
   expect(rust.calls).toEqual(ts.calls);
   expect(rust.resolved).toEqual(ts.resolved);
   expect(rust.trace).toEqual(ts.trace);
+  // The host is handed the trace a statement at a time, by both engines.
+  expect(rust.appends).toEqual(ts.appends);
   if ('error' in ts) {
     expect('error' in rust).toBe(true);
     const [tsError, rustError] = [ts.error, 'error' in rust ? rust.error : undefined];

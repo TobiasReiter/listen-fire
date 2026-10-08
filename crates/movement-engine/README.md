@@ -36,7 +36,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `node` | node and graph literals: value entries, nested nodes, reference entries and record copies (the checker's stamps) |
 | `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
-| `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`) |
+| `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`), and the per-flow buffer they wait in until their statement ends |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers, Unicode normalisation and the wall clock, from the JavaScript runtime (WASM) or natively (below) |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
@@ -75,6 +75,7 @@ Measured 2026-10-07 (gzip -9):
 | the probe entries test-only, the dead value model removed | 1,987,389 | 557,438 |
 | admission on the engine's own parse (chunk 5B) | 2,018,914 | 565,647 |
 | chunk 5B task 1, fix round 1 (the cap rule in admission) | 2,018,987 | 565,747 |
+| the trace batched per statement | 2,018,749 | 565,685 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -339,7 +340,7 @@ TypeScript takes through its host is a host request here:
 | `check.program` | first, once admitted ("Admission" above) | program_check.ts (below) |
 | `adapters.resolve` | the source instance (`prepareMovement`); each write's target, once per instance (`targetAdapterFor`) | `host.adapters.resolve`: the instance as data (its opaque id, its `adapterType`, the `methods` it implements); a rehearsed target is resolved `dryRun`, and the host captures its writes. The credential id is the run's input (`credentialIds`), by the import's credential name |
 | `adapters.call` `listEntryPoints` | a discriminated event (`naturalRootTypeName`) | `host.adapters.call` |
-| `trace.append` | each trace entry, as it lands | the segment's trace (the result's), handed on to `host.trace` |
+| `trace.append` | after each statement that traced anything, at any depth, its entries in one request; once more as the segment ends, for what a park or a failure left (run.ts publishes the same way, `interpretBody`) | the segment's trace (the result's), handed on to `host.trace` |
 | `control.cancel.cancelled` | before each statement | `host.control.cancel.cancelled` |
 | `adapters.call` `getFieldValue` | each read of an event field, in evaluation order | `host.adapters.call`, through the surface-read wrapper's restamp (done here) |
 | `adapters.call` `describe`, `resolveEntity`, `readRecord`, `createRecord`, `updateRecord` | a write, in run.ts's order (below); `readRecord` only when the instance's `methods` list it | `host.adapters.call` |
@@ -513,7 +514,7 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 | `locks.acquire {segmentId, names}` / `locks.release {segmentId, token}` | `{token}` once held / `undefined` once let go |
 | `park.sink.commitTimerPark {segmentId, address, state, wakeAt, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
 | `control.cancel.cancelled {segmentId}` / `control.cancel.cancelledNow {segmentId}` | a boolean: the cancel gate, debounced / not |
-| `trace.append {segmentId, entries}` | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
+| `trace.append {segmentId, entries}` (one per statement that traced; the last, as the segment ends, may fail without failing the run) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
 | `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
 | `builtins.compare {op, left, right}` | the same two shapes, for `compareValues(left, op, right)`; `op` a `FilterOperator` |
 
