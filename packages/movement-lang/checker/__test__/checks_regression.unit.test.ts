@@ -19,18 +19,19 @@
 // A record carrying a `note` is one whose catalog no snapshot can express (the
 // note says why); it is kept, as evidence, but not replayed.
 //
+// The replay is the language kit's (../../conformance/checks_corpus.ts), so
+// `pnpm language:conformance` over this corpus is this test.
+//
 // Set UPDATE_CHECKS_FIXTURE=1 to rewrite the pins from the current checker
 // (after a re-harvest, or a ruling) — then read the diff.
-import { canonical } from '../../parser/expression/__test__/lowering_fixture';
-import { checkNow, loadChecks as load, SNAPSHOT_TABLE, writeChecks, type CheckRecord } from './checks_fixture';
+import { canonical, replayChecks } from '../../conformance/checks_corpus';
+import { checkNow, loadChecks as load, SNAPSHOT_TABLE, writeChecks } from './checks_fixture';
 
 declare const process: { env: Record<string, string | undefined> };
 declare function require(id: string): unknown;
 declare const console: { warn(...args: unknown[]): void };
 
 const KNOWN_VERSIONS = [1, 2, 3];
-
-const label = (record: CheckRecord): string => `v${record.version} ${JSON.stringify(record.source.slice(0, 120))}`;
 
 describe('checks regression', () => {
   if (process.env.UPDATE_CHECKS_FIXTURE) {
@@ -40,14 +41,8 @@ describe('checks regression', () => {
   it('checks every pinned program against its snapshot exactly as pinned', () => {
     const pins = load();
     expect(pins.length).toBeGreaterThan(2000);
-    const drifted = pins
-      .filter(pin => !pin.note)
-      .flatMap(pin => {
-        const now = canonical(checkNow(pin));
-        const pinned = canonical(pin.diagnostics);
-        return now === pinned ? [] : [`${label(pin)}: pinned ${pinned.slice(0, 400)} | now ${now.slice(0, 400)}`];
-      });
-    expect(drifted).toEqual([]);
+    // The language kit's own replay (`pnpm language:conformance`), over ours.
+    expect(replayChecks(pins, SNAPSHOT_TABLE).drifted).toEqual([]);
   });
 
   it('keys every snapshot by the sha256 of its canonical form, as the harvest does', () => {

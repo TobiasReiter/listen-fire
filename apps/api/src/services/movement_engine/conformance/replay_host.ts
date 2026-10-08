@@ -6,7 +6,7 @@
 import type { RecordedError, ServedAnswer } from 'engine-contracts/conformance';
 
 import { MovementEngineError, RunCancelledSignal, RunLeaseLost, type MovementEngineErrorCode } from '../errors';
-import type { EngineHost } from '../host';
+import { missingHostMethods, type EngineHost } from '../host';
 
 /** The error a recorded thrown error was. The engine branches on three
  *  classes a host may throw (a cancel, a lost lease, its own error by code);
@@ -35,20 +35,22 @@ export function rethrown(error: RecordedError): Error {
   return thrown;
 }
 
-const ENGINE_CODES: ReadonlySet<string> = new Set<MovementEngineErrorCode>([
-  'MOVENG_PARSE',
-  'MOVENG_CHECK',
-  'MOVENG_LANGUAGE_VERSION',
-  'MOVENG_NOT_FOUND',
-  'MOVENG_UNSUPPORTED',
-  'MOVENG_RUNTIME',
-  'MOVENG_CALL_DEPTH',
-  'MOVENG_PARK_NONSERIALIZABLE',
-  'MOVENG_ERROR',
-]);
+// Every code, held to the type: a code added there and not here fails to
+// compile.
+const ENGINE_CODES: Record<MovementEngineErrorCode, true> = {
+  MOVENG_PARSE: true,
+  MOVENG_CHECK: true,
+  MOVENG_LANGUAGE_VERSION: true,
+  MOVENG_NOT_FOUND: true,
+  MOVENG_UNSUPPORTED: true,
+  MOVENG_RUNTIME: true,
+  MOVENG_CALL_DEPTH: true,
+  MOVENG_PARK_NONSERIALIZABLE: true,
+  MOVENG_ERROR: true,
+};
 
 function isEngineCode(code: string): code is MovementEngineErrorCode {
-  return ENGINE_CODES.has(code);
+  return Object.prototype.hasOwnProperty.call(ENGINE_CODES, code);
 }
 
 /** What a served answer resolves to, or the error it throws. */
@@ -85,7 +87,7 @@ export function hostServing(
     family[name] = (...args: unknown[]) => serve(path, args[0]);
   }
   if (!isEngineHost(root)) {
-    throw new Error(`a host serving ${methods.join(', ')} lacks a family every host has`);
+    throw new Error(`a host serving ${methods.join(', ')} lacks ${missingHostMethods(root).join(', ')}, which every host serves`);
   }
   return root;
 }
@@ -94,10 +96,8 @@ function isFamily(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-/** The families every host serves (the manifest's non-optional ones): a tree
- *  holding them, each method a function from the recording, is a host. */
-const REQUIRED_FAMILIES = ['segment', 'adapters', 'llm', 'park', 'control', 'files', 'lookup', 'locks'];
-
+/** A tree serving every method the manifest requires (its non-optional
+ *  families'), each a function from the recording, is a host. */
 function isEngineHost(tree: Record<string, unknown>): tree is Record<string, unknown> & EngineHost {
-  return REQUIRED_FAMILIES.every((family) => isFamily(tree[family]));
+  return missingHostMethods(tree).length === 0;
 }

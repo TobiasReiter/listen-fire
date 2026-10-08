@@ -21,9 +21,9 @@ pnpm language:conformance path/to/checks.json --snapshots path/to/checks.snapsho
   diagnostics).
 - It exits 0 when nothing drifted, 1 otherwise.
 
-The runner is the checker regression test
-(`checker/__test__/checks_regression.unit.test.ts`) as a command: the same
-loader, the same replay, the same comparison.
+The loader, the replay and the comparison are `checks_corpus.ts` here; the
+checker regression test (`checker/__test__/checks_regression.unit.test.ts`)
+runs the same replay over ours.
 
 ## The corpus format
 

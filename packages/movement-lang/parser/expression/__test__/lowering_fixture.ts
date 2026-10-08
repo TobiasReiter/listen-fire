@@ -72,18 +72,7 @@ export function lowerNow(raw: string, mode: Mode, source: Lowered['source']): Lo
 }
 
 /** Key order and `undefined` members are not part of a value. */
-export function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) => {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      return Object.fromEntries(
-        Object.entries(v as Record<string, unknown>)
-          .filter(([, x]) => x !== undefined)
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-      );
-    }
-    return v;
-  });
-}
+export { canonical } from '../../../conformance/checks_corpus';
 
 /** The constructs the statement layer reads today and the new grammar reads
  *  as expressions, with the tree kind each must parse to. */
