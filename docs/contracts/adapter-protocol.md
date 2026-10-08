@@ -726,20 +726,68 @@ The fake CRM is a complete protocol-2 adapter in one file:
 with a comment thread. It uses both push doors and the host door's methods,
 and it pages. Read it next to this walkthrough.
 
-Its paging is exercised only by its integration test
-(`scripts/dev/__test__/fake_crm_adapter.integration.test.ts`), not by an
-automation: `Company` is not readable from the root, so no automation can
-walk the collection.
+Its paging is exercised by its integration test
+(`scripts/dev/__test__/fake_crm_adapter.integration.test.ts`) and by the
+conformance CLI (step 1), not by an automation: `Company` is not readable
+from the root, so no automation can walk the collection.
 
-1. **Describe your data.** `listEntryPoints` publishes `Company` (writable,
+1. **Run the conformance CLI against your server.** Start with it and keep
+   it green as you build. It needs no Listen-Fire stack and no database:
+
+   ```bash
+   export ADAPTER_CONFORMANCE_SECRET=<your secret>
+   pnpm adapter:conformance --url https://crm.acme.example/listen-fire --auth bearer \
+     --scratch-type Company --scratch-fields '{"Name":"Conformance Co"}' \
+     --sample-delivery '{"companies":[{"id":"c1","Name":"A"}]}' \
+     --wait-for-push 30
+   ```
+
+   It prints one line per check (`PASS`, `FAIL` or `SKIP`, then the check's
+   name and detail) and exits 1 on any `FAIL`. The checks: the manifest and
+   its version; the refusal of an older `protocolVersion`; the error
+   envelopes (`bad_request` naming the method and path, `method_not_implemented`);
+   `listEntryPoints`, `describe` and the natural names; `resolveEntity`,
+   `getRelated`, `iterateRelatedPage` (paging), `getFieldValue`, `createRecord`,
+   `updateRecord`, `deleteRecord`; `resolveAwait`; the event subscription
+   (a secret, a stable `externalId`); `listEventTypes`, `preprocessInbound`
+   and `wakeKeys`; and the two push doors.
+
+   Flags:
+
+   - `--url <baseUrl>` and `--auth bearer|secret` are required. For
+     `--auth secret`, `--auth-header <name>` names the header (default
+     `x-listen-fire-adapter-secret`).
+   - The secret is read from the environment variable `--secret-env` names
+     (default `ADAPTER_CONFORMANCE_SECRET`), never from the command line.
+   - `--scratch-type <typeId>` with `--scratch-fields '<json>'` names a type
+     the CLI may write. It creates three records with those fields (the first
+     string field gets ` #1`, ` #2`, ` #3` appended), updates one, reads a
+     field back and compares it with what it wrote, deletes them all, and uses them to check paging and `resolveAwait`.
+     Without the flags, those checks are skipped with a notice.
+   - `--sample-delivery '<json>'` is a webhook body your server sends. The CLI
+     cannot make you deliver one, so it hands this body to `preprocessInbound`
+     and `wakeKeys` and checks the shapes.
+   - `--wait-for-push <seconds>` makes the CLI wait for your server to push
+     to the doors. The CLI serves a stand-in for Listen-Fire's host and
+     prints its URL on stderr (`--host-port <n>` fixes the port, `--host-bind <address>`
+     picks the address, default `127.0.0.1`: use one your server can reach); point your
+     server's host URL at it, then trigger an event and a wake. It checks the
+     credential and the body of each push against the doors' own schemas.
+     At `0` (the default) the door checks are skipped.
+   - `--json` prints the report as a JSON array.
+
+   The fake CRM passes every check. The CLI cannot check what the real host
+   does with a push; the dev loop in step 7 does.
+
+2. **Describe your data.** `listEntryPoints` publishes `Company` (writable,
    fires) and `Comment`. `describe` gives `Company` its fields and its
    `Comments` edge, declared `awaitable`, `watchable` and `resolvesEmpty`.
 
-2. **Implement the required methods.** `resolveEntity` always answers no
+3. **Implement the required methods.** `resolveEntity` always answers no
    match, so every write creates. `createRecord` stores the company and
    returns its id and fields. `getFieldValue` reads the position's `data`.
 
-3. **Serve it.** In TypeScript, wrap your adapter with the reference kit:
+4. **Serve it.** In TypeScript, wrap your adapter with the reference kit:
 
    ```ts
    const handler = createAdapterProtocolHandler({
@@ -753,15 +801,15 @@ walk the collection.
    throws to `adapter_error`, and serves paging. In another language, follow
    [the envelope](#the-envelope).
 
-4. **Make the thread awaitable.** `resolveAwait` answers `empty` for a
+5. **Make the thread awaitable.** `resolveAwait` answers `empty` for a
    deleted company, `pending` with `thread:<company id>` for a thread with no
    comments, and `landed` with the comments otherwise.
 
-5. **Push.** When somebody comments, the CRM `POST`s `{ "keys": ["thread:<company id>"] }`
+6. **Push.** When somebody comments, the CRM `POST`s `{ "keys": ["thread:<company id>"] }`
    to `/wake`. When somebody creates a company, it `POST`s the event to
    `/emit`. Both send `Authorization: Bearer <secret>`.
 
-6. **Try it in the dev loop.**
+7. **Try it in the dev loop.**
 
    ```bash
    pnpm dev:loop:agent                # starts the fake CRM with the stack
@@ -803,6 +851,7 @@ walk the collection.
 
 ## Changes
 
+- **Conformance CLI.** `pnpm adapter:conformance` checks a server against this protocol; run it first when building an adapter ([Build your first adapter](#build-your-first-adapter)).
 - **Version 2** (current; the only version this release speaks). Breaking for a server built against version 1:
   - Requests carry `protocolVersion: "2"`, and the `manifest` answers `protocolVersion: 2`. Installing probes the server and refuses anything older.
   - Names on the wire are the natural display names; `typeId` and `fieldId` are the server's own ids.

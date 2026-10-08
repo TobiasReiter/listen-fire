@@ -5,7 +5,7 @@
 
 import { Environment, evalMovementExpr } from '../expression';
 import { listUnsupportedConstructs } from '../interpretable';
-import { parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 import { evaluatePredicate } from '#shared/expression/filter';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
@@ -13,7 +13,7 @@ async function evaluate(text: string, bindings: Record<string, unknown> = {}): P
   for (const [name, value] of Object.entries(bindings)) {
     env.declare(name, { kind: 'value', value });
   }
-  return (await evalMovementExpr(parseMovementExpression(text), { env })).value;
+  return (await evalMovementExpr(parseMovementExpression(text), { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
 }
 
 describe('a spread splices a list into a list literal', () => {

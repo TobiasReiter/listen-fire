@@ -116,17 +116,6 @@ describe('the Rust evaluator switch', () => {
     expect(inRust('DATE.FORMAT_ISO(t)', ctx)).toBeUndefined();
   });
 
-  it('leaves to TypeScript an evaluation with no pin: the Rust evaluator refuses one', () => {
-    resetRustEvalStats();
-    const env = new Environment();
-    env.declare('n', { kind: 'value', value: 2 });
-    const unpinned: MovementExprContext = { env };
-    expect(rustCanEval(parseMovementExpression('n + 1'))).toBe(true);
-    expect(inRust('n + 1', unpinned)).toBeUndefined();
-    expect(rustEvalStats).toMatchObject({ notAdmitted: 1, admitted: 0 });
-    expect(inRust('n + 1', contextOf({ n: 2 }))?.value).toBe(3);
-  });
-
   it('counts what it sent, what Rust answered and what came back, by reason', () => {
     resetRustEvalStats();
     const ctx = contextOf({ n: 2, t: '2026-03-12T09:30' });

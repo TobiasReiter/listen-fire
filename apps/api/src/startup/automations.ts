@@ -9,14 +9,20 @@
 // instances may drain side by side, in either mode.
 
 import { neverAsAny } from '../lib/utils/types';
+import { mounts } from '../products';
 import { claimLoopTick } from '../lib/worker';
 import {
+  HttpTickNotifier,
+  NoopNotifier,
   drainPassFailing,
+  inProcessNotifier,
   registerWorkKinds,
   setExternalDrainPassRecorder,
+  setWorkNotifier,
   startDrainLoop,
   type DrainResult,
   type StopDrainLoop,
+  type WorkNotifier,
 } from '../services/work/drain';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
@@ -27,6 +33,8 @@ import type { WorkerRegistry } from './registry';
 type Env = Record<string, string | undefined>;
 
 const DRAIN_MODE_VAR = 'AUTOMATIONS_DRAIN_MODE';
+const TICK_URLS_VAR = 'AUTOMATIONS_TICK_URLS';
+const TICK_KEY_VAR = 'AUTOMATIONS_TICK_KEY';
 const DRAIN_WORKER_ID = 'automations.drain';
 const DRAIN_EVERY_MS = 1_000;
 
@@ -41,6 +49,57 @@ function drainMode(env: Env): DrainMode {
   throw new Error(`${DRAIN_MODE_VAR} must be "loop" or "external", not "${raw}".`);
 }
 
+function tickUrls(env: Env): string[] {
+  const urls = (env[TICK_URLS_VAR] ?? '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter((url) => url !== '');
+  for (const url of urls) {
+    if (!URL.canParse(url) || !['http:', 'https:'].includes(new URL(url).protocol)) {
+      throw new Error(`${TICK_URLS_VAR} names "${url}", which is not an http(s) URL.`);
+    }
+  }
+  return urls;
+}
+
+/** Where a door's notify goes. In loop mode, to this process's loop. In
+ *  external mode, to the drain tick endpoints when both tick settings are
+ *  given, or nowhere when neither is (every pass then comes from the
+ *  schedule). One without the other is refused: a key with nowhere to send it,
+ *  or URLs that would answer every tick 403, is a deployment that believes its
+ *  doors wake the drain when they do not. */
+function workNotifierFor(mode: DrainMode, env: Env): WorkNotifier {
+  switch (mode) {
+    case 'loop':
+      return inProcessNotifier;
+    case 'external': {
+      const urls = tickUrls(env);
+      const apiKey = env[TICK_KEY_VAR]?.trim() ?? '';
+      if (urls.length === 0 && apiKey === '') return new NoopNotifier();
+      if (urls.length === 0 || apiKey === '') {
+        throw new Error(
+          `${TICK_URLS_VAR} and ${TICK_KEY_VAR} go together: set both for a door's notify to tick the drain, ` +
+            `or neither to leave every pass to the scheduled tick.`,
+        );
+      }
+      return new HttpTickNotifier({ urls, apiKey });
+    }
+    default:
+      return neverAsAny(mode);
+  }
+}
+
+/** The drain's settings, checked where the server checks its other boot-time
+ *  configuration: a bad mode or half a tick pair fails the boot, rather than
+ *  leaving an API that serves requests while nothing drains. Only where the
+ *  unit is mounted — the same gate the drain worker has — so a process
+ *  running other products is not failed by settings it never reads.
+ *  `startDrain` checks again, for an entry that boots without the server. */
+function assertAutomationsDrainConfigured(env: Env = process.env): void {
+  if (!mounts('automations', env)) return;
+  workNotifierFor(drainMode(env), env);
+}
+
 /** The worker pulse one drain pass records, in either mode. */
 function passRecorder(): ((result: DrainResult) => void) | undefined {
   const recordPass = claimLoopTick();
@@ -50,6 +109,8 @@ function passRecorder(): ((result: DrainResult) => void) | undefined {
 
 function startDrain(env: Env): StopDrainLoop | undefined {
   const mode = drainMode(env);
+  const notifier = workNotifierFor(mode, env);
+  setWorkNotifier(notifier);
   switch (mode) {
     case 'loop': {
       console.warn(`[startup] ${DRAIN_WORKER_ID}: drain mode "loop" (in-process, every ${DRAIN_EVERY_MS} ms)`);
@@ -62,7 +123,8 @@ function startDrain(env: Env): StopDrainLoop | undefined {
     }
     case 'external':
       console.warn(
-        `[startup] ${DRAIN_WORKER_ID}: drain mode "external" (no loop; each POST /api/v1/system/automations/drain is a pass)`,
+        `[startup] ${DRAIN_WORKER_ID}: drain mode "external" (no loop; each POST /api/v1/system/automations/drain is a pass; ` +
+          `${notifier instanceof HttpTickNotifier ? `a door's notify ticks ${TICK_URLS_VAR}` : 'a door waits for the scheduled tick'})`,
       );
       setExternalDrainPassRecorder(passRecorder());
       return undefined;
@@ -90,4 +152,11 @@ const automationsWorkers: WorkerRegistry = {
   lock: false,
 };
 
-export { DRAIN_MODE_VAR, automationsWorkers, registerAutomationsWork };
+export {
+  DRAIN_MODE_VAR,
+  TICK_KEY_VAR,
+  TICK_URLS_VAR,
+  assertAutomationsDrainConfigured,
+  automationsWorkers,
+  registerAutomationsWork,
+};

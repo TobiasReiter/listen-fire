@@ -18,7 +18,7 @@ Two tests hold the contract to this document (`movement_engine/__test__/seam_gua
 - **The version is an integer**, stated at the top of this document and held by `HOST_FAMILIES_VERSION`. This release serves version 1 only ([the index](README.md) lists what each release supports and deprecates).
 - **On the wire:** every `segment.open` request carries `hostFamiliesVersion`. A host refuses an open whose version it does not serve, or that names none, before it opens anything. The refusal is a thrown failure whose message names the contract, the version it was handed and the versions it serves: `segment.open carries host families version 2, which this host does not serve (supported: 1)`. The entry fails before any statement runs.
 - **What bumps it:** a change in meaning. A method removed or renamed, a field whose meaning changed, a required field added to a request, or an answer reshaped. An optional request field a host may ignore, or a new optional family, keeps the version.
-- **A new required family** keeps the version too: it changes no existing shape. A host that lacks one is refused by the engine before `segment.open`, with a message naming each missing method (`the host does not serve clock.now, ids.mint, which host families version 1 requires (the clock, ids families); no segment was opened`). The engine checks every method of every family the manifest does not mark optional.
+- **A required family is part of the version.** Adding one bumps it, as any required addition does. A host that lacks a required method is refused by the engine before `segment.open`, with a message naming each missing method (`the host does not serve clock.now, ids.mint, which host families version 1 requires (the clock, ids families); no segment was opened`). The engine checks every method of every family the manifest does not mark optional.
 - **How a break lands:** the engine sends the new version; a host that serves both branches on it at the point of difference. It is never a second host interface.
 
 ## Conventions
@@ -33,7 +33,23 @@ The shapes are TypeScript-ish. These rules apply to every one of them.
 - **Answers.** Every method answers a promise. A method shown answering `void` answers nothing (JSON `null` over a wire).
 - **Failure.** A method fails one of two ways.
   - **As data**, in the answer: only `adapters.call` (an `error` variant) and the priced calls (a `budget` refusal). The engine branches on these.
-  - **By throwing** (over a wire: an error response carrying `message`). The engine never branches on a thrown failure's class. It fails the statement with the message, exactly as it fails one on its own error, so a remote host may throw a plain error with the same message. One exception: `RunLeaseLost` (`movement_engine/errors.ts`), which an in-process host throws when its segment no longer holds the run (from the cancel gate, or a park refused by the lease fence). The engine treats it as control flow, as it treats a cancel: it stops the run, and no collection op's `onError` forgives it.
+  - **By throwing.** Over a wire, a thrown failure travels as an error envelope (below). The engine fails the statement with the message, exactly as it fails one on its own error, so a remote host may throw a plain error with the same message. The engine branches on the class of three thrown failures (`movement_engine/errors.ts`), and a host that means one of them throws it under that class:
+    - **`RunCancelledSignal`:** the run was cancelled by request. The cancel gate (`control.cancel.cancelled`) throws it. The engine stops the run and reports it cancelled; the writes already made stand.
+    - **`RunLeaseLost`:** the segment no longer holds the run, so another instance may. The cancel gate throws it, as does a park the lease fence refused. The engine stops the run and records or settles nothing.
+    - **`MovementEngineError`, with its `code`:** the engine's own failure (`MOVENG_RUNTIME`, `MOVENG_NOT_FOUND`, …). The run fails as though the engine had raised it, under that code, which the caller reads.
+    - The first two are control flow, not failures: no collection op's `onError` forgives either. Every other class is a plain failure.
+
+  **The error envelope.** A thrown failure as JSON, wherever one crosses as data (a host over a wire, a conformance recording):
+
+  ```ts
+  interface ThrownError {
+    class: string;      // the thrown class's name (`RunLeaseLost`); `Error` for a plain one
+    code?: string;      // a `MovementEngineError`'s code; absent otherwise
+    message: string;    // the thrown message; a `MovementEngineError`'s may lead with its `CODE: `, which a reader drops when it rebuilds one
+  }
+  ```
+
+  A reader rebuilds the three classes above as themselves and any other as a plain error under the recorded name.
 - **Retries.** The engine never retries a host call. A host that retries does so inside the call, and only where this document says the call is idempotent.
 
 ## Shared shapes
@@ -84,11 +100,11 @@ interface TriggerEvent {
   objectType?: string;
   triggerEntryId?: string;
   changeType?: 'create' | 'update' | 'delete';
-  actor?: unknown;
+  actor?: { type: 'user' | 'api-token' | 'system'; id: string | null };   // who acted, as the producing system asserts it; the opaque principal reference comes later
   snapshotRunId?: string;
   snapshotComplete?: boolean;
   recordId?: string;
-  externalRecordRef?: unknown;
+  externalRecordRef?: { adapterType: string; externalId: string; recordType?: string };  // the source system's id for the record
   rootRecordType?: string;
   changedFields?: string[];
   idempotencyKey?: string;
@@ -742,7 +758,7 @@ answer:  void
 
 ### `clock`
 
-The engine reads no clock of its own. Every instant it needs that is not the run's firing instant comes from here: a sleep's wake time and an `every` timer's, a callback's expiry, the pin of a segment handed no `firedAt`, the instant a `WITHIN` measures recency from (asked once per comparison or filter that holds one), and every measured duration on the trace (a plugin invocation's, a model call's).
+The engine reads no clock of its own. Every instant it needs that is not the run's firing instant comes from here: a sleep's wake time and an `every` timer's, a callback's expiry, the pin of a segment handed no `firedAt`, the instant a `WITHIN` measures recency from (one `clock.now` request per row the `WITHIN` is evaluated on: a hop filter holding one, over N rows, asks N times), and every measured duration on the trace (a plugin invocation's, a model call's).
 
 #### `clock.now`
 
@@ -797,7 +813,7 @@ Three requests are the Rust engine's own: they are not `EngineHost` methods, and
 
 ## Changes
 
-- **Version 1, the clock and ids** (additive; the version stands). Two required families, `clock.now` and `ids.mint`. The engine reads no wall clock and mints no random id: a sleep's wake, a callback's expiry, a segment's pin without `firedAt`, every measured duration and an extraction's resource ids come from the host, so a recorded run replays to the same values. A host without them is refused before `segment.open`, naming the missing methods.
+- **Version 1 includes the clock and ids.** Two required families, `clock.now` and `ids.mint`, joined the manifest before version 1 was released, so they are part of it. The engine reads no wall clock and mints no random id: a sleep's wake, a callback's expiry, a segment's pin without `firedAt`, every measured duration and an extraction's resource ids come from the host, so a recorded run replays to the same values. A host without them is refused before `segment.open`, naming the missing methods.
 - **Version 1** (the first version on the wire). Relative to the contract as chunk 4A left it:
   - **`segment.open`** carries `hostFamiliesVersion`, and a host refuses a version it does not serve.
   - **`lookup.resolveActingUser`** answers `{ principal: { id, display? }, email? }` in place of a team user `{ id, email, name? }`. The principal is an opaque reference; `email` comes only from a host that has one.

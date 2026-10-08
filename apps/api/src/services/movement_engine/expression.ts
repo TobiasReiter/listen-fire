@@ -688,9 +688,8 @@ export interface MovementExprContext {
    *  the wall clock. */
   clock?: EngineClock;
   /** The movement's pin, for the evaluation rules a version changed
-   *  (`COALESCE` reaches only the arguments it needs from version 3). Absent
-   *  ⇒ the oldest behaviour. */
-  languageVersion?: LanguageVersion;
+   *  (`COALESCE` reaches only the arguments it needs from version 3). */
+  languageVersion: LanguageVersion;
   /**
    * The event side, when interpreting inside a movement body. File-level
    * expressions evaluate without one (they cannot reach the event
@@ -1507,11 +1506,7 @@ export async function evalMovementExpr(
           'built-in functions run everywhere; an integration-provided function runs only as a write-field value on a field that advertises it',
         );
       }
-      if (
-        expr.fn === 'coalesce'
-        && ctx.languageVersion !== undefined
-        && since(ctx.languageVersion, 3)
-      ) {
+      if (expr.fn === 'coalesce' && since(ctx.languageVersion, 3)) {
         // From version 3 COALESCE short-circuits, as TypeScript's `??` does: an
         // argument after the first present one is never evaluated, so its
         // effects (a model call, a read) never happen and its failures are

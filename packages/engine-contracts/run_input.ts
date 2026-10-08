@@ -31,9 +31,9 @@ export interface RunInput {
    * passes the run row's `started_at`, which a resume reads back unchanged, so
    * a run that parks for a day still computes the window it started with.
    *
-   * An ISO 8601 instant. Absent ⇒ the interpreter pins `new Date()` once at
-   * construction: still one instant for the whole run, just not one that
-   * survives a park. Every path that can park supplies it.
+   * An ISO 8601 instant. Absent ⇒ the engine asks the host's `clock.now` once
+   * as the segment opens and pins that: still one instant for the segment,
+   * just not one that survives a park. Every path that can park supplies it.
    */
   firedAt?: string;
   /**

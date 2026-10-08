@@ -41,7 +41,7 @@ import { pathRootName, probePathHead, typeNameOf } from '../parser/ast';
 import { parseProgram } from '../parser/parse';
 import { unwrapCredentialArg } from '../parser/scan';
 import { expressionOfSlot, parseMovementExpression } from '../expression/bridge';
-import { CURRENT_LANGUAGE_VERSION, before, since, type LanguageVersion } from '../language_version';
+import { CURRENT_LANGUAGE_VERSION, since, type LanguageVersion } from '../language_version';
 
 export interface InstanceChain {
   /** The construction's adapter slug (import aliases resolved back). */
@@ -535,14 +535,15 @@ export function scanInstanceChains(
     }
   };
   /**
-   * A collection op, in the form it takes before version 3 (from 3 it is a
-   * call, read as one). What it reads — its collection, a `REDUCE`'s starting
-   * value, a `MAP`'s settings — is this scope's demand, as a call's arguments
-   * are. Its function's body is not walked: before version 3 a call's function
-   * argument demands nothing (visitCallArg), and an older movement keeps that.
+   * A collection op as its own form, which only the grammar before version 3
+   * produces (from 3 it is a call, read as one). The node kind already says
+   * which grammar wrote it, so it is walked whatever the pin. What it reads —
+   * its collection, a `REDUCE`'s starting value, a `MAP`'s settings — is this
+   * scope's demand, as a call's arguments are. Its function's body is not
+   * walked: before version 3 a call's function argument demands nothing
+   * (visitCallArg), and an older movement keeps that.
    */
   const visitCollectionOp = (op: CollectionOpExpression, aliasScope: Map<string, AliasGrounding>): void => {
-    if (!before(languageVersion, 3)) return;
     visitSlot(op.source, aliasScope);
     if (op.init !== undefined) visitSlot(op.init, aliasScope);
     if (op.config !== undefined) visitSlot(op.config, aliasScope);

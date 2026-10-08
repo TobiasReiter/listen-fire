@@ -63,6 +63,7 @@ import {
 } from './services/translation_graph/adapters/email/inbound_auth';
 import { sentryScopeHandler } from './lib/middleware/sentry_scope';
 import { startup as startBackgroundProcesses } from './startup';
+import { assertAutomationsDrainConfigured } from './startup/automations';
 import { startEventLoopWatchdogIfEnabled } from './services/event_loop_watchdog';
 import { linkTrpcWsServer, trpcRouter } from './interfaces/trpc';
 import { webhookSyncRouter } from './interfaces/rest/webhookSync';
@@ -120,6 +121,11 @@ assertParserReady();
 // An engine choice that is neither "rust" nor "ts" would fail every run at its
 // first statement; refuse it here instead. Each run still reads the choice.
 assertEngineChoiceConfigured();
+
+// A drain mode it does not know, or a tick URL without its key (or the
+// reverse), is a deployment that believes its work drains when it does not.
+// Checked only where automations is mounted (the gate is inside).
+assertAutomationsDrainConfigured();
 
 // A blocked event loop is the one failure this process cannot narrate: the
 // health check goes unanswered, the logs stop mid-sentence, and the platform

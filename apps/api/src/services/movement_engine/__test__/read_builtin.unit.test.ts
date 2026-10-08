@@ -12,7 +12,7 @@ jest.mock('../../logger', () => ({
 }));
 
 import type { ExprSlot, Span } from 'movement-lang';
-import { parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 import {
   Environment,
   evalMovementExpr,
@@ -50,6 +50,7 @@ async function evaluate(
   env.declare('attachment', { kind: 'value', value: opts.attachment ?? null });
   return evalMovementExpr(parseMovementExpression(text), {
     env,
+    languageVersion: CURRENT_LANGUAGE_VERSION,
     ...(opts.resolveFileText ? { resolveFileText: opts.resolveFileText } : {}),
     ...(opts.trace ? { trace: opts.trace } : {}),
   });

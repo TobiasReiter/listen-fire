@@ -15,7 +15,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { MB } from '../../constants';
-import { WireDiscriminableEvent } from 'engine-contracts';
+import { AdapterEmitBody as EmitBody, AdapterWakeBody as WakeBody } from 'engine-contracts';
 import {
   authenticateAdapterDoor,
   emitAdapterEvents,
@@ -25,11 +25,6 @@ import {
 import { ADAPTER_TEAM_HEADER } from '../../services/translation_graph/protocol/client';
 import { neverAsAny } from '../../lib/utils/types';
 import { logger } from '../../services/logger';
-
-const MAX_BATCH = 1000;
-
-const EmitBody = z.object({ events: z.array(WireDiscriminableEvent).min(1).max(MAX_BATCH) });
-const WakeBody = z.object({ keys: z.array(z.string().min(1)).min(1).max(MAX_BATCH) });
 
 const adapterDoorsRouter: ReturnType<typeof Router> = Router();
 

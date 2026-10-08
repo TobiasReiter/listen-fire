@@ -25,6 +25,9 @@ export { CATALOG_SNAPSHOT_VERSION, DEPRECATED_CATALOG_SNAPSHOT_VERSIONS, SUPPORT
  *  host stores it and hands it back. */
 export const PARK_STATE_VERSION = 1;
 
+/** The park state versions this release reads. */
+export const SUPPORTED_PARK_STATE_VERSIONS: ReadonlySet<number> = new Set([1]);
+
 /** The host families and the entry points (docs/contracts/host-families.md),
  *  carried on every `segment.open`. */
 export const HOST_FAMILIES_VERSION = 1;
@@ -46,7 +49,7 @@ export const CONTRACTS = {
     supported: [...SUPPORTED_CATALOG_SNAPSHOT_VERSIONS],
     deprecated: [...DEPRECATED_CATALOG_SNAPSHOT_VERSIONS],
   },
-  'park-state': { current: PARK_STATE_VERSION, supported: [1], deprecated: [] },
+  'park-state': { current: PARK_STATE_VERSION, supported: [...SUPPORTED_PARK_STATE_VERSIONS], deprecated: [] },
   'host-families': {
     current: HOST_FAMILIES_VERSION,
     supported: [...SUPPORTED_HOST_FAMILIES_VERSIONS],
@@ -69,5 +72,17 @@ export function refuseUnsupportedHostFamiliesVersion(opening: { hostFamiliesVers
   throw new Error(
     `segment.open carries host families version ${JSON.stringify(seen) ?? 'none'}, which this host does not serve ` +
       `(supported: ${[...SUPPORTED_HOST_FAMILIES_VERSIONS].join(', ')})`,
+  );
+}
+
+/** Refuse a parked state whose version this release does not read, before
+ *  anything is rehydrated from it: it names the contract, the version it was
+ *  handed and the ones it reads. Every writer has always stamped the version,
+ *  so a state that names none is refused the same way. */
+export function refuseUnsupportedParkStateVersion(version: unknown): void {
+  if (typeof version === 'number' && SUPPORTED_PARK_STATE_VERSIONS.has(version)) return;
+  throw new Error(
+    `the parked state carries park state version ${JSON.stringify(version) ?? 'none'}, which this release does not read ` +
+      `(supported: ${[...SUPPORTED_PARK_STATE_VERSIONS].join(', ')})`,
   );
 }

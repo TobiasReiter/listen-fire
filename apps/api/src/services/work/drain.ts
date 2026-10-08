@@ -310,19 +310,29 @@ export async function drainWork(opts: DrainOptions = {}): Promise<DrainResult> {
   return result;
 }
 
+/** Why `drainUntilIdle` stopped: a pass claimed fewer than `limit` rows
+ *  (`idle`), `maxPasses` ran out with the last pass full, so more may be due
+ *  (`pass_limit`), or a claim could not reach the store (`claim_failed`). */
+export type DrainStop = 'idle' | 'pass_limit' | 'claim_failed';
+
+export interface DrainUntilIdleResult extends DrainResult {
+  stopped: DrainStop;
+}
+
 /** Keep draining until a pass claims fewer than `limit` rows (bounded by maxPasses, default 20). */
 export async function drainUntilIdle(
   opts: DrainOptions & { maxPasses?: number } = {},
-): Promise<DrainResult> {
+): Promise<DrainUntilIdleResult> {
   const { maxPasses = 20, ...drainOpts } = opts;
   const limit = drainOpts.limit ?? 10;
   let total = emptyResult();
   for (let pass = 0; pass < maxPasses; pass++) {
     const result = await drainWork({ ...drainOpts, limit });
     total = addResults(total, result);
-    if (result.claimFailed || result.claimed < limit) break;
+    if (result.claimFailed) return { ...total, stopped: 'claim_failed' };
+    if (result.claimed < limit) return { ...total, stopped: 'idle' };
   }
-  return total;
+  return { ...total, stopped: 'pass_limit' };
 }
 
 export interface WorkNotifier {
@@ -341,9 +351,103 @@ export const inProcessNotifier: WorkNotifier = {
   },
 };
 
+/** For a deployment whose every pass comes from its schedule: a door's notify
+ *  does nothing, and the row waits for the next scheduled tick. */
+export class NoopNotifier implements WorkNotifier {
+  notify(): void {}
+}
+
+const TICK_FAILURE_LOG_EVERY_MS = 60_000;
+const TICK_TIMEOUT_MS = 30_000;
+
+/** One URL's tick state: at most one request in flight, and at most one more
+ *  owed — however many doors notify meanwhile, since one tick drains them all. */
+interface TickLatch {
+  inFlight: boolean;
+  pending: boolean;
+}
+
+/**
+ * For external mode: a door's notify POSTs the drain tick endpoint at each URL
+ * (any instance's, or a push subscription that forwards to one). Fire and
+ * forget, because `notifyWork` is synchronous and a lost tick costs only
+ * latency — the scheduled tick drains the row anyway. So a failure is logged,
+ * at most once a minute per URL, and never thrown.
+ */
+export class HttpTickNotifier implements WorkNotifier {
+  private readonly urls: readonly string[];
+  private readonly apiKey: string;
+  private readonly timeoutMs: number;
+  private readonly latches = new Map<string, TickLatch>();
+  private readonly lastFailureLoggedAt = new Map<string, number>();
+
+  constructor(opts: { urls: readonly string[]; apiKey: string; timeoutMs?: number }) {
+    this.urls = opts.urls;
+    this.apiKey = opts.apiKey;
+    this.timeoutMs = opts.timeoutMs ?? TICK_TIMEOUT_MS;
+  }
+
+  notify(): void {
+    for (const url of this.urls) this.request(url);
+  }
+
+  private request(url: string): void {
+    const latch = this.latches.get(url) ?? { inFlight: false, pending: false };
+    this.latches.set(url, latch);
+    if (latch.inFlight) {
+      latch.pending = true;
+      return;
+    }
+    latch.inFlight = true;
+    void this.tick(url).finally(() => {
+      latch.inFlight = false;
+      if (!latch.pending) return;
+      latch.pending = false;
+      this.request(url);
+    });
+  }
+
+  private async tick(url: string): Promise<void> {
+    // The tick answers only once its drain goes idle. Giving up on the answer
+    // does not stop that drain: the server keeps running what it claimed, so a
+    // timeout here only frees this URL for the next owed tick.
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), this.timeoutMs);
+    try {
+      logger.debug('[work] drain tick sent', { url });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
+        body: '{}',
+        signal: abort.signal,
+      });
+      const body = await response.text();
+      if (!response.ok) this.logFailure(url, `HTTP ${response.status}`);
+      else logger.debug('[work] drain tick answered', { url, result: body });
+    } catch (error) {
+      const reason = abort.signal.aborted
+        ? `no answer within ${this.timeoutMs} ms (the drain carries on)`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      this.logFailure(url, reason);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private logFailure(url: string, reason: string): void {
+    const now = Date.now();
+    const last = this.lastFailureLoggedAt.get(url);
+    if (last !== undefined && now - last < TICK_FAILURE_LOG_EVERY_MS) return;
+    this.lastFailureLoggedAt.set(url, now);
+    logger.warn('[work] drain tick failed; the scheduled tick will drain it', { url, reason });
+  }
+}
+
 let notifier: WorkNotifier = inProcessNotifier;
 
-/** Injection point: external shapes set a no-op or an HTTP poke. */
+/** Injection point: chosen at boot from the drain mode (startup/automations.ts). */
 export function setWorkNotifier(n: WorkNotifier): void {
   notifier = n;
 }

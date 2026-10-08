@@ -20,6 +20,7 @@ import {
   hostMethodPaths,
   isCorePark,
   refuseUnsupportedHostFamiliesVersion,
+  refuseUnsupportedParkStateVersion,
   tenantIdOf,
 } from '../index';
 
@@ -101,6 +102,21 @@ describe('a host families version is refused at segment.open unless this host se
     );
     expect(() => refuseUnsupportedHostFamiliesVersion({})).toThrow(
       'segment.open carries host families version none, which this host does not serve (supported: 1)',
+    );
+  });
+});
+
+describe('a park state version is refused on read unless this release reads it', () => {
+  it('passes the version it reads', () => {
+    expect(() => refuseUnsupportedParkStateVersion(PARK_STATE_VERSION)).not.toThrow();
+  });
+
+  it('refuses another version, or none, naming the contract, what it saw and what it reads', () => {
+    expect(() => refuseUnsupportedParkStateVersion(2)).toThrow(
+      'the parked state carries park state version 2, which this release does not read (supported: 1)',
+    );
+    expect(() => refuseUnsupportedParkStateVersion(undefined)).toThrow(
+      'the parked state carries park state version none, which this release does not read (supported: 1)',
     );
   });
 });
