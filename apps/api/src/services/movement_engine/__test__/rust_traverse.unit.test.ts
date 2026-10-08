@@ -115,6 +115,8 @@ interface GraphOptions {
   unstable?: boolean;
   /** What the adapter says it can traverse (`runtimeCapabilities().traversal`). */
   traversal?: { incoming?: boolean; edgeProperties?: boolean };
+  /** A record whose every field read fails, by its id. */
+  failOn?: string;
   /** The inline properties of the edge each record is landed by, by its id. */
   edgeProperties?: Record<string, Record<string, unknown>>;
 }
@@ -180,6 +182,7 @@ function fakeGraph(options: GraphOptions = {}) {
     async getFieldValue(input) {
       calls.push(['getFieldValue', input]);
       const id = positionRecordId(input.position);
+      if (id !== undefined && id === options.failOn) throw new Error(`graph: ${id} is unreadable`);
       if (id !== undefined) return byId.get(id)?.fields[input.fieldId] ?? null;
       return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId] ?? null;
     },
@@ -513,6 +516,56 @@ describe('traversal blocks in the Rust engine', () => {
     const block = (where: string) => `  kg-[c:company WHERE ${where}]-> {\n    n = c.\`name\`\n    write kg-[:note]-> { text: n }\n  }`;
     const { rust } = await agree({ body: `${block('`stage` == "Late"')}\n${block('`revenue` == 10')}` });
     expect(written(rust)).toEqual(['Initech', 'Acme']);
+  });
+
+  describe('nested blocks', () => {
+    const DEALS: Row[] = [
+      { id: 'd-1', fields: { title: 'Seed round' } },
+      { id: 'd-2', fields: { title: 'Series A' } },
+      { id: 'd-3', fields: { title: 'Bridge' } },
+    ];
+    const graph = (extra: GraphOptions = {}): GraphOptions => ({
+      collections: { company: COMPANIES, deal: DEALS },
+      links: { 'n-1/deals': ['d-1', 'd-2'], 'n-2/deals': ['d-3'], 'n-3/deals': ['d-2'] },
+      ...extra,
+    });
+    const NESTED = [
+      '  kg-[c:company WHERE `revenue` >= 10 ORDER BY `name`]-> {',
+      '    write kg-[:note]-> { text: "co ${c.`name`}" }',
+      '    c-[d:deals WHERE `title` != "Bridge" ORDER BY `title` DESC]-> {',
+      '      t = d.`title`',
+      '      if t == "Series A" {',
+      '        write kg-[:note]-> { text: "${c.`name`}: ${t}!" }',
+      '      } else {',
+      '        write kg-[:note]-> { text: "${c.`name`}: ${t}" }',
+      '      }',
+      '    }',
+      '    write kg-[:note]-> { text: "end ${c.`name`}" }',
+      '  }',
+      '  write kg-[:note]-> { text: "done" }',
+    ].join('\n');
+
+    it('walks a hop off each landing, its body writing at both levels, in order', async () => {
+      const { rust } = await agree({ body: NESTED, graph: graph() });
+      expect(written(rust)).toEqual([
+        'co Acme', 'Acme: Series A!', 'Acme: Seed round', 'end Acme',
+        'co Globex', 'end Globex',
+        'co Initech', 'Initech: Series A!', 'end Initech',
+        'co Umbrella', 'end Umbrella',
+        'done',
+      ]);
+      // Each nested walk starts at its own landing's position.
+      const origins = calls(rust).filter(([m, input]) => m === 'getRelated' && input.fieldId === 'deals').map(([, input]) => positionRecordId(input.position as never));
+      expect(origins).toEqual(['n-1', 'n-2', 'n-3', 'n-5']);
+      expect(rust.trace).toContainEqual({ kind: 'block', root: 'c-[d:deals WHERE `title` != "Bridge" ORDER BY `title` DESC]->', positions: 2 });
+    });
+
+    it('fails mid-fan-out where the TypeScript engine does, keeping the writes before it', async () => {
+      const { rust } = await agree({ body: NESTED, graph: graph({ failOn: 'd-3' }) });
+      expect(rust.failed).toBe(true);
+      expect(String(runFailureCause(rust.error))).toContain('graph: d-3 is unreadable');
+      expect(rust.error instanceof MovementRunFailed ? rust.error.partial.writes.length : -1).toBe(5);
+    });
   });
 
   describe('edge properties', () => {

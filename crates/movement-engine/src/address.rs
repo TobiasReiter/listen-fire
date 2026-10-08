@@ -51,5 +51,7 @@ mod tests {
         assert_eq!(root.encode(), "");
         assert_eq!(root.stmt(1).branch(0).stmt(2).encode(), "s1.b0.s2");
         assert_eq!(root.stmt(1).iter(0).stmt(0).branch(0).stmt(0).encode(), "s1.i0.s0.b0.s0");
+        // A nested block's iteration, inside its enclosing block's.
+        assert_eq!(root.stmt(1).iter(2).stmt(3).iter(0).stmt(1).encode(), "s1.i2.s3.i0.s1");
     }
 }

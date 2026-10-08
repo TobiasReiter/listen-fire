@@ -13,11 +13,13 @@ const path = require('node:path');
 // with chunk 5B's admission in Rust (2026-10-08), which proved it admits what
 // the shim's old allow-list did, run for run: any run lost now is a
 // regression. Raised to v1 87, v2 95 with traversal blocks over adapter edges
-// (chunk 5B task 4, 2026-10-08), exactly the counts they route. A floor
+// (chunk 5B task 4, 2026-10-08), exactly the counts they route. Raised to
+// v1 93, v2 101 with nested blocks and heads off a hop alias (chunk 5B task
+// 5: hop_narrowing's six). A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 87, v2: 95 };
+const RAN_WHOLE_FLOOR = { v1: 93, v2: 101 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

@@ -31,8 +31,11 @@
 //! 6. the body once per landing, in order, at the iteration's address
 //!    (`s1.i0.s0`), in a scope of its own holding the alias.
 //!
-//! Bodies run sequentially, as the TypeScript's do. A body may not park or
-//! suspend (admission refuses it): nothing here joins parked iterations.
+//! Bodies run sequentially, as the TypeScript's do, a nested block's at
+//! `…i<j>.s<k>.i<m>…`. A body may not park or suspend (admission refuses it):
+//! nothing here joins parked iterations. A body that fails fails the run
+//! where it stands: the iterations before it keep their writes, the rest
+//! never run.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -302,7 +305,10 @@ impl Run<'_> {
                 let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
                 (source.read.clone(), source.position.to_js())
             }
-            _ => unreachable!("admission roots a head at an instance, a handle or the event"),
+            // A nested block: the hop off an enclosing block's landing, from
+            // its own position, through the graph it was landed in.
+            Some(Binding::Landed(landed)) => (landed.read.clone(), landed.position.clone()),
+            _ => unreachable!("admission roots a head at an instance, a handle, the event or a hop alias"),
         };
         self.walk(&start, step, read, scope, span).await
     }

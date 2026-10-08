@@ -256,8 +256,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name |
 | `statement:<kind>` | a statement other than a binding, `write`, `if`, a traversal block, `await sleep(…)` and `return` (`link`, `unlink`, `delete`, `match`, `call`, `combinator`, `collection`, `error`, `refresh`) |
 | `block_head_rootless`, `block_head_expression_root` | a block head with no root, or rooted at an expression (`AT(rows, 0)-[c:company]->`) |
-| `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle or the event |
-| `block_nested` | a block inside a block's body, or a head rooted at a block's hop alias (fan-out bodies with blocks in them come next) |
+| `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle, the event or an enclosing block's hop alias |
 | `block_multi_hop` | a head that walks more than one hop (`crm-[c:companies]->-[d:deals]->`) |
 | `block_head_resources`, `block_head_step`, `block_head_does_not_lower` | a `_resources` head, a hop that is not an edge, a head the probe cannot read |
 | `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame, which this engine does not keep |
@@ -431,7 +430,9 @@ id per mint reproduces exactly (identity, in the TypeScript).
 `traverse.rs` is run.ts `interpretBlock` with its head walk
 (`headIterationsFrom` → `walkSourceHeadPaths`) for an unbound block of one
 hop off a constructed instance (from its meta position), a write's handle
-(from its record) or the event (from the seeded position):
+(from its record), the event (from the seeded position) or an enclosing
+block's hop alias (a nested block: from that landing's own position,
+through the graph it was landed in):
 
 1. the head's graph: the instance resolved as a source, once per
    instance (`instanceSourceRead`); the event's source for the event;
@@ -463,8 +464,11 @@ hop off a constructed instance (from its meta position), a write's handle
    order, a comparator's NaN read as 0, the leading run reversed when
    strictly descending, then binary insertion), the limit `slice(0, n)`;
 6. a `block` trace entry (`{root, positions}`, the head as written), then the
-   body once per landing, in order, at `…i<j>…`, in a scope of its own
-   holding the alias.
+   body once per landing, in order, at `…i<j>…` (a nested block's at
+   `…i<j>.s<k>.i<m>…`, address.ts's encoding), in a scope of its own holding
+   the alias. A body that fails fails the run where it stands, as the
+   TypeScript's does: the iterations before it keep their writes, which ride
+   out on the failure; the rest never run.
 
 A landed record (`Landed`, `sourcePosition`) is the very position object the
 adapter (or the wrapper's restamp) answered; reading its field is
@@ -473,8 +477,7 @@ adapter (or the wrapper's restamp) answered; reading its field is
 `source_field` origin.
 
 What stays the TypeScript engine's (refused, "Admission" above): bound
-blocks (`x = … { return … }`), nested blocks and heads off a hop alias,
-heads of more than one hop, heads off a value, a node, an expression or
+blocks (`x = … { return … }`), heads of more than one hop, heads off a value, a node, an expression or
 `_resources`, extraction heads (an extract is refused), a park in a body,
 EXISTS and any traversal inside an expression, writes rooted at a hop alias.
 
@@ -848,6 +851,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 87, v2 95). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 93, v2 101). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

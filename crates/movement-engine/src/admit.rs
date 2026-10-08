@@ -348,14 +348,14 @@ impl Names<'_> {
                     None => Ok(()),
                 }
             }
-            Statement::Block(_) if within == Within::Block => refuse("block_nested"),
             Statement::Block(statement) => self.block(&statement.block),
             other => refuse(format!("statement:{}", statement_kind(other))),
         }
     }
 
     /// A traversal block over an adapter edge (crate::traverse): one hop
-    /// off a constructed instance, a write's handle or the event, its WHERE
+    /// off a constructed instance, a write's handle, the event or an
+    /// enclosing block's hop alias (a nested block), its WHERE
     /// and ORDER BY key position-scoped expressions the evaluator runs, its
     /// body in the slice and with no park in it.
     fn block(&self, block: &TraversalBlock) -> Admitted {
@@ -369,16 +369,14 @@ impl Names<'_> {
             Some(PathRoot::Expression { .. }) => return refuse("block_head_expression_root"),
             Some(PathRoot::Name { name }) => name,
         };
-        if self.landings.contains(root) {
-            return refuse("block_nested");
-        }
         if self.values.contains(root) {
             return refuse("block_head_value_root");
         }
         if self.nodes.contains(root) {
             return refuse("block_head_node_root");
         }
-        if !self.instances.contains(root) && !self.handles.contains(root) && !self.events.contains(root) {
+        let held = self.instances.contains(root) || self.handles.contains(root) || self.events.contains(root) || self.landings.contains(root);
+        if !held {
             return refuse("block_head_root");
         }
         let probe = format!("{}{}.`__movement_engine_probe__`", crate::write::spell_name(root), head.hops_raw);
@@ -724,6 +722,7 @@ mod tests {
             "  co = write crm-[:companies]-> { name: \"a\" }\n  co-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }",
             "  msg-[a:attachments]-> {\n    write crm-[:notes]-> { body: a.`name` }\n  }",
             "  crm-[:companies]-> {\n    write crm-[:notes]-> { body: \"one\" }\n  }",
+            "  crm-[c:companies]-> {\n    write crm-[:notes]-> { body: c.`name` }\n    c-[d:deals WHERE `title` != c.`name`]-> {\n      x = d.`title`\n      write crm-[:notes]-> { body: x }\n    }\n  }",
         ] {
             assert_eq!(refused(body), None, "{body}");
         }
@@ -733,7 +732,6 @@ mod tests {
     fn refuses_each_block_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
             ("  crm-[c:companies]-> {\n    await sleep(1h)\n  }", "block_park"),
-            ("  crm-[c:companies]-> {\n    c-[d:deals]-> {\n      x = d.`title`\n    }\n  }", "block_nested"),
             ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
             ("  v = 1\n  v-[c:companies]-> {\n    x = 1\n  }", "block_head_value_root"),
             ("  n = node { a: 1 }\n  n-[c:kids]-> {\n    x = 1\n  }", "block_head_node_root"),
