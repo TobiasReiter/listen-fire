@@ -337,6 +337,7 @@ import {
 } from 'engine-contracts';
 import { checkPinned, parsePinned, type CheckInput } from './program_check';
 import { engineChoice, resumeSegmentInRust, runSegmentInRust, rustCanResume, rustCanRun } from './rust_engine';
+import { WriteLedger, forkWriteOrder, rootWriteOrder, type WriteOrder } from './write_ledger';
 import {
   closeRunContext,
   openRunContext,
@@ -605,6 +606,19 @@ export class MovementRunFailed extends Error {
  * raised before the interpreter starts (parse / check) are never wrapped and
  * pass straight back.
  */
+/** A resolution's identity: what it asks for, the construction args in any
+ *  key order. */
+function resolutionKey(resolution: AdapterResolution): string {
+  const args = resolution.constructionArgs;
+  return JSON.stringify([
+    resolution.adapterType,
+    resolution.credentialsId ?? null,
+    args !== undefined ? Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) : null,
+    resolution.role,
+    resolution.dryRun === true,
+  ]);
+}
+
 export function runFailureCause(error: unknown): unknown {
   return error instanceof MovementRunFailed ? error.cause : error;
 }
@@ -1545,6 +1559,9 @@ interface FlowFrame {
    *  next to each other (`recordExtractedEntities` finds its own by
    *  position). */
   trace: MovementTraceEntry[];
+  /** Where this flow's writes fall in the ledger's program order: under the
+   *  fork that started it, by its branch index (`write_ledger.ts`). */
+  writeOrder: WriteOrder;
 }
 
 /**
@@ -2173,7 +2190,7 @@ function flattenAndConjuncts(expr: Expression): Expression[] {
 }
 
 class Interpreter {
-  private readonly writes: MovementWriteRecord[] = [];
+  private readonly writeLedger = new WriteLedger();
   /** Set when the run parked at an `ask` (caught at run() top → the result
    *  carries `parked: true`, the firing caller skips finalisation). */
   private parked = false;
@@ -2206,13 +2223,15 @@ class Interpreter {
   private readonly runTrace: MovementTraceEntry[];
   /** Interns extraction sites + projects trails to refs for the
    *  firing record (E4 — refs not blobs). */
-  private readonly summariser = new ProvenanceSummariser();
+  private readonly summariser = new ProvenanceSummariser(this.writeLedger);
   /** Aliased imports: local name → name in the source namespace (catalog / workspace key). */
   private readonly importOriginals = new Map<string, string>();
   private readonly targetAdapterCache = new Map<string, Adapter>();
   /** Source-role adapters for graph-rooted traversals (see graphReadFor). */
   private readonly sourceAdapterCache = new Map<string, Adapter>();
   private readonly resolveAdapterFn: (input: AdapterResolution) => Promise<Adapter>;
+  /** Each distinct resolution's adapter, as it resolves (`resolutionKey`). */
+  private readonly resolutions = new Map<string, Promise<Adapter>>();
   /** The engine's stand-in for each host instance, by its id: the host
    *  answers one id per instance, so an instance resolved twice is one
    *  adapter here too. */
@@ -2323,6 +2342,13 @@ class Interpreter {
     return this.flowFrames.getStore()?.callStack ?? this.runCallStack;
   }
 
+  /** Where this flow's next write falls in program order. */
+  private get writeOrder(): WriteOrder {
+    return this.flowFrames.getStore()?.writeOrder ?? this.runWriteOrder;
+  }
+
+  private readonly runWriteOrder = rootWriteOrder();
+
   private readonly catalog: Catalog;
 
   constructor(
@@ -2350,14 +2376,25 @@ class Interpreter {
     // Every adapter is resolved for this segment, so it answers inside the
     // segment's host scope. What comes back is the instance as data; the
     // engine holds a stand-in that calls it through the host.
-    this.resolveAdapterFn = async (resolution) => {
-      const { segmentId } = prepared.context;
-      const resolved = await prepared.context.host.adapters.resolve(resolution);
-      const known = this.hostAdapters.get(resolved.instance);
-      if (known !== undefined) return known;
-      const adapter = hostAdapter({ host: input.host, segmentId, resolved });
-      this.hostAdapters.set(resolved.instance, adapter);
-      return adapter;
+    //
+    // One request per distinct resolution per segment: the memo holds the
+    // PROMISE, taken before the request is answered, so two flows racing to
+    // resolve the same instance share one request.
+    this.resolveAdapterFn = (resolution) => {
+      const key = resolutionKey(resolution);
+      const memoised = this.resolutions.get(key);
+      if (memoised !== undefined) return memoised;
+      const resolving = (async () => {
+        const { segmentId } = prepared.context;
+        const resolved = await prepared.context.host.adapters.resolve(resolution);
+        const known = this.hostAdapters.get(resolved.instance);
+        if (known !== undefined) return known;
+        const adapter = hostAdapter({ host: input.host, segmentId, resolved });
+        this.hostAdapters.set(resolved.instance, adapter);
+        return adapter;
+      })();
+      this.resolutions.set(key, resolving);
+      return resolving;
     };
     this.currentImports = prepared.link?.imports;
     // The firing that started this run rides along in the provenance of every
@@ -3137,7 +3174,7 @@ class Interpreter {
     leafAddress: string,
   ): Promise<SpineCompletion> {
     const { op } = frame;
-    const flow = this.openFlowFrame();
+    const flow = this.openFlowFrame(forkWriteOrder(this.writeOrder)(frame.boundary.member));
     const into = this.trace;
     let answer: MemberAnswer;
     try {
@@ -3483,7 +3520,7 @@ class Interpreter {
   private assembleResult(movementName: string): MovementRunResult {
     return {
       movementName,
-      writes: this.writes,
+      writes: this.writeLedger.ordered(),
       extractionSites: this.summariser.sites,
       trace: this.runTrace,
       ...(this.parked ? { parked: true } : {}),
@@ -4448,8 +4485,8 @@ class Interpreter {
    * its OWN child environment, all siblings concurrently (Promise.all):
    * sibling bindings are invisible to each other while the block runs
    * (the checker already rejects cross-sibling reads — `parallelSibling`
-   * scope poisoning), and the block's writes interleave in completion
-   * order on the firing record. After the join, each sibling's bindings
+   * scope poisoning), and the block's writes land on the firing record in
+   * program order, sibling by sibling (`write_ledger.ts`). After the join, each sibling's bindings
    * hoist into the enclosing scope in program order — exactly the
    * checker's "sibling bindings come into scope after the block".
    */
@@ -4724,6 +4761,7 @@ class Interpreter {
   }): Promise<number[]> {
     const { indices, count, settings, spelling, answers, member } = input;
     const frames: FlowFrame[] = [];
+    const memberOrder = forkWriteOrder(this.writeOrder);
     const parked: number[] = [];
     let failure: { index: number; error: unknown } | undefined;
     let next = 0;
@@ -4743,7 +4781,7 @@ class Interpreter {
     /** Run the member at `position` of `indices`; true when it parked. */
     const runOne = async (position: number): Promise<boolean> => {
       const index = indices[position];
-      const frame = this.openFlowFrame();
+      const frame = this.openFlowFrame(memberOrder(index));
       frames[position] = frame;
       try {
         answers[index] = { kept: true, value: await this.flowFrames.run(frame, () => member(index)) };
@@ -4801,9 +4839,10 @@ class Interpreter {
   }
 
   /** A frame for one concurrent flow started from this one: the enclosing
-   *  call stack copied, and an empty trace of its own. */
-  private openFlowFrame(): FlowFrame {
-    return { callStack: [...this.callStack], trace: [] };
+   *  call stack copied, an empty trace of its own, and its writes ordered
+   *  under `writeOrder` (one branch of a fork, `forkWriteOrder`). */
+  private openFlowFrame(writeOrder: WriteOrder): FlowFrame {
+    return { callStack: [...this.callStack], trace: [], writeOrder };
   }
 
   /** The function a collection op runs: written in place, or a name bound to
@@ -4891,12 +4930,13 @@ class Interpreter {
       return;
     }
 
+    const armOrder = forkWriteOrder(this.writeOrder);
     const forks = arms.map((arm, index) => ({
       arm,
       index,
       env: env.child(),
       address: childBranch(stmtAddress, index),
-      frame: this.openFlowFrame(),
+      frame: this.openFlowFrame(armOrder(index)),
     }));
     const settled = new Map<number, Binding>();
     const parked: typeof forks = [];
@@ -9175,8 +9215,8 @@ class Interpreter {
       );
     }
     if (input.bindingName !== undefined) record.bindingName = input.bindingName;
-    record.origin = { kind: 'write', writeIndex: this.writes.length };
-    this.writes.push(record);
+    record.origin = { kind: 'write', writeIndex: this.writeLedger.nextIndex };
+    this.writeLedger.append(record, this.writeOrder);
   }
 
   /**
@@ -9896,8 +9936,8 @@ class Interpreter {
       const current = await adapter.readRecord({ recordType, externalId: matched.externalId });
       if (current) resultData = { ...resultData, ...current };
     }
-    const writeIndex = this.writes.length;
-    this.writes.push({
+    const writeIndex = this.writeLedger.nextIndex;
+    this.writeLedger.append({
       kind: 'link',
       adapterType: adapter.adapterType,
       recordType: fromRecordType,
@@ -9917,8 +9957,10 @@ class Interpreter {
         to: [],
       },
       ...(bindingName !== undefined ? { bindingName } : {}),
-    });
+    }, this.writeOrder);
     if (bindingName !== undefined) {
+      const origin = { kind: 'write' as const, writeIndex, externalId: matched.externalId };
+      this.writeLedger.cite(origin);
       env.declare(bindingName, {
         kind: 'handle',
         handle: {
@@ -9930,7 +9972,7 @@ class Interpreter {
           writtenValues: {},
           resultData,
           provenance: {},
-          origin: { kind: 'write', writeIndex, externalId: matched.externalId },
+          origin,
         },
         targetType: recordType,
         graph,
@@ -10214,7 +10256,7 @@ class Interpreter {
       deleteRecord({ recordType, externalId, mutationContext: this.mutationContext }),
     );
 
-    this.writes.push({
+    this.writeLedger.append({
       kind: 'delete',
       adapterType: adapter.adapterType,
       recordType,
@@ -10226,7 +10268,7 @@ class Interpreter {
         binding?.kind === 'handle'
           ? { record: this.summariser.summariseTrail(handleTrail(binding.handle)) }
           : {},
-    });
+    }, this.writeOrder);
   }
 
   /**
@@ -10315,7 +10357,7 @@ class Interpreter {
     changed: boolean;
   }): void {
     const { resolved } = input;
-    this.writes.push({
+    this.writeLedger.append({
       kind: input.kind,
       adapterType: resolved.adapter.adapterType,
       recordType: resolved.from.recordType,
@@ -10332,7 +10374,7 @@ class Interpreter {
         from: this.summariser.summariseTrail(handleTrail(resolved.fromHandle)),
         to: this.summariser.summariseTrail(handleTrail(resolved.toHandle)),
       },
-    });
+    }, this.writeOrder);
   }
 
   private resolveEdgeEndpoint(
@@ -10361,7 +10403,7 @@ class Interpreter {
    * `applyCreate` / `applyUpdate` already carries its identity and
    * write-event facts; here it gains the firing-log layer in place
    * (summarised per-field provenance, interned write origin) and is
-   * pushed onto `this.writes`. The handle binding wraps that SAME object,
+   * appended to the write ledger. The handle binding wraps that SAME object,
    * so the binding value and the firing entry are one — there is no
    * slim-handle → fuller-entry transform.
    */
@@ -10374,7 +10416,7 @@ class Interpreter {
      *  firing record for the fields that were actually written. */
     fieldProvenance: Record<string, Provenance>;
   }): Binding {
-    const writeIndex = this.writes.length;
+    const writeIndex = this.writeLedger.nextIndex;
     const record = input.write;
     for (const fieldId of Object.keys(record.writtenValues)) {
       record.provenance[fieldId] = this.summariser.summariseTrail(
@@ -10389,7 +10431,7 @@ class Interpreter {
       writeIndex,
       ...(record.externalId !== undefined ? { externalId: record.externalId } : {}),
     };
-    this.writes.push(record);
+    this.writeLedger.append(record, this.writeOrder);
     const binding: Binding = {
       kind: 'handle',
       handle: record,

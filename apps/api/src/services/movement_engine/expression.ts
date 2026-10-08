@@ -103,6 +103,7 @@ import type {
 import type { EdgeStep, Expression, FilterOperator } from '#shared/expression/types';
 import { isObjectSpread, objectMemberExpression } from '#shared/expression/types';
 import { serialize as serializeExpression } from '#shared/expression/formula';
+import { settledAll } from './fans';
 import { aiExpressionSettings } from './ai_tiers';
 import {
   applyHopOrderLimit,
@@ -2828,7 +2829,7 @@ async function stepExistsCursor(
       return cursor.edges.get(step.edgeTypeId) ?? [];
     case 'positions':
       return (
-        await Promise.all(cursor.landings.map((landing) => stepExistsCursor(landing, step, ctx)))
+        await settledAll(cursor.landings.map((landing) => stepExistsCursor(landing, step, ctx)))
       ).flat();
     case 'handle': {
       // A written or matched record IS a record in its graph: the hop is that

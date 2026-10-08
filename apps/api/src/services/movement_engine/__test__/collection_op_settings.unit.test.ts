@@ -468,3 +468,75 @@ describe('members writing the same record take turns', () => {
     expect(attio.creates[0]?.fields.summary).toBe('got-a,got-b,got-c,got-d,got-e');
   });
 });
+
+describe('what concurrent members leave behind does not depend on which finished first', () => {
+  const WRITING = [
+    'movement intake(m: <inbox-[:message]->>) {',
+    `  MAP(${MEMBERS}, { concurrency: 5 }, (u) => {`,
+    '    page = fetch_url(url: u)',
+    '    co = write crm-[:companies]-> { name: u, summary: COALESCE(page, "none") }',
+    '    write crm-[:people]-> { name: co.`name` }',
+    '  })',
+    '}',
+  ].join('\n');
+
+  async function runCounting(source: string, invoker: MovementTransformInvoker) {
+    const email = makeFakeAdapter('email');
+    const attio = makeFakeAdapter('attio');
+    const host = makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email.adapter : attio.adapter,
+      },
+      llm: { transforms: invoker },
+    });
+    const resolutions: string[] = [];
+    const counted = {
+      ...host,
+      adapters: {
+        ...host.adapters,
+        resolve: (input: Parameters<typeof host.adapters.resolve>[0]) => {
+          resolutions.push(`${input.adapterType} as ${input.role}`);
+          return host.adapters.resolve(input);
+        },
+      },
+    };
+    const result = await runMovement({
+      source: PRELUDE + source,
+      movementName: 'intake',
+      event: webhookEvent(),
+      teamId: TEAM_ID,
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
+      host: counted,
+    });
+    return { result, attio, resolutions };
+  }
+
+  it('the writes are in program order, member by member, and each citation names its write there', async () => {
+    const plugin = delayedInvoker();
+    const { result, attio } = await runCounting(WRITING, plugin.invoker);
+    // The members' writes LANDED out of member order …
+    expect(attio.creates.filter((c) => c.recordType === 'company').map((c) => c.fields.name)).not.toEqual([
+      'a', 'b', 'c', 'd', 'e',
+    ]);
+    // … and the ledger reads as the members would have run one after another.
+    expect(result.writes.map((w) => `${w.recordType} ${String(w.writtenValues.name)}`)).toEqual(
+      ['a', 'b', 'c', 'd', 'e'].flatMap((u) => [`company ${u}`, `person ${u}`]),
+    );
+    result.writes.forEach((write, index) => {
+      if (write.recordType === 'company') {
+        expect(write.origin?.writeIndex).toBe(index);
+      } else {
+        // The person's name came off the company its member wrote just before.
+        expect(write.provenance.name).toEqual([expect.objectContaining({ kind: 'write', write: index - 1 })]);
+      }
+    });
+  });
+
+  it('members resolving the same instance at once share one resolution', async () => {
+    const { resolutions } = await runCounting(WRITING, delayedInvoker().invoker);
+    expect(resolutions.filter((r) => r === 'attio as target')).toHaveLength(1);
+    expect(new Set(resolutions).size).toBe(resolutions.length);
+  });
+});

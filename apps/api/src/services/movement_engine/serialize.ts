@@ -61,6 +61,7 @@ import type {
   SourceRead,
 } from './expression';
 import { bindingOf, isDictValue } from './expression';
+import { settledAll } from './fans';
 import { isFileRef } from '../translation_graph/adapter';
 import { MovementEngineError } from './errors';
 
@@ -558,7 +559,7 @@ async function rehydrateInPark(
           edge.kind === 'landed'
             ? {
                 kind: 'landed',
-                landings: await Promise.all(edge.landings.map(rehydrate)),
+                landings: await settledAll(edge.landings.map(rehydrate)),
                 ...landingShapeOf(edge),
               }
             : { kind: 'deferred', walk: await rehydrateDeferredWalk(edge.walk, ctx, park) };
@@ -608,12 +609,12 @@ async function rehydrateInPark(
     case 'positions':
       return {
         kind: 'positions',
-        landings: await Promise.all(descriptor.landings.map(rehydrate)),
+        landings: await settledAll(descriptor.landings.map(rehydrate)),
       };
     case 'tuple':
       return {
         kind: 'tuple',
-        slots: await Promise.all(descriptor.slots.map(rehydrate)),
+        slots: await settledAll(descriptor.slots.map(rehydrate)),
       };
     case 'closure': {
       const captured = new Map<string, Binding>();
@@ -631,7 +632,7 @@ async function rehydrateInPark(
     case 'blockMeta': {
       const edges = new Map<string, Binding[]>();
       for (const [name, descriptors] of Object.entries(descriptor.edges)) {
-        edges.set(name, await Promise.all(descriptors.map(rehydrate)));
+        edges.set(name, await settledAll(descriptors.map(rehydrate)));
       }
       return {
         kind: 'blockMeta',
@@ -716,7 +717,7 @@ async function rehydrateValue(
     case 'record':
       return rehydrateInPark(descriptor.binding, ctx, park);
     case 'list':
-      return Promise.all(descriptor.of.map((entry) => rehydrateValue(entry, ctx, park)));
+      return settledAll(descriptor.of.map((entry) => rehydrateValue(entry, ctx, park)));
     case 'map': {
       const out: Record<string, unknown> = {};
       for (const [key, entry] of Object.entries(descriptor.of)) {

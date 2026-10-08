@@ -225,6 +225,11 @@ export async function driveEngine(
       inFlight.delete(settled.id);
       step = engine.answer(settled.id, settled.answer);
     }
+  } catch (error) {
+    // The segment is ending: every request still in flight settles first, so
+    // none reaches the host after it.
+    await Promise.allSettled(inFlight.values());
+    throw error;
   } finally {
     engine.finish();
   }

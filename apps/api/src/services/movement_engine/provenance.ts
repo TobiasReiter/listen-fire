@@ -113,6 +113,10 @@ export function fieldEvidenceFromProvenance(
 export class ProvenanceSummariser {
   readonly sites: Record<string, ExtractSiteSummary> = {};
 
+  /** `writes`, when given, is told of every summarised origin that cites a
+   *  write by number, so the run's final numbering reaches it. */
+  constructor(private readonly writes?: { cite(citation: Extract<SummarisedOrigin, { kind: 'write' }>): void }) {}
+
   summariseTrail(provenance: Provenance | undefined): SummarisedOrigin[] {
     return (provenance?.origins ?? []).map((origin) => this.summariseOrigin(origin));
   }
@@ -129,13 +133,16 @@ export class ProvenanceSummariser {
           ...(origin.item !== undefined ? { item: origin.item } : {}),
         };
       }
-      case 'write':
-        return {
+      case 'write': {
+        const cited: Extract<SummarisedOrigin, { kind: 'write' }> = {
           kind: 'write',
           write: origin.writeIndex,
           ...(origin.externalId !== undefined ? { externalId: origin.externalId } : {}),
           ...(origin.field !== undefined ? { field: origin.field } : {}),
         };
+        this.writes?.cite(cited);
+        return cited;
+      }
       case 'ai':
         return { kind: 'ai', prompt: origin.prompt };
       case 'source_field':

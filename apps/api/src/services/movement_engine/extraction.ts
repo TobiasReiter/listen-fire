@@ -65,6 +65,7 @@ import type {
   ShapeNode,
 } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
+import { mapConcurrent, settledAll } from './fans';
 import { languageVersionOf, runLogFields, stopwatch, throwIfCancelled, type IdMint, type RunFacts } from './run_context';
 import { matchOption } from '../../lib/utils/string';
 import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
@@ -285,10 +286,10 @@ async function buildNodeSpec(
     name,
     description,
     exported: [...new Set(stages.flatMap((stage) => stage.fields.map((f) => f.name)))],
-    stages: await Promise.all(
+    stages: await settledAll(
       stages.map(async (stage) => ({
         through: stage.through ?? [],
-        fields: await Promise.all(
+        fields: await settledAll(
           stage.fields.map(async (f) => {
             const type = resolveFieldType(f, options);
             return {
@@ -299,7 +300,7 @@ async function buildNodeSpec(
             };
           }),
         ),
-        children: await Promise.all(
+        children: await settledAll(
           stage.children.map(async (c) =>
             c.declared === undefined
               ? buildNodeSpec(c.name, await describeSlot(c.description, options), c.stages, options)
@@ -386,7 +387,7 @@ async function buildShapeNodeSpec(
     stages: [
       {
         through: [],
-        fields: await Promise.all(
+        fields: await settledAll(
           shape.fields.map(async (f) => {
             const type = resolveFieldType(f, options);
             return {
@@ -397,7 +398,7 @@ async function buildShapeNodeSpec(
             };
           }),
         ),
-        children: await Promise.all(
+        children: await settledAll(
           shape.children.map((c) => buildShapeNodeSpec(c.name, c, options)),
         ),
       },
@@ -761,37 +762,6 @@ class TraceSink {
  */
 export const STAGE_FAN_OUT = 4;
 
-/**
- * Run `job` over `items`, at most `STAGE_FAN_OUT` at a time, answering in the
- * order the items were WRITTEN. The ordering is the point: a stage's
- * enrichment blocks render in declaration order and its trace reads in walk
- * order however the fetches actually landed.
- *
- * The first rejection is what the caller sees, and nothing further is started
- * after it — the serial loop's behaviour, less the items already in flight.
- */
-async function mapConcurrent<T, R>(
-  items: readonly T[],
-  job: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = [];
-  let next = 0;
-  let failed = false;
-  const worker = async (): Promise<void> => {
-    while (!failed) {
-      const index = next++;
-      if (index >= items.length) return;
-      try {
-        results[index] = await job(items[index], index);
-      } catch (error) {
-        failed = true;
-        throw error;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(STAGE_FAN_OUT, items.length) }, worker));
-  return results;
-}
 
 // The `resolveFileText` seam's own vocabulary lives beside the trace shape it
 // feeds (./expression.ts) — `READ(file)` reads files through the same seam, so
@@ -1046,7 +1016,7 @@ class Materializer {
     // its `from` sources do: every record it produces carries them.
     const pipelineResources: Resource[] = [];
     try {
-      const results = await mapConcurrent(fromPipeline, async (plugin, i) => {
+      const results = await mapConcurrent(fromPipeline, STAGE_FAN_OUT, async (plugin, i) => {
         // The same boundary the per-entity pipeline keeps (see `runPipeline`):
         // a bundle-level fetch is as long as any other, and an operator's
         // cancel must not wait for the whole fan before it means anything.
@@ -1658,7 +1628,7 @@ class Materializer {
     const children = [...emission.children.values()].flat();
     const branches = children.map(() => trace.branch());
     try {
-      await mapConcurrent(children, (child, i) =>
+      await mapConcurrent(children, STAGE_FAN_OUT, (child, i) =>
         this.resolveFences(child, {
           segments,
           baseSources,
@@ -1692,7 +1662,7 @@ class Materializer {
     );
     const branches = specs.map(() => walk.trace.branch());
     try {
-      const extracted = await mapConcurrent(specs, async (child, i) => {
+      const extracted = await mapConcurrent(specs, STAGE_FAN_OUT, async (child, i) => {
         const enrichments = await this.runPipeline(
           child.stages[0].through,
           childAncestors,
@@ -1759,7 +1729,7 @@ class Materializer {
   ): Promise<Array<{ plugin: string; result: TransformInvocationResult }>> {
     const branches = pipeline.map(() => trace.branch());
     try {
-      const results = await mapConcurrent(pipeline, async (plugin, i) => {
+      const results = await mapConcurrent(pipeline, STAGE_FAN_OUT, async (plugin, i) => {
         // A retrieval plugin is the longest thing a statement does — a per-URL
         // fetch has a seven-minute backstop, and this pipeline runs once per
         // entity per stage. Checking before each launch is what keeps a cancel

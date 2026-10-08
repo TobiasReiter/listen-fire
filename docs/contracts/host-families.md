@@ -213,6 +213,13 @@ The decision that a join has closed is split between the engine and the run host
 - **The engine closes the frame.** A resumed branch that completes walks back up through its join frames (`parallel`, a fan-out, a race). At each one it persists its exports (`park.sink.persistBranchExport`) and decrements the frame (`park.sink.decrementJoin`). `closed: true` comes back for exactly one branch, which collects the exports (`collectBranchExports`) and runs what follows the join, in its own segment. Any other branch's segment ends there. Without `park.sink`, a resumed join closes only its own leaf.
 - **The run host closes the run.** Whether the whole run is complete is not a host call: the host decides it from what its park sink persisted, once the segment has returned without parking, cancelling or failing. The run is complete when no join frame is still pending and no leaf other than the one just resumed is parked (production: `settleBranchComplete` in each resume driver). Complete, the host settles the run `success`; otherwise it records the segment's writes and keeps the run parked.
 
+### What an entry answers
+
+Every entry answers the segment's result (`MovementRunResult`, `movement_engine/run.ts`), or throws carrying the same result as far as it got.
+
+- **`writes`** is every write, link, unlink and delete the segment made, in program order: as the program's text orders them, and the writes of concurrent branches (a collection op's members, a `race`'s or `parallel`'s arms) by branch index, each branch's writes together at the place of the fork. It is never the order the writes landed in, so two hosts that answer at different speeds get the same ledger. A write that cites another (`origin.writeIndex`; a provenance origin `{ kind: 'write', write }`) names its position in this list.
+- **`trace`** is in the same order: each branch's entries together, in branch order.
+
 ## The families
 
 | Family | Methods | Optional for an embedder |

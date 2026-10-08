@@ -78,6 +78,7 @@ const PURE_FILES = [
   'expression.ts',
   'extraction.ts',
   'extraction_call.ts',
+  'fans.ts',
   'host.ts',
   'host_adapter.ts',
   'interpretable.ts',
@@ -92,6 +93,7 @@ const PURE_FILES = [
   'rust_stats.ts',
   'rust_wire.ts',
   'serialize.ts',
+  'write_ledger.ts',
 ];
 
 /** Host implementations that still live in this directory: they wire the
