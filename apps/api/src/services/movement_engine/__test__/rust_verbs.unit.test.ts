@@ -123,17 +123,13 @@ function fakeCrm(store: Store) {
       calls.push(['updateRecord', input]);
       return { adapterType: 'attio', externalId: input.externalId, data: {}, association: containerAssociation(input) };
     },
-    ...(verbs.has('deleteRecord')
-      ? {
-          async deleteRecord(input: unknown) {
-            calls.push(['deleteRecord', input]);
-            return {};
-          },
-        }
-      : {}),
+    async deleteRecord(input) {
+      calls.push(['deleteRecord', input]);
+      return {};
+    },
     ...(verbs.has('linkRecords')
       ? {
-          async linkRecords(input: unknown) {
+          async linkRecords(input: Parameters<NonNullable<Adapter['linkRecords']>>[0]) {
             calls.push(['linkRecords', input]);
             return { created: true };
           },
@@ -141,13 +137,14 @@ function fakeCrm(store: Store) {
       : {}),
     ...(verbs.has('unlinkRecords')
       ? {
-          async unlinkRecords(input: unknown) {
+          async unlinkRecords(input: Parameters<NonNullable<Adapter['unlinkRecords']>>[0]) {
             calls.push(['unlinkRecords', input]);
             return { removed: false };
           },
         }
       : {}),
   };
+  // An adapter without the capability, as the TypeScript engine's `typeof` check sees it.
   if (!verbs.has('deleteRecord')) delete (adapter as Partial<Adapter>).deleteRecord;
   return { adapter, calls };
 }

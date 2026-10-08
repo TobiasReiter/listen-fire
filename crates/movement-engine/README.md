@@ -658,6 +658,14 @@ None of the first four is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
 brings.
 
+The record verbs, the target WHERE, nested and bound blocks add none: each
+of their mid-run failures (an adapter without `linkRecords`,
+`unlinkRecords` or `deleteRecord`; link endpoints in two graphs, or an edge
+the from side's type does not declare; a traversed record with no stable id
+parenting a write, or of no known type updated or deleted; a read that
+fails part way through a fan-out) is the TypeScript engine's own, with its
+message, after the same calls.
+
 ### For an embedder: the segment protocol
 
 Every shape here is what apps/api's rust_engine.ts sends and answers; another
