@@ -125,7 +125,9 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
         Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
         Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
         Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
-        Err(Stop::Cancelled | Stop::Parked(_)) => unreachable!("a cancel or a park ends the body, and the run returns its result"),
+        Err(Stop::Cancelled | Stop::Parked(_) | Stop::EndedQuietly) => {
+            unreachable!("a cancel, a park or a quiet end ends the body, and the run returns its result")
+        }
     };
     // What this segment's priced calls spent, by source, for the run host's
     // account (the run's figures are the run host's to report).
@@ -149,6 +151,10 @@ pub(crate) enum Stop {
     Cancelled,
     /// The flow parked at this address (`RunParked`): its state is durable.
     Parked(String),
+    /// A match found nothing (`ScopeEndedQuietly`): the enclosing scope ends
+    /// with nothing thrown — a block's iteration skips, the movement's body
+    /// stops, and the run completes.
+    EndedQuietly,
 }
 
 #[derive(Debug, Clone)]
@@ -328,14 +334,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     if let Some(reason) = run.stamp_decline() {
         return Err(Stop::Declined(reason.into()));
     }
-    // A deprecated pin runs, and says so on the run's own record (the check's
-    // version diagnostic; an unsupported one never got an answer).
-    let version_warning = run.checked.diagnostics.iter().find_map(|d| {
-        let code = d.get("code")?.as_str()?;
-        let message = d.get("message")?.as_str()?;
-        code.starts_with("MOV_LANGUAGE_VERSION_").then(|| (code.to_string(), message.to_string()))
-    });
-    if let Some((code, message)) = version_warning {
+    // A deprecated pin runs, and says so on the run's own record (the check
+    // answer's version warning; an unsupported pin never got an answer).
+    if let Some((code, message)) = run.checked.version_warning.clone() {
         run.trace(TraceEntry::Warning { code, message });
     }
     let outcome = run.execute().await;
@@ -386,7 +387,9 @@ impl Run<'_> {
             Some(resume) => self.resume(resume, &movement, &scope, &path).await,
         };
         let (cancelled, parked) = match ran {
-            Ok(()) => (false, None),
+            // Find-on-missing at the top scope: the body simply stops, its
+            // earlier writes stand, and the run completes.
+            Ok(()) | Err(Stop::EndedQuietly) => (false, None),
             Err(Stop::Cancelled) => (true, None),
             Err(Stop::Parked(address)) => (false, Some(address)),
             Err(Stop::Thrown(failure)) => return Err(Stop::Failed(failure, self.result(false, None))),
@@ -736,6 +739,10 @@ impl Run<'_> {
                     RValue::Write { write } => {
                         self.write(write, Some(&assign.name), scope, &format!("{path}/value/write")).await?;
                     }
+                    RValue::Match { r#match } => {
+                        self.match_record(r#match, Some(&assign.name), scope).await?;
+                    }
+                    RValue::Link { link } => self.link(link, Some(&assign.name), scope).await?,
                     RValue::Node { node } => {
                         let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
                         scope.declare(assign.name.clone(), Binding::Node(built));
@@ -768,6 +775,22 @@ impl Run<'_> {
                 self.write(&statement.write, None, scope, &format!("{path}/write")).await?;
                 Ok(Flow::FellThrough)
             }
+            Statement::Match(statement) => {
+                self.match_record(&statement.r#match, None, scope).await?;
+                Ok(Flow::FellThrough)
+            }
+            Statement::Link(statement) => {
+                self.link(&statement.link, None, scope).await?;
+                Ok(Flow::FellThrough)
+            }
+            Statement::Unlink(statement) => {
+                self.unlink(statement, scope).await?;
+                Ok(Flow::FellThrough)
+            }
+            Statement::Delete(statement) => {
+                self.delete(&statement.name, scope).await?;
+                Ok(Flow::FellThrough)
+            }
             Statement::Await(statement) => match &statement.r#await.source {
                 AwaitSource::Sleep { duration, .. } => {
                     self.sleep(duration, at, scope, None).await?;
@@ -797,7 +820,10 @@ impl Run<'_> {
                     None => Ok(Flow::FellThrough),
                 }
             }
-            _ => Err(Stop::Thrown(Failure::unsupported("this statement", "the Rust engine runs bindings, writes, `if`, `sleep` and `return`"))),
+            _ => Err(Stop::Thrown(Failure::unsupported(
+                "this statement",
+                "the Rust engine runs bindings, writes, matches, links, unlinks, deletes, blocks, `if`, `sleep` and `return`",
+            ))),
         }
     }
 
@@ -1176,7 +1202,7 @@ fn mutation_context(event: &Js, now_ms: f64) -> Js {
 
 /// `ProvenanceSummariser.summariseOrigin` for the origins this engine meets:
 /// an earlier write by its index, `AI()` by its prompt, the rest as they are.
-fn summarise(origin: &Js) -> Js {
+pub(crate) fn summarise(origin: &Js) -> Js {
     let get = |key: &str| crate::unique::get(origin, key);
     match get("kind") {
         Js::String(kind) if kind == "write" => {
@@ -1776,7 +1802,11 @@ mod tests {
 
     #[test]
     fn a_dated_read_declines_before_the_version_warning_is_traced() {
-        let deprecated = json!({ "diagnostics": [{ "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" }], "stamps": [] });
+        let deprecated = json!({
+            "diagnostics": [{ "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" }],
+            "stamps": [],
+            "versionWarning": { "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" },
+        });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { name: msg.`when` }\n}";
         let (done, seen) = dated_run(source, deprecated);
         assert_eq!(done, json!({ "declined": "event_field_dated" }));

@@ -767,7 +767,7 @@ Three requests are the Rust engine's own: they are not `EngineHost` methods, and
 
 | request | answer | why it is not on the host |
 |---|---|---|
-| `check.program { source, languageVersion, upgradingFrom? }` | `{ diagnostics, link?, stamps }`, the checker's AST stamps by path; a program that fails its check gets no answer, and the run fails with `MOVENG_CHECK` (or `MOVENG_PARSE`, `MOVENG_LANGUAGE_VERSION`) as the TypeScript engine's does | the checker is TypeScript until it is ported |
+| `check.program { source, languageVersion, upgradingFrom? }` | `{ diagnostics, link?, stamps, versionWarning? }`, the checker's AST stamps by path, and `versionWarning: { code, message }` for a deprecated pin as the host's engine reads its release (the warning the run traces); a program that fails its check gets no answer, and the run fails with `MOVENG_CHECK` (or `MOVENG_PARSE`, `MOVENG_LANGUAGE_VERSION`) as the TypeScript engine's does | the checker is TypeScript until it is ported |
 | `builtins.function { id, args, now, languageVersion }` | `{ value }` or `{ threw: { class, code?, message } }`, values on the eval wire | a standard-library reading the Rust engine does not reproduce (V8's date parser, local time, some regex features), answered by the TypeScript member |
 | `builtins.compare { op, left, right }` | the same two shapes, for the shared comparator | `WITHIN` and the comparator's other readings, likewise |
 

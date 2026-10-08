@@ -15,11 +15,13 @@ const path = require('node:path');
 // regression. Raised to v1 87, v2 95 with traversal blocks over adapter edges
 // (chunk 5B task 4, 2026-10-08), exactly the counts they route. Raised to
 // v1 93, v2 101 with nested blocks and heads off a hop alias (chunk 5B task
-// 5: hop_narrowing's six). A floor
+// 5: hop_narrowing's six), then to v1 114, v2 136 with the record verbs in
+// and out of blocks (match, link, unlink, delete, a target's WHERE, writes
+// off a traversed record). A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 93, v2: 101 };
+const RAN_WHOLE_FLOOR = { v1: 114, v2: 136 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
@@ -60,6 +62,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
   const runs = { routed: 0, admitted: 0, ranWhole: 0, shimFaults: 0, notAdmitted: {}, declined: {}, hostCalls: {} };
   const byFile = {};
+  const refusedByFile = {};
   const add = (into, from) => {
     for (const [key, count] of Object.entries(from ?? {})) into[key] = (into[key] ?? 0) + count;
   };
@@ -76,6 +79,7 @@ async function globalTeardown(globalConfig, projectConfig) {
       runs.shimFaults += stats.runs?.shimFaults ?? 0;
       if ((stats.runs?.ranWhole ?? 0) > 0 && stats.file) byFile[stats.file] = (byFile[stats.file] ?? 0) + stats.runs.ranWhole;
       add(runs.notAdmitted, stats.runs?.notAdmitted);
+      if (Object.keys(stats.runs?.notAdmitted ?? {}).length > 0 && stats.file) add((refusedByFile[stats.file] ??= {}), stats.runs.notAdmitted);
       add(runs.declined, stats.runs?.declined);
       add(runs.hostCalls, stats.runs?.hostCalls);
     }
@@ -89,7 +93,11 @@ async function globalTeardown(globalConfig, projectConfig) {
   // shim's input checks and the engine's own admission, by reason.
   console.log(`Rust runs not admitted: ${JSON.stringify(sorted(runs.notAdmitted))}`);
   // Which files' runs the Rust engine ran whole, for a report.
-  if (process.env.MOVEMENT_RUST_RUNS_BY_FILE === '1') console.log(`Rust runs by file: ${JSON.stringify(byFile)}`);
+  if (process.env.MOVEMENT_RUST_RUNS_BY_FILE === '1') {
+    console.log(`Rust runs by file: ${JSON.stringify(byFile)}`);
+    // And why each file's other runs went to the TypeScript engine.
+    console.log(`Rust runs not admitted by file: ${JSON.stringify(refusedByFile)}`);
+  }
   if (total.answered === 0) {
     throw new Error('MOVEMENT_ENGINE=rust, and the Rust evaluator answered no expression in the whole run');
   }

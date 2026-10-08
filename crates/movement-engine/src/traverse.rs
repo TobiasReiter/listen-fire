@@ -103,19 +103,19 @@ impl Read {
 
 // ── Positions, as translation_graph/types.ts reads and makes them ──
 
-fn record_type(position: &Js) -> Option<String> {
+pub(crate) fn record_type(position: &Js) -> Option<String> {
     match get(position, "recordType") {
         Js::String(text) => Some(text),
         _ => None,
     }
 }
 
-fn is_stable(position: &Js) -> bool {
+pub(crate) fn is_stable(position: &Js) -> bool {
     matches!(get(&get(position, "identity"), "kind"), Js::String(kind) if kind == "stable")
 }
 
 /// `positionRecordId`.
-fn record_id(position: &Js) -> Js {
+pub(crate) fn record_id(position: &Js) -> Js {
     if is_stable(position) { get(&get(position, "identity"), "recordId") } else { Js::Undefined }
 }
 
@@ -124,7 +124,7 @@ pub(crate) fn position_data(position: &Js) -> Js {
     get(&get(position, "identity"), "data")
 }
 
-fn stable_position(adapter_type: Js, record_type: Js, record_id: Js, data: Js) -> Js {
+pub(crate) fn stable_position(adapter_type: Js, record_type: Js, record_id: Js, data: Js) -> Js {
     env::object_of(vec![
         ("adapterType", adapter_type),
         ("recordType", record_type),
@@ -276,7 +276,12 @@ impl Run<'_> {
             if let Some(alias) = &step.alias {
                 iteration.declare(alias.clone(), Binding::Landed(landed));
             }
-            self.body(&block.body, &iteration, &at.iter(index), &body, 0).await?;
+            match self.body(&block.body, &iteration, &at.iter(index), &body, 0).await {
+                // A match inside found nothing: this iteration skips, the
+                // next runs.
+                Err(Stop::EndedQuietly) => continue,
+                other => other?,
+            };
         }
         Ok(Flow::FellThrough)
     }
@@ -315,7 +320,7 @@ impl Run<'_> {
 
     /// `instanceSourceRead`: the instance resolved as a source, once per
     /// (adapter, credential, construction arguments).
-    async fn instance_read(&self, instance: &InstanceBinding) -> Result<Rc<Read>, Failure> {
+    pub(crate) async fn instance_read(&self, instance: &InstanceBinding) -> Result<Rc<Read>, Failure> {
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let construction_args: std::collections::BTreeMap<String, String> = instance
             .construction_config

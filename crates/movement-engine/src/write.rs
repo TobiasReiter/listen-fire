@@ -84,7 +84,7 @@ pub struct TargetAdapter {
 }
 
 /// One parent a linked write hangs off (`ResolvedWriteTarget.parents[n]`).
-struct Parent {
+pub(crate) struct Parent {
     handle_name: String,
     edge_name: String,
     record_type: String,
@@ -93,28 +93,52 @@ struct Parent {
 }
 
 /// `ResolvedWriteTarget`.
-struct Target {
-    adapter: Rc<TargetAdapter>,
-    record_type: String,
-    graph: Rc<InstanceBinding>,
-    parents: Vec<Parent>,
-    handle_type: Option<String>,
+pub(crate) struct Target {
+    pub(crate) adapter: Rc<TargetAdapter>,
+    pub(crate) record_type: String,
+    pub(crate) graph: Rc<InstanceBinding>,
+    pub(crate) parents: Vec<Parent>,
+    pub(crate) handle_type: Option<String>,
+    /// The target edge's WHERE, when it carries one.
+    pub(crate) where_: Vec<TargetWhere>,
+}
+
+impl Target {
+    /// A target with no parents and no WHERE: what a criteria link searches.
+    pub(crate) fn bare(adapter: Rc<TargetAdapter>, record_type: String, graph: Rc<InstanceBinding>) -> Target {
+        Target { adapter, record_type, graph, parents: Vec::new(), handle_type: None, where_: Vec::new() }
+    }
+}
+
+/// Which statement a target is resolved for: its messages name it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verb {
+    Write,
+    Match,
+    Link,
 }
 
 /// What `evaluateWriteFields` hands back.
-struct Fields {
-    fields: Js,
+pub(crate) struct Fields {
+    pub(crate) fields: Js,
     provenance: Vec<(String, Option<Trail>)>,
     semantics: Vec<(String, FieldWriteMode)>,
-    descriptor: Js,
+    pub(crate) descriptor: Js,
 }
 
 /// One field line, a spread's included: its name, its value's text, the
 /// span its literals cite and its write mode.
-struct Line {
+pub(crate) struct Line {
     name: String,
     slot: ast::ExprSlot,
     semantics: Option<FieldWriteMode>,
+}
+
+impl Line {
+    /// A field line as written (a match's, which has no spreads).
+    pub(crate) fn of(field: &ast::FieldEntry) -> Line {
+        Line { name: field.name.clone(), slot: field.value.clone(), semantics: field.semantics }
+    }
 }
 
 impl Run<'_> {
@@ -128,11 +152,11 @@ impl Run<'_> {
         if let WriteTarget::Position { alias, .. } = &write.target {
             return self.position_write(alias, &lines, binding_name, scope).await;
         }
-        let resolved = self.write_target(write, scope).await?;
+        let resolved = self.write_target(&write.target, scope, Verb::Write).await?;
         let evaluated = self.write_fields(&lines, &resolved.adapter, &resolved.record_type, scope).await?;
         let handle_type = discriminated_handle_type(resolved.graph.schema.as_ref(), &resolved.record_type, &evaluated.fields);
         let target = Target { handle_type, ..resolved };
-        let identity = self.unique_by_identity(write, &target)?;
+        let identity = self.unique_by_identity(&write.unique_by, &target)?;
         let native = unique::get(&evaluated.descriptor, "uniquenessConstraints");
         let constraints = unique::merge(&native, identity.branches.clone());
         let resolve_record = self.identity_record(&evaluated.fields, &identity.overlay, &constraints, &target);
@@ -146,7 +170,7 @@ impl Run<'_> {
             self.version(),
         );
         let record = self
-            .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links))
+            .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links, scope))
             .await?;
         self.record_write(record, binding_name, scope, &target, &evaluated.provenance);
         Ok(())
@@ -201,9 +225,10 @@ impl Run<'_> {
     }
 
     /// `resolveWriteTarget` for a linked target: a collection of an instance,
-    /// or one edge off a handle or the event.
-    async fn write_target(&self, write: &WriteExpression, scope: &Rc<Scope>) -> Result<Target, Stop> {
-        let (path, explicit_type) = match &write.target {
+    /// or one edge off a handle, the event or a traversed record (a block's
+    /// hop alias).
+    pub(crate) async fn write_target(&self, target: &WriteTarget, scope: &Rc<Scope>, verb: Verb) -> Result<Target, Stop> {
+        let (path, explicit_type) = match target {
             WriteTarget::Linked { path, explicit_type, .. } => (path, explicit_type),
             WriteTarget::Tuple { .. } => return Err(thrown(Failure::unsupported("a tuple write", "the Rust engine runs linked writes"))),
             WriteTarget::Position { .. } => unreachable!("position writes are dispatched first"),
@@ -214,13 +239,13 @@ impl Run<'_> {
         };
         let root = root_name.as_deref().and_then(|name| scope.resolve(name));
         if let Some(Binding::Instance(instance)) = &root {
-            let (edge, _) = self.single_edge(path, "a linked write walks exactly one declared edge from its root")?;
+            let (edge, where_) = self.single_edge(path, "a linked write walks exactly one declared edge from its root")?;
             let record_type = explicit_type
                 .clone()
                 .or_else(|| instance.schema.as_ref().and_then(|s| s.collections.0.get(&edge)).map(|c| c.target.clone()))
                 .unwrap_or(edge);
             let adapter = self.target_adapter(instance).await?;
-            return Ok(Target { adapter, record_type, graph: instance.clone(), parents: Vec::new(), handle_type: None });
+            return Ok(Target { adapter, record_type, graph: instance.clone(), parents: Vec::new(), handle_type: None, where_: where_.into_iter().collect() });
         }
         let name = root_name.unwrap_or_default();
         let describe = |b: &Option<Binding>| b.as_ref().map_or("not in scope".to_string(), |b| describe_binding(b).to_string());
@@ -228,6 +253,9 @@ impl Run<'_> {
         let graph = match &root {
             Some(Binding::Handle(handle)) => handle.graph.clone(),
             Some(Binding::Event) => self.source_instance.borrow().clone().ok_or_else(|| thrown(self.unnamed_graph(&name)))?,
+            // The graph the record was read from: its constructed instance by
+            // name, or, read off the event's source, the source's instance.
+            Some(Binding::Landed(landed)) => self.landed_graph(landed, scope).ok_or_else(|| thrown(self.unnamed_graph(&name)))?,
             other => {
                 return Err(thrown(Failure::engine(
                     "MOVENG_RUNTIME",
@@ -240,6 +268,20 @@ impl Run<'_> {
         };
         let (parent_type, parent_id, parent_data) = match &root {
             Some(Binding::Handle(handle)) => (handle.target_type.clone(), handle.record.get("externalId"), Some(handle.record.get("resultData"))),
+            Some(Binding::Landed(landed)) => {
+                let position = &landed.position;
+                match (crate::traverse::record_type(position), crate::traverse::is_stable(position)) {
+                    (Some(record_type), true) => (record_type, crate::traverse::record_id(position), Some(crate::traverse::position_data(position))),
+                    _ => {
+                        return Err(thrown(Failure::engine(
+                            "MOVENG_RUNTIME",
+                            format!(
+                                "'{name}' is a traversed position without a stable record id — only positions with durable native identity (e.g. a WHERE-selected Spreadsheet or Channel) can parent a linked write"
+                            ),
+                        )));
+                    }
+                }
+            }
             _ => {
                 let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
                 let position = &source.position;
@@ -254,8 +296,8 @@ impl Run<'_> {
                 }
             }
         };
-        let (edge, _) = self.single_edge(path, "a linked write walks exactly one declared edge from its parent handle")?;
-        let record_type = infer_linked_type(graph.schema.as_ref(), &parent_type, &edge, explicit_type.as_deref(), &name)?;
+        let (edge, where_) = self.single_edge(path, "a linked write walks exactly one declared edge from its parent handle")?;
+        let record_type = infer_linked_type(graph.schema.as_ref(), &parent_type, &edge, explicit_type.as_deref(), &name, verb)?;
         let data = parent_data.filter(|d| matches!(d, Js::Object(_) | Js::Array(_)));
         let adapter = self.target_adapter(&graph).await?;
         Ok(Target {
@@ -264,14 +306,28 @@ impl Run<'_> {
             graph,
             parents: vec![Parent { handle_name: name, edge_name: edge.clone(), record_type: parent_type, external_id: parent_id, data }],
             handle_type: None,
+            where_: where_.into_iter().collect(),
         })
     }
 
-    /// `singleWriteEdge`: the one edge step a linked path walks.
-    fn single_edge(&self, path: &ast::PathHead, detail: &str) -> Result<(String, bool), Stop> {
+    /// The instance a traversed record lives in (`linkedPathGraph`): read
+    /// off the event's source, the source's own; otherwise the constructed
+    /// instance its read names.
+    pub(crate) fn landed_graph(&self, landed: &crate::bindings::Landed, scope: &Scope) -> Option<Rc<InstanceBinding>> {
+        let source = self.source.borrow().clone();
+        if source.as_ref().is_some_and(|s| Rc::ptr_eq(&s.read, &landed.read)) {
+            return self.source_instance.borrow().clone();
+        }
+        match scope.resolve(&landed.read.instance_name) {
+            Some(Binding::Instance(instance)) => Some(instance),
+            _ => None,
+        }
+    }
+
+    /// `singleWriteEdge`: the one edge step a linked path walks, and its WHERE.
+    fn single_edge(&self, path: &ast::PathHead, detail: &str) -> Result<(String, Option<TargetWhere>), Stop> {
         match edge_shape(path) {
-            EdgeShape::One { edge } => Ok((edge, false)),
-            EdgeShape::Narrowed => Err(thrown(Failure::unsupported("a WHERE on a write's target", "the Rust engine runs unnarrowed targets"))),
+            EdgeShape::One { edge, where_ } => Ok((edge, where_)),
             EdgeShape::MultiHop => Err(thrown(Failure::unsupported("multi-hop linked writes", detail))),
             EdgeShape::Invalid(e) => {
                 Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"))))
@@ -290,7 +346,7 @@ impl Run<'_> {
 
     /// `targetAdapterFor`: one resolve per instance, rehearsed when the run
     /// or the instance's own construction says so.
-    async fn target_adapter(&self, instance: &InstanceBinding) -> Result<Rc<TargetAdapter>, Stop> {
+    pub(crate) async fn target_adapter(&self, instance: &InstanceBinding) -> Result<Rc<TargetAdapter>, Stop> {
         let dry = self.input.dry_run
             || instance.construction_config.iter().any(|(k, v)| k == "dry_run" && js::trim(v).to_lowercase() == "true");
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
@@ -324,7 +380,7 @@ impl Run<'_> {
     }
 
     /// `evaluateWriteFields`: `describe`, then each line in order.
-    async fn write_fields(&self, lines: &[Line], adapter: &TargetAdapter, record_type: &str, scope: &Rc<Scope>) -> Result<Fields, Stop> {
+    pub(crate) async fn write_fields(&self, lines: &[Line], adapter: &TargetAdapter, record_type: &str, scope: &Rc<Scope>) -> Result<Fields, Stop> {
         let descriptor = self.call_adapter(&adapter.instance, "describe", env::object_of(vec![("typeId", Js::str(record_type))])).await.map_err(thrown)?;
         let described: Vec<Js> = match unique::get(&descriptor, "fields") {
             Js::Array(list) => list.items.clone(),
@@ -373,11 +429,11 @@ impl Run<'_> {
     /// `uniqueByIdentity`: the clauses' key branches, the literal values a
     /// key compared with, and each clause's conjuncts that narrow what its
     /// key finds.
-    fn unique_by_identity(&self, write: &WriteExpression, target: &Target) -> Result<Identity, Stop> {
+    pub(crate) fn unique_by_identity(&self, unique_by: &[ast::UniqueClause], target: &Target) -> Result<Identity, Stop> {
         let mut branches = Vec::new();
         let mut overlay: Vec<(String, Js)> = Vec::new();
         let mut narrowings = Vec::new();
-        for clause in &write.unique_by {
+        for clause in unique_by {
             let mut all: Vec<(String, bool)> = Vec::new();
             let mut non_key: Vec<Expression> = Vec::new();
             for part in unique::split_conjuncts(&clause.predicate.raw) {
@@ -518,7 +574,7 @@ impl Run<'_> {
     }
 
     /// `identityRecord`.
-    fn identity_record(&self, fields: &Js, overlay: &[(String, Js)], constraints: &Js, target: &Target) -> Js {
+    pub(crate) fn identity_record(&self, fields: &Js, overlay: &[(String, Js)], constraints: &Js, target: &Target) -> Js {
         let mut record = JsObject::new();
         if let Js::Object(fields) = fields {
             for (k, v) in fields.entries() {
@@ -555,8 +611,122 @@ impl Run<'_> {
         Js::object(record)
     }
 
+    /// `resolveIdentity`: the shortlist (each key's candidates narrowed by
+    /// its clause), then the target's WHERE over what is left, then the rules
+    /// and, when they cannot say, the judge. The candidate chosen, and why
+    /// the judge could not be asked, if it could not.
+    pub(crate) async fn resolve_identity(
+        &self,
+        target: &Target,
+        asserted: &Js,
+        resolve_record: &Js,
+        constraints: &Js,
+        narrowings: &[Option<Expression>],
+        scope: &Rc<Scope>,
+    ) -> Result<(Option<Js>, Option<String>), Stop> {
+        let shortlist = self.identity_shortlist(target, resolve_record, constraints, narrowings).await?;
+        // The target's WHERE runs last, on the smallest list: it reads each
+        // candidate as the record it is.
+        let candidates = if target.where_.is_empty() { shortlist } else { self.narrow_by_target_where(target, shortlist, scope).await? };
+        let (chosen, judge_unavailable) = match unique::arbitrate_without_judge(asserted, &candidates, constraints, self.version()) {
+            Some(decided) => (decided, None),
+            None => self.judge(asserted, &candidates, &target.record_type, constraints).await?,
+        };
+        Ok((chosen.and_then(|i| candidates.get(i)).cloned(), judge_unavailable))
+    }
+
+    /// The judge (`llm.arbitrateEntities`), a priced call: the index it
+    /// picked, and why it could not judge, if it could not.
+    async fn judge(&self, asserted: &Js, candidates: &[Js], record_type: &str, constraints: &Js) -> Result<(Option<usize>, Option<String>), Stop> {
+        let request = host::llm::arbitrate_entities(
+            self.segment(),
+            host::llm::Arbitration {
+                asserted: env::encode_plain(asserted),
+                candidates: env::encode_plain(&Js::array(candidates.to_vec())),
+                record_type,
+                constraints: env::encode_plain(constraints),
+                language_version: self.version(),
+            },
+            self.ledger.budget(),
+        );
+        let answer = self.ask(request).await.map_err(thrown)?.unwrap_or(Json::Null);
+        // A priced call: what it spent is charged, a refusal included,
+        // before the answer is read (run_context.ts `charged`).
+        self.ledger
+            .charge(answer.get("cost"))
+            .map_err(|message| thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }))?;
+        if let Some(error) = answer.get("error") {
+            // A budget refusal is the run's cap, from the run's own
+            // figures, where they say it is met.
+            if error.get("kind").and_then(Json::as_str) == Some("budget")
+                && let Some(cap) = self.ledger.exceeded()
+            {
+                return Err(thrown(Failure::CapExceeded(cap)));
+            }
+            let message = error.get("message").and_then(Json::as_str).unwrap_or_default().to_string();
+            return Err(thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }));
+        }
+        Ok((judged_index(&answer), answer.get("judgeUnavailable").and_then(Json::as_str).map(String::from)))
+    }
+
+    /// `narrowCandidatesByTargetWhere`: each candidate read as the record it
+    /// is — its snapshot under what `readRecord` answers, a stable position
+    /// of the handle's type read through the target graph as a source — and
+    /// kept when every WHERE on the target holds of it, the hop's alias
+    /// naming it. The shortlist's order is kept.
+    async fn narrow_by_target_where(&self, target: &Target, candidates: Vec<Js>, scope: &Rc<Scope>) -> Result<Vec<Js>, Stop> {
+        if candidates.is_empty() {
+            return Ok(candidates);
+        }
+        let read = self.instance_read(&target.graph).await.map_err(thrown)?;
+        let adapter = &target.adapter;
+        let record_type = target.handle_type.clone().unwrap_or_else(|| target.record_type.clone());
+        let mut kept = Vec::new();
+        for candidate in candidates {
+            let external_id = unique::get(&candidate, "externalId");
+            let current = if adapter.instance.has("readRecord") {
+                let mut read = JsObject::new();
+                read.set("recordType".into(), Js::str(target.record_type.clone()));
+                read.set("externalId".into(), external_id.clone());
+                self.call_adapter(&adapter.instance, "readRecord", Js::object(read)).await.map_err(thrown)?
+            } else {
+                Js::Null
+            };
+            let mut data = JsObject::new();
+            let url = unique::get(&candidate, "url");
+            if !matches!(url, Js::Undefined) {
+                data.set("url".into(), url);
+            }
+            for bag in [unique::get(&candidate, "data"), current] {
+                if let Js::Object(bag) = bag {
+                    for (k, v) in bag.entries() {
+                        data.set(k.clone(), v.clone());
+                    }
+                }
+            }
+            let position = crate::traverse::stable_position(Js::str(adapter.adapter_type.clone()), Js::str(record_type.clone()), external_id, Js::object(data));
+            let landed = Rc::new(crate::bindings::Landed::new(position, None, read.clone()));
+            let mut passes = true;
+            for where_ in &target.where_ {
+                let at = scope.child();
+                if let Some(alias) = &where_.alias {
+                    at.declare(alias.clone(), Binding::Landed(landed.clone()));
+                }
+                if !self.evaluate_in(&where_.filter, &at, None, Some(landed.clone())).await?.value.truthy() {
+                    passes = false;
+                    break;
+                }
+            }
+            if passes {
+                kept.push(candidate);
+            }
+        }
+        Ok(kept)
+    }
+
     /// `findThenWrite`: the search, the rules and the judge, then an update
     /// of what was found or a create.
+    #[allow(clippy::too_many_arguments)]
     async fn find_then_write(
         &self,
         target: &Target,
@@ -565,45 +735,10 @@ impl Run<'_> {
         constraints: &Js,
         narrowings: &[Option<Expression>],
         parent_links: &[Js],
+        scope: &Rc<Scope>,
     ) -> Result<Js, Stop> {
-        let candidates = self.identity_shortlist(target, resolve_record, constraints, narrowings).await?;
-        let mut judge_unavailable = None;
-        let chosen = match unique::arbitrate_without_judge(&fields.fields, &candidates, constraints, self.version()) {
-            Some(decided) => decided,
-            None => {
-                let request = host::llm::arbitrate_entities(
-                    self.segment(),
-                    host::llm::Arbitration {
-                        asserted: env::encode_plain(&fields.fields),
-                        candidates: env::encode_plain(&Js::array(candidates.clone())),
-                        record_type: &target.record_type,
-                        constraints: env::encode_plain(constraints),
-                        language_version: self.version(),
-                    },
-                    self.ledger.budget(),
-                );
-                let answer = self.ask(request).await.map_err(thrown)?.unwrap_or(Json::Null);
-                // A priced call: what it spent is charged, a refusal included,
-                // before the answer is read (run_context.ts `charged`).
-                self.ledger
-                    .charge(answer.get("cost"))
-                    .map_err(|message| thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }))?;
-                if let Some(error) = answer.get("error") {
-                    // A budget refusal is the run's cap, from the run's own
-                    // figures, where they say it is met.
-                    if error.get("kind").and_then(Json::as_str) == Some("budget")
-                        && let Some(cap) = self.ledger.exceeded()
-                    {
-                        return Err(thrown(Failure::CapExceeded(cap)));
-                    }
-                    let message = error.get("message").and_then(Json::as_str).unwrap_or_default().to_string();
-                    return Err(thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }));
-                }
-                judge_unavailable = answer.get("judgeUnavailable").and_then(Json::as_str).map(String::from);
-                judged_index(&answer)
-            }
-        };
-        let matched = chosen.and_then(|i| candidates.get(i)).map(|c| unique::get(c, "externalId"));
+        let (chosen, judge_unavailable) = self.resolve_identity(target, &fields.fields, resolve_record, constraints, narrowings, scope).await?;
+        let matched = chosen.map(|c| unique::get(&c, "externalId"));
         if let Some(external_id) = matched.filter(|id| !matches!(id, Js::Undefined)) {
             if let Some(updated) = self.apply_update(target, &external_id, fields, parent_links).await? {
                 return Ok(updated);
@@ -785,32 +920,10 @@ impl Run<'_> {
         Ok(Js::object(record))
     }
 
-    /// `executePositionWrite` for a held handle: an update by its id.
+    /// `executePositionWrite`: an update by the id of the record the alias
+    /// stands on — a write's handle, or a traversed record.
     async fn position_write(&self, alias: &str, lines: &[Line], binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<(), Stop> {
-        let handle = match scope.resolve(alias) {
-            Some(Binding::Handle(handle)) => handle,
-            None => return Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("'{alias}' is not in scope — the checker should have caught this")))),
-            Some(other) => {
-                return Err(thrown(Failure::engine(
-                    "MOVENG_RUNTIME",
-                    format!(
-                        "'{alias}' is {} — 'write {alias} {{ … }}' needs a record position (a traversal alias or a prior write result)",
-                        describe_binding(&other)
-                    ),
-                )));
-            }
-        };
-        let external_id = handle.record.get("externalId");
-        if matches!(external_id, Js::Undefined) {
-            return Err(thrown(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!(
-                    "can't update '{alias}' — it has no stable record to update (an inbound payload, an extracted node, or a write that produced no record). Create a new record instead"
-                ),
-            )));
-        }
-        let adapter = self.target_adapter(&handle.graph).await?;
-        let target = Target { adapter, record_type: handle.target_type.clone(), graph: handle.graph.clone(), parents: Vec::new(), handle_type: None };
+        let (target, external_id) = self.position_target(alias, scope, "update").await?;
         let fields = self.write_fields(lines, &target.adapter, &target.record_type, scope).await?;
         let Some(record) = self.apply_update(&target, &external_id, &fields, &[]).await? else {
             return Err(thrown(Failure::engine(
@@ -826,10 +939,72 @@ impl Run<'_> {
         Ok(())
     }
 
+    /// `resolvePositionWriteTarget`: the record an alias stands on, as an
+    /// update's (or a delete's) destination, and its id. A traversed record
+    /// is written through its graph's target adapter, under the type its
+    /// position names; a handle under the type it stands on.
+    pub(crate) async fn position_target(&self, alias: &str, scope: &Rc<Scope>, action: &str) -> Result<(Target, Js), Stop> {
+        let unstable = || {
+            thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!(
+                    "can't update '{alias}' — it has no stable record to update (an inbound payload, an extracted node, or a write that produced no record). Create a new record instead"
+                ),
+            ))
+        };
+        let target = |adapter, record_type, graph| Target { adapter, record_type, graph, parents: Vec::new(), handle_type: None, where_: Vec::new() };
+        match scope.resolve(alias) {
+            None => Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("'{alias}' is not in scope — the checker should have caught this")))),
+            Some(Binding::Landed(landed)) => {
+                let position = &landed.position;
+                if !crate::traverse::is_stable(position) {
+                    return Err(unstable());
+                }
+                let Some(record_type) = crate::traverse::record_type(position) else {
+                    return Err(thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("can't {action} '{alias}' — its record type is unknown (an un-narrowed position). Narrow it with an IS test first"),
+                    )));
+                };
+                let name = &landed.read.instance_name;
+                let Some(Binding::Instance(instance)) = scope.resolve(name) else {
+                    return Err(thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("can't {action} '{alias}' — its graph '{name}' is not a constructed instance in scope"),
+                    )));
+                };
+                let adapter = self.target_adapter(&instance).await?;
+                Ok((target(adapter, record_type, instance), crate::traverse::record_id(position)))
+            }
+            Some(Binding::Handle(handle)) => {
+                let external_id = handle.record.get("externalId");
+                if matches!(external_id, Js::Undefined) {
+                    return Err(unstable());
+                }
+                let adapter = self.target_adapter(&handle.graph).await?;
+                Ok((target(adapter, handle.target_type.clone(), handle.graph.clone()), external_id))
+            }
+            Some(other) => {
+                let statement = if action == "delete" { format!("delete {alias}") } else { format!("write {alias} {{ … }}") };
+                Err(thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("'{alias}' is {} — '{statement}' needs a record position (a traversal alias or a prior write result)", describe_binding(&other)),
+                )))
+            }
+        }
+    }
+
     /// `recordWrite`: the firing record finished — each written field's
     /// trail summarised, the binding's name, the interned origin — onto the
     /// run's writes, and the handle bound.
-    fn record_write(&self, record: Js, binding_name: Option<&str>, scope: &Scope, target: &Target, provenance: &[(String, Option<Trail>)]) {
+    pub(crate) fn record_write(
+        &self,
+        record: Js,
+        binding_name: Option<&str>,
+        scope: &Scope,
+        target: &Target,
+        provenance: &[(String, Option<Trail>)],
+    ) -> Rc<Handle> {
         let write_index = self.writes.borrow().len();
         let Js::Object(object) = &record else { unreachable!("a write record is an object") };
         let mut object = JsObject::clone_of(object);
@@ -857,9 +1032,11 @@ impl Run<'_> {
             target_type: target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
             graph: target.graph.clone(),
         };
+        let handle = Rc::new(handle);
         if let Some(name) = binding_name {
-            scope.declare(name, Binding::Handle(Rc::new(handle)));
+            scope.declare(name, Binding::Handle(handle.clone()));
         }
+        handle
     }
 
     /// A field read off a record the run holds (`readBindingField`): a
@@ -906,7 +1083,7 @@ impl Run<'_> {
     /// An effect run holding the cross-run locks it needs, let go however it
     /// ends (`EffectLocks.withLocks` beneath the run's own flows, which in
     /// this engine never run at once).
-    async fn with_locks<T>(&self, names: Vec<String>, effect: impl std::future::Future<Output = Result<T, Stop>>) -> Result<T, Stop> {
+    pub(crate) async fn with_locks<T>(&self, names: Vec<String>, effect: impl std::future::Future<Output = Result<T, Stop>>) -> Result<T, Stop> {
         let mut names = names;
         names.sort();
         names.dedup();
@@ -936,19 +1113,19 @@ fn judged_index(answer: &Json) -> Option<usize> {
     answer.get("index").and_then(Json::as_f64).filter(|i| *i >= 0.0 && i.fract() == 0.0).map(|i| i as usize)
 }
 
-struct Identity {
-    branches: Vec<Js>,
-    overlay: Vec<(String, Js)>,
+pub(crate) struct Identity {
+    pub(crate) branches: Vec<Js>,
+    pub(crate) overlay: Vec<(String, Js)>,
     /// Per authored clause, the conjuncts that narrow what its key finds.
-    narrowings: Vec<Option<Expression>>,
+    pub(crate) narrowings: Vec<Option<Expression>>,
 }
 
-fn thrown(failure: Failure) -> Stop {
+pub(crate) fn thrown(failure: Failure) -> Stop {
     Stop::Thrown(failure)
 }
 
 /// The first keys of a write record, in the TypeScript's order.
-fn record_head(adapter: &TargetAdapter, record_type: &str, created: bool, committed: bool, external_id: Js) -> JsObject {
+pub(crate) fn record_head(adapter: &TargetAdapter, record_type: &str, created: bool, committed: bool, external_id: Js) -> JsObject {
     let mut record = JsObject::new();
     record.set("adapterType".into(), Js::str(adapter.adapter_type.clone()));
     record.set("recordType".into(), Js::str(record_type));
@@ -1084,7 +1261,7 @@ pub fn deep_equal(a: &Js, b: &Js) -> bool {
 
 /// `discriminatedHandleType`: the variant a discriminated write's own body
 /// named, when it names one that mints a position.
-fn discriminated_handle_type(schema: Option<&InstanceSchema>, record_type: &str, fields: &Js) -> Option<String> {
+pub(crate) fn discriminated_handle_type(schema: Option<&InstanceSchema>, record_type: &str, fields: &Js) -> Option<String> {
     let schema = schema?;
     let shape = schema
         .writable_roots
@@ -1098,7 +1275,20 @@ fn discriminated_handle_type(schema: Option<&InstanceSchema>, record_type: &str,
 }
 
 /// `inferLinkedSurfaceType`.
-fn infer_linked_type(schema: Option<&InstanceSchema>, parent_type: &str, edge_name: &str, explicit: Option<&str>, root_name: &str) -> Result<String, Stop> {
+pub(crate) fn infer_linked_type(
+    schema: Option<&InstanceSchema>,
+    parent_type: &str,
+    edge_name: &str,
+    explicit: Option<&str>,
+    root_name: &str,
+    verb: Verb,
+) -> Result<String, Stop> {
+    let keyword = match verb {
+        Verb::Write => "write",
+        Verb::Match => "match",
+        Verb::Link => "link",
+    };
+    let (creates, written) = if verb == Verb::Write { ("write creates", "written") } else { ("match finds", "found") };
     let edge = schema.and_then(|s| {
         s.positions.0.get(parent_type).and_then(|p| p.edges.0.get(edge_name)).or_else(|| {
             s.writable_roots
@@ -1112,7 +1302,7 @@ fn infer_linked_type(schema: Option<&InstanceSchema>, parent_type: &str, edge_na
     if edge.is_some_and(|e| e.polymorphic == Some(true)) && explicit.is_none() {
         return Err(thrown(Failure::engine(
             "MOVENG_RUNTIME",
-            format!("'{edge_name}' is polymorphic — say which type this write creates: write …-[:{edge_name}]-><type> {{ … }}"),
+            format!("'{edge_name}' is polymorphic — say which type this {creates}: {keyword} …-[:{edge_name}]-><type> {{ … }}"),
         )));
     }
     if let Some(explicit) = explicit {
@@ -1124,7 +1314,7 @@ fn infer_linked_type(schema: Option<&InstanceSchema>, parent_type: &str, edge_na
     Err(thrown(Failure::engine(
         "MOVENG_RUNTIME",
         format!(
-            "cannot infer the written type for edge '{edge_name}' from '{root_name}' (a {parent_type} handle) — name it explicitly: write …-[:{edge_name}]-><type> {{ … }}"
+            "cannot infer the {written} type for edge '{edge_name}' from '{root_name}' (a {parent_type} handle) — name it explicitly: {keyword} …-[:{edge_name}]-><type> {{ … }}"
         ),
     )))
 }
@@ -1144,14 +1334,22 @@ pub fn describe_binding(binding: &Binding) -> &'static str {
 }
 
 /// `spellName`: bare when an ASCII identifier, backticked otherwise.
-/// What a linked write's path walks: one edge (with or without a WHERE),
-/// more, or nothing a probe reads. Admission (crate::admit) and the write
-/// read the same probe.
+/// What a linked write's path walks: one edge (and the WHERE on it, when
+/// the author narrowed it), more, or nothing a probe reads. Admission
+/// (crate::admit) and the write read the same probe.
 pub(crate) enum EdgeShape {
-    One { edge: String },
-    Narrowed,
+    One { edge: String, where_: Option<TargetWhere> },
     MultiHop,
     Invalid(String),
+}
+
+/// A WHERE on a write's or a match's target edge (run.ts `TargetWhere`): it
+/// narrows the identity shortlist, each candidate read as the record it is,
+/// the hop's alias naming it.
+#[derive(Debug, Clone)]
+pub(crate) struct TargetWhere {
+    pub alias: Option<String>,
+    pub filter: Expression,
 }
 
 pub(crate) fn edge_shape(path: &ast::PathHead) -> EdgeShape {
@@ -1170,8 +1368,10 @@ pub(crate) fn edge_shape(path: &ast::PathHead) -> EdgeShape {
     };
     match &expr {
         Expression::Traverse { steps, .. } if steps.len() == 1 => match &steps[0] {
-            TraversalStep::Edge(step) if step.expression_filter.is_some() => EdgeShape::Narrowed,
-            TraversalStep::Edge(step) => EdgeShape::One { edge: step.edge_type_id.clone() },
+            TraversalStep::Edge(step) => EdgeShape::One {
+                edge: step.edge_type_id.clone(),
+                where_: step.expression_filter.as_deref().map(|filter| TargetWhere { alias: step.alias.clone(), filter: filter.clone() }),
+            },
             _ => EdgeShape::MultiHop,
         },
         _ => EdgeShape::MultiHop,

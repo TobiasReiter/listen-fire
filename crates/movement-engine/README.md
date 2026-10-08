@@ -31,7 +31,8 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
 | `run` | the `segment` entry: `runMovement` / `resumeMovement` for the programs the shim admits (below) |
-| `write` | the `write` statement: targets, fields, identity, update or create, the firing record |
+| `write` | the `write` statement: targets (a WHERE on one included), fields, identity, update or create, the firing record |
+| `verbs` | `match`, `link`, `unlink`, `delete`: the identity half of a write on its own, edges between two handles, a record removed |
 | `traverse` | traversal blocks over adapter edges: the head's graph, the hop's fetch, the member gate, the WHERE per landed record, ORDER BY / LIMIT, the body per landing |
 | `order_limit` | packages/shared/expression/order_limit.ts: a hop's pushdown (closed over its scope) and its ORDER BY / LIMIT over what came back, sorted as V8 sorts |
 | `address` | address.ts's lexical addresses: `s`, `b` and fan-out `i` steps |
@@ -254,24 +255,28 @@ Each is a stable snake_case string: the one log line per run names it, and
 |---|---|
 | `name_shadowed` | a body binds a name the movement's parameters or the file bind |
 | `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name |
-| `statement:<kind>` | a statement other than a binding, `write`, `if`, a traversal block, `await sleep(…)` and `return` (`link`, `unlink`, `delete`, `match`, `call`, `combinator`, `collection`, `error`, `refresh`) |
+| `statement:<kind>` | a statement other than a binding, `write`, `match`, `link`, `unlink`, `delete`, `if`, a traversal block, `await sleep(…)` and `return` (`call`, `combinator`, `collection`, `error`, `refresh`) |
 | `block_head_rootless`, `block_head_expression_root` | a block head with no root, or rooted at an expression (`AT(rows, 0)-[c:company]->`) |
 | `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle, the event or an enclosing block's hop alias |
 | `block_multi_hop` | a head that walks more than one hop (`crm-[c:companies]->-[d:deals]->`) |
 | `block_head_resources`, `block_head_step`, `block_head_does_not_lower` | a `_resources` head, a hop that is not an edge, a head the probe cannot read |
 | `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame, which this engine does not keep |
-| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `block`, `callback`, `match`, `link`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node` and `write` |
+| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a match, a link, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `block`, `callback`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node`, `write`, `match` and `link` |
 | `await_not_sleep` | an `await` of anything but `sleep(…)` |
 | `movement_call` | a construction in a body spelled with a movement's name |
 | `function_call` | a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 |
 | `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read |
 | `write_bind` | a write with `bind` |
 | `write_tuple` | a tuple write |
-| `write_position_not_handle` | `write x { … }` where `x` is not a write's handle |
-| `write_root_expression` | a linked write rooted at an expression |
-| `write_root_not_held` | a linked write rooted at a name that is not an instance, a handle or the event |
-| `write_target_where` | a WHERE on a write's target edge |
-| `write_multi_hop` | a linked write that walks more (or less) than one edge |
+| `write_position_not_record` | `write x { … }` where `x` is not a write's handle or a block's hop alias |
+| `write_root_expression`, `match_root_expression` | a linked write or match rooted at an expression |
+| `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at a name that is not an instance, a handle, the event or a block's hop alias |
+| `write_node_root`, `match_node_root` | a write or a match into an edge of a node this run built (the in-process stand-in adapter is the TypeScript engine's) |
+| `write_multi_hop`, `match_multi_hop` | a linked write or match that walks more (or less) than one edge |
+| `match_tuple`, `match_position` | a match over a tuple of paths, or of a bare alias |
+| `link_node` | `link n -[:e]-> …` where `n` is a node this run built (an appended landing) |
+| `link_endpoint_not_handle` | a `link` or `unlink` endpoint that is not a write's (or a match's) handle |
+| `delete_not_record` | `delete x` where `x` is not a handle or a block's hop alias |
 | `unique_by_without_key` | a `unique by` clause with no key (no bare field, parent or `field == value`) |
 | `unique_by_reads_beyond_candidate` | a `unique by` conjunct that is not a pure predicate over the candidate |
 | `write_spread_source` | a write spread of a name that is not a value, a handle, a node or the event |
@@ -293,8 +298,9 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, …) |
 | `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `aggregate`, `meta`, `exists`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); `EXISTS(…)` anywhere, a hop's WHERE included, is `expression:exists` |
 
-A hop's WHERE and ORDER BY key are walked as expressions scoped at the
-landed record: a bare name (`property`, `edge_property`) is the record's
+A hop's WHERE and ORDER BY key, and a write's or a match's target WHERE, are
+walked as expressions scoped at the landed record (the candidate, for a
+target): a bare name (`property`, `edge_property`) is the record's
 field (or a value the body binds of that name), and the rest is the
 expression walk above.
 
@@ -303,7 +309,7 @@ parse, before anything is asked):
 
 | reason | what the input would make the run do |
 |---|---|
-| `cost_cap_inside_block` | a capped run with a write in a block's body: the cap can be met at any judged write, and a flow suspended in an iteration is joined by the fan-out's frame, which this engine does not keep |
+| `cost_cap_inside_block` | a capped run with a write, a match or a link that matches in a block's body: the cap can be met at any judged write or match, and a flow suspended in an iteration is joined by the fan-out's frame, which this engine does not keep |
 | `suspend_at_inside_block` | a `suspendAt` address with an `i` step: likewise |
 
 **Admission: a parked state** (`notAdmitted`; `park::resume_refusal`):
@@ -388,9 +394,12 @@ recognises it. The engine never asks whether the lease is lost.
 ### Writes
 
 `write.rs` is run.ts's `executeWrite`, for a collection of an instance
-(`write crm-[:companies]->`), one edge off a handle or the event
-(`write co-[:notes]->`, `write msg-[:replies]->`), and a held handle updated
-in place (`write co { … }`):
+(`write crm-[:companies]->`), one edge off a handle, the event or a block's
+hop alias (`write co-[:notes]->`, `write msg-[:replies]->`, `write c-[:notes]->`:
+the traversed record parents the write when its position is stable and
+typed, in the graph its read names), and a held handle or a traversed record
+updated in place (`write co { … }`, `write c { … }`, through the record's
+graph's target adapter under its position's type):
 
 1. the target adapter resolved, once per instance identity;
 2. `describe`, then each field line in the author's order — a spread is the
@@ -404,8 +413,12 @@ in place (`write co { … }`):
 4. `resolveEntity` — once with every key, or once per key when a clause has
    conjuncts that narrow (each narrowed by `evaluatePredicate` over the
    candidate, its record read when the search's snapshot lacks a field;
-   `WITHIN` answered by the TypeScript comparator) — then the rules
-   (`arbitrateWithoutJudge`), then the judge;
+   `WITHIN` answered by the TypeScript comparator) — then the target's WHERE
+   (`crm-[c:companies WHERE c.\`region\` == "EU"]->`,
+   `narrowCandidatesByTargetWhere`: each candidate read whole, `readRecord`
+   over its snapshot, as a stable position of the handle's type read through
+   the target graph as a source, the alias naming it; the shortlist's order
+   kept), then the rules (`arbitrateWithoutJudge`), then the judge;
 5. an update of what was found (its record lock, `readRecord`, the `?:` / `+:`
    / `+?:` merges, no-op suppression, `noop` / `attach` / `update`, an
    unsupported association failing the write) or a create (the required-field
@@ -424,6 +437,51 @@ writes the origins themselves. The order of a trail is the order of
 evaluation in both engines (a literal minted once per evaluation, an event
 or handle read once per ask), and deduplication is by origin, which a fresh
 id per mint reproduces exactly (identity, in the TypeScript).
+
+### Record verbs
+
+`verbs.rs` is run.ts's `executeMatch`, `executeLink` (with version 1's
+`executeCriteriaLink`), `executeUnlinkStatement` and
+`executeDeleteStatement`, for records in a system:
+
+- **`match`** is a write's first half — the target (its WHERE included), the
+  field lines, `unique by` ∪ the native rules, the shortlist, the target's
+  WHERE, the rules, the judge — with no identity lock and no write. What it
+  finds is bound as a handle: a `kind: "match"` row (`created` and
+  `committed` false) whose `resultData` is the candidate's `{url, ...data}`
+  under `readRecord`'s answer. A miss ends the enclosing scope quietly
+  (`ScopeEndedQuietly`): a block's iteration skips, the movement's body
+  stops, the run completes with what it wrote.
+- **`link a -[:e]-> b`** and **`unlink`**: both endpoints written (or
+  matched) handles in one graph; the edge, where the from side's type is
+  declared, must be one of its edges and land on the to side's type; then
+  `linkRecords` / `unlinkRecords` `{from: {recordType, externalId}, edgeName,
+  to, mutationContext}` under the edge's lock (`edge <system> <from> <edge>
+  <to>`), and a `kind: "link"` / `"unlink"` row with both endpoints' write
+  origins as provenance (`created` is what the adapter answered: `created`,
+  `removed`). An adapter without the method fails the statement by name.
+- **`link a -[:e]-> { … }`**: from version 2 the body is a match (its row,
+  its quiet end) and the link joins what it found; in version 1 a body with
+  no `unique by` of its own is criteria — `describe`, the criteria as one
+  AND-group over the native rules, `resolveIdentity` with no narrowing — and
+  the link lands as one row (`foundTarget: true`, to-side provenance empty)
+  whose bound handle's origin names that row.
+- **`delete x`**: the record a handle or a traversed record stands on (the
+  same resolution as `write x { … }`), `deleteRecord {recordType, externalId,
+  mutationContext}` under the record's lock, and a `kind: "delete"` row (a
+  handle's write origin as its provenance).
+
+The adapter calls are ordinary `adapters.call` requests: `resolveEntity`,
+`readRecord {recordType, externalId}`, `describe`, `linkRecords`,
+`unlinkRecords`, `deleteRecord`, each with the TypeScript's arguments key for
+key; whether an instance has a method is the `methods` its resolve answered
+(a rehearsal's wrapper has `linkRecords` and `unlinkRecords` only where the
+adapter does). A target WHERE's field reads are the source instance's
+`getFieldValue` (`adapters.resolve role: "source"`, once per instance).
+
+What stays the TypeScript engine's: a match, link or write into a node this
+run built (the in-process stand-in adapter), tuple targets, EXISTS and
+aggregates in a target WHERE (traversal inside an expression).
 
 ### Traversal blocks
 
@@ -479,7 +537,7 @@ adapter (or the wrapper's restamp) answered; reading its field is
 What stays the TypeScript engine's (refused, "Admission" above): bound
 blocks (`x = … { return … }`), heads of more than one hop, heads off a value, a node, an expression or
 `_resources`, extraction heads (an extract is refused), a park in a body,
-EXISTS and any traversal inside an expression, writes rooted at a hop alias.
+EXISTS and any traversal inside an expression.
 
 **tests/order_limit_pin.rs** holds `order_limit` to the TypeScript's own
 answers (tests/oracle/order_limit.json, 601 seeded brackets: the pushdown's
@@ -628,7 +686,7 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 
 | request (family.method, args) | answer |
 |---|---|
-| `check.program {source, languageVersion, upgradingFrom?}` | `{diagnostics, link?, stamps}` (below); a program that fails its check gets no answer: the host ends the run with the check's error |
+| `check.program {source, languageVersion, upgradingFrom?}` | `{diagnostics, link?, stamps, versionWarning?}` (below; `versionWarning: {code, message}` is the deprecated pin's warning the run traces, as the host's engine reads its release, not the checker's diagnostic); a program that fails its check gets no answer: the host ends the run with the check's error |
 | `adapters.resolve {segmentId, adapterType, credentialsId?, constructionArgs?, role: "source" \| "target", dryRun?: true}` | the instance as data: `{instance, adapterType, methods, capabilities, …}` |
 | `adapters.call {segmentId, instance, method, args, wire: true, positionRef?, position?}` | `{result}` (on the eval wire) or `{error: {kind: "call_ceiling" \| "adapter_error", message, name?, detail?, ref}}`; `ref` numbers the very error the engine's TypeScript twin raises for it. With `positionRef` the call's argument object is `{position, ...args}`: the position by handle (below) |
 | `llm.arbitrateEntities {segmentId, asserted, candidates, recordType, constraints, languageVersion, budget}` (the first four on the eval wire) | `{index: number \| null, judgeUnavailable?, cost?}`, or a budget refusal `{error: {kind: "budget", message}, cost?}` |
@@ -851,6 +909,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 93, v2 101). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 114, v2 136). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

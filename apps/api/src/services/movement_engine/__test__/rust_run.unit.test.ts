@@ -223,7 +223,8 @@ describe('a whole run in the Rust engine', () => {
     const program = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
     expect(await admission(BINDINGS_AND_IF)).toBe('admitted');
     expect(await admission(program('  write crm-[:companies]-> { name: msg.`subject` }'))).toBe('admitted');
-    expect(await admission(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'))).toBe('write_target_where');
+    expect(await admission(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'))).toBe('admitted');
+    expect(await admission(program('  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: "y" }'))).toBe('expression:exists');
     expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'))).toBe('name_not_value');
     expect(await admission(program('  x = msg'))).toBe('name_not_value');
     expect(await admission(program('  x = AI("why?")'))).toBe('expression:llm');
@@ -439,14 +440,15 @@ describe('a whole run in the Rust engine', () => {
       [`movement v(n: <number[]>) {\n  x = 1\n}\n${movement('  x = 1')}`, 'movement_value_param'],
       [movement('  inbox = 1'), 'name_shadowed'],
       [movement('  x = 1\n  x = write crm-[:companies]-> { name: "a" }'), 'name_rebound'],
-      [movement('  crm-[c:companies]-> {\n    c-[:deals]-> {\n      x = 1\n    }\n  }'), 'block_nested'],
+      [movement('  crm-[c:companies]-> {\n    x = 1\n  }\n  c = 1'), 'name_rebound'],
       [movement('  crm-[c:companies]-> {\n    await sleep(1h)\n  }'), 'block_park'],
       [movement('  rows = crm-[c:companies]-> {\n    return c\n  }'), 'rvalue:block'],
       [movement('  x = await inbox-[:message]->'), 'await_not_sleep'],
       [movement('  r = m(msg: msg)'), 'movement_call'],
       [movement('  r = M(msg)'), 'function_call'],
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
-      [movement('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'), 'write_target_where'],
+      [movement('  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: "y" }'), 'expression:exists'],
+      [movement('  n = node { a: 1 }\n  link n -[:kids]-> n'), 'link_node'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
       [movement('  write crm-[:companies]-> { ...crm }'), 'write_spread_source'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],

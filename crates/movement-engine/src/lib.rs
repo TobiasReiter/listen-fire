@@ -34,6 +34,7 @@ pub mod stdlib;
 pub mod trace;
 pub mod traverse;
 pub mod unique;
+pub mod verbs;
 pub mod write;
 
 use movement_parser::lowering::expression::Expression;

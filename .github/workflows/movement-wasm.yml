@@ -134,7 +134,7 @@ jobs:
         run: pnpm run test --testPathPattern 'catalog_differential'
       - name: Engine shim, against a double and through the committed artifact
         working-directory: apps/api
-        run: pnpm run test:unit --testPathPattern '(movement_engine/__test__/(rust_engine|rust_engine_abi|rust_eval|rust_run|rust_write|rust_traverse|program_check|seam_guard)|test/__test__/rust_eval_stats_teardown)\.unit\.test\.ts$'
+        run: pnpm run test:unit --testPathPattern '(movement_engine/__test__/(rust_engine|rust_engine_abi|rust_eval|rust_run|rust_write|rust_traverse|rust_verbs|program_check|seam_guard)|test/__test__/rust_eval_stats_teardown)\.unit\.test\.ts$'
       # The oracle the crate tests hold the Rust engine to is the TypeScript's
       # own answers: a TypeScript change that moves one must move the oracle.
       - name: The Rust engine's oracle is current

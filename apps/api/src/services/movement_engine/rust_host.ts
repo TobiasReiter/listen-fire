@@ -17,7 +17,7 @@
 // handed exactly the JavaScript values (key order, `undefined`) the TypeScript
 // engine hands it in process, and an adapter's result comes back the same way.
 
-import { applyStdlib, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
+import { applyStdlib, languageVersionDiagnostic, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
@@ -78,7 +78,7 @@ export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
 const ROUTES: Record<string, Route> = {
   /** The TypeScript checker over the pinned source (program_check.ts):
    *  every diagnostic, the import link and the checker's AST stamps as
-   *  data. A program that fails its check ends the run with the check's
+   *  data, and the run's version warning for a deprecated pin. A program that fails its check ends the run with the check's
    *  error, exactly as parseAndCheck throws it. */
   async 'check.program'(request, context) {
     const languageVersion = request.languageVersion;
@@ -99,7 +99,14 @@ const ROUTES: Record<string, Route> = {
     } catch (error) {
       throw new RunAborted(error);
     }
-    return checkAnswer(checked);
+    // The run's own version warning, read as the TypeScript engine reads it
+    // (run.ts, before the body): the release the engine runs under, not the
+    // checker's own view of it, which a host may hold apart.
+    const versionWarning = languageVersionDiagnostic(languageVersion);
+    return {
+      ...checkAnswer(checked),
+      ...(versionWarning !== undefined ? { versionWarning: { code: versionWarning.code, message: versionWarning.message } } : {}),
+    };
   },
   async 'adapters.resolve'(request, { host }) {
     const role = request.role;

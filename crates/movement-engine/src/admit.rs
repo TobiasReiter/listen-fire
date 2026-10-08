@@ -25,7 +25,7 @@ use movement_parser::ast::{
 use movement_parser::lowering::condition::MovementCondition;
 use movement_parser::lowering::expression::{Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
-use crate::write::{EdgeShape, edge_shape};
+use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
 /// The flat built-ins and namespaced members the evaluator runs
 /// (crate::stdlib): an expression calling any other is refused.
@@ -124,11 +124,21 @@ pub fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]
     None
 }
 
-/// Whether a write sits in a traversal block's body, at any depth.
+/// Whether a write, or a match that may ask the judge, sits in a traversal
+/// block's body, at any depth.
 fn writes_in_block(statements: &[Statement], in_block: bool) -> bool {
+    let judged_link = |link: &ast::LinkExpression| matches!(link.to, ast::LinkTarget::Match { .. });
     statements.iter().any(|statement| match statement {
-        Statement::Write(_) => in_block,
-        Statement::Assign(assign) => in_block && matches!(assign.value, RValue::Write { .. }),
+        Statement::Write(_) | Statement::Match(_) => in_block,
+        Statement::Link(statement) => in_block && judged_link(&statement.link),
+        Statement::Assign(assign) => {
+            in_block
+                && match &assign.value {
+                    RValue::Write { .. } | RValue::Match { .. } => true,
+                    RValue::Link { link } => judged_link(link),
+                    _ => false,
+                }
+        }
         Statement::If(statement) => {
             statement.arms.iter().any(|arm| writes_in_block(&arm.body, in_block))
                 || statement.else_arm.as_ref().is_some_and(|arm| writes_in_block(&arm.body, in_block))
@@ -219,13 +229,20 @@ impl Bound {
             match statement {
                 Statement::Assign(assign) => {
                     let kind = match &assign.value {
-                        RValue::Write { .. } => Kind::Handle,
+                        RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
                         RValue::Construct { .. } => Kind::Instance,
                         RValue::Node { .. } => Kind::Node,
                         _ => Kind::Value,
                     };
                     self.bind(&assign.name, kind, scope);
+                    match &assign.value {
+                        RValue::Write { write } => self.target_alias(&write.target, scope),
+                        RValue::Match { r#match } => self.target_alias(&r#match.target, scope),
+                        _ => {}
+                    }
                 }
+                Statement::Write(statement) => self.target_alias(&statement.write.target, scope),
+                Statement::Match(statement) => self.target_alias(&statement.r#match.target, scope),
                 Statement::If(statement) => {
                     for arm in &statement.arms {
                         let inner = self.enter(scope);
@@ -247,6 +264,17 @@ impl Bound {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// A target WHERE's hop alias (`crm-[c:companies WHERE c.\`region\` ==
+    /// "EU"]->`): the candidate the WHERE reads, in a scope of its own.
+    fn target_alias(&mut self, target: &WriteTarget, scope: &[usize]) {
+        if let WriteTarget::Linked { path, .. } = target
+            && let EdgeShape::One { where_: Some(TargetWhere { alias: Some(alias), .. }), .. } = edge_shape(path)
+        {
+            let inner = self.enter(scope);
+            self.bind(&alias, Kind::Landing, &inner);
         }
     }
 
@@ -329,6 +357,8 @@ impl Names<'_> {
         match statement {
             Statement::Assign(assign) => match &assign.value {
                 RValue::Write { write } => self.write(write),
+                RValue::Match { r#match } => self.match_(r#match),
+                RValue::Link { link } => self.link(link),
                 RValue::Await { r#await } => sleep(&r#await.source),
                 RValue::Construct { construct } if self.movements.contains(&construct.callee) => refuse("movement_call"),
                 RValue::Construct { .. } => Ok(()),
@@ -337,6 +367,14 @@ impl Names<'_> {
             },
             Statement::Return(ret) => self.rvalue(&ret.value),
             Statement::Write(statement) => self.write(&statement.write),
+            Statement::Match(statement) => self.match_(&statement.r#match),
+            Statement::Link(statement) => self.link(&statement.link),
+            Statement::Unlink(statement) => {
+                if self.handles.contains(&statement.from) && self.handles.contains(&statement.to) { Ok(()) } else { refuse("link_endpoint_not_handle") }
+            }
+            Statement::Delete(statement) => {
+                if self.handles.contains(&statement.name) || self.landings.contains(&statement.name) { Ok(()) } else { refuse("delete_not_record") }
+            }
             Statement::Await(statement) => sleep(&statement.r#await.source),
             Statement::If(statement) => {
                 for arm in &statement.arms {
@@ -449,21 +487,11 @@ impl Names<'_> {
         match &write.target {
             WriteTarget::Tuple { .. } => return refuse("write_tuple"),
             WriteTarget::Position { alias, .. } => {
-                if !self.handles.contains(alias) {
-                    return refuse("write_position_not_handle");
+                if !self.handles.contains(alias) && !self.landings.contains(alias) {
+                    return refuse("write_position_not_record");
                 }
             }
-            WriteTarget::Linked { path, .. } => {
-                let Some(PathRoot::Name { name: root }) = &path.root else { return refuse("write_root_expression") };
-                if !self.instances.contains(root) && !self.handles.contains(root) && !self.events.contains(root) {
-                    return refuse("write_root_not_held");
-                }
-                match edge_shape(path) {
-                    EdgeShape::One { .. } => {}
-                    EdgeShape::Narrowed => return refuse("write_target_where"),
-                    EdgeShape::MultiHop | EdgeShape::Invalid(_) => return refuse("write_multi_hop"),
-                }
-            }
+            WriteTarget::Linked { path, .. } => self.target_path(path, "write")?,
         }
         for clause in &write.unique_by {
             unique_clause(&clause.predicate.raw)?;
@@ -478,6 +506,55 @@ impl Names<'_> {
             }
         }
         write.fields.iter().try_for_each(|field| self.slot(&field.value))
+    }
+
+    /// A write's or a match's linked target: one edge off an instance, a
+    /// handle, the event or a hop alias, its WHERE scoped at the candidate.
+    fn target_path(&self, path: &PathHead, verb: &str) -> Admitted {
+        let Some(PathRoot::Name { name: root }) = &path.root else { return refuse(format!("{verb}_root_expression")) };
+        if self.nodes.contains(root) {
+            return refuse(format!("{verb}_node_root"));
+        }
+        let held = self.instances.contains(root) || self.handles.contains(root) || self.events.contains(root) || self.landings.contains(root);
+        if !held {
+            return refuse(format!("{verb}_root_not_held"));
+        }
+        match edge_shape(path) {
+            EdgeShape::One { where_: Some(where_), .. } => self.scoped(&where_.filter),
+            EdgeShape::One { where_: None, .. } => Ok(()),
+            EdgeShape::MultiHop | EdgeShape::Invalid(_) => refuse(format!("{verb}_multi_hop")),
+        }
+    }
+
+    /// `match <target> { unique by (…) … }` (crate::verbs): a linked target in
+    /// a system, keyed `unique by` clauses, field values the evaluator runs.
+    fn match_(&self, m: &ast::MatchExpression) -> Admitted {
+        match &m.target {
+            WriteTarget::Linked { path, .. } => self.target_path(path, "match")?,
+            WriteTarget::Tuple { .. } => return refuse("match_tuple"),
+            WriteTarget::Position { .. } => return refuse("match_position"),
+        }
+        for clause in &m.unique_by {
+            unique_clause(&clause.predicate.raw)?;
+        }
+        m.fields.iter().try_for_each(|field| self.slot(&field.value))
+    }
+
+    /// `link a -[:e]-> b` or `link a -[:e]-> { match body }`: the endpoints
+    /// written handles (a link into a node this run built appends a landing,
+    /// which this engine does not).
+    fn link(&self, link: &ast::LinkExpression) -> Admitted {
+        if self.nodes.contains(&link.from) {
+            return refuse("link_node");
+        }
+        if !self.handles.contains(&link.from) {
+            return refuse("link_endpoint_not_handle");
+        }
+        match &link.to {
+            ast::LinkTarget::Handle { name } if self.handles.contains(name) => Ok(()),
+            ast::LinkTarget::Handle { .. } => refuse("link_endpoint_not_handle"),
+            ast::LinkTarget::Match { r#match, .. } => self.match_(r#match),
+        }
     }
 
     /// A node or graph literal node.rs builds: value entries, nested
@@ -685,7 +762,7 @@ mod tests {
     #[test]
     fn refuses_each_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  write crm-[c:companies WHERE `name` == \"x\"]-> { name: \"y\" }", "write_target_where"),
+            ("  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: \"y\" }", "expression:exists"),
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = co", "name_not_value"),
             ("  x = msg", "name_not_value"),
             ("  x = AI(\"why?\")", "expression:llm"),
@@ -738,10 +815,39 @@ mod tests {
             ("  crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> {\n    x = 1\n  }", "expression:exists"),
             ("  crm-[c:companies ORDER BY c-[:owner]->.`joined`]-> {\n    x = 1\n  }", "traversal_steps"),
             ("  crm-[c:companies WHERE `name` == @current_date]-> {\n    x = 1\n  }", "expression:meta"),
-            ("  crm-[c:companies]-> {\n    write c-[:notes]-> { body: \"x\" }\n  }", "write_root_not_held"),
             ("  crm-[c:companies]-> {\n    x = c\n  }", "name_not_value"),
             ("  x = crm-[c:companies]-> {\n    return c\n  }", "rvalue:block"),
             ("  crm-[c:companies]-> {\n    x = COUNT(c-[:deals]->)\n  }", "expression:aggregate"),
+        ] {
+            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+        }
+    }
+
+    #[test]
+    fn admits_the_record_verbs_on_records_in_a_system() {
+        for body in [
+            "  co = match crm-[c:companies WHERE c.`region` == msg.`text`]-> { unique by (FUZZY `name`), name: msg.`subject` }\n  write crm-[:notes]-> { body: co.`name` }",
+            "  match crm-[:companies WHERE `region` == \"EU\"]-> { unique by (`name`), name: \"a\" }",
+            "  write crm-[c:companies WHERE c.`region` == \"EU\"]-> { unique by (`name`), name: \"a\" }",
+            "  p = write crm-[:people]-> { name: \"a\" }\n  co = write crm-[:companies]-> { name: \"b\" }\n  link p -[:company]-> co\n  unlink p -[:company]-> co\n  delete co",
+            "  co = write crm-[:companies]-> { name: \"b\" }\n  fund = link co -[:portfolio]-> { unique by (`name`), name: \"F\" }",
+            "  crm-[c:companies]-> {\n    write c-[:notes]-> { body: c.`name` }\n    write c { stage: \"x\" }\n    delete c\n  }",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn refuses_each_record_verb_form_it_does_not_run_with_its_reason() {
+        for (body, reason) in [
+            ("  n = node { a: 1 }\n  link n -[:kids]-> n", "link_node"),
+            ("  co = write crm-[:companies]-> { name: \"b\" }\n  link co -[:x]-> msg", "link_endpoint_not_handle"),
+            ("  co = write crm-[:companies]-> { name: \"b\" }\n  unlink co -[:x]-> msg", "link_endpoint_not_handle"),
+            ("  delete msg", "delete_not_record"),
+            ("  write msg { a: 1 }", "write_position_not_record"),
+            ("  n = node { a: 1 }\n  x = match n-[:kids]-> { unique by (`a`), a: 1 }", "match_node_root"),
+            ("  x = match nowhere-[:kids]-> { unique by (`a`), a: 1 }", "match_root_not_held"),
+            ("  x = match crm-[:companies]-> { unique by (`name` CONTAINS \"a\"), name: \"a\" }", "unique_by_without_key"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
@@ -772,6 +878,8 @@ mod tests {
         let in_block = program("  crm-[c:companies]-> {\n    if c.`name` != \"\" {\n      write crm-[:notes]-> { body: c.`name` }\n    }\n  }");
         let outside = program("  write crm-[:notes]-> { body: \"x\" }\n  crm-[c:companies]-> {\n    x = c.`name`\n  }");
         assert_eq!(input_refusal(&in_block, true, &[]).as_deref(), Some("cost_cap_inside_block"));
+        let matched = program("  crm-[c:companies]-> {\n    x = match crm-[:funds]-> { unique by (`name`), name: c.`name` }\n  }");
+        assert_eq!(input_refusal(&matched, true, &[]).as_deref(), Some("cost_cap_inside_block"), "a match may ask the judge");
         assert_eq!(input_refusal(&in_block, false, &[]), None);
         assert_eq!(input_refusal(&outside, true, &[]), None);
         assert_eq!(input_refusal(&outside, false, &["s1.i0.s0".into()]).as_deref(), Some("suspend_at_inside_block"));
