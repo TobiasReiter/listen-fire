@@ -1217,8 +1217,8 @@ describe('the round trip', () => {
     expect(methodPaths(roundTripHost(host)).sort()).toEqual(hostMethodPaths().sort());
   });
 
-  it('the manifest is the contract docs/engine-host.md documents, method by method', () => {
-    const doc = fs.readFileSync(path.resolve(SRC_DIR, '../../../docs/engine-host.md'), 'utf8');
+  it('the manifest is the contract docs/contracts/host-families.md documents, method by method', () => {
+    const doc = fs.readFileSync(path.resolve(SRC_DIR, '../../../docs/contracts/host-families.md'), 'utf8');
     const documented = [...doc.matchAll(/^#### `([A-Za-z.]+)`/gm)].map((match) => match[1]);
     expect(documented.sort()).toEqual(hostMethodPaths().sort());
     const families = [...doc.matchAll(/^### `([A-Za-z.]+)`/gm)].map((match) => match[1]);

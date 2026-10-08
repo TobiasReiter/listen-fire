@@ -1,7 +1,7 @@
 // The Rust engine's host dispatch: every request a segment makes, by family
 // and method, answered from the run's `EngineHost`. This is the one module that
 // knows the host's shapes, so a change to the host boundary
-// (docs/engine-host.md) is adapted here and in the Rust request builders
+// (docs/contracts/host-families.md) is adapted here and in the Rust request builders
 // (crates/movement-engine/src/host.rs) and nowhere between.
 //
 // A request whose family and method are an `EngineHost` method's

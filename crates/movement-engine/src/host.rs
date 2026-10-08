@@ -1,6 +1,6 @@
 //! The requests a segment makes of its host, one builder per host call, named
 //! after the `EngineHost` groups (apps/api/src/services/movement_engine/
-//! host.ts, docs/engine-host.md). A builder is the only place a request's
+//! host.ts, docs/contracts/host-families.md). A builder is the only place a request's
 //! shape is written: the executor carries `{family, method, args}` without
 //! reading them, and the TypeScript shim routes on the same pair, so a shape
 //! change touches a builder and its route and nothing between.
@@ -10,7 +10,7 @@ use std::rc::Rc;
 use serde::Serialize;
 use serde_json::{Value as Json, json};
 
-/// The `EngineHost` families a request can address (docs/engine-host.md;
+/// The `EngineHost` families a request can address (docs/contracts/host-families.md;
 /// host.ts `HOST_FAMILIES`), spelled as the manifest spells them, plus the
 /// ones that are this engine's own and never reach an `EngineHost`: `Check`
 /// (the TypeScript checker, until the checker is Rust), `Builtins` (the
@@ -88,7 +88,7 @@ impl Instance {
     }
 }
 
-/// `adapters.resolve`'s request, as docs/engine-host.md writes it.
+/// `adapters.resolve`'s request, as docs/contracts/host-families.md writes it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveAdapter {

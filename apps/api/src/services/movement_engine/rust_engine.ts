@@ -4,7 +4,7 @@
 // from the run's `EngineHost`, several at once when the engine issues several,
 // answering each by id as it settles. The segment is the run host's
 // (`inRunContext` opened it): every request the engine makes of the host names
-// it, in the shapes docs/engine-host.md freezes, and the shim forwards each one
+// it, in the shapes docs/contracts/host-families.md freezes, and the shim forwards each one
 // to the run's `EngineHost` (rust_host.ts).
 //
 // Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`)

@@ -15,7 +15,7 @@
 // `Comment { Text }`), awaitable: `await FIRST(c-[:Comments]->)` parks until a
 // comment exists, keyed on the company's thread.
 //
-// It is the reference protocol-v2 adapter (docs/adapter-protocol.md), so it
+// It is the reference protocol-v2 adapter (docs/contracts/adapter-protocol.md), so it
 // speaks every inbound route a third party has:
 //   - the host's webhook door: a subscription (ensure/remove) and a webhook
 //     body (`FakeCrmDelivery`) it turns into events (preprocessInbound) and

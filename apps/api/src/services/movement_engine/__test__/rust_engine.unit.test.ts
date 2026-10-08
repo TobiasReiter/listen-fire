@@ -317,9 +317,10 @@ describe('the Rust engine shim', () => {
     for (const path of Object.keys(ENGINE_OWN_ROUTES)) expect(host.has(path)).toBe(false);
   });
 
-  it('documents its own requests in docs/engine-host.md, exactly', () => {
-    const doc = fs.readFileSync(path.resolve(__dirname, '../../../../../../docs/engine-host.md'), 'utf8');
-    const section = doc.slice(doc.indexOf("## The Rust engine's requests"), doc.indexOf('## Changes since chunk 3'));
+  it('documents its own requests in docs/contracts/host-families.md, exactly', () => {
+    const doc = fs.readFileSync(path.resolve(__dirname, '../../../../../../docs/contracts/host-families.md'), 'utf8');
+    const start = doc.indexOf("## The Rust engine's requests");
+    const section = doc.slice(start, doc.indexOf('\n## ', start + 1));
     const documented = [...section.matchAll(/^\| `([a-z]+\.[A-Za-z]+) \{/gm)].map((match) => match[1]);
     expect(documented.sort()).toEqual(Object.keys(ENGINE_OWN_ROUTES).sort());
   });
