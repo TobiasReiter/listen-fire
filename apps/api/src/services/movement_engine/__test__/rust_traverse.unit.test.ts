@@ -116,9 +116,12 @@ interface GraphOptions {
   unstable?: boolean;
   /** What the adapter says it can traverse (`runtimeCapabilities().traversal`). */
   traversal?: { incoming?: boolean; edgeProperties?: boolean };
-  /** A record whose every field read fails, by its id (`d-1`), or one field
-   *  of it (`d-1/stage`). */
-  failOn?: string;
+  /** The records whose every field read fails, by id (`d-1`), or one field
+   *  of one (`d-1/stage`). */
+  failOn?: string | readonly string[];
+  /** Each field read (`<id>/<field>`) waits on what this answers, before it
+   *  answers or fails. */
+  gate?: (read: string) => Promise<void> | undefined;
   /** The inline properties of the edge each record is landed by, by its id. */
   edgeProperties?: Record<string, Record<string, unknown>>;
 }
@@ -184,7 +187,9 @@ function fakeGraph(options: GraphOptions = {}) {
     async getFieldValue(input) {
       calls.push(['getFieldValue', input]);
       const id = positionRecordId(input.position);
-      if (id !== undefined && (id === options.failOn || `${id}/${input.fieldId}` === options.failOn)) throw new Error(`graph: ${id} is unreadable`);
+      await options.gate?.(`${id ?? ''}/${input.fieldId}`);
+      const failing = typeof options.failOn === 'string' ? [options.failOn] : (options.failOn ?? []);
+      if (id !== undefined && (failing.includes(id) || failing.includes(`${id}/${input.fieldId}`))) throw new Error(`graph: ${id} is unreadable`);
       if (id !== undefined) return byId.get(id)?.fields[input.fieldId] ?? null;
       return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId] ?? null;
     },
@@ -255,6 +260,44 @@ interface Case {
   graph?: GraphOptions;
   costCapMicrodollars?: number;
   suspendAt?: readonly string[];
+  /** A fresh hold for each run (see `holdingRead`). */
+  hold?: () => HeldRead;
+}
+
+interface HeldRead {
+  gate: (read: string) => Promise<void> | undefined;
+  /** Runs beside the run; `done` settles (never rejects) when the run does. */
+  meanwhile: (done: Promise<void>) => Promise<void>;
+}
+
+/** Holds one field read (`<id>/<field>`) at the host until a macrotask after
+ *  it arrives, recording, run by run, whether the run had settled by then. */
+function holdingRead(read: string) {
+  const settledWhileHeld: boolean[] = [];
+  const hold = (): HeldRead => {
+    let arrive = () => {};
+    const arrived = new Promise<void>((resolve) => (arrive = resolve));
+    let release = () => {};
+    const released = new Promise<void>((resolve) => (release = resolve));
+    return {
+      gate: (key) => {
+        if (key !== read) return undefined;
+        arrive();
+        return released;
+      },
+      async meanwhile(done) {
+        let settled = false;
+        void done.then(() => (settled = true));
+        await Promise.race([arrived, done]);
+        // Every microtask has run by the next macrotask: a sibling read's
+        // failure has reached the engine, and a run that fails on it has.
+        await new Promise((resolve) => setImmediate(resolve));
+        settledWhileHeld.push(settled);
+        release();
+      },
+    };
+  };
+  return { hold, settledWhileHeld };
 }
 
 interface Outcome {
@@ -271,11 +314,14 @@ interface Outcome {
   captured: CapturedWrite[];
 }
 
+const noop = () => {};
+
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
   const locks: string[][] = [];
-  const graph = fakeGraph(c.graph);
+  const hold = c.hold?.();
+  const graph = fakeGraph({ ...c.graph, ...(hold !== undefined ? { gate: hold.gate } : {}) });
   const email = fakeEmail();
   const resolved: unknown[] = [];
   const trace: unknown[] = [];
@@ -292,7 +338,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     captured,
   });
   try {
-    const result = await runMovement({
+    const run = runMovement({
       source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`,
       event: c.event ?? webhook({ subject: 'Seed', text: 'Late' }),
       teamId: TEAM_ID,
@@ -317,6 +363,8 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
         traceAppends: appends,
       }),
     });
+    await hold?.meanwhile(run.then(noop, noop));
+    const result = await run;
     return { failed: false, result, ...world() };
   } catch (error) {
     return { failed: true, error, ...world() };
@@ -696,12 +744,36 @@ describe("5A's engine fixes, on both engines", () => {
     expect(targets).toHaveLength(1);
   });
 
-  // After the second merge (sortByOrderKey settled on TypeScript): hold one key read at the host and assert the run has not failed until it is released; fail two reads out of order and assert the lower index's error; eviction on rejection where a Rust-routed program can observe it.
-  it('issues every key read of an ORDER BY when one fails, and fails with the TypeScript engine’s error', async () => {
-    const { ts, rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY c.`name`'), graph: { failOn: 'n-2/name' } });
-    expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
+  // The TypeScript engine settles every key read of an ORDER BY before it
+  // fails, and fails with the earliest by index (`sortByOrderKey`); the Rust
+  // engine's join does the same. Eviction on rejection is not here: the one
+  // memo a key read could fill keeps successes only, and no Rust-routed
+  // program can go on past a failed read to ask again (no `onError` inside a
+  // block), so neither engine can show it.
+  describe('ORDER BY key reads settle before the run fails', () => {
+    const ORDERED = NOTE_PER_COMPANY('company ORDER BY c.`name`');
     const keyReads = (o: Outcome) => calls(o).filter(([m, input]) => m === 'getFieldValue' && input.fieldId === 'name');
-    expect(keyReads(rust)).toHaveLength(COMPANIES.length);
-    expect(keyReads(ts)).toHaveLength(COMPANIES.length);
+
+    it('issues every key read when one fails, and fails with the TypeScript engine’s error', async () => {
+      const { ts, rust } = await agree({ body: ORDERED, graph: { failOn: 'n-2/name' } });
+      expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
+      expect(keyReads(rust)).toHaveLength(COMPANIES.length);
+      expect(keyReads(ts)).toHaveLength(COMPANIES.length);
+    });
+
+    it('does not fail while a sibling of the failed read is still held at the host', async () => {
+      const held = holdingRead('n-5/name');
+      const { rust } = await agree({ body: ORDERED, graph: { failOn: 'n-2/name' }, hold: held.hold });
+      expect(held.settledWhileHeld).toEqual([false, false]);
+      expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
+    });
+
+    it('fails with the lower index’s error when two reads fail, the higher first', async () => {
+      // n-2's read is held and fails on release; n-4's fails at once.
+      const held = holdingRead('n-2/name');
+      const { ts, rust } = await agree({ body: ORDERED, graph: { failOn: ['n-2/name', 'n-4/name'] }, hold: held.hold });
+      expect(held.settledWhileHeld).toEqual([false, false]);
+      for (const o of [ts, rust]) expect(String(runFailureCause(o.error))).toContain('graph: n-2 is unreadable');
+    });
   });
 });
