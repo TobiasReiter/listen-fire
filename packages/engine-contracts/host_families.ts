@@ -222,6 +222,19 @@ export interface HostLocks {
   release(input: Scoped<{ token: string }>): Promise<void>;
 }
 
+/** The host's clock: the instant now, which the engine reads for a sleep's
+ *  wake, a callback's expiry, a segment with no firing instant, and a
+ *  measured duration. The engine reads no clock of its own. */
+export interface HostClock {
+  now(input: InSegment): Promise<{ nowIso: string }>;
+}
+
+/** The host's id minting: `count` fresh ids, each unique within the run's
+ *  team (an extraction's resource ids). The engine mints no id of its own. */
+export interface HostIds {
+  mint(input: Scoped<{ count: number }>): Promise<string[]>;
+}
+
 /** Who an event acts as: an opaque reference the host mints, never a row the
  *  engine reads, and how a person would see it named. */
 export interface PrincipalReference {
@@ -274,6 +287,8 @@ export const HOST_FAMILIES = {
   lookup: { methods: ['resolveActingUser'] },
   locks: { methods: ['acquire', 'release'] },
   trace: { optional: true, methods: ['append'] },
+  clock: { methods: ['now'] },
+  ids: { methods: ['mint'] },
 } as const satisfies Record<string, { optional?: true; methods: readonly string[] }>;
 
 type Manifest = typeof HOST_FAMILIES;
@@ -303,4 +318,26 @@ export const VOID_HOST_METHODS = [
 /** Each method's path (`park.sink.recordJoin`), from the manifest. */
 export function hostMethodPaths(): string[] {
   return Object.entries(HOST_FAMILIES).flatMap(([family, { methods }]) => methods.map((method) => `${family}.${method}`));
+}
+
+/** Every method a host must serve: each method of every family the manifest
+ *  does not mark optional. */
+export function requiredHostMethodPaths(): string[] {
+  return Object.entries(HOST_FAMILIES).flatMap(([family, spec]) =>
+    'optional' in spec ? [] : spec.methods.map((method) => `${family}.${method}`),
+  );
+}
+
+/** The required methods `host` does not serve, by path: an engine refuses a
+ *  host missing any (a host written against an earlier manifest) before it
+ *  opens a segment. */
+export function missingHostMethods(host: unknown): string[] {
+  return requiredHostMethodPaths().filter((path) => {
+    let at: unknown = host;
+    for (const key of path.split('.')) {
+      if (typeof at !== 'object' || at === null) return true;
+      at = Reflect.get(at, key);
+    }
+    return typeof at !== 'function';
+  });
 }

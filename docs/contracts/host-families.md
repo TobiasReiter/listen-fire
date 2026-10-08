@@ -2,7 +2,7 @@
 
 Version: 1
 
-The movement engine runs a program. Everything outside the program goes through one interface the caller hands it, `EngineHost` (`apps/api/src/services/movement_engine/host.ts`): adapters, model calls, parking, cancellation, files, the acting principal, write locks and the trace. The engine imports none of these itself. This document is that interface and the four entry points into the engine. How this repository's two hosts serve it, and the engine's own notes, are in [`docs/engine-host.md`](../engine-host.md). The data shapes are in the `engine-contracts` package (`packages/engine-contracts/`).
+The movement engine runs a program. Everything outside the program goes through one interface the caller hands it, `EngineHost` (`apps/api/src/services/movement_engine/host.ts`): adapters, model calls, parking, cancellation, files, the acting principal, write locks, the trace, the clock and fresh ids. The engine imports none of these itself. This document is that interface and the four entry points into the engine. How this repository's two hosts serve it, and the engine's own notes, are in [`docs/engine-host.md`](../engine-host.md). The data shapes are in the `engine-contracts` package (`packages/engine-contracts/`).
 
 This document is the host contract, frozen as JSON. Every host call is one request and one awaited answer, each plain JSON: no callback, live object, `Date`, stream or shared array crosses, and instants are ISO 8601 strings. An embedder in another language or process serves exactly these shapes.
 
@@ -18,6 +18,7 @@ Two tests hold the contract to this document (`movement_engine/__test__/seam_gua
 - **The version is an integer**, stated at the top of this document and held by `HOST_FAMILIES_VERSION`. This release serves version 1 only ([the index](README.md) lists what each release supports and deprecates).
 - **On the wire:** every `segment.open` request carries `hostFamiliesVersion`. A host refuses an open whose version it does not serve, or that names none, before it opens anything. The refusal is a thrown failure whose message names the contract, the version it was handed and the versions it serves: `segment.open carries host families version 2, which this host does not serve (supported: 1)`. The entry fails before any statement runs.
 - **What bumps it:** a change in meaning. A method removed or renamed, a field whose meaning changed, a required field added to a request, or an answer reshaped. An optional request field a host may ignore, or a new optional family, keeps the version.
+- **A new required family** keeps the version too: it changes no existing shape. A host that lacks one is refused by the engine before `segment.open`, with a message naming each missing method (`the host does not serve clock.now, ids.mint, which host families version 1 requires (the clock, ids families); no segment was opened`). The engine checks every method of every family the manifest does not mark optional.
 - **How a break lands:** the engine sends the new version; a host that serves both branches on it at the point of difference. It is never a second host interface.
 
 ## Conventions
@@ -105,7 +106,7 @@ interface PrincipalReference { id: string; display?: string }
 
 ## What a run is given
 
-- **Data.** The source and its language version, a `CatalogSnapshot`, the credential ids its imports name (`credentialIds`: import name to id, beside the snapshot, never in it), the trigger event, the instant it fired (`firedAt`, an ISO 8601 string; every clock read in the run answers from it), the cost cap (`costCapMicrodollars`, absent for none) with what the run spent before this segment, and, on resume, the parked state. A run may also be handed addresses to suspend at (`suspendAt`: just before a statement, or before the k-th call a statement makes); the first flow to reach one parks there once.
+- **Data.** The source and its language version, a `CatalogSnapshot`, the credential ids its imports name (`credentialIds`: import name to id, beside the snapshot, never in it), the trigger event, the instant it fired (`firedAt`, an ISO 8601 string; every clock read the program makes answers from it), the cost cap (`costCapMicrodollars`, absent for none) with what the run spent before this segment, and, on resume, the parked state. A run may also be handed addresses to suspend at (`suspendAt`: just before a statement, or before the k-th call a statement makes); the first flow to reach one parks there once.
 - **The catalog snapshot** ([`catalog-snapshot.md`](catalog-snapshot.md)). The team's catalog as plain JSON: adapters and their schemas, credential names, plugins, models, and the saved files the program imports (file imports resolve from the snapshot's `files` only). Everything the engine knows of a plugin comes from the snapshot's `plugins`: the arguments a stage feeds it (`fedArgs`), the ones it must be handed (`requiredArgs`), what a plain call hands back (`output`, `earlierOutputs`), and whether it is `priced`.
 - **A host.** The families below.
 
@@ -135,7 +136,7 @@ interface RunInput {
 }
 ```
 
-- A run host passes the run's own `firedAt` on every entry, the first included (production: the run row's `started_at`). Absent, the engine pins its own clock once per segment, which a park does not survive.
+- A run host passes the run's own `firedAt` on every entry, the first included (production: the run row's `started_at`). Absent, the engine asks `clock.now` once as the segment opens and pins that, which a park does not survive.
 - The cap counts `priorSpentMicrodollars - capBaselineMicrodollars` plus what this segment spends.
 
 ### First firing
@@ -231,6 +232,8 @@ The decision that a join has closed is split between the engine and the run host
 | `lookup` | `resolveActingUser` | no (answer `null` when no user is known) |
 | `locks` | `acquire`, `release` | no |
 | `trace` | `append` | yes: absent, the trace is on the run's result only |
+| `clock` | `now` | no |
+| `ids` | `mint` | no |
 
 "No (may throw…)" means the family must be present, and a method of it may throw naming itself: the engine fails only a run that reaches it.
 
@@ -730,6 +733,36 @@ answer:  void
 - The run's decision trace as it goes, so a caller can publish it before the run settles. The engine appends each run-level statement's new entries once the statement is done (never from inside a flow), and the rest as the segment ends. The whole trace is on the run's result either way, and what was appended equals it.
 - **Persist:** the caller's choice (production: the live run view). **Retry:** not idempotent; entries are appended in order, exactly once each.
 
+### `clock`
+
+The engine reads no clock of its own. Every instant it needs that is not the run's firing instant comes from here: a sleep's wake time and an `every` timer's, a callback's expiry, the pin of a segment handed no `firedAt`, and every measured duration on the trace (a plugin invocation's, a model call's).
+
+#### `clock.now`
+
+```ts
+request: { segmentId: string }
+answer:  { nowIso: string }   // ISO 8601
+```
+
+- The engine adds a sleep's duration to the answer for `commitTimerPark`'s `wakeAt`, and a callback's `ttl` for `mint`'s `expiresAt`. A duration is the difference of two answers.
+- A host may answer one instant for the whole segment (the test host answers the instant the segment opened at), or the wall clock (production). The engine refuses an answer that names no instant.
+- **Persist:** nothing. **Retry:** idempotent.
+
+### `ids`
+
+The engine mints no id of its own. An extraction stamps each source and fetched file it carries as a resource with an id from here.
+
+#### `ids.mint`
+
+```ts
+request: { segmentId: string; count: number }   // count ≥ 1
+answer:  string[]                                // exactly count distinct, non-empty ids
+```
+
+- An id is unique within the segment's team; production answers UUIDs (a stored resource's id is a UUID), the test host `id-1`, `id-2`, … in the order asked.
+- The engine asks once per batch, never with `count` 0, and refuses an answer that is not `count` distinct strings.
+- **Persist:** nothing. **Retry:** not idempotent: each call mints fresh ids.
+
 ## Spend
 
 The engine keeps the run's ledger (`movement_engine/run_context.ts`). The budget it sends with each priced call is the run's cap less what it has spent against it (`null` with no cap), and every answer's `cost` is charged. A host refuses priced work past the budget by answering a `BudgetRefusal` carrying what the call spent first; the engine charges that, raises the run's cap (`RunCostCapExceeded`) from its own figures, and suspends the run there (`park.sink.commitLimitPause`, then `commitSuspension`).
@@ -749,10 +782,11 @@ Three requests are the Rust engine's own: they are not `EngineHost` methods, and
 | `builtins.function { id, args, now, languageVersion }` | `{ value }` or `{ threw: { class, code?, message } }`, values on the eval wire | a standard-library reading the Rust engine does not reproduce (V8's date parser, local time, some regex features), answered by the TypeScript member |
 | `builtins.compare { op, left, right }` | the same two shapes, for the shared comparator | `WITHIN` and the comparator's other readings, likewise |
 
-The engine reads two clocks, neither a host call. Every clock read a program makes (`DATE.TODAY`, a write's mutation context) answers from the run's pinned instant (`firedAt`, in the segment's input). A timer park's `wakeAt` is the engine's own wall clock plus the sleep, as the TypeScript engine reads `Date.now()`: an environment service (`now`, beside the zone, URL and normalisation services the engine asks its runtime for synchronously), not part of this contract.
+Every clock read a program makes (`DATE.TODAY`, a write's mutation context) answers from the run's pinned instant (`now` in the segment's input): `firedAt`, or, handed none, the shim's `clock.now` as the segment opened. A timer park's `wakeAt` is still the engine's own: an environment service (`now`, beside the zone, URL and normalisation services the engine asks its runtime for synchronously), which reads the segment input's instant. Routing it, and any id the engine mints, through `clock.now` and `ids.mint` lands when the Rust engine is merged.
 
 ## Changes
 
+- **Version 1, the clock and ids** (additive; the version stands). Two required families, `clock.now` and `ids.mint`. The engine reads no wall clock and mints no random id: a sleep's wake, a callback's expiry, a segment's pin without `firedAt`, every measured duration and an extraction's resource ids come from the host, so a recorded run replays to the same values. A host without them is refused before `segment.open`, naming the missing methods.
 - **Version 1** (the first version on the wire). Relative to the contract as chunk 4A left it:
   - **`segment.open`** carries `hostFamiliesVersion`, and a host refuses a version it does not serve.
   - **`lookup.resolveActingUser`** answers `{ principal: { id, display? }, email? }` in place of a team user `{ id, email, name? }`. The principal is an opaque reference; `email` comes only from a host that has one.

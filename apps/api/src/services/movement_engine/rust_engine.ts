@@ -46,6 +46,7 @@ import { isObjectSpread, listElementExpression, objectMemberExpression } from '#
 import { neverAsAny } from '../../lib/utils/types';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
+import { pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
 import type { RunContext } from './run_context';
@@ -263,7 +264,7 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
         ...(input.costCapMicrodollars !== undefined ? { capMicrodollars: input.costCapMicrodollars } : {}),
       },
       // The run's pinned instant, as the TypeScript interpreter pins it.
-      now: input.firedAt ?? new Date().toISOString(),
+      now: input.firedAt ?? context.pinnedNow.toISOString(),
       catalog: input.catalog,
     },
     'the segment input',
@@ -835,7 +836,7 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     origins: wire.origins.length,
     ...(ctx.languageVersion !== undefined ? { languageVersion: ctx.languageVersion } : {}),
     // The run's pinned instant, which DATE.TODAY reads.
-    now: (ctx.meta?.now ?? new Date()).toISOString(),
+    now: pinnedNow(ctx).toISOString(),
   };
   const reply = callEvalExpression(JSON.stringify(expr), JSON.stringify(envelope));
   const answer = record(reply.json, 'the Rust evaluator reply');

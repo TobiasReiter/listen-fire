@@ -47,6 +47,11 @@ export interface TestHostOverrides {
   wakes?: QueuedWake[];
   /** Receives each write a rehearsed (`dryRun`) instance captured. */
   writeSink?: DryRunWriteSink;
+  /** The clock; by default each segment reads the instant it opened at,
+   *  throughout. */
+  clock?: EngineHost['clock'];
+  /** The id minting; by default `id-1`, `id-2`, … in the order asked. */
+  ids?: EngineHost['ids'];
 }
 
 function notProvided(piece: string): Error {
@@ -83,10 +88,28 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
   const open = segment.open ?? (async () => ({ segmentId: `test-segment-${++opened}` }));
   const close = segment.close ?? (async () => ({}));
   const teamOf = (segmentId: string) => segments.facts(segmentId).teamId;
+  // Deterministic by default: one instant per segment (the moment it opened,
+  // so a test's fake timers set it), and ids numbered in the order asked.
+  const openedAt = new Map<string, string>();
+  let minted = 0;
   return {
     segment: {
-      open: (input) => openSegmentWith(input, { segments, locks, open }),
+      open: async (input) => {
+        const opening = await openSegmentWith(input, { segments, locks, open });
+        openedAt.set(opening.segmentId, new Date().toISOString());
+        return opening;
+      },
       close: async (input) => closeSegmentWith(input, { segments, table, locks, close }),
+    },
+    clock: overrides.clock ?? {
+      now: async ({ segmentId }) => {
+        const nowIso = openedAt.get(segmentId);
+        if (nowIso === undefined) throw new Error(`clock.now: segment ${segmentId} was never opened on this host`);
+        return { nowIso };
+      },
+    },
+    ids: overrides.ids ?? {
+      mint: async ({ count }) => Array.from({ length: count }, () => `id-${++minted}`),
     },
     adapters: { resolve: (input) => table.resolve(input), call: (input) => table.call(input) },
     llm: {

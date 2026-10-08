@@ -38,6 +38,8 @@ import {
   appendingInto,
   closeSegmentWith,
   NEVER_CANCELLED,
+  RANDOM_IDS,
+  WALL_CLOCK,
   openSegmentWith,
   SegmentDirectory,
   type ActingUserLookup,
@@ -177,6 +179,8 @@ export function productionEngineHost(input: {
     },
     locks: { acquire: (request) => locks.acquire(request), release: (request) => locks.release(request) },
     ...(input.trace !== undefined ? { trace: appendingInto(input.trace) } : {}),
+    clock: WALL_CLOCK,
+    ids: RANDOM_IDS,
   };
 }
 

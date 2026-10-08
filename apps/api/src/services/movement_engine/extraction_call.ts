@@ -65,7 +65,7 @@ import {
   type MovementTraceEntry,
 } from './expression';
 import { fromOrigin, NO_PROVENANCE, type ExtractSiteRef, type Provenance, type ProvenanceOrigin } from './provenance';
-import { throwIfCancelled, type RunFacts } from './run_context';
+import { stopwatch, throwIfCancelled, type RunFacts } from './run_context';
 
 // ── The model seam ──────────────────────────────────────────────────────────
 
@@ -710,7 +710,7 @@ export async function runExtractCall(input: ExtractCallInput): Promise<Binding> 
   const schema = responseSchema(spec, sink, finds);
   const usage: ExtractCallUsage[] = [];
   let lastReply: ExtractCallLlmResult | undefined;
-  const started = Date.now();
+  const elapsed = await stopwatch(runtime.run?.clock);
   // The reply is third-party content, so a run keeps only a few digests of it;
   // the budget is counted off the entries already on the run's trace.
   const digestOf = (why: Array<'no_entities' | 'dropped_records' | 'retried' | 'failed'>) => {
@@ -733,9 +733,11 @@ export async function runExtractCall(input: ExtractCallInput): Promise<Binding> 
     lastReply = reply;
     return reply;
   };
-  const telemetry = (): Pick<Extract<MovementTraceEntry, { kind: 'extraction' }>, 'model' | 'durationMs' | 'cache'> => ({
+  const telemetry = async (): Promise<
+    Pick<Extract<MovementTraceEntry, { kind: 'extraction' }>, 'model' | 'durationMs' | 'cache'>
+  > => ({
     model: settings.model,
-    durationMs: Date.now() - started,
+    durationMs: await elapsed(),
     cache: {
       breakpoints: plan.breakpoints.map((position) => items[position].index),
       sharedItems: plan.sharedItems,
@@ -772,7 +774,7 @@ export async function runExtractCall(input: ExtractCallInput): Promise<Binding> 
         failed: 'invalid_reply',
         retried,
         ...digestOf(['failed', 'retried']),
-        ...telemetry(),
+        ...(await telemetry()),
       });
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -804,7 +806,7 @@ export async function runExtractCall(input: ExtractCallInput): Promise<Binding> 
     ...(Object.keys(tallies.empty).length > 0 ? { empty: tallies.empty } : {}),
     ...(Object.keys(tallies.dropped).length > 0 ? { dropped: tallies.dropped } : {}),
     ...(coerced ? { coerced } : {}),
-    ...telemetry(),
+    ...(await telemetry()),
   });
   if (runtime.trace !== undefined) {
     // The keyword's tree has an unnamed root over its top-level records.

@@ -65,7 +65,7 @@ import type {
   ShapeNode,
 } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
-import { languageVersionOf, runLogFields, throwIfCancelled, type RunFacts } from './run_context';
+import { languageVersionOf, runLogFields, stopwatch, throwIfCancelled, type IdMint, type RunFacts } from './run_context';
 import { matchOption } from '../../lib/utils/string';
 import type { LlmCallResult, LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import { selectModel } from '../translation_graph/engine/batched_extraction/model_choice';
@@ -73,7 +73,7 @@ import { extractionCallSettings, type ExtractionCallSettings, type TierModel } f
 import { logger } from '../logger';
 import type { FileRef, Resource } from '../translation_graph/adapter';
 import { fileHandle, isFileRef } from '../translation_graph/adapter';
-import { stampResourceId } from '../translation_graph/engine/files/resources';
+import { stampResourceIds } from '../translation_graph/engine/files/resources';
 import {
   isFileUnreadable,
   MovementEngineError,
@@ -489,23 +489,21 @@ function pluginFileResources(
     const name = typeof record.name === 'string' ? record.name : file.name;
     const url = typeof record.url === 'string' ? record.url : null;
     const externalId = fileHandle(file);
-    resources.push(
-      stampResourceId({
-        ...(externalId !== undefined ? { externalId } : {}),
-        type: 'FILE',
+    resources.push({
+      ...(externalId !== undefined ? { externalId } : {}),
+      type: 'FILE',
+      ...(name !== undefined ? { name } : {}),
+      url,
+      fileRef: file,
+      ...(file.contentType !== undefined ? { contentType: file.contentType } : {}),
+      data: {
+        file,
         ...(name !== undefined ? { name } : {}),
-        url,
-        fileRef: file,
+        ...(url !== null ? { url } : {}),
+        type: 'FILE',
         ...(file.contentType !== undefined ? { contentType: file.contentType } : {}),
-        data: {
-          file,
-          ...(name !== undefined ? { name } : {}),
-          ...(url !== null ? { url } : {}),
-          type: 'FILE',
-          ...(file.contentType !== undefined ? { contentType: file.contentType } : {}),
-        },
-      }),
-    );
+      },
+    });
   }
   return resources;
 }
@@ -959,6 +957,13 @@ interface FenceWalk {
   trace: TraceSink;
 }
 
+/** Outside a run (a script, a test calling the extraction directly) no host
+ *  mints ids: resources are numbered within the process instead. */
+let mintedOutsideARun = 0;
+const OUTSIDE_A_RUN_IDS: IdMint = {
+  mint: async (count) => Array.from({ length: count }, () => `local-${++mintedOutsideARun}`),
+};
+
 export async function materializeExtract(input: {
   extract: ExtractExpression;
   /** The resolved spec (`buildExtractSpec`, annotations resolved live). */
@@ -994,14 +999,25 @@ class Materializer {
     return languageVersionOf(this.runtime.run);
   }
 
+  /** Each resource with no id, given one: in a run, by the host
+   *  (`ids.mint`), all of them in one request. */
+  private stamp(resources: readonly Resource[]): Promise<Resource[]> {
+    return stampResourceIds(resources, (count) => (this.runtime.run?.ids ?? OUTSIDE_A_RUN_IDS).mint(count));
+  }
+
+  private async stampOne(resource: Resource): Promise<Resource> {
+    const [stamped] = await this.stamp([resource]);
+    return stamped ?? resource;
+  }
+
   /** The files a stage's plugins fetched, joined onto the record they ran for. */
-  private addResources(
+  private async addResources(
     emission: WorkingEmission,
     enrichments: Array<{ plugin: string; result: TransformInvocationResult }>,
-  ): void {
+  ): Promise<void> {
     const fetched = enrichments.flatMap(({ result }) => pluginFileResources(result, this.languageVersion));
     if (fetched.length === 0) return;
-    emission.resources = [...(emission.resources ?? []), ...fetched];
+    emission.resources = [...(emission.resources ?? []), ...(await this.stamp(fetched))];
   }
 
   async run(extract: ExtractExpression, spec: ExtractNodeSpec): Promise<ExtractEmission> {
@@ -1047,6 +1063,7 @@ class Materializer {
         baseSources.push({ kind: 'enrichment', plugin: plugin.plugin });
         pipelineResources.push(...pluginFileResources(result, this.languageVersion));
       });
+      pipelineResources.splice(0, pipelineResources.length, ...(await this.stamp(pipelineResources)));
     } finally {
       trace.absorb(fromBranches);
     }
@@ -1133,7 +1150,7 @@ class Materializer {
         if (textResource) resources.push(textResource);
       }
     }
-    return { segments, sources, resources, files };
+    return { segments, sources, resources: await this.stamp(resources), files };
   }
 
   /**
@@ -1178,7 +1195,7 @@ class Materializer {
       ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}),
     };
     const resolution: FileResolution = {
-      resource: stampResourceId(fileResourceForRef(ref, read)),
+      resource: await this.stampOne(fileResourceForRef(ref, read)),
       ...(text !== undefined ? { text } : {}),
       traced: isFileUnreadable(result)
         ? {
@@ -1530,7 +1547,7 @@ class Materializer {
     // this method drives (one call per region, then one per entity per stage)
     // is the extraction's to gate. Both share the one debounced read.
     await throwIfCancelled(this.runtime.run);
-    const started = Date.now();
+    const elapsed = await stopwatch(this.runtime.run?.clock);
     const first = await this.runtime.llm.call({
       system: opts.system,
       userMessage: opts.userMessage,
@@ -1538,7 +1555,7 @@ class Materializer {
       ...opts.settings,
     });
     opts.telemetry.lastReply = first;
-    opts.telemetry.durationMs = Date.now() - started;
+    opts.telemetry.durationMs = await elapsed();
     // The schema tree (and its closures) is built once and reused across
     // both attempts — reset so a successful retry doesn't inherit the first
     // attempt's coercion diagnostics.
@@ -1559,7 +1576,7 @@ class Materializer {
       ...opts.settings,
     });
     opts.telemetry.lastReply = retry;
-    opts.telemetry.durationMs = Date.now() - started;
+    opts.telemetry.durationMs = await elapsed();
     opts.coercions.reset();
     return opts.schema.parse(retry.parsedJson);
   }
@@ -1585,7 +1602,7 @@ class Materializer {
       );
       // A fetched file is this record's source whether or not the stage goes on
       // to read anything — a deck with no readable text still carries forward.
-      this.addResources(emission, enrichments);
+      await this.addResources(emission, enrichments);
       // A stage fenced behind plugins that all came back with nothing has
       // nothing new for this entity to be read from: the prompt would carry
       // the same source text and the same fields the previous stage already
@@ -1692,7 +1709,7 @@ class Materializer {
         );
         // The child's stage ran once for all of its records, so each carries
         // what it fetched.
-        for (const extracted of children) this.addResources(extracted, enrichments);
+        for (const extracted of children) await this.addResources(extracted, enrichments);
         return children;
       });
       specs.forEach((child, i) => emission.children.set(child.name, extracted[i]));
@@ -1797,7 +1814,6 @@ class Materializer {
     // on the trace, because a fetch is what a slow run is usually waiting on
     // and its per-URL backstop is seven minutes.
     const url = typeof config.url === 'string' ? tracedUrl(config.url) : undefined;
-    const started = Date.now();
 
     for (const param of spec?.requiredArgs ?? []) {
       if (!isBlank(config[param])) continue;
@@ -1817,18 +1833,20 @@ class Materializer {
       return SKIPPED;
     }
 
+    const elapsed = await stopwatch(this.runtime.run?.clock);
     const result = await this.runtime.transformInvoker.invoke({
       plugin: plugin.plugin,
       config,
       extractedContext: { ...context },
     });
+    const durationMs = await elapsed();
     const fields = Object.keys(result.data ?? {});
     trace.push({
       kind: 'plugin',
       plugin: plugin.plugin,
       node,
       ...(url !== undefined ? { url } : {}),
-      durationMs: Date.now() - started,
+      durationMs,
       ...(result.text ? { chars: result.text.length } : {}),
       ...(fields.length > 0 ? { fields } : {}),
       ...(result.outcome ? { outcome: result.outcome } : {}),
@@ -2785,11 +2803,11 @@ function fileResourceForRef(ref: FileRef, text: FileTextResult | undefined): Res
 function textResourceForDatum(datum: unknown): Resource | undefined {
   const segment = segmentForDatum(datum);
   if (segment.content.trim().length === 0) return undefined;
-  return stampResourceId({
+  return {
     type: 'TEXT',
     content: segment.content,
     data: { content: segment.content, type: 'TEXT' },
-  });
+  };
 }
 
 function sanitizeSiteName(name: string): string {

@@ -23,7 +23,9 @@ import type {
   CostLine,
   ExternalRecordRef,
   FileRef,
+  HostClock,
   HostFamilyMethodPath,
+  HostIds,
   HostLocks,
   Priced,
   PricedAnswer,
@@ -56,6 +58,8 @@ export {
   HOST_FAMILIES,
   VOID_HOST_METHODS,
   hostMethodPaths,
+  missingHostMethods,
+  requiredHostMethodPaths,
 } from 'engine-contracts';
 export type {
   AdapterCallError,
@@ -67,7 +71,9 @@ export type {
   Costed,
   EncodedEndpoint,
   HostCallError,
+  HostClock,
   HostErrorDetail,
+  HostIds,
   HostLocks,
   InSegment,
   Priced,
@@ -337,6 +343,14 @@ export interface EngineHost {
   trace?: {
     append(input: Scoped<{ entries: MovementTraceEntry[] }>): Promise<void>;
   };
+  /** The instant now. Every time the engine needs that is not the run's
+   *  firing instant — a sleep's wake, a callback's expiry, a measured
+   *  duration, the pin of a segment handed no `firedAt` — it asks here, so a
+   *  recorded run replays to the same instants. */
+  clock: HostClock;
+  /** Fresh ids (an extraction's resource ids), minted by the host so a
+   *  recorded run replays to the same ids. */
+  ids: HostIds;
 }
 
 // ── The manifest ────────────────────────────────────────────────────────────

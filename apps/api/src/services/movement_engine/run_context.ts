@@ -27,7 +27,7 @@
 
 import { CURRENT_LANGUAGE_VERSION, type FileArtifactType, type LanguageVersion } from 'movement-lang';
 
-import { HOST_FAMILIES_VERSION, type ActingPrincipal, type TenantId } from 'engine-contracts';
+import { HOST_FAMILIES_VERSION, missingHostMethods, type ActingPrincipal, type TenantId } from 'engine-contracts';
 import type { FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import type { ArbitrationAnswer, EntityArbitration } from './host';
@@ -50,7 +50,7 @@ import type { CancelGate, ParkSink } from './run';
 import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs } from './extraction';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
-import { RunCancelledSignal } from './errors';
+import { MovementEngineError, RunCancelledSignal } from './errors';
 import {
   RunCostCapExceeded,
   type Budget,
@@ -69,6 +69,28 @@ export interface RunFacts {
   readonly cancel: CancelGate;
   /** The run this segment belongs to, named on the engine's log lines. */
   readonly runId?: string;
+  /** The host's clock, as this segment asks it. */
+  readonly clock: EngineClock;
+  /** The host's id minting, as this segment asks it. */
+  readonly ids: IdMint;
+}
+
+/** The instant now, from the host (`clock.now`). */
+export interface EngineClock {
+  now(): Promise<Date>;
+}
+
+/** `count` fresh ids, from the host (`ids.mint`). */
+export interface IdMint {
+  mint(count: number): Promise<string[]>;
+}
+
+/** A stopwatch on `clock`, started now: each read answers the milliseconds
+ *  since. Outside a run there is no clock, and every read is 0. */
+export async function stopwatch(clock: EngineClock | undefined): Promise<() => Promise<number>> {
+  if (clock === undefined) return async () => 0;
+  const started = (await clock.now()).getTime();
+  return async () => (await clock.now()).getTime() - started;
 }
 
 /** One segment's engine state. */
@@ -85,6 +107,9 @@ export interface RunContext extends RunFacts {
    *  segment. The lock session is the host's, and closes with the segment. */
   readonly locks: CrossRunLocks;
   readonly ledger: RunLedger;
+  /** The instant every clock read a program makes answers from: the run's
+   *  `firedAt`, or — handed none — the host's clock as the segment opened. */
+  readonly pinnedNow: Date;
   /** The segment's decision trace, and how much of it the host has been
    *  handed (`host.trace.append`). */
   readonly trace: { readonly entries: MovementTraceEntry[]; published: number };
@@ -115,7 +140,7 @@ export function languageVersionOf(run: RunFacts | undefined): LanguageVersion {
  * Refusing preemption is fine at a boundary this coarse: a fetch already in
  * flight runs to its own timeout, and the cancel lands before the NEXT one.
  */
-export async function throwIfCancelled(run: RunFacts | undefined): Promise<void> {
+export async function throwIfCancelled(run: Pick<RunFacts, 'cancel'> | undefined): Promise<void> {
   if (run !== undefined && (await run.cancel.cancelled())) throw new RunCancelledSignal();
 }
 
@@ -125,7 +150,7 @@ export async function throwIfCancelled(run: RunFacts | undefined): Promise<void>
  * THIS run waiting on?". Outside a run, or for a run with no id (a test run),
  * the bag is empty.
  */
-export function runLogFields(run: RunFacts | undefined): { runId?: string } {
+export function runLogFields(run: Pick<RunFacts, 'runId'> | undefined): { runId?: string } {
   return run?.runId !== undefined ? { runId: run.runId } : {};
 }
 
@@ -296,6 +321,8 @@ export interface SegmentHost {
   control: { cancel: CancelGate };
   files: { render(input: { content: string; type: FileArtifactType }): Promise<FileRef> };
   lookup: { resolveActingUser(input: ResolveActingUserInput): Promise<ActingPrincipal | null> };
+  clock: EngineClock;
+  ids: IdMint;
 }
 
 function bindSegment(host: EngineHost, segmentId: string): SegmentHost {
@@ -328,7 +355,46 @@ function bindSegment(host: EngineHost, segmentId: string): SegmentHost {
     },
     files: { render: (input) => host.files.render({ ...input, segmentId }) },
     lookup: { resolveActingUser: (input) => host.lookup.resolveActingUser({ ...input, segmentId }) },
+    clock: { now: async () => instantFrom(await host.clock.now({ segmentId })) },
+    ids: {
+      mint: async (count) => (count === 0 ? [] : mintedFrom(await host.ids.mint({ segmentId, count }), count)),
+    },
   };
+}
+
+/** The host clock's answer, read at the boundary: a clock that answered
+ *  "Invalid Date" would make every instant the run computes wrong without
+ *  saying so. */
+function instantFrom(answer: unknown): Date {
+  const nowIso: unknown = typeof answer === 'object' && answer !== null ? Reflect.get(answer, 'nowIso') : undefined;
+  const instant = typeof nowIso === 'string' ? new Date(nowIso) : undefined;
+  if (instant === undefined || Number.isNaN(instant.getTime())) {
+    throw new Error(`clock.now answered ${JSON.stringify(answer)}, which is not { nowIso: <an ISO 8601 instant> }`);
+  }
+  return instant;
+}
+
+function mintedFrom(answer: unknown, count: number): string[] {
+  if (
+    !Array.isArray(answer) ||
+    answer.length !== count ||
+    !answer.every((id): id is string => typeof id === 'string' && id.length > 0) ||
+    new Set(answer).size !== count
+  ) {
+    throw new Error(`ids.mint was asked for ${count} ids and answered ${JSON.stringify(answer)}, which is not ${count} distinct strings`);
+  }
+  return answer;
+}
+
+/** The run's pinned instant, from the ISO string it is handed. A string that
+ *  names no instant is refused: a clock that read "Invalid Date" would make
+ *  every date the run computes wrong without saying so. */
+function firedInstant(firedAt: string): Date {
+  const instant = new Date(firedAt);
+  if (Number.isNaN(instant.getTime())) {
+    throw new MovementEngineError('MOVENG_RUNTIME', `firedAt '${firedAt}' is not an ISO 8601 instant`);
+  }
+  return instant;
 }
 
 function bindParkSink(sink: NonNullable<EngineHost['park']['sink']>, segmentId: string): ParkSink {
@@ -361,9 +427,23 @@ export async function openRunContext(input: {
   teamId: TenantId;
   runId?: string;
   languageVersion: LanguageVersion;
+  /** When the run first fired (ISO 8601); absent, the segment pins the host's
+   *  clock as it opens. */
+  firedAt?: string;
   spend: ConstructorParameters<typeof RunLedger>[0];
 }): Promise<RunContext> {
   const { host, teamId, runId, languageVersion } = input;
+  // A host written against an earlier manifest lacks a family the engine now
+  // asks of every run: refused here, before anything is opened on it.
+  const missing = missingHostMethods(host);
+  if (missing.length > 0) {
+    const families = [...new Set(missing.map((path) => familyOf(path)))];
+    throw new MovementEngineError(
+      'MOVENG_UNSUPPORTED',
+      `the host does not serve ${missing.join(', ')}, which host families version ${HOST_FAMILIES_VERSION} requires ` +
+        `(the ${families.join(', ')} ${families.length === 1 ? 'family' : 'families'}); no segment was opened`,
+    );
+  }
   const { segmentId } = await host.segment.open({
     teamId,
     languageVersion,
@@ -371,10 +451,12 @@ export async function openRunContext(input: {
     ...(runId !== undefined ? { runId } : {}),
   });
   const bound = bindSegment(host, segmentId);
-  return {
+  const context = (pinnedNow: Date): RunContext => ({
     teamId,
     languageVersion,
     cancel: bound.control.cancel,
+    clock: bound.clock,
+    ids: bound.ids,
     ...(runId !== undefined ? { runId } : {}),
     segmentId,
     host: bound,
@@ -383,8 +465,21 @@ export async function openRunContext(input: {
       release: (token) => host.locks.release({ segmentId, token }),
     },
     ledger: new RunLedger(input.spend),
+    pinnedNow,
     trace: { entries: [], published: 0 },
-  };
+  });
+  try {
+    return context(input.firedAt !== undefined ? firedInstant(input.firedAt) : await bound.clock.now());
+  } catch (error) {
+    // The segment is open: it closes however its opening ends.
+    await closeRunContext(context(new Date(0)), host);
+    throw error;
+  }
+}
+
+/** A method path's family: everything before its last dot. */
+function familyOf(path: string): string {
+  return path.slice(0, path.lastIndexOf('.'));
 }
 
 /** Hand the host the trace entries it has not seen yet. */

@@ -3,6 +3,8 @@
 // (`test_host.ts`). Host side: none of this crosses the boundary, it is how a
 // host serves the families that do.
 
+import { randomUUID } from 'node:crypto';
+
 import { refuseUnsupportedHostFamiliesVersion, type ActingPrincipal, type TenantId } from 'engine-contracts';
 import type { CostLine } from '../../lib/run_cost';
 import type { ActingUser, ActorCandidate } from '../translation_graph/adapter';
@@ -15,6 +17,16 @@ import type { CancelGate } from './run';
 export const NEVER_CANCELLED: CancelGate = {
   cancelled: async () => false,
   cancelledNow: async () => false,
+};
+
+/** The wall clock, as a host serves `clock`. */
+export const WALL_CLOCK: EngineHost['clock'] = {
+  now: async () => ({ nowIso: new Date().toISOString() }),
+};
+
+/** Random UUIDs, as a host serves `ids`. */
+export const RANDOM_IDS: EngineHost['ids'] = {
+  mint: async ({ count }) => Array.from({ length: count }, () => randomUUID()),
 };
 
 /** What a host knows of a segment it opened: the run and the team every call

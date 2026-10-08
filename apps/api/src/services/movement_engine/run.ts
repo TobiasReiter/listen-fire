@@ -342,6 +342,7 @@ import {
   openRunContext,
   publishTrace,
   pricedCalls,
+  stopwatch,
   type PricedCalls,
   type RunContext,
   type RunLedger,
@@ -604,17 +605,6 @@ export class MovementRunFailed extends Error {
  * raised before the interpreter starts (parse / check) are never wrapped and
  * pass straight back.
  */
-/** The run's pinned instant, from the ISO string it is handed. A string that
- *  names no instant is refused: a clock that read "Invalid Date" would make
- *  every date the run computes wrong without saying so. */
-function firedInstant(firedAt: string): Date {
-  const instant = new Date(firedAt);
-  if (Number.isNaN(instant.getTime())) {
-    throw new MovementEngineError('MOVENG_RUNTIME', `firedAt '${firedAt}' is not an ISO 8601 instant`);
-  }
-  return instant;
-}
-
 export function runFailureCause(error: unknown): unknown {
   return error instanceof MovementRunFailed ? error.cause : error;
 }
@@ -676,6 +666,7 @@ async function inRunContext(
     teamId: input.teamId,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
     languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+    ...(input.firedAt !== undefined ? { firedAt: input.firedAt } : {}),
     spend: {
       priorMicrodollars: input.priorSpentMicrodollars ?? 0,
       capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
@@ -2355,7 +2346,7 @@ class Interpreter {
     if (versionWarning !== undefined) {
       this.trace.push({ kind: 'warning', code: versionWarning.code, message: versionWarning.message });
     }
-    this.pinnedNow = input.firedAt !== undefined ? firedInstant(input.firedAt) : new Date();
+    this.pinnedNow = prepared.context.pinnedNow;
     // Every adapter is resolved for this segment, so it answers inside the
     // segment's host scope. What comes back is the instance as data; the
     // engine holds a stand-in that calls it through the host.
@@ -5756,8 +5747,9 @@ class Interpreter {
       config[arg.name] = value;
       trails.push(provenance);
     }
-    const started = Date.now();
+    const elapsed = await stopwatch(this.context.clock);
     const result = await invoker.invoke({ plugin, config, extractedContext: {} });
+    const durationMs = await elapsed();
     // What the plugin brought back is no longer justified by the quote that
     // pointed at it, so the origins survive and the direct citation does not.
     const { binding, handedBack } = pluginCallBinding(
@@ -5770,7 +5762,7 @@ class Interpreter {
       kind: 'plugin',
       plugin,
       ...(typeof config.url === 'string' ? { url: tracedUrl(config.url) } : {}),
-      durationMs: Date.now() - started,
+      durationMs,
       ...(result.text ? { chars: result.text.length } : {}),
       ...(fields.length > 0 ? { fields } : {}),
       ...(result.outcome ? { outcome: result.outcome } : {}),
@@ -5928,7 +5920,7 @@ class Interpreter {
       ...(presenceBindingName !== undefined ? { presenceBind: true } : {}),
       scopeChain: serializeScopeChain(env.chainFromRoot(), park),
     }));
-    const wakeAt = new Date(Date.now() + durationToMs(sleep.duration.raw)).toISOString();
+    const wakeAt = new Date((await this.context.clock.now()).getTime() + durationToMs(sleep.duration.raw)).toISOString();
     await parkSink.commitTimerPark({ address, state, wakeAt });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -6059,7 +6051,9 @@ class Interpreter {
         }
         case 'ttl':
           // Checker-validated duration literal, so the raw spelling parses.
-          expiresAt = new Date(Date.now() + durationToMs(entry.value.raw.trim())).toISOString();
+          expiresAt = new Date(
+            (await this.context.clock.now()).getTime() + durationToMs(entry.value.raw.trim()),
+          ).toISOString();
           break;
         default:
           throw new MovementEngineError(
@@ -6559,7 +6553,7 @@ class Interpreter {
     await parkSink.commitTimerPark({
       address,
       state,
-      wakeAt: new Date(Date.now() + everyMs).toISOString(),
+      wakeAt: new Date((await this.context.clock.now()).getTime() + everyMs).toISOString(),
     });
     this.trace.push({ kind: 'gate', outcome: false });
     throw new RunParked(address);
@@ -7713,6 +7707,7 @@ class Interpreter {
             adapter: this.source.adapter,
             position: start,
             filter: probe.filter,
+            mintIds: (count) => this.context.ids.mint(count),
           }),
           probe,
           env,

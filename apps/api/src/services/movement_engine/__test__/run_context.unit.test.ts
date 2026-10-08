@@ -457,16 +457,16 @@ describe("a run's segment ends exactly once, however the run ends", () => {
 describe('the run facts a statement carries', () => {
   it('a cancel is honoured inside a statement; outside a run there is nothing to cancel', async () => {
     const cancelled = { ...NEVER_CANCELLED, cancelled: async () => true };
-    await expect(throwIfCancelled({ languageVersion: 2, cancel: cancelled })).rejects.toBeInstanceOf(
+    await expect(throwIfCancelled({ cancel: cancelled })).rejects.toBeInstanceOf(
       RunCancelledSignal,
     );
-    await expect(throwIfCancelled({ languageVersion: 2, cancel: NEVER_CANCELLED })).resolves.toBeUndefined();
+    await expect(throwIfCancelled({ cancel: NEVER_CANCELLED })).resolves.toBeUndefined();
     await expect(throwIfCancelled(undefined)).resolves.toBeUndefined();
   });
 
   it("a log line names the run, when there is one", () => {
-    expect(runLogFields({ languageVersion: 2, cancel: NEVER_CANCELLED, runId: 'run-9' })).toEqual({ runId: 'run-9' });
-    expect(runLogFields({ languageVersion: 2, cancel: NEVER_CANCELLED })).toEqual({});
+    expect(runLogFields({ runId: 'run-9' })).toEqual({ runId: 'run-9' });
+    expect(runLogFields({})).toEqual({});
     expect(runLogFields(undefined)).toEqual({});
   });
 });

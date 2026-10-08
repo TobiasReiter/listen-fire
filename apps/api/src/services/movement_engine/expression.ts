@@ -1822,7 +1822,7 @@ async function resolveMovementMetaKey(
  * engine that calls `new Date()` for "now", so "the run's instant" and "the
  * wall clock" never quietly become the same value anywhere else.
  */
-function pinnedNow(ctx: MovementExprContext): Date {
+export function pinnedNow(ctx: MovementExprContext): Date {
   return ctx.meta?.now ?? new Date();
 }
 
