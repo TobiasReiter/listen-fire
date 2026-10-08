@@ -38,8 +38,13 @@
 //! For either the shim runs the program on the TypeScript engine instead.
 //!
 //! `error` is `{class: "MovementEngineError", code, message}`, `{class:
-//! "Error" | "RangeError", message}`, or `{hostError: ref}`: the very error a
-//! host call failed with, which the shim holds and rethrows.
+//! "Error" | "RangeError", message}`, `{class: "RunCostCapExceeded",
+//! capMicrodollars, spentMicrodollars}` (a run that met its cap where it
+//! cannot suspend), or `{hostError: ref}`: the very error a host call failed
+//! with, which the shim holds and rethrows.
+//!
+//! A run that meets its cost cap where it can suspend pauses instead
+//! (crate::park): its `done` is a parked result, as a timer park's is.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -99,6 +104,16 @@ pub struct SegmentInput {
     /// Resume a parked run from its state (crate::park), rather than run it.
     #[serde(default)]
     pub resume: Option<crate::park::ResumeInput>,
+    /// The run is paused at its cost cap, and this segment was woken for one
+    /// of its flows: the flow suspends before its next statement
+    /// (`RunMovementInput.limitPaused`).
+    #[serde(default)]
+    pub limit_paused: bool,
+    /// Where to suspend, by address, once each (`RunMovementInput.suspendAt`):
+    /// a statement's address suspends the flow just before it. An address
+    /// before a call (`… .c k`) is never reached: this engine runs no calls.
+    #[serde(default)]
+    pub suspend_at: Vec<String>,
 }
 
 /// The segment entry: the run, and its `done`.
@@ -140,6 +155,9 @@ pub(crate) enum Stop {
 pub(crate) enum Failure {
     Engine { class: ErrorClass, message: String },
     Host(HostError),
+    /// The run met its cost cap (`RunCostCapExceeded`): the statement
+    /// suspends where it can, and fails the run where it cannot.
+    CapExceeded(crate::ledger::CapExceeded),
 }
 
 impl Failure {
@@ -156,6 +174,7 @@ impl Failure {
         match self {
             Failure::Engine { class, message } => EvalError::Thrown { class, message },
             Failure::Host(error) => EvalError::Host(error),
+            Failure::CapExceeded(cap) => EvalError::CapExceeded(cap),
         }
     }
 
@@ -165,6 +184,7 @@ impl Failure {
         match error {
             EvalError::Thrown { class, message } => Failure::Engine { class, message },
             EvalError::Host(error) => Failure::Host(error),
+            EvalError::CapExceeded(cap) => Failure::CapExceeded(cap),
             EvalError::Fallback(reason) => Failure::unsupported(&format!("this reading ({reason})"), unreproduced),
         }
     }
@@ -177,6 +197,7 @@ impl Failure {
             Failure::Engine { class: ErrorClass::Error, message } => json!({ "class": "Error", "message": message }),
             Failure::Engine { class: ErrorClass::RangeError, message } => json!({ "class": "RangeError", "message": message }),
             Failure::Host(error) => json!({ "hostError": error.detail.get("ref").cloned().unwrap_or(Json::Null) }),
+            Failure::CapExceeded(cap) => cap.to_json(),
         }
     }
 }
@@ -252,6 +273,15 @@ pub(crate) struct Run<'a> {
     pub(crate) targets: RefCell<Vec<(String, Rc<TargetAdapter>)>>,
     /// What every write tells its adapter about where it came from.
     pub(crate) mutation_context: RefCell<Js>,
+    /// The run is paused at a limit: the flow suspends at its next statement
+    /// boundary. From the input, or set as the run meets its cap; never
+    /// cleared within a segment (run.ts `limitPaused`).
+    pub(crate) limit_paused: std::cell::Cell<bool>,
+    /// The `suspendAt` addresses not yet suspended at.
+    pub(crate) pending_suspensions: RefCell<Vec<String>>,
+    /// The park sink answered that it cannot suspend (it has no
+    /// `commitSuspension`): run.ts `canSuspend` is false for the run.
+    pub(crate) cannot_suspend: std::cell::Cell<bool>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -259,7 +289,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
     let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
-    if let Some(reason) = crate::admit::refusal(&root.program, version, input.spend.cap_microdollars.is_some()) {
+    if let Some(reason) = crate::admit::refusal(&root.program, version) {
         return Err(Stop::Refused(reason));
     }
     if let Some(resume) = &input.resume
@@ -297,6 +327,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         writes: RefCell::default(),
         targets: RefCell::default(),
         mutation_context: RefCell::new(mutation_context(&event, now_ms)),
+        limit_paused: std::cell::Cell::new(input.limit_paused),
+        pending_suspensions: RefCell::new(input.suspend_at.clone()),
+        cannot_suspend: std::cell::Cell::default(),
     };
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
@@ -682,7 +715,17 @@ impl Run<'_> {
                 if self.ask_bool(host::control::cancelled(self.segment())).await.map_err(Stop::Thrown)? {
                     return Err(Stop::Cancelled);
                 }
-                let flow = self.statement(statement, scope, &at, &format!("{path}/{index}")).await?;
+                // A paused run (its cap met here or before this segment)
+                // stops each flow between statements; so does a `suspendAt`
+                // address.
+                self.suspend_before(&at, scope).await?;
+                let flow = match self.statement(statement, scope, &at, &format!("{path}/{index}")).await {
+                    // The host refuses a priced call once the run has spent
+                    // its cap: this statement was about to spend, so the run
+                    // suspends just before it.
+                    Err(Stop::Thrown(Failure::CapExceeded(cap))) => return Err(self.suspend_at_limit(cap, &at, scope).await),
+                    other => other?,
+                };
                 self.publish_trace().await.map_err(Stop::Thrown)?;
                 if let Flow::Returned = flow {
                     return Ok(Flow::Returned);
@@ -971,7 +1014,7 @@ impl Run<'_> {
     // ── Host calls ──
 
     /// An entry on the run's trace, handed to the host when its statement ends.
-    fn trace(&self, entry: TraceEntry) {
+    pub(crate) fn trace(&self, entry: TraceEntry) {
         self.trace.push(entry);
     }
 
@@ -1403,9 +1446,9 @@ mod tests {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
         let scope = |binding: Json| json!([{ "bindings": { "x": binding } }]);
         for (state, reason) in [
-            (json!({ "version": 1, "address": "s0", "journal": [] }), "resume_state_journal"),
+            (json!({ "version": 1, "address": "s0", "journal": [{ "index": 0, "value": null, "next": 1 }] }), "resume_state_journal"),
             (json!({ "version": 1, "address": "s0", "frames": [] }), "resume_state_frames"),
-            (json!({ "version": 1, "address": "s0", "suspended": true }), "resume_state_suspended"),
+            (json!({ "version": 1, "address": "s0", "suspended": false }), "resume_state_suspended"),
             (json!({ "version": 1, "address": "s0", "until": {} }), "resume_state_until"),
             (json!({ "version": 2, "address": "s0" }), "resume_state_version"),
             (json!({ "version": 1, "address": "s1.i0.s0" }), "resume_state_address"),
@@ -1442,7 +1485,12 @@ mod tests {
                 "g": { "kind": "nodePosition", "fields": {}, "fieldProvenance": {}, "edges": { "owner": { "kind": "landed", "landings": [{ "kind": "nodeRef", "id": 0 }] } } },
             } }],
         });
-        assert_eq!(crate::park::resume_refusal(&wire(resumable)), None);
+        assert_eq!(crate::park::resume_refusal(&wire(resumable.clone())), None);
+        // A suspension's state, whose journal is empty: this engine runs no calls.
+        let mut suspended = resumable;
+        suspended["suspended"] = json!(true);
+        suspended["journal"] = json!([]);
+        assert_eq!(crate::park::resume_refusal(&wire(suspended)), None);
     }
 
     #[test]

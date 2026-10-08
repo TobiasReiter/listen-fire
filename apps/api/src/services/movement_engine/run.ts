@@ -344,7 +344,6 @@ import {
   resumeSegmentInRust,
   runSegmentInRust,
   rustResumeRefusal,
-  rustRunRefusal,
 } from './rust_engine';
 import {
   closeRunContext,
@@ -719,7 +718,7 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // `check.program` host call), which throws exactly what parseAndCheck
   // throws. It runs inside the same segment the interpreter would: its host
   // calls are the run's.
-  if (routesToRust(input) && rustRunRefusal(input) === undefined) {
+  if (routesToRust(input)) {
     return inRunContext(input, async (context) => {
       const outcome = await runSegmentInRust({ input, context });
       if ('ran' in outcome) return outcome.ran;

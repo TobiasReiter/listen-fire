@@ -147,7 +147,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
             ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
         } }),
         Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
-        Err(EvalError::Host(_)) => unreachable!("an evaluation with no reader asks no host"),
+        Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("an evaluation with no reader asks no host"),
     })
 }
 

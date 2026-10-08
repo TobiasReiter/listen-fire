@@ -589,6 +589,13 @@ impl Run<'_> {
                     .charge(answer.get("cost"))
                     .map_err(|message| thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }))?;
                 if let Some(error) = answer.get("error") {
+                    // A budget refusal is the run's cap, from the run's own
+                    // figures, where they say it is met.
+                    if error.get("kind").and_then(Json::as_str) == Some("budget")
+                        && let Some(cap) = self.ledger.exceeded()
+                    {
+                        return Err(thrown(Failure::CapExceeded(cap)));
+                    }
                     let message = error.get("message").and_then(Json::as_str).unwrap_or_default().to_string();
                     return Err(thrown(Failure::Engine { class: crate::eval::ErrorClass::Error, message }));
                 }

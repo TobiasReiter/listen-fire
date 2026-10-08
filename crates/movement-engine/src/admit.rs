@@ -38,10 +38,8 @@ const FUNCTIONS: [&str; 32] = [
 
 /// Why this engine does not run `program`, or `None` when it does. Every
 /// movement in the file is walked, not only the one an event dispatches.
-/// `capped`: the run has a cost cap, so no priced call may be reached (the
-/// judge of a `unique by` write is one, and a run that meets its cap there
-/// must suspend, which this engine cannot yet).
-pub fn refusal(program: &ast::Program, language_version: u32, capped: bool) -> Option<String> {
+/// A cost cap refuses nothing: a run that meets it suspends (crate::park).
+pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> {
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
     let mut movements: Vec<&ast::MovementDeclaration> = Vec::new();
@@ -103,7 +101,6 @@ pub fn refusal(program: &ast::Program, language_version: u32, capped: bool) -> O
             file_names: &file_names,
             movements: &movement_names,
             language_version,
-            capped,
         };
         if let Err(reason) = names.body(&movement.body) {
             return Some(reason);
@@ -218,7 +215,6 @@ struct Names<'n> {
     file_names: &'n BTreeSet<String>,
     movements: &'n BTreeSet<String>,
     language_version: u32,
-    capped: bool,
 }
 
 impl Names<'_> {
@@ -322,9 +318,6 @@ impl Names<'_> {
         }
         for clause in &write.unique_by {
             unique_clause(&clause.predicate.raw)?;
-        }
-        if self.capped && !write.unique_by.is_empty() {
-            return refuse("cost_cap_with_priced_call");
         }
         for spread in write.spreads.iter().flatten() {
             let held = self.values.contains(&spread.source)
@@ -501,12 +494,12 @@ mod tests {
     fn refused(body: &str) -> Option<String> {
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
-        refusal(&program, 3, false)
+        refusal(&program, 3)
     }
 
     fn file(source: &str) -> Option<String> {
         let program = movement_parser::stmt::parse_program(source, 3, false).expect("the test's program parses");
-        refusal(&program, 3, false)
+        refusal(&program, 3)
     }
 
     #[test]
@@ -563,18 +556,5 @@ mod tests {
         assert_eq!(file(&format!("{PRELUDE}y = 1\n{movement}")).as_deref(), Some("file_assignment"));
         assert_eq!(file(&format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\n{movement}")).as_deref(), Some("movement_value_param"));
         assert_eq!(file(&format!("{PRELUDE}{movement}")), None);
-    }
-
-    #[test]
-    fn a_capped_run_refuses_a_priced_call_and_nothing_else() {
-        let capped = |body: &str| {
-            let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
-            let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
-            refusal(&program, 3, true)
-        };
-        let identity = "  write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }";
-        assert_eq!(capped(identity).as_deref(), Some("cost_cap_with_priced_call"));
-        assert_eq!(refused(identity), None);
-        assert_eq!(capped("  write crm-[:companies]-> { name: msg.`subject` }"), None);
     }
 }

@@ -8,8 +8,8 @@
 // to the run's `EngineHost` (rust_host.ts).
 //
 // Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`),
-// by this shim's input checks (`rustRunRefusal`, `rustResumeRefusal`: what the
-// run is handed, never what its program says), and then by the Rust engine
+// by this shim's input check on a resume (`rustResumeRefusal`: what the run is
+// handed, never what its program says), and then by the Rust engine
 // itself: its admission walks its own parse of the program before it asks for
 // anything (crates/movement-engine/src/admit.rs). What it refuses or declines
 // runs on the TypeScript engine. Each decision is logged once per run
@@ -23,6 +23,7 @@ import { callEvalExpression, CURRENT_LANGUAGE_VERSION, openEngineSegment } from 
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
+import { RunCostCapExceeded } from '../../lib/run_cost';
 import { logger } from '../logger';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
@@ -205,36 +206,22 @@ export function noteEngine(input: Pick<RunMovementInput, 'runId'>, engine: Engin
 export const ENGINE_CHOICE_TS = 'movement_engine_ts';
 
 /**
- * Why the Rust engine must not run this run, read off its input alone (what
- * the program says is the engine's own admission to decide, a capped run's
- * priced calls among it): a run that resumes after a limit pause or must
- * suspend at an address. Counted and logged as not admitted; undefined to
- * route the run.
+ * Why the Rust engine must not resume this run, read off its input alone:
+ * a resume that answers into its leaf or defers a race's settlement. The
+ * parked state itself is the Rust engine's to read
+ * (crates/movement-engine/src/park.rs `resume_refusal`), and a run's pause
+ * and suspensions (`limitPaused`, `suspendAt`, a cost cap) are its own.
+ * Counted and logged as not admitted; undefined to route the resume.
  */
-export function rustRunRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt' | 'runId'>): string | undefined {
-  const reason = inputRefusal(input);
-  if (reason !== undefined) notAdmitted(input, reason);
-  return reason;
-}
-
-/** `rustRunRefusal` for a resume, which also must not answer into its leaf or
- *  defer a race's settlement. The parked state itself is the Rust engine's
- *  to read (crates/movement-engine/src/park.rs `resume_refusal`). */
 export function rustResumeRefusal(
-  input: Pick<ResumeMovementInput, 'limitPaused' | 'suspendAt' | 'runId' | 'answer' | 'deferRaceSettlement'>,
+  input: Pick<ResumeMovementInput, 'runId' | 'answer' | 'deferRaceSettlement'>,
 ): string | undefined {
   const reason =
     input.answer !== undefined ? 'resume_answer'
     : input.deferRaceSettlement === true ? 'resume_defers_race_settlement'
-    : inputRefusal(input);
+    : undefined;
   if (reason !== undefined) notAdmitted(input, reason);
   return reason;
-}
-
-function inputRefusal(input: Pick<RunMovementInput, 'limitPaused' | 'suspendAt'>): string | undefined {
-  if (input.limitPaused === true) return 'limit_paused';
-  if ((input.suspendAt?.length ?? 0) > 0) return 'suspend_at';
-  return undefined;
 }
 
 /**
@@ -306,6 +293,9 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
         capBaselineMicrodollars: input.capBaselineMicrodollars ?? 0,
         ...(input.costCapMicrodollars !== undefined ? { capMicrodollars: input.costCapMicrodollars } : {}),
       },
+      // Where the run's flows suspend (crates/movement-engine/src/park.rs).
+      ...(input.limitPaused === true ? { limitPaused: true } : {}),
+      ...(input.suspendAt !== undefined && input.suspendAt.length > 0 ? { suspendAt: [...input.suspendAt] } : {}),
       // The run's pinned instant, as the TypeScript interpreter pins it.
       now: input.firedAt ?? new Date().toISOString(),
       catalog: input.catalog,
@@ -619,8 +609,18 @@ function namesRead(expr: Expression, into: Set<string> = new Set()): Set<string>
   return into;
 }
 
-/** The error the TypeScript evaluator would have thrown. */
+/** The error the TypeScript engine would have thrown. */
 function thrownBy(error: Record<string, unknown>): Error {
+  // A run that met its cost cap where it could not suspend: the error is
+  // rebuilt from its figures, message and all, as the TypeScript ledger
+  // builds it.
+  if (error.class === 'RunCostCapExceeded') {
+    const { capMicrodollars, spentMicrodollars } = error;
+    if (typeof capMicrodollars !== 'number' || typeof spentMicrodollars !== 'number') {
+      throw new RustShimError('a RunCostCapExceeded carries its cap and spend as numbers');
+    }
+    return new RunCostCapExceeded(capMicrodollars, spentMicrodollars);
+  }
   const message = string(error.message, 'the Rust evaluator error message');
   switch (error.class) {
     case 'MovementEngineError':

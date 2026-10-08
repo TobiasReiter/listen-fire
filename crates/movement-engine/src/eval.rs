@@ -50,6 +50,9 @@ pub enum EvalError {
     /// A host request the evaluation awaited failed (`Reader`): the run
     /// fails with the host's own error.
     Host(HostError),
+    /// A priced call the evaluation awaited met the run's cost cap: the
+    /// statement suspends (run.rs `body`).
+    CapExceeded(crate::ledger::CapExceeded),
 }
 
 impl EvalError {

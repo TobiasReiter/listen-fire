@@ -7,6 +7,7 @@ import path from 'node:path';
 import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import { RunCostCapExceeded } from '../../../lib/run_cost';
 
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { hostMethodPaths } from '../host';
@@ -24,7 +25,6 @@ import {
   readRunResult,
   runSegmentInRust,
   rustResumeRefusal,
-  rustRunRefusal,
   EVENT_DOES_NOT_CROSS,
   RustShimError,
   type EngineProtocol,
@@ -350,6 +350,16 @@ describe('the Rust engine shim', () => {
         { context: context(), hostErrors: [] },
       ),
     ).toThrow('MOVENG_NOT_FOUND: no movement');
+    // A cap met where the run cannot suspend: the TypeScript ledger's error, from its figures.
+    let cap: unknown;
+    try {
+      readRunResult({ thrown: { class: 'RunCostCapExceeded', capMicrodollars: 1000, spentMicrodollars: 1500 } }, { context: context(), hostErrors: [] });
+    } catch (error) {
+      cap = error;
+    }
+    expect(cap).toBeInstanceOf(RunCostCapExceeded);
+    expect(String(cap)).toBe(String(new RunCostCapExceeded(1000, 1500)));
+    expect(() => readRunResult({ thrown: { class: 'RunCostCapExceeded', capMicrodollars: '1' } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     let failed: unknown;
     try {
       readRunResult({ failed: { error: { hostError: 0 }, result: { movementName: 'm' } } }, { context: context(trace), hostErrors: [original] });
@@ -434,17 +444,13 @@ describe('choosing the engine', () => {
     expect(() => assertEngineChoiceConfigured({})).not.toThrow();
   });
 
-  it('admits no run that could suspend, reading its input alone, and counts each refusal by its reason', () => {
+  it('admits no resume that answers or defers, reading its input alone, and counts each refusal by its reason', () => {
     resetRustRunStats();
-    expect(rustRunRefusal({})).toBeUndefined();
-    expect(rustRunRefusal({ limitPaused: true })).toBe('limit_paused');
-    expect(rustRunRefusal({ suspendAt: ['s0'] })).toBe('suspend_at');
     expect(rustResumeRefusal({ answer: true })).toBe('resume_answer');
     expect(rustResumeRefusal({ deferRaceSettlement: true })).toBe('resume_defers_race_settlement');
+    // A pause or a suspension is the Rust engine's own (crates/movement-engine/src/park.rs).
     expect(rustResumeRefusal({})).toBeUndefined();
-    expect(rustRunStats.notAdmitted).toEqual({
-      limit_paused: 1, suspend_at: 1, resume_answer: 1, resume_defers_race_settlement: 1,
-    });
+    expect(rustRunStats.notAdmitted).toEqual({ resume_answer: 1, resume_defers_race_settlement: 1 });
     expect(rustRunStats.routed).toBe(0);
   });
 });

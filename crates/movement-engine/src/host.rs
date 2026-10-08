@@ -209,6 +209,31 @@ pub mod park {
             args: in_segment(segment, json!({ "address": address, "state": state, "wakeAt": wake_at, "wire": true })),
         }
     }
+
+    /// An engine-initiated suspension (`suspendFlow`): the leaf's address and
+    /// its suspended `ParkedScopeState`, on the eval wire. `{noSink: true}`
+    /// answers a sink that cannot suspend.
+    pub fn commit_suspension(segment: &str, address: &str, state: Json) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "commitSuspension".into(),
+            args: in_segment(segment, json!({ "address": address, "state": state, "wire": true })),
+        }
+    }
+
+    /// The run is pausing at its cost cap: what it spent against the cap.
+    /// `{noSink: true}` answers a sink that cannot suspend, which is not
+    /// paused at all (run.ts `canSuspend`): the run fails on its cap.
+    pub fn commit_limit_pause(segment: &str, cap: &crate::ledger::CapExceeded) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "commitLimitPause".into(),
+            args: in_segment(
+                segment,
+                json!({ "limit": "cost", "capMicrodollars": cap.cap_microdollars, "spentMicrodollars": cap.spent_microdollars }),
+            ),
+        }
+    }
 }
 
 pub mod control {

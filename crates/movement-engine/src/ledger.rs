@@ -6,10 +6,11 @@
 //!
 //! The account belongs to the run: a segment is seeded with what the run
 //! spent before it (`priorMicrodollars`), and the cap counts from
-//! `capBaselineMicrodollars`. This engine cannot suspend a run at its cap,
-//! so the shim's allow-list declines a capped run whose program can make a
-//! priced call; a budget refusal reaching this engine fails the statement
-//! with the host's message.
+//! `capBaselineMicrodollars`. The engine never refuses a priced call itself:
+//! the host refuses one past the budget, and that refusal, once charged, is
+//! the run's cap met (`exceeded`) when the run's own figures say so, at
+//! which the run suspends (crate::park); otherwise it fails the statement
+//! with the host's message, as run_context.ts `charged` does.
 
 use std::cell::RefCell;
 
@@ -51,13 +52,24 @@ impl Ledger {
         self.by_source.borrow().iter().map(|line| line.microdollars).sum()
     }
 
+    /// What the run has spent against its cap (`sinceReset`).
+    fn since_reset(&self) -> f64 {
+        self.spend.prior_microdollars + self.segment_microdollars() - self.spend.cap_baseline_microdollars
+    }
+
     /// What the next priced call may spend: `{remainingMicrodollars}`, null
     /// with no cap.
     pub fn budget(&self) -> Json {
-        let remaining = self.spend.cap_microdollars.map(|cap| {
-            cap - (self.spend.prior_microdollars + self.segment_microdollars() - self.spend.cap_baseline_microdollars)
-        });
+        let remaining = self.spend.cap_microdollars.map(|cap| cap - self.since_reset());
         json!({ "remainingMicrodollars": remaining })
+    }
+
+    /// The cap met, in the run's own figures (`exceeded`): spent at or past
+    /// it. `None` while it is not, or with no cap.
+    pub fn exceeded(&self) -> Option<CapExceeded> {
+        let cap = self.spend.cap_microdollars?;
+        let spent = self.since_reset();
+        (spent >= cap).then_some(CapExceeded { cap_microdollars: cap, spent_microdollars: spent })
     }
 
     /// Charge an answer's `cost`. A malformed line fails, with the
@@ -86,6 +98,47 @@ impl Ledger {
     }
 }
 
+/// The run met its cost cap (lib/run_cost.ts `RunCostCapExceeded`): the cap,
+/// and what the run had spent against it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CapExceeded {
+    pub cap_microdollars: f64,
+    pub spent_microdollars: f64,
+}
+
+impl CapExceeded {
+    /// `{class: "RunCostCapExceeded", capMicrodollars, spentMicrodollars}`:
+    /// the shim rebuilds the error from its figures, message and all.
+    pub fn to_json(self) -> Json {
+        json!({
+            "class": "RunCostCapExceeded",
+            "capMicrodollars": self.cap_microdollars,
+            "spentMicrodollars": self.spent_microdollars,
+        })
+    }
+
+    /// What a run paused at its cap says on its trace (run.ts
+    /// `runPausedMessage`).
+    pub fn paused_message(self) -> String {
+        format!(
+            "Paused: cost limit reached. The run has spent {} against a limit of {} ({RUN_COST_CAP_ENV_VAR}). Every branch stopped before its next statement; resume the run to carry on from there, with its usage reset.",
+            format_usd(self.spent_microdollars),
+            format_usd(self.cap_microdollars),
+        )
+    }
+}
+
+/// The knob the cap is set by (lib/run_cost.ts).
+const RUN_COST_CAP_ENV_VAR: &str = "MOVEMENT_MAX_RUN_COST_USD";
+
+/// lib/run_cost.ts `formatUsd`: dollars to four places, then one or two
+/// trailing zeros dropped (`$0.10`, `$1.00`, `$0.0312`).
+fn format_usd(microdollars: f64) -> String {
+    let fixed = crate::js::to_fixed(microdollars / 1_000_000.0, 4);
+    let zeros = fixed.len() - fixed.trim_end_matches('0').len();
+    format!("${}", &fixed[..fixed.len() - zeros.min(2)])
+}
+
 fn malformed(line: &Json) -> String {
     format!("a cost report must be {{ source, microdollars }} with a non-negative, finite number of microdollars; got {line}")
 }
@@ -102,6 +155,27 @@ mod tests {
         assert_eq!(ledger.cost_lines(), vec![CostLine { source: "model:judge".into(), microdollars: 11.0 }]);
         assert_eq!(ledger.budget(), json!({ "remainingMicrodollars": 59.0 }));
         assert_eq!(Ledger::new(&Spend::default()).budget(), json!({ "remainingMicrodollars": null }));
+    }
+
+    #[test]
+    fn the_cap_is_met_at_or_past_it_counting_from_the_baseline() {
+        let ledger = Ledger::new(&Spend { prior_microdollars: 50.0, cap_baseline_microdollars: 20.0, cap_microdollars: Some(100.0) });
+        assert_eq!(ledger.exceeded(), None);
+        ledger.charge(Some(&json!([{ "source": "model:judge", "microdollars": 69 }]))).unwrap();
+        assert_eq!(ledger.exceeded(), None);
+        ledger.charge(Some(&json!([{ "source": "model:judge", "microdollars": 1 }]))).unwrap();
+        assert_eq!(ledger.exceeded(), Some(CapExceeded { cap_microdollars: 100.0, spent_microdollars: 100.0 }));
+        assert_eq!(Ledger::new(&Spend { prior_microdollars: 1e9, ..Spend::default() }).exceeded(), None);
+    }
+
+    #[test]
+    fn dollars_format_as_format_usd_formats_them() {
+        assert_eq!(format_usd(100_000.0), "$0.10");
+        assert_eq!(format_usd(1_000_000.0), "$1.00");
+        assert_eq!(format_usd(31_250.0), "$0.0313");
+        assert_eq!(format_usd(1_234.0), "$0.0012");
+        assert_eq!(format_usd(10_000.0), "$0.01");
+        assert_eq!(format_usd(0.0), "$0.00");
     }
 
     #[test]

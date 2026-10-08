@@ -9,12 +9,23 @@
 //!   writes them for the kinds this engine holds: `event`, `instance`,
 //!   `opaque`, `movement`, `value` (its JSON round trip and its trail's
 //!   origins) and `handle` (the write record itself, its type and graph).
+//! - **Suspension** (run.ts `suspendFlow`): the flow stops just before a
+//!   statement, its state `suspended`, with a `journal` of the calls the
+//!   statement had finished — always empty here, as this engine runs no
+//!   calls. A flow suspends when the run meets its cost cap (the statement
+//!   about to spend: `suspendAtLimit`, which first marks the run paused,
+//!   `commitLimitPause`, and says so on the trace), at each statement of a
+//!   run already paused (`limitPaused`), and at a `suspendAt` address. A
+//!   sink that cannot suspend answers `noSink`, and the run goes on (a
+//!   pause), fails on its cap, or fails for want of a park (`suspendAt`), as
+//!   the TypeScript does.
 //! - **Resume** (`resumeAlongAddress`): the movement's scope re-layered from
 //!   the chain's second entry, each `if` arm on the address descended with
-//!   its scope rehydrated, the leaf stepped past (or re-entered), then each
-//!   enclosing body finished from the statement after its container.
+//!   its scope rehydrated, the leaf stepped past (or re-entered: a
+//!   suspension's operator resume), then each enclosing body finished from
+//!   the statement after its container.
 //!
-//! A state holding anything else (frames, a journal, a suspension, an
+//! A state holding anything else (frames, a journal with calls in it, an
 //! `until`, a binding of another kind) is not this engine's to resume:
 //! `resume_refusal` refuses it, before the run asks its host for anything,
 //! and the shim resumes it on the TypeScript engine.
@@ -30,7 +41,10 @@ use serde_json::Value as Json;
 
 use crate::bindings::{Binding, Handle, InstanceBinding, Node, Scope};
 use crate::env::{Trail, ValueBinding};
-use crate::env::{json_round_trip, object_of};
+use crate::env::{encode_plain, json_round_trip, object_of};
+use crate::host;
+use crate::ledger::CapExceeded;
+use crate::trace::TraceEntry;
 use crate::js::{Js, JsObject};
 use crate::run::{Address, Failure, Flow, Run, Stop};
 use crate::write::WriteRecord;
@@ -49,9 +63,6 @@ pub struct ResumeInput {
 /// JavaScript object the TypeScript writes: every key in its order (it
 /// crosses to the host on the eval wire).
 pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Js {
-    // One table for the whole state: a node two scopes hold is written once.
-    let mut park = Vec::new();
-    let chain: Vec<Js> = scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect();
     let mut state = vec![
         ("version", Js::Number(1.0)),
         ("address", Js::str(address)),
@@ -60,8 +71,28 @@ pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>,
     if presence.is_some() {
         state.push(("presenceBind", Js::Bool(true)));
     }
-    state.push(("scopeChain", Js::array(chain)));
+    state.push(("scopeChain", scope_chain(run, scope)));
     object_of(state)
+}
+
+/// `{version: 1, address, bindingName: null, suspended: true, journal: [],
+/// scopeChain}`, as `suspendFlow` writes it.
+pub(crate) fn suspended_state(run: &Run<'_>, address: &str, scope: &Rc<Scope>) -> Js {
+    object_of(vec![
+        ("version", Js::Number(1.0)),
+        ("address", Js::str(address)),
+        ("bindingName", Js::Null),
+        ("suspended", Js::Bool(true)),
+        ("journal", Js::array(Vec::new())),
+        ("scopeChain", scope_chain(run, scope)),
+    ])
+}
+
+/// The scopes root first, as one park writes them.
+fn scope_chain(run: &Run<'_>, scope: &Rc<Scope>) -> Js {
+    // One table for the whole state: a node two scopes hold is written once.
+    let mut park = Vec::new();
+    Js::array(scope.chain_from_root().iter().map(|s| serialize_scope(run, s, &mut park)).collect())
 }
 
 /// The nodes one park has written, numbered as first reached (`ParkWriter`).
@@ -159,24 +190,27 @@ fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
 }
 
 /// Why this engine does not resume `state` (on the eval wire), or `None`
-/// when it does: a timer park's state of version 1 — no frames, no journal,
-/// no suspension, no `until` — whose address steps only into `if` arms, and
-/// whose scopes hold only the binding kinds this engine binds, with no
-/// extraction among their origins and no record held in a value.
+/// when it does: a timer park's or a suspension's state of version 1 — no
+/// frames, no call in its journal, no `until` — whose address steps only
+/// into `if` arms, and whose scopes hold only the binding kinds this engine
+/// binds, with no extraction among their origins and no record held in a
+/// value.
 pub fn resume_refusal(state: &Json) -> Option<String> {
     let Ok(state) = crate::env::decode(state) else { return Some("resume_state_does_not_read".into()) };
     if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == 1.0) {
         return Some("resume_state_version".into());
     }
-    for (key, reason) in [
-        ("frames", "resume_state_frames"),
-        ("journal", "resume_state_journal"),
-        ("suspended", "resume_state_suspended"),
-        ("until", "resume_state_until"),
-    ] {
+    for (key, reason) in [("frames", "resume_state_frames"), ("until", "resume_state_until")] {
         if at(&state, key).is_some() {
             return Some(reason.into());
         }
+    }
+    // A journal of calls to replay is a call this engine would have to run.
+    if at(&state, "journal").is_some_and(|journal| !matches!(journal, Js::Array(list) if list.items.is_empty())) {
+        return Some("resume_state_journal".into());
+    }
+    if at(&state, "suspended").is_some_and(|suspended| !matches!(suspended, Js::Bool(true))) {
+        return Some("resume_state_suspended".into());
     }
     if !text(at(&state, "address")).is_some_and(steps_only_into_if_arms) {
         return Some("resume_state_address".into());
@@ -227,6 +261,81 @@ fn descriptor_refusal(descriptor: &Js) -> Option<String> {
         }
         other => Some(format!("resume_state_kind:{}", other.unwrap_or("undefined"))),
     }
+}
+
+// ── Suspension ──
+
+impl Run<'_> {
+    /// Before a statement (run.ts `interpretBody`): a paused run's flow
+    /// suspends where it can, and a `suspendAt` address suspends it, once.
+    pub(crate) async fn suspend_before(&self, at: &Address, scope: &Rc<Scope>) -> Result<(), Stop> {
+        if self.limit_paused.get()
+            && !self.cannot_suspend.get()
+            && let Some(parked) = self.suspend_flow(at, scope).await?
+        {
+            return Err(parked);
+        }
+        let address = at.encode();
+        let pending = {
+            let mut pending = self.pending_suspensions.borrow_mut();
+            pending.iter().position(|a| *a == address).map(|i| pending.remove(i))
+        };
+        if pending.is_some() {
+            return Err(self.suspend_flow(at, scope).await?.unwrap_or_else(|| nowhere_to_park(&address)));
+        }
+        Ok(())
+    }
+
+    /// `suspendAtLimit`: the run met its cost cap in the statement at `at`.
+    /// The first time, the run is marked paused and says so; then the flow
+    /// suspends just before the statement. What the statement ends with: the
+    /// park, or, where the sink cannot suspend, the cap as the run's failure.
+    pub(crate) async fn suspend_at_limit(&self, cap: CapExceeded, at: &Address, scope: &Rc<Scope>) -> Stop {
+        match self.pause_at_limit(cap, at, scope).await {
+            Ok(stop) | Err(stop) => stop,
+        }
+    }
+
+    async fn pause_at_limit(&self, cap: CapExceeded, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
+        let fails = || Stop::Thrown(Failure::CapExceeded(cap));
+        if self.cannot_suspend.get() {
+            return Ok(fails());
+        }
+        if !self.limit_paused.get() {
+            let answer = self.ask(host::park::commit_limit_pause(self.segment(), &cap)).await.map_err(Stop::Thrown)?;
+            if no_sink(answer.as_ref()) {
+                self.cannot_suspend.set(true);
+                return Ok(fails());
+            }
+            self.limit_paused.set(true);
+            self.trace(TraceEntry::Warning { code: "RUN_PAUSED_COST_CAP".into(), message: cap.paused_message() });
+        }
+        let address = at.encode();
+        Ok(self.suspend_flow(at, scope).await?.unwrap_or_else(|| nowhere_to_park(&address)))
+    }
+
+    /// `suspendFlow`: the suspended state committed and the flow parked at
+    /// `at`, or `None` from a sink that cannot suspend.
+    async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Option<Stop>, Stop> {
+        let address = at.encode();
+        let state = suspended_state(self, &address, scope);
+        let request = host::park::commit_suspension(self.segment(), &address, encode_plain(&state));
+        let answer = self.ask(request).await.map_err(Stop::Thrown)?;
+        if no_sink(answer.as_ref()) {
+            self.cannot_suspend.set(true);
+            return Ok(None);
+        }
+        self.trace(TraceEntry::Gate { outcome: false });
+        Ok(Some(Stop::Parked(address)))
+    }
+}
+
+fn no_sink(answer: Option<&Json>) -> bool {
+    answer.and_then(|a| a.get("noSink")).is_some()
+}
+
+fn nowhere_to_park(address: &str) -> Stop {
+    Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the run was asked to suspend at '{address}' and has nowhere durable to park")))
 }
 
 // ── Resume ──

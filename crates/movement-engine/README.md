@@ -25,7 +25,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 |---|---|
 | `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight |
 | `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `park.sink`, `control.cancel`, `locks`, `trace`), plus the engine's own (`check`, `builtins`); every host request names the segment |
-| `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the charges handed back with `done` |
+| `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the cap met (`exceeded`) once a budget refusal is charged, the charges handed back with `done` |
 | `admit` | admission: the allow-list walk over this engine's own parse, before the check; a refusal's stable reason (below) |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
@@ -77,6 +77,8 @@ Measured 2026-10-07 (gzip -9):
 | chunk 5B task 1, fix round 1 (the cap rule in admission) | 2,018,987 | 565,747 |
 | the trace batched per statement | 2,018,749 | 565,685 |
 | the evaluator awaits host reads in place | 2,029,485 | 569,630 |
+| the closing trace hand-over marked | 2,029,738 | 569,885 |
+| limit pause (the cap, suspensions, `limitPaused`, `suspendAt`) | 2,038,536 | 573,184 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -203,8 +205,9 @@ answered nothing.
 Whether this engine runs a program whole is decided in three places, in
 this order, and the program is parsed once, here:
 
-1. **The shim's input checks** (rust_engine.ts `rustRunRefusal`,
-   `rustResumeRefusal`), on what the run is handed, before a segment opens.
+1. **The shim's input checks** (rust_engine.ts: an event that cannot cross
+   the eval wire; `rustResumeRefusal` for a resume), on what the run is
+   handed, before a segment opens.
 2. **This engine's admission** (`admit.rs`, and `park::resume_refusal` for a
    resume), on its own parse, before the catalog loads, before
    `check.program`, before any request: a refused run costs one parse and
@@ -225,8 +228,6 @@ Each is a stable snake_case string: the one log line per run names it, and
 
 | reason | the input |
 |---|---|
-| `limit_paused` | a run entered while its limit pause holds (`limitPaused`) |
-| `suspend_at` | a run that must suspend at an address (`suspendAt`) |
 | `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a `Date`, a class instance, a lone surrogate) |
 | `resume_answer` | a resume that answers into its leaf (an ask) |
 | `resume_defers_race_settlement` | a resume that defers a race's settlement |
@@ -264,7 +265,6 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `unique_by_without_key` | a `unique by` clause with no key (no bare field, parent or `field == value`) |
 | `unique_by_reads_beyond_candidate` | a `unique by` conjunct that is not a pure predicate over the candidate |
 | `write_spread_source` | a write spread of a name that is not a value, a handle, a node or the event |
-| `cost_cap_with_priced_call` | in a run with a cost cap (`spend.capMicrodollars`), a `unique by` write: its judge is a priced call, and a run that meets its cap there must suspend, which this engine cannot yet. A capped run with no such write is admitted |
 | `graph_shape` | `graph<Shape> { … }` |
 | `node_spread` | a spread in a `node { … }` literal |
 | `node_spread_source` | a graph spread of a name that is not a value, a handle or a node |
@@ -289,7 +289,9 @@ Each is a stable snake_case string: the one log line per run names it, and
 |---|---|
 | `resume_state_does_not_read` | it does not read off the wire |
 | `resume_state_version` | a version other than 1 |
-| `resume_state_frames`, `resume_state_journal`, `resume_state_suspended`, `resume_state_until` | frames, a journal, a suspension, an `until` |
+| `resume_state_frames`, `resume_state_until` | frames, an `until` |
+| `resume_state_journal` | a journal with a call in it (a suspension's journal is empty when this engine wrote it) |
+| `resume_state_suspended` | a `suspended` other than `true` |
 | `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) |
 | `resume_state_kind:<kind>` | a binding of a kind this engine does not bind (`extraction`, `shape`, …) |
 | `resume_state_extraction_origin` | an extraction among a binding's origins |
@@ -349,6 +351,8 @@ TypeScript takes through its host is a host request here:
 | `locks.acquire`, `locks.release` | around an identity search and an update by id | `host.locks`: a token per acquire, released by token |
 | `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature, `WITHIN`) | the TypeScript member itself |
 | `park.sink.commitTimerPark` | a `sleep` in a run that is not a rehearsal | `host.park.sink`; `wakeAt` is this engine's wall clock plus the sleep |
+| `park.sink.commitLimitPause` | the first time the run meets its cost cap (a budget refusal, charged, that the ledger says is the cap) | `host.park.sink.commitLimitPause`, skipped when the sink has none; `{noSink: true}` when the sink cannot suspend, and the run fails on its cap |
+| `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address | `host.park.sink.commitSuspension`; `{noSink: true}` when the sink has none |
 | `control.cancel.cancelledNow` | the last check (not after a park) | `host.control.cancel.cancelledNow` |
 
 **A lost run lease** is the run host's (docs/engine-host.md "Failure"): the
@@ -419,9 +423,36 @@ TypeScript's is. A resume
 (`input.resume = {state, reenter?}`) re-layers the movement's scope, descends
 the `if` arms the address names, steps past (or re-enters) the leaf, and
 finishes each enclosing body. A state either engine wrote resumes on either;
-admission refuses anything else (frames, a journal, a suspension, `until`,
+admission refuses anything else (frames, a journal with calls in it, `until`,
 other binding kinds, extraction origins: `resume_state_*` above), and the
 TypeScript engine resumes it.
+
+A suspension (run.ts `suspendFlow`) writes `{version: 1, address,
+bindingName: null, suspended: true, journal: [], scopeChain}` for the flow at
+a statement's boundary; its journal is empty because this engine runs no
+calls. The flow suspends:
+
+- **at its cost cap.** The engine never refuses a priced call itself. The
+  host refuses one once its budget is spent (the meter refuses when the run
+  has spent at or past its cap), and that refusal, once its cost is charged,
+  is the cap met if the ledger's own figures say so (`spent >= cap`, counted
+  from `capBaselineMicrodollars`); otherwise the statement fails with the
+  host's message. So the call that crosses the cap is kept, and the run
+  pauses at the next priced call, just before its statement, as run.ts
+  `suspendAtLimit` does. The first time, the run is marked paused
+  (`commitLimitPause`) and says so on its trace (`RUN_PAUSED_COST_CAP`); a
+  sink that cannot suspend is not paused, and the run fails with
+  `RunCostCapExceeded`.
+- **before each statement of a paused run** (`limitPaused` in the input: a
+  flow woken while its run's pause holds). A sink that cannot suspend lets
+  the flow run on.
+- **at a `suspendAt` address**, once each. A sink that cannot suspend fails
+  the run (`MOVENG_RUNTIME`). An address before a call (`… .c k`) is never
+  reached: this engine runs no calls.
+
+An operator's limit resume is an ordinary resume with `reenter`: the
+statement runs again, from the run's spend with the cap counted afresh
+(`capBaselineMicrodollars`), all of which the host decides.
 
 - An expression is evaluated by the one evaluator, as one async walk (as
   `evalMovementExpr` is). What it cannot answer itself it asks
@@ -466,12 +497,6 @@ fails); none produces a different answer.
 - A record compared by identity (`a == b` where either is binding-shaped):
   MOVENG_UNSUPPORTED. TypeScript compares two records by identity.
 
-- A priced call refused as `budget`: the statement fails with the host's
-  message, where the TypeScript engine would suspend the run at its cap. It
-  cannot happen with no cap (the budget is unlimited), and admission refuses
-  a capped run's `unique by` write (`cost_cap_with_priced_call`), the only
-  priced call this engine makes.
-
 None of the first four is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
 brings.
@@ -491,13 +516,14 @@ writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, catalog, dryRun?,
-resume?}`. `segmentId` is the segment the run host opened (`segment.open`),
+resume?, limitPaused?, suspendAt?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
 rehearsal (writes captured, `sleep` fast-forwarded); `resume` is `{state,
 reenter?}`, a `ParkedScopeState` (on the eval wire) to resume rather than a
-run to start. `languageVersion` is the pin,
+run to start; `limitPaused` says the run's pause holds, and `suspendAt` lists
+the addresses to suspend at (both "Parks" above). `languageVersion` is the pin,
 written out (the engine does not know the release's current one); `event`
 is the `TriggerEvent` on the eval wire; `now` is the run's pinned instant as
 a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
@@ -519,8 +545,10 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 | `llm.arbitrateEntities {segmentId, asserted, candidates, recordType, constraints, languageVersion, budget}` (the first four on the eval wire) | `{index: number \| null, judgeUnavailable?, cost?}`, or a budget refusal `{error: {kind: "budget", message}, cost?}` |
 | `locks.acquire {segmentId, names}` / `locks.release {segmentId, token}` | `{token}` once held / `undefined` once let go |
 | `park.sink.commitTimerPark {segmentId, address, state, wakeAt, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a host with no park sink (the run fails as the TypeScript's does) |
+| `park.sink.commitSuspension {segmentId, address, state, wire: true}` (`state` on the eval wire) | `undefined`, or `{noSink: true}` for a sink that cannot suspend |
+| `park.sink.commitLimitPause {segmentId, limit: "cost", capMicrodollars, spentMicrodollars}` | `undefined`, or `{noSink: true}` for a sink that cannot suspend (nothing is committed) |
 | `control.cancel.cancelled {segmentId}` / `control.cancel.cancelledNow {segmentId}` | a boolean: the cancel gate, debounced / not |
-| `trace.append {segmentId, entries}` (one per statement that traced; the last, as the segment ends, may fail without failing the run) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
+| `trace.append {segmentId, entries, closing?: true}` (one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}` or `{kind: "field_miss", binding, field, available: [key…]}` |
 | `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
 | `builtins.compare {op, left, right}` | the same two shapes, for `compareValues(left, op, right)`; `op` a `FilterOperator` |
 
@@ -553,8 +581,11 @@ segment's priced calls spent, by source, for the run's account.
 
 `error` is `{class: "MovementEngineError", code, message}` (`message` without
 the `CODE: ` the TypeScript constructor adds), `{class: "Error" |
-"RangeError", message}`, or `{hostError: ref}`: the error a host call failed
-with, by the `ref` its answer carried.
+"RangeError", message}`, `{class: "RunCostCapExceeded", capMicrodollars,
+spentMicrodollars}` (the cap met where the run cannot suspend; the shim
+builds the TypeScript's error from the figures), or `{hostError: ref}`: the
+error a host call failed with, by the `ref` its answer carried. A run that
+suspends at its cap ends in a parked `result`.
 
 ## Spec the tail, mirror the cheap core
 

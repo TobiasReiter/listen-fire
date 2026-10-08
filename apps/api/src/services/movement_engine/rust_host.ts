@@ -191,6 +191,36 @@ const ROUTES: Record<string, Route> = {
     });
     return undefined;
   },
+  /** An engine-initiated suspension (run.ts `suspendFlow`). A sink that
+   *  cannot suspend is told so: the run goes on, or fails, as run.ts
+   *  `canSuspend` decides. */
+  async 'park.sink.commitSuspension'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink?.commitSuspension === undefined) return { noSink: true };
+    if (request.wire !== true) throw new RustShimError('park.sink.commitSuspension carries its state on the eval wire');
+    await sink.commitSuspension({
+      segmentId: segmentOf(request),
+      address: string(request.address, 'park.sink.commitSuspension address'),
+      state: new WireOut().read(request.state),
+    });
+    return undefined;
+  },
+  /** The run is pausing at its cost cap. A sink that cannot suspend
+   *  (run.ts `canSuspend`) is not paused at all: it is told so, and the run
+   *  fails on its cap. A sink that can suspend but keeps no pause is
+   *  skipped, as `commitLimitPause?.` skips it. */
+  async 'park.sink.commitLimitPause'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink?.commitSuspension === undefined) return { noSink: true };
+    if (request.limit !== 'cost') throw new RustShimError('park.sink.commitLimitPause limit is "cost"');
+    await sink.commitLimitPause?.({
+      segmentId: segmentOf(request),
+      limit: 'cost',
+      capMicrodollars: microdollars(request.capMicrodollars, 'park.sink.commitLimitPause capMicrodollars'),
+      spentMicrodollars: microdollars(request.spentMicrodollars, 'park.sink.commitLimitPause spentMicrodollars'),
+    });
+    return undefined;
+  },
   /** The cancel gate at a statement boundary. */
   async 'control.cancel.cancelled'(request, { host }) {
     return host.control.cancel.cancelled({ segmentId: segmentOf(request) });
@@ -275,6 +305,11 @@ function budgetOf(value: unknown): { remainingMicrodollars: number | null } {
     throw new RustShimError('a budget is {remainingMicrodollars: number | null}');
   }
   return { remainingMicrodollars: remaining };
+}
+
+function microdollars(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new RustShimError(`${what} is a finite number`);
+  return value;
 }
 
 function instant(value: unknown, what: string): string {
