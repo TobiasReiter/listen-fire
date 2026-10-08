@@ -726,10 +726,10 @@ The fake CRM is a complete protocol-2 adapter in one file:
 with a comment thread. It uses both push doors and the host door's methods,
 and it pages. Read it next to this walkthrough.
 
-Its paging is exercised only by its integration test
-(`scripts/dev/__test__/fake_crm_adapter.integration.test.ts`), not by an
-automation: `Company` is not readable from the root, so no automation can
-walk the collection.
+Its paging is exercised by its integration test
+(`scripts/dev/__test__/fake_crm_adapter.integration.test.ts`) and by the
+conformance CLI (step 1), not by an automation: `Company` is not readable
+from the root, so no automation can walk the collection.
 
 1. **Run the conformance CLI against your server.** Start with it and keep
    it green as you build. It needs no Listen-Fire stack and no database:
@@ -760,15 +760,17 @@ walk the collection.
    - The secret is read from the environment variable `--secret-env` names
      (default `ADAPTER_CONFORMANCE_SECRET`), never from the command line.
    - `--scratch-type <typeId>` with `--scratch-fields '<json>'` names a type
-     the CLI may write. It creates three records with those fields, updates
-     one, deletes them all, and uses them to check paging and `resolveAwait`.
+     the CLI may write. It creates three records with those fields (the first
+     string field gets ` #1`, ` #2`, ` #3` appended), updates one, reads a
+     field back and compares it with what it wrote, deletes them all, and uses them to check paging and `resolveAwait`.
      Without the flags, those checks are skipped with a notice.
    - `--sample-delivery '<json>'` is a webhook body your server sends. The CLI
      cannot make you deliver one, so it hands this body to `preprocessInbound`
      and `wakeKeys` and checks the shapes.
    - `--wait-for-push <seconds>` makes the CLI wait for your server to push
      to the doors. The CLI serves a stand-in for Listen-Fire's host and
-     prints its URL on stderr (`--host-port <n>` fixes the port); point your
+     prints its URL on stderr (`--host-port <n>` fixes the port, `--host-bind <address>`
+     picks the address, default `127.0.0.1`: use one your server can reach); point your
      server's host URL at it, then trigger an event and a wake. It checks the
      credential and the body of each push against the doors' own schemas.
      At `0` (the default) the door checks are skipped.

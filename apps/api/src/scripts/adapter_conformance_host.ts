@@ -7,12 +7,15 @@
 
 import http from 'node:http';
 
+import { z } from 'zod';
 import { AdapterEmitBody, AdapterWakeBody } from 'engine-contracts';
 
 export type DoorName = 'emit' | 'wake';
 
 export interface ReceivedPush {
-  door: DoorName;
+  /** Null when the push arrived at a path that is neither door. */
+  door: DoorName | null;
+  path: string;
   /** The door accepted it: the credential matched and the body parsed. */
   accepted: boolean;
   /** Why not, when it was refused. */
@@ -56,11 +59,17 @@ function credentialPresented(
   return Object.entries(expected).every(([name, value]) => headers[name.toLowerCase()] === value);
 }
 
+const UUID = z.uuid();
+
+/** The one UUID check for the team header, shared by the double and the CLI's minted team id. */
+export function isUuid(value: unknown): value is string {
+  return UUID.safeParse(value).success;
+}
+
 function teamHeaderProblem(headers: http.IncomingHttpHeaders, teamHeader: string): string | undefined {
   const team = headers[teamHeader];
   if (team === undefined) return undefined;
-  const isUuid = typeof team === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(team);
-  return isUuid ? undefined : `${teamHeader} is present but not a UUID`;
+  return isUuid(team) ? undefined : `${teamHeader} is present but not a UUID`;
 }
 
 export async function startHostDouble(options: {
@@ -68,10 +77,12 @@ export async function startHostDouble(options: {
   /** The headers the install's credential is presented in, name to value. */
   expectedCredential: Record<string, string>;
   teamHeader: string;
+  /** The address to listen on; a vendor on another machine needs one it can reach. */
+  bind: string;
   /** 0 picks an ephemeral port. */
   port: number;
 }): Promise<HostDouble> {
-  const { adapterType, expectedCredential, teamHeader, port: requestedPort } = options;
+  const { adapterType, expectedCredential, teamHeader, bind, port: requestedPort } = options;
   const pushes: ReceivedPush[] = [];
   const waiters: Array<() => void> = [];
   const record = (push: ReceivedPush): void => {
@@ -91,17 +102,18 @@ export async function startHostDouble(options: {
         (name) => path === `/api/public/adapter/${adapterType}/${name}`,
       );
       if (req.method !== 'POST' || door === undefined) {
+        record({ door: null, path, accepted: false, problem: `${req.method} ${path} is not a door` });
         send(res, 404, { error: 'not_found', message: `the host double serves /api/public/adapter/${adapterType}/{emit,wake}` });
         return;
       }
       if (!credentialPresented(req.headers, expectedCredential)) {
-        record({ door, accepted: false, problem: 'the credential did not match the install' });
+        record({ door, path, accepted: false, problem: 'the credential did not match the install' });
         send(res, 401, { error: 'unauthorized' });
         return;
       }
       const teamProblem = teamHeaderProblem(req.headers, teamHeader);
       if (teamProblem !== undefined) {
-        record({ door, accepted: false, problem: teamProblem });
+        record({ door, path, accepted: false, problem: teamProblem });
         send(res, 400, { error: 'bad_request', issues: [{ path: teamHeader, message: teamProblem }] });
         return;
       }
@@ -109,7 +121,7 @@ export async function startHostDouble(options: {
       try {
         json = JSON.parse(raw);
       } catch {
-        record({ door, accepted: false, problem: 'the body is not JSON' });
+        record({ door, path, accepted: false, problem: 'the body is not JSON' });
         send(res, 400, { error: 'bad_request', issues: [{ path: '', message: 'the body is not JSON' }] });
         return;
       }
@@ -117,23 +129,30 @@ export async function startHostDouble(options: {
       if (!parsed.success) {
         const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
         const first = issues[0];
-        record({ door, accepted: false, problem: first ? `${first.path || '(body)'}: ${first.message}` : 'malformed body' });
+        record({ door, path, accepted: false, problem: first ? `${first.path || '(body)'}: ${first.message}` : 'malformed body' });
         send(res, 400, { error: 'bad_request', issues });
         return;
       }
-      record({ door, accepted: true });
+      record({ door, path, accepted: true });
       send(res, 202, { accepted: 'events' in parsed.data ? parsed.data.events.length : parsed.data.keys.length });
     })().catch((err: unknown) => {
       send(res, 500, { error: err instanceof Error ? err.message : String(err) });
     });
   });
 
-  await new Promise<void>((resolve) => server.listen(requestedPort, '127.0.0.1', resolve));
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(requestedPort, bind, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
   const address = server.address();
   if (typeof address !== 'object' || address === null) {
     throw new Error('conformance host double: the server is not listening on a TCP port.');
   }
-  const url = `http://127.0.0.1:${address.port}`;
+  const host = address.address.includes(':') ? `[${address.address}]` : address.address;
+  const url = `http://${host}:${address.port}`;
 
   const hasAll = (doors: readonly DoorName[]): boolean =>
     doors.every((door) => pushes.some((push) => push.door === door));

@@ -11,7 +11,9 @@ import {
   startFakeCrmServer,
   type FakeCrmServer,
 } from '../dev/fake_crm_adapter';
-import { runConformance, type CheckResult } from '../adapter_conformance';
+import { z } from 'zod';
+
+import { runConformance, type CheckResult } from '../adapter_conformance_checks';
 
 const SECRET = 'conformance-test-secret';
 
@@ -40,6 +42,9 @@ async function postJson(url: string, body: unknown): Promise<unknown> {
   return res.json();
 }
 
+const CompanyPush = z.object({ company: z.object({ externalId: z.string() }) });
+const StubRequest = z.object({ method: z.string(), protocolVersion: z.string() });
+
 interface StubServer {
   baseUrl: string;
   close: () => Promise<void>;
@@ -51,7 +56,7 @@ async function startStub(answers: Record<string, unknown>): Promise<StubServer> 
     let raw = '';
     req.on('data', (c) => (raw += c));
     req.on('end', () => {
-      const { method, protocolVersion } = JSON.parse(raw || '{}') as { method: string; protocolVersion: string };
+      const { method, protocolVersion } = StubRequest.parse(JSON.parse(raw));
       res.writeHead(200, { 'content-type': 'application/json' });
       if (protocolVersion !== '2') {
         res.end(JSON.stringify({ ok: false, error: { code: 'protocol_version', message: 'expected protocol version 2', retryable: false } }));
@@ -91,11 +96,11 @@ describe('adapter conformance CLI', () => {
         hostPort,
         waitForPushSeconds: 10,
         onWaitingForPush: async () => {
-          const company = (await postJson(new URL('dev/companies', crm.baseUrl).href, { Name: 'Pushed Co' })) as {
-            company: { externalId: string };
-          };
+          const pushed = CompanyPush.parse(
+            await postJson(new URL('dev/companies', crm.baseUrl).href, { Name: 'Pushed Co' }),
+          );
           await postJson(new URL('dev/comments', crm.baseUrl).href, {
-            company: company.company.externalId,
+            company: pushed.company.externalId,
             text: 'hello',
           });
         },
@@ -139,10 +144,13 @@ describe('adapter conformance CLI', () => {
       ]);
     });
 
+    it('varies the scratch records and compares what it wrote', () => {
+      expect(byName(results, 'getFieldValue').detail).toBe('Name = "Conformance Co #1", as written');
+    });
+
     it('pages across a boundary and deletes its scratch records', () => {
       expect(byName(results, 'iterateRelatedPage').detail).toMatch(/[2-9] pages/);
-      // Three scratch records + the one the door trigger created, minus none:
-      // the scratch records are gone, the pushed company is the CRM's own.
+      // Only the company the door trigger created remains; the scratch records are deleted.
       expect(crm.writes.map((w) => w.fields)).toEqual([{ Name: 'Pushed Co' }]);
     });
   });
@@ -156,6 +164,35 @@ describe('adapter conformance CLI', () => {
       expect(create.detail).toContain('--scratch-type');
       expect(results.filter((r) => r.status === 'FAIL')).toEqual([]);
     } finally {
+      await crm.close();
+    }
+  });
+
+  it('names the URL when the server cannot be reached', async () => {
+    const port = await freePort();
+    const baseUrl = `http://127.0.0.1:${port}/`;
+    const results = await runConformance({ baseUrl, authStrategy: { kind: 'bearer' }, secret: SECRET });
+    expect(byName(results, 'manifest').detail).toContain(baseUrl);
+  });
+
+  it('reports a busy host port as a failed check instead of crashing', async () => {
+    const crm = await startFakeCrmServer({ secret: SECRET });
+    const squatter = http.createServer();
+    await new Promise<void>((resolve) => squatter.listen(0, '127.0.0.1', resolve));
+    const address = squatter.address();
+    if (typeof address !== 'object' || address === null) throw new Error('no port');
+    try {
+      const results = await runConformance({
+        baseUrl: crm.baseUrl,
+        authStrategy: { kind: 'bearer' },
+        secret: SECRET,
+        hostPort: address.port,
+      });
+      const hostCheck = byName(results, 'host-double');
+      expect(hostCheck.status).toBe('FAIL');
+      expect(hostCheck.detail).toContain('EADDRINUSE');
+    } finally {
+      await new Promise<void>((resolve) => squatter.close(() => resolve()));
       await crm.close();
     }
   });
