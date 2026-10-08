@@ -80,16 +80,17 @@ function isCheckRecord(value: unknown): value is CheckRecord {
   );
 }
 
-const linesOf = (path: string): unknown[] =>
+export const linesOf = (path: string): unknown[] =>
   fs
     .read(path)
     .split('\n')
     .filter(line => line.trim() !== '')
     .map(line => JSON.parse(line));
 
-export function loadChecks(): CheckRecord[] {
-  return linesOf(FIXTURE).map((record, i) => {
-    if (!isCheckRecord(record)) throw new Error(`checks.json line ${i + 1} is not a check record`);
+/** A checks corpus's records: ours by default, or any file in its format. */
+export function loadChecks(path: string = FIXTURE): CheckRecord[] {
+  return linesOf(path).map((record, i) => {
+    if (!isCheckRecord(record)) throw new Error(`${path} line ${i + 1} is not a check record`);
     return record;
   });
 }
@@ -98,11 +99,12 @@ export function writeChecks(rows: CheckRecord[]): void {
   fs.write(FIXTURE, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 }
 
-function loadSnapshots(): Map<string, CatalogSnapshot> {
+/** A checks corpus's snapshot table, by key: ours by default. */
+export function loadSnapshots(path: string = SNAPSHOTS): Map<string, CatalogSnapshot> {
   return new Map(
-    linesOf(SNAPSHOTS).map((row, i) => {
+    linesOf(path).map((row, i) => {
       if (!isRecord(row) || typeof row.key !== 'string' || !isSnapshot(row.snapshot)) {
-        throw new Error(`checks.snapshots.json line ${i + 1} is not a keyed snapshot`);
+        throw new Error(`${path} line ${i + 1} is not a keyed snapshot`);
       }
       return [row.key, row.snapshot];
     }),
@@ -111,17 +113,22 @@ function loadSnapshots(): Map<string, CatalogSnapshot> {
 
 export const SNAPSHOT_TABLE = loadSnapshots();
 
-export function snapshotOf(record: CheckRecord): CatalogSnapshot {
-  const snapshot = SNAPSHOT_TABLE.get(record.snapshot);
-  if (!snapshot) throw new Error(`no snapshot ${record.snapshot} in checks.snapshots.json`);
+export function snapshotOf(record: CheckRecord, table: ReadonlyMap<string, CatalogSnapshot> = SNAPSHOT_TABLE): CatalogSnapshot {
+  const snapshot = table.get(record.snapshot);
+  if (!snapshot) throw new Error(`no snapshot ${record.snapshot} in the snapshot table`);
   return snapshot;
 }
 
 /** The record's diagnostics from the checker as it is now, as plain data.
- *  `wrap` sees the catalog the checker is handed, and may stand in for it. */
-export function checkNow(record: CheckRecord, wrap: (catalog: Catalog) => Catalog = c => c): unknown[] {
+ *  `wrap` sees the catalog the checker is handed, and may stand in for it;
+ *  `table` is the snapshot table the record names its snapshot in. */
+export function checkNow(
+  record: CheckRecord,
+  wrap: (catalog: Catalog) => Catalog = c => c,
+  table: ReadonlyMap<string, CatalogSnapshot> = SNAPSHOT_TABLE,
+): unknown[] {
   const { source, version, parseVersion, upgradingFrom } = record;
-  const snapshot = snapshotOf(record);
+  const snapshot = snapshotOf(record, table);
   const resolveFile = resolveFileFromSnapshot(snapshot);
   const program = parseProgram(source, { languageVersion: parseVersion ?? version });
   const diagnostics = checkProgram(program, wrap(fromCatalogSnapshot(snapshot)), {

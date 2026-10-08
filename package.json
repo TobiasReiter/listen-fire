@@ -51,7 +51,8 @@
     "carve:export-team": "cd apps/api && pnpm run carve:export-team",
     "carve:import-team": "cd apps/api && pnpm run carve:import-team",
     "carve:delete-team": "cd apps/api && pnpm run carve:delete-team",
-    "dev:editor-repro": "cd apps/api && pnpm run dev:editor-repro"
+    "dev:editor-repro": "cd apps/api && pnpm run dev:editor-repro",
+    "language:conformance": "pnpm --dir packages/movement-lang run language:conformance"
   },
   "pnpm": {
     "overrides": {
