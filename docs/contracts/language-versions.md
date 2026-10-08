@@ -5,7 +5,7 @@ Version: 3
 Every saved movement is pinned to the language version it was written against: an integer with a two-word name. The pin governs syntax and semantics, and every layer honours it: the parser, the checker, both engines, plugins and adapters. The version above is the current one, what a movement saved today is pinned to and what an entry point given no version compiles and runs under.
 
 - **The table:** `LANGUAGE_VERSIONS`, `CURRENT_LANGUAGE_VERSION`, `SUPPORTED_LANGUAGE_VERSIONS` and `DEPRECATED_LANGUAGE_VERSIONS` (`packages/movement-lang/language_version.ts`); the Rust side's is `crates/movement-parser/src/version.rs`. A test holds them equal to this document.
-- **On the wire:** the pin travels as `languageVersion` wherever a program does: a run's input, `segment.open`, the checker's `check.program`, an adapter call's segment.
+- **On the wire:** the pin travels as `languageVersion` with a run's input, on `segment.open` (so an in-process adapter reads it from its segment), and on the checker's `check.program`. A remote adapter does not receive it: the adapter protocol carries no `languageVersion` today.
 
 ## The versions
 

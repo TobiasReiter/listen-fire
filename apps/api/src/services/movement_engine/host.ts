@@ -15,6 +15,7 @@
 
 import type { FileArtifactType, LanguageVersion } from 'movement-lang';
 import type {
+  ActingPrincipal,
   AdapterCallError,
   AdapterMethod,
   AdapterResolution,
@@ -23,7 +24,6 @@ import type {
   ExternalRecordRef,
   FileRef,
   HostFamilyMethodPath,
-  ActingPrincipal,
   HostLocks,
   Priced,
   PricedAnswer,

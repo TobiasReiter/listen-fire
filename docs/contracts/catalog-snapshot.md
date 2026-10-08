@@ -95,6 +95,11 @@ interface InstanceSchema {
   refinements?: Record<string, string>;
   selectedMembers?: Record<string, string>;
   narrowBy?: Record<string, string[]>;
+  genericLandings?: Record<string, string>;
+  eventPosition?: string;
+  eventPositions?: Array<{ position: string; on?: string[] }>;
+  eventNarrowingKeys?: string[];
+  eventNarrowingValues?: Record<string, Record<string, string[]>>;
 }
 
 interface PositionSchema {
@@ -123,10 +128,45 @@ interface WritableRootSchema {
   fuzzyResolution?: true | string[];
   uniquenessAuthorable?: boolean;
 }
+
+interface EdgeSchema {
+  target: string;
+  polymorphic?: boolean;
+  required?: boolean;
+  capability?: EdgeCapability;
+  sequenced?: 'chronological' | 'document' | 'arrival';
+  ephemeral?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+  linkable?: boolean;
+  requiresLiveRecord?: boolean;
+  subject?: boolean;
+  awaitable?: boolean;
+  resolvesEmpty?: boolean;
+  watchable?: boolean;
+  genericOver?: { field: string; onNonLiteral?: 'error' | 'warn' };
+}
+
+interface EdgeCapability {
+  filter?: 'bounded' | 'native';
+  order?: 'bounded' | 'native';
+  supportsLimit: boolean;
+  naturalOrder?: NaturalOrder;
+}
+
+interface NaturalOrder {
+  field: string;
+  direction: 'asc' | 'desc';
+}
+
+interface FieldCapability {
+  filterOperators?: Array<'eq' | 'neq' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte' | 'exists' | 'in' | 'within'>;
+  orderable?: boolean;
+}
 ```
 
-`EdgeSchema`, `EdgeCapability` and `FieldCapability` are the checker's own (`packages/movement-lang/checker/catalog.ts` and `checker/typing.ts`); every member of each is optional but an edge's `target`. A schema's field types are `SchemaFieldType` only: the Rust reader refuses a field typed with what only the checker's typing builds (a record, a union).
+`EdgeSchema` is the checker's (`packages/movement-lang/checker/catalog.ts`); `EdgeCapability`, `NaturalOrder` and `FieldCapability` are shared with the expression layer (`packages/shared/expression/types.ts`). A test holds the member names and optional marks of every interface on this page to those sources. A schema's field types are `SchemaFieldType` only: the Rust reader refuses a field typed with what only the checker's typing builds (a record, a union).
 
 ## Changes
 
-- **Version 1** (the first version on the wire). The snapshot gains `contractVersion`, which both builders set and both readers check. Everything else is the snapshot as it was before it was versioned, when compatibility rested on optional members alone (`files`, `models`, `schemaNotes`, `constructionArgOptions` and the positioned instance keys were each added that way).
+- **Version 1** (the first version on the wire). (This page first omitted five optional `InstanceSchema` members, `genericLandings` and the four `event…` members, and inlined no capability types; they were on the wire all along and are documented now. No version change: the shapes did not change.) The snapshot gains `contractVersion`, which both builders set and both readers check. Everything else is the snapshot as it was before it was versioned, when compatibility rested on optional members alone (`files`, `models`, `schemaNotes`, `constructionArgOptions` and the positioned instance keys were each added that way).
