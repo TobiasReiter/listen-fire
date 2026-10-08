@@ -6,14 +6,32 @@ use super::helpers::{credential_arg_of, entry_position_key_of, unwrap_credential
 use super::types::{AdapterSpec, CatalogSnapshot, CredentialSpec, InstanceSchema, PluginSpec, SnapshotCredential};
 use crate::util::js;
 
+/// The snapshot versions this build reads (service/snapshot.ts
+/// `SUPPORTED_CATALOG_SNAPSHOT_VERSIONS`).
+pub const SUPPORTED_CATALOG_SNAPSHOT_VERSIONS: &[u32] = &[1];
+
 impl CatalogSnapshot {
     /// The snapshot in `json`, refused when it does not read as one — a
     /// member the TypeScript does not declare included, and a schema field
     /// typed with what only the checker's typing builds.
     pub fn load(json: &str) -> Result<CatalogSnapshot, String> {
         let snapshot: CatalogSnapshot = super::types::read_catalog(json)?;
+        snapshot.check_contract_version()?;
         snapshot.check_schema_types()?;
         Ok(snapshot)
+    }
+
+    /// A snapshot written under a version this build cannot read is refused,
+    /// never read as though it were the current one.
+    fn check_contract_version(&self) -> Result<(), String> {
+        match self.contract_version {
+            None => Ok(()),
+            Some(seen) if SUPPORTED_CATALOG_SNAPSHOT_VERSIONS.contains(&seen) => Ok(()),
+            Some(seen) => Err(format!(
+                "the catalog snapshot carries contract version {seen}, which this release does not read (supported: {})",
+                SUPPORTED_CATALOG_SNAPSHOT_VERSIONS.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+            )),
+        }
     }
 
     fn check_schema_types(&self) -> Result<(), String> {

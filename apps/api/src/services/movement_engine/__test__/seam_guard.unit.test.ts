@@ -61,7 +61,7 @@ import {
 import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 import { methodPaths, notJsonAt, roundTripHost } from './round_trip_host';
-import { tenantIdOf } from 'engine-contracts';
+import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
 import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 
 const ENGINE_DIR = path.resolve(__dirname, '..');
@@ -577,7 +577,7 @@ describe('the engine/host seam carries data', () => {
       'resolveFileText',
       'segment.close',
     ]);
-    expect(made[0]?.input).toEqual({ teamId, languageVersion: CURRENT_LANGUAGE_VERSION });
+    expect(made[0]?.input).toEqual({ teamId, languageVersion: CURRENT_LANGUAGE_VERSION, hostFamiliesVersion: HOST_FAMILIES_VERSION });
     // Every call names the segment the run opened.
     expect(made[1]?.input).toEqual({ segmentId: 'seg-1', content: 'the digest', type: 'text' });
     // A priced call: the run's budget in (no cap here), what it spent out —

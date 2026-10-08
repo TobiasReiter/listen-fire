@@ -3,9 +3,9 @@
 // (`test_host.ts`). Host side: none of this crosses the boundary, it is how a
 // host serves the families that do.
 
-import type { TenantId } from 'engine-contracts';
+import { refuseUnsupportedHostFamiliesVersion, type ActingPrincipal, type TenantId } from 'engine-contracts';
 import type { CostLine } from '../../lib/run_cost';
-import type { ActorCandidate } from '../translation_graph/adapter';
+import type { ActingUser, ActorCandidate } from '../translation_graph/adapter';
 import type { SegmentWriteLocks } from '../write_locks/write_locks';
 import type { MovementTraceEntry } from './expression';
 import type { EngineHost, SegmentOpening } from './host';
@@ -68,6 +68,16 @@ export interface ActingUserLookup {
   getCandidates: () => Promise<ActorCandidate[]>;
 }
 
+/** A team user as the lookup answers it: the user's id as the principal's
+ *  opaque reference, its name to show, and its email, which this host has. */
+export function actingPrincipalOf(user: ActingUser | null): ActingPrincipal | null {
+  if (user === null) return null;
+  return {
+    principal: { id: user.id, ...(typeof user.name === 'string' ? { display: user.name } : {}) },
+    email: user.email,
+  };
+}
+
 /** A host's `trace` family over an array a caller reads as the run goes. */
 export function appendingInto(trace: MovementTraceEntry[]): NonNullable<EngineHost['trace']> {
   return {
@@ -75,6 +85,24 @@ export function appendingInto(trace: MovementTraceEntry[]): NonNullable<EngineHo
       trace.push(...entries);
     },
   };
+}
+
+/** Open a segment's host half: refuse a host families version this host does
+ *  not serve before anything opens, then the segment itself, its directory
+ *  entry and its lock session. */
+export async function openSegmentWith(
+  opening: SegmentOpening,
+  parts: {
+    segments: SegmentDirectory;
+    locks: SegmentWriteLocks;
+    open: EngineHost['segment']['open'];
+  },
+): Promise<{ segmentId: string }> {
+  refuseUnsupportedHostFamiliesVersion(opening);
+  const opened = await parts.open(opening);
+  parts.segments.opened(opened.segmentId, opening);
+  parts.locks.opened(opened.segmentId, opening.teamId);
+  return opened;
 }
 
 /** Close a segment's host half: forget its adapter instances, close its lock

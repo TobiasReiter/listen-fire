@@ -27,8 +27,8 @@
 
 import { CURRENT_LANGUAGE_VERSION, type FileArtifactType, type LanguageVersion } from 'movement-lang';
 
-import type { TenantId } from 'engine-contracts';
-import type { ActingUser, FileRef } from '../translation_graph/adapter';
+import { HOST_FAMILIES_VERSION, type ActingPrincipal, type TenantId } from 'engine-contracts';
+import type { FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import type { ArbitrationAnswer, EntityArbitration } from './host';
 import type { CrossRunLocks } from './effect_locks';
@@ -295,7 +295,7 @@ export interface SegmentHost {
   };
   control: { cancel: CancelGate };
   files: { render(input: { content: string; type: FileArtifactType }): Promise<FileRef> };
-  lookup: { resolveActingUser(input: ResolveActingUserInput): Promise<ActingUser | null> };
+  lookup: { resolveActingUser(input: ResolveActingUserInput): Promise<ActingPrincipal | null> };
 }
 
 function bindSegment(host: EngineHost, segmentId: string): SegmentHost {
@@ -367,6 +367,7 @@ export async function openRunContext(input: {
   const { segmentId } = await host.segment.open({
     teamId,
     languageVersion,
+    hostFamiliesVersion: HOST_FAMILIES_VERSION,
     ...(runId !== undefined ? { runId } : {}),
   });
   const bound = bindSegment(host, segmentId);

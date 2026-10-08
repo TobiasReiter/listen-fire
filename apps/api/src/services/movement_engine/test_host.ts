@@ -12,9 +12,11 @@ import type { ParkSink } from './run';
 import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
 import { InMemoryWriteLocks, segmentWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import {
+  actingPrincipalOf,
   appendingInto,
   closeSegmentWith,
   NEVER_CANCELLED,
+  openSegmentWith,
   SegmentDirectory,
   type ActingUserLookup,
   type QueuedWake,
@@ -83,12 +85,7 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
   const teamOf = (segmentId: string) => segments.facts(segmentId).teamId;
   return {
     segment: {
-      open: async (input) => {
-        const answer = await open(input);
-        segments.opened(answer.segmentId, input);
-        locks.opened(answer.segmentId, input.teamId);
-        return answer;
-      },
+      open: (input) => openSegmentWith(input, { segments, locks, open }),
       close: async (input) => closeSegmentWith(input, { segments, table, locks, close }),
     },
     adapters: { resolve: (input) => table.resolve(input), call: (input) => table.call(input) },
@@ -149,12 +146,12 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
       resolveActingUser: async ({ triggerId, segmentId, instance, event }) => {
         const resolve = lookup.resolveActingUser;
         if (resolve === undefined) return null;
-        return resolve({
+        return actingPrincipalOf(await resolve({
           teamId: teamOf(segmentId),
           ...(triggerId !== undefined ? { triggerId } : {}),
           getCandidates: () =>
             table.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
-        });
+        }));
       },
     },
     locks: { acquire: (input) => locks.acquire(input), release: (input) => locks.release(input) },

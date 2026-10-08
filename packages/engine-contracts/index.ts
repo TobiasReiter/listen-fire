@@ -19,4 +19,5 @@ export * from './provenance';
 export * from './records';
 export * from './run_input';
 export * from './tenant';
+export * from './versions';
 export * from './write_record';

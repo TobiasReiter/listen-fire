@@ -34,9 +34,11 @@ import { withSpendMeter } from '../../../lib/run_spend';
 import { enqueueAwaitWake } from '../../movement_engine/await_wake';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
 import {
+  actingPrincipalOf,
   appendingInto,
   closeSegmentWith,
   NEVER_CANCELLED,
+  openSegmentWith,
   SegmentDirectory,
   type ActingUserLookup,
 } from '../../movement_engine/host_kit';
@@ -117,12 +119,7 @@ export function productionEngineHost(input: {
   const locks = segmentWriteLocks(input.locks ?? processWriteLocks());
   return {
     segment: {
-      open: async (opening) => {
-        const opened = await hostSegments.open(opening);
-        segments.opened(opened.segmentId, opening);
-        locks.opened(opened.segmentId, opening.teamId);
-        return opened;
-      },
+      open: (opening) => openSegmentWith(opening, { segments, locks, open: hostSegments.open }),
       close: (closing) =>
         closeSegmentWith(closing, { segments, table: adapters, locks, close: hostSegments.close }),
     },
@@ -169,12 +166,14 @@ export function productionEngineHost(input: {
     lookup: {
       // The source instance's parse of the event's actors, asked of it inside
       // its segment, only when the trigger does not already decide the user.
-      resolveActingUser: ({ triggerId, segmentId, instance, event }) =>
-        resolveTeamActingUser({
-          teamId: tenantOf(segmentId),
-          ...(triggerId !== undefined ? { triggerId } : {}),
-          getCandidates: () => adapters.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
-        }),
+      resolveActingUser: async ({ triggerId, segmentId, instance, event }) =>
+        actingPrincipalOf(
+          await resolveTeamActingUser({
+            teamId: tenantOf(segmentId),
+            ...(triggerId !== undefined ? { triggerId } : {}),
+            getCandidates: () => adapters.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
+          }),
+        ),
     },
     locks: { acquire: (request) => locks.acquire(request), release: (request) => locks.release(request) },
     ...(input.trace !== undefined ? { trace: appendingInto(input.trace) } : {}),

@@ -33,6 +33,7 @@
 
 import {
   entryPositionKeyOf,
+  CATALOG_SNAPSHOT_VERSION,
   instanceSchemaKey,
   catalogSnapshotOf,
   maybeAbsent,
@@ -1626,6 +1627,7 @@ export function toCatalogSnapshot(input: {
     };
   }
   return {
+    contractVersion: CATALOG_SNAPSHOT_VERSION,
     adapters,
     credentials: input.credentials,
     plugins: input.plugins,

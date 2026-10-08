@@ -156,7 +156,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { LlmClient } from '../../translation_graph/engine/batched_extraction';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
-import { tenantIdOf } from 'engine-contracts';
+import { tenantIdOf, type ActingPrincipal } from 'engine-contracts';
 import type { EngineHost } from '../host';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 import type { ActingUserLookup } from '../host_kit';
@@ -1724,6 +1724,41 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
 
     // The firing record's trail names the meta key, literal-ish.
     expect(result.writes[0].provenance.domains).toEqual([{ kind: 'meta', key: 'user_email' }]);
+  });
+
+  it('the acting user is a principal: its id and display answer @user_id and @user_name, and @user_email only a host with an email', async () => {
+    const PRINCIPAL = [
+      PRELUDE,
+      '',
+      'movement stamp(msg: <inbox-[:message]->>) {',
+      '  write crm-[:companies]-> {',
+      '    unique by (`name`)',
+      '    name:    msg.`user`',
+      '    summary: "id=${@user_id} name=${@user_name} email=${COALESCE(@user_email, "none")}"',
+      '  }',
+      '}',
+    ].join('\n');
+    const summaryWith = async (answer: ActingPrincipal | null): Promise<unknown> => {
+      const attio = makeFakeAdapter('attio');
+      const inner = makeTestHost({
+        adapters: { resolve: makeResolver({ attio: attio.adapter, slack: actorAwareSlack().adapter }) },
+      });
+      await runMovement({
+        source: PRINCIPAL,
+        event: webhookEvent('slack', { user: 'U123' }),
+        teamId: TEAM_ID,
+        catalog,
+        credentialIds: CREDENTIAL_IDS,
+        host: { ...inner, lookup: { resolveActingUser: async () => answer } },
+      });
+      return attio.creates[0]?.fields.summary;
+    };
+    // A host without emails: the reference and its display, nothing more.
+    expect(await summaryWith({ principal: { id: 'p-7', display: 'Amy' } })).toBe('id=p-7 name=Amy email=none');
+    // A host whose principals have one supplies it.
+    expect(await summaryWith({ principal: { id: 'p-7' }, email: 'amy@acme.dev' })).toBe(
+      'id=p-7 name= email=amy@acme.dev',
+    );
   });
 
   it('user/actor keys collapse to null when the source adapter has no actor surface', async () => {

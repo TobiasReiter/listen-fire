@@ -23,6 +23,7 @@ import type {
   ExternalRecordRef,
   FileRef,
   HostFamilyMethodPath,
+  ActingPrincipal,
   HostLocks,
   Priced,
   PricedAnswer,
@@ -33,7 +34,6 @@ import type {
   VOID_HOST_METHODS,
 } from 'engine-contracts';
 import type {
-  ActingUser,
   Adapter,
   GetRelatedInput,
   RelatedPage,
@@ -314,12 +314,13 @@ export interface EngineHost {
   };
   lookup: {
     /**
-     * The team user an event acts as (`@user_*`): the source adapter parses
-     * the event's actor candidates, the host maps them to a team user through
-     * the trigger the event dispatched through (its creator override and
-     * creator fallback). Null when no user matches.
+     * The principal an event acts as (`@user_*`): the source adapter parses
+     * the event's actor candidates, the host maps them to one of its
+     * principals through the trigger the event dispatched through (its
+     * creator override and creator fallback). Null when none matches. The
+     * engine sees only the reference, and an email when the host has one.
      */
-    resolveActingUser(input: Scoped<ResolveActingUserInput>): Promise<ActingUser | null>;
+    resolveActingUser(input: Scoped<ResolveActingUserInput>): Promise<ActingPrincipal | null>;
   };
   /** The cross-run write locks each segment's effects take beneath their
    *  own: `acquire({ segmentId, names })` answers a token, `release({ segmentId, token })`

@@ -5,7 +5,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 
-import { tenantIdOf } from 'engine-contracts';
+import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
 import type { Adapter, WriteInput } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
@@ -249,12 +249,31 @@ describe("a segment's opening and closing", () => {
       },
     });
     const context = await openRunContext({ host, teamId: TEAM_ID, runId: 'run-1', languageVersion: 1, spend: {} });
-    expect(opened).toEqual([{ teamId: TEAM_ID, runId: 'run-1', languageVersion: 1 }]);
+    // The engine names the host families version it speaks on every open.
+    expect(opened).toEqual([{ teamId: TEAM_ID, runId: 'run-1', languageVersion: 1, hostFamiliesVersion: HOST_FAMILIES_VERSION }]);
     expect(context.segmentId).toBe('seg-1');
     await closeRunContext(context, host);
     expect(closed).toEqual(['seg-1']);
     // What the segment's adapter calls spent is the run's too.
     expect(context.ledger.spend.bySource).toEqual({ 'model:adapter-match': 40 });
+  });
+
+  it('the test host refuses an open under a host families version it does not serve, before its own open runs', async () => {
+    const opened: unknown[] = [];
+    const host = makeTestHost({
+      segment: {
+        open: async (input) => {
+          opened.push(input);
+          return { segmentId: 'seg-1' };
+        },
+      },
+    });
+    await expect(
+      host.segment.open({ teamId: TEAM_ID, languageVersion: 1, hostFamiliesVersion: HOST_FAMILIES_VERSION + 1 }),
+    ).rejects.toThrow(
+      `segment.open carries host families version ${HOST_FAMILIES_VERSION + 1}, which this host does not serve (supported: 1)`,
+    );
+    expect(opened).toEqual([]);
   });
 
   it("a segment's locks are taken by token, and whatever it still holds is let go when it ends", async () => {

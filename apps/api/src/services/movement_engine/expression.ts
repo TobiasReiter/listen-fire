@@ -125,9 +125,8 @@ import {
   replacePureLeaves,
   type LeafRead,
 } from '#shared/expression/filter';
-import type { TenantId } from 'engine-contracts';
+import type { ActingPrincipal, TenantId } from 'engine-contracts';
 import type {
-  ActingUser,
   ActorIdentity,
   Adapter,
   FileRef,
@@ -1127,7 +1126,7 @@ export interface MovementMetaContext {
    *  segment. */
   resolveActingUser: SegmentHost['lookup']['resolveActingUser'];
   /** `undefined` = not yet resolved; `null` = resolved to "none". */
-  actingUserCache: { value?: ActingUser | null };
+  actingUserCache: { value?: ActingPrincipal | null };
   actorCache: { value?: ActorIdentity | null };
 }
 
@@ -1789,11 +1788,11 @@ async function resolveMovementMetaKey(
     case 'user_email':
     case 'user_name':
     case 'user_id': {
-      const user = await resolveMovementActingUser(ctx);
-      if (!user) return null;
-      if (key === 'user_email') return user.email;
-      if (key === 'user_name') return user.name ?? null;
-      return user.id;
+      const acting = await resolveMovementActingUser(ctx);
+      if (!acting) return null;
+      if (key === 'user_email') return acting.email ?? null;
+      if (key === 'user_name') return acting.principal.display ?? null;
+      return acting.principal.id;
     }
     case 'actor_email':
     case 'actor_name':
@@ -1832,7 +1831,7 @@ function pinnedNow(ctx: MovementExprContext): Date {
  *  frozen `resolveContextActingUser`. */
 async function resolveMovementActingUser(
   ctx: MovementExprContext,
-): Promise<ActingUser | null> {
+): Promise<ActingPrincipal | null> {
   const meta = ctx.meta;
   if (!meta) return null;
   if (meta.actingUserCache.value !== undefined) return meta.actingUserCache.value;
@@ -1844,7 +1843,7 @@ async function resolveMovementActingUser(
 async function resolveMovementActingUserUncached(
   meta: MovementMetaContext,
   ctx: MovementExprContext,
-): Promise<ActingUser | null> {
+): Promise<ActingPrincipal | null> {
   const event = meta.event;
   const sourceAdapter = ctx.source?.adapter;
   if (!event || meta.teamId === undefined) return null;

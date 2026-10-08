@@ -165,6 +165,14 @@ fn a_member_the_typescript_does_not_declare_is_refused() {
 }
 
 #[test]
+fn a_snapshot_carries_its_contract_version_and_an_unsupported_one_is_refused() {
+    let at = |version: Value| json!({ "contractVersion": version, "adapters": {}, "credentials": {}, "plugins": {} }).to_string();
+    assert_eq!(CatalogSnapshot::load(&at(json!(1))).unwrap().contract_version, Some(1));
+    let refused = CatalogSnapshot::load(&at(json!(2))).unwrap_err();
+    assert!(refused.contains("catalog snapshot") && refused.contains("version 2") && refused.contains("supported: 1"), "{refused}");
+}
+
+#[test]
 fn a_schema_field_typed_as_only_the_checker_types_is_refused() {
     let schema = json!({ "positions": { "Row": { "properties": { "r": { "kind": "record" } }, "edges": {} } }, "collections": {}, "writableRoots": {} });
     assert!(sheets_result(json!({ "": schema })).unwrap_err().contains("Row.r"));

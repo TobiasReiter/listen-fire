@@ -22,6 +22,7 @@ import type { FileRef } from './file_ref';
 import type { SourcePosition } from './position';
 import type { Provenance, ProvenanceOrigin } from './provenance';
 import type { Resource } from './records';
+import type { PARK_STATE_VERSION } from './versions';
 import type { LocalLandingShape, WriteRecord } from './write_record';
 
 // ── Park reasons ────────────────────────────────────────────────────────────
@@ -248,8 +249,8 @@ export interface SerializedScope {
  * rebuilds the scope chain by rehydrating each scope in order.
  */
 export interface ParkedScopeState {
-  /** Schema version of this state blob. */
-  version: 1;
+  /** The park state contract's version (`PARK_STATE_VERSION`). */
+  version: typeof PARK_STATE_VERSION;
   /** The parked statement's canonical lexical address — the resume entry
    *  point. */
   address: string;

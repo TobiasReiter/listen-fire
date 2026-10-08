@@ -152,6 +152,9 @@ export interface SegmentOpening {
   teamId: TenantId;
   /** The movement's pin, which an adapter's version conditionals read. */
   languageVersion: LanguageVersion;
+  /** The host families version the engine speaks (`HOST_FAMILIES_VERSION`);
+   *  a host refuses one it does not serve. */
+  hostFamiliesVersion: number;
 }
 
 /**
@@ -219,10 +222,25 @@ export interface HostLocks {
   release(input: Scoped<{ token: string }>): Promise<void>;
 }
 
+/** Who an event acts as: an opaque reference the host mints, never a row the
+ *  engine reads, and how a person would see it named. */
+export interface PrincipalReference {
+  id: string;
+  display?: string;
+}
+
+/** What `lookup.resolveActingUser` answers (`@user_id`, `@user_name`,
+ *  `@user_email`). `email` is supplied only by a host whose principals have
+ *  one; without it `@user_email` reads as absent. */
+export interface ActingPrincipal {
+  principal: PrincipalReference;
+  email?: string;
+}
+
 // ── The manifest ────────────────────────────────────────────────────────────
 
 /**
- * The host's families and their methods: the contract docs/engine-host.md
+ * The host's families and their methods: the contract docs/contracts/host-families.md
  * documents family by family, and the set the seam guard proves crosses as
  * JSON. `optional` marks a family an embedder may leave out (the engine takes
  * its no-substrate path) or, within `park.sink`, a method it may.

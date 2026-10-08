@@ -653,6 +653,10 @@ pub struct SnapshotFile {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogSnapshot {
+    /// The contract version the builder wrote it under
+    /// (docs/contracts/catalog-snapshot.md); absent reads as 1.
+    #[serde(default, rename = "contractVersion")]
+    pub contract_version: Option<u32>,
     pub adapters: JsMap<AdapterSnapshot>,
     pub credentials: JsMap<SnapshotCredential>,
     pub plugins: JsMap<PluginSpec>,
