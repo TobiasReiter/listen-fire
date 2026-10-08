@@ -11,10 +11,13 @@ import type { Provenance } from '../provenance';
 import { evalInRust, rustCanEval } from '../rust_engine';
 import { resetRustEvalStats, rustEvalStats } from '../rust_stats';
 
+/** Every evaluation in a run carries the run's pin. */
+const PIN = 3;
+
 function contextOf(bindings: Record<string, unknown>, extra: Partial<MovementExprContext> = {}): MovementExprContext {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) env.declare(name, { kind: 'value', value });
-  return { env, ...extra };
+  return { env, languageVersion: PIN, ...extra };
 }
 
 function inRust(text: string, ctx: MovementExprContext) {
@@ -39,7 +42,7 @@ describe('the Rust evaluator switch', () => {
     const env = new Environment();
     env.declare('x', { kind: 'value', value: 'Acme', provenance: trail });
     env.declare('n', { kind: 'value', value: 1_200_000 });
-    const ctx: MovementExprContext = { env, literalSpan: { start: { line: 1, col: 1 }, end: { line: 1, col: 4 } } };
+    const ctx: MovementExprContext = { env, languageVersion: PIN, literalSpan: { start: { line: 1, col: 1 }, end: { line: 1, col: 4 } } };
     for (const text of ['x', 'CONCAT("Re: ", x, " ", NUMBER.FORMAT(n, "compact"))', '"lit"', 'IF n > 1 THEN x ELSE "no" END', '-n % 7']) {
       const { rust, ts } = await both(text, ctx);
       expect(rust).toEqual(ts);
@@ -103,7 +106,7 @@ describe('the Rust evaluator switch', () => {
     env.declare('e', position);
     env.declare('when', { kind: 'value', value: new Date(0) });
     env.declare('t', { kind: 'value', value: '2026-03-12T09:30' });
-    const ctx: MovementExprContext = { env };
+    const ctx: MovementExprContext = { env, languageVersion: PIN };
     expect(rustCanEval(parseMovementExpression('@current_date'))).toBe(false);
     expect(rustCanEval({ type: 'static', value: '\uD800' })).toBe(false);
     expect(inRust('e == null', ctx)).toBeUndefined();
@@ -111,6 +114,17 @@ describe('the Rust evaluator switch', () => {
     expect(inRust('missing', ctx)).toBeUndefined();
     // A date-time with no offset is local time, which only V8 knows here.
     expect(inRust('DATE.FORMAT_ISO(t)', ctx)).toBeUndefined();
+  });
+
+  it('leaves to TypeScript an evaluation with no pin: the Rust evaluator refuses one', () => {
+    resetRustEvalStats();
+    const env = new Environment();
+    env.declare('n', { kind: 'value', value: 2 });
+    const unpinned: MovementExprContext = { env };
+    expect(rustCanEval(parseMovementExpression('n + 1'))).toBe(true);
+    expect(inRust('n + 1', unpinned)).toBeUndefined();
+    expect(rustEvalStats).toMatchObject({ notAdmitted: 1, admitted: 0 });
+    expect(inRust('n + 1', contextOf({ n: 2 }))?.value).toBe(3);
   });
 
   it('counts what it sent, what Rust answered and what came back, by reason', () => {

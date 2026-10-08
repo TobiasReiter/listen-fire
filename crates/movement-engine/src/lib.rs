@@ -172,7 +172,7 @@ mod tests {
     fn eval(text: &str, bindings: Json) -> Json {
         let bindings: serde_json::Map<String, Json> =
             bindings.as_object().unwrap().iter().map(|(k, v)| (k.clone(), json!({ "value": v }))).collect();
-        eval_with(text, json!({ "bindings": bindings }))
+        eval_with(text, json!({ "bindings": bindings, "languageVersion": 3 }))
     }
 
     fn value(text: &str, bindings: Json) -> Json {
@@ -261,6 +261,7 @@ mod tests {
                 "z": { "value": 2 },
             },
             "origins": 2,
+            "languageVersion": 3,
         });
         let prov = |text: &str| eval_with(text, envelope.clone())["provenance"].clone();
         assert_eq!(prov("x"), json!({ "binding": "x" }));
@@ -276,22 +277,26 @@ mod tests {
     #[test]
     fn coalesce_short_circuits_from_version_three() {
         let text = "COALESCE(x, DATE.ADD_DAYS(\"2026-01-01\", 1000000000))";
-        let envelope = |version: Option<u32>| {
-            let mut e = json!({ "bindings": { "x": { "value": 1 } } });
-            if let Some(v) = version {
-                e["languageVersion"] = json!(v);
-            }
-            e
-        };
-        assert_eq!(eval_with(text, envelope(Some(3)))["value"], json!(1.0));
-        let eager = eval_with(text, envelope(Some(2)));
+        let envelope = |version: u32| json!({ "bindings": { "x": { "value": 1 } }, "languageVersion": version });
+        assert_eq!(eval_with(text, envelope(3))["value"], json!(1.0));
+        let eager = eval_with(text, envelope(2));
         assert_eq!(eager["error"], json!({ "class": "RangeError", "message": "Invalid time value" }));
-        assert_eq!(eval_with(text, envelope(None))["error"]["class"], "RangeError");
+    }
+
+    #[test]
+    fn a_missing_language_version_is_refused_not_defaulted() {
+        let refused = evaluate(&lowered("COALESCE(x, 1)"), &json!({ "bindings": { "x": { "value": 1 } } }).to_string());
+        assert_eq!(
+            refused,
+            Err("the envelope has no `languageVersion`: an expression is evaluated under its movement's pin, which the caller passes".to_string())
+        );
+        let malformed = evaluate(&lowered("x"), &json!({ "bindings": {}, "languageVersion": "3" }).to_string());
+        assert_eq!(malformed, Err("the language version is a number, not \"3\"".to_string()));
     }
 
     #[test]
     fn date_today_reads_the_pinned_instant_in_the_zone() {
-        let envelope = json!({ "bindings": {}, "now": "2026-03-11T23:30:00.000Z" });
+        let envelope = json!({ "bindings": {}, "now": "2026-03-11T23:30:00.000Z", "languageVersion": 3 });
         assert_eq!(eval_with("DATE.TODAY(\"Europe/Berlin\")", envelope.clone())["value"], "2026-03-12");
         assert_eq!(eval_with("DATE.TODAY(\"UTC\")", envelope.clone())["value"], "2026-03-11");
         assert_eq!(

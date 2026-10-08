@@ -55,7 +55,8 @@ Entries are written for two readers: an operator running a self-hosted installat
 ### Fixed
 
 - A run parking on an await could miss a wake that arrived while it parked, and then wait forever. The park now writes the parked run before the correlation that points at it, so a wake in between finds both or neither. When the re-check after parking itself fails (the remote is down), the run stays parked without a wake and the failure is logged with the await's key; the adapter's own wake covers later landings.
-- Engine: the interpretability scan honours the run's language pin. Saving or validating an automation pinned to an older language version now checks what the engine can run under that version, as the engine runs it, instead of under the current one. For example, a call to a function written in another letter case reaches that function only from version 3, so a version 1 or 2 automation that writes one is now refused at save rather than passing the check and failing when it runs.
+- Engine: the interpretability scan honours the run's language pin. The save-time check of which constructs the engine can run now reads an automation under its pinned language version, not the current one, so it reports for a version 1 or 2 automation what the engine would refuse under that version. For example, a call to a function written in another letter case reaches the function only from version 3: under version 1 or 2 the check now reports it as an unsupported function call. The demand scan (which systems' schemas a run's check is given) also reads an automation under its pin, including a version 1 or 2 collection operation (`MAP`, `FILTER`, `REDUCE`, …), which demands what it read before.
+- For embedders: the Rust engine's `eval_expression` refuses an envelope with no `languageVersion`, naming it. It used to read a missing version as the oldest behaviour. Pass the movement's pin.
 
 <!-- add merged PRs here -->
 

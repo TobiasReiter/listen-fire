@@ -777,7 +777,7 @@ impl Run<'_> {
         loop {
             replay.cursor.set(0);
             let first_literal = self.origins.borrow().len() as u32;
-            let evaluator = Evaluator::new(scope.as_ref(), Some(self.version()), around, first_literal).with_reader(&replay);
+            let evaluator = Evaluator::new(scope.as_ref(), self.version(), around, first_literal).with_reader(&replay);
             match evaluator.eval(expr) {
                 Ok(evaluated) => {
                     // Each literal the evaluation read is an origin in the

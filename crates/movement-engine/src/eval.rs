@@ -130,7 +130,7 @@ pub trait Reader {
 
 pub struct Evaluator<'a> {
     env: &'a dyn Names,
-    language_version: Option<u32>,
+    language_version: u32,
     around: Surroundings<'a>,
     next_literal: Cell<u32>,
     reader: Option<&'a dyn Reader>,
@@ -141,7 +141,7 @@ type Eval = Result<Evaluated, EvalError>;
 impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
-    pub fn new(env: &'a dyn Names, language_version: Option<u32>, around: Surroundings<'a>, first_literal: u32) -> Self {
+    pub fn new(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, first_literal: u32) -> Self {
         Evaluator { env, language_version, around, next_literal: Cell::new(first_literal), reader: None }
     }
 
@@ -407,7 +407,7 @@ impl<'a> Evaluator<'a> {
         if !stdlib::FLAT.contains(&id) {
             return Err(EvalError::Fallback(format!("{id} is not a built-in this engine runs")));
         }
-        if id == "coalesce" && self.language_version.is_some_and(|v| v >= 3) {
+        if id == "coalesce" && self.language_version >= 3 {
             // From version 3 COALESCE short-circuits, as `??` does.
             let mut seen = Vec::new();
             for a in args {

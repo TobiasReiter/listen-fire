@@ -442,6 +442,8 @@ export function rustCanRun(
       instances: new Set([...instances, ...bodyInstances]),
       movements: new Set(functions),
       capped: input.costCapMicrodollars !== undefined,
+      // The one read of the pin before the run context exists; the context
+      // resolves it from the same input the same way, so the two agree.
       languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
       scope: {
         binds: bound,
@@ -841,6 +843,11 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     return undefined;
   };
   if (!rustCanEval(expr)) return notAdmitted();
+  // The Rust evaluator refuses an evaluation with no pin: it has no release
+  // version to fall back to. A context without one is the TypeScript
+  // evaluator's to answer, under its own rule for that case.
+  const languageVersion = ctx.languageVersion;
+  if (languageVersion === undefined) return notAdmitted();
   const wire = new WireOut();
   const bindings: Record<string, unknown> = {};
   const read = new Map<string, Extract<Binding, { kind: 'value' }>>();
@@ -860,7 +867,7 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
   const envelope = {
     bindings,
     origins: wire.origins.length,
-    ...(ctx.languageVersion !== undefined ? { languageVersion: ctx.languageVersion } : {}),
+    languageVersion,
     // The run's pinned instant, which DATE.TODAY reads.
     now: pinnedNow(ctx).toISOString(),
   };

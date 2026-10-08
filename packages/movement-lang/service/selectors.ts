@@ -25,6 +25,7 @@ import type {
   AwaitExpression,
   CallArg,
   ClosureExpression,
+  CollectionOpExpression,
   ExprSlot,
   NodeLiteral,
   PathHead,
@@ -40,7 +41,7 @@ import { pathRootName, probePathHead, typeNameOf } from '../parser/ast';
 import { parseProgram } from '../parser/parse';
 import { unwrapCredentialArg } from '../parser/scan';
 import { expressionOfSlot, parseMovementExpression } from '../expression/bridge';
-import { CURRENT_LANGUAGE_VERSION, since, type LanguageVersion } from '../language_version';
+import { CURRENT_LANGUAGE_VERSION, before, since, type LanguageVersion } from '../language_version';
 
 export interface InstanceChain {
   /** The construction's adapter slug (import aliases resolved back). */
@@ -114,7 +115,7 @@ export function scanInstanceChains(
   const languageVersion = options?.languageVersion ?? CURRENT_LANGUAGE_VERSION;
   let program: Program;
   try {
-    program = parseProgram(source);
+    program = parseProgram(source, { languageVersion });
   } catch {
     return []; // unparseable program — the save path's own parse reports it
   }
@@ -533,6 +534,20 @@ export function scanInstanceChains(
       if (arm.kind === 'closure') walkClosure(arm.closure, aliasScope);
     }
   };
+  /**
+   * A collection op, in the form it takes before version 3 (from 3 it is a
+   * call, read as one). What it reads — its collection, a `REDUCE`'s starting
+   * value, a `MAP`'s settings — is this scope's demand, as a call's arguments
+   * are. Its function's body is not walked: before version 3 a call's function
+   * argument demands nothing (visitCallArg), and an older movement keeps that.
+   */
+  const visitCollectionOp = (op: CollectionOpExpression, aliasScope: Map<string, AliasGrounding>): void => {
+    if (!before(languageVersion, 3)) return;
+    visitSlot(op.source, aliasScope);
+    if (op.init !== undefined) visitSlot(op.init, aliasScope);
+    if (op.config !== undefined) visitSlot(op.config, aliasScope);
+  };
+
   const walk = (statements: Statement[], outerScope: Map<string, AliasGrounding>): void => {
     // Handles bind for the REST of the block, so the scope accumulates as we
     // go. A local copy — mutating the caller's map would leak a handle into
@@ -599,6 +614,8 @@ export function scanInstanceChains(
             for (const arg of statement.value.call.args) visitCallArg(arg, aliasScope);
           } else if (statement.value.kind === 'node') {
             visitNode(statement.value.node, aliasScope);
+          } else if (statement.value.kind === 'collection') {
+            visitCollectionOp(statement.value.collection, aliasScope);
           } else if (statement.value.kind === 'lazy') {
             const lazy = statement.value.lazy;
             const landing = visitLanding(lazy.head, aliasScope);
@@ -643,7 +660,8 @@ export function scanInstanceChains(
           else if (value.kind === 'combinator') visitCombinator(value.combinator, aliasScope);
           else if (value.kind === 'call') {
             for (const arg of value.call.args) visitCallArg(arg, aliasScope);
-          } else if (value.kind === 'closure') walkClosure(value.closure, aliasScope);
+          } else if (value.kind === 'collection') visitCollectionOp(value.collection, aliasScope);
+          else if (value.kind === 'closure') walkClosure(value.closure, aliasScope);
           else if (value.kind === 'lazy') {
             visitLanding(value.lazy.head, aliasScope);
             if (value.lazy.mapping) {
@@ -667,6 +685,9 @@ export function scanInstanceChains(
           break;
         case 'call':
           for (const arg of statement.args) visitCallArg(arg, aliasScope);
+          break;
+        case 'collection':
+          visitCollectionOp(statement.collection, aliasScope);
           break;
         case 'movement': {
           const paramScope = new Map(aliasScope);
