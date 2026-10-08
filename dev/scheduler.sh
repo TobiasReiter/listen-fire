@@ -24,7 +24,7 @@ loop_alive() { kill -0 "$LOOP_PID" 2>/dev/null; }
 # A tick's curl runs as a background job so a signal reaches this script at
 # once, and the EXIT trap takes the job down with it rather than orphaning a
 # request that may wait minutes for its drain.
-ANSWER_DIR="$(mktemp -d -t scheduler-tick)"
+ANSWER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/scheduler-tick.XXXXXX")"
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$ANSWER_DIR"' EXIT
 trap 'exit 0' INT TERM
 

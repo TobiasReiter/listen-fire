@@ -124,6 +124,7 @@ assertEngineChoiceConfigured();
 
 // A drain mode it does not know, or a tick URL without its key (or the
 // reverse), is a deployment that believes its work drains when it does not.
+// Checked only where automations is mounted (the gate is inside).
 assertAutomationsDrainConfigured();
 
 // A blocked event loop is the one failure this process cannot narrate: the

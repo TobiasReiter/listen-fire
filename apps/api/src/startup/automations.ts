@@ -9,6 +9,7 @@
 // instances may drain side by side, in either mode.
 
 import { neverAsAny } from '../lib/utils/types';
+import { mounts } from '../products';
 import { claimLoopTick } from '../lib/worker';
 import {
   HttpTickNotifier,
@@ -90,9 +91,12 @@ function workNotifierFor(mode: DrainMode, env: Env): WorkNotifier {
 
 /** The drain's settings, checked where the server checks its other boot-time
  *  configuration: a bad mode or half a tick pair fails the boot, rather than
- *  leaving an API that serves requests while nothing drains. `startDrain`
- *  checks again, for an entry that boots without the server. */
+ *  leaving an API that serves requests while nothing drains. Only where the
+ *  unit is mounted — the same gate the drain worker has — so a process
+ *  running other products is not failed by settings it never reads.
+ *  `startDrain` checks again, for an entry that boots without the server. */
 function assertAutomationsDrainConfigured(env: Env = process.env): void {
+  if (!mounts('automations', env)) return;
   workNotifierFor(drainMode(env), env);
 }
 

@@ -12,6 +12,7 @@ import {
 } from '../../services/work/drain';
 import { CORE_WORK_KINDS, claimableWorkKinds } from '../../services/work/kinds';
 import { runNamedWorker, workerTick } from '../../lib/worker';
+import * as products from '../../products';
 import {
   TICK_KEY_VAR,
   TICK_URLS_VAR,
@@ -231,6 +232,26 @@ describe('assertAutomationsDrainConfigured (the boot-time check)', () => {
     const check = () => assertAutomationsDrainConfigured({ AUTOMATIONS_DRAIN_MODE: 'external', ...half });
     expect(check).toThrow(TICK_URLS_VAR);
     expect(check).toThrow(TICK_KEY_VAR);
+  });
+
+  describe('over the product set', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    const half = { AUTOMATIONS_DRAIN_MODE: 'external', [TICK_URLS_VAR]: 'http://a.test/drain' };
+
+    it('passes on a process that does not mount automations, whatever its drain settings', () => {
+      const mounted = jest.spyOn(products, 'mounts').mockImplementation((unit) => unit !== 'automations');
+      expect(() => assertAutomationsDrainConfigured(half)).not.toThrow();
+      expect(() => assertAutomationsDrainConfigured({ AUTOMATIONS_DRAIN_MODE: 'sometimes' })).not.toThrow();
+      expect(mounted).toHaveBeenCalledWith('automations', half);
+    });
+
+    it('throws on a process that mounts automations, naming both tick variables', () => {
+      jest.spyOn(products, 'mounts').mockImplementation(() => true);
+      const check = () => assertAutomationsDrainConfigured(half);
+      expect(check).toThrow(TICK_URLS_VAR);
+      expect(check).toThrow(TICK_KEY_VAR);
+    });
   });
 
   it('installs nothing: it only checks', () => {
