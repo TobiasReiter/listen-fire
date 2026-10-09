@@ -28,6 +28,8 @@ export default {
   setupFilesAfterEnv: [
     path.join(CONFORMANCE, 'v1.setup.cjs'),
     path.join(CONFORMANCE, 'triage.setup.cjs'),
+    // Hands the corpus's version to every evaluation its context omits.
+    '<rootDir>/src/test/conformance_pin.setup.ts',
     // Under MOVEMENT_ENGINE=rust: count the Rust evaluator's answers, and
     // fail a run in which it answered none.
     '<rootDir>/src/test/rust_eval_stats.setup.ts',

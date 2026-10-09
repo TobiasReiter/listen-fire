@@ -19,7 +19,7 @@
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import { callEvalExpression, openEngineSegment, type LanguageVersion } from 'movement-lang';
+import { callEvalExpression, openEngineSegment } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
@@ -548,12 +548,6 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     return undefined;
   };
   if (!rustCanEval(expr)) return notAdmitted();
-  // The type requires a pin, but the frozen conformance corpora are typed
-  // against an older tree and transpiled only, so they still evaluate with
-  // none. The Rust evaluator refuses an unpinned evaluation; those stay the
-  // TypeScript evaluator's, as they always were.
-  const languageVersion: LanguageVersion | undefined = ctx.languageVersion;
-  if (languageVersion === undefined) return notAdmitted();
   const wire = new WireOut();
   const bindings: Record<string, unknown> = {};
   const read = new Map<string, Extract<Binding, { kind: 'value' }>>();
@@ -573,7 +567,7 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
   const envelope = {
     bindings,
     origins: wire.origins.length,
-    languageVersion,
+    languageVersion: ctx.languageVersion,
     // The run's pinned instant, which DATE.TODAY reads.
     now: pinnedNow(ctx).toISOString(),
   };

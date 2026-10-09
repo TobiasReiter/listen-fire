@@ -8,6 +8,7 @@ on:
       - "docs/contracts/**"
       - "packages/engine-contracts/**"
       - "packages/shared/**"
+      - "packages/movement-lang/**"
   workflow_dispatch:
 
 jobs:
@@ -72,6 +73,11 @@ jobs:
         run: pnpm --filter engine-contracts test
       - name: Shared package tests
         run: pnpm --filter @listen-fire/shared test
+      # movement-lang's own suite (parser, checker, engine-facing units): the
+      # language is what every saved movement is pinned to, so it is gated
+      # whole here rather than only in part by movement-wasm.
+      - name: movement-lang tests
+        run: pnpm --filter movement-lang test
       - name: Smoke tests
         env:
           NODE_OPTIONS: --max-old-space-size=4096
