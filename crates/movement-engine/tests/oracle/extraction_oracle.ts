@@ -29,7 +29,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { declaredTypesIn, parseProgram, resolveBorrowedField } from '../../../../packages/movement-lang';
-import type { ExprSlot, InstanceSchema, Program, ShapeDeclaration, Statement } from '../../../../packages/movement-lang';
+import type { ExprSlot, InstanceSchema, LinkedFile, Program, ShapeDeclaration, Statement } from '../../../../packages/movement-lang';
 import {
   buildExtractSpec,
   buildSystemPrompt,
@@ -48,7 +48,7 @@ import {
   type ExtractNodeSpec,
   type PluginSpecs,
 } from '../../../../apps/api/src/services/movement_engine/extraction';
-import { MovementEngineError } from '../../../../apps/api/src/services/movement_engine/errors';
+import { shapeChain, type ShapeBinding } from '../../../../apps/api/src/services/movement_engine/run';
 import { pricedCalls, RunLedger } from '../../../../apps/api/src/services/movement_engine/run_context';
 import type { EngineHost } from '../../../../apps/api/src/services/movement_engine/host';
 
@@ -183,24 +183,20 @@ const LIBRARY_IMPORTS = new Map<string, Array<{ local: string; kind: 'shape'; na
   ['more', [{ local: 'Plain', kind: 'shape', name: 'Plain', file: 'deals', declaration: `/statements/${shapeIndex(LIBRARY_PROGRAMS.get('deals')!, 'Plain')}` }]],
 ]);
 
-// ── The scope chain a declaration is resolved through (run.ts, mirrored) ─────
+// ── The libraries as the link resolves them, and the root's shapes ─────────
 
-interface ShapeAt {
-  declaration: ShapeDeclaration;
-  /** 'root', or the library path that declared it. */
-  file: string;
+/** The linked files `libraryShape` reads: each program, and what it imports. */
+const LINKED = new Map<string, LinkedFile>();
+for (const l of LIBRARIES) LINKED.set(l.path, { path: l.path, program: LIBRARY_PROGRAMS.get(l.path)!, imports: new Map() });
+for (const [path, imports] of LIBRARY_IMPORTS) {
+  for (const i of imports) {
+    const file = LINKED.get(i.file)!;
+    LINKED.get(path)!.imports.set(i.local, { kind: 'shape', name: i.name, declaration: shapeOf(file.program, i.name)!, file });
+  }
 }
 
 function shapeOf(program: Program, name: string): ShapeDeclaration | undefined {
   return program.statements.find((s): s is Extract<Statement, { kind: 'shape' }> => s.kind === 'shape' && s.name === name);
-}
-
-/** run.ts `libraryShape`: a library's own declaration, or one it imports. */
-function libraryShape(file: string, name: string): ShapeAt | undefined {
-  const own = shapeOf(LIBRARY_PROGRAMS.get(file)!, name);
-  if (own !== undefined) return { declaration: own, file };
-  const imported = LIBRARY_IMPORTS.get(file)!.find((i) => i.local === name);
-  return imported === undefined ? undefined : { declaration: shapeOf(LIBRARY_PROGRAMS.get(imported.file)!, imported.name)!, file: imported.file };
 }
 
 /** The tag a stand-in description carries: the scope it was asked in. */
@@ -208,39 +204,22 @@ function describedIn(scope: string, slot: ExprSlot): string {
   return `⟪${scope}|${slot.raw}⟫`;
 }
 
-function declaredNode(root: Map<string, ShapeAt>, rootTypes: ReturnType<typeof declaredTypesIn>, shape: ShapeAt): DeclaredNodeShape {
-  // run.ts `shapeChain` then `declaredNodeShape`.
-  const chain: ShapeAt[] = [];
-  for (let at: ShapeAt | undefined = shape; at !== undefined; ) {
-    const current: ShapeAt = at;
-    if (chain.some((c) => c.declaration === current.declaration)) {
-      throw new MovementEngineError('MOVENG_RUNTIME', `'${shape.declaration.name}' extends itself — the checker should have caught this`);
-    }
-    chain.push(current);
-    const base = current.declaration.extends;
-    if (base === undefined) break;
-    at = current.file === 'root' ? root.get(base.name) : libraryShape(current.file, base.name);
-    if (at === undefined) {
-      throw new MovementEngineError(
-        'MOVENG_RUNTIME',
-        `'${current.declaration.name}' extends '${base.name}', which is not a node declaration in scope — the checker should have caught this`,
-      );
-    }
-  }
+/** run.ts `declaredNodeShape` over run.ts's own `shapeChain`: each link read in
+ *  the file that declared it — a library's, or the root's. */
+function declaredNode(root: Map<string, ShapeBinding>, rootTypes: ReturnType<typeof declaredTypesIn>, shape: ShapeBinding): DeclaredNodeShape {
   let declared: DeclaredNodeShape | undefined;
-  for (const link of chain.reverse()) {
-    const program = link.file === 'root' ? undefined : LIBRARY_PROGRAMS.get(link.file)!;
-    const types = program !== undefined ? declaredTypesIn(program) : undefined;
+  for (const link of shapeChain(shape, (_, name) => root.get(name)).reverse()) {
+    const scope = link.library?.path ?? 'root';
+    const types = link.library !== undefined ? declaredTypesIn(link.library.program) : rootTypes;
     declared = {
       root: link.declaration.root,
-      resolveDeclaredType: (name) => (types ?? rootTypes).get(name),
-      resolveDescription: async (slot) => describedIn(link.file, slot),
+      resolveDeclaredType: (name) => types.get(name),
+      resolveDescription: async (slot) => describedIn(scope, slot),
       ...(declared !== undefined ? { base: declared } : {}),
     };
   }
   return declared!;
 }
-
 
 // ── Seeded programs ──────────────────────────────────────────────────────────
 
@@ -566,29 +545,80 @@ class Replies {
   }
 }
 
+/**
+ * zod reads a declared key through the record's prototype. A field named
+ * after an `Object.prototype` member that the reply leaves out is a function,
+ * and fails `expected object, received function`; a `__proto__` the reply
+ * writes becomes the record's prototype rather than its own key. The Rust
+ * engine reads both as any other field (README, "Spec the tail"). The
+ * expectation for such a reply is TypeScript's with exactly that taken out:
+ * those issues dropped (the retry and the failure's detail worked out from
+ * what is left), a `__proto__` record kept as an own key, and a reply with no
+ * issue left read clean.
+ */
+const PROTOTYPE_ISSUE = (i: { message: string }) => i.message.endsWith('received function');
+
+/** `JSON.parse(JSON.stringify(data))`, with a prototype zod gave a record put
+ *  back as the record's `__proto__` key. */
+function plain(value: unknown, restored: { any: boolean }): unknown {
+  if (Array.isArray(value)) return value.map((v) => plain(v, restored));
+  if (value === null || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) out[k] = plain(v, restored);
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null && typeof proto === 'object') {
+    restored.any = true;
+    Object.defineProperty(out, '__proto__', { value: plain(proto, restored), enumerable: true, writable: true, configurable: true });
+  }
+  return out;
+}
+
 function verdict(site: CallSite, text: string): unknown {
   const sink = new CoercionTracker();
   const reply: unknown = JSON.parse(text);
   const parsed = responseSchemaFor(site, sink).safeParse(reply);
   if (parsed.success) {
+    const restored = { any: false };
+    const data = plain(parsed.data, restored);
     return {
-      data: JSON.parse(JSON.stringify(parsed.data)),
+      ...(restored.any ? { divergence: 'prototype_key' } : {}),
+      data,
+      // Key for key, in order (the `data` above is compared as a value).
+      dataText: JSON.stringify(data),
       coerced: Object.entries(sink.snapshot() ?? {}),
       evidenceCoerced: Object.entries(sink.evidenceSnapshot() ?? {}),
       envelope: sink.envelopeSnapshot() ?? null,
     };
   }
-  // zod reads a declared key through the object's prototype: a field named
-  // `constructor` that the reply leaves out is a function. The Rust engine
-  // reads it absent (README, "Spec the tail").
-  const prototypeKey = parsed.error.issues.some((i) => i.message.endsWith('received function'));
+  const issues = parsed.error.issues.filter((i) => !PROTOTYPE_ISSUE(i));
+  const divergence = issues.length < parsed.error.issues.length ? { divergence: 'prototype_key' } : {};
+  // Nothing left: the reply is one the Rust engine reads clean.
+  if (issues.length === 0) return { ...divergence, clean: true };
   return {
-    ...(prototypeKey ? { divergence: 'prototype_key' } : {}),
-    issues: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
-    retry: retryUserMessage('', site, parsed.error.issues),
-    detail: unansweredDetail(site, reply, parsed.error),
+    ...divergence,
+    issues: issues.map((i) => ({ path: i.path, message: i.message })),
+    retry: retryUserMessage('', site, issues),
+    // The detail reads only the rejection's issues.
+    detail: unansweredDetail(site, reply, { ...parsed.error, issues } as Parameters<typeof unansweredDetail>[2]),
   };
 }
+
+/** Replies to program 0's root region, each prototype-named field present
+ *  and absent, beside an ordinary failure so a filtered verdict still fails. */
+const PROTOTYPE_REPLIES: unknown[] = (() => {
+  const w = (value: unknown) => ({ evidence: 'e', value });
+  const all = { constructor: w(1), toString: w('t'), hasOwnProperty: w(true), ['__proto__']: w(3), name: w('Acme') };
+  const without = (...keys: string[]) => Object.fromEntries(Object.entries(all).filter(([k]) => !keys.includes(k)));
+  return [
+    [all],
+    [without('constructor')],
+    [without('toString', 'hasOwnProperty')],
+    [without('__proto__')],
+    [without('constructor', 'toString', 'hasOwnProperty', '__proto__')],
+    [{ ...without('constructor'), name: 5 }],
+    [{ name: w('a') }, { ...all, toString: 'bare' }],
+  ];
+})();
 
 async function programCase(rand: Rand, index: number): Promise<unknown | undefined> {
   const { source, imports } = seededProgram(rand, index);
@@ -599,9 +629,9 @@ async function programCase(rand: Rand, index: number): Promise<unknown | undefin
     return undefined;
   }
   const rootTypes = declaredTypesIn(program);
-  const rootShapes = new Map<string, ShapeAt>();
-  for (const i of imports) rootShapes.set(i.local, { declaration: shapeOf(LIBRARY_PROGRAMS.get(i.file)!, i.name)!, file: i.file });
-  for (const statement of program.statements) if (statement.kind === 'shape') rootShapes.set(statement.name, { declaration: statement, file: 'root' });
+  const rootShapes = new Map<string, ShapeBinding>();
+  for (const i of imports) rootShapes.set(i.local, { kind: 'shape', declaration: shapeOf(LIBRARY_PROGRAMS.get(i.file)!, i.name)!, library: LINKED.get(i.file)! });
+  for (const statement of program.statements) if (statement.kind === 'shape') rootShapes.set(statement.name, { kind: 'shape', declaration: statement });
   const link = {
     imports: imports.map((i) => ({
       local: i.local, kind: 'shape', name: i.name, file: i.file,
@@ -628,15 +658,15 @@ async function programCase(rand: Rand, index: number): Promise<unknown | undefin
     return { case: index, source, link, error: error instanceof Error ? error.message : String(error) };
   }
   const replies = new Replies(rand);
-  const regions = regionsOf(spec).map((site) => ({
+  const regions = regionsOf(spec).map((site, at) => ({
     region: regionJson(site),
     sites: countSites(site),
     system: buildSystemPrompt(site),
     envelope: envelopeExample(site),
-    replies: Array.from({ length: 6 }, () => {
-      const text = JSON.stringify(replies.reply(site));
-      return { reply: text, verdict: verdict(site, text) };
-    }),
+    replies: [
+      ...Array.from({ length: 6 }, () => JSON.stringify(replies.reply(site))),
+      ...(index === 0 && at === 0 ? PROTOTYPE_REPLIES.map((entities) => JSON.stringify({ [site.siteId]: entities })) : []),
+    ].map((text) => ({ reply: text, verdict: verdict(site, text) })),
   }));
   return { case: index, source, link, spec, regions };
 }

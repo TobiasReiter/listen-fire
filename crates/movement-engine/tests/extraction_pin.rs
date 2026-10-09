@@ -15,7 +15,7 @@ use movement_engine::env::{js_of_serialized, json_of_js};
 use movement_engine::extract::prompt::{self, Enrichment, Entity, Segment};
 use movement_engine::extract::spec::{self, Firing, NodeSpec, Region, SpecError, WordsScope};
 use movement_engine::extract::validate::{self, Issue, PathKey};
-use movement_engine::js::Js;
+use movement_engine::js::{self, Js};
 use movement_engine::ledger::{Ledger, Spend};
 use movement_engine::program::{self, DeclaringFile};
 use movement_parser::ast::{self, ExprSlot};
@@ -175,18 +175,26 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
                         let text = reply["reply"].as_str().unwrap();
                         let verdict = &reply["verdict"];
                         let read = validate::read_reply(region, &reply_of(text));
-                        if verdict.get("divergence").is_some() {
-                            // zod failed a prototype-named field the reply left out;
-                            // this engine reads it absent.
+                        // The one known divergence (README, "Spec the tail"): the
+                        // expectation is TypeScript's with zod's prototype reads
+                        // taken out, so this engine is held to all the rest.
+                        let divergent = verdict.get("divergence").is_some();
+                        if divergent {
                             divergences += 1;
-                            if let Err(issues) = &read {
-                                assert!(issues.iter().all(|i| !i.message.ends_with("received function")), "{text}");
-                            }
+                        }
+                        if verdict.get("clean").is_some() {
+                            assert!(divergent, "only a divergence is pinned clean without its data");
+                            assert!(read.is_ok(), "{text}\nRust read {read:?}");
                             continue;
                         }
                         match (read, verdict.get("data")) {
                             (Ok(read), Some(expected_data)) => {
                                 assert_eq!(&json_of_js(&read.value), expected_data, "{source}\n{text}");
+                                // Key order too, except where TypeScript's record lost a
+                                // `__proto__` key to its prototype (put back last).
+                                if !divergent {
+                                    assert_eq!(js::json_stringify(&read.value, 0), verdict["dataText"].as_str().unwrap(), "{text}");
+                                }
                                 assert_eq!(pairs(&read.coercions.values), verdict["coerced"], "{text}");
                                 assert_eq!(pairs(&read.coercions.evidence), verdict["evidenceCoerced"], "{text}");
                                 assert_eq!(json!(read.coercions.envelope), verdict["envelope"], "{text}");
@@ -251,6 +259,7 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
                 match (ledger.plugin_refusal(&plugins, plugin), case.get("refused")) {
                     (Some(cap), Some(refused)) => {
                         assert_eq!(cap.to_json()["class"], refused["class"], "{case}");
+                        assert_eq!(cap.message(), refused["message"].as_str().unwrap(), "{case}");
                         assert_eq!(json!(cap.cap_microdollars), json!(refused["capMicrodollars"].as_f64().unwrap()), "{case}");
                         assert_eq!(json!(cap.spent_microdollars), json!(refused["spentMicrodollars"].as_f64().unwrap()), "{case}");
                         assert_eq!(case["asked"], json!([]), "a refused plugin's host is asked nothing");
@@ -279,5 +288,5 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
     }
     // A pin that silently lost its cases would hold nothing.
     assert!(programs >= 160 && regions_seen >= 300 && replies >= 1500 && messages >= 100 && data >= 15 && priced >= 80);
-    assert!(divergences >= 1, "the known divergence is pinned");
+    assert_eq!(divergences, 7, "program 0's prototype-named fields are the known divergence's replies");
 }

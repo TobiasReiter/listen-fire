@@ -130,6 +130,16 @@ impl CapExceeded {
         })
     }
 
+    /// `RunCostCapExceeded`'s message: the whole failure an author sees
+    /// where the run cannot suspend.
+    pub fn message(self) -> String {
+        format!(
+            "Run cost cap reached: this run has spent {} on model calls and paid services, and the limit set by {RUN_COST_CAP_ENV_VAR} is {}. The run was stopped before its next priced call in case something was looping. If this run legitimately needs more, raise {RUN_COST_CAP_ENV_VAR} in the server's environment (or unset it to remove the cap).",
+            format_usd(self.spent_microdollars),
+            format_usd(self.cap_microdollars),
+        )
+    }
+
     /// What a run paused at its cap says on its trace (run.ts
     /// `runPausedMessage`).
     pub fn paused_message(self) -> String {

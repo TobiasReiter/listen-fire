@@ -129,10 +129,24 @@ pub async fn build_declaration_spec<F: Firing>(
 ) -> Result<NodeSpec, SpecError<F::Error>> {
     let builder = Builder { declarations, firing };
     let chain = builder.chain(shape)?;
-    builder.declaration(name, &chain).await
+    Ok(builder.declaration(name, &chain).await?.into_spec())
 }
 
-type Built<'a, E> = Pin<Box<dyn Future<Output = Result<NodeSpec, SpecError<E>>> + 'a>>;
+type Built<'a, E, T = NodeSpec> = Pin<Box<dyn Future<Output = Result<T, SpecError<E>>> + 'a>>;
+
+/// A declaration's node as its inline spelling builds it: one stage.
+struct DeclaredNode {
+    name: String,
+    description: String,
+    exported: Vec<String>,
+    stage: StageSpec,
+}
+
+impl DeclaredNode {
+    fn into_spec(self) -> NodeSpec {
+        NodeSpec { name: self.name, description: self.description, exported: self.exported, stages: vec![self.stage] }
+    }
+}
 
 /// The scope one part of the tree reads: its words, and its `type`s.
 #[derive(Clone)]
@@ -200,7 +214,7 @@ impl<'a, F: Firing> Builder<'a, F> {
                 )));
             };
             let chain = self.chain(shape)?;
-            let declared = self.declaration(&node.name, &chain).await?;
+            let declared = self.declaration(&node.name, &chain).await?.into_spec();
             let following = self.node(node.name.clone(), String::new(), &node.stages).await?;
             let description = match &node.description {
                 Some(slot) => self.describe(slot, &self.firing_reading()).await?,
@@ -244,31 +258,33 @@ impl<'a, F: Firing> Builder<'a, F> {
     /// each next one its base): the base's members first, then its own,
     /// and its words or else the base's — each part read in the file that
     /// wrote it.
-    fn declaration(&'a self, name: &'a str, chain: &'a [&'a DeclaredShape]) -> Built<'a, F::Error> {
+    fn declaration(&'a self, name: &'a str, chain: &'a [&'a DeclaredShape]) -> Built<'a, F::Error, DeclaredNode> {
         Box::pin(async move {
             let link = chain[0];
-            let types = self.declarations.of_file(&link.file).ok_or_else(|| SpecError::Runtime(format!("the library \"{:?}\" is not linked", link.file)))?;
+            let types = self.declarations.of_file(&link.file).ok_or_else(|| {
+                let path = match &link.file {
+                    DeclaringFile::Root => "the root file",
+                    DeclaringFile::Library(path) => path,
+                };
+                SpecError::Runtime(format!("the file \"{path}\" that declares '{}' is not linked", link.declaration.name))
+            })?;
             let reading = Reading { words: WordsScope::File(link.file.clone()), types };
             let own = self.shape_node(name.to_string(), &link.declaration.root, reading).await?;
-            if chain.len() == 1 {
-                return Ok(own);
-            }
-            let base = self.declaration(name, &chain[1..]).await?;
+            let Some(rest) = chain.get(1..).filter(|rest| !rest.is_empty()) else { return Ok(own) };
+            let base = self.declaration(name, rest).await?;
             let description = if link.declaration.root.description.is_some() { own.description } else { base.description };
             let mut exported = base.exported;
             exported.extend(own.exported);
-            let [base_stage] = <[StageSpec; 1]>::try_from(base.stages).expect("a declaration is one stage");
-            let [own_stage] = <[StageSpec; 1]>::try_from(own.stages).expect("a declaration is one stage");
-            let mut fields = base_stage.fields;
-            fields.extend(own_stage.fields);
-            let mut children = base_stage.children;
-            children.extend(own_stage.children);
-            Ok(NodeSpec { name: name.to_string(), description, stages: vec![StageSpec { through: Vec::new(), fields, children }], exported })
+            let mut fields = base.stage.fields;
+            fields.extend(own.stage.fields);
+            let mut children = base.stage.children;
+            children.extend(own.stage.children);
+            Ok(DeclaredNode { name: name.to_string(), description, exported, stage: StageSpec { through: Vec::new(), fields, children } })
         })
     }
 
     /// `buildShapeNodeSpec`: one node of a declaration.
-    fn shape_node(&'a self, name: String, shape: &'a ast::ShapeNode, reading: Reading<'a>) -> Built<'a, F::Error> {
+    fn shape_node(&'a self, name: String, shape: &'a ast::ShapeNode, reading: Reading<'a>) -> Built<'a, F::Error, DeclaredNode> {
         Box::pin(async move {
             let description = self.describe_optional(shape.description.as_ref(), &reading).await?;
             let mut fields = Vec::with_capacity(shape.fields.len());
@@ -282,13 +298,13 @@ impl<'a, F: Firing> Builder<'a, F> {
             }
             let mut children = Vec::with_capacity(shape.children.len());
             for child in &shape.children {
-                children.push(self.shape_node(child.name.clone(), child, reading.clone()).await?);
+                children.push(self.shape_node(child.name.clone(), child, reading.clone()).await?.into_spec());
             }
-            Ok(NodeSpec {
+            Ok(DeclaredNode {
                 name,
                 description,
                 exported: shape.fields.iter().map(|f| f.name.clone()).collect(),
-                stages: vec![StageSpec { through: Vec::new(), fields, children }],
+                stage: StageSpec { through: Vec::new(), fields, children },
             })
         })
     }
@@ -378,6 +394,10 @@ impl<'s> Region<'s> {
     /// unfenced children depth first. A fenced child (its first stage behind
     /// a pipeline) is a call of its own, planned by whoever runs the fence.
     pub fn plan(spec: &'s NodeSpec, stage_index: usize, single: bool, next_site: &mut dyn FnMut() -> u64) -> Region<'s> {
+        // TypeScript also refuses a region rooted at a fenced first stage it
+        // was not told to skip; every caller of either plans the stage behind
+        // a fence only once the fence has run, and the children here are
+        // filtered to the unfenced, so the refusal guards nothing.
         let site_id = format!("x:{}#{}", sanitize_site_name(&spec.name), next_site());
         let children = spec.stages[stage_index]
             .children

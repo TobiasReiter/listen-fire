@@ -61,21 +61,23 @@ impl JsObject {
     /// prototype instead; callers refuse it before getting here). A key
     /// already there keeps its place.
     pub fn set(&mut self, key: String, value: Js) {
-        if let Some(slot) = self.entries.iter_mut().find(|(k, _)| *k == key) {
-            slot.1 = value;
-            return;
+        insert_in_object_order(&mut self.entries, key, value);
+    }
+}
+
+/// `object[key] = value` over any keyed list: array-index keys ascending
+/// first, then the rest as inserted; a key already there keeps its place.
+pub fn insert_in_object_order<V>(entries: &mut Vec<(String, V)>, key: String, value: V) {
+    if let Some(slot) = entries.iter_mut().find(|(k, _)| *k == key) {
+        slot.1 = value;
+        return;
+    }
+    match array_index(&key) {
+        Some(index) => {
+            let at = entries.iter().position(|(k, _)| array_index(k).is_none_or(|other| other > index)).unwrap_or(entries.len());
+            entries.insert(at, (key, value));
         }
-        match array_index(&key) {
-            Some(index) => {
-                let at = self
-                    .entries
-                    .iter()
-                    .position(|(k, _)| array_index(k).is_none_or(|other| other > index))
-                    .unwrap_or(self.entries.len());
-                self.entries.insert(at, (key, value));
-            }
-            None => self.entries.push((key, value)),
-        }
+        None => entries.push((key, value)),
     }
 }
 

@@ -858,16 +858,24 @@ The rule for what this engine reproduces of JavaScript:
     key kind (say: nulls, then numbers, then text), so no sort algorithm's
     merge decides where a record lands.
   - a reply field named after an `Object.prototype` member
-    (`constructor`, `toString`, …): zod reads a declared key through the
-    object's prototype, so a reply that leaves the field out hands zod a
-    function, which fails the call (`expected object, received
-    function`). crate::extract::validate reads the field absent; the
-    oracle marks those replies (`divergence: "prototype_key"`) and pins
-    only that this engine does not fail them.
-  - a reply number past ±1.8e308: `JSON.parse` reads it as `Infinity`,
-    which zod's number check refuses (`expected number, received
-    number`); across the host boundary it is `null`, which reads clean.
-    A field's number is a finite double, or absent.
+    (`constructor`, `toString`, `hasOwnProperty`, `__proto__`, …): zod
+    reads a declared key through the record's prototype, so a reply that
+    leaves such a field out hands zod a function, which fails the call
+    (`expected object, received function`), and a `__proto__` the reply
+    writes becomes the record's prototype instead of its key.
+    crate::extract::validate reads each as any other field. The oracle marks
+    those replies (`divergence: "prototype_key"`) and holds this engine to
+    TypeScript's verdict with exactly that taken out: the function issues
+    dropped (the retry and the failure's detail worked out from what is
+    left), the `__proto__` record kept as a key, and a reply with nothing
+    left read clean.
+  - a reply number above the double range (past ±1.8e308): `JSON.parse`
+    reads it as `Infinity`, which zod's number check refuses (`expected
+    number, received number`); across the host boundary it arrives as
+    `null`, which reads clean. The oracle cannot express it (its replies
+    are JSON text, which `JSON.stringify` never writes so), so it is not
+    marked there; Task 3b pins the boundary behaviour (a number above the
+    double range arrives as null).
   - extraction call-site numbering: the number in an extraction's prompt
     (`x:<node>#<n>`) follows the order concurrent siblings reach the site,
     so a host answering at another speed sees another prompt; numbered by

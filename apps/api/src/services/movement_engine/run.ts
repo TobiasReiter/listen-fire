@@ -1194,11 +1194,11 @@ const PRIMITIVE_RUNTIME_TYPES: Readonly<Record<string, 'string' | 'number' | 'bo
   boolean: 'boolean',
 };
 
-type ShapeBinding = Extract<Binding, { kind: 'shape' }>;
+export type ShapeBinding = Extract<Binding, { kind: 'shape' }>;
 
 /** `name` as a library file sees it, when it names a node declaration there:
  *  one the file declares, or one it imported (which then belongs to ITS file). */
-function libraryShape(file: LinkedFile, name: string): ShapeBinding | undefined {
+export function libraryShape(file: LinkedFile, name: string): ShapeBinding | undefined {
   for (const statement of file.program.statements) {
     if (statement.kind === 'shape' && statement.name === name) {
       return { kind: 'shape', declaration: statement, library: file };
@@ -1208,6 +1208,41 @@ function libraryShape(file: LinkedFile, name: string): ShapeBinding | undefined 
   return imported?.kind === 'shape'
     ? { kind: 'shape', declaration: imported.declaration, library: imported.file }
     : undefined;
+}
+
+/**
+ * The `extends` chain from `shape` down to the declaration that stands on its
+ * own, `shape` first. Each base (`node X extends Y`) is a name in the scope X
+ * was declared in — a sibling declaration or an import there — so a library's
+ * is found in the library (`libraryShape`) and any other through
+ * `resolveInFile`, the scope of the file that declared it; from then on Y's
+ * words and types read Y's own file.
+ */
+export function shapeChain(
+  shape: ShapeBinding,
+  resolveInFile: (shape: ShapeBinding, name: string) => Binding | undefined,
+): ShapeBinding[] {
+  const shapeBase = (at: ShapeBinding): ShapeBinding | undefined => {
+    const base = at.declaration.extends;
+    if (base === undefined) return undefined;
+    const found = at.library !== undefined ? libraryShape(at.library, base.name) : resolveInFile(at, base.name);
+    if (found?.kind === 'shape') return found;
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      `'${at.declaration.name}' extends '${base.name}', which is not a node declaration in scope — the checker should have caught this`,
+    );
+  };
+  const chain: ShapeBinding[] = [];
+  for (let at: ShapeBinding | undefined = shape; at !== undefined; at = shapeBase(at)) {
+    if (chain.some((c) => c.declaration === at!.declaration)) {
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `'${shape.declaration.name}' extends itself — the checker should have caught this`,
+      );
+    }
+    chain.push(at);
+  }
+  return chain;
 }
 
 /** What a `link` may append to a run-local node's edge: the binding kinds that
@@ -4015,39 +4050,10 @@ class Interpreter {
     return shape.library !== undefined ? this.typesOfLibrary(shape.library) : this.typesIn(shape.fileEnv);
   }
 
-  /**
-   * `node X extends Y` — Y, as a binding that knows where IT was declared. `Y`
-   * is a name in the scope X was declared in (a sibling declaration or an
-   * import there), and from then on Y's words and types read Y's own file.
-   */
-  private shapeBase(shape: ShapeBinding): ShapeBinding | undefined {
-    const base = shape.declaration.extends;
-    if (base === undefined) return undefined;
-    const found =
-      shape.library !== undefined
-        ? libraryShape(shape.library, base.name)
-        : (shape.fileEnv ?? this.fileEnv)?.resolve(base.name);
-    if (found?.kind === 'shape') return found;
-    throw new MovementEngineError(
-      'MOVENG_RUNTIME',
-      `'${shape.declaration.name}' extends '${base.name}', which is not a node declaration in scope — the checker should have caught this`,
-    );
-  }
-
   /** The `extends` chain from `shape` down to the declaration that stands on
    *  its own, `shape` first. */
   private shapeChain(shape: ShapeBinding): ShapeBinding[] {
-    const chain: ShapeBinding[] = [];
-    for (let at: ShapeBinding | undefined = shape; at !== undefined; at = this.shapeBase(at)) {
-      if (chain.some((c) => c.declaration === at!.declaration)) {
-        throw new MovementEngineError(
-          'MOVENG_RUNTIME',
-          `'${shape.declaration.name}' extends itself — the checker should have caught this`,
-        );
-      }
-      chain.push(at);
-    }
-    return chain;
+    return shapeChain(shape, (at, name) => (at.fileEnv ?? this.fileEnv)?.resolve(name));
   }
 
   /**

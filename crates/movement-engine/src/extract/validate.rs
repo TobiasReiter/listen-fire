@@ -10,7 +10,8 @@
 //! One zod accident is not reproduced (README, "Spec the tail"): zod reads a
 //! declared key through the object's prototype, so a field named after an
 //! `Object.prototype` member (`constructor`, `toString`, …) that the reply
-//! leaves out is a function, and fails. Here an absent field is absent.
+//! leaves out is a function, and fails, and a `__proto__` the reply writes
+//! becomes the record's prototype. Here each is a field like any other.
 
 use crate::extract::spec::Region;
 use crate::js::{self, Js, JsObject};
@@ -279,26 +280,20 @@ impl Parse {
             self.expected("object", value);
             return Js::Undefined;
         };
-        // The schema's keys in the order a JavaScript object holds them.
-        let mut shape = JsObject::new();
-        for field in site.fields() {
-            shape.set(field.name.clone(), Js::Null);
+        // The schema's keys in the order a JavaScript object holds them: a
+        // child named like a field takes the field's place.
+        let mut declared: Vec<(String, Declared<'_, '_>)> = Vec::new();
+        let fields = site.fields().iter().map(|f| (f.name.clone(), Declared::Field(f)));
+        let children = site.children.iter().map(|c| (c.spec.name.clone(), Declared::Child(c)));
+        for (key, kind) in fields.chain(children) {
+            js::insert_in_object_order(&mut declared, key, kind);
         }
-        for child in &site.children {
-            shape.set(child.spec.name.clone(), Js::Null);
-        }
-        let declared: Vec<String> = shape.entries().iter().map(|(k, _)| k.clone()).collect();
-        let kind = |key: &str| -> Declared<'_, '_> {
-            match site.children.iter().rev().find(|c| c.spec.name == key) {
-                Some(child) => Declared::Child(child),
-                None => Declared::Field(site.fields().iter().find(|f| f.name == key).expect("a declared key is a field or a child")),
-            }
-        };
+        let declared_names: Vec<String> = declared.iter().map(|(k, _)| k.clone()).collect();
         let before = self.issues.len();
         let mut out = JsObject::new();
-        for key in &declared {
+        for (key, kind) in &declared {
             let raw = object.get(key).cloned();
-            let parsed = self.at(PathKey::Key(key.clone()), |p| match kind(key) {
+            let parsed = self.at(PathKey::Key(key.clone()), |p| match kind {
                 Declared::Field(field) => {
                     let ctx = format!("{}.{}", site.spec.name, field.name);
                     p.field(field.type_.as_ref(), raw.as_ref().unwrap_or(&Js::Undefined), &ctx)
@@ -314,7 +309,7 @@ impl Parse {
             }
         }
         for (key, value) in object.entries() {
-            if !declared.contains(key) {
+            if !declared_names.contains(key) {
                 out.set(key.clone(), value.clone());
             }
         }
@@ -322,11 +317,11 @@ impl Parse {
         // as zod runs a check.
         if self.issues.len() == before && !declared.is_empty() {
             let keys: Vec<String> = out.entries().iter().map(|(k, _)| k.clone()).collect();
-            if !keys.is_empty() && !keys.iter().any(|k| declared.contains(k)) {
+            if !keys.is_empty() && !keys.iter().any(|k| declared_names.contains(k)) {
                 self.issue(format!(
                     "this entity was answered under {} — none of which it declares. Its fields are {}; answer under those names.",
                     quote_keys(&keys),
-                    quote_keys(&declared)
+                    quote_keys(&declared_names)
                 ));
             }
         }
