@@ -6,13 +6,17 @@
 //!
 //! The account belongs to the run: a segment is seeded with what the run
 //! spent before it (`priorMicrodollars`), and the cap counts from
-//! `capBaselineMicrodollars`. The engine never refuses a priced call itself:
-//! the host refuses one past the budget, and that refusal, once charged, is
-//! the run's cap met (`exceeded`) when the run's own figures say so, at
-//! which the run suspends (crate::park); otherwise it fails the statement
-//! with the host's message, as run_context.ts `charged` does.
+//! `capBaselineMicrodollars`. The engine refuses one priced call itself: a
+//! priced plugin once the run has spent its cap (`plugin_refusal`), before
+//! the host is asked. Any other the host refuses past the budget, and that
+//! refusal, once charged, is the run's cap met (`exceeded`) when the run's
+//! own figures say so, at which the run suspends (crate::park); otherwise it
+//! fails the statement with the host's message, as run_context.ts `charged`
+//! does.
 
 use std::cell::RefCell;
+
+use movement_parser::catalog::types::{JsMap, PluginSpec};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
@@ -96,6 +100,15 @@ impl Ledger {
     pub fn cost_lines(&self) -> Vec<CostLine> {
         self.by_source.borrow().clone()
     }
+
+    /// Whether invoking `plugin` is refused before it starts (run_context.ts
+    /// `pricedCalls`): it is priced, and the run has spent its cap. The
+    /// plugin is found as `pluginSpecNamed` finds it, dashes read as
+    /// underscores; one the catalog does not know is not priced.
+    pub fn plugin_refusal(&self, plugins: &JsMap<PluginSpec>, plugin: &str) -> Option<CapExceeded> {
+        crate::plugin::spec_named(plugins, plugin).filter(|spec| spec.priced)?;
+        self.exceeded()
+    }
 }
 
 /// The run met its cost cap (lib/run_cost.ts `RunCostCapExceeded`): the cap,
@@ -115,6 +128,16 @@ impl CapExceeded {
             "capMicrodollars": self.cap_microdollars,
             "spentMicrodollars": self.spent_microdollars,
         })
+    }
+
+    /// `RunCostCapExceeded`'s message: the whole failure an author sees
+    /// where the run cannot suspend.
+    pub fn message(self) -> String {
+        format!(
+            "Run cost cap reached: this run has spent {} on model calls and paid services, and the limit set by {RUN_COST_CAP_ENV_VAR} is {}. The run was stopped before its next priced call in case something was looping. If this run legitimately needs more, raise {RUN_COST_CAP_ENV_VAR} in the server's environment (or unset it to remove the cap).",
+            format_usd(self.spent_microdollars),
+            format_usd(self.cap_microdollars),
+        )
     }
 
     /// What a run paused at its cap says on its trace (run.ts
@@ -176,6 +199,23 @@ mod tests {
         assert_eq!(format_usd(1_234.0), "$0.0012");
         assert_eq!(format_usd(10_000.0), "$0.01");
         assert_eq!(format_usd(0.0), "$0.00");
+    }
+
+    #[test]
+    fn a_priced_plugin_is_refused_once_the_cap_is_spent() {
+        let plugins: JsMap<PluginSpec> = serde_json::from_value(json!({
+            "fetch_url": { "args": ["url"], "priced": true },
+            "free_lookup": { "args": [], "priced": false },
+        }))
+        .unwrap();
+        let ledger = Ledger::new(&Spend { cap_microdollars: Some(100.0), ..Spend::default() });
+        assert_eq!(ledger.plugin_refusal(&plugins, "fetch_url"), None);
+        ledger.charge(Some(&json!([{ "source": "model:extract", "microdollars": 100 }]))).unwrap();
+        let spent = Some(CapExceeded { cap_microdollars: 100.0, spent_microdollars: 100.0 });
+        assert_eq!(ledger.plugin_refusal(&plugins, "fetch_url"), spent);
+        assert_eq!(ledger.plugin_refusal(&plugins, "fetch-url"), spent);
+        assert_eq!(ledger.plugin_refusal(&plugins, "free_lookup"), None);
+        assert_eq!(ledger.plugin_refusal(&plugins, "unknown"), None);
     }
 
     #[test]

@@ -124,6 +124,27 @@ pub(crate) struct Fields {
     provenance: Vec<(String, Option<Trail>)>,
     semantics: Vec<(String, FieldWriteMode)>,
     pub(crate) descriptor: Js,
+    /// Per field, the citation an untransformed extracted value earns
+    /// (`fieldEvidenceFromProvenance`).
+    evidence: Vec<(String, Js)>,
+    /// The source content of every extracted record a field reads
+    /// (`collectWriteResources`), once each by id.
+    resources: Vec<Js>,
+}
+
+impl Fields {
+    /// `evidenceForWrite`: the citations of the fields written, none when
+    /// none has one.
+    fn evidence_for(&self, written: &Js) -> Js {
+        let Js::Object(written) = written else { return Js::Undefined };
+        let mut evidence = JsObject::new();
+        for (field, _) in written.entries() {
+            if let Some((_, cited)) = self.evidence.iter().find(|(name, _)| name == field) {
+                evidence.set(field.clone(), cited.clone());
+            }
+        }
+        if evidence.entries().is_empty() { Js::Undefined } else { Js::object(evidence) }
+    }
 }
 
 /// One field line, a spread's included: its name, its value's text, the
@@ -416,7 +437,48 @@ impl Run<'_> {
                 }
             }
         }
-        Ok(Fields { fields: Js::object(fields), provenance, semantics, descriptor })
+        let mut evidence = Vec::new();
+        for (name, trail) in &provenance {
+            let direct = trail.as_ref().and_then(|t| t.direct).map(|id| self.origin(id));
+            if let Some(origin) = direct
+                && matches!(unique::get(&origin, "kind"), Js::String(kind) if kind == "extraction")
+                && unique::get(&origin, "quote").truthy()
+            {
+                evidence.push((name.clone(), env::object_of(vec![("quote", unique::get(&origin, "quote")), ("type", Js::str("extraction"))])));
+            }
+        }
+        let resources = self.write_resources(lines, scope);
+        Ok(Fields { fields: Js::object(fields), provenance, semantics, descriptor, evidence, resources })
+    }
+
+    /// `collectWriteResources`: the names each field's text reads (field
+    /// names in backticks, and a name after a dot, are not names), and of
+    /// those bound to what an extraction yielded, the source content it
+    /// was read from, once each by id.
+    fn write_resources(&self, lines: &[Line], scope: &Scope) -> Vec<Js> {
+        let mut seen: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        for line in lines {
+            for name in referenced_identifiers(&line.slot.raw) {
+                let Some(Binding::Extracted { emission, .. }) = scope.resolve(&name) else { continue };
+                for resource in &emission.resources {
+                    // `resource.id ?? resource.externalId`.
+                    let key = match unique::get(resource, "id") {
+                        id if id.is_nullish() => unique::get(resource, "externalId"),
+                        id => id,
+                    };
+                    let key = (!matches!(key, Js::Undefined)).then(|| key.to_js_string());
+                    if let Some(key) = key {
+                        if seen.contains(&key) {
+                            continue;
+                        }
+                        seen.push(key);
+                    }
+                    out.push(resource.clone());
+                }
+            }
+        }
+        out
     }
 
     /// A slot evaluated as `evaluateSlot` evaluates it: lowered, its literals
@@ -426,7 +488,7 @@ impl Run<'_> {
         self.evaluate(&expr, scope, slot).await
     }
 
-    fn trail_of(&self, prov: &Prov, scope: &Scope) -> Option<Trail> {
+    pub(crate) fn trail_of(&self, prov: &Prov, scope: &Scope) -> Option<Trail> {
         match prov {
             Prov::Binding(name) => crate::eval::Names::value(scope, name).and_then(|b| b.trail),
             Prov::Built(trail) => Some(trail.clone()),
@@ -814,7 +876,9 @@ impl Run<'_> {
         }
         let parents = parent_summaries(parent_links);
         let changed = !to_write.entries().is_empty();
-        if !changed && parent_links.is_empty() {
+        // An extract-fed write whose fields all match still records its
+        // source content against the record.
+        if !changed && fields.resources.is_empty() && parent_links.is_empty() {
             let mut record = record_head(adapter, &target.record_type, false, !adapter.dry, external_id.clone());
             record.set("writtenValues".into(), Js::object(JsObject::new()));
             record.set("outcome".into(), Js::str("noop"));
@@ -829,7 +893,10 @@ impl Run<'_> {
         update.set("recordType".into(), Js::str(target.record_type.clone()));
         update.set("externalId".into(), external_id.clone());
         update.set("fields".into(), to_write.clone());
-        update.set("evidence".into(), Js::Undefined);
+        update.set("evidence".into(), fields.evidence_for(&to_write));
+        if !fields.resources.is_empty() {
+            update.set("resources".into(), Js::array(fields.resources.clone()));
+        }
         update.set("mutationContext".into(), self.mutation_context.borrow().clone());
         update.set("parentLinks".into(), Js::array(parent_links.to_vec()));
         let updated = self.call_adapter(&adapter.instance, "updateRecord", Js::object(update)).await.map_err(thrown)?;
@@ -906,7 +973,10 @@ impl Run<'_> {
         let mut create = JsObject::new();
         create.set("recordType".into(), Js::str(target.record_type.clone()));
         create.set("fields".into(), fields.fields.clone());
-        create.set("evidence".into(), Js::Undefined);
+        create.set("evidence".into(), fields.evidence_for(&fields.fields));
+        if !fields.resources.is_empty() {
+            create.set("resources".into(), Js::array(fields.resources.clone()));
+        }
         create.set("mutationContext".into(), self.mutation_context.borrow().clone());
         create.set("parentLinks".into(), Js::array(parent_links.to_vec()));
         create.set("bridgeToExternal".into(), Js::Undefined);
@@ -1050,6 +1120,7 @@ impl Run<'_> {
             Some(Binding::Node(node)) => return crate::node::node_field(&node.borrow(), field),
             // A field of no returned records is nothing (`collapse([])`).
             Some(Binding::Positions(landings)) if landings.is_empty() => return Ok(Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) }),
+            Some(Binding::Extracted { emission, .. }) => return emission_field(&emission, field),
             _ => return Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not a record in scope"))),
         };
         let value = handle.record.field(field)?;
@@ -1331,11 +1402,59 @@ pub fn describe_binding(binding: &Binding) -> &'static str {
         Binding::Instance(_) => "a constructed adapter instance",
         Binding::Opaque => "an import",
         Binding::Movement(_) => "a movement declaration",
+        Binding::Shape(_) => "a shape declaration",
+        Binding::Plugin(_) => "a plugin",
         Binding::Handle(_) => "a write handle",
         Binding::Node(_) => "a synthesised node",
         Binding::Landed(_) => "a traversed source record",
         Binding::Positions(_) => "a block's returned records",
+        Binding::Extracted { root: true, .. } => "an extract result",
+        Binding::Extracted { root: false, .. } => "an extracted entity",
     }
+}
+
+/// `referencedIdentifiers`: the names a field's text reads — backticked
+/// segments (field names) blanked out, a name after a dot skipped — each
+/// once, in the order first read.
+fn referenced_identifiers(raw: &str) -> Vec<String> {
+    let mut without_fields = String::new();
+    let mut quoted = false;
+    for c in raw.chars() {
+        match c {
+            '`' if !quoted => quoted = true,
+            '`' => {
+                quoted = false;
+                without_fields.push(' ');
+            }
+            _ if quoted => {}
+            c => without_fields.push(c),
+        }
+    }
+    // An unclosed backtick stays text, as the regex leaves it.
+    if quoted {
+        let tail = raw.rfind('`').map_or("", |at| &raw[at..]);
+        without_fields.push_str(tail);
+    }
+    let chars: Vec<char> = without_fields.chars().collect();
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut names: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !word(chars[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && word(chars[i]) {
+            i += 1;
+        }
+        let token: String = chars[start..i].iter().collect();
+        let after_dot = start > 0 && chars[start - 1] == '.';
+        if !after_dot && !token.chars().next().is_some_and(|c| c.is_ascii_digit()) && !names.contains(&token) {
+            names.push(token);
+        }
+    }
+    names
 }
 
 /// `spellName`: bare when an ASCII identifier, backticked otherwise.
@@ -1381,6 +1500,21 @@ pub(crate) fn edge_shape(path: &ast::PathHead) -> EdgeShape {
         },
         _ => EdgeShape::MultiHop,
     }
+}
+
+/// `readEmissionField`: the field as extracted, cited by its own origin,
+/// which every read shares.
+pub(crate) fn emission_field(emission: &crate::extract::emission::Emission, field: &str) -> Result<Evaluated, EvalError> {
+    let value = match emission.fields.get(field) {
+        Some(value) if !value.is_nullish() => value.clone(),
+        Some(_) => Js::Null,
+        None if crate::stdlib::is_object_prototype_name(field) => {
+            return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
+        }
+        None => Js::Null,
+    };
+    let trail = emission.origin_of(field).map_or_else(Trail::default, |id| Trail { origins: vec![id], direct: Some(id) });
+    Ok(Evaluated { value, prov: Prov::Built(trail) })
 }
 
 /// `spellName`: bare when an ASCII identifier, backticked otherwise.

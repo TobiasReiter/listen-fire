@@ -147,6 +147,9 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
         Binding::Opaque => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
         Binding::Movement(movement) => object_of(vec![kind("movement"), ("name", Js::str(movement.clone()))]),
+        Binding::Shape(shape) => object_of(vec![kind("shape"), ("name", Js::str(shape.clone()))]),
+        // A plugin travels as the import it is, re-resolved by its slot name.
+        Binding::Plugin(_) => object_of(vec![kind("opaque"), ("what", Js::str("a plugin")), ("name", Js::str(name))]),
         Binding::Handle(handle) => object_of(vec![
             kind("handle"),
             ("handle", handle.record.object.clone()),
@@ -164,20 +167,30 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             }
             object_of(descriptor)
         }
-        // A landing is bound only in a block iteration's own scope, and
-        // admission refuses every park and suspension inside a block, so no
-        // state this engine writes holds one. A guard that missed fails the
-        // run loudly, before anything is committed.
-        Binding::Landed(_) => {
-            return Err(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("a park inside a block reached the parker (the hop alias '{name}' is in scope); admission should have refused it"),
-            ));
+        // A record a pick bound (`top = FIRST(…)`): admission refuses every
+        // park inside a block, so no hop alias reaches here. Its read is
+        // named only when it is not the event's source (the TypeScript binds
+        // none there), and a pick keeps no edge properties.
+        Binding::Landed(landed) => {
+            let mut descriptor = vec![kind("sourcePosition"), ("position", json_round_trip(&landed.position))];
+            if let Some(properties) = &landed.edge_properties {
+                descriptor.push(("edgeProperties", json_round_trip(properties)));
+            }
+            let from_source = run.source.borrow().as_ref().is_some_and(|source| Rc::ptr_eq(&source.read, &landed.read));
+            if !from_source {
+                descriptor.push(("read", object_of(vec![("instanceName", Js::str(landed.read.instance_name.clone()))])));
+            }
+            object_of(descriptor)
         }
         Binding::Positions(landings) => {
             let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
             object_of(vec![kind("positions"), ("landings", Js::array(landings))])
         }
+        // The extraction ran: its output is data, never run again.
+        Binding::Extracted { emission, root } => object_of(vec![
+            kind(if *root { "extractRoot" } else { "extractPosition" }),
+            ("emission", emission.descriptor(&|id| run.origin(id))),
+        ]),
     })
 }
 
@@ -234,10 +247,16 @@ pub fn resume_refusal(state: &Json) -> Option<String> {
     if !text(at(&state, "address")).is_some_and(steps_only_into_if_arms) {
         return Some("resume_state_address".into());
     }
-    items(at(&state, "scopeChain"))
+    let scopes = items(at(&state, "scopeChain"));
+    // The file scope is rebuilt from the program on resume (`prepare`), as
+    // the TypeScript re-derives its declarations by name: a declared shape
+    // there is the program's, not the state's.
+    let file_shape = |i: usize, descriptor: &Js| i == 0 && text(at(descriptor, "kind")) == Some("shape");
+    scopes
         .iter()
-        .flat_map(|scope| pairs(at(scope, "bindings")))
-        .find_map(|(_, descriptor)| descriptor_refusal(descriptor))
+        .enumerate()
+        .flat_map(|(i, scope)| pairs(at(scope, "bindings")).into_iter().map(move |(_, d)| (i, d)))
+        .find_map(|(i, descriptor)| if file_shape(i, descriptor) { None } else { descriptor_refusal(descriptor) })
 }
 
 /// `/^s\d+(\.b\d+\.s\d+)*$/`.
@@ -729,10 +748,10 @@ mod tests {
         assert_eq!(duration_ms("30"), None);
     }
 
-    /// A landing in a scope a park writes is a guard that missed: the run
-    /// fails loudly, naming it, rather than trapping.
+    /// A record a pick bound parks as serialize.ts writes a source
+    /// position: the position, and the graph it was read from by name.
     #[test]
-    fn a_park_that_reaches_a_landing_fails_the_run_loudly() {
+    fn a_picked_record_parks_as_the_typescript_writes_it() {
         let input: crate::run::SegmentInput = serde_json::from_value(serde_json::json!({
             "source": "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}", "languageVersion": 3, "event": null,
             "segmentId": "g1", "serves": [], "now": "2026-03-12T12:00:00.000Z",
@@ -765,6 +784,10 @@ mod tests {
             pending_suspensions: RefCell::default(),
             source_reads: RefCell::default(),
             positions: RefCell::default(),
+            extraction_sites: RefCell::default(),
+            reply_digests: std::cell::Cell::new(0),
+            unfetched_files: RefCell::default(),
+            log_lines: RefCell::default(),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },
@@ -779,9 +802,10 @@ mod tests {
         let scope = Scope::root();
         scope.declare("c", Binding::Landed(Rc::new(crate::bindings::Landed::new(Js::Undefined, None, read))));
         for state in [parked_state(&run, "s0", None, &scope), suspended_state(&run, "s0", &scope)] {
-            let Err(Failure::Engine { message, .. }) = state else { panic!("a landing was written into a park") };
-            assert!(message.contains("a park inside a block reached the parker"), "{message}");
-            assert!(message.contains("'c'"), "{message}");
+            let state = crate::env::encode_plain(&state.expect("a picked record parks"));
+            let text = state.to_string();
+            assert!(text.contains(r#"[["kind","sourcePosition"],["position",["u"]],["read",["o","#), "{text}");
+            assert!(text.contains(r#"[["instanceName","kg"]]"#), "{text}");
         }
     }
 

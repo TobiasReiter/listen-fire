@@ -17,10 +17,11 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData, positionRecordId } from '../../translation_graph/types';
+import { MovementEngineError } from '../errors';
 import type { MovementTraceEntry } from '../expression';
 import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from '../run';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
-import { credentialIdsFor, makeTestHost, recordingWriteLocks } from '../test_host';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks } from '../test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c4');
 
@@ -401,6 +402,7 @@ async function agree(c: Case) {
     expect(rust.failed).toBe(true);
     expect(String(rust.error)).toBe(String(ts.error));
     expect(runFailureCause(rust.error)?.constructor).toBe((runFailureCause(ts.error) as object).constructor);
+    expect(codeOf(runFailureCause(rust.error))).toBe(codeOf(runFailureCause(ts.error)));
     if (ts.error instanceof MovementRunFailed && rust.error instanceof MovementRunFailed) {
       expect(sameIds(rust.error.partial)).toEqual(sameIds(ts.error.partial));
     }
@@ -410,6 +412,9 @@ async function agree(c: Case) {
   }
   return { ts, rust };
 }
+
+/** A failure's MOVENG code, when it carries one. */
+const codeOf = (error: unknown) => (error instanceof MovementEngineError ? error.code : undefined);
 
 const written = (o: Outcome) => o.captured.map((w) => w.fields?.text);
 const calls = (o: Outcome, which: 'graph' | 'email' = 'graph') => JSON.parse(o[which]) as Array<[string, Record<string, unknown>]>;
@@ -715,6 +720,217 @@ describe('traversal blocks in the Rust engine', () => {
       // still answers first.
       expect(written(closed.rust)).toEqual([undefined, 'Seed round', 'Bridge']);
     });
+  });
+});
+
+// Chunk 6A Task 4: the expression tail — folds, EXISTS, IS tests and a
+// record read as a whole value — held to the TypeScript engine call for call.
+describe('the expression tail, on both engines', () => {
+  const DEALS: Row[] = [
+    { id: 'd-1', fields: { title: 'Seed round', stage: 'open' } },
+    { id: 'd-2', fields: { title: 'Series A', stage: 'won' } },
+  ];
+  const withDeals = (over: GraphOptions = {}): GraphOptions => ({
+    collections: { company: COMPANIES, deal: DEALS },
+    links: { 'n-1/deals': ['d-1', 'd-2'], 'n-2/deals': ['d-2'] },
+    edges: { deals: ['d-1'] },
+    ...over,
+  });
+  const fetches = (o: Outcome) => calls(o).filter(([m]) => m === 'getRelated').map(([, input]) => input);
+
+  // Review Focus 4: a hop's WHERE the adapter honours, and one it cannot be
+  // handed, answer the same records, and ask with the same arguments.
+  describe('COUNT and FIRST over a traversal', () => {
+    const PUSHED = 'company WHERE `stage` == "Seed" ORDER BY `revenue` DESC LIMIT 2';
+    const LOCAL = 'company WHERE UPPER(`stage`) == "SEED" ORDER BY c.`revenue` DESC LIMIT 2';
+    const body = (bracket: string) =>
+      [
+        `  n = COUNT(kg-[c:${bracket}]->)`,
+        `  top = FIRST(kg-[c:${bracket}]->)`,
+        `  names = JOIN(kg-[c:${bracket}]->.\`name\`, ", ")`,
+        '  write kg-[:note]-> { text: "${n} ${top.`name`} ${names}" }',
+      ].join('\n');
+
+    it('answers the same whether the adapter honours the pushed WHERE or not, asking it the same', async () => {
+      const local = await agree({ body: body(PUSHED) });
+      const pushed = await agree({ body: body(PUSHED), graph: { honours: true } });
+      expect(written(local.rust)).toEqual(['2 Globex Globex, Umbrella']);
+      expect(written(pushed.rust)).toEqual(written(local.rust));
+      expect(fetches(pushed.rust)).toEqual(fetches(local.rust));
+      expect(fetches(local.rust)).toHaveLength(3);
+      expect(fetches(local.rust)[0]).toMatchObject({ fieldId: 'company', orderBy: { fieldId: 'revenue', direction: 'desc' }, limit: 2 });
+    });
+
+    it('filters, orders and bounds locally a WHERE no adapter can be handed, with the same answer', async () => {
+      const local = await agree({ body: body(LOCAL) });
+      expect(written(local.rust)).toEqual(['2 Globex Globex, Umbrella']);
+      for (const fetch of fetches(local.rust)) {
+        expect(fetch).not.toHaveProperty('where');
+        expect(fetch).not.toHaveProperty('limit');
+      }
+    });
+
+    it('walks a streaming instance with one getRelated per hop, as an expression does', async () => {
+      const { rust } = await agree({ body: body(PUSHED), graph: { pageSize: 2 } });
+      // The pick walks as a block head does, a page at a time; the count and
+      // the projection, as an expression does, in one getRelated each.
+      expect(calls(rust).filter(([m]) => m === 'iterateRelatedPage')).toHaveLength(3);
+      expect(fetches(rust)).toHaveLength(2);
+    });
+
+    it('picks the last and the only record, binds null when there is none, and fails ONLY over two', async () => {
+      const last = await agree({ body: '  top = LAST(kg-[c:company WHERE `stage` == "Seed" ORDER BY `name`]->)\n  write kg-[:note]-> { text: COALESCE(top.`name`, "none") }' });
+      expect(written(last.rust)).toEqual(['Umbrella']);
+      const none = await agree({ body: '  top = FIRST(kg-[c:company WHERE `stage` == "Gone" ORDER BY `name`]->)\n  if top == null { ERROR("no company matched") }' });
+      expect(String(runFailureCause(none.rust.error))).toContain('no company matched');
+      const two = await agree({ body: '  co = ONLY(kg-[c:company WHERE `stage` == "Late" OR `revenue` == 30]->)' });
+      expect(String(runFailureCause(two.rust.error))).toContain('says there is exactly one, and there are 2');
+      const one = await agree({ body: '  co = ONLY(kg-[c:company WHERE `name` == "Initech"]->)\n  if EXISTS(co) {\n    write kg-[:note]-> { text: COALESCE(co.`name`, "?") }\n  }', graph: withDeals() });
+      expect(one.rust.captured).toHaveLength(1);
+    });
+
+    it('counts from a landed record, a hop alias read in the WHERE and the ORDER BY key a walk of its own', async () => {
+      await agree({
+        body: '  kg-[c:company]-> {\n    write kg-[:note]-> { text: "${COUNT(c-[d:deals WHERE d.`stage` != "lost"]->)}" }\n  }',
+        graph: withDeals(),
+      });
+      await agree({ body: '  write kg-[:note]-> { text: JOIN(kg-[c:company ORDER BY c-[:deals]->.`title` DESC LIMIT 2]->.`name`, ",") }', graph: withDeals() });
+    });
+  });
+
+  describe('EXISTS', () => {
+    it('asks one getRelated per subject and hop, and reads the WHERE until a record holds it', async () => {
+      const { ts, rust } = await agree({
+        body: [
+          '  co = write kg-[:company]-> { name: "Newco" }',
+          '  if EXISTS(co-[:deals]->) { write kg-[:note]-> { text: "any" } }',
+          '  if EXISTS(co-[d:deals WHERE `title` == "Seed round"]->) { write kg-[:note]-> { text: "seed" } }',
+          '  if NOT EXISTS(co-[d:deals WHERE `title` == "Nope"]->) { write kg-[:note]-> { text: "none" } }',
+          '  if EXISTS(kg-[c:company WHERE `stage` == "Late"]-> WHERE `revenue` > 40) { write kg-[:note]-> { text: "late" } }',
+          '  if EXISTS(kg-[c:company]->-[d:deals WHERE `stage` == "won"]->) { write kg-[:note]-> { text: "won" } }',
+          '  if EXISTS(msg-[:attachments]->) { write kg-[:note]-> { text: "files" } }',
+        ].join('\n'),
+        graph: withDeals(),
+      });
+      expect(written(rust)).toEqual([undefined, 'any', 'seed', 'none', 'late', 'won', 'files']);
+      expect(fetches(rust)).toHaveLength(fetches(ts).length);
+    });
+
+    it('asks whether a value holds one, and tests a candidate of a target WHERE', async () => {
+      await agree({
+        body: [
+          '  v = msg.`subject`',
+          '  blank = null',
+          '  empty = []',
+          '  write kg-[:note]-> { text: "${EXISTS(v)} ${EXISTS(blank)} ${EXISTS(empty)}" }',
+          '  kg-[c:company WHERE EXISTS(c-[:deals]->)]-> {',
+          '    write kg-[:note]-> { text: c.`name` }',
+          '  }',
+        ].join('\n'),
+        graph: withDeals(),
+      });
+    });
+  });
+
+  it('folds values as the TypeScript engine does', async () => {
+    const { rust } = await agree({
+      body: [
+        '  xs = [3, null, "4", 1]',
+        '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]',
+        '  write kg-[:note]-> { text: "${COUNT(xs)} ${SUM(xs)} ${AVG(xs)} ${MIN([2, 0, 5])} ${MAX(xs)} ${FIRST(xs)} ${LAST(xs)} ${JOIN(xs, "/")} ${COUNT(COLLECT(7))}" }',
+        '  write kg-[:note]-> { text: JOIN(SORT(["b", "a", "c"], DESC), "") }',
+        '  write kg-[:note]-> { text: JOIN(MAP_NAMES, "") }'.replace('MAP_NAMES', 'SORT([2, 10, 1])'),
+        '  ranked = SORT(rows, `s`, DESC)',
+        '  r0 = AT(ranked, 0)',
+        '  r1 = AT(ranked, 1)',
+        '  r2 = AT(ranked, 2)',
+        '  pair = [null, 5]',
+        '  write kg-[:note]-> { text: "${r0.n}${r1.n}${r2.n} ${ONLY(pair)}" }',
+      ].join('\n'),
+    });
+    expect(written(rust)).toEqual(['3 8 2 0 4 3 1 3/4/1 1', 'cba', '1210', 'abc 5']);
+    const only = await agree({ body: '  xs = [1, 2]\n  x = ONLY(xs)' });
+    expect(String(runFailureCause(only.rust.error))).toContain('ONLY(xs) says there is exactly one, and there are 2.');
+  });
+
+  it('reads a second name for the event, a landing and a handle as the record it names', async () => {
+    await agree({
+      body: [
+        '  m2 = msg',
+        '  m3 = m2',
+        '  co = write kg-[:company]-> { name: m3.`subject` }',
+        '  same = co',
+        '  kg-[c:company WHERE `stage` == "Late"]-> {',
+        '    doc = c',
+        '    write kg-[:note]-> { text: "${doc.`name`} ${same.name}" }',
+        '  }',
+        '  same-[d:deals]-> {',
+        '    write kg-[:note]-> { text: d.`title` }',
+        '  }',
+      ].join('\n'),
+      graph: withDeals(),
+    });
+  });
+
+  it('parks a picked record, and the event named twice, as the TypeScript engine writes them', async () => {
+    const body = [
+      '  top = FIRST(kg-[c:company WHERE `stage` == "Seed" ORDER BY `name`]->)',
+      '  m2 = msg',
+      '  await sleep(1h)',
+      '  write kg-[:note]-> { text: COALESCE(top.`name`, m2.`subject`) }',
+    ].join('\n');
+    async function parkOn(engine: 'ts' | 'rust') {
+      const previous = process.env.MOVEMENT_ENGINE;
+      process.env.MOVEMENT_ENGINE = engine;
+      try {
+        const park = makeFakeParkSink();
+        const graph = fakeGraph();
+        await runMovement({
+          source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+          event: webhook({ subject: 'Seed', text: 'Late' }),
+          teamId: TEAM_ID,
+          catalog,
+          credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+          firedAt: '2026-05-01T09:00:00.000Z',
+          host: makeTestHost({
+            adapters: { resolve: (request) => (request.adapterType === 'graph' ? graph.adapter : fakeEmail().adapter) },
+            park: { sink: park.sink },
+          }),
+        });
+        expect(park.timerParks).toHaveLength(1);
+        return { state: JSON.stringify(park.timerParks[0]?.state), calls: graph.calls };
+      } finally {
+        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+        else process.env.MOVEMENT_ENGINE = previous;
+      }
+    }
+    const ts = await parkOn('ts');
+    resetRustRunStats();
+    const rust = await parkOn('rust');
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+    expect(rust.state).toBe(ts.state);
+    expect(JSON.stringify(rust.calls)).toBe(JSON.stringify(ts.calls));
+    expect(ts.state).toContain('"top":{"kind":"sourcePosition"');
+    expect(ts.state).toContain('"read":{"instanceName":"kg"}');
+  });
+
+  it('tests a record IS of a kind, from the run alone', async () => {
+    const { rust } = await agree({
+      event: { ...webhook({ subject: 'Seed', text: 'Late' }), rootRecordType: 'message' },
+      body: [
+        '  if msg IS <inbox-[:message]->> { write kg-[:note]-> { text: "message" } }',
+        '  if msg IS <inbox> { write kg-[:note]-> { text: "inbox" } }',
+        '  if msg IS <kg-[:company]->> { write kg-[:note]-> { text: "never" } }',
+        '  co = write kg-[:company]-> { name: "Acme" }',
+        '  if co IS <kg-[:company]->> { write kg-[:note]-> { text: "company" } }',
+        '  if co IS <inbox-[:message]->> { write kg-[:note]-> { text: "never" } }',
+        '  kg-[c:company WHERE `name` == "Acme"]-> {',
+        '    if c IS <kg-[:company]->> { write kg-[:note]-> { text: "landed" } }',
+        '    if c IS <kg-[:deal]->> { write kg-[:note]-> { text: "never" } }',
+        '  }',
+      ].join('\n'),
+    });
+    expect(written(rust)).toEqual(['message', 'inbox', undefined, 'company', 'landed']);
   });
 });
 

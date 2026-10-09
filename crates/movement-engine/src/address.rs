@@ -6,7 +6,8 @@
 //! - `i j`: a fan-out body's iteration j (a traversal block's j-th landing);
 //! - `b k`: an `if` arm (or, later, a parallel branch) k.
 //!
-//! The `c k` step (a call) is address.ts's too; this engine runs no calls.
+//! The `c k` step (a call) is address.ts's too; this engine addresses no
+//! call (a `suspendAt` naming one is refused at admission).
 
 /// A lexical address: `s1.b0.s2`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

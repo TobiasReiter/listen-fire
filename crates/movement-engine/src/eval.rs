@@ -20,8 +20,9 @@ use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
 
+use movement_parser::lowering::POSITION_SENTINEL;
 use movement_parser::lowering::expression::{
-    Expression, FilterOperator, ListElement, LogicalOp, ObjectMember, StaticValue,
+    AggregationFunction, Expression, FilterOperator, ListElement, LogicalOp, ObjectMember, OrderDirection, StaticValue,
 };
 
 use crate::env::{Env, Trail, ValueBinding};
@@ -70,6 +71,11 @@ impl EvalError {
             format!("{construct} is not supported by the movement engine yet ({detail})"),
         )
     }
+
+    /// `unsupported(construct)`, with no detail.
+    fn unsupported_bare(construct: &str) -> EvalError {
+        EvalError::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet"))
+    }
 }
 
 /// A value's trail: exactly a binding's own (passed through), or one built
@@ -105,6 +111,16 @@ pub trait Names {
     fn is_record(&self, _name: &str) -> bool {
         false
     }
+    /// A name a walk can start from that is no value (the event, an
+    /// instance, a record): its traversals are the run's.
+    fn is_walk_root(&self, _name: &str) -> bool {
+        false
+    }
+    /// A name bound to anything but a value, which a presence test reads as
+    /// present by the fact of being bound (`presenceCompare`).
+    fn binds_non_value(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 impl Names for Env {
@@ -137,6 +153,12 @@ pub enum Ask {
     /// walked edge's own inline property first, then a value binding of
     /// that name, then the record's field.
     ScopedField { field: String, edge: bool },
+    /// A traversal the run walks (crate::traverse `walk_read`): hops off the
+    /// event, an instance or a record read for a field, or an `EXISTS`
+    /// over hops.
+    Traverse { expr: Expression },
+    /// `COUNT(<walk>)` over the records a walk lands on: how many.
+    Count { expr: Expression },
 }
 
 /// An evaluation in progress, or a host answer it awaits.
@@ -151,6 +173,9 @@ pub trait Reader {
     /// reaches it: one per literal evaluated, as the TypeScript makes one
     /// `literal` origin object each time.
     fn literal(&self) -> u32;
+    /// An ambient's origin (`{kind: 'meta', key}`), minted as the
+    /// evaluation reaches it.
+    fn meta(&self, key: &str) -> u32;
 }
 
 pub struct Evaluator<'a> {
@@ -342,12 +367,10 @@ impl<'a> Evaluator<'a> {
                 // `x == null` asks whether `x` has a value: answered from
                 // the subject alone, which keeps its trail.
                 if is_null_literal(right) {
-                    let subject = self.eval(left).await?;
-                    return Ok(Evaluated { value: Js::Bool(compare_to_null(*op, &subject.value)), prov: subject.prov });
+                    return self.presence(left, *op).await;
                 }
                 if is_null_literal(left) {
-                    let subject = self.eval(right).await?;
-                    return Ok(Evaluated { value: Js::Bool(compare_to_null(*op, &subject.value)), prov: subject.prov });
+                    return self.presence(right, *op).await;
                 }
                 let l = self.eval(left).await?;
                 let r = self.eval(right).await?;
@@ -392,6 +415,22 @@ impl<'a> Evaluator<'a> {
                 Ok(Evaluated { value, prov: self.union(&[&l.prov, &r.prov]) })
             }
             Expression::Function { fn_, args } => self.function(fn_, args).await,
+            // `@current_date` / `@current_timestamp`: the run's pinned
+            // instant (`pinnedNow`), its key the trail.
+            Expression::Meta { key } if key == "current_date" || key == "current_timestamp" => {
+                let (Some(reader), Some(now)) = (self.reader(), self.around.now) else {
+                    return Err(EvalError::Fallback("an ambient is the run's".into()));
+                };
+                let instant = crate::js_date::to_iso_string(now);
+                let value = if key == "current_date" { instant[..10].to_string() } else { instant };
+                let id = reader.meta(key);
+                Ok(Evaluated { value: Js::String(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
+            }
+            Expression::Traverse { alias_root: Some(root), steps, expression }
+                if steps.is_empty() && matches!(expression.as_ref(), Expression::Exists { .. }) =>
+            {
+                self.exists(root, expr, expression).await
+            }
             Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => {
                 // The bracket grammar reads `t.\`f\`` as an edge property;
                 // either terminal is the root's field (`fieldTerminalId`).
@@ -401,6 +440,11 @@ impl<'a> Evaluator<'a> {
                     return Err(EvalError::Fallback("a traversal terminal other than a field".into()));
                 };
                 self.traverse(root, field).await
+            }
+            // Hops off a record: the run's walk.
+            Expression::Traverse { alias_root: Some(_), .. } => self.walk(Ask::Traverse { expr: expr.clone() }).await,
+            Expression::Aggregate { fn_, expression, separator, order_by, order_direction, .. } => {
+                self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction).await
             }
             other => Err(EvalError::Fallback(format!("the expression kind {:?} needs the host", kind_of(other)))),
         }
@@ -443,6 +487,175 @@ impl<'a> Evaluator<'a> {
         // A field projected out of a value keeps the taint union but drops
         // `direct`: it is not the whole value's quote.
         Ok(Evaluated { value, prov: self.union(&[&Prov::Binding(root.to_string())]) })
+    }
+
+    /// `presenceCompare`: `x == null` of a name bound to anything but a
+    /// value is answered by the binding (present), outside a hop's WHERE,
+    /// where the name is the landed record's field.
+    async fn presence(&self, subject: &Expression, op: FilterOperator) -> Eval {
+        let name = match subject {
+            _ if self.scoped => None,
+            Expression::Property { property_type_id: name } | Expression::AliasRef { name } => Some(name),
+            _ => None,
+        };
+        if let Some(name) = name
+            && self.env.binds_non_value(name)
+        {
+            return Ok(Evaluated { value: Js::Bool(compare_to_null(op, &Js::Bool(true))), prov: Prov::Built(Trail::default()) });
+        }
+        let subject = self.eval(subject).await?;
+        Ok(Evaluated { value: Js::Bool(compare_to_null(op, &subject.value)), prov: subject.prov })
+    }
+
+    /// `EXISTS(root…)`: over a value, whether it holds one (the gate idiom,
+    /// `traverseFrom`'s value case); over the event or a record, the run's
+    /// walk.
+    async fn exists(&self, root: &str, expr: &Expression, terminal: &Expression) -> Eval {
+        if self.env.is_walk_root(root) {
+            return self.walk(Ask::Traverse { expr: expr.clone() }).await;
+        }
+        let Some(binding) = self.env.value(root) else {
+            return Err(EvalError::Fallback(format!("'{root}' is not a value binding")));
+        };
+        if stdlib::is_binding_shaped(&binding.value) {
+            return Err(EvalError::Fallback("a record held in a value binding".into()));
+        }
+        if let Expression::Exists { steps, where_ } = terminal
+            && (!steps.is_empty() || where_.is_some())
+        {
+            return Err(EvalError::unsupported_bare(&format!(
+                "traversing inside EXISTS() from '{root}', which holds {} rather than a record",
+                describe_held_value(&binding.value)
+            )));
+        }
+        let present = match &binding.value {
+            Js::Array(list) => !list.items.is_empty(),
+            other => !other.is_nullish(),
+        };
+        Ok(Evaluated { value: Js::Bool(present), prov: self.union(&[&Prov::Binding(root.to_string())]) })
+    }
+
+    async fn walk(&self, ask: Ask) -> Eval {
+        match self.reader() {
+            Some(reader) => reader.ask(ask).await,
+            None => Err(EvalError::Fallback("a traversal needs the host".into())),
+        }
+    }
+
+    /// `case 'aggregate'`: the folds, as the TG engine's `applyAggregation`
+    /// computes them, over what the inner expression evaluated to (nothing
+    /// is no members, a list its own, anything else one).
+    async fn aggregate(
+        &self,
+        fn_: AggregationFunction,
+        inner: &Expression,
+        separator: Option<&str>,
+        order_by: Option<&Expression>,
+        direction: Option<OrderDirection>,
+    ) -> Eval {
+        // The records a walk lands on, counted: no record crosses as a value.
+        if fn_ == AggregationFunction::Count && is_records_walk(inner) {
+            return self.walk(Ask::Count { expr: inner.clone() }).await;
+        }
+        let evaluated = self.eval(inner).await?;
+        let values: Vec<Js> = match &evaluated.value {
+            Js::Undefined | Js::Null => Vec::new(),
+            Js::Array(list) => list.items.clone(),
+            other => vec![other.clone()],
+        };
+        if fn_ == AggregationFunction::Sort {
+            return self.sort(values, order_by, direction, evaluated.prov).await;
+        }
+        let prov = self.union(&[&evaluated.prov]);
+        let sum = |values: &[Js]| values.iter().fold(0.0, |acc, v| acc + or_zero(v.to_number()));
+        let value = match fn_ {
+            AggregationFunction::First => values.first().cloned().unwrap_or(Js::Null),
+            AggregationFunction::Last => values.last().cloned().unwrap_or(Js::Null),
+            AggregationFunction::Only => {
+                let present: Vec<&Js> = values.iter().filter(|v| !v.is_nullish()).collect();
+                if present.len() > 1 {
+                    let Some(spelled) = spelled_name(inner) else {
+                        return Err(EvalError::Fallback("ONLY's message spells an expression this engine does not".into()));
+                    };
+                    return Err(EvalError::engine(
+                        "MOVENG_RUNTIME",
+                        format!(
+                            "ONLY({spelled}) says there is exactly one, and there are {}. Narrow it until there is, or fold with something that takes many.",
+                            present.len()
+                        ),
+                    ));
+                }
+                present.first().map_or(Js::Null, |v| (*v).clone())
+            }
+            AggregationFunction::Count => Js::Number(values.iter().filter(|v| !v.is_nullish()).count() as f64),
+            AggregationFunction::Sum => Js::Number(sum(&values)),
+            AggregationFunction::Avg if values.is_empty() => Js::Null,
+            AggregationFunction::Avg => Js::Number(sum(&values) / values.len() as f64),
+            AggregationFunction::Min if values.is_empty() => Js::Null,
+            AggregationFunction::Min => Js::Number(math_min(values.iter().map(Js::to_number))),
+            AggregationFunction::Max if values.is_empty() => Js::Null,
+            AggregationFunction::Max => Js::Number(math_max(values.iter().map(Js::to_number))),
+            AggregationFunction::Join => Js::String(
+                values.iter().filter(|v| !v.is_nullish()).map(Js::to_js_string).collect::<Vec<_>>().join(separator.unwrap_or(", ")),
+            ),
+            AggregationFunction::Collect => Js::array(values),
+            AggregationFunction::Sort => unreachable!("SORT answered above"),
+            AggregationFunction::Llm => return Err(EvalError::unsupported_bare("the 'llm' aggregation")),
+        };
+        Ok(Evaluated { value, prov })
+    }
+
+    /// `evaluateSort`: the members in the order of their keys (`sortByOrderKey`),
+    /// a plain value its own key, a map's read off it by name; the trail the
+    /// collection arrived with, unchanged.
+    async fn sort(&self, members: Vec<Js>, key: Option<&Expression>, direction: Option<OrderDirection>, prov: Prov) -> Eval {
+        let mut keys = Vec::with_capacity(members.len());
+        for member in &members {
+            if stdlib::is_binding_shaped(member) {
+                return Err(EvalError::Fallback("a record sorted by its key".into()));
+            }
+            let dict = matches!(member, Js::Object(_));
+            let Some(key) = key else {
+                if dict {
+                    return Err(EvalError::unsupported("sorting records with no key", "say what to rank them by — `SORT(xs, `Added At`, DESC)`"));
+                }
+                keys.push(member.clone());
+                continue;
+            };
+            if !dict {
+                return Err(EvalError::unsupported(
+                    "reading SORT's key off this member",
+                    "the key is read off a RECORD — bind the walk first (`entries = … { return e }`) and sort that, or sort plain values by themselves (`SORT(xs)`)",
+                ));
+            }
+            keys.push(self.member_key(member, key)?);
+        }
+        if keys.len() > 64 && crate::order_limit::mixed_kinds(&keys) {
+            return Err(EvalError::unsupported(
+                &format!("SORT over {} members whose keys mix numbers with text or other kinds", keys.len()),
+                "past 64 members the order of mixed keys is the JavaScript sort's own; give the key one kind, or run this movement on the TypeScript engine",
+            ));
+        }
+        let order = crate::order_limit::sort_by_order_key(&keys, direction);
+        Ok(Evaluated { value: Js::array(order.into_iter().map(|i| members[i].clone()).collect()), prov })
+    }
+
+    /// A SORT key over one map: a bare name reads a value binding of that
+    /// name first (`scopedBinding`), else the map's key (`readBindingField`).
+    fn member_key(&self, member: &Js, key: &Expression) -> Result<Js, EvalError> {
+        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = key else {
+            return Err(EvalError::Fallback("a SORT key other than a field name".into()));
+        };
+        if let Some(bound) = self.env.value(name) {
+            return Ok(bound.value);
+        }
+        let Js::Object(object) = member else { unreachable!("a key is read off a map") };
+        match object.get(name) {
+            Some(found) if !found.is_nullish() => Ok(found.clone()),
+            Some(_) => Ok(Js::Null),
+            None if stdlib::is_object_prototype_name(name) => Err(EvalError::Fallback(format!("`{name}` is Object.prototype's"))),
+            None => Ok(Js::Null),
+        }
     }
 
     async fn ask_scoped(&self, field: &str, edge: bool) -> Eval {
@@ -541,6 +754,67 @@ impl<'a> Evaluator<'a> {
         }
         Prov::Built(Trail { origins, direct: None })
     }
+}
+
+/// `<root>-[…]->` with the position terminal: the records a walk lands on.
+pub(crate) fn is_records_walk(expr: &Expression) -> bool {
+    matches!(expr, Expression::Traverse { alias_root: Some(_), steps, expression }
+        if !steps.is_empty() && matches!(expression.as_ref(), Expression::Property { property_type_id } if property_type_id == POSITION_SENTINEL))
+}
+
+/// `describeHeldValue`.
+fn describe_held_value(value: &Js) -> String {
+    match value {
+        Js::Undefined | Js::Null => "nothing".into(),
+        Js::Array(_) => "a list that is not all records".into(),
+        other => format!("a {}", other.type_of()),
+    }
+}
+
+/// A bare name as the formula serializer spells it (`quoteName`): the only
+/// expression ONLY folds that this engine admits.
+pub(crate) fn spelled_name(expr: &Expression) -> Option<String> {
+    let (Expression::AliasRef { name } | Expression::Property { property_type_id: name }) = expr else { return None };
+    let mut chars = name.chars();
+    let plain = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if plain {
+        return Some(name.clone());
+    }
+    let escaped: String = name.chars().flat_map(|c| if c == '\\' || c == '`' { vec!['\\', c] } else { vec![c] }).collect();
+    Some(format!("`{escaped}`"))
+}
+
+/// `Number(v) || 0`.
+fn or_zero(n: f64) -> f64 {
+    if n.is_nan() || n == 0.0 { 0.0 } else { n }
+}
+
+/// `Math.min(...numbers)` over at least one: NaN if any is, and -0 below 0.
+fn math_min(numbers: impl Iterator<Item = f64>) -> f64 {
+    let mut least = f64::INFINITY;
+    for n in numbers {
+        if n.is_nan() {
+            return f64::NAN;
+        }
+        if n < least || (n == 0.0 && least == 0.0 && n.is_sign_negative()) {
+            least = n;
+        }
+    }
+    least
+}
+
+/// `Math.max(...numbers)` over at least one: NaN if any is, and 0 above -0.
+fn math_max(numbers: impl Iterator<Item = f64>) -> f64 {
+    let mut most = f64::NEG_INFINITY;
+    for n in numbers {
+        if n.is_nan() {
+            return f64::NAN;
+        }
+        if n > most || (n == 0.0 && most == 0.0 && most.is_sign_negative()) {
+            most = n;
+        }
+    }
+    most
 }
 
 /// `membersOf`: nothing is no members, a list is its own, anything else one.
@@ -657,6 +931,10 @@ mod tests {
         fn literal(&self) -> u32 {
             self.literals.set(self.literals.get() + 1);
             self.literals.get() - 1
+        }
+
+        fn meta(&self, _key: &str) -> u32 {
+            self.literal()
         }
     }
 

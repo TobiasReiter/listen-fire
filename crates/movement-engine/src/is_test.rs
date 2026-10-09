@@ -1,0 +1,305 @@
+//! A condition's `IS <type>` test (run.ts `evaluateIsTest`): is this
+//! subject's runtime kind the one named? Decided from what the run holds —
+//! the event's seeded position and its canonical address, a handle's graph
+//! and type, a landed record's stamp, a declared node's structure — never
+//! from a host call.
+//!
+//! Where the kind is not knowable (an undiscriminated event, a record its
+//! system returned unstamped, an address axis the event does not carry) the
+//! run fails rather than pick a branch, as the TypeScript does. A declared
+//! node is compared structurally (checker/conformance.ts `surfaceMisfit`)
+//! for a subject whose structure is its own entries — a node the run built,
+//! an extracted entity; a record whose structure is a schema's types is
+//! refused by admission (`is_test_declared_record`): comparing types is the
+//! checker's assignability, which this engine does not carry.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use movement_parser::lowering::condition::IsType;
+use movement_parser::lowering::expression::{Expression, FilterOperator, LogicalOp, StaticValue, TraversalStep};
+
+use crate::bindings::{Binding, Node, Scope};
+use crate::extract::emission::Emission;
+use crate::program::DeclaredShape;
+use crate::run::{EventAddress, Failure, Run, event_address_key};
+
+impl Run<'_> {
+    pub(crate) fn is_test(&self, subject_raw: &str, type_: &IsType, scope: &Scope) -> Result<bool, Failure> {
+        let name = crate::js::trim(subject_raw);
+        if !bare_ident(name) {
+            return Ok(false);
+        }
+        let (Some(subject), Some(graph)) = (scope.resolve(name), scope.resolve(&type_.graph)) else { return Ok(false) };
+        if let Binding::Shape(shape) = &graph
+            && type_.hops_raw.is_none()
+        {
+            return self.declared_node_test(name, &subject, shape);
+        }
+        let graph_named = |instance: &str| matches!(&graph, Binding::Instance(i) if i.name == instance);
+        match subject {
+            Binding::Event => {
+                let Some(source) = self.source.borrow().clone() else { return Ok(false) };
+                if !graph_named(&source.instance_name) {
+                    return Ok(false);
+                }
+                if type_.position.is_none() && type_.hops_raw.is_none() {
+                    return Ok(true);
+                }
+                // An ADDRESS test is true when its pins are a subset of the
+                // seed's own address, agreeing on every value; an axis the
+                // seed never pinned is "can't tell".
+                if let Some(hops) = &type_.hops_raw {
+                    let Some(test) = event_address_of_hops(hops) else { return Ok(false) };
+                    if let Some(seed) = &source.address {
+                        if test.event != seed.event {
+                            return Ok(false);
+                        }
+                        let pin = |key: &str| seed.narrowing.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+                        let unpinned: Vec<&str> = test.narrowing.iter().filter(|(k, _)| pin(k).is_none()).map(|(k, _)| k.as_str()).collect();
+                        if !unpinned.is_empty() {
+                            return Err(undiscriminated(name, &unpinned_axis(&unpinned)));
+                        }
+                        return Ok(test.narrowing.iter().all(|(k, v)| pin(k) == Some(v)));
+                    }
+                    let Some(keyed) = &source.position.record_type else { return Err(undiscriminated(name, UNDISCRIMINATED_EVENT)) };
+                    return Ok(event_address_key(&test) == *keyed);
+                }
+                if source.address.as_ref().is_some_and(|seed| type_.position.as_deref() == Some(seed.event.as_str())) {
+                    return Ok(true);
+                }
+                let Some(record_type) = &source.position.record_type else { return Err(undiscriminated(name, UNDISCRIMINATED_EVENT)) };
+                Ok(type_.position.as_deref() == Some(record_type.as_str()))
+            }
+            Binding::Handle(handle) => {
+                if type_.hops_raw.is_some() || !graph_named(&handle.graph.name) {
+                    return Ok(false);
+                }
+                Ok(type_.position.as_ref().is_none_or(|p| *p == handle.target_type))
+            }
+            Binding::Landed(landed) => {
+                // An address names an event narrowing; a landed record is never one.
+                if type_.hops_raw.is_some() || !graph_named(&landed.read.instance_name) {
+                    return Ok(false);
+                }
+                let Some(record_type) = crate::traverse::record_type(&landed.position) else { return Err(undiscriminated(name, UNSTAMPED_LANDING)) };
+                Ok(type_.position.as_ref().is_none_or(|p| *p == record_type))
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// `evaluateDeclaredNodeTest`: does the subject carry everything the
+    /// declaration declares? A subject that is no record is an ordinary
+    /// false.
+    fn declared_node_test(&self, name: &str, subject: &Binding, shape: &str) -> Result<bool, Failure> {
+        let supplied = match subject {
+            Binding::Node(node) => Surface::Node(node.clone()),
+            Binding::Extracted { emission, .. } => Surface::Emission(emission.clone()),
+            Binding::Event | Binding::Landed(_) | Binding::Handle(_) => {
+                return Err(Failure::unsupported(
+                    &format!("comparing '{name}' with a declared node"),
+                    "its structure is its system's types, which the Rust engine does not compare",
+                ));
+            }
+            _ => return Ok(false),
+        };
+        let required = self.required_shape(shape)?;
+        Ok(!misfits(&supplied, &required)?)
+    }
+
+    /// The declaration as the whole tree it stands for (`resolvedShape`):
+    /// each `extends` folded in, the base's fields and nodes first, a node
+    /// of its own replacing the base's of that name.
+    fn required_shape(&self, shape: &str) -> Result<Required, Failure> {
+        let root = &self.checked.declarations.root;
+        let mut chain: Vec<&DeclaredShape> = Vec::new();
+        let mut at = root.shapes.get(shape).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("'{shape}' is not a node declaration in scope")))?;
+        loop {
+            if chain.iter().any(|c| c.declaration.name == at.declaration.name) {
+                return Err(Failure::engine("MOVENG_RUNTIME", format!("'{shape}' extends itself — the checker should have caught this")));
+            }
+            chain.push(at);
+            let Some(base) = &at.declaration.extends else { break };
+            at = root.shapes.get(&base.name).ok_or_else(|| {
+                Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("'{}' extends '{}', which is not a node declaration in scope — the checker should have caught this", at.declaration.name, base.name),
+                )
+            })?;
+        }
+        let mut folded: Option<Required> = None;
+        for link in chain.iter().rev() {
+            let own = Required::of(&link.declaration.root);
+            folded = Some(match folded {
+                None => own,
+                Some(base) => base.extended_by(own),
+            });
+        }
+        Ok(folded.expect("a chain holds its declaration"))
+    }
+}
+
+/// What a declared node requires: its fields by name and its nodes.
+struct Required {
+    fields: Vec<String>,
+    children: Vec<(String, Required)>,
+}
+
+impl Required {
+    fn of(node: &movement_parser::ast::ShapeNode) -> Required {
+        Required {
+            fields: node.fields.iter().map(|f| f.name.clone()).collect(),
+            children: node.children.iter().map(|c| (c.name.clone(), Required::of(c))).collect(),
+        }
+    }
+
+    fn extended_by(mut self, own: Required) -> Required {
+        for field in own.fields {
+            if !self.fields.contains(&field) {
+                self.fields.push(field);
+            }
+        }
+        for (name, child) in own.children {
+            match self.children.iter_mut().find(|(n, _)| *n == name) {
+                Some(slot) => slot.1 = child,
+                None => self.children.push((name, child)),
+            }
+        }
+        self
+    }
+}
+
+/// A subject whose structure is its own entries (`synthesisedSurface`):
+/// every entry name declared and untyped, one landing per edge.
+enum Surface {
+    Node(Rc<RefCell<Node>>),
+    Emission(Rc<Emission>),
+}
+
+impl Surface {
+    fn has_property(&self, name: &str) -> bool {
+        match self {
+            Surface::Node(node) => node.borrow().fields.get(name).is_some(),
+            Surface::Emission(emission) => emission.fields.get(name).is_some(),
+        }
+    }
+
+    /// The edge's first landing, when the subject has the edge at all.
+    fn edge(&self, name: &str) -> Option<Option<Binding>> {
+        match self {
+            Surface::Node(node) => node.borrow().edges.iter().find(|(n, _)| n == name).map(|(_, landings)| landings.first().cloned()),
+            Surface::Emission(emission) => emission
+                .children
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, children)| children.first().map(|child| Binding::Extracted { emission: child.clone(), root: false })),
+        }
+    }
+}
+
+/// `surfaceMisfit` over a synthesised subject: a field the declaration
+/// requires and the subject lacks is a misfit; an edge the subject lacks is
+/// the empty set, and an edge it has is compared at its first landing.
+fn misfits(supplied: &Surface, required: &Required) -> Result<bool, Failure> {
+    if required.fields.iter().any(|field| !supplied.has_property(field)) {
+        return Ok(true);
+    }
+    for (name, child) in &required.children {
+        let Some(landing) = supplied.edge(name) else { continue };
+        let inner = match landing {
+            Some(Binding::Node(node)) => Surface::Node(node),
+            Some(Binding::Extracted { emission, .. }) => Surface::Emission(emission),
+            Some(Binding::Event | Binding::Landed(_) | Binding::Handle(_)) => {
+                return Err(Failure::unsupported(
+                    &format!("comparing the record under '{name}' with a declared node"),
+                    "its structure is its system's types, which the Rust engine does not compare",
+                ));
+            }
+            // Nothing landed, or no record: nothing to compare, which fits.
+            _ => continue,
+        };
+        if misfits(&inner, child)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// `/^[A-Za-z_][A-Za-z0-9_]*$/`.
+fn bare_ident(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+const UNDISCRIMINATED_EVENT: &str = "the event arrived without a discriminated kind, so the trigger never said which one it was";
+const UNSTAMPED_LANDING: &str = "the connected system returned it without a record type";
+
+fn unpinned_axis(axes: &[&str]) -> String {
+    let named: Vec<String> = axes.iter().map(|a| format!("'{a}'")).collect();
+    format!("the event carries no {}, and this test asks about {}", named.join(" or "), if axes.len() == 1 { "it" } else { "them" })
+}
+
+/// `undiscriminatedIsTest`.
+fn undiscriminated(name: &str, reason: &str) -> Failure {
+    Failure::engine(
+        "MOVENG_RUNTIME",
+        format!(
+            "can't tell what kind of record '{name}' is — {reason}. An 'IS' test needs a record whose kind is known, so this run stopped rather than pick a branch that might be wrong"
+        ),
+    )
+}
+
+/// `eventAddressOfHops`: a marker's one hop and the pins its WHERE states,
+/// or none when it states no address.
+fn event_address_of_hops(hops_raw: &str) -> Option<EventAddress> {
+    let trimmed = crate::js::trim(hops_raw);
+    if !trimmed.starts_with("-[") {
+        return None;
+    }
+    let probe = format!("__movement_path_root__{trimmed}.`__movement_path_probe__`");
+    let tree = movement_parser::expr::parse_expression(&probe).ok()?;
+    let Expression::Traverse { steps, .. } = movement_parser::lowering::lower_expression(&tree, &probe).ok()? else { return None };
+    let [TraversalStep::Edge(step)] = steps.as_slice() else { return None };
+    let mut narrowing = Vec::new();
+    if let Some(filter) = step.expression_filter.as_deref() {
+        crate::filter::pure_leaf_reads(filter)?;
+        if !collect_pins(filter, &mut narrowing) {
+            return None;
+        }
+    }
+    Some(EventAddress { event: step.edge_type_id.clone(), narrowing })
+}
+
+/// `collectPins`: a conjunction of `` `key` == "literal" ``, no key pinned
+/// to two values.
+fn collect_pins(expr: &Expression, into: &mut Vec<(String, String)>) -> bool {
+    if let Expression::Logical { op: LogicalOp::And, operands } = expr {
+        return operands.iter().all(|child| collect_pins(child, into));
+    }
+    let Expression::Compare { op: FilterOperator::Eq, left, right } = expr else { return false };
+    let pin = match (side(left), side(right)) {
+        (Some(Side::Read(key)), Some(Side::Literal(value))) | (Some(Side::Literal(value)), Some(Side::Read(key))) => (key, value),
+        _ => return false,
+    };
+    match into.iter().find(|(k, _)| *k == pin.0) {
+        Some((_, existing)) => *existing == pin.1,
+        None => {
+            into.push(pin);
+            true
+        }
+    }
+}
+
+enum Side {
+    Read(String),
+    Literal(String),
+}
+
+fn side(expr: &Expression) -> Option<Side> {
+    match expr {
+        Expression::Static { value: StaticValue::String(text) } => Some(Side::Literal(text.clone())),
+        Expression::Property { .. } | Expression::EdgeProperty { .. } => Some(Side::Read(crate::filter::leaf_read_key(expr))),
+        _ => None,
+    }
+}

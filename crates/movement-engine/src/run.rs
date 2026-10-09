@@ -54,7 +54,7 @@ use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{Expression, FilterOperator};
+use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, TraversalStep};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Value as Json, json};
@@ -115,13 +115,33 @@ pub struct SegmentInput {
     pub limit_paused: bool,
     /// Where to suspend, by address, once each (`RunMovementInput.suspendAt`):
     /// a statement's address suspends the flow just before it. An address
-    /// before a call (`… .c k`) is never reached: this engine runs no calls.
+    /// before a call (`… .c k`) is refused at admission (`suspend_at_call`).
     #[serde(default)]
     pub suspend_at: Vec<String>,
     /// Every host method the run's host serves, by path
     /// (`park.sink.commitTimerPark`): the optional ones it serves are what
     /// the engine may ask, as the TypeScript engine asks its host object.
     pub serves: Vec<String>,
+    /// How much of one source file's text an extraction prompt takes
+    /// (extraction.ts `maxFileChars`, a deployment's `EXTRACTION_FILE_CHARS`):
+    /// the shim reads it, so the engine reads no environment.
+    #[serde(default = "default_file_chars")]
+    pub extraction_file_chars: usize,
+}
+
+fn default_file_chars() -> usize {
+    50_000
+}
+
+/// The snapshot's plugins alone, read before the rest of it loads.
+#[derive(Deserialize)]
+struct CatalogPlugins {
+    #[serde(default = "no_plugins")]
+    plugins: movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec>,
+}
+
+fn no_plugins() -> movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec> {
+    movement_parser::catalog::types::JsMap(Default::default())
 }
 
 /// The segment entry: the run, and its `done`.
@@ -236,6 +256,9 @@ pub(crate) struct Source {
     pub(crate) surface: Js,
     /// The source as a graph a block head walks (crate::traverse).
     pub(crate) read: Rc<crate::traverse::Read>,
+    /// The typed event's canonical address (`sourceEventAddress`), which an
+    /// `IS` test of the event compares (crate::is_test).
+    pub(crate) address: Option<EventAddress>,
 }
 
 pub use crate::address::Address;
@@ -279,6 +302,16 @@ pub(crate) struct Run<'a> {
     /// The positions registered with the host this segment (crate::host
     /// `call_at`), by handle number.
     pub(crate) positions: RefCell<crate::traverse::PositionTable>,
+    /// The extraction sites the writes' provenance cites, by site id, each
+    /// summarised once (`ProvenanceSummariser.sites`): the result's
+    /// `extractionSites`.
+    pub(crate) extraction_sites: RefCell<Vec<(String, Js)>>,
+    /// The reply digests the run's trace holds (`TraceSink`'s budget).
+    pub(crate) reply_digests: std::cell::Cell<usize>,
+    /// The files whose bytes could not be fetched, warned of once each.
+    pub(crate) unfetched_files: RefCell<Vec<String>>,
+    /// Log lines not yet handed to the shim.
+    pub(crate) log_lines: RefCell<Vec<Json>>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -286,7 +319,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
     let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
-    if let Some(reason) = crate::admit::refusal(&root.program, version) {
+    // What a plugin call binds is the snapshot's to say, read off the input.
+    let plugins = serde_json::from_str::<CatalogPlugins>(input.catalog.get()).ok();
+    if let Some(reason) = crate::admit::refusal(&root.program, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins))) {
         return Err(Stop::Refused(reason));
     }
     if let Some(reason) = crate::admit::input_refusal(&root.program, input.spend.cap_microdollars.is_some(), &input.suspend_at) {
@@ -331,6 +366,10 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         pending_suspensions: RefCell::new(input.suspend_at.clone()),
         source_reads: RefCell::default(),
         positions: RefCell::default(),
+        extraction_sites: RefCell::default(),
+        reply_digests: std::cell::Cell::new(0),
+        unfetched_files: RefCell::default(),
+        log_lines: RefCell::default(),
     };
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
@@ -404,6 +443,16 @@ impl Run<'_> {
     fn result(&self, cancelled: bool, parked: Option<&str>) -> Json {
         let writes: Vec<Js> = self.writes.borrow().iter().map(|w| w.object.clone()).collect();
         let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": env::encode_plain(&Js::array(writes)) });
+        // Each extraction site the writes cite, once (`ProvenanceSummariser.sites`).
+        let sites = self.extraction_sites.borrow();
+        if !sites.is_empty() {
+            let mut table = JsObject::new();
+            for (id, summary) in sites.iter() {
+                table.set(id.clone(), summary.clone());
+            }
+            result["extractionSites"] = env::encode_plain(&Js::object(table));
+        }
+        drop(sites);
         if let Some(address) = parked {
             result["parked"] = json!(true);
             result["parkedAddress"] = json!(address);
@@ -461,8 +510,16 @@ impl Run<'_> {
             .position(|s| matches!(s, Statement::Movement(m) if m.name == movement.name && m.span == movement.span))
             .expect("the movement picked is one of the program's");
         *self.movement_name.borrow_mut() = movement.name.clone();
+        // In source order, so a file-level value reads the ones before it.
         for statement in deferred {
-            self.file_statement(statement, &file);
+            match statement {
+                Statement::Assign(assign) if !matches!(assign.value, RValue::Construct { .. }) => {
+                    let expr = self.value_slot(&assign.value, &file)?;
+                    let bound = self.bind_slot(expr, &file).await?;
+                    file.declare(assign.name.clone(), Binding::Value(bound));
+                }
+                other => self.file_statement(other, &file),
+            }
         }
         if movement.params.len() != 1 {
             return Err(Stop::Thrown(Failure::engine(
@@ -560,12 +617,16 @@ impl Run<'_> {
         };
         let mut read = Vec::new();
         let text = serde_json::to_string(&movement.body).unwrap_or_default();
-        event_fields_read(&text, &param.name, &mut |field| read.push(field.to_string()));
+        // The event under its own name and every second name for it (`m2 = msg`).
+        let names = event_names(&movement.body, &param.name);
+        for name in &names {
+            event_fields_read(&text, name, &mut |field| read.push(field.to_string()));
+        }
         // `...msg` in a write: the lines the checker's stamp says it writes.
         for (path, stamp) in &self.checked.root.stamps {
             if let Stamp::SpreadFields(fields) = stamp
                 && path.starts_with(&prefix)
-                && self.checked.root.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str) == Some(param.name.as_str())
+                && self.checked.root.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str).is_some_and(|source| names.iter().any(|n| n == source))
             {
                 read.extend(fields.iter().cloned());
             }
@@ -600,17 +661,21 @@ impl Run<'_> {
     }
 
     /// `interpretFileStatement`, for what this engine runs at file scope
-    /// (admission refused the rest).
+    /// with no effect (admission refused the rest; `prepare` evaluates the
+    /// file-level values).
     fn file_statement(&self, statement: &Statement, file: &Scope) {
         match statement {
             Statement::Import(import) => {
+                let plugins = matches!(&import.source, ast::ImportSource::Builtin { namespace } if namespace == "plugins");
                 for name in &import.names {
                     if let Some(alias) = &name.alias {
                         self.import_originals.borrow_mut().push((alias.clone(), name.name.clone()));
                     }
-                    file.declare(name.alias.clone().unwrap_or_else(|| name.name.clone()), Binding::Opaque);
+                    let binding = if plugins { Binding::Plugin(name.name.clone()) } else { Binding::Opaque };
+                    file.declare(name.alias.clone().unwrap_or_else(|| name.name.clone()), binding);
                 }
             }
+            Statement::Shape(shape) => file.declare(shape.name.clone(), Binding::Shape(shape.name.clone())),
             Statement::Assign(assign) => {
                 if let RValue::Construct { construct } = &assign.value {
                     let instance = self.instance_binding(&assign.name, construct);
@@ -701,6 +766,7 @@ impl Run<'_> {
             position,
             surface,
             read,
+            address,
         }));
         Ok(())
     }
@@ -785,6 +851,21 @@ impl Run<'_> {
                         let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
                         scope.declare(assign.name.clone(), Binding::Node(built));
                     }
+                    RValue::Extract { extract } => {
+                        let emission = self.extraction(extract, scope).await?;
+                        scope.declare(assign.name.clone(), Binding::Extracted { emission, root: true });
+                    }
+                    // A plugin's name in a construction's spelling is its call
+                    // (`constructionAsCall`).
+                    RValue::Construct { construct } if matches!(scope.resolve(&construct.callee), Some(Binding::Plugin(_))) => {
+                        let args: Vec<(String, ExprSlot)> = construct.args.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
+                        let bound = self.plugin_call(&construct.callee, &args, scope).await?;
+                        scope.declare(assign.name.clone(), bound);
+                    }
+                    RValue::Call { call } if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
+                        let bound = self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
+                        scope.declare(assign.name.clone(), bound);
+                    }
                     // An instance constructed in a body, as at file scope; a
                     // movement's name in that spelling is a call.
                     RValue::Construct { construct } => {
@@ -802,9 +883,9 @@ impl Run<'_> {
                         _ => return Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
                     },
                     _ => {
-                        let expr = self.value_slot(&assign.value, scope)?;
-                        let bound = self.bind_slot(expr, scope).await?;
-                        scope.declare(assign.name.clone(), Binding::Value(bound));
+                        let slot = self.value_slot(&assign.value, scope)?;
+                        let bound = self.bind_slot_binding(slot, scope).await?;
+                        scope.declare(assign.name.clone(), bound);
                     }
                 }
                 Ok(Flow::FellThrough)
@@ -845,6 +926,23 @@ impl Run<'_> {
                 Ok(Flow::Returned)
             }
             Statement::Block(statement) => self.block(&statement.block, None, scope, at, path).await,
+            // `ERROR(message)`: the run fails with the author's words.
+            Statement::Error(statement) => {
+                let expr = lowered(&statement.message, |tree| movement_parser::lowering::lower_expression(tree, &statement.message.raw), "expression")
+                    .map_err(Stop::Thrown)?;
+                let message = self.evaluate(&expr, scope, &statement.message).await?.value;
+                let message = match message {
+                    Js::String(text) => text,
+                    other if other.is_nullish() => String::new(),
+                    other => other.to_js_string(),
+                };
+                Err(Stop::Thrown(Failure::engine("MOVENG_ERROR", message)))
+            }
+            // A plugin called for what it does: its value goes nowhere.
+            Statement::Call(call) if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
+                self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
+                Ok(Flow::FellThrough)
+            }
             Statement::If(statement) => {
                 for (index, arm) in statement.arms.iter().enumerate() {
                     let taken = self.condition(&arm.condition, scope).await?;
@@ -892,18 +990,72 @@ impl Run<'_> {
         }
     }
 
+    /// `bindSlotValue`: a bare name of a record (the event, a handle, a
+    /// landing, a node, an extraction's) is a second name for it
+    /// (`aliasedNodeBinding`); `FIRST`/`LAST`/`ONLY` of a bare walk is the
+    /// record it picks (`selectedPositionBinding`); anything else, the value
+    /// it evaluates to.
+    async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+        let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
+            .map_err(Stop::Thrown)?;
+        if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
+            && let Some(record @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::Positions(_))) =
+                scope.resolve(name)
+        {
+            return Ok(record);
+        }
+        if let Some(selected) = self.selected_record(&expr, slot, scope).await.map_err(Stop::Thrown)? {
+            return Ok(selected);
+        }
+        Ok(Binding::Value(self.bind_evaluated(&expr, slot, scope).await?))
+    }
+
     /// `bindSlotValue` for what this engine binds: the value the slot
     /// evaluates to, with its trail.
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
-        let evaluated = self.evaluate(&expr, scope, slot).await?;
+        self.bind_evaluated(&expr, slot, scope).await
+    }
+
+    async fn bind_evaluated(&self, expr: &Expression, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
+        let evaluated = self.evaluate(expr, scope, slot).await?;
         // `binding.provenance ?? NO_PROVENANCE`: a bound value always has a trail.
         let trail = match evaluated.prov {
             Prov::Binding(name) => Some(scope.value_of(&name).and_then(|b| b.trail).unwrap_or_default()),
             Prov::Built(trail) => Some(trail),
         };
-        Ok(ValueBinding { value: evaluated.value, trail, many: false })
+        Ok(ValueBinding { value: evaluated.value, trail, many: binds_many_values(expr, scope) })
+    }
+
+    /// `selectedPositionBinding`: `FIRST`/`LAST`/`ONLY` of a bare walk of one
+    /// hop, walked as a block head walks it; the record picked, or a null
+    /// value when there is none.
+    async fn selected_record(&self, expr: &Expression, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Option<Binding>, Failure> {
+        let Expression::Aggregate { fn_: pick @ (AggregationFunction::First | AggregationFunction::Last | AggregationFunction::Only), expression, .. } = expr else {
+            return Ok(None);
+        };
+        if !crate::eval::is_records_walk(expression) {
+            return Ok(None);
+        }
+        let Expression::Traverse { alias_root: Some(root), steps, .. } = expression.as_ref() else { return Ok(None) };
+        let [TraversalStep::Edge(step)] = steps.as_slice() else {
+            unreachable!("admission picks only from a walk of one hop")
+        };
+        let landings = self.selection_landings(root, step, scope, slot).await?;
+        if *pick == AggregationFunction::Only && landings.len() > 1 {
+            return Err(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("ONLY({}) says there is exactly one, and there are {}. Narrow it until there is.", js::trim(&slot.raw), landings.len()),
+            ));
+        }
+        let picked = if *pick == AggregationFunction::Last { landings.last() } else { landings.first() };
+        Ok(Some(match picked {
+            // What a selection binds carries the record and its graph, not
+            // the walked edge's properties.
+            Some(landed) => Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position.clone(), None, landed.read.clone()))),
+            None => Binding::Value(ValueBinding { value: Js::Null, trail: Some(Trail::default()), many: false }),
+        }))
     }
 
     /// `evaluateCondition`: the condition's conjuncts, each an expression's
@@ -931,7 +1083,7 @@ impl Run<'_> {
                     Ok(true)
                 }
                 MovementCondition::Expr { expr } => Ok(self.evaluate(expr, scope, slot).await?.value.truthy()),
-                MovementCondition::IsTest { .. } => Err(Stop::Thrown(Failure::unsupported("an IS test", "the Rust engine runs expression conditions"))),
+                MovementCondition::IsTest { subject_raw, type_ } => self.is_test(subject_raw, type_, scope).map_err(Stop::Thrown),
             }
         })
     }
@@ -954,9 +1106,15 @@ impl Run<'_> {
         span: Option<Js>,
         landed: Option<Rc<crate::bindings::Landed>>,
     ) -> Result<Evaluated, Stop> {
+        self.evaluate_scoped(expr, scope, span, landed.map(Scoped::Landed)).await
+    }
+
+    /// One walk, scoped at `subject` when given: a landed record, or an
+    /// extracted entity (an `EXISTS` WHERE over an extraction's).
+    pub(crate) async fn evaluate_scoped(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, subject: Option<Scoped>) -> Result<Evaluated, Stop> {
         let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
-        let scoped = landed.is_some();
-        let reader = Reading { run: self, scope, span, landed };
+        let scoped = subject.is_some();
+        let reader = Reading { run: self, scope, span: span.clone(), subject };
         let evaluator = if scoped {
             Evaluator::scoped_in_run(scope.as_ref(), self.version(), around, &reader)
         } else {
@@ -968,16 +1126,28 @@ impl Run<'_> {
     }
 
     /// What an evaluation asked, answered by the host.
-    async fn answer(&self, ask: Ask, scope: &Scope, landed: Option<&crate::bindings::Landed>) -> Result<Result<Evaluated, EvalError>, Failure> {
+    async fn answer(&self, ask: Ask, scope: &Rc<Scope>, subject: Option<&Scoped>, span: Option<&Js>) -> Result<Result<Evaluated, EvalError>, Failure> {
         match ask {
             Ask::EventField { field } => self.event_field(&field).await.map(Ok),
             Ask::RecordField { root, field } => match scope.resolve(&root) {
                 Some(Binding::Landed(record)) => self.landed_field(&record, &field).await.map(Ok),
                 _ => Ok(self.record_field(&root, &field, scope)),
             },
-            Ask::ScopedField { field, edge } => {
-                let landed = landed.expect("a scoped read is asked only of a scoped evaluation");
-                self.scoped_field(landed, &field, edge, scope).await.map(Ok)
+            Ask::ScopedField { field, edge } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
+                Scoped::Landed(landed) => self.scoped_field(landed, &field, edge, scope).await.map(Ok),
+                Scoped::Emission(_) if edge => Ok(Err(EvalError::engine(
+                    "MOVENG_UNSUPPORTED",
+                    "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
+                ))),
+                Scoped::Emission(emission) => Ok(crate::write::emission_field(emission, &field)),
+            },
+            Ask::Traverse { expr } => {
+                let span = span.cloned().unwrap_or(Js::Undefined);
+                self.walk_read(&expr, scope, &span).await
+            }
+            Ask::Count { expr } => {
+                let span = span.cloned().unwrap_or(Js::Undefined);
+                self.walk_count(&expr, scope, &span).await.map(|(n, trail)| Ok(Evaluated { value: Js::Number(n as f64), prov: Prov::Built(trail) }))
             }
             Ask::Function { id, args } => {
                 let args = args.iter().map(env::encode_plain).collect();
@@ -1047,10 +1217,52 @@ impl Run<'_> {
         origins.len() as u32 - 1
     }
 
-    /// An origin as the firing record carries it (`ProvenanceSummariser`).
+    /// The origin `id` names, as the TypeScript's object.
+    pub(crate) fn origin(&self, id: u32) -> Js {
+        self.origins.borrow().get(id as usize).cloned().unwrap_or(Js::Null)
+    }
+
+    /// An origin as the firing record carries it (`ProvenanceSummariser`):
+    /// an extraction's site interned into the result's `extractionSites`.
     pub(crate) fn summarised_origin(&self, id: u32) -> Js {
-        let origin = self.origins.borrow().get(id as usize).cloned().unwrap_or(Js::Null);
-        summarise(&origin)
+        self.summarised(&self.origin(id))
+    }
+
+    /// `summariseOrigin`: an extraction's site by its id, its details (and
+    /// its data sources, summarised) kept once in `extractionSites`, the
+    /// first site of an id the one kept.
+    pub(crate) fn summarised(&self, origin: &Js) -> Js {
+        let get = |key: &str| crate::unique::get(origin, key);
+        if !matches!(get("kind"), Js::String(kind) if kind == "extraction") {
+            return summarise(origin);
+        }
+        let site = get("site");
+        let site_id = crate::unique::get(&site, "siteId").to_js_string();
+        let known = self.extraction_sites.borrow().iter().any(|(id, _)| *id == site_id);
+        if !known {
+            // The slot is reserved before the data sources are summarised.
+            self.extraction_sites.borrow_mut().push((site_id.clone(), Js::Null));
+            let sources: Vec<Js> = match crate::unique::get(&site, "dataSources") {
+                Js::Array(list) => list.items.iter().map(|o| self.summarised(o)).collect(),
+                _ => Vec::new(),
+            };
+            let summary = env::object_of(vec![
+                ("node", crate::unique::get(&site, "node")),
+                ("description", crate::unique::get(&site, "description")),
+                ("stage", crate::unique::get(&site, "stage")),
+                ("dataSources", Js::array(sources)),
+            ]);
+            if let Some(slot) = self.extraction_sites.borrow_mut().iter_mut().find(|(id, _)| *id == site_id) {
+                slot.1 = summary;
+            }
+        }
+        let mut entries = vec![("kind", Js::str("extraction")), ("site", Js::str(site_id))];
+        for key in ["field", "description", "quote", "item"] {
+            if !matches!(get(key), Js::Undefined) {
+                entries.push((key, get(key)));
+            }
+        }
+        env::object_of(entries)
     }
 
     /// `interpretSleep`: a rehearsal fast-forwards; a real run parks the flow
@@ -1120,11 +1332,22 @@ impl Run<'_> {
     /// `closing`: the hand-over as the segment ends, whose failure is the
     /// shim's to log and never the run's.
     async fn hand_over_trace(&self, closing: bool) -> Result<(), Failure> {
+        let lines = std::mem::take(&mut *self.log_lines.borrow_mut());
+        if !lines.is_empty() {
+            // A line the shim could not write is not the run's failure.
+            let _ = self.ask(host::log::write(lines)).await;
+        }
         let entries = self.trace.take();
         if entries.is_empty() {
             return Ok(());
         }
         self.ask(host::trace::append(self.segment(), &entries, closing)).await.map(|_| ())
+    }
+
+    /// A line on the platform's log where the TypeScript engine writes one,
+    /// kept until the statement's trace is handed over.
+    pub(crate) fn log(&self, level: &str, message: &str, fields: serde_json::Map<String, Json>) {
+        self.log_lines.borrow_mut().push(json!({ "level": level, "message": message, "fields": fields }));
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
@@ -1134,6 +1357,33 @@ impl Run<'_> {
     async fn ask_bool(&self, request: host::Request) -> Result<bool, Failure> {
         Ok(self.ask(request).await?.is_some_and(|v| v.as_bool() == Some(true)))
     }
+}
+
+/// `bindsManyValues`: a walk read for a field, or a second name for one.
+fn binds_many_values(expr: &Expression, scope: &Scope) -> bool {
+    match expr {
+        Expression::Traverse { steps, expression, .. } if !steps.is_empty() => match expression.as_ref() {
+            Expression::Property { property_type_id } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
+            Expression::EdgeProperty { .. } => true,
+            _ => false,
+        },
+        Expression::Property { property_type_id: name } | Expression::AliasRef { name } => scope.value_of(name).is_some_and(|b| b.many),
+        _ => false,
+    }
+}
+
+/// A plugin call's named arguments; admission lets by no other kind.
+fn plugin_args(call: &ast::CallStatement) -> Result<Vec<(String, ExprSlot)>, Stop> {
+    call.args
+        .iter()
+        .map(|arg| match arg {
+            ast::CallArg::Expr { name: Some(name), expr } => Ok((name.clone(), expr.clone())),
+            _ => Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("'{}' is a plugin, and a plugin's arguments are named values — the checker should have caught this", call.callee),
+            ))),
+        })
+        .collect()
 }
 
 /// `Array.prototype`'s own names, which `in` finds on any list.
@@ -1147,16 +1397,23 @@ const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
 /// One evaluation's reads, answered by its run in the scope it reads.
 struct Reading<'r, 'h> {
     run: &'r Run<'h>,
-    scope: &'r Scope,
+    scope: &'r Rc<Scope>,
     /// Where the evaluation's literals are written (`literalSpan`).
     span: Option<Js>,
-    /// The landed record a position-scoped evaluation reads.
-    landed: Option<Rc<crate::bindings::Landed>>,
+    /// What a position-scoped evaluation reads.
+    subject: Option<Scoped>,
+}
+
+/// What a position-scoped evaluation's bare names read (`PositionScope`).
+#[derive(Clone)]
+pub(crate) enum Scoped {
+    Landed(Rc<crate::bindings::Landed>),
+    Emission(Rc<crate::extract::emission::Emission>),
 }
 
 impl Reader for Reading<'_, '_> {
     fn ask(&self, ask: Ask) -> Evaluating<'_> {
-        Box::pin(async move { self.run.answer(ask, self.scope, self.landed.as_deref()).await.map_err(Failure::into_eval)? })
+        Box::pin(async move { self.run.answer(ask, self.scope, self.subject.as_ref(), self.span.as_ref()).await.map_err(Failure::into_eval)? })
     }
 
     fn literal(&self) -> u32 {
@@ -1165,6 +1422,10 @@ impl Reader for Reading<'_, '_> {
             origin.push(("span", span.clone()));
         }
         self.run.mint_origin(env::object_of(origin))
+    }
+
+    fn meta(&self, key: &str) -> u32 {
+        self.run.mint_origin(env::object_of(vec![("kind", Js::str("meta")), ("key", Js::str(key))]))
     }
 }
 
@@ -1186,6 +1447,54 @@ pub(crate) fn lowered<T, E: std::fmt::Debug>(
     };
     let tree = movement_parser::expr::parse_expression(&slot.raw).map_err(|e| invalid(format!("{e:?}")))?;
     lower(&tree).map_err(|e| invalid(format!("{e:?}")))
+}
+
+/// The name a slot reads bare, as the lowering spells it (`bareName`): a
+/// backticked name included.
+fn bare_name(slot: &ExprSlot) -> Option<String> {
+    let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
+    match movement_parser::lowering::lower_expression(&tree, &slot.raw).ok()? {
+        Expression::Property { property_type_id: name } | Expression::AliasRef { name } => Some(name),
+        _ => None,
+    }
+}
+
+/// `param` and every name a body binds to it again (`x = param`, `y = x`),
+/// at any depth.
+fn event_names(body: &[Statement], param: &str) -> Vec<String> {
+    fn collect(statements: &[Statement], names: &mut Vec<String>) -> bool {
+        let mut grew = false;
+        for statement in statements {
+            match statement {
+                Statement::Assign(assign) => {
+                    if let RValue::Expr { expr } = &assign.value
+                        && bare_name(expr).is_some_and(|name| names.contains(&name))
+                        && !names.contains(&assign.name)
+                    {
+                        names.push(assign.name.clone());
+                        grew = true;
+                    }
+                    if let RValue::Block { block } = &assign.value {
+                        grew |= collect(&block.body, names);
+                    }
+                }
+                Statement::If(statement) => {
+                    for arm in &statement.arms {
+                        grew |= collect(&arm.body, names);
+                    }
+                    if let Some(arm) = &statement.else_arm {
+                        grew |= collect(&arm.body, names);
+                    }
+                }
+                Statement::Block(statement) => grew |= collect(&statement.block.body, names),
+                _ => {}
+            }
+        }
+        grew
+    }
+    let mut names = vec![param.to_string()];
+    while collect(body, &mut names) {}
+    names
 }
 
 /// Every field `param.field` an expression in `body_json` (a body's AST as
@@ -1556,7 +1865,7 @@ mod tests {
         );
         // The `if`'s gate is handed over after the arm's first statement, as
         // the TypeScript publishes after every statement at any depth.
-        assert_eq!(seen[6].args, json!({ "entries": [{ "kind": "gate", "outcome": true }], "segmentId": "g1" }));
+        assert_eq!(appended(&seen[6]), json!([{ "kind": "gate", "outcome": true }]));
         // Every request the host serves names the segment.
         assert!(seen.iter().filter(|r| r.family != "check").all(|r| r.args["segmentId"] == json!("g1")));
         // The source adapter reads the payload under the parameter's
@@ -1625,11 +1934,105 @@ mod tests {
 
     #[test]
     fn what_it_does_not_run_is_declined_before_anything_happens() {
-        let source = "import { email } from adapters\ninbox = email()\ntype T = <\"a\">\nmovement m(msg: <inbox-[:message]->>) {\n  s = 1\n}";
+        let source = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}";
         let (done, seen) = drive(source, json!(["o", 1, []]), plain_host(json!({})));
         // Refused on this engine's own parse: not even the check is asked.
-        assert_eq!(done, json!({ "refused": "file_statement:type" }));
+        assert_eq!(done, json!({ "refused": "plugin_call" }));
         assert!(seen.is_empty());
+    }
+
+    /// The file scope as `prepareMovement` builds it: an import of a plugin
+    /// binds the plugin, a declared shape its name, a `type` nothing, and a
+    /// value what it evaluates to, in source order, a body reading it; a park
+    /// writes each as the TypeScript engine does.
+    #[test]
+    fn file_level_declarations_bind_and_park_as_the_typescript_engine_writes_them() {
+        let source = "import { email } from adapters\nimport { fetch_url as fetch } from plugins\ninbox = email()\ntype Stage = <\"a\" | \"b\">\nrules = \"route\"\nnode Lead {\n  name: <text> \"its name ${rules}\"\n}\ntag = \"${UPPER(rules)}!\"\nmovement m(msg: <inbox-[:message]->>) {\n  label = \"${tag} ${rules}\"\n  await sleep(1h)\n}";
+        let host = plain_host(json!({}));
+        let (done, seen) = drive_serving(source, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+            match (request.family, request.method.as_str()) {
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                ("park.sink", "commitTimerPark") => json!({}),
+                _ => host(request),
+            }
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let park = seen.iter().find(|r| r.method == "commitTimerPark").expect("the sleep parked");
+        let decoded = env::decode(&park.args["state"]).unwrap();
+        let state = env::json_of_js(&decoded);
+        let file = &state["scopeChain"][0]["bindings"];
+        // In the order declared (the JSON above sorts its keys).
+        let Some(Js::Array(chain)) = (match &decoded { Js::Object(o) => o.get("scopeChain"), _ => None }) else { panic!("a chain") };
+        let Some(Js::Object(bindings)) = (match &chain.items[0] { Js::Object(o) => o.get("bindings"), _ => None }) else { panic!("bindings") };
+        let kinds: Vec<(&str, String)> = bindings.entries().iter().map(|(name, b)| (name.as_str(), env::json_of_js(b)["kind"].as_str().unwrap_or_default().to_string())).collect();
+        let kinds: Vec<(&str, &str)> = kinds.iter().map(|(n, k)| (*n, k.as_str())).collect();
+        assert_eq!(
+            kinds,
+            [("m", "movement"), ("email", "opaque"), ("fetch", "opaque"), ("inbox", "instance"), ("rules", "value"), ("Lead", "shape"), ("tag", "value")]
+        );
+        assert_eq!(file["fetch"], json!({ "kind": "opaque", "what": "a plugin", "name": "fetch" }));
+        assert_eq!(file["Lead"], json!({ "kind": "shape", "name": "Lead" }));
+        assert_eq!(file["tag"]["value"], json!("ROUTE!"));
+        assert_eq!(state["scopeChain"][1]["bindings"]["label"]["value"], json!("ROUTE! route"));
+        // Its own park resumes here: the file scope's shape is the program's.
+        assert_eq!(crate::park::resume_refusal(&park.args["state"]), None);
+    }
+
+    /// An extraction asks what the TypeScript asks, in its order: the
+    /// `from` slot's read, one `ids.mint` for its text resource, then per
+    /// region the cancel gate, the clock either side of the priced model
+    /// call; a head over what it yielded asks nothing.
+    #[test]
+    fn an_extraction_asks_its_host_what_the_typescript_asks_in_its_order() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n    node co: \"each company\" {\n      name: \"its name\"\n    }\n  }\n  deals-[c:co]-> {\n    n = c.`name`\n  }\n}";
+        let payload = json!({ "text": "Acme raised." });
+        let host = plain_host(payload.clone());
+        let reply = env::encode_plain(&env::js_of_json(&json!({ "parsedJson": { "x:extract_result#1": [{
+            "digest": { "evidence": "q", "value": "a raise" },
+            "co": [{ "name": { "evidence": "Acme", "value": "Acme" } }, { "name": { "evidence": null, "value": " " } }],
+        }] } })));
+        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
+            ("ids", "mint") => json!({ "value": ["id-1"] }),
+            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
+            ("llm.client", "call") => json!({ "value": reply.clone() }),
+            _ => host(request),
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let calls: Vec<String> = seen.iter().map(|r| format!("{}.{}", r.family, r.method)).collect();
+        assert_eq!(
+            calls,
+            [
+                "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.call", "ids.mint", "control.cancel.cancelled",
+                "clock.now", "llm.client.call", "clock.now", "trace.append", "control.cancel.cancelled", "control.cancel.cancelled",
+                "trace.append", "control.cancel.cancelledNow",
+            ]
+        );
+        let call = &seen[7].args;
+        assert_eq!((call["label"].clone(), call["model"].clone(), call["effort"].clone()), (json!("movement_extraction"), json!("sonnet"), json!("low")));
+        assert!(call["system"].as_str().unwrap().contains("**x:co#2** (an array under the key `co` inside each **x:extract_result#1** entity)"));
+        assert_eq!(call["userMessage"], json!("## TEXT\nAcme raised."));
+        assert_eq!(call["budget"], json!({ "remainingMicrodollars": null }));
+        // The blank entity is counted empty and dropped; the trace names
+        // what was extracted.
+        let entries = appended(&seen[9]);
+        let entry = &entries[0];
+        // In the TypeScript's key order, the members `extractRegion` writes.
+        let Js::Array(wired) = env::decode(&seen[9].args["entries"]).unwrap() else { panic!("a list") };
+        let Js::Object(first) = &wired.items[0] else { panic!("an entry") };
+        assert_eq!(
+            first.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            ["kind", "node", "inputChars", "inputs", "emissions", "model", "durationMs", "reply", "empty", "dropped", "entities"]
+        );
+        assert_eq!(entry["emissions"], json!({ "extract result": 1 }));
+        assert_eq!((entry["empty"].clone(), entry["dropped"].clone()), (json!({ "co": 1 }), json!({ "co": 1 })));
+        assert_eq!(entry["entities"], json!({ "extract result": [{ "fields": { "digest": "a raise" } }], "co": [{ "fields": { "name": "Acme" } }] }));
+        assert_eq!(appended(&seen[12]), json!([{ "kind": "block", "root": "deals-[c:co]->", "positions": 1 }]));
+    }
+
+    /// What a `trace.append` handed over, its entries off the eval wire.
+    fn appended(request: &PendingRequest) -> Json {
+        assert_eq!(request.args["wire"], json!(true));
+        env::json_of_js(&env::decode(&request.args["entries"]).unwrap())
     }
 
     /// A plain JSON value on the eval wire.
@@ -1687,11 +2090,28 @@ mod tests {
             } }],
         });
         assert_eq!(crate::park::resume_refusal(&wire(resumable.clone())), None);
-        // A suspension's state, whose journal is empty: this engine runs no calls.
+        // A suspension's state, whose journal is empty: this engine keeps no
+        // call's answer for a statement run again.
         let mut suspended = resumable;
         suspended["suspended"] = json!(true);
         suspended["journal"] = json!([]);
         assert_eq!(crate::park::resume_refusal(&wire(suspended)), None);
+    }
+
+    /// The file scope is rebuilt from the program on resume, so a declared
+    /// shape there is the program's; anywhere else it is a local shape this
+    /// engine does not rebuild.
+    #[test]
+    fn a_shape_is_resumed_in_the_file_scope_only() {
+        let state = |file: Json, body: Json| {
+            json!({ "version": 1, "address": "s0", "bindingName": null, "scopeChain": [{ "bindings": file }, { "bindings": body }] })
+        };
+        let shape = json!({ "kind": "shape", "name": "Lead" });
+        assert_eq!(crate::park::resume_refusal(&wire(state(json!({ "Lead": shape }), json!({})))), None);
+        assert_eq!(
+            crate::park::resume_refusal(&wire(state(json!({}), json!({ "Lead": shape })))).as_deref(),
+            Some("resume_state_kind:shape")
+        );
     }
 
     #[test]

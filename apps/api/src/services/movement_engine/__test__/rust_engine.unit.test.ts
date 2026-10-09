@@ -380,7 +380,7 @@ describe('the Rust engine shim', () => {
               seen.length === 0
                 ? [
                     request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE)),
-                    request(2, 'trace', 'append', inSegment(segmentId, { entries: [] })),
+                    request(2, 'trace', 'append', inSegment(segmentId, { entries: ['l', 0, []], wire: true })),
                   ]
                 : [],
           }
@@ -527,8 +527,8 @@ describe('the Rust engine shim', () => {
     expect(readRunResult({ result: { movementName: 'm', writes: wired, parked: true, parkedAddress: 's0' } }, { context: context(), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [write], trace: [], extractionSites: {}, parked: true, parkedAddress: 's0' },
     });
-    expect(() => readRunResult({ result: { movementName: 'm', extractionSites: {} } }, { context: context(), hostErrors: [] })).toThrow(
-      'the Rust engine result has extractionSites, which this shim does not decode yet',
+    expect(() => readRunResult({ result: { movementName: 'm', counted: {} } }, { context: context(), hostErrors: [] })).toThrow(
+      'the Rust engine result has counted, which this shim does not decode yet',
     );
     expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', 0, [1]] } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(() => readRunResult({ parked: true }, { context: context(), hostErrors: [] })).toThrow(RustShimError);

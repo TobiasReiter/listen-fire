@@ -21,13 +21,18 @@ use serde_json::{Value as Json, json};
 pub enum Family {
     Adapters,
     Llm,
+    LlmClient,
+    LlmTransforms,
     ParkSink,
     ControlCancel,
     Locks,
     Trace,
     Clock,
+    Files,
+    Ids,
     Check,
     Builtins,
+    Log,
     #[cfg(test)]
     Echo,
 }
@@ -35,13 +40,18 @@ pub enum Family {
 const FAMILIES: &[Family] = &[
     Family::Adapters,
     Family::Llm,
+    Family::LlmClient,
+    Family::LlmTransforms,
     Family::ParkSink,
     Family::ControlCancel,
     Family::Locks,
     Family::Trace,
     Family::Clock,
+    Family::Files,
+    Family::Ids,
     Family::Check,
     Family::Builtins,
+    Family::Log,
     #[cfg(test)]
     Family::Echo,
 ];
@@ -51,13 +61,18 @@ impl Family {
         match self {
             Family::Adapters => "adapters",
             Family::Llm => "llm",
+            Family::LlmClient => "llm.client",
+            Family::LlmTransforms => "llm.transforms",
             Family::ParkSink => "park.sink",
             Family::ControlCancel => "control.cancel",
             Family::Locks => "locks",
             Family::Trace => "trace",
             Family::Clock => "clock",
+            Family::Files => "files",
+            Family::Ids => "ids",
             Family::Check => "check",
             Family::Builtins => "builtins",
+            Family::Log => "log",
             #[cfg(test)]
             Family::Echo => "echo",
         }
@@ -196,6 +211,45 @@ pub mod llm {
         }
     }
 
+    /// An extraction region's model call (`llm.client.call`), a priced call:
+    /// the run's `budget` goes in; answered on the eval wire (`wire: true`:
+    /// the reply's `parsedJson` keeps the key order and the numbers the model
+    /// wrote, as `JSON.parse` made them) with `{parsedJson, rawText?,
+    /// effortSteppedDown?, continuations?, cost?}`, or a budget refusal.
+    pub fn client_call(segment: &str, call: ClientCall<'_>, budget: Json) -> Request {
+        let ClientCall { system, user_message, label, model, effort, max_tokens } = call;
+        let mut args = json!({ "system": system, "userMessage": user_message, "label": label, "model": model, "effort": effort, "budget": budget, "wire": true });
+        if let Some(max_tokens) = max_tokens {
+            args["maxTokens"] = json!(max_tokens);
+        }
+        Request { family: Family::LlmClient, method: "call".into(), args: in_segment(segment, args) }
+    }
+
+    /// What one model call is asked.
+    pub struct ClientCall<'a> {
+        pub system: &'a str,
+        pub user_message: &'a str,
+        pub label: &'a str,
+        pub model: &'a str,
+        pub effort: &'a str,
+        pub max_tokens: Option<u64>,
+    }
+
+    /// A plugin invocation (`llm.transforms.invoke`), a priced call: the
+    /// plugin as registered, its arguments and the entity's fields so far on
+    /// the eval wire; answered on the wire with `{text?, data?, records?,
+    /// outcome?, cost?}`, or a budget refusal.
+    pub fn transforms_invoke(segment: &str, plugin: &str, config: Json, extracted_context: Json, budget: Json) -> Request {
+        Request {
+            family: Family::LlmTransforms,
+            method: "invoke".into(),
+            args: in_segment(
+                segment,
+                json!({ "plugin": plugin, "config": config, "extractedContext": extracted_context, "budget": budget, "wire": true }),
+            ),
+        }
+    }
+
     /// What the judge is asked.
     pub struct Arbitration<'a> {
         pub asserted: Json,
@@ -282,7 +336,10 @@ pub mod trace {
     /// hand-over as the segment ends (the shim's own marker, never the
     /// host's): its failure is logged, not the run's.
     pub fn append(segment: &str, entries: &[crate::trace::TraceEntry], closing: bool) -> Request {
-        let mut args = json!({ "entries": entries });
+        // On the eval wire, so each entry's members keep the TypeScript's
+        // order (serde's maps sort them).
+        let entries = crate::env::encode_plain(&crate::js::Js::array(entries.iter().map(crate::trace::TraceEntry::to_js).collect()));
+        let mut args = json!({ "entries": entries, "wire": true });
         if closing {
             args["closing"] = json!(true);
         }
@@ -309,6 +366,32 @@ pub mod clock {
     }
 }
 
+pub mod files {
+    use super::*;
+
+    /// A source file's text (`files.resolveFileText`), a priced call: the
+    /// descriptor on the eval wire; answered on the wire with `{text,
+    /// rawTextId?}` or `{unreadable, detail?}`, and `cost?`, or a budget
+    /// refusal.
+    pub fn resolve_file_text(segment: &str, file: Json, budget: Json) -> Request {
+        Request {
+            family: Family::Files,
+            method: "resolveFileText".into(),
+            args: in_segment(segment, json!({ "file": file, "budget": budget, "wire": true })),
+        }
+    }
+}
+
+pub mod ids {
+    use super::*;
+
+    /// `count` fresh ids (`ids.mint`, `count` ≥ 1), answered as that many
+    /// distinct texts: the engine mints none of its own.
+    pub fn mint(segment: &str, count: usize) -> Request {
+        Request { family: Family::Ids, method: "mint".into(), args: in_segment(segment, json!({ "count": count })) }
+    }
+}
+
 pub mod builtins {
     use super::*;
 
@@ -332,6 +415,18 @@ pub mod builtins {
             args["now"] = json!(now);
         }
         Request { family: Family::Builtins, method: "compare".into(), args }
+    }
+}
+
+pub mod log {
+    use super::*;
+
+    /// Lines on the platform's log (`logger.info` / `logger.warn`), each
+    /// `{level, message, fields}`, the run they belong to added by the
+    /// shim: what the TypeScript engine logs, sent as a statement ends so a
+    /// line costs no yield inside a fan.
+    pub fn write(lines: Vec<Json>) -> Request {
+        Request { family: Family::Log, method: "write".into(), args: json!({ "lines": lines }) }
     }
 }
 
@@ -430,7 +525,7 @@ mod tests {
 
     #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "park.sink", "control.cancel", "locks", "trace", "clock", "check", "builtins", "echo"] {
+        for name in ["adapters", "llm", "llm.client", "llm.transforms", "park.sink", "control.cancel", "locks", "trace", "clock", "files", "ids", "check", "builtins", "log", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);
