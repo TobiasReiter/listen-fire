@@ -58,6 +58,20 @@ const ENTITY_DENSITY_OPUS_THRESHOLD: usize = 30;
 const EXTRACTION_EFFORT: &str = "low";
 const LABEL: &str = "movement_extraction";
 
+/// A plugin's or a file reader's answer that held what the eval wire cannot
+/// carry fails the statement here, where the TypeScript reads on ("Spec the
+/// tail" in the README).
+pub(crate) fn refuse_uncarried(answer: &Js, what: &str) -> Result<(), Failure> {
+    let uncarried = uncarried(answer);
+    if uncarried.is_empty() {
+        return Ok(());
+    }
+    Err(Failure::unsupported(
+        &format!("{what} holding a `__proto__` key or a lone surrogate (in {})", uncarried.join(", ")),
+        "the Rust engine reads only what its wire carries",
+    ))
+}
+
 pub(crate) fn thrown(failure: Failure) -> Stop {
     Stop::Thrown(failure)
 }
@@ -283,6 +297,9 @@ struct Telemetry {
 /// A model call's answer (`LlmCallResult`).
 #[derive(Clone)]
 struct Reply {
+    /// The reply held what the eval wire cannot carry (the shim's
+    /// `uncarried`): a `__proto__` key, a lone surrogate.
+    unreadable: bool,
     parsed_json: Js,
     raw_text: Option<String>,
     effort_stepped_down: Option<Js>,
@@ -375,7 +392,9 @@ impl Run<'_> {
             env::encode_plain(&Js::object(JsObject::clone_of(extracted_context))),
             self.ledger.budget(),
         );
-        Ok(PluginResult::of(&self.priced(request).await?))
+        let answer = self.priced(request).await?;
+        refuse_uncarried(&answer, &format!("'{registered}''s answer"))?;
+        Ok(PluginResult::of(&answer))
     }
 }
 
@@ -600,7 +619,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
         let first = self.call_model(system, user_message, LABEL, &telemetry.model).await.map_err(Unanswered::Stopped)?;
         telemetry.last_reply = Some(first.clone());
         telemetry.duration_ms = Some(self.run.clock_now().await.map_err(|f| Unanswered::Stopped(thrown(f)))? - started);
-        let issues = match validate::read_reply(region, &first.parsed_json) {
+        let issues = match read_reply(region, &first) {
             Ok(read) => return Ok(read),
             Err(issues) => issues,
         };
@@ -609,7 +628,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
         let retry = self.call_model(system, &retry_message, &format!("{LABEL}_retry"), &telemetry.model).await.map_err(Unanswered::Stopped)?;
         telemetry.last_reply = Some(retry.clone());
         telemetry.duration_ms = Some(self.run.clock_now().await.map_err(|f| Unanswered::Stopped(thrown(f)))? - started);
-        validate::read_reply(region, &retry.parsed_json).map_err(Unanswered::Invalid)
+        read_reply(region, &retry).map_err(Unanswered::Invalid)
     }
 
     /// One `llm.client.call`, priced.
@@ -620,7 +639,9 @@ impl<'r, 'h> Materializer<'r, 'h> {
             Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
             _ => Js::Undefined,
         };
+        let uncarried = uncarried(&answer);
         Ok(Reply {
+            unreadable: uncarried.iter().any(|m| m == "parsedJson"),
             parsed_json: member("parsedJson"),
             raw_text: match member("rawText") {
                 Js::String(text) => Some(text),
@@ -938,6 +959,26 @@ impl<'r, 'h> Materializer<'r, 'h> {
         }
         sink.push(TraceEntry::Plugin(entry));
         Ok(Some(result))
+    }
+}
+
+/// What the reply says unread: a reply the eval wire could not carry is one
+/// issue at its root, retried and failed as any reply the guide does not
+/// describe ("Spec the tail" in the README).
+fn read_reply(region: &Region<'_>, reply: &Reply) -> Result<validate::Read, Vec<Issue>> {
+    if reply.unreadable {
+        return Err(vec![Issue { path: Vec::new(), message: UNREADABLE_REPLY.into() }]);
+    }
+    validate::read_reply(region, &reply.parsed_json)
+}
+
+const UNREADABLE_REPLY: &str = "the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)";
+
+/// The members of a host's answer the shim could not carry on the eval wire.
+pub(crate) fn uncarried(answer: &Js) -> Vec<String> {
+    match crate::unique::get(answer, "uncarried") {
+        Js::Array(list) => list.items.iter().map(Js::to_js_string).collect(),
+        _ => Vec::new(),
     }
 }
 

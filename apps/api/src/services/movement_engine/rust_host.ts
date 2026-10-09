@@ -208,7 +208,7 @@ const ROUTES: Record<string, Route> = {
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(answer, 'llm.client.call'));
+    return new Plain(wired(answer, 'llm.client.call', ['parsedJson', 'rawText']));
   },
   /** A plugin's invocation (`through` or a plain call), a priced call: its
    *  arguments and the entity's fields so far arrive on the eval wire, and
@@ -223,7 +223,7 @@ const ROUTES: Record<string, Route> = {
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(answer, 'llm.transforms.invoke'));
+    return new Plain(wired(answer, 'llm.transforms.invoke', ['text', 'data', 'records', 'outcome']));
   },
   /** A source file's text, a priced call: the descriptor on the eval wire. */
   async 'files.resolveFileText'(request, { host, context }) {
@@ -232,7 +232,7 @@ const ROUTES: Record<string, Route> = {
     if (!isFileRef(file)) throw new RustShimError('files.resolveFileText file is a FileRef');
     const answer = await host.files.resolveFileText({ segmentId: segmentOf(request), file, budget: budgetOf(request.budget) });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(answer, 'files.resolveFileText'));
+    return new Plain(wired(answer, 'files.resolveFileText', ['text', 'rawTextId', 'detail']));
   },
   /** Fresh ids, for the resources an extraction carries. */
   async 'ids.mint'(request, { host }) {
@@ -437,9 +437,23 @@ function instant(value: unknown, what: string): string {
   return text;
 }
 
-/** A host's answer on the eval wire, as the engine reads it. */
-function wired(answer: unknown, method: string): unknown {
-  const wire = new WireOut({ asData: true }).value(answer);
+/**
+ * A host's answer on the eval wire, as the engine reads it. A member the wire
+ * cannot carry as itself (a reply's `__proto__` key or lone surrogate, both of
+ * which `JSON.parse` can make) is left out and named under `uncarried`: the
+ * call was made and charged, so the engine decides what an unreadable answer
+ * means for the run, never the shim. The cost and every other member cross.
+ */
+function wired(answer: object, method: string, members: readonly string[]): unknown {
+  const whole = new WireOut({ asData: true }).value(answer);
+  if (whole !== REFUSED) return whole;
+  const kept: Record<string, unknown> = {};
+  const uncarried: string[] = [];
+  for (const [key, value] of Object.entries(answer)) {
+    if (members.includes(key) && new WireOut({ asData: true }).value(value) === REFUSED) uncarried.push(key);
+    else kept[key] = value;
+  }
+  const wire = new WireOut({ asData: true }).value({ ...kept, uncarried });
   if (wire === REFUSED) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
   return wire;
 }

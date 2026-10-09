@@ -233,6 +233,7 @@ impl Run<'_> {
     pub(crate) async fn resolve_file_text(&self, file: &Js) -> Result<Js, Failure> {
         let request = host::files::resolve_file_text(self.segment(), env::encode_plain(file), self.ledger.budget());
         let answer = self.priced(request).await?;
+        super::run::refuse_uncarried(&answer, "a file's text")?;
         if matches!(member(&answer, "unreadable"), Js::String(why) if why == "bytes_unavailable") {
             let key = file_handle(file).or_else(|| match member(file, "name") {
                 Js::String(name) => Some(name),

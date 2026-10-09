@@ -758,10 +758,12 @@ TypeScript engine would carry on. Each comes back as an error (the run
 fails); none produces a different answer.
 
 - An adapter answers a value the eval wire cannot carry as itself (a
-  `Date`, a class instance, a function): `RustShimError` from the shim. So
-  does a model reply or a plugin's answer holding a `__proto__` key or a
-  lone surrogate (both `JSON.parse` can make), which the TypeScript reads
-  on. The
+  `Date`, a class instance, a function): `RustShimError` from the shim.
+- A plugin's answer, or a file reader's, holding a `__proto__` key or a
+  lone surrogate (the shim carries the rest and names what it left out,
+  `uncarried`): the statement fails with MOVENG_UNSUPPORTED naming the
+  members. The TypeScript reads on. (A model reply that does is a
+  validation failure instead: "Spec the tail" below.) The
   likely case — an event field the source's schema types as a date or a
   datetime (read by an expression, or written by a `...msg` spread as the
   checker's stamp names its fields) — is declined before the version warning
@@ -987,6 +989,18 @@ The rule for what this engine reproduces of JavaScript:
     host (the HTTP double, a remote embedder) the number is already
     `null`, which reads clean on both engines. The oracle cannot express it
     (its replies are JSON text), so it is not marked there.
+  - a model reply holding a `__proto__` key or a lone surrogate (both
+    `JSON.parse` can make): the eval wire cannot carry either, so the shim
+    hands this engine the answer without its `parsedJson` (`uncarried`),
+    its cost and the rest kept. This engine reads that as one issue at the
+    reply's root ("the reply held a key or a text this engine cannot
+    read"): it asks once more with the issue named, as for any reply the
+    guide does not describe; a second such reply fails the root's call with
+    the twice-unanswered MOVENG_RUNTIME text, and a per-entity call keeps
+    its entity (`kept_previous_stage`). The TypeScript reads on: a lone
+    surrogate is a string zod accepts, and a `__proto__` key is the
+    prototype accident above. Pinned on both engines by
+    `rust_extract.unit.test.ts`.
   - extraction call-site numbering: the number in an extraction's prompt
     (`x:<node>#<n>`) follows the order concurrent siblings reach the site,
     so a host answering at another speed sees another prompt; numbered by

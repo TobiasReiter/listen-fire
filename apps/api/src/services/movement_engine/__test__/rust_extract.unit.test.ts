@@ -237,4 +237,49 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect(rustRunStats.hostCalls).toEqual({});
     }
   });
+
+  describe('a model reply this engine cannot read (a named divergence: the TypeScript reads on)', () => {
+    const source = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
+    // `JSON.parse`, so the surrogate and the key are the reply's own.
+    const lone = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"\\ud800"}}]}');
+    const proto = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"Acme"},"__proto__":{"x":1}}]}');
+    const valid = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
+
+    async function onEach(replies: unknown[]) {
+      const ts = await runOn('ts', { source, replies });
+      resetRustRunStats();
+      const rust = await runOn('rust', { source, replies });
+      // Never the shim's fault: the reply is the engine's to judge.
+      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0, declined: {} });
+      return { ts, rust };
+    }
+
+    it.each([
+      ['a lone surrogate', lone],
+      ['a `__proto__` key', proto],
+    ])('asks again when the reply holds %s, as for any reply the guide does not describe', async (_what, unreadable) => {
+      const { ts, rust } = await onEach([unreadable, valid]);
+      // TypeScript reads the reply as it is, in one call.
+      expect('result' in ts).toBe(true);
+      expect(ts.asked.map((a) => Reflect.get(a as object, 'label'))).toEqual(['movement_extraction']);
+      expect(rust.asked.map((a) => Reflect.get(a as object, 'label'))).toEqual(['movement_extraction', 'movement_extraction_retry']);
+      const trace = 'result' in rust && rust.result !== undefined ? rust.result.trace : [];
+      expect(trace[0]).toMatchObject({
+        kind: 'extraction',
+        retried: ['  - : the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)'],
+      });
+    });
+
+    it('fails the root call, twice unreadable, with the twice-unanswered text the TypeScript writes', async () => {
+      const { ts, rust } = await onEach([lone, lone]);
+      expect('result' in ts).toBe(true);
+      expect('error' in rust && rust.error).toBeInstanceOf(MovementRunFailed);
+      const cause = 'error' in rust ? runFailureCause(rust.error) : undefined;
+      // The text the TypeScript fails a root answered twice with nothing it reads.
+      const twice = await runOn('ts', { source, replies: [{}, {}] });
+      const expected = 'error' in twice ? runFailureCause(twice.error) : undefined;
+      expect(String(cause)).toContain('was answered with something the guide does not describe, twice.');
+      expect(String(cause)).toBe(String(expected));
+    });
+  });
 });
