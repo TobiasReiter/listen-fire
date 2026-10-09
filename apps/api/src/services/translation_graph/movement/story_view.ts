@@ -37,10 +37,22 @@ import {
   type StoryTraversal,
   type Step,
 } from 'movement-lang';
-
 import { LRUCache } from 'lru-cache';
 
 import type { BrandIcon } from '../adapter';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type {
+  StoryView,
+  StoryViewAction,
+  StoryViewMovement,
+  StoryViewRecord,
+  StoryViewResult,
+  StoryViewSystem,
+  StoryViewTraversal,
+  StoryViewTrigger,
+  StoryViewType,
+} from 'story-view/view';
+
 import { getAdapterManifest, inboundAddressFor } from '../adapters/registry';
 import { resolveEventPhrase } from '../vocabulary';
 import { movementCatalogForTeam, type TeamMovementCatalog } from './catalog';
@@ -50,7 +62,6 @@ import {
   type MovementValidityStatus,
 } from './store';
 import { movementSourceHash } from './version_store';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 
 // ── The view ────────────────────────────────────────────────────────────────
 
@@ -72,17 +83,6 @@ export type {
   StoryViewType,
 } from 'story-view/view';
 
-import type {
-  StoryView,
-  StoryViewAction,
-  StoryViewMovement,
-  StoryViewRecord,
-  StoryViewResult,
-  StoryViewSystem,
-  StoryViewTraversal,
-  StoryViewTrigger,
-  StoryViewType,
-} from 'story-view/view';
 
 // ── The vocabulary the join consumes ────────────────────────────────────────
 

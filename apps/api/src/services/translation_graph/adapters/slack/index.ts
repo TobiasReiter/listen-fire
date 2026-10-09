@@ -26,15 +26,11 @@
 // "attach facts + per-property evidence to an existing message".
 
 import { Readable } from 'node:stream';
+
 import { z } from 'zod';
 
-import { parseSlackEvents } from '../../../webhook_sync/providers/slack';
-import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-
-import { isNaturalOrder } from '#shared/expression/order_limit';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   ActorCandidate,
   ActorIdentity,
@@ -55,20 +51,28 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import type { EventType } from '../../adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+import type { TriggerEvent } from '../../triggers/types';
+import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
+import type {
+  AwaitableCapability,
+  AwaitPoint,
+  AwaitResolution,
+} from '../../awaitable';
+
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
+import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import {
   META_RECORD_TYPE,
   makeStablePosition,
   makeUnstablePosition,
   positionData,
 } from '../../types';
-import type { TriggerEvent } from '../../triggers/types';
 import { BaseAdapter } from '../base';
 import { naturalName } from '../name_resolution';
 import { SLACK_HANDBOOK_SECTION } from './handbook_section';
@@ -80,7 +84,6 @@ import {
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../../lib/recording';
-import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 import { logger } from '../../../logger';
 import {
   addReaction,
@@ -89,11 +92,8 @@ import {
   replyAnchorFromParent,
   type SlackWriteAnchor,
 } from './write';
-import type {
-  AwaitableCapability,
-  AwaitPoint,
-  AwaitResolution,
-} from '../../awaitable';
+import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
+import { parseSlackEvents } from '../../../webhook_sync/providers/slack';
 import { SLACK_MESSAGE_FUNCTION, composeSlackMessage } from './compose';
 import {
   SLACK_CHANNELS_COLLECTION,
@@ -118,9 +118,10 @@ import {
   type SlackChannelRecord,
   type SlackUserRecord,
 } from './read_graph';
-
 import { SLACK_ADAPTER_TYPE } from './types';
 import { uniformWalk } from '../hop';
+
+import { isNaturalOrder } from '#shared/expression/order_limit';
 export { SLACK_ADAPTER_TYPE } from './types';
 
 /** Single source entry-point type id — a Slack message in a channel. */

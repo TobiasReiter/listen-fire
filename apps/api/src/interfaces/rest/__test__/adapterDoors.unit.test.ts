@@ -4,8 +4,10 @@
 // what's under test is authentication (the credential picks the install, and
 // the install is the team), body validation, and what each door queues.
 
-import express, { type Router } from 'express';
 import { createServer, type Server } from 'node:http';
+
+import express, { type Router } from 'express';
+
 import type { AddressInfo } from 'node:net';
 
 const listRemoteAdaptersOfType = jest.fn();
@@ -46,6 +48,7 @@ jest.mock('../../../services/logger', () => ({
 }));
 
 import { timingSafeEqual } from 'node:crypto';
+
 import { adapterDoorsRouter } from '../adapterDoors';
 
 let server: Server;

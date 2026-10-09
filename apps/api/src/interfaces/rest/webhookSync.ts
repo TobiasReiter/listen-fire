@@ -1,6 +1,8 @@
 // REST webhook endpoint
 import { Router } from 'express';
+
 import type { Request, Response } from 'express';
+
 import { handleInboundWebhook } from '../../services/webhook_sync/handler';
 import { logger } from '../../services/logger';
 import { notifyWork } from '../../services/work/drain';

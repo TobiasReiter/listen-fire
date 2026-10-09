@@ -1,15 +1,18 @@
 import { format } from 'date-fns';
+
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
+import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, FieldConstraints, ResourceContext } from './types';
+import type { FieldMapping } from '../schemas';
+
 import { valueType, locationFieldValue, AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
 import { services } from '../../../../adapters/registry';
 import { streamToBlob } from '../../../../lib/utils/stream';
 import { logger } from '../../../logger';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { HAIKU_MODEL } from '../../../agent_running_state';
-import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, FieldConstraints, ResourceContext } from './types';
 import { isExpressionConfig, resolveConfigField, StaleLinkedObjectError, MergedEntityError } from './types';
 import { resolveFieldMapping, buildLLMContext, resolvePreserveTags, loadResources } from '../resolve';
-import type { FieldMapping } from '../schemas';
+
 
 // ── adapterConfig shapes for Affinity action nodes ──
 // Built-in entity properties are stored in adapterConfig as field-mapping-like

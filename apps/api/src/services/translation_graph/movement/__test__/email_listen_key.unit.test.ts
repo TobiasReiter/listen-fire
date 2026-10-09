@@ -8,6 +8,7 @@
 // delivery path without a key stay legal.
 
 import { checkProgram, parseProgram } from 'movement-lang';
+
 import { staticCatalogFromManifests } from '../catalog';
 
 const catalog = staticCatalogFromManifests({

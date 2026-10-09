@@ -21,7 +21,6 @@
  * naming the dev-loop team (`TEST_HARNESS_TEAM_ID`) in the team header.
  */
 import './_profile_loader';
-
 import {
   FAKE_CRM_ADAPTER_TYPE,
   FAKE_CRM_SECRET,

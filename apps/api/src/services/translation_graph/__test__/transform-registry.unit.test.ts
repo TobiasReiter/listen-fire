@@ -4,6 +4,8 @@
 //
 // Brief: plans/2026-05-19-tg-extraction-parity/_execution/wave-0/F4-transform-registry.md
 
+import type { SourcePosition, TransformSignature } from '../types';
+
 import {
   _resetTransformRegistry,
   getTransform,
@@ -15,7 +17,6 @@ import {
   type TransformInput,
   type TransformOutput,
 } from '../engine/transforms';
-import type { SourcePosition, TransformSignature } from '../types';
 import { makeStablePosition } from '../types';
 
 const sourceNode: SourcePosition = makeStablePosition({

@@ -3,8 +3,9 @@
 // asserts the exact OpenAI body that goes out; each reply fixture asserts the
 // exact Anthropic message that comes back.
 
-import type Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+
+import type Anthropic from '@anthropic-ai/sdk';
 
 import {
   assembleOpenAiMessage,

@@ -2,12 +2,13 @@
 // request as an inline part, with its MIME type as a MIME type, and the model
 // is asked for the words.
 
+import type { Resolved } from '../map';
+import type { TranscriptionRequest, TranscriptionResult } from './index';
+
 import { logger } from '../../../services/logger';
 import { recordLlmUsage } from '../../llm_usage';
 import { geminiClient } from '../providers/gemini';
 import { geminiAudioMimeType } from './audio_format';
-import type { Resolved } from '../map';
-import type { TranscriptionRequest, TranscriptionResult } from './index';
 
 /**
  * How many bytes of audio may travel INSIDE the request.

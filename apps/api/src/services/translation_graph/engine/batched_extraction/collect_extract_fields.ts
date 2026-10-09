@@ -39,9 +39,10 @@
 
 import type { ActionNode, ExpressionType, SchemaFieldDescriptor, TGFieldMapping } from '../../types';
 import type { Expression } from '../../../knowledge_pipeline/output_v3/expression';
-import { listElementExpression, type ListElement } from '#shared/expression/types';
 import type { TraversalStep } from '../../../knowledge_pipeline/output_v3/schemas';
 import type { FieldShape } from './schema_synthesis';
+
+import { listElementExpression, type ListElement } from '#shared/expression/types';
 
 /**
  * Synthetic binding key for an `#extract` step the author left unaliased.

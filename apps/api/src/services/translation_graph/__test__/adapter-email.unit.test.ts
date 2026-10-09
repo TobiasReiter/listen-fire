@@ -19,6 +19,8 @@
  */
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { SourcePosition } from '../types';
+
 import {
   EmailAdapter,
   EMAIL_ADAPTER_TYPE,
@@ -29,7 +31,6 @@ import {
   type EmailPayload,
 } from '../adapters/email';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
-import type { SourcePosition } from '../types';
 import { makeStablePosition, makeUnstablePosition } from '../types';
 
 const TEAM_ID = 'team-1' as TeamId;

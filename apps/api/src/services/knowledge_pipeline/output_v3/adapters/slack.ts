@@ -1,10 +1,11 @@
 import type { FileUploadComplete } from '@slack/web-api/dist/types/request/files';
 import type { MessageAttachment } from '@slack/web-api';
 import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient';
+import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, ResourceContext } from './types';
+
 import { services } from '../../../../adapters/registry';
 import { logger } from '../../../logger';
 import { composeTextFromPrompt, resolvePreserveTags, loadResources } from '../resolve';
-import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, ResourceContext } from './types';
 import { resolveConfigField } from './types';
 
 const SLACK_SYSTEM_PROMPT_EXTENSION = `This message will be sent to Slack. Use Slack-native formatting only:

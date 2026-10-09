@@ -1,14 +1,17 @@
 // Output agent runner
 
 import { z } from 'zod';
+
+import type { AgentUpdate } from '../openai/types';
+import type { OntologySummary, AgentContext, AdapterMetadataProvider } from '../../services/knowledge_pipeline/output_v3/agent';
+import type { OutputV3Config, ActionNode, TreeNode } from '../../services/knowledge_pipeline/output_v3/schemas';
+import type { PropertyInfo, EdgeInfo } from '#shared/expression/formula';
+
 import { anthropicToolLoop, type TurnEvent } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
 import { getAutomationsQb, getKnowledgeQb, getQb } from '../kysely';
 import { mq } from '../message_queue';
-import type { AgentUpdate } from '../openai/types';
 import { AgentToolSession, OUTPUT_AGENT_SYSTEM_PROMPT } from '../../services/knowledge_pipeline/output_v3/agent';
-import type { OntologySummary, AgentContext, AdapterMetadataProvider } from '../../services/knowledge_pipeline/output_v3/agent';
-import type { OutputV3Config, ActionNode, TreeNode } from '../../services/knowledge_pipeline/output_v3/schemas';
 import { TeamId } from '../../generated/kysely/core/Team';
 import { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { PipelineOutputId } from '../../generated/kysely/public/PipelineOutput';
@@ -21,7 +24,6 @@ import { slackCredsParser, getSlackClient } from '../../adapters/slack/webApi/ap
 import { SlackWebApiConfigurer } from '../../adapters/slack/webApi/configurer';
 import { airtableCredsParser, getAirtableClient } from '../../adapters/airtable/apiClient';
 import { writeExpression, type ExpressionWriterContext } from '../../services/knowledge_pipeline/output_v3/expression_writer';
-import type { PropertyInfo, EdgeInfo } from '#shared/expression/formula';
 import { logger } from '../../services/logger';
 import { getStyleBlock } from './style_preferences';
 

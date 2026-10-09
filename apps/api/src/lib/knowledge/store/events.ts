@@ -21,11 +21,12 @@
 import { sql } from 'kysely';
 
 import type { KnowledgeWriteDb } from './write';
-import ChangeSource from '../../../generated/kysely/knowledge/ChangeSource';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
 import type { EdgeTypeId } from '../../../generated/kysely/knowledge/EdgeType';
+
+import ChangeSource from '../../../generated/kysely/knowledge/ChangeSource';
 import { neverAsAny } from '../../utils/types';
 
 export type MutationChangeKind = 'create' | 'update' | 'delete';

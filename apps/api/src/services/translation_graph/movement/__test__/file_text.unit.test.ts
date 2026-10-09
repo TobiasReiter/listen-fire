@@ -36,11 +36,12 @@ import { Readable } from 'node:stream';
 import { jsPDF } from 'jspdf';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { FileRef } from '../../adapter';
+
 import { makeFileTextResolver } from '../file_text';
 import { services } from '../../../../adapters/registry';
 import { LlmUsageContext } from '../../../../lib/llm_usage';
 import { logger } from '../../../logger';
-import type { FileRef } from '../../adapter';
 
 const ocrMock = jest.fn();
 

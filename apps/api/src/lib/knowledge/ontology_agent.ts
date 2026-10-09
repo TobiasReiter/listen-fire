@@ -1,11 +1,14 @@
 import { z } from 'zod';
 
+import type { AgentUpdate } from '../openai/types';
+import type { StoredUniquenessConstraints, ConstraintEntry } from '../../services/knowledge_pipeline/uniqueness_constraints';
+import type { Expression, EdgeStep } from '#shared/expression/types';
+
 import { getKnowledgeQb } from '../kysely';
 import { anthropicToolLoop, type TurnEvent } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
 import { currentContext } from '../../services/context';
 import { mq } from '../message_queue';
-import type { AgentUpdate } from '../openai/types';
 import { TeamId } from '../../generated/kysely/core/Team';
 import { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
@@ -16,9 +19,7 @@ import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity'
 import EvaluationStrategy from '../../generated/kysely/knowledge/EvaluationStrategy';
 import { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
 import { getStyleBlock } from './style_preferences';
-import type { StoredUniquenessConstraints, ConstraintEntry } from '../../services/knowledge_pipeline/uniqueness_constraints';
 import { parseConstraintText, serializeConstraintEntries } from '../../services/knowledge_pipeline/uniqueness_constraints';
-import type { Expression, EdgeStep } from '#shared/expression/types';
 import { unsupportedCategoryReason } from './node_type_category_policy';
 
 export const ONTOLOGY_AGENT_SYSTEM_PROMPT = `You are an ontology configuration assistant. You help users design and build their knowledge graph schema through conversation.

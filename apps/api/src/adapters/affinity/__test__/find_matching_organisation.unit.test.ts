@@ -12,9 +12,10 @@ jest.mock('../../../lib/anthropic', () => ({
   anthropicChat: jest.fn(async () => 'null'),
 }));
 
+import type { AffinityAPIClient } from '../apiClient';
+
 import { anthropicChat } from '../../../lib/anthropic';
 import { findMatchingOrganisation } from '../common';
-import type { AffinityAPIClient } from '../apiClient';
 
 const judge = jest.mocked(anthropicChat);
 

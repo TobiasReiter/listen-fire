@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { sql } from 'kysely';
 
 import type { TopLevelTool } from '../server';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { getTrpcCaller, toolHandler } from '../trpc_caller';
 import { getValuationsQb } from '../../../lib/kysely';
 import { isReportableInvestment } from '../../trpc/views/reportableInvestments';
@@ -12,7 +14,6 @@ import { currentContext } from '../../../services/context';
 import { getInvestmentsValuation } from '../../../lib/valuations/valuation';
 import CurrencyIsoCode from '../../../generated/kysely/valuations/CurrencyIsoCode';
 import LegalEntityType from '../../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 
 const COMPANY_LIKE_TYPES = [
   LegalEntityType.COMPANY,

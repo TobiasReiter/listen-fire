@@ -9,10 +9,13 @@
 // Mirrors the in-process express + node:http harness in commands.unit.test.ts
 // (no supertest dependency in this repo).
 
-import express, { type Router } from 'express';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+
+import express, { type Router } from 'express';
 import { z } from 'zod';
+
+import type { AddressInfo } from 'node:net';
+
 
 const enterTransaction = jest.fn();
 const insertedValues = jest.fn();

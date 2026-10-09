@@ -14,7 +14,6 @@ import { randomUUID } from 'node:crypto';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ExchangeRateId } from '../../../generated/kysely/valuations/ExchangeRate';
-
 import type { Principal } from 'principal';
 
 import { getCoreQb, getValuationsQb } from '../../kysely';

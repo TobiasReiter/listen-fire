@@ -29,6 +29,7 @@ jest.mock('../../../../lib/credentials', () => ({
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { Expression } from '#shared/expression/types';
+
 import {
   NATIVE_VALUATIONS_ADAPTER_TYPE,
   createNativeValuationsAdapter,

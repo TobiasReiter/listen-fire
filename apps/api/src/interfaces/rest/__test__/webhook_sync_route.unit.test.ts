@@ -10,8 +10,10 @@
 //   • a test-harness delivery drains its rows and reports dispatch errors inline,
 //   • phase-1 refusals keep their status codes (404/400/401).
 
-import express, { type Router } from 'express';
 import { createServer, type Server } from 'node:http';
+
+import express, { type Router } from 'express';
+
 import type { AddressInfo } from 'node:net';
 
 const handleInboundWebhook = jest.fn();

@@ -1,4 +1,3 @@
-import { parseCypher, parseAnyCypher, ParseError } from '../parser';
 import type {
   CypherQuery,
   MutationCypherQuery,
@@ -11,6 +10,8 @@ import type {
   RelationshipPattern,
   Expression,
 } from '../types';
+
+import { parseCypher, parseAnyCypher, ParseError } from '../parser';
 import { isMutation } from '../types';
 
 // --- Helpers ---

@@ -67,14 +67,15 @@ jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
   };
 });
 
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { GetRelatedInput } from '../../../adapter';
+
 import { GoogleDriveAdapter } from '../index';
 import { DISPLAY_NAME_BY_KIND, GOOGLE_DRIVE_ADAPTER_TYPE } from '../types';
 import { DRIVE_FILES_COLLECTION, DRIVE_FILE_TYPE, DRIVE_FOLDERS_COLLECTION } from '../schema_catalog';
 import { META_RECORD_TYPE, makeStablePosition } from '../../../types';
 import * as grantedItems from '../../../../credentials/granted_items';
 import { DRIVE_FOLDER_MIME } from '../../../../credentials/granted_items';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { GetRelatedInput } from '../../../adapter';
 
 function metaPosition(): GetRelatedInput['position'] {
   return makeStablePosition({

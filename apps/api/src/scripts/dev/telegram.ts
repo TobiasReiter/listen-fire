@@ -33,7 +33,6 @@ import './_profile_loader';
 // Register the service adapters the API server boots so `saveMovement` runs
 // the real provision path (catalog assembly, listener reconciliation).
 import '../../services';
-
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import {
   DEV_LOOP_EMAIL,

@@ -12,11 +12,12 @@
 // (`routeInboundEmail`), because a message routing differently depending on
 // who carried it would be a bug nobody would find.
 
+import { parseEmailAddress } from './index';
+
 import type { Request } from 'express';
+import type { EmailAttachment, EmailPayload } from './index';
 
 import { logger } from '../../../logger';
-import type { EmailAttachment, EmailPayload } from './index';
-import { parseEmailAddress } from './index';
 import { routeInboundEmail, type InboundEmailDecision } from './inbound_door';
 import {
   fetchReceivedEmail,

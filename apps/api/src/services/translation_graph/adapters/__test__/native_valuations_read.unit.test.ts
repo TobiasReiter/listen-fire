@@ -14,6 +14,7 @@ jest.mock('../../../logger', () => ({
 }));
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   NATIVE_VALUATIONS_ADAPTER_TYPE,
   createNativeValuationsAdapter,

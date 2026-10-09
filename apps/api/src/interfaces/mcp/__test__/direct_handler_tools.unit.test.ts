@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-import { createMcpRouter } from '../server';
 import type { TopLevelTool } from '../server';
+
+import { createMcpRouter } from '../server';
 
 const base = {
   title: 'Read a thing',

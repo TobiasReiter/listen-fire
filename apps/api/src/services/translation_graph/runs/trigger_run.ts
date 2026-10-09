@@ -8,9 +8,17 @@
 // row, and publishes it live for the automation page's Recent Activity.
 
 import { randomUUID } from 'node:crypto';
+
 import { sql } from 'kysely';
+
 import type { EvaluationResult } from '../engine/types';
 import type { MovementRunResult } from '../../movement_engine/run';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
+import type { TriggerEvent } from '../triggers/types';
+import type { WorkHandler } from '../../work/kinds';
+
 import { isWriteEffect, type MovementTraceEntry } from '../../movement_engine/expression';
 import { SECOND } from '../../../constants';
 import { getAutomationsQb, getQb } from '../../../lib/kysely';
@@ -31,14 +39,9 @@ import { revokeRunCallbacks } from '../../movement_engine/callback_store';
 import OpsEventType from '../../../generated/kysely/public/OpsEventType';
 import OpsSeverity from '../../../generated/kysely/public/OpsSeverity';
 import { OpsDetailLevel } from '../../../lib/ops/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
-import type { TriggerEvent } from '../triggers/types';
 import { markTriggerEventFailed } from '../triggers/event_store';
 import { settleUnresumableRun } from '../../interaction/run_failure';
 import { ORPHAN_AFTER, returnLeavesOfLapsedLeases, withRunLease } from '../../movement_engine/run_lease';
-import type { WorkHandler } from '../../work/kinds';
 import { registerWorkHandler } from '../../work/drain';
 
 export type TriggerRunTriggerType =

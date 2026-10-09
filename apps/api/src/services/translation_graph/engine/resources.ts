@@ -10,6 +10,7 @@
 // nodes — a non-ephemeral position resolves `#resources` through its adapter.
 
 import type { ResourceFilter } from '../../knowledge_pipeline/output_v3/schemas';
+
 import {
   isEphemeralPosition,
   makeEphemeralPosition,

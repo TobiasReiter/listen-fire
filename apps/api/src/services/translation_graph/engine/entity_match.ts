@@ -9,8 +9,11 @@
 // (Attio, Affinity, KG, …), whereas the KG path is hardcoded to
 // extracted-entity → KG-node matching.
 
-import type { LanguageVersion } from 'movement-lang';
 import { z } from 'zod';
+
+import type { LanguageVersion } from 'movement-lang';
+import type { ExternalRecordRef } from '../adapter';
+import type { ArbitrationAnswer, Costed, EntityArbitration, Priced } from '../../movement_engine/host';
 
 import { execute } from '../../../lib/prompts/execute';
 import { promptDef } from '../../../lib/prompts/definition';
@@ -26,10 +29,9 @@ import { isBudgetExhausted } from '../../../lib/run_cost';
 import { withSpendMeter } from '../../../lib/run_spend';
 import { neverAsAny } from '../../../lib/utils/types';
 import { logger } from '../../logger';
-import type { ExternalRecordRef } from '../adapter';
 import { arbitrateWithoutJudge, type UniquenessConstraints } from '../uniqueness';
 import { aiExpressionSettings, claudeModelId } from '../../movement_engine/ai_tiers';
-import type { ArbitrationAnswer, Costed, EntityArbitration, Priced } from '../../movement_engine/host';
+
 
 export type { ArbitrationAnswer, EntityArbitration };
 

@@ -1,5 +1,8 @@
 import { sql } from 'kysely';
 
+import type { NodeId } from '../../generated/kysely/knowledge/Node';
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { runInSandbox, type HostFn } from './import_sandbox';
 import { applyImport } from './import_host_functions';
 import { mergeNodes } from './merge';
@@ -14,8 +17,6 @@ import {
 import { unwrapAgentQueryRows } from './query_agent_utils';
 import { getQb } from '../kysely';
 import { anthropicChat } from '../anthropic';
-import type { NodeId } from '../../generated/kysely/knowledge/Node';
-import type { TeamId } from '../../generated/kysely/core/Team';
 
 // import tool definitions and implementations
 

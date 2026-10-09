@@ -5,11 +5,12 @@
 
 import { z } from 'zod';
 
+import type { UserId } from '../../../generated/kysely/core/User';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 import { getCoreQb } from '../../../lib/kysely';
-import type { UserId } from '../../../generated/kysely/core/User';
 import {
   hashPassword,
   verifyPassword,

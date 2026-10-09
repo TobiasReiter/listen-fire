@@ -23,12 +23,14 @@ import {
   type CatalogSnapshot,
   type InstanceSchema,
 } from 'movement-lang';
+
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { SchemaTypeDescriptor } from '../../types';
+
 import { AskAdapter } from '../../adapters/ask';
 import { instanceSchemaFromDescriptors } from '../schema_projection';
 import { graftGenericLandings } from '../generic_landings';
 import { closeDemandOverChains, demandSeed } from '../demand';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { SchemaTypeDescriptor } from '../../types';
 
 const PRELUDE = 'import { questions } from adapters\nqa = questions()\n';
 

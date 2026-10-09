@@ -8,9 +8,10 @@
 // thread re-check (`resolveAwait` against `conversations.replies`) is covered
 // e2e in the dev loop.
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { SlackAdapter, SLACK_MESSAGE_TYPE_ID } from '../adapters/slack';
 import { makeUnstablePosition } from '../types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 
 const TEAM_ID = 'team-1' as TeamId;
 

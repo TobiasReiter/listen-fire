@@ -19,9 +19,10 @@ import type {
   RuntimeCapabilities,
 } from '../adapter';
 import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
-import { type SourcePosition, makeUnstablePosition } from '../types';
 import type { TriggerEvent } from '../triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import { type SourcePosition, makeUnstablePosition } from '../types';
 
 const dbQueue: Array<unknown> = [];
 function setDbRow(row: unknown) {

@@ -10,12 +10,13 @@
 // routes) so it is genuinely public. The id is the authorisation; never logged.
 
 import { Router } from 'express';
+
 import type { Request, Response } from 'express';
+import type { ExposedFileId } from '../../generated/kysely/automations/ExposedFile';
 
 import { services } from '../../adapters/registry';
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { EXPOSED_FILE_PREFIX } from '../../services/translation_graph/engine/files/expose';
-import type { ExposedFileId } from '../../generated/kysely/automations/ExposedFile';
 
 const filesRouter: ReturnType<typeof Router> = Router();
 

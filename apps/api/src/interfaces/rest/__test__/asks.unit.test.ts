@@ -10,9 +10,11 @@
 // `answerAsk` are mocked (same technique as `ask_adapter.unit.test.ts`) so the
 // test pins the HTTP shell + prefetch contract without a database.
 
-import express from 'express';
-import type { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
+
+import express from 'express';
+
+import type { Server } from 'node:http';
 
 const lookupAskByTokenMock = jest.fn();
 const answerAskMock = jest.fn();

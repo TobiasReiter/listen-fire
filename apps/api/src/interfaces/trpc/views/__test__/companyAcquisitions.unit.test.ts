@@ -3,8 +3,9 @@
 // Rows and engine figures are synthetic; the query side is covered by the
 // acquisition-exclusion integration suite.
 
-import { valueAcquisitions } from '../portfolio/acquisitions';
 import type { AcquisitionRow, ValuationDeps } from '../portfolio/acquisitions';
+
+import { valueAcquisitions } from '../portfolio/acquisitions';
 import AssetType from '../../../../generated/kysely/valuations/AssetType';
 import CurrencyIsoCode from '../../../../generated/kysely/valuations/CurrencyIsoCode';
 

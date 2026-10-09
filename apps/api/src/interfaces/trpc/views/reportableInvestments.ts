@@ -1,7 +1,8 @@
 import { sql } from 'kysely';
-import type { Expression, ExpressionBuilder, SqlBool } from 'kysely';
 
+import type { Expression, ExpressionBuilder, SqlBool } from 'kysely';
 import type ValuationsSchema from '../../../generated/kysely/valuations/ValuationsSchema';
+
 import EventType from '../../../generated/kysely/valuations/EventType';
 import InvestmentType from '../../../generated/kysely/valuations/InvestmentType';
 

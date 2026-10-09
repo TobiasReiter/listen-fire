@@ -20,9 +20,11 @@
 // teaches the language a movement saved today is pinned to.
 
 import { CURRENT_LANGUAGE_VERSION, parseProgram } from 'movement-lang';
+
+import type { EngineClaim } from '../types';
+
 import { listUnsupportedConstructs } from '../../../../services/movement_engine/interpretable';
 import { getMovementHandbook } from '../index';
-import type { EngineClaim } from '../types';
 import { frontPageClaims } from '../front_page';
 import { controlFormClaims } from '../language_search';
 

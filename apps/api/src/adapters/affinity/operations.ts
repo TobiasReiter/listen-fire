@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { sub } from 'date-fns';
 
+import type { ParentAssociation } from '../../services/translation_graph/adapter';
+
 import { AffinityAPIClient, fieldsValidator, locationFieldValue, valueType } from './apiClient';
 import {
   findMatchingOrganisation as findMatchingOrganisationCommon,
@@ -15,7 +17,6 @@ import { sendSlackNotification } from '../../lib/slack';
 import { notNull } from '../../lib/utils/nullability';
 import { Tracer } from '../../services/tracer';
 import { fieldConfigurationSchema, AffinityFieldConfiguration } from './nodes/shared';
-import type { ParentAssociation } from '../../services/translation_graph/adapter';
 import {
   attachPersonToOrganisation,
   type AffinityPersonRecord,

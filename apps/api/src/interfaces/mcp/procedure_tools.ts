@@ -6,8 +6,9 @@
 
 import { z } from 'zod';
 
-import { trpcRouter } from '../trpc';
 import type { TopLevelTool, McpToolResult } from './server';
+
+import { trpcRouter } from '../trpc';
 import { getTrpcCaller, toolHandler } from './trpc_caller';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

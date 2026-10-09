@@ -12,6 +12,7 @@
 
 import type { Expression, MetaEdgeStep } from '#shared/expression/types';
 import type { EphemeralNode, SourcePosition } from '../../types';
+
 import { makeEphemeralPosition } from '../../types';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput, type EphemeralEmission } from '../transforms';
 

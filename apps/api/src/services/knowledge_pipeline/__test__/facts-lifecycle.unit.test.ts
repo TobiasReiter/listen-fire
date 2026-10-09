@@ -47,13 +47,14 @@ jest.mock('../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn() },
 }));
 
+import type { Resource, Fact } from '../../translation_graph/adapter';
+
 import {
   extractFactsForResource,
   getCachedFactsForResource,
   _resetResourceFactCache,
   resetChunkContexts,
 } from '../facts';
-import type { Resource, Fact } from '../../translation_graph/adapter';
 
 function makeResource(overrides: Partial<Resource> = {}): Resource {
   return {

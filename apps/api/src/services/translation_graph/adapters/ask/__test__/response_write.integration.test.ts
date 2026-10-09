@@ -17,14 +17,16 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { WriteInput } from '../../../adapter';
+
 import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import { cleanupTeam } from '../../../../../test/harness/cleanup';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import { AskAdapter } from '../index';
 import { notifyEngineOfSettledAsks } from '../../../../asks/in_process_notifier';
 import { AskResponseRefused, answerAskByToken } from '../answer_door';
 import { createAsk, getAsk, cancelAsk, type AskFamily, type AskRecord } from '../store';
-import type { WriteInput } from '../../../adapter';
+
 
 function ctx(): WriteInput['mutationContext'] {
   return {

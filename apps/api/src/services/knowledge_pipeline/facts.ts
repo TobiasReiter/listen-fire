@@ -1,13 +1,14 @@
 
+import type { NodeId } from '../../generated/kysely/knowledge/Node';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
+import type { Resource } from '../translation_graph/adapter';
+
 import { getKnowledgeQb } from '../../lib/kysely';
 import { anthropicChat } from '../../lib/anthropic';
 import { parseJson } from '../../lib/utils/parse_json';
 import { embedTexts } from '../embedding';
 import { logger } from '../logger';
-import type { NodeId } from '../../generated/kysely/knowledge/Node';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
-import type { Resource } from '../translation_graph/adapter';
 import { resourceIdSchema } from '../../lib/resource_id';
 
 // ---------------------------------------------------------------------------

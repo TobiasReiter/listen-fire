@@ -39,13 +39,15 @@
 //     team, so a resolved email can only ever match a user in the SAME team.
 
 import type { TeamId } from '../../generated/kysely/core/Team';
+import type { WebhookEvent } from './providers';
+import type { HarnessDelivery, SettleReport } from '../work/harness';
+
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import {
   parseTelegramEvents,
   telegramEventToDiscriminable,
 } from '../translation_graph/adapters/telegram';
-import type { WebhookEvent } from './providers';
 import { captureProviderTriggerEvents } from './handler';
 import {
   enqueueCapturedEvents,
@@ -53,7 +55,6 @@ import {
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
 import { isTestHarnessTeam } from '../../lib/recording';
-import type { HarnessDelivery, SettleReport } from '../work/harness';
 import {
   TELEGRAM_ADAPTER_TYPE,
   TelegramAdapter,

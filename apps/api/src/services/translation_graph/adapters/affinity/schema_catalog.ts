@@ -17,6 +17,7 @@ import type {
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
 } from '../../types';
+
 import {
   AFFINITY_ADAPTER_TYPE,
   AFFINITY_ENTITIES,

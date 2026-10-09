@@ -124,10 +124,11 @@ jest.mock('../issues', () => ({
   resolveMovementIssues: jest.fn(async () => undefined),
 }));
 
-import { RunLeaseLost } from '../../../movement_engine/run_lease';
-import { movementForTrigger, resumeMovementFiring, runMovementFiring } from '../execute';
 import type { TriggerEvent } from '../../triggers/types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
+import { RunLeaseLost } from '../../../movement_engine/run_lease';
+import { movementForTrigger, resumeMovementFiring, runMovementFiring } from '../execute';
 
 const { runMovement, resumeMovement, MovementRunFailed } = jest.requireMock(
   '../../../movement_engine/run',

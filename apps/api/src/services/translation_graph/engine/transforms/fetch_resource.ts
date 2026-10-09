@@ -6,6 +6,10 @@
 // either way — the gated-document path, the profile path, the plain scrape —
 // so it lives here rather than in whichever plugin was written first.
 
+import type { FetchedSegment } from './url-fetch';
+import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
+import type { EphemeralEmission } from './registry';
+
 import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
 import { isBudgetExhausted } from '../../../../lib/run_cost';
@@ -14,9 +18,6 @@ import { RawTextService } from '../../../raw_text';
 import { ResourceService } from '../../../resource';
 import { ScraperService } from '../../../scraper';
 import { fetchLinkedInProfile, fetchPitchDeckUrl, isLinkedInUrl } from './url-fetch';
-import type { FetchedSegment } from './url-fetch';
-import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
-import type { EphemeralEmission } from './registry';
 
 // Per-URL backstop. The Playwright queue has its own 5-min wall-clock
 // timeout for browser sessions, so this needs to be longer than that

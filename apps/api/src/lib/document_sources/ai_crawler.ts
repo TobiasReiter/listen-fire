@@ -1,8 +1,9 @@
-import { createHash } from 'crypto';
+import { createHash } from "node:crypto";
 
-import type Anthropic from '@anthropic-ai/sdk';
 import { Page } from 'playwright';
 import { z } from 'zod';
+
+import type Anthropic from '@anthropic-ai/sdk';
 
 import { chatCallFor } from '../models/chat';
 import { logger } from '../../services/logger';

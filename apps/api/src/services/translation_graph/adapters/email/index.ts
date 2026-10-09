@@ -28,17 +28,18 @@ import type {
   RelatedResult,
   ResolveFileRefResult,
 } from '../../adapter';
-import { fileHandle, ownedFileSource } from '../../adapter';
-import { uniformWalk } from '../hop';
-import { INBOUND_EMAIL_ADDRESS_VAR, inboundRoutingAddress } from './address';
-import { fetchEmailAttachment } from './provider';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
-import { META_RECORD_TYPE, makeUnstablePosition, positionData } from '../../types';
 import type { TriggerEvent } from '../../triggers/types';
+
+import { fileHandle, ownedFileSource } from '../../adapter';
+import { uniformWalk } from '../hop';
+import { INBOUND_EMAIL_ADDRESS_VAR, inboundRoutingAddress } from './address';
+import { fetchEmailAttachment } from './provider';
+import { META_RECORD_TYPE, makeUnstablePosition, positionData } from '../../types';
 import { BaseAdapter } from '../base';
 
 /** Stable adapter identifier. Matches `MutationContext.source.adapterType`. */

@@ -32,6 +32,8 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { getCoreQb, getValuationsQb } from '../../../../lib/kysely';
 import { Context } from '../../../../services/context';
 import { trpc } from '../../trpc';
@@ -45,7 +47,6 @@ import EventType from '../../../../generated/kysely/valuations/EventType';
 import InvestmentType from '../../../../generated/kysely/valuations/InvestmentType';
 import LegalEntityType from '../../../../generated/kysely/valuations/LegalEntityType';
 import PriceType from '../../../../generated/kysely/valuations/PriceType';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { userPrincipal } from '../../../../services/principal';
 
 const INVESTED_AT = '2024-01-01';

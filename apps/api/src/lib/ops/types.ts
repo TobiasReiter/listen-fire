@@ -1,7 +1,8 @@
+import type { SlackNotificationType } from '../slack';
+
 import OpsEventType from '../../generated/kysely/public/OpsEventType';
 import OpsSeverity from '../../generated/kysely/public/OpsSeverity';
 import OpsDetailLevel from '../../generated/kysely/automations/OpsDetailLevel';
-import type { SlackNotificationType } from '../slack';
 
 export { OpsEventType, OpsSeverity, OpsDetailLevel };
 

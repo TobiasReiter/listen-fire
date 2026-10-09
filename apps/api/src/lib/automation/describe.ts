@@ -26,6 +26,7 @@
  */
 
 import type { TranslationGraphRowBody } from '../../services/translation_graph/types';
+
 import { parseRowBodyLenient } from '../../services/translation_graph/types';
 import { getAdapterManifest } from '../../services/translation_graph/adapters/registry';
 import { resolveEventPhrase } from '../../services/translation_graph/vocabulary';

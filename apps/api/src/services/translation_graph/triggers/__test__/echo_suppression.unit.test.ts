@@ -9,15 +9,16 @@
 //
 // Both are pure (no DB / Redis), so the adapter is constructed directly.
 
-import {
-  consultEchoSuppression,
-  suppressSelfEnabled,
-} from '../echo_suppression';
-import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE } from '../../adapters/knowledge_graph';
 import type { Adapter } from '../../adapter';
 import type { TriggerEvent } from '../types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { MutationContext } from '../../mutation_context';
+
+import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE } from '../../adapters/knowledge_graph';
+import {
+  consultEchoSuppression,
+  suppressSelfEnabled,
+} from '../echo_suppression';
 
 const TEAM = 'team-1' as TeamId;
 

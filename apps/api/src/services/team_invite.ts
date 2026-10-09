@@ -10,11 +10,12 @@
 // address that is neither an existing account nor a pending invite has no way
 // in, and `resolveSignInForVerifiedEmail` is where every sign-in path asks.
 
-import { getCoreQb } from '../lib/kysely';
-import { logger } from './logger';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { UserId } from '../generated/kysely/core/User';
 import type { TeamInviteId } from '../generated/kysely/core/TeamInvite';
+
+import { logger } from './logger';
+import { getCoreQb } from '../lib/kysely';
 import { ProvisioningService } from './provisioning';
 
 /** Discriminated so the caller maps each refusal to its own message. */

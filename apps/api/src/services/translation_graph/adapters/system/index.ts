@@ -11,13 +11,14 @@
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { Adapter, AdapterManifest, EdgesFromResult, EventType } from '../../adapter';
-import { uniformWalk } from '../hop';
 import type {
   SchemaEntryPoint,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+
+import { uniformWalk } from '../hop';
 import { META_RECORD_TYPE, positionData } from '../../types';
 import { BaseAdapter } from '../base';
 import { SYSTEM_HANDBOOK_SECTION } from './handbook_section';

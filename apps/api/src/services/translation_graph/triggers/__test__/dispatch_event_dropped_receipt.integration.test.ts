@@ -21,18 +21,22 @@ jest.mock('../../adapters/resolve', () => {
 });
 
 import { sql } from 'kysely';
-import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
-import { cleanupTeam } from '../../../../test/harness/cleanup';
+import { SUPPRESS_SELF_KEY } from 'movement-lang';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../../generated/kysely/public/PipelineConfiguration';
+import type { Adapter, DiscriminableEvent } from '../../adapter';
+import type { TriggerEvent } from '../types';
+
+import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
+import { cleanupTeam } from '../../../../test/harness/cleanup';
 import { dispatchDiscriminableEvent } from '../dispatch_event';
 import { storeTriggerEvent, replayTriggerEvent } from '../event_store';
 import { resolveAdapter } from '../../adapters/resolve';
-import type { Adapter, DiscriminableEvent } from '../../adapter';
-import type { TriggerEvent } from '../types';
-import { SUPPRESS_SELF_KEY } from 'movement-lang';
+
+
 
 const mockedResolve = resolveAdapter as jest.Mock;
 

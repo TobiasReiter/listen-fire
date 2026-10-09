@@ -7,8 +7,7 @@
 // external builtin during tRPC type bundling instead of trying to inline
 // it (which fails on the named `Readable` type export). Type-only import;
 // no runtime effect.
-import type { Readable } from 'stream';
-
+import type { Readable } from "node:stream";
 import type { ExternalRecordRef, FieldEvidence, FileRef, Resource } from 'engine-contracts';
 import type { MutationContext } from './mutation_context';
 import type { TriggerType } from './triggers/types';

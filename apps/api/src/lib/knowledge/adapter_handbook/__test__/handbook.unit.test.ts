@@ -1,6 +1,7 @@
+import type { ChapterId } from '../types';
+
 import { readBook, getLibraryShelf } from '../../library';
 import { adapterHandbook } from '../index';
-import type { ChapterId } from '../types';
 
 // Distinctive late-in-the-chapter markers. Each lives deep enough in its
 // chapter that over-escaping (which silently TRUNCATES the rendered

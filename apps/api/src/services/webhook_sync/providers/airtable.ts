@@ -1,5 +1,5 @@
 // Airtable webhook provider
-import crypto from 'crypto';
+import crypto from "node:crypto";
 
 import type { WebhookProvider, WebhookRegistration } from './interface';
 

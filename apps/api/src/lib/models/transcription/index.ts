@@ -1,10 +1,11 @@
 // Speech to text behind the model map: the caller names a registry model, and
 // the map decides which vendor hears the audio.
 
+import type { TranscriptionModelName } from '../registry';
+
 import { assertRunBudget } from '../../run_spend';
 import { neverAsAny } from '../../utils/types';
 import { assertCallable, resolveModel } from '../map';
-import type { TranscriptionModelName } from '../registry';
 import { geminiTranscribe } from './gemini';
 import { openAiTranscribe } from './openai';
 

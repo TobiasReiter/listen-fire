@@ -15,8 +15,6 @@
 // contract evolve independently from the pre-existing webhook adapter.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import { parseWhatsappEvents } from '../../../webhook_sync/providers/whatsapp';
-import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
 import type {
   ActorCandidate,
   ActorIdentity,
@@ -33,19 +31,22 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { fileHandle, isFileRef, ownedFileSource, singleParentLink } from '../../adapter';
-import { naturalName } from '../name_resolution';
-import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
-import { fetchUrlToStream } from '../../engine/files/fetch-stream';
-import { streamFileRef } from '../../engine/files/retrieve';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+import type { TriggerEvent } from '../../triggers/types';
+
+import { parseWhatsappEvents } from '../../../webhook_sync/providers/whatsapp';
+import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
+import { fileHandle, isFileRef, ownedFileSource, singleParentLink } from '../../adapter';
+import { naturalName } from '../name_resolution';
+import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
+import { fetchUrlToStream } from '../../engine/files/fetch-stream';
+import { streamFileRef } from '../../engine/files/retrieve';
 import { META_RECORD_TYPE, makeUnstablePosition, positionData } from '../../types';
 import { uniformWalk } from '../hop';
-import type { TriggerEvent } from '../../triggers/types';
 import { BaseAdapter } from '../base';
 import { normalizeWhatsappPhone } from '../acting_user/phone';
 import { WHATSAPP_HANDBOOK_SECTION } from './handbook_section';

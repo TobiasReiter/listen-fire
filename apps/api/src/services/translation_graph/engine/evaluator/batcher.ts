@@ -14,9 +14,10 @@
 
 import type { z } from 'zod';
 import type { EphemeralNode, ExpressionType, SourcePosition } from '../../types';
-import { makeEphemeralPosition } from '../../types';
 import type { FieldEvidence } from '../../adapter';
 import type { FieldShape } from '../batched_extraction/schema_synthesis';
+
+import { makeEphemeralPosition } from '../../types';
 
 /**
  * What `registerExtractValue` resolves to — the typed scalar plus the

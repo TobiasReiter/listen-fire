@@ -12,6 +12,7 @@
 // one place that fixes all of them at once.
 
 import { randomBytes } from 'node:crypto';
+
 import type { Kysely } from 'kysely';
 
 import { slugify } from '../utils/string';

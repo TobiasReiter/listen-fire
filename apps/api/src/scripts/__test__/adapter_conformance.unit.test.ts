@@ -5,14 +5,14 @@
 
 import http from 'node:http';
 
+import { z } from 'zod';
+
 import { BASE_RUNTIME_CAPABILITIES } from '../../services/translation_graph/adapter';
 import {
   FAKE_CRM_COMPANY_TYPE,
   startFakeCrmServer,
   type FakeCrmServer,
 } from '../dev/fake_crm_adapter';
-import { z } from 'zod';
-
 import { runConformance, type CheckResult } from '../adapter_conformance_checks';
 
 const SECRET = 'conformance-test-secret';

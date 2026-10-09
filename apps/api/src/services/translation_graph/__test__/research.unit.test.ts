@@ -94,6 +94,10 @@ jest.mock('../../../adapters/registry', () => ({ services: {} }));
 
 // ── Module imports (after mocks) ──────────────────────────────────────────
 
+import type { ResearchEngineName } from '../engine/transforms/research';
+import type { ContextDependentInput } from '../engine/transforms';
+import type { SourcePosition } from '../types';
+
 import { services } from '../../../adapters/registry';
 import {
   configuredEngine,
@@ -104,9 +108,6 @@ import {
   RESEARCH_PLUGIN_MANIFEST,
 } from '../engine/transforms/research';
 import { makeStablePosition } from '../types';
-import type { ResearchEngineName } from '../engine/transforms/research';
-import type { ContextDependentInput } from '../engine/transforms';
-import type { SourcePosition } from '../types';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 

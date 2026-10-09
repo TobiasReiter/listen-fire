@@ -24,8 +24,9 @@ import { randomUUID } from 'node:crypto';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { PipelineConfigurationId } from '../../generated/kysely/public/PipelineConfiguration';
-import { getAutomationsQb } from '../../lib/kysely';
 import type { TriggerId } from '../../generated/kysely/automations/Trigger';
+
+import { getAutomationsQb } from '../../lib/kysely';
 
 async function withEnv<T>(overrides: Record<string, string>, fn: () => Promise<T>): Promise<T> {
   const saved: Record<string, string | undefined> = {};

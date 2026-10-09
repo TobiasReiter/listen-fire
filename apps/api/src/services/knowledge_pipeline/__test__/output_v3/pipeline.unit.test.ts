@@ -6,7 +6,6 @@
  * rather than call arguments.
  */
 
-import { KnowledgeGraphSimulator, AttioSimulator, SlackSimulator, WebhookSimulator, AffinitySimulator, AirtableSimulator, GoogleSheetsSimulator } from './simulators';
 import type { OutputV3Config, ActionNode, BranchNode } from '../../output_v3/schemas';
 import type { OutputExecutionContext } from '../../output_v3/resolve';
 import type { Changeset, ApplyResult } from '../../types';
@@ -14,6 +13,8 @@ import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../../../generated/kysely/knowledge/PropertyType';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
+import { KnowledgeGraphSimulator, AttioSimulator, SlackSimulator, WebhookSimulator, AffinitySimulator, AirtableSimulator, GoogleSheetsSimulator } from './simulators';
 
 // ---------------------------------------------------------------------------
 // Module-level simulator instances (reset per test)

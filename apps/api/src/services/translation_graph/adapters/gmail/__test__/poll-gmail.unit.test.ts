@@ -11,6 +11,8 @@ jest.mock('../../../../logger', () => ({
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { GmailApiClient } from '../client';
+
 import {
   GmailApiError,
   type GmailHistoryAddition,
@@ -18,7 +20,6 @@ import {
   type GmailMessageRef,
   type GmailProfile,
 } from '../../../../../adapters/gmail/apiClient';
-import type { GmailApiClient } from '../client';
 import { GmailPollSource, GMAIL_LABELS_SHAPE_ERROR, listenLabels } from '../poll';
 
 const TEAM = 'team-1' as TeamId;

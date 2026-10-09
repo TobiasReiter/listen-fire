@@ -12,13 +12,14 @@
 // So the Context is established HERE, at the seam every firing passes through,
 // rather than in each worker — a seventh worker cannot forget it.
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
+
 import { Context, unsafeCurrentContext } from '../../context';
 import { runInSystemContext } from '../../context/utils';
 import { userPrincipal } from '../../principal';
 import { logger } from '../../logger';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 
 /**
  * Run one firing inside a Context bound to its team. A Context already in

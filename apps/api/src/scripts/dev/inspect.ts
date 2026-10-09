@@ -36,7 +36,9 @@ import './_profile_loader';
 import { sql } from 'kysely';
 
 import { getQb, getAutomationsQb, getValuationsQb } from '../../lib/kysely';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { ensureDevLoopTeam } from './_lib';
 import { FAKE_CRM_ADAPTER_TYPE, fakeCrmBaseUrl } from './fake_crm_adapter';
 import { listAsksForTeam } from '../../services/translation_graph/adapters/ask/store';
@@ -45,6 +47,7 @@ import {
   listRunCallbacks,
   listTeamCallbacks,
 } from '../../services/movement_engine/callback_store';
+
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 
 const FAKE_CHANNELS_URL = process.env.FAKE_CHANNELS_URL || 'http://localhost:5556';

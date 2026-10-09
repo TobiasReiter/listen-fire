@@ -50,6 +50,7 @@ jest.mock('../team_scope', () => {
 });
 
 import type { RequestHandler } from 'express';
+
 import { runWithPrincipal, type Principal } from 'principal';
 
 import { editAutomationHandler, saveMovementHandler } from '../knowledge_agent_tools';

@@ -32,11 +32,11 @@
 //
 // Dependency-light by design: Node `http` types only, no express.
 
+import { MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from 'engine-contracts';
+
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
-
 import type { Adapter } from '../adapter';
-import { MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from 'engine-contracts';
 import type { MethodName, RpcResponseShape } from 'engine-contracts';
 
 /**

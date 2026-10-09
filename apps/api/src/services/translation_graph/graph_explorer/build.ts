@@ -8,8 +8,9 @@
 // assembled a whole node+edge graph up front; that mechanism is deleted, along
 // with the static-map CLI it existed to feed.
 
-import { getAutomationsQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import { getAutomationsQb } from '../../../lib/kysely';
 import { listAdapterCapabilities } from '../adapters/registry';
 
 export const PER_ADAPTER_TIMEOUT_MS = 20_000;

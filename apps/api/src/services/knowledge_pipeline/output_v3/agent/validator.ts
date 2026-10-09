@@ -1,8 +1,9 @@
 // 4-layer validator
 
-import { outputV3ConfigSchema } from '../schemas';
 import type { OutputV3Config, TreeNode, ActionNode, BranchNode } from '../schemas';
 import type { OntologySummary, ValidationError, ValidationWarning, ValidationResult } from './types';
+
+import { outputV3ConfigSchema } from '../schemas';
 
 // Known adapter action types and their required config fields
 const ADAPTER_CONFIG_REQUIREMENTS: Record<string, { required: string[]; optional: string[] }> = {

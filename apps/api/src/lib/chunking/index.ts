@@ -65,7 +65,7 @@ function chunkByParagraphWithOverlap(text: string, maxTokens: number, overlap: n
   while (i < segments.length) {
     // Build a chunk starting from segment i
     let chunkContent = segments[i].content;
-    let chunkStart = segments[i].start;
+    const chunkStart = segments[i].start;
     let chunkEnd = segments[i].end;
     let j = i + 1;
 

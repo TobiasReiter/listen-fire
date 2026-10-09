@@ -15,9 +15,10 @@ jest.mock('../catalog', () => ({
   describeMovementLandings: (...args: unknown[]) => landingsMock(...args),
 }));
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { renderConnectionDescription } from '../connection_digest';
 import { describeConnectionCompact } from '../describe_connection';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const companiesFull: DescribedInstance = require('./__fixtures__/attio_companies_describe.json');

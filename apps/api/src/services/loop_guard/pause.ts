@@ -9,12 +9,14 @@
 // condition usually persists and would oscillate). Resume clears the columns
 // AND resets the Redis windows so the automation starts clean.
 
-import { getAutomationsQb } from '../../lib/kysely';
 import type { TriggerId } from '../../generated/kysely/automations/Trigger';
+import type { GuardSignal } from './types';
+
+import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { guardKeys, resetWindow } from './store';
 import { resolveThresholds } from './thresholds';
-import type { GuardSignal } from './types';
+
 
 export interface GuardPausedState {
   pausedAt: Date | null;

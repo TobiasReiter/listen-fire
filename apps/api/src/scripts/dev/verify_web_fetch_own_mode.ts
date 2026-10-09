@@ -17,10 +17,10 @@
  * or two Bright Data page reads. Run it once, read the output, stop.
  */
 import './_profile_loader';
-
 import { anthropicWebChat } from '../../lib/anthropic';
 import { logger } from '../../services/logger';
 import { ScraperService } from '../../services/scraper';
+
 import type { PageFetchResult } from '../../lib/anthropic';
 
 /** A small, stable company site, named on the command line when a different

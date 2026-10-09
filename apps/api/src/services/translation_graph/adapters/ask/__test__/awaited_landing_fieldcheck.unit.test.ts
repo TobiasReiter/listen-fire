@@ -17,8 +17,6 @@
 // movement-lang's own jest is broken locally, so the language layer is exercised
 // through apps/api's ts-jest (per repo convention).
 
-import { AskAdapter } from '../index';
-import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
 import {
   parseProgram,
   checkProgram,
@@ -26,8 +24,12 @@ import {
   type CatalogSnapshot,
   type InstanceSchema,
 } from 'movement-lang';
+
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { SchemaTypeDescriptor } from '../../../types';
+
+import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
+import { AskAdapter } from '../index';
 
 async function askSnapshot(): Promise<{ schema: InstanceSchema; snapshot: CatalogSnapshot }> {
   const adapter = new AskAdapter('team-1' as TeamId);

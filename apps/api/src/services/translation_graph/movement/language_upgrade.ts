@@ -32,6 +32,7 @@ import {
 } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { getAutomationsQb } from '../../../lib/kysely';
 import { logger } from '../../logger';
 import {

@@ -4,6 +4,7 @@ import { normalizeObjectSchema } from '@modelcontextprotocol/sdk/server/zod-comp
 import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
+
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 
 import { getEnvVar } from '../../lib/utils/environment';

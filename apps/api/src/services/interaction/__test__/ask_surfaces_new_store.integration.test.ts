@@ -9,11 +9,12 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
-import { cleanupTeam } from '../../../test/harness/cleanup';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { AskId } from '../../../generated/kysely/asks/Ask';
+
+import { cleanupTeam } from '../../../test/harness/cleanup';
+import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { createAsk, getAsk } from '../../translation_graph/adapters/ask/store';
 import {
   listAskRecordsForTeam,

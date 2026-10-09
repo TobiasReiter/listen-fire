@@ -1,4 +1,5 @@
 import type { InstanceSchema } from 'movement-lang';
+
 import { normaliseSchemaForAgent } from '../agent_schema';
 
 function fixture(): InstanceSchema {

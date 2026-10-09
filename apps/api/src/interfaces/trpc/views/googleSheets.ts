@@ -23,6 +23,9 @@
 
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getAutomationsQb } from '../../../lib/kysely';
@@ -37,8 +40,6 @@ import {
   type GrantedSpreadsheet,
 } from '../../../services/translation_graph/adapters/google_sheets/grants';
 import { resolveCredentialIdByImportName } from '../../../services/translation_graph/movement/catalog';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
 /** Identify a credential either by raw id (credential UI) or by the movement

@@ -12,10 +12,11 @@
  *
  * Usage: FAKE_BASE=http://localhost:6199/affinity ts-node … verify_affinity_person_name.ts
  */
-import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
-import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
+import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6199/affinity';
 
@@ -25,7 +26,7 @@ const BASE = process.env.FAKE_BASE ?? 'http://localhost:6199/affinity';
  *  is expected; `affinity.splitName` is the one under test. */
 const modelCalls: string[] = [];
 /** What the split prompt gets told, when it is reached at all. */
-let splitAnswer = JSON.stringify({ first_name: null, last_name: null });
+const splitAnswer = JSON.stringify({ first_name: null, last_name: null });
 
 const SPLIT_PROMPT = 'splits a name into first name and last name';
 

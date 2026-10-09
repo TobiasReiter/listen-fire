@@ -56,10 +56,12 @@ import {
   type InstanceSchema,
   type PositionSchema,
 } from 'movement-lang';
+
 import type { Expression } from '#shared/expression/types';
 import type { ListenConfigKey } from '../adapter';
 import type { SchemaTypeDescriptor } from '../types';
 import type { CachedAdapterInstance } from './instance_cache';
+
 import { instanceSchemaFromDescriptors } from './schema_projection';
 
 export interface EventNarrowingInput {

@@ -11,9 +11,10 @@
 
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
 import type { FileRef, WriteInput, WriteResult } from '../../adapter';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { singleParentLink } from '../../adapter';
 import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { logger } from '../../../logger';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE } from './types';
 import { createNoopTracer } from './shared';

@@ -11,6 +11,8 @@ import type {
   FunctionExpr,
 } from './expression';
 import type { OutputExecutionContext, ResolvedEdge } from './resolve';
+import type { runKgQuery as RunKgQueryFn } from './kg_query_runner';
+
 import {
   selectValues,
   aggregate,
@@ -21,8 +23,8 @@ import {
   selectResourceField,
 } from './resolve';
 import { evaluateCondition } from './filter';
-import type { runKgQuery as RunKgQueryFn } from './kg_query_runner';
 import { logger } from '../../logger';
+
 import { compareOrderValues } from '#shared/expression/order_limit';
 
 // ── Evaluation context ──

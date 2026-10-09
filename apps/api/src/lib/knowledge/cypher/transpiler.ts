@@ -10,6 +10,7 @@ import type {
   PatternPath,
   RelationshipPattern,
 } from './types';
+
 import { ParseError } from './parser';
 
 // Cypher → PostgreSQL function name mapping

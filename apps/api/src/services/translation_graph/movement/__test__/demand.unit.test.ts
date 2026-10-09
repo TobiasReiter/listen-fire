@@ -11,7 +11,9 @@ import {
   type CatalogSnapshot,
   type InstanceSchema,
 } from 'movement-lang';
+
 import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+
 import {
   closeDemandOverChains,
   closeDemandOverWriteVariants,

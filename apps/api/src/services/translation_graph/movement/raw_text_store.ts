@@ -8,9 +8,10 @@
 // movement path stores raw text as extraction provenance, not as
 // search-indexed knowledge.
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { getKnowledgeQb } from '../../../lib/kysely';
 import { checksum } from '../../../lib/utils/hash';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 
 /** Extracted text, stored once per distinct content: the stable id a file's
  *  text is cited by. Undefined when nothing was stored. */

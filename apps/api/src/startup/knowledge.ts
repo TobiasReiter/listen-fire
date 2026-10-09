@@ -6,6 +6,8 @@
 // drainer runs the same either way. Whether THIS process is also the consumer
 // is the composition root's question, in `./index`.
 
+import type { WorkerRegistry } from './registry';
+
 import {
   OUTBOX_DRAINER,
   readOutboxHealth,
@@ -16,7 +18,6 @@ import {
   readArbitrationHealth,
   startKnowledgeArbitrationWorker,
 } from '../services/knowledge/arbitration/worker';
-import type { WorkerRegistry } from './registry';
 
 const knowledgeWorkers: WorkerRegistry = {
   unit: 'knowledge',

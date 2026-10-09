@@ -33,6 +33,7 @@
 import { z } from 'zod';
 
 import type { AuthStrategy } from '../services/translation_graph/protocol/client';
+
 import { formatReport, messageOf, runConformance, type ConformanceOptions } from './adapter_conformance_checks';
 
 // ── The command line ─────────────────────────────────────────────────────────

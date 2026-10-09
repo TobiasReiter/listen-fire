@@ -253,6 +253,10 @@ jest.mock('../../../../services/context', () => ({
   unsafeCurrentContext: jest.fn(() => undefined),
 }));
 
+import { mockCatalog } from 'movement-lang';
+
+import type { DerivedTriggerRow } from '../store';
+
 import {
   deleteMovement,
   getMovement,
@@ -261,9 +265,8 @@ import {
   planListenerReconciliation,
   saveMovement,
 } from '../provision';
-import type { DerivedTriggerRow } from '../store';
 import { movementSourceHash } from '../version_store';
-import { mockCatalog } from 'movement-lang';
+
 
 const db = jest.requireMock('../../../../lib/kysely') as {
   __tables: Record<string, Array<Record<string, unknown>>>;

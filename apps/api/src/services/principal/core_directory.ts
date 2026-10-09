@@ -14,10 +14,10 @@
 // only ever admit people who are NOT members.
 
 import type { Directory, DirectoryTeamAssociation, DirectoryUser } from 'principal';
-
-import { getCoreQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
+
+import { getCoreQb } from '../../lib/kysely';
 
 interface PersonRow {
   id: UserId;

@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
+import type { Kysely } from 'kysely';
+
 import { trpc } from '../../trpc';
 import { currentContext } from '../../../../services/context';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { getSchema, stripCypherComments, executeCypher } from '../../../../lib/knowledge/cypher';
 import { parseAnyCypher, ParseError } from '../../../../lib/knowledge/cypher/parser';
 import { getKnowledgeQb } from '../../../../lib/kysely';
-import type { Kysely } from 'kysely';
 import { userProcedure as sharedUserProcedure } from '../../procedures';
 
 function backtickIfNeeded(name: string): string {

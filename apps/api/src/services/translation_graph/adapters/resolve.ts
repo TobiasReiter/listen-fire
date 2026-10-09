@@ -22,8 +22,8 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import type { Adapter } from '../adapter';
 import type { TriggerType } from '../triggers/types';
-import { getAutomationsQb } from '../../../lib/kysely';
 
+import { getAutomationsQb } from '../../../lib/kysely';
 import {
   getAdapter,
   hasAdapter,

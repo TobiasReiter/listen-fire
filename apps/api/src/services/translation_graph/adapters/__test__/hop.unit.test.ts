@@ -17,6 +17,7 @@ const described = (target: EdgeTargetNode | undefined): DescribedTargetNode => {
   return target;
 };
 import { META_RECORD_TYPE, makeUnstablePosition } from '../../types';
+
 import type { SchemaTypeDescriptor } from '../../types';
 
 const ROOT: SchemaTypeDescriptor = {

@@ -14,12 +14,13 @@ jest.mock('../../../lib/kysely', () => ({
   getAsksQb: () => ({ insertInto: insertInto.mockReturnValue({ values: values.mockReturnValue({ execute }) }) }),
 }));
 
+import type { AskRecord } from '../../translation_graph/adapters/ask/store';
+
 import { askSettleDelivery } from '../../translation_graph/adapters/ask/delivery_mode';
 import {
   notifyAskSettled,
   registerAskSettledNotifier,
 } from '../../translation_graph/adapters/ask/notifier';
-import type { AskRecord } from '../../translation_graph/adapters/ask/store';
 
 function settled(callbackUrl: string | null): AskRecord {
   return {

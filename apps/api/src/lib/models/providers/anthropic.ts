@@ -2,8 +2,9 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
-import { getEnvVar } from '../../utils/environment';
 import type { ChatProvider } from '../chat';
+
+import { getEnvVar } from '../../utils/environment';
 
 // Built at first use, not at import: `getEnvVar` throws in production on an
 // unset key, and merely importing this must not stop a deployment that routes

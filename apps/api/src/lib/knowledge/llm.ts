@@ -12,17 +12,18 @@
 // call that fails at the vendor. The arbitration worker reads that and lets its
 // queue grow visibly rather than burning attempts on a call that cannot succeed.
 
-import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
+
+import type Anthropic from '@anthropic-ai/sdk';
+import type { ChatProvider } from '../models/chat';
+import type { Provider, Resolved } from '../models/map';
+import type { ChatModelName } from '../models/registry';
 
 import { missingGoogleServiceAccountVars } from '../google_cloud';
 import { chatCallFor } from '../models/chat';
-import type { ChatProvider } from '../models/chat';
 import { providerCredentialsPresent, resolveModel } from '../models/map';
-import type { Provider, Resolved } from '../models/map';
 import { anthropicKeyedChatProvider } from '../models/providers/anthropic';
 import { parseChatModelName } from '../models/registry';
-import type { ChatModelName } from '../models/registry';
 import { neverAsAny } from '../utils/types';
 import { logger } from '../../services/logger';
 

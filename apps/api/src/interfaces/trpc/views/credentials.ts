@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import type { ConnectMethod } from '../../../services/credentials/connect_link';
+import type { SchemaTypeDescriptor } from '../../../services/translation_graph/types';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+
 import { getAutomationsQb, getQb } from '../../../lib/kysely';
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
@@ -35,7 +39,6 @@ import { credentialLifecycle } from '../../../services/credentials/credential_li
 import { persistCredential } from '../../../services/credentials/persist_credential';
 import { intrinsicProvisionerForType } from '../../../services/credentials/intrinsic_provision';
 import { connectMethodForType } from '../../../services/credentials/connect_link';
-import type { ConnectMethod } from '../../../services/credentials/connect_link';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../lib/recording';
 import { resolveAdapter } from '../../../services/translation_graph/adapters/resolve';
 import { hasAdapter } from '../../../services/translation_graph/adapters/registry';
@@ -48,12 +51,10 @@ import {
   adapterTypeForRef,
   credentialsIdFromRef,
 } from '../../../services/translation_graph/types';
-import type { SchemaTypeDescriptor } from '../../../services/translation_graph/types';
 import { TeamId } from '../../../generated/kysely/core/Team';
 import { UserId } from '../../../generated/kysely/core/User';
 import { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import { reportedFailureReason } from '../../../services/translation_graph/runs/trigger_run';
 
 function maybeFakeCreds<T extends Record<string, unknown>>(creds: T, serviceType: string): T {

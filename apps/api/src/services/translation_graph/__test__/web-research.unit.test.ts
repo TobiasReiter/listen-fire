@@ -41,10 +41,11 @@ jest.mock('../engine/transforms/fetch_resource', () => ({
 
 // ── Module imports (after mocks) ──────────────────────────────────────────
 
-import { webResearchImpl, WEB_RESEARCH_PLUGIN_MANIFEST } from '../engine/transforms/web-research';
-import { makeStablePosition } from '../types';
 import type { ContextDependentInput } from '../engine/transforms';
 import type { SourcePosition } from '../types';
+
+import { webResearchImpl, WEB_RESEARCH_PLUGIN_MANIFEST } from '../engine/transforms/web-research';
+import { makeStablePosition } from '../types';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 

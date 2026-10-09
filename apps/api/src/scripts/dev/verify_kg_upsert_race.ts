@@ -14,7 +14,8 @@
  */
 import './_profile_loader';
 
-import { randomUUID } from 'crypto';
+import { randomUUID } from "node:crypto";
+
 import { ensureDevLoopTeam } from './_lib';
 import { getAutomationsQb, getKnowledgeQb } from '../../lib/kysely';
 import { loadKgCredentials } from '../../services/translation_graph/adapters/kg_client';

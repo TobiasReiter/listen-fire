@@ -13,9 +13,12 @@
 //      validity leaves 'valid' (unverified — introspection now unreachable)
 
 import { randomUUID } from 'node:crypto';
+
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { FakeCrmServer } from '../../../../scripts/dev/fake_crm_adapter';
+
 import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { saveMovement } from '../provision';
 import { runMovementNow } from '../run_now';
 import { getMovementRow } from '../store';
@@ -25,7 +28,7 @@ import {
   FAKE_CRM_COMPANY_TYPE,
   startFakeCrmServer,
 } from '../../../../scripts/dev/fake_crm_adapter';
-import type { FakeCrmServer } from '../../../../scripts/dev/fake_crm_adapter';
+
 
 jest.mock('../../../credentials/credential_lifecycle', () => ({
   credentialLifecycle: () => undefined,

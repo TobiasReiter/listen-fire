@@ -4,7 +4,6 @@
 // with the usual systems connected.
 
 import type { TeamRef } from 'principal';
-
 import type { WalkedEdge, WalkedNode, WalkedProperty } from '../walk';
 
 const snapshotMock = jest.fn();
@@ -16,6 +15,8 @@ jest.mock('../catalog', () => ({
   describeMovementLandings: (...args: unknown[]) => landingsMock(...args),
 }));
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   CONNECTIONS_DIGEST_CHAR_CAP,
   SYSTEM_DIGEST_CHAR_CAP,
@@ -25,7 +26,6 @@ import {
   type SystemDigestInput,
 } from '../connection_digest';
 import { renderGetStarted } from '../get_started';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 const text = (extra: Partial<WalkedProperty> = {}): WalkedProperty => ({
   type: 'text',

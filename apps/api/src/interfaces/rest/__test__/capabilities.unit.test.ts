@@ -2,9 +2,11 @@
 // must hide what is not here. Derived from the SAME two functions the server-side
 // product gate and the identity composition root read, so it can never drift.
 
-import express from 'express';
-import type { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
+
+import express from 'express';
+
+import type { Server } from 'node:http';
 
 import { capabilitiesFrom, capabilitiesHandler } from '../capabilities';
 

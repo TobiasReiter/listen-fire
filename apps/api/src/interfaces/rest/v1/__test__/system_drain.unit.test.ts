@@ -2,8 +2,10 @@
 // The drain itself is tested with the work table; this pins only the door — scope,
 // body validation, and what reaches drainUntilIdle.
 
-import express, { Router } from 'express';
 import { createServer, type Server } from 'node:http';
+
+import express, { Router } from 'express';
+
 import type { AddressInfo } from 'node:net';
 
 const drainUntilIdle = jest.fn();

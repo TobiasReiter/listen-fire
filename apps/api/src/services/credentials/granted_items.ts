@@ -2,8 +2,9 @@
 // drive.file scope there is no list-all API; the Picker grants access one item
 // at a time and each pick is recorded here against the Google credential, tagged
 // with its real Drive mime_type so each adapter filters to what it cares about.
-import { getAutomationsQb } from '../../lib/kysely';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { getAutomationsQb } from '../../lib/kysely';
 
 export const DRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 export const SPREADSHEET_MIME = 'application/vnd.google-apps.spreadsheet';

@@ -5,10 +5,11 @@
 //   - Does NOT leak `authoringHints` (agent-only authoring guidance) to the caller.
 //   - Hidden adapters (manual, cron, etc.) are excluded.
 
-import express from 'express';
-import type { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 
+import express from 'express';
+
+import type { Server } from 'node:http';
 import type { AdapterManifest } from '../../../services/translation_graph/adapter';
 
 const ATTIO_MANIFEST: AdapterManifest = {

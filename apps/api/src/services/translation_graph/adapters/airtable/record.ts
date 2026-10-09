@@ -5,7 +5,6 @@
 // adapter carries its own behavioral reference.
 
 import type { AirtableAPIClient } from '../../../../adapters/airtable/apiClient';
-import { logger } from '../../../logger';
 import type { UniquenessConstraints } from '../../uniqueness';
 import type {
   ResolveEntityInput,
@@ -25,8 +24,10 @@ import type {
   DeleteResult,
   LinkedObjectCandidate,
 } from '../../adapter';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import { logger } from '../../../logger';
 import { exposeFile } from '../../engine/files/expose';
 import { UPDATE_NOT_FOUND, isHttp404 } from '../not_found';
 import {

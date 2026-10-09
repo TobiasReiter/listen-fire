@@ -10,14 +10,16 @@
 // / Postgres; the document store is in memory.
 
 import http from 'node:http';
+
 import type { Readable } from 'node:stream';
 import type { AddressInfo } from 'node:net';
-
 import type { Adapter } from '../../../adapter';
+import type { RemoteAdapterConfig } from '../index';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { createAdapterProtocolHandler } from '../../../protocol/server';
 import { createRemoteAdapter, fetchRemoteManifest, RemoteAdapter } from '../index';
-import type { RemoteAdapterConfig } from '../index';
 
 const EXPOSED_URL = 'https://example.test/api/files/blob/xyz';
 
@@ -33,7 +35,7 @@ jest.mock('../../../engine/files/expose', () => ({
 }));
 // eslint-disable-next-line import/first
 import { exposeFile } from '../../../engine/files/expose';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
 
 /** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
 const CONFIG_TEAM_ID = '00000000-0000-4000-8000-0000000000c1' as TeamId;

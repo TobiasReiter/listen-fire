@@ -13,6 +13,7 @@
 
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
 import type { UpdateInput, UpdateResult, WriteInput, WriteResult } from '../../adapter';
+
 import { containerAssociation, singleParentLink } from '../../adapter';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE, type DecodedTypeId } from './types';
 import { createNoopTracer, writeCustomFieldValues } from './shared';

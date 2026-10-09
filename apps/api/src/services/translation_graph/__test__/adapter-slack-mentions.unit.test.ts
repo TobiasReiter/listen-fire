@@ -7,6 +7,9 @@
  * roster and degrades safely when the roster can't be fetched.
  */
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
+
 import {
   matchMember,
   resolveMentions,
@@ -15,9 +18,8 @@ import {
   finalizeMessageText,
   type RosterMember,
 } from '../adapters/slack/mentions';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 import { createUnifiedMessage } from '../adapters/slack/write';
-import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
+
 
 type SlackClient = ReturnType<typeof getSlackClient>;
 

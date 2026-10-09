@@ -1,3 +1,7 @@
+import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { V3Adapter } from './types';
+
 import { attioCredsParser, getAttioClient } from '../../../../adapters/attio/apiClient';
 import { AttioOperations } from '../../../../adapters/attio/operations';
 import { affinityCredsParser, getAffinityClient } from '../../../../adapters/affinity/apiClient';
@@ -10,8 +14,6 @@ import { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClie
 import { webhookGraphOutputConfigSchema } from '../../../../adapters/webhook/configSchema';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { decryptToken } from '../../../../lib/credentials';
-import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { logger } from '../../../logger';
 import { createAttioV3Adapter } from './attio';
 import { createAffinityV3Adapter } from './affinity';
@@ -26,7 +28,7 @@ import { DropboxClient } from '../../../../adapters/dropbox/apiClient';
 import { services } from '../../../../adapters/registry';
 import { currentContext } from '../../../context';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import type { V3Adapter } from './types';
+
 
 async function initializeV3Adapter(output: {
   id: string;

@@ -1,11 +1,12 @@
 import { sql } from 'kysely';
 import uniq from 'lodash/uniq';
 
+import type { EmbeddingDestinationName } from '../lib/models/embedding/destinations';
+
 import { getKnowledgeQb } from '../lib/kysely';
 import { chunkText, isWithinTokenLimit, CHUNK_SIZE, truncateToTokenLimit } from '../lib/chunking';
 import { embed } from '../lib/models/embedding';
 import { embeddingDestinations } from '../lib/models/embedding/destinations';
-import type { EmbeddingDestinationName } from '../lib/models/embedding/destinations';
 import { UserService } from '../services/user';
 import { currentContext } from './context';
 import { RawTextId } from '../generated/kysely/knowledge/RawText';

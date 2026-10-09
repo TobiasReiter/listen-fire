@@ -2,8 +2,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
 
-import { APP_MIME_TYPE, buildMcpServer } from '../server';
 import type { LocalApiCall, TopLevelTool, ToolApp } from '../server';
+
+import { APP_MIME_TYPE, buildMcpServer } from '../server';
 
 /**
  * The in-chat view, asserted where a host actually reads it.

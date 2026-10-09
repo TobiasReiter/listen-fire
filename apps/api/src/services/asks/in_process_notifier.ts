@@ -15,9 +15,10 @@
 // process. Being registered is what tells the cancel door a drain exists here. The kick asks
 // this process's drain for a pass now rather than on its next tick.
 
+import type { AskRecord } from '../translation_graph/adapters/ask/store';
+
 import { registerAskSettledNotifier } from '../translation_graph/adapters/ask/notifier';
 import { ASK_ADAPTER_TYPE } from '../translation_graph/adapters/ask/type';
-import type { AskRecord } from '../translation_graph/adapters/ask/store';
 import { enqueueAwaitWake } from '../movement_engine/await_wake';
 import { notifyWork } from '../work/drain';
 

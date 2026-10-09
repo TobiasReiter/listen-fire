@@ -2,10 +2,11 @@
 // in platform_token_registry.ts stays as a test/placeholder; this module is the
 // production implementation, backed by `public.platform_owned_token`.
 
-import { getAutomationsQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { Actor } from '../mutation_context';
 import type { PlatformTokenRegistry } from './platform_token_registry';
+
+import { getAutomationsQb } from '../../../lib/kysely';
 
 export class PostgresPlatformTokenRegistry implements PlatformTokenRegistry {
   async isPlatformOwned(input: {

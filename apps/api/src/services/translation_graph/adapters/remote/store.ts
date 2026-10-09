@@ -11,10 +11,11 @@
 
 import { sql } from 'kysely';
 
-import { getAutomationsQb } from '../../../../lib/kysely';
-import { RemoteAdapterManifestFile } from './manifest';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { RemoteAdapter as RemoteAdapterRow } from '../../../../generated/kysely/automations/RemoteAdapter';
+
+import { getAutomationsQb } from '../../../../lib/kysely';
+import { RemoteAdapterManifestFile } from './manifest';
 
 export type { RemoteAdapterRow };
 

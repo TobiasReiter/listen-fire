@@ -1,4 +1,3 @@
-import { getKnowledgeQb } from '../../lib/kysely';
 import type { ExtractionGraphId } from '../../generated/kysely/knowledge/ExtractionGraph';
 import type { ExtractionGraphNodeId } from '../../generated/kysely/knowledge/ExtractionGraphNode';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
@@ -10,7 +9,6 @@ import type EvaluationStrategy from '../../generated/kysely/knowledge/Evaluation
 import type NodeTypeCategory from '../../generated/kysely/knowledge/NodeTypeCategory';
 import type { EdgeFilter, PluginHookRef } from '../../lib/knowledge/templates/types';
 import type { InputPropertyMapping } from '../../adapters/pipeline/inbound/metadata';
-import { parsePropertyMappings } from './input_mappings';
 import type {
   ExtractionTree,
   ExtractionTreeNode,
@@ -18,6 +16,9 @@ import type {
   ExtractionTreeEdgeType,
   ExtractionTreePropertyDef,
 } from './types';
+
+import { parsePropertyMappings } from './input_mappings';
+import { getKnowledgeQb } from '../../lib/kysely';
 
 interface NodeTypeRow {
   id: NodeTypeId;

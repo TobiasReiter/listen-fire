@@ -16,6 +16,12 @@
 
 import type { LanguageVersion } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { MovementTraceEntry } from '../../movement_engine/expression';
+import type { ParkedScopeState } from '../../movement_engine/serialize';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
+import type { TriggerEvent } from '../triggers/types';
+
 import { describeError } from '../../../lib/utils/error';
 import { logger } from '../../logger';
 import {
@@ -28,16 +34,11 @@ import {
   type CancelGate,
   type MovementRunResult,
 } from '../../movement_engine/run';
-import type { MovementTraceEntry } from '../../movement_engine/expression';
 import { makeDbCancelGate } from '../../movement_engine/cancel_gate';
 import { failRunAndCancelRequests } from '../../interaction/run_failure';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { runCostCapFromEnv } from '../../../lib/run_spend';
-import type { ParkedScopeState } from '../../movement_engine/serialize';
-import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import { noteFirstFiringLeaseLost, TriggerRunRecorder, type TriggerRunTriggerType } from '../runs/trigger_run';
-import type { TriggerEvent } from '../triggers/types';
 import { runCatalogSnapshotForTeam } from './catalog';
 import { getMovementRow, recordValidityOutcome, type MovementRow } from './store';
 import { assessMovementValidity, validateMovementForTeam } from './authoring';

@@ -8,17 +8,8 @@
 // constructs the API client on first use, redirecting to fake-channels for
 // the dev-loop test-harness team (mirrors Attio).
 
-import { decryptToken } from '../../../../lib/credentials';
-import { getAutomationsQb } from '../../../../lib/kysely';
-import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
-import {
-  AirtableAPIClient,
-  getAirtableClient,
-} from '../../../../adapters/airtable/apiClient';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   AdapterManifest,
   DeleteInput,
@@ -47,6 +38,16 @@ import type {
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+
+import { decryptToken } from '../../../../lib/credentials';
+import { getAutomationsQb } from '../../../../lib/kysely';
+import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
+import { logger } from '../../../logger';
+import {
+  AirtableAPIClient,
+  getAirtableClient,
+} from '../../../../adapters/airtable/apiClient';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import {
   META_RECORD_TYPE,
   makeStablePosition,

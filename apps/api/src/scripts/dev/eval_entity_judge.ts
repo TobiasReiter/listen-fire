@@ -32,6 +32,8 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
+import type { ExternalRecordRef } from '../../services/translation_graph/adapter';
+
 import {
   GENERATIVE_MATCH_THRESHOLD,
   JEV_SAME_THRESHOLD,
@@ -39,7 +41,6 @@ import {
   judgeEntityMatchGenerativeRaw,
   judgeEntityMatchViaJevRaw,
 } from '../../services/translation_graph/engine/entity_match';
-import type { ExternalRecordRef } from '../../services/translation_graph/adapter';
 
 const FIXTURES_PATH = path.join(__dirname, '_fixtures/entity_match_labelled.jsonl');
 

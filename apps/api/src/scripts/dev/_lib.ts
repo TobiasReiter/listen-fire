@@ -21,10 +21,12 @@ import { intrinsicProvisionerForType } from '../../services/credentials/intrinsi
 import { persistCredential } from '../../services/credentials/persist_credential';
 import { Context } from '../../services/context';
 import { ensurePublicIdentity } from '../../startup/core';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
 import type { PipelineConfigurationId } from '../../generated/kysely/public/PipelineConfiguration';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { installRemoteAdapterFromManifest } from '../../services/translation_graph/adapters/remote/install';
 import { CurrencyAsset } from '../../lib/datasources/currency';

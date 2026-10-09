@@ -5,8 +5,9 @@
 // ends) is tested without a thread. The one threaded test exists to prove the
 // wiring: a real worker, a really blocked loop, and the line that comes back.
 
-import { decideStall, startEventLoopWatchdog } from '../event_loop_watchdog';
 import type { StallState, WatchdogEvent } from '../event_loop_watchdog';
+
+import { decideStall, startEventLoopWatchdog } from '../event_loop_watchdog';
 
 const STALL_AFTER_MS = 5_000;
 const REPORT_AT_MS = [5_000, 30_000];

@@ -7,16 +7,18 @@
 // catch (the brief's AZ-2 class) — so it's verified end-to-end against Postgres.
 
 import { randomUUID } from 'node:crypto';
-import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
-import { cleanupTeam } from '../../../../test/harness/cleanup';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
 import type { PipelineConfigurationId } from '../../../../generated/kysely/public/PipelineConfiguration';
-import { TriggerRunRecorder } from '../../runs/trigger_run';
 import type { MovementRunResult } from '../../../movement_engine/run';
 import type { TriggerEvent } from '../../triggers/types';
+
+import { TriggerRunRecorder } from '../../runs/trigger_run';
+import { cleanupTeam } from '../../../../test/harness/cleanup';
+import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
 import { listMovementRuns, inspectMovementRun } from '../run_now';
 
 function makeEvent(): TriggerEvent {

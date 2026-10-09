@@ -24,6 +24,7 @@ jest.mock('../native_valuations_webhook', () => ({
 }));
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   NATIVE_VALUATIONS_MANIFEST,
   createNativeValuationsAdapter,

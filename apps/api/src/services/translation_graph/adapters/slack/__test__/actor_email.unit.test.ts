@@ -22,6 +22,7 @@ jest.mock('../../../../../lib/recording', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { TriggerEvent } from '../../../triggers/types';
+
 import { SlackAdapter } from '../index';
 
 const TEAM = 'team-1' as TeamId;

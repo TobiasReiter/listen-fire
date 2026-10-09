@@ -1,6 +1,7 @@
-import { getAutomationsQb, getQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
+
+import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { reportedFailureReason } from '../translation_graph/runs/trigger_run';
 
 interface ListTriggerRunsArgs {

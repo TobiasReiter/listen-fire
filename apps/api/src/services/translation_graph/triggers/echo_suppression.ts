@@ -23,9 +23,10 @@
 
 import { SUPPRESS_SELF_KEY } from 'movement-lang';
 
-import { logger } from '../../logger';
 import type { Adapter } from '../adapter';
 import type { TriggerEvent } from './types';
+
+import { logger } from '../../logger';
 
 /**
  * Read the opt-in `suppress_self` flag off a persisted trigger config. The flag

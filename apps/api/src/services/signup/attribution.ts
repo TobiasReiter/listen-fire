@@ -2,9 +2,10 @@
 // referrer, captured transiently from the signup URL (no client cookie) and
 // written to `signup_event` on new-account creation. Read by the admin app.
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { getQb } from '../../lib/kysely';
 import { logger } from '../logger';
-import type { TeamId } from '../../generated/kysely/core/Team';
 
 export interface SignupAttribution {
   utmSource?: string | null;

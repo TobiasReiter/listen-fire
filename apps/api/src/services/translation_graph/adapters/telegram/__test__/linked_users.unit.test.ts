@@ -51,6 +51,7 @@ jest.mock('../../../../../lib/kysely', () => ({
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
 import { isStablePosition, makeMetaPosition, makeStablePosition } from '../../../types';
 import { TelegramAdapter } from '../index';
 

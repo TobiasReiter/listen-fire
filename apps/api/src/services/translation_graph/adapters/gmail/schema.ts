@@ -12,6 +12,7 @@
 
 import type { EdgeCapability } from '#shared/expression/types';
 import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+
 import { META_RECORD_TYPE } from '../../types';
 import {
   GMAIL_ATTACHMENT_DISPLAY_NAME,

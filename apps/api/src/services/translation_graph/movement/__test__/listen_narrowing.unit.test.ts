@@ -23,8 +23,10 @@
 //     neither is discarded and neither wins.
 
 import { eventAddressKey, type EventAddressRef, type InstanceSchema } from 'movement-lang';
+
 import type { ListenConfigKey } from '../../adapter';
 import type { SchemaTypeDescriptor } from '../../types';
+
 import { narrowEventPositions } from '../listen_narrowing';
 
 const TABLE_META = 'Table';

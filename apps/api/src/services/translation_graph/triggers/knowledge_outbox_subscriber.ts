@@ -13,9 +13,10 @@
 // other way round, so a standalone knowledge deployment simply has no local
 // subscriber and its consumers register webhooks.
 
-import { registerLocalMutationSubscriber } from '../../knowledge/mutation_outbox/worker';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
+
+import { registerLocalMutationSubscriber } from '../../knowledge/mutation_outbox/worker';
 import { recordMutationEventSchema, type RecordMutationEvent } from './record_mutation_event';
 import { dispatchMutationEvent } from './mutation_dispatch';
 import { logger } from '../../logger';

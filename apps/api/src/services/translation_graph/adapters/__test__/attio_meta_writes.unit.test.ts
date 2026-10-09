@@ -11,7 +11,10 @@
 //   - comment thread_id routing (reply vs new-thread-on-record),
 //   - the legacy generic list-entry type staying UNWRITABLE.
 
-import { installMemoryDocumentStore } from '../../engine/files/__test__/memory_document_store';
+
+import type { FileRef } from '../../adapter';
+import type { MutationContext } from '../../mutation_context';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 import {
   createAttioAdapter,
@@ -23,9 +26,7 @@ import {
   ATTIO_LIST_MEMBERSHIP_PREFIX,
   ATTIO_FILE_TYPE_ID,
 } from '../attio';
-import type { FileRef } from '../../adapter';
-import type { MutationContext } from '../../mutation_context';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import { installMemoryDocumentStore } from '../../engine/files/__test__/memory_document_store';
 
 const mutationContext: MutationContext = {
   source: { type: 'structured_input' },

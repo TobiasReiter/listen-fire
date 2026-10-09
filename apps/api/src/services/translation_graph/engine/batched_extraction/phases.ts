@@ -27,10 +27,9 @@
 // LLM access is injected via `LlmClient` so unit tests can stub.
 
 import { z } from 'zod';
+
 import type { Bundle, BundleSegment } from './bundle';
-import { bundleHandleFor } from './bundle';
 import type { SyntheticSchema } from './schema_synthesis';
-import { ENTITY_DENSITY_OPUS_THRESHOLD, selectModel } from './schema_synthesis';
 import type {
   LlmCallInput,
   LlmCallResult,
@@ -40,6 +39,9 @@ import type {
 } from './batcher';
 import type { EnrichmentBinding } from '../evaluator/batcher';
 import type { Resource } from '../../adapter';
+
+import { ENTITY_DENSITY_OPUS_THRESHOLD, selectModel } from './schema_synthesis';
+import { bundleHandleFor } from './bundle';
 
 // ── C3: pre-extraction transforms ─────────────────────────────────────────
 

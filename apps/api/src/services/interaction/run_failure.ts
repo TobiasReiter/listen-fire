@@ -8,6 +8,9 @@
 // touch them.
 
 import { sql } from 'kysely';
+
+import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
+
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { clearJoins } from '../movement_engine/join_pending';
 import { dropAwaitCorrelationsForRun } from '../translation_graph/adapters/await_correlation';
@@ -15,7 +18,6 @@ import { awaitKeepers } from '../translation_graph/adapters/packages';
 import { revokeRunCallbacks } from '../movement_engine/callback_store';
 import { withRunLease } from '../movement_engine/run_lease';
 import { logger } from '../logger';
-import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 
 /**
  * Settle a run that has been stamped `cancel_requested_at` (operator abort, or

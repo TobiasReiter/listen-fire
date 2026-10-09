@@ -1,5 +1,6 @@
+import crypto from "node:crypto";
+
 import { Router, type RequestHandler } from 'express';
-import crypto from 'crypto';
 import { verify, type JwtPayload } from 'jsonwebtoken';
 
 import { getCoreQb } from '../../lib/kysely';

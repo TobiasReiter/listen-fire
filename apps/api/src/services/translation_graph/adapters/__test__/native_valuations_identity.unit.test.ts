@@ -36,8 +36,9 @@ jest.mock('../../../../lib/credentials', () => ({
 }));
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import { createNativeValuationsAdapter } from '../native_valuations';
 import type { MutationContext } from '../../mutation_context';
+
+import { createNativeValuationsAdapter } from '../native_valuations';
 
 const adapter = () =>
   createNativeValuationsAdapter({ teamId: 'team-1' as TeamId, credentialsId: 'cred-1' });

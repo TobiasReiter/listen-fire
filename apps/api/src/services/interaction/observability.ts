@@ -11,13 +11,14 @@
 //
 // Team-scoping happens at the tRPC view; these take a `teamId` and filter on it.
 
+import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { MovementId } from '../../generated/kysely/automations/Movement';
+
 import { getAutomationsQb } from '../../lib/kysely';
 import { enclosingJoinAddress, encodeAddress, parseAddress } from '../movement_engine/address';
 import { describeRunAwaits } from '../movement_engine/await_description';
 import { resolveAutomationName } from '../../lib/automation/naming';
-import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { MovementId } from '../../generated/kysely/automations/Movement';
 
 export interface ParkedRunSummary {
   runId: string;

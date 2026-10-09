@@ -11,9 +11,11 @@ jest.mock('../../../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { logger } from '../../../../logger';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { MutationContext } from '../../../mutation_context';
+import type { Expression } from '#shared/expression/types';
+
+import { logger } from '../../../../logger';
 import { updateRecordSucceeded } from '../../../adapter';
 import {
   ADAPTER_META_TYPE_ID,
@@ -22,7 +24,6 @@ import {
   makeUnstablePosition,
   positionData,
 } from '../../../types';
-import type { Expression } from '#shared/expression/types';
 import {
   EvertraceApiError,
   type EvertraceApiClient,

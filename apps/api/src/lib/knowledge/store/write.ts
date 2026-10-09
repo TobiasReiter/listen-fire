@@ -18,9 +18,9 @@
 //   (g) one call is one transaction (K-25), on the handle the caller passes in
 
 import { randomUUID } from 'node:crypto';
+
 import { sql, type Kysely } from 'kysely';
 
-import { getKnowledgeQb } from '../../kysely';
 import type KnowledgeSchema from '../../../generated/kysely/knowledge/KnowledgeSchema';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
@@ -30,6 +30,8 @@ import type { EdgeTypeId } from '../../../generated/kysely/knowledge/EdgeType';
 import type { PropertyId } from '../../../generated/kysely/knowledge/Property';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
 import type { EvidenceId } from '../../../generated/kysely/knowledge/Evidence';
+
+import { getKnowledgeQb } from '../../kysely';
 import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
 import EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
 import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';

@@ -13,10 +13,11 @@
 // owner-side byte resolution
 
 import { Readable } from 'node:stream';
+
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
+import type { ResolveFileRefResult } from '../../adapter';
 
 import { describeError } from '../../../../lib/utils/error';
-import type { ResolveFileRefResult } from '../../adapter';
 
 /**
  * Fetch `url` (optionally with caller-supplied headers, e.g. an owner's

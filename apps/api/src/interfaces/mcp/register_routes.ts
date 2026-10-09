@@ -12,7 +12,6 @@ import PriceType from '../../generated/kysely/valuations/PriceType';
 import EventType from '../../generated/kysely/valuations/EventType';
 import ValuationType from '../../generated/kysely/valuations/ValuationType';
 import InvestmentRoundType from '../../generated/kysely/valuations/InvestmentRoundType';
-
 import { registerCrudRoutes, registerRoute } from './registry';
 import {
   registerAutomationToolRoutes,

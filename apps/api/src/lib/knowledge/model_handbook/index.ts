@@ -9,6 +9,7 @@
 // their own model.
 
 import type { Handbook, ChapterId, Chapter, IntentEntry } from './types';
+
 import { shape } from './chapters/shape';
 import { identity } from './chapters/identity';
 import { relationships } from './chapters/relationships';

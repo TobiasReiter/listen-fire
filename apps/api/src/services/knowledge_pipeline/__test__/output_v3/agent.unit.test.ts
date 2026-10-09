@@ -3,8 +3,9 @@ jest.mock('../../../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import { AgentToolSession, ConfigState, validate } from '../../output_v3/agent';
 import type { OntologySummary, AgentContext, AdapterMetadataProvider } from '../../output_v3/agent';
+
+import { AgentToolSession, ConfigState, validate } from '../../output_v3/agent';
 
 // ---------------------------------------------------------------------------
 // Fixtures

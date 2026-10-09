@@ -32,6 +32,7 @@ import {
 } from 'movement-lang';
 
 import type { AuthoringDiagnostic } from '../authoring';
+
 import { getMovementRow, type MovementRow } from '../store';
 import {
   runDeployCheck,

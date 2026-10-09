@@ -10,6 +10,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { UserId } from '../../generated/kysely/core/User';
+
 import { forgetAffinityWorkspace } from '../../adapters/affinity/apiClient';
 import { encryptToken } from '../../lib/credentials';
 import { getAutomationsQb } from '../../lib/kysely';
@@ -17,8 +20,6 @@ import { credentialLifecycle } from './credential_lifecycle';
 import { defaultAppIdForType } from './app_id';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { UserId } from '../../generated/kysely/core/User';
 
 /** Thrown when a non-replace insert collides on the (team_id, name) unique constraint. */
 export class CredentialNameTakenError extends Error {

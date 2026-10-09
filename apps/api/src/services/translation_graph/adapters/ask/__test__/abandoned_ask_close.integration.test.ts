@@ -13,15 +13,17 @@
 // case that must NOT change: an ask answered before the settle keeps its answer.
 
 import { randomUUID } from 'node:crypto';
-import express, { type Router } from 'express';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 
-import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
-import { cleanupTeam } from '../../../../../test/harness/cleanup';
+import express, { type Router } from 'express';
+
+import type { AddressInfo } from 'node:net';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../../../generated/kysely/automations/TriggerRun';
 import type { TriggerRunRecorder } from '../../../runs/trigger_run';
+
+import { cleanupTeam } from '../../../../../test/harness/cleanup';
+import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import { makeRecorderParkSink } from '../../../../movement_engine/park_sink';
 import { settleRunsParkedOnTriggers } from '../../../../interaction/run_failure';
 import { claimRunLease, releaseRunLease } from '../../../../movement_engine/run_lease';

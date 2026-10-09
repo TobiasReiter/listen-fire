@@ -23,6 +23,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { UserId } from '../../generated/kysely/core/User';
+
 import { getCoreQb, getValuationsQb } from '../../lib/kysely';
 import { Context } from '../../services/context';
 import { findByIdDataloader } from '../../lib/datasources/dataloaders';
@@ -32,8 +35,6 @@ import { TeamService } from '../../services/team';
 import { ProfileService } from '../../services/profiles/profile';
 import { ApiKeyService } from '../../services/api_key';
 import LegalEntityType from '../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { UserId } from '../../generated/kysely/core/User';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const anyVals = (v: Record<string, unknown>) => v as any;

@@ -20,8 +20,9 @@
 // a stub be an edit in one place rather than sixteen; that promise is only
 // true if sixteen adapters do not each hand-roll it.
 
-import { stubTargetOf, targetNodeOf, type EdgesFromResult, type EdgeTargetNode, type StubTargetNode } from '../adapter';
 import type { SchemaReferenceDescriptor, SchemaTypeDescriptor, SourcePosition } from '../types';
+
+import { stubTargetOf, targetNodeOf, type EdgesFromResult, type EdgeTargetNode, type StubTargetNode } from '../adapter';
 import { META_RECORD_TYPE, makeUnstablePosition } from '../types';
 
 type Describe = (typeId: string) => Promise<SchemaTypeDescriptor | null>;

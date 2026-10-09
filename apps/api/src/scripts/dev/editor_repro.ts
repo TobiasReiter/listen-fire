@@ -21,11 +21,14 @@ import './_profile_loader';
 // as "no problems" and would let this harness report a false all-clear on the
 // exact bug it exists to catch.
 import '../../services';
+
 import fs from 'node:fs';
 
 import { getMovementDiagnostics, referencedConstructions } from 'movement-lang';
+
 import { movementCatalogSnapshotForTeam } from '../../services/translation_graph/movement/catalog';
 import { ensureDevLoopTeam } from './_lib';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 
 const DEFAULT_SOURCE = `

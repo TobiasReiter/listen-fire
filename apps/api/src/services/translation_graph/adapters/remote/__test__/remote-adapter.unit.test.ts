@@ -5,8 +5,9 @@
 // wire are the caller's natural names, forwarded untranslated.
 
 import type { FileRef, RuntimeCapabilities } from '../../../adapter';
-import { streamFileRef } from '../../../engine/files/retrieve';
 import type { RemoteAdapterConfig, RemoteManifest } from '../index';
+
+import { streamFileRef } from '../../../engine/files/retrieve';
 
 // Mock the transport. Every forwarder funnels through `postRpc`; we control its
 // return value per-method and inspect the calls.
@@ -17,6 +18,7 @@ jest.mock('../../../protocol/client', () => {
 
 import { postRpc } from '../../../protocol/client';
 import { RemoteAdapter, createRemoteAdapter, fetchRemoteManifest } from '../index';
+
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 /** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */

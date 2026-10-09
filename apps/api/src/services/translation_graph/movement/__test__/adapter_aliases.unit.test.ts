@@ -7,10 +7,11 @@
 // clean while nothing about it was checked. So both are asserted here, side by
 // side, against the same names.
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { getAdapter, resolveAdapterSlug } from '../../adapters/registry';
 import { EMAIL_ADAPTER_NAMES, EmailAdapter } from '../../adapters/email';
 import { staticCatalogFromManifests } from '../catalog';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 const TEAM = 'team-1' as TeamId;
 

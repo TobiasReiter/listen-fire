@@ -7,6 +7,8 @@
 
 import { mockCatalog, storyOf, type InstanceSchema, type StoryIR } from 'movement-lang';
 
+import type { TeamMovementCatalog } from '../catalog';
+
 import {
   joinStoryView,
   storyVocabularyOf,
@@ -14,7 +16,6 @@ import {
   type StoryVocabulary,
   type StoryView,
 } from '../story_view';
-import type { TeamMovementCatalog } from '../catalog';
 
 // ── Fixture: two systems that share no vocabulary ──
 

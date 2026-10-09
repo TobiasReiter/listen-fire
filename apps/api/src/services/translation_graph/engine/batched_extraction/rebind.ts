@@ -22,12 +22,13 @@
 // we want for compound scoping.
 
 import type { EphemeralNode } from '../../types';
-import { makeEphemeralPosition } from '../../types';
 import type { ExtractInvocation, ExtractValueInvocation } from '../evaluator/batcher';
 import type { FieldEvidence } from '../../adapter';
 import type { Bundle } from './bundle';
 import type { SyntheticSchema, FieldShape } from './schema_synthesis';
 import type { FullExtractionResult } from './phases';
+
+import { makeEphemeralPosition } from '../../types';
 
 export interface RebindResult {
   /** Materialised ephemeral nodes per `#extract` siteId — `#extract` is

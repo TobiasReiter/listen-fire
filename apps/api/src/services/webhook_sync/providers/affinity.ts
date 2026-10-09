@@ -26,6 +26,8 @@
 import crypto from 'node:crypto';
 
 import type { WebhookProvider, WebhookRegistration } from './interface';
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { decryptToken } from '../../../lib/credentials';
 import { getAutomationsQb } from '../../../lib/kysely';
 import {
@@ -33,7 +35,6 @@ import {
   getAffinityClient,
 } from '../../../adapters/affinity/apiClient';
 import { AFFINITY_SUBSCRIBABLE_EVENTS } from '../../translation_graph/adapters/affinity/inbound';
-import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 
 const affinityProvider: WebhookProvider = {
   canRegisterViaApi: true,

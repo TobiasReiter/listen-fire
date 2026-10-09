@@ -21,15 +21,8 @@
 // refreshes + returns a valid access token), redirecting to fake-channels for
 // the dev-loop test-harness team (mirrors Attio / Airtable / Sheets / Drive).
 
-import { decryptToken } from '../../../../lib/credentials';
-import { getAutomationsQb } from '../../../../lib/kysely';
-import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
-import { services } from '../../../../adapters/registry';
-import { DropboxClient } from '../../../../adapters/dropbox/apiClient';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   AdapterManifest,
   DeleteInput,
@@ -47,13 +40,21 @@ import type {
   WriteResult,
   EdgesFromResult,
 } from '../../adapter';
-import { fileHandle, ownedFileSource } from '../../adapter';
 import type { TriggerType } from '../../triggers/types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+
+import { decryptToken } from '../../../../lib/credentials';
+import { getAutomationsQb } from '../../../../lib/kysely';
+import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
+import { logger } from '../../../logger';
+import { services } from '../../../../adapters/registry';
+import { DropboxClient } from '../../../../adapters/dropbox/apiClient';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
+import { fileHandle, ownedFileSource } from '../../adapter';
 import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../types';
 import { BaseAdapter } from '../base';
 import { naturalName } from '../name_resolution';

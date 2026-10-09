@@ -24,6 +24,8 @@
 // `getTransform(name)` before registering so a second call after a
 // partial test-reset doesn't trip the registry's duplicate-name throw.
 
+import type { PluginManifest, TransformImpl } from './registry';
+
 import { getTransform, registerTransform } from './registry';
 import { vcUrlRetrievalImpl, VC_URL_RETRIEVAL_PLUGIN_MANIFEST } from './vc-url-retrieval';
 import { fetchUrlImpl, FETCH_URL_PLUGIN_MANIFEST } from './fetch-url';
@@ -37,7 +39,6 @@ import {
 } from './linkedin-research';
 import { webResearchImpl, WEB_RESEARCH_PLUGIN_MANIFEST } from './web-research';
 import { researchImpl, RESEARCH_PLUGIN_MANIFEST } from './research';
-import type { PluginManifest, TransformImpl } from './registry';
 
 const BUNDLED_TRANSFORMS: readonly TransformImpl[] = [
   vcUrlRetrievalImpl,

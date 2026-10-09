@@ -5,9 +5,11 @@
 // The DB (getAutomationsQb) and the S3 provider (services.document) are mocked; the real
 // express router runs over an ephemeral server so the path runs end to end.
 
-import express from 'express';
-import type { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
+
+import express from 'express';
+
+import type { Server } from 'node:http';
 
 interface Row {
   object_uri: string;

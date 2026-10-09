@@ -16,9 +16,11 @@
  *   pnpm dev:link delete <linkedObjectId> remove a link
  */
 import { randomUUID } from 'node:crypto';
-import { getKnowledgeQb } from '../../lib/kysely';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
+
+import { getKnowledgeQb } from '../../lib/kysely';
 import { ensureDevLoopTeam } from './_lib';
 import { normalizeAdapterType } from '../../services/knowledge_pipeline/output_v3/linked_objects';
 

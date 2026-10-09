@@ -22,9 +22,10 @@
 //
 // Ops decisions
 
+import type { AskId } from '../../../../generated/kysely/asks/Ask';
+
 import { notifyAskCancelled, notifyAskSettled } from './notifier';
 import { answerAsk, cancelAsk, lookupAskByToken, type AskRecord, type CancelOutcome } from './store';
-import type { AskId } from '../../../../generated/kysely/asks/Ask';
 
 export type AskDoorOutcome =
   /** The token was not minted by this store — the caller should fall through to

@@ -15,14 +15,15 @@
 // lets the author paste a spreadsheet id, which `describe` resolves directly).
 
 import type { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
-import { writableColumnNames } from '../../../../adapters/googleSheets/columns';
 import type { Expression } from '#shared/expression/types';
-import { logger } from '../../../logger';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaTypeDescriptor,
 } from '../../types';
+
+import { writableColumnNames } from '../../../../adapters/googleSheets/columns';
+import { logger } from '../../../logger';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
   type SheetsTableId,

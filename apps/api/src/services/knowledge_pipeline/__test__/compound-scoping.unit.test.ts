@@ -34,6 +34,11 @@ import type { EdgeTypeId } from '../../../generated/kysely/knowledge/EdgeType';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
 import type { ExtractedSubgraph, ExtractedNode } from '../types';
 import type { Expression } from '#shared/expression/types';
+import type {
+  StoredUniquenessConstraints,
+  ConstraintEntry,
+} from '../uniqueness_constraints';
+
 import {
   validateUniquenessConstraints,
   findDedupGroups,
@@ -42,10 +47,6 @@ import {
   parseConstraintText,
   serializeConstraintEntries,
   constraintEntrySchema,
-} from '../uniqueness_constraints';
-import type {
-  StoredUniquenessConstraints,
-  ConstraintEntry,
 } from '../uniqueness_constraints';
 
 // ── Test IDs ──────────────────────────────────────────────────────────────

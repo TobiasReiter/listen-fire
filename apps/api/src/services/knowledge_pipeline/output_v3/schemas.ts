@@ -1,7 +1,9 @@
 import { z } from 'zod';
+
+import type { Expression } from './expression';
+
 import { webhookGraphOutputConfigInputSchema } from '../../../adapters/webhook/configSchema';
 import { expressionSchema } from './expression';
-import type { Expression } from './expression';
 
 export { expressionSchema };
 export type { Expression };

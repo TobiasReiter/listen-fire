@@ -37,13 +37,14 @@ import type {
   EnsureEventSubscriptionInput,
   EventSubscriptionRegistration,
 } from '../../adapter';
-import { uniformWalk } from '../hop';
-import { CRON_HANDBOOK_SECTION } from './handbook_section';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+
+import { uniformWalk } from '../hop';
+import { CRON_HANDBOOK_SECTION } from './handbook_section';
 import { META_RECORD_TYPE, positionData } from '../../types';
 import { BaseAdapter } from '../base';
 

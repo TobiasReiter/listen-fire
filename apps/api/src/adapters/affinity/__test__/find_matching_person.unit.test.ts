@@ -17,11 +17,12 @@ jest.mock('../../../lib/anthropic', () => ({
   anthropicChatStructured: jest.fn(async () => ({ id: null })),
 }));
 
+import type { AffinityAPIClient } from '../apiClient';
+
 import { AffinityOperations } from '../operations';
 import { normalizeEmail, ownsEmail } from '../common';
 import { anthropicChat } from '../../../lib/anthropic';
 import { logger } from '../../../services/logger';
-import type { AffinityAPIClient } from '../apiClient';
 
 const STORED = 'b.smith@acme.example';
 

@@ -27,11 +27,12 @@
 //      R19's closing position, but the failure mode is "operator hasn't
 //      configured a message type" rather than "string isn't UUID-shaped".
 
-import { getKnowledgeQb, getQb } from '../../lib/kysely';
-import { logger } from '../logger';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { PipelineInputId } from '../../generated/kysely/public/PipelineInput';
+
+import { logger } from '../logger';
+import { getKnowledgeQb, getQb } from '../../lib/kysely';
 import { normalizeAdapterType } from '../knowledge_pipeline/output_v3/linked_objects';
 
 export interface MaterialisedSourceNode {

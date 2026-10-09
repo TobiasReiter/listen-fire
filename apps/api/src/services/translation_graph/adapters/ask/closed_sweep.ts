@@ -5,10 +5,11 @@
 // runs are still parked on and queues the same `wake_await` row the door would
 // have. The engine then resumes each await, which re-checks the ask live.
 
+import type { WorkHandler } from '../../../work/kinds';
+
 import { enqueueAwaitWake, wakeAwaitPayloadSchema } from '../../../movement_engine/await_wake';
 import { SECOND } from '../../../../constants';
 import { registerWorkKinds, type WorkKindRegistration } from '../../../work/drain';
-import type { WorkHandler } from '../../../work/kinds';
 import { loadClosedAskAwaitPage } from './await_store';
 import { ASK_ADAPTER_TYPE } from './type';
 

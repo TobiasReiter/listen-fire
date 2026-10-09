@@ -9,6 +9,8 @@
 // once is free for the next describe or compile that names it.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { WalkedEdge, WalkedNode } from './walk';
+
 import {
   describeMovementInstance,
   describeMovementLandings,
@@ -16,7 +18,6 @@ import {
   type DescribedInstance,
 } from './catalog';
 import { renderConnectionDescription, type SystemDigestInput } from './connection_digest';
-import type { WalkedEdge, WalkedNode } from './walk';
 
 /** At most this many stubs are described per node. Writable ones come first;
  *  the rest keep their names and say they are one hop away. */

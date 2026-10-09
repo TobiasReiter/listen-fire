@@ -22,6 +22,7 @@ import { Readable } from 'node:stream';
 
 import type { RenderFile } from '../../movement_engine/host';
 import type { FileRef } from '../adapter';
+
 import { documentStoreFileRef } from '../engine/files/document_store';
 
 export const renderFileArtifact: RenderFile = async (input) => {

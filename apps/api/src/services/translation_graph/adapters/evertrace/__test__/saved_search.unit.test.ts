@@ -4,6 +4,7 @@
 // Evertrace's undocumented operator vocabulary gets discovered.
 
 import type { EvertraceSearchFilterRow } from '../../../../../adapters/evertrace/apiClient';
+
 import { narrowsAnything, signalFilterFromSearchRows } from '../saved_search';
 
 const row = (key: string, operator: string, value: string): EvertraceSearchFilterRow => ({

@@ -11,7 +11,6 @@
  * boots, because the API's tick notifier reads the key at boot.
  */
 import './_profile_loader';
-
 import { ensureDevLoopTeam } from './_lib';
 import { rotateSchedulerKey } from './lib/scheduler_key';
 

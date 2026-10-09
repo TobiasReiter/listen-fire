@@ -13,8 +13,9 @@
  *
  * --pretty for human-readable output, default JSON.
  */
-import { getKnowledgeQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
+
+import { getKnowledgeQb } from '../../lib/kysely';
 
 const TEAM_ID = process.env.TEST_HARNESS_TEAM_ID;
 

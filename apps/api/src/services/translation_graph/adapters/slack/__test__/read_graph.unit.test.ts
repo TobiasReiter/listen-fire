@@ -18,17 +18,19 @@ jest.mock('../../../../../lib/recording', () => ({
   injectFakeBaseUrl: (p: unknown) => p,
 }));
 
-import type { Expression } from '#shared/expression/types';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import { isStablePosition, makeMetaPosition, makeStablePosition, positionData } from '../../../types';
-import { SlackAdapter, SLACK_MANIFEST } from '../index';
-import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
 import {
   checkProgram,
   fromCatalogSnapshot,
   parseProgram,
   type CatalogSnapshot,
 } from 'movement-lang';
+
+import type { Expression } from '#shared/expression/types';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
+import { isStablePosition, makeMetaPosition, makeStablePosition, positionData } from '../../../types';
+import { SlackAdapter, SLACK_MANIFEST } from '../index';
+import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
 
 const TEAM = 'team-1' as TeamId;
 

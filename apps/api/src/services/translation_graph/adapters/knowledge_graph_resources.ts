@@ -18,14 +18,16 @@
 // slice when the link carries offsets, exactly as the summariser used to
 // compute on the fly.
 
-import { getKnowledgeQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import ResourceType from '../../../generated/kysely/knowledge/ResourceType';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
 import type { Resource } from '../adapter';
+import type { WriteConnection } from './knowledge_graph_writes';
+
+import { getKnowledgeQb } from '../../../lib/kysely';
+import ResourceType from '../../../generated/kysely/knowledge/ResourceType';
 import { resourceIdSchema } from '../../../lib/resource_id';
 import { kgFetch } from './kg_client';
-import type { WriteConnection } from './knowledge_graph_writes';
+
 
 /**
  * Persist node-level resources against a written KG node (`4d_resources.md`).

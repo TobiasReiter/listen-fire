@@ -15,14 +15,15 @@
  *     -r tsconfig-paths/register src/scripts/dev/verify_evidence_tolerance.ts
  */
 
-import { BARE_HOST } from '../../services/movement_engine/host_kit';
 import type { ExtractExpression, Span } from 'movement-lang';
+import type { MovementTraceEntry } from '../../services/movement_engine/expression';
+
+import { BARE_HOST } from '../../services/movement_engine/host_kit';
 import {
   ROOT_EXTRACT_DESCRIPTION,
   materializeExtract,
   type ExtractNodeSpec,
 } from '../../services/movement_engine/extraction';
-import type { MovementTraceEntry } from '../../services/movement_engine/expression';
 import { NO_PROVENANCE } from '../../services/movement_engine/provenance';
 import { registeredPluginSpecs } from '../../services/translation_graph/movement/catalog';
 

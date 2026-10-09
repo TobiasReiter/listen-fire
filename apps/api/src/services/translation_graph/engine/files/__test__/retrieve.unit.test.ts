@@ -16,6 +16,7 @@ jest.mock('../../../../../adapters/registry', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { Adapter, FileRef } from '../../../adapter';
+
 import { streamFileRef, type ResolveFileOwner } from '../retrieve';
 
 const TEAM_ID = '00000000-0000-0000-0000-0000000000f1' as TeamId;

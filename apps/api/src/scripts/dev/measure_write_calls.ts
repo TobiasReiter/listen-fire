@@ -13,9 +13,10 @@
  */
 
 import './_profile_loader';
-
 import { resolveAdapter } from '../../services/translation_graph/adapters/resolve';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { getAutomationsQb } from '../../lib/kysely';
 import { ensureDevLoopTeam } from './_lib';
 import { userEditContext } from '../../services/translation_graph/mutation_context';

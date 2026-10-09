@@ -18,8 +18,9 @@
  */
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { EmailAdapter } from '../adapters/email';
 import type { FileRef } from '../adapter';
+
+import { EmailAdapter } from '../adapters/email';
 
 const TEAM_ID = 'team-1' as TeamId;
 

@@ -5,15 +5,16 @@ jest.mock('../../../lib/anthropic', () => ({
   anthropicChat: jest.fn(async () => 'an aggregated answer'),
 }));
 
+import type { Adapter, RuntimeCapabilities, Resource } from '../adapter';
+import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
+
 import {
   evaluateExpression,
   ExpressionNotImplementedError,
   ResourceSink,
   type ExpressionEvalContext,
 } from '../engine/expression';
-import type { Adapter, RuntimeCapabilities, Resource } from '../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
-import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
 import {
   type SourcePosition,
   makeStablePosition,

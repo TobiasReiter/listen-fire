@@ -5,9 +5,11 @@
 // 6): it reads/writes `pipeline_input.tg_event_body` JSONB directly.
 
 import { sql } from 'kysely';
+
 import type { Insertable } from 'kysely';
-import { getQb } from '../../../lib/kysely';
 import type { PipelineInputId } from '../../../generated/kysely/public/PipelineInput';
+
+import { getQb } from '../../../lib/kysely';
 import { parsePipelineEventBodyLenient, type PipelineEventBody } from '../types';
 
 /**

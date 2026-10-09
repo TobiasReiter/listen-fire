@@ -10,14 +10,15 @@
  * adds nothing.
  */
 import './_profile_loader';
-
 import { getKnowledgeQb } from '../../lib/kysely';
 import { createNode, openKnowledgeStore } from '../../lib/knowledge/store';
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import ChangeSource from '../../generated/kysely/knowledge/ChangeSource';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
+
 import { ensureDevLoopTeam } from './_lib';
 
 const DEMO_COMPANIES = [

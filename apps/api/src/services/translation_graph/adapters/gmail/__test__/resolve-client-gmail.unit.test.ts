@@ -60,6 +60,7 @@ jest.mock('../../../../../lib/kysely', () => ({
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
 import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '../../../../../lib/google_cloud';
 import { resolveGmailClient } from '../client';
 

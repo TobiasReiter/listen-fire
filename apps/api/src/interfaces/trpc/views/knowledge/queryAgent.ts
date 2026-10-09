@@ -5,6 +5,11 @@ import * as db from '@prisma/client';
 import { z } from 'zod';
 import { observable } from '@trpc/server/observable';
 
+import type { AgentUpdate } from '../../../../lib/openai/types';
+import type { NodeTypeId } from '../../../../generated/kysely/knowledge/NodeType';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { AgentDomain } from '../../../../lib/knowledge/agent_registry';
+
 import { services } from '../../../../adapters/registry';
 import { currentContext } from '../../../../services/context';
 import { UserService } from '../../../../services/user';
@@ -12,16 +17,12 @@ import { trpc } from '../../trpc';
 import { abortAgent, getActiveSession, registerActiveSession, clearActiveSession } from '../../../../lib/knowledge/agent_sessions';
 import { runConversationTurn } from '../../../../lib/knowledge/orchestrator';
 import { mq } from '../../../../lib/message_queue';
-import type { AgentUpdate } from '../../../../lib/openai/types';
 import { LlmUsageContext } from '../../../../lib/llm_usage';
 import { sendSlackNotification } from '../../../../lib/slack';
 import { getKnowledgeQb } from '../../../../lib/kysely';
 import { checkUsage, recordEvent, checkAndAlert, USAGE_EXHAUSTED_MESSAGES } from '../../../../services/usage';
 import { logger } from '../../../../services/logger';
-import type { NodeTypeId } from '../../../../generated/kysely/knowledge/NodeType';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import NodeTypeCategory from '../../../../generated/kysely/knowledge/NodeTypeCategory';
-import type { AgentDomain } from '../../../../lib/knowledge/agent_registry';
 import { userProcedure as sharedUserProcedure } from '../../procedures';
 
 const AGENT_TYPE = 'knowledge_query';

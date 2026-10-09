@@ -23,6 +23,9 @@ import * as path from 'node:path';
 
 import Pg from 'pg';
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { UserId } from '../../../../generated/kysely/core/User';
+
 import { getCoreQb, getValuationsQb } from '../../../kysely';
 import { getDatabaseUrl } from '../../../../prisma';
 import { Context } from '../../../../services/context';
@@ -34,8 +37,6 @@ import EventType from '../../../../generated/kysely/valuations/EventType';
 import PriceType from '../../../../generated/kysely/valuations/PriceType';
 import InvestmentType from '../../../../generated/kysely/valuations/InvestmentType';
 import LegalEntityType from '../../../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { UserId } from '../../../../generated/kysely/core/User';
 import { userPrincipal } from '../../../../services/principal';
 
 const AS_OF_DATE = new Date('2024-12-31');

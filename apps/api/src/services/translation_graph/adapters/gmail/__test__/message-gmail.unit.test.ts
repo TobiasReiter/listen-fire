@@ -1,11 +1,12 @@
 // Decoding a Gmail message — the MIME tree walk, the body preference, the
 // address headers and the attachment listing. No network, no graph.
 
+import type { GmailMessage, GmailPart } from '../../../../../adapters/gmail/apiClient';
+
 import {
   decodeGmailMessage,
   splitAddressHeader,
 } from '../../../../../adapters/gmail/mime';
-import type { GmailMessage, GmailPart } from '../../../../../adapters/gmail/apiClient';
 
 function b64(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64url');

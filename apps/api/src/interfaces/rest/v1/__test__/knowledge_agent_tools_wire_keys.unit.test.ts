@@ -86,8 +86,9 @@ jest.mock('../../../../services/interaction/operator', () => ({
   abortRun: (...args: unknown[]) => abortRunMock(...(args as [])),
 }));
 
-import type { RequestHandler } from 'express';
 import { runWithPrincipal, type Principal } from 'principal';
+
+import type { RequestHandler } from 'express';
 
 import { MovementEngineError } from '../../../../services/movement_engine/errors';
 import {

@@ -2,10 +2,11 @@ import * as db from '@prisma/client';
 import YahooFinance from 'yahoo-finance2';
 import { backOff } from 'exponential-backoff';
 
+import type { ChartResultArray } from 'yahoo-finance2/esm/src/modules/chart';
+
 import { SECOND } from '../../constants';
 import { logger } from '../../services/logger';
 import { Queue } from '../utils/queue';
-import type { ChartResultArray } from 'yahoo-finance2/esm/src/modules/chart';
 
 const yahooFinance = new YahooFinance();
 

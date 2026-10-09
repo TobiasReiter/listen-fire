@@ -11,12 +11,13 @@
 // called: a long reply outlives a non streaming HTTP timeout on OpenAI just as
 // it does on Anthropic, and one assembly path means the two cannot drift.
 
-import type Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+
+import type Anthropic from '@anthropic-ai/sdk';
+import type { ChatProvider } from '../chat';
 
 import { getEnvVar } from '../../utils/environment';
 import { neverAsAny } from '../../utils/types';
-import type { ChatProvider } from '../chat';
 
 type OpenAiRequest = OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 type OpenAiMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;

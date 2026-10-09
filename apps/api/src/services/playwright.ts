@@ -1,4 +1,5 @@
 import type { Page, Browser, BrowserContextOptions } from 'playwright';
+
 import { Queue } from '../lib/utils/queue';
 import { MINUTE } from '../constants';
 import { logger } from './logger';

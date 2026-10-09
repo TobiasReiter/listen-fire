@@ -1,6 +1,11 @@
 // tRPC management endpoints
 // auto vs manual registration
 import { z } from 'zod';
+
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+import type { WebhookSubscriptionId } from '../../../generated/kysely/automations/WebhookSubscription';
+
 import { trpc } from '../trpc';
 import { currentContext } from '../../../services/context';
 import { userProcedure as sharedUserProcedure } from '../procedures';
@@ -10,10 +15,6 @@ import {
   getWebhookProviderMeta,
   listWebhookProviders,
 } from '../../../services/webhook_sync/providers';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
-import type { WebhookSubscriptionId } from '../../../generated/kysely/automations/WebhookSubscription';
-
 import { buildWebhookTargetUrl as buildTargetUrl } from '../../../services/webhook_sync/urls';
 
 const webhookSubscriptionsRouter = (procedure: typeof trpc.procedure) => {

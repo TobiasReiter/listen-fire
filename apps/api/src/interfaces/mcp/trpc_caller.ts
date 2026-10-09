@@ -6,8 +6,9 @@
 // tool handler can invoke a procedure directly through this caller — no loopback
 // HTTP, no parallel REST route — and reuse the exact logic the web app uses.
 
-import { trpcRouter } from '../trpc';
 import type { McpToolResult } from './server';
+
+import { trpcRouter } from '../trpc';
 
 /** A caller bound to the request's ambient (express-established) context. */
 function getTrpcCaller() {

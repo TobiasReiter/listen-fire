@@ -28,6 +28,7 @@
 // ask record would be a second copy of a type nobody would read.
 
 import { genericLandingKey, genericLandingName, literalStringValuesOf } from 'movement-lang';
+
 import type {
   InstanceChain,
   InstanceSchema,
@@ -35,6 +36,7 @@ import type {
   WritableRootSchema,
 } from 'movement-lang';
 import type { SchemaTypeDescriptor } from '../types';
+
 import { landingSynthesizerFor } from '../adapters/packages';
 import { instanceSchemaFromDescriptors } from './schema_projection';
 

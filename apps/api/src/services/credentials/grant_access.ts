@@ -6,9 +6,10 @@
 // adapter carries the burden.
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
+import type { PickerActionKind } from './picker_spec';
+
 import { getAdapterManifest } from '../translation_graph/adapters/registry';
 import { mintItemPickerLink, type MintConnectLinkResult } from './connect_link';
-import type { PickerActionKind } from './picker_spec';
 
 const PICKER_ACTION_KINDS: readonly PickerActionKind[] = ['google-sheets-picker', 'google-drive-picker'];
 

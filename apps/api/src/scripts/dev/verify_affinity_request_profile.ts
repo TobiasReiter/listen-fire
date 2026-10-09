@@ -45,14 +45,15 @@
  * Postgres advisory locks.
  */
 import type { CatalogSnapshot } from 'movement-lang';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { runMovement } from '../../services/movement_engine/run';
 import { withSegment } from '../../services/translation_graph/segment_scope';
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { AffinityAdapter, AFFINITY_MANIFEST } from '../../services/translation_graph/adapters/affinity';
 import { makeWebBaseUrlResolver } from '../../services/translation_graph/adapters/affinity/shared';
 import { instanceSchemaFromDescriptors } from '../../services/translation_graph/movement/schema_projection';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
 import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 

@@ -7,7 +7,7 @@
 // `src/__conformance__/v2/triage.cjs`. The resolver and setup files are
 // movement-lang's — one mechanism for every corpus. Run via
 // `pnpm test:conformance:v2`.
-import path from 'path';
+import path from "node:path";
 
 import unitConfig from './jest-unit.config';
 

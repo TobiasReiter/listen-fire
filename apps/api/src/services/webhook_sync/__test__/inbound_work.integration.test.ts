@@ -33,9 +33,8 @@ jest.mock('../../translation_graph/triggers/router', () => {
   return { ...actual, dispatchTriggerByIdEvent: jest.fn(actual.dispatchTriggerByIdEvent) };
 });
 
-import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
-import { cleanupTeam } from '../../../test/harness/cleanup';
-import { testWorkContext } from '../../../test/harness/work';
+import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
@@ -44,16 +43,25 @@ import type { TriggerEventId } from '../../../generated/kysely/automations/Trigg
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import type { WebhookSubscriptionId } from '../../../generated/kysely/automations/WebhookSubscription';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
-import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
+
 import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
-import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
+import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
+import { cleanupTeam } from '../../../test/harness/cleanup';
+import { testWorkContext } from '../../../test/harness/work';
+
+import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
+
+
+
 import { runCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { resumeMovementFiring } from '../../translation_graph/movement/execute';
 import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/router';
 import { mintMovementVersionIfChanged } from '../../translation_graph/movement/version_store';
 import { positionData } from '../../translation_graph/types';
+
 import type { Adapter, DiscriminableEvent, RuntimeCapabilities } from '../../translation_graph/adapter';
+
 import { loadCorrelatedParks, registerAwaitCorrelation } from '../../translation_graph/adapters/await_correlation';
 import { dispatchEventHandler, registerDispatchWork } from '../../translation_graph/triggers/dispatch_event';
 import { registerAwaitWork } from '../../movement_engine/await_resume';

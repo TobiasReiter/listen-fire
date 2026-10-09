@@ -30,6 +30,7 @@ import '../../services/translation_graph/engine/transforms/register-bundled';
 
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
+
 import type { AddressInfo } from 'node:net';
 
 import { ensureDevLoopTeam } from './_lib';
@@ -38,6 +39,7 @@ import { getAutomationsQb, getKnowledgeQb } from '../../lib/kysely';
 import { saveMovement } from '../../services/translation_graph/movement/provision';
 import { dispatchTriggerByIdEvent } from '../../services/translation_graph/triggers/router';
 import { unsafeCurrentContext } from '../../services/context';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerId } from '../../generated/kysely/automations/Trigger';
 import type { TriggerEvent } from '../../services/translation_graph/triggers/types';

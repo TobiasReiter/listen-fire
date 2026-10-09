@@ -12,10 +12,11 @@
 // key-entry submit — mint through here, so the type + app_id + payload shape are
 // declared in exactly one place.
 
-import { persistCredential } from './persist_credential';
-import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
+
+import { persistCredential } from './persist_credential';
+import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { RemoteAdapterCredentialPayload } from '../translation_graph/adapters/remote/manifest';
 
 export interface MintRemoteCredentialInput {

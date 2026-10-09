@@ -1,13 +1,18 @@
 // webhook handler
 // TG dispatch from webhook
 import { sql } from 'kysely';
+
+import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { Adapter, DiscriminableEvent, EventType } from '../translation_graph/adapter';
+import type { TriggerId } from '../../generated/kysely/automations/Trigger';
+import type { HarnessDelivery, SettleReport } from '../work/harness';
+import type { WebhookProvider } from './providers';
+
 import { getAutomationsQb } from '../../lib/kysely';
 import { getWebhookProvider } from './providers';
 import { logger } from '../logger';
-import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
-import type { TeamId } from '../../generated/kysely/core/Team';
 import { findTriggersByKind } from '../translation_graph/storage/tg_table';
-import type { Adapter, DiscriminableEvent, EventType } from '../translation_graph/adapter';
 import {
   captureDiscriminableEvent,
   enqueueCapturedEvents,
@@ -15,7 +20,6 @@ import {
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
 import { channelScopeMatches, eventConfigList } from '../translation_graph/triggers/listen_config';
-import type { TriggerId } from '../../generated/kysely/automations/Trigger';
 import { ATTIO_ADAPTER_TYPE } from '../translation_graph/adapters/attio';
 import { TELEGRAM_ADAPTER_TYPE, TelegramAdapter } from '../translation_graph/adapters/telegram';
 import { handleTelegramCallbackQuery, ownsCallbackQuery } from './telegram_callback_door';
@@ -27,7 +31,6 @@ import {
 } from './whatsapp_callback_door';
 import { enqueueAwaitWakes } from '../movement_engine/await_wake';
 import { notifyWork } from '../work/drain';
-import type { HarnessDelivery, SettleReport } from '../work/harness';
 import {
   enqueueLinkedObjectRefresh,
   hasBridgedLinkedObjects,
@@ -36,7 +39,6 @@ import {
 import { hasAdapter, resolveAdapterSlug } from '../translation_graph/adapters/registry';
 import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { isTestHarnessTeam } from '../../lib/recording';
-import type { WebhookProvider } from './providers';
 import { verifyRemoteSignature } from './remote_inbound';
 import { webhookProviderKey } from './urls';
 import { listRemoteAdapters } from '../translation_graph/adapters/remote/store';

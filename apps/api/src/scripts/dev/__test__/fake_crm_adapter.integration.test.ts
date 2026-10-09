@@ -13,16 +13,19 @@
 // transport tests (real socket, real HTTP round-trip).
 
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 
+import type { AddressInfo } from 'node:net';
 import type { MutationContext } from '../../../services/translation_graph/mutation_context';
+import type { RemoteAdapterConfig } from '../../../services/translation_graph/adapters/remote';
+import type { FakeCrmServer } from '../fake_crm_adapter';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { BASE_RUNTIME_CAPABILITIES } from '../../../services/translation_graph/adapter';
 import {
   createRemoteAdapter,
   fetchRemoteManifest,
   RemoteAdapter,
 } from '../../../services/translation_graph/adapters/remote';
-import type { RemoteAdapterConfig } from '../../../services/translation_graph/adapters/remote';
 import { makeMetaPosition, positionData } from '../../../services/translation_graph/types';
 import {
   FAKE_CRM_ADAPTER_TYPE,
@@ -34,8 +37,7 @@ import {
   fakeCrmThreadKey,
   startFakeCrmServer,
 } from '../fake_crm_adapter';
-import type { FakeCrmServer } from '../fake_crm_adapter';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+
 
 /** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
 const CONFIG_TEAM_ID = '00000000-0000-4000-8000-0000000000c1' as TeamId;

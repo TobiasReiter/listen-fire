@@ -17,14 +17,15 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
+
 import type { UserId } from '../../../generated/kysely/core/User';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
-import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
+import type { AuthoringDiagnostic } from './authoring';
 
 import { getAutomationsQb } from '../../../lib/kysely';
 import { parseRunMode, type TriggerRunMode } from '../triggers/run_mode';
-import type { AuthoringDiagnostic } from './authoring';
 import { repinCurrentVersion } from './version_store';
 
 /** Runtime validity of the CURRENT source against the adapters' CURRENT live

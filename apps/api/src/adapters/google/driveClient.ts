@@ -1,6 +1,7 @@
+import { Readable } from 'node:stream';
+
 import { google, type drive_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
-import { Readable } from 'node:stream';
 
 /** One Drive item as the read surface projects it. */
 export interface DriveItem {

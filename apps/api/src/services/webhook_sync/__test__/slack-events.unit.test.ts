@@ -4,7 +4,7 @@
 // the credential is both the trigger-matching key and the send identity). A
 // workspace with no install is dropped. Plus the route's signature auth.
 
-import crypto from 'crypto';
+import crypto from "node:crypto";
 
 jest.mock('../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },

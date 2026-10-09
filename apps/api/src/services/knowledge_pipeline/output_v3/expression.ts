@@ -2,7 +2,9 @@
 // unified expression model
 
 import { z } from 'zod';
+
 import type { Selection, Aggregation, TraversalStep } from '#shared/expression/types';
+
 import { traversalStepSchema, fieldRefSchema } from './schemas';
 
 // Re-export the shared Expression type as the single source of truth

@@ -27,12 +27,14 @@
 // what it needs instead.
 
 import { parseTraversalPath } from 'movement-lang';
-import type { Expression } from '#shared/expression/types';
-import { selectMember } from './narrowing';
 
+import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { SchemaTypeDescriptor, SourcePosition } from '../types';
 import type { Adapter, EdgesFromResult } from '../adapter';
+import type { AdapterIntrospection } from '../adapters/name_resolution';
+
+import { selectMember } from './narrowing';
 import { ADAPTER_META_TYPE_ID, makeMetaPosition, positionLabel } from '../types';
 import { resolveAdapter } from '../adapters/resolve';
 import { getAdapterManifest } from '../adapters/registry';
@@ -41,7 +43,7 @@ import {
   instanceSchemaFromDescriptors,
   type AdapterSchemaProjection,
 } from './schema_projection';
-import type { AdapterIntrospection } from '../adapters/name_resolution';
+
 
 /**
  * Long enough to stay warm across ONE authoring loop — validate, then save

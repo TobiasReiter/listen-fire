@@ -9,9 +9,10 @@
 import { Readable } from 'node:stream';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { TriggerEvent } from '../../../triggers/types';
+
 import { RESOURCES_REFERENCE_FIELD_ID } from '../../../adapter';
 import { makeUnstablePosition, positionData } from '../../../types';
-import type { TriggerEvent } from '../../../triggers/types';
 
 // `types.ts` (imported transitively by the adapter) loads the output_v3
 // zod-schema chain, which pulls in the prisma/openai/logger graph that crashes

@@ -5,8 +5,9 @@
  *
  */
 
-import { resolveEventPhrase } from '../vocabulary';
 import type { AdapterEventPhraseVocabulary } from '../adapter';
+
+import { resolveEventPhrase } from '../vocabulary';
 
 describe('resolveEventPhrase', () => {
   it('returns null when the manifest declares no eventPhrase vocabulary', () => {

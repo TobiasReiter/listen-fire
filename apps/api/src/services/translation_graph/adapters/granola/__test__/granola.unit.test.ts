@@ -12,8 +12,9 @@ jest.mock('../../../../logger', () => ({
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../../../adapter';
 import type { TriggerEvent } from '../../../triggers/types';
+
+import { RESOURCES_REFERENCE_FIELD_ID } from '../../../adapter';
 import {
   ADAPTER_META_TYPE_ID,
   makeMetaPosition,

@@ -10,10 +10,13 @@
 // words rather than throwing. The user-principal case is asserted alongside each
 // so the guard is provably about the machine case, not a blanket refusal.
 
-import express, { Router } from 'express';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+
+import express, { Router } from 'express';
 import { currentPrincipal, runWithPrincipalSync, type Principal } from 'principal';
+
+import type { AddressInfo } from 'node:net';
+
 
 const startPhoneVerification = jest.fn();
 const listTgRuns = jest.fn();

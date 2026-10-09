@@ -21,6 +21,9 @@
 // so an override-on dispatch never pays the Slack/Attio actor-email API
 // round-trip.
 
+import type { ActingUser, ActorCandidate } from '../../adapter';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   applyCreatorOverride,
   lookupTeamUserByEmail,
@@ -29,8 +32,6 @@ import {
   readCreatorFallbackConfig,
   type ActingUserTriggerContext,
 } from '../acting_user_shared';
-import type { ActingUser, ActorCandidate } from '../../adapter';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 export async function resolveActingUser(input: {
   teamId: TeamId;

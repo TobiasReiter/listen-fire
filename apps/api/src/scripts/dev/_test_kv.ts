@@ -5,8 +5,9 @@
  *
  * pnpm dev:_test_kv <node_id> <new_name>
  */
-import { getKnowledgeQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
+
+import { getKnowledgeQb } from '../../lib/kysely';
 import { createKnowledgeGraphAdapter } from '../../services/translation_graph/adapters/knowledge_graph';
 import { dispatchMutationEvent } from '../../services/translation_graph/triggers/mutation_dispatch';
 import { userEditContext } from '../../services/translation_graph/mutation_context';

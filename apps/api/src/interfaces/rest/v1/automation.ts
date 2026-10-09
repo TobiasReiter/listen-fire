@@ -12,19 +12,21 @@
 // knowledge_agent_tools.ts, shared with the in-app agent). The asks surface
 // lives here.
 
-import { Router, type RequestHandler } from 'express';
-import { randomUUID } from 'crypto';
-import { z } from 'zod';
+import { randomUUID } from "node:crypto";
 
-import { answerForTeam, listOpenAsksForTeam } from '../../../services/interaction/answer_surfaces';
+import { Router, type RequestHandler } from 'express';
+import { z } from 'zod';
+import { currentPrincipal } from 'principal';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { AskId } from '../../../generated/kysely/asks/Ask';
+
+import { answerForTeam, listOpenAsksForTeam } from '../../../services/interaction/answer_surfaces';
 import { mountAutomationToolRoutes } from './knowledge_agent_tools';
 import { teamSetForReads, teamNames, resolveToolTeam, ToolTeamError } from './team_scope';
 import { emitOpsEvent } from '../../../lib/ops/emit';
 import OpsEventType from '../../../generated/kysely/public/OpsEventType';
 import OpsSeverity from '../../../generated/kysely/public/OpsSeverity';
-import { currentPrincipal } from 'principal';
 import { UserService } from '../../../services/user';
 import { requireScope } from './require_scope';
 

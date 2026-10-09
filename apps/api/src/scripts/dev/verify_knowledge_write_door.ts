@@ -26,15 +26,16 @@
  *   pnpm dev:movement run kg_write_probe
  */
 import './_profile_loader';
-
 import { runInContext } from '../../services/context/utils';
 import { getKnowledgeQb } from '../../lib/kysely';
 import { trpcRouter } from '../../interfaces/trpc';
 import { ensureDevLoopTeam } from './_lib';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
+
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import PropertyValueType from '../../generated/kysely/knowledge/PropertyValueType';
 import PropertyCardinality from '../../generated/kysely/knowledge/PropertyCardinality';
@@ -42,7 +43,9 @@ import EvaluationStrategy from '../../generated/kysely/knowledge/EvaluationStrat
 import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity';
 import { createEntity, updateEntity } from '../../lib/knowledge/query_agent_crud';
 import { createKgRecord, updateKgRecord, linkKgRecords } from '../../services/translation_graph/adapters/knowledge_graph_writes';
+
 import type { MutationContext } from '../../services/translation_graph/mutation_context';
+
 import { getAutomationsQb } from '../../lib/kysely';
 import { loadKgCredentials, kgFetch, type WireOntology } from '../../services/translation_graph/adapters/kg_client';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';

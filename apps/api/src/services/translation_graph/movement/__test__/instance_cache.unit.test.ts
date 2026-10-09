@@ -4,6 +4,7 @@
 // the real projection (`instanceSchemaFromDescriptors`) runs.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   clearIntrospectionCache,
   introspectAdapterInstanceCached,

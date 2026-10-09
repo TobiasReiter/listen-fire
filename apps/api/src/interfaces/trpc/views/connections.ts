@@ -22,12 +22,15 @@
 
 import { z } from 'zod';
 
+import type { UserId } from '../../../generated/kysely/core/User';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getQb, getAutomationsQb } from '../../../lib/kysely';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import type { UserId } from '../../../generated/kysely/core/User';
 import { movementsImportingCredential } from '../../../services/connections/credential_dependents';
 import {
   listAdapterManifests,
@@ -43,8 +46,6 @@ import {
   telegramStartUrl,
 } from '../../../services/translation_graph/adapters/telegram/handshake';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 
 /** Hide seed labels that leaked into the dev-loop DB before U1's seed rename. */
 const DEV_FIXTURE_NAME_RE = /^(Test |Dev Loop |Mock )/i;

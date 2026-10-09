@@ -18,9 +18,10 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ActingUser, ActorCandidate, Adapter } from '../adapter';
+import type { TriggerEvent } from './types';
+
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 import { getAdapterManifest } from '../adapters/registry';
-import type { TriggerEvent } from './types';
 
 export type ActorGateDisposition =
   | { kind: 'proceed' }

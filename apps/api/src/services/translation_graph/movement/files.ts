@@ -32,6 +32,7 @@ import {
   type Program,
   type ResolveFile,
 } from 'movement-lang';
+
 import { getMovementRowByName, listMovementRows, type MovementValidityStatus } from './store';
 
 /** Defensive bound on the import closure — no sane library graph nests

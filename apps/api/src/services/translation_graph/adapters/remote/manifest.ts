@@ -12,8 +12,9 @@
 // Registration
 
 import { z } from 'zod';
-import type { AdapterManifest } from '../../adapter';
 import { WireManifestProtocolVersion } from 'engine-contracts';
+
+import type { AdapterManifest } from '../../adapter';
 import type { TriggerType } from '../../triggers/types';
 
 export const RemoteAdapterManifestFile = z.object({

@@ -5,8 +5,6 @@
 // to update — so we pass it through as the operations `affinityId`.
 
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import { attachPersonToOrganisation } from '../../../../adapters/affinity/employer_association';
-import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
 import type {
   WriteInput,
   WriteResult,
@@ -14,6 +12,9 @@ import type {
   UpdateResult,
   UpdateWriteResult,
 } from '../../adapter';
+
+import { attachPersonToOrganisation } from '../../../../adapters/affinity/employer_association';
+import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
 import { writeParentLinks } from '../../adapter';
 import { logger } from '../../../logger';
 import {

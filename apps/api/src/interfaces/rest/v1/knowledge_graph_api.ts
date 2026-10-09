@@ -23,13 +23,12 @@
 // handlers emit no events of their own.
 
 import { randomBytes, randomUUID } from 'node:crypto';
+
 import { Router, type RequestHandler } from 'express';
 import { sql } from 'kysely';
 import { z } from 'zod';
-
 import { currentPrincipal } from 'principal';
 
-import { getKnowledgeQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
@@ -37,6 +36,8 @@ import type { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
 import type { EdgeId } from '../../../generated/kysely/knowledge/Edge';
 import type { EdgeTypeId } from '../../../generated/kysely/knowledge/EdgeType';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
+
+import { getKnowledgeQb } from '../../../lib/kysely';
 import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
 import { ChangeSource } from '../../../lib/knowledge/changes';
 import {

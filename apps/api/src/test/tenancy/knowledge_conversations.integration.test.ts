@@ -19,6 +19,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { UserId } from '../../generated/kysely/core/User';
+
 import { getCoreQb, getKnowledgeQb, getQb } from '../../lib/kysely';
 import { services } from '../../adapters/registry';
 import { trpc } from '../../interfaces/trpc/trpc';
@@ -28,8 +31,6 @@ import { userPrincipal } from '../../services/principal';
 import { compactIfDue, loadRunningState } from '../../services/agent_running_state';
 import { runConversationTurn } from '../../lib/knowledge/orchestrator';
 import { initAgentRegistry, registerAgent } from '../../lib/knowledge/agent_registry';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { UserId } from '../../generated/kysely/core/User';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const anyVals = (v: Record<string, unknown>) => v as any;

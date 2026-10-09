@@ -9,12 +9,13 @@
 // undocumented row set into a step that runs itself, says what it did, and
 // never touches an install that already has people in it.
 
-import { getCoreQb } from '../lib/kysely';
-import { runInBackground } from '../lib/utils/background';
-import { ProvisioningService } from '../services/provisioning';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { UserId } from '../generated/kysely/core/User';
 import type { WorkerRegistry } from './registry';
+
+import { getCoreQb } from '../lib/kysely';
+import { runInBackground } from '../lib/utils/background';
+import { ProvisioningService } from '../services/provisioning';
 
 /**
  * The public identity's own team. Pinned rather than minted so the row set is

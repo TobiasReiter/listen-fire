@@ -19,13 +19,13 @@
 // survive.
 
 import type { Kysely } from 'kysely';
+import type { TeamId } from '../generated/kysely/core/Team';
+import type { UserId } from '../generated/kysely/core/User';
+import type CoreSchema from '../generated/kysely/core/CoreSchema';
 
 import { getCoreQb } from '../lib/kysely';
 import { logger } from './logger';
 import { ProvisioningService } from './provisioning';
-import type { TeamId } from '../generated/kysely/core/Team';
-import type { UserId } from '../generated/kysely/core/User';
-import type CoreSchema from '../generated/kysely/core/CoreSchema';
 
 type Access = 'read' | 'write';
 

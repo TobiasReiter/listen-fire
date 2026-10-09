@@ -2,15 +2,16 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { sql } from 'kysely';
 
-import { getQb } from './kysely';
-import { logger } from '../services/logger';
 import type { Resolved } from './models/map';
-import { models } from './models/registry';
-import { isInsideSpendMeter, reportRunCost } from './run_spend';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { DealflowPipelineId } from '../generated/kysely/public/DealflowPipeline';
 import type { AgentConversationId } from '../generated/kysely/public/AgentConversation';
 import type { TriggerRunId } from '../generated/kysely/automations/TriggerRun';
+
+import { isInsideSpendMeter, reportRunCost } from './run_spend';
+import { models } from './models/registry';
+import { logger } from '../services/logger';
+import { getQb } from './kysely';
 
 // -- Context --
 

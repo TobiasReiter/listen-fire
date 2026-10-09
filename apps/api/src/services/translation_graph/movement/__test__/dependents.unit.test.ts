@@ -32,6 +32,8 @@ jest.mock('../../../../lib/kysely', () => {
   };
 });
 
+import type { MovementValidityStatus } from '../store';
+
 import {
   checkMovementDependentsOf,
   movementDependentsOf,
@@ -39,7 +41,6 @@ import {
   movementUsageIndex,
   type ValidateMovementSource,
 } from '../files';
-import type { MovementValidityStatus } from '../store';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

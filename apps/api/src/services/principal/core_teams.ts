@@ -9,9 +9,10 @@
 
 import { TeamScopeError, type Access, type Principal, type TeamRef } from 'principal';
 
-import { getCoreQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
+
+import { getCoreQb } from '../../lib/kysely';
 
 interface Membership {
   teamId: string;

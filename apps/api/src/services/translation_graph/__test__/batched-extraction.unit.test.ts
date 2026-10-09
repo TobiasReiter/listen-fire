@@ -12,6 +12,13 @@
 // Brief: plans/2026-05-19-tg-extraction-parity/_execution/wave-1/R2-batched-extraction.md
 
 import { z } from 'zod';
+
+import type {
+  ExtractInvocation,
+  ExtractValueInvocation,
+} from '../engine/evaluator/batcher';
+import type { Resource } from '../adapter';
+
 import {
   BatchedExtractionBatcher,
   assembleBundle,
@@ -29,11 +36,6 @@ import {
   runSkeletonPass,
 } from '../engine/batched_extraction/phases';
 import { ENTITY_DENSITY_OPUS_THRESHOLD } from '../engine/batched_extraction/schema_synthesis';
-import type {
-  ExtractInvocation,
-  ExtractValueInvocation,
-} from '../engine/evaluator/batcher';
-import type { Resource } from '../adapter';
 import { positionData } from '../types';
 
 // ── Test helpers ──────────────────────────────────────────────────────────

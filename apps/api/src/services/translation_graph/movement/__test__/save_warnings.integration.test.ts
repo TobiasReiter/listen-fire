@@ -14,9 +14,12 @@
 //      registration is ambiguous; the AUTHOR's mental model is. Warn.
 
 import { randomUUID } from 'node:crypto';
+
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { FakeCrmServer } from '../../../../scripts/dev/fake_crm_adapter';
+
 import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { saveMovement } from '../provision';
 import { findTriggersByKind } from '../../storage/tg_table';
 import { installRemoteAdapterFromManifest } from '../../adapters/remote/install';
@@ -25,7 +28,7 @@ import {
   FAKE_CRM_COMPANY_TYPE,
   startFakeCrmServer,
 } from '../../../../scripts/dev/fake_crm_adapter';
-import type { FakeCrmServer } from '../../../../scripts/dev/fake_crm_adapter';
+
 
 jest.mock('../../../credentials/credential_lifecycle', () => ({
   credentialLifecycle: () => undefined,

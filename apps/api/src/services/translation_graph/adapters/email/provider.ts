@@ -18,9 +18,10 @@
 // one. Silent 401s on old attachments is exactly what the old
 // `endsWith('mailgun.net')` special-case produced when anything else appeared.
 
+import type { ResolveFileRefResult } from '../../adapter';
+
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { getEnvVar } from '../../../../lib/utils/environment';
-import type { ResolveFileRefResult } from '../../adapter';
 import { mintAttachmentDownloadUrl, parseResendAttachmentHandle } from './resend';
 
 type EmailProviderSlug = 'mailgun' | 'resend';

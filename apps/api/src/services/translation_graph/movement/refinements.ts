@@ -38,9 +38,11 @@
 // steps THROUGH refinements it just grafted, so nested selection composes.
 
 import { refinementKey } from 'movement-lang';
+
 import type { InstanceChain, InstanceSchema, PositionSchema } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import type { SchemaTypeDescriptor } from '../types';
+
 import { decidableConjuncts, narrowByOf, selectMember } from './narrowing';
 import { instanceSchemaFromDescriptors } from './schema_projection';
 

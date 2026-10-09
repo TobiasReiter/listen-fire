@@ -25,10 +25,11 @@
  *
  */
 
+import type { MessageThoughts } from '../lib/knowledge/agent_types';
+
 import { anthropicChat } from '../lib/anthropic';
 import { currentContext } from './context';
 import { logger } from './logger';
-import type { MessageThoughts } from '../lib/knowledge/agent_types';
 
 // ---------------------------------------------------------------------------
 // Types

@@ -1,5 +1,6 @@
-import { MQ } from '../native';
 import type { AgentUpdate } from '../../openai/types';
+
+import { MQ } from '../native';
 
 export type { AgentUpdate };
 

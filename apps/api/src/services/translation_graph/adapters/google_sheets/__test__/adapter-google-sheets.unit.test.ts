@@ -84,16 +84,7 @@ jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
   };
 });
 
-import { GoogleSheetsAdapter } from '../index';
-import { SPREADSHEET_META_TYPE, cellAddressesInWhere } from '../schema_catalog';
 import type { Expression } from '#shared/expression/types';
-import {
-  makeMetaPosition,
-  makeStablePosition,
-  positionData,
-  positionRecordId,
-} from '../../../types';
-import { sheetCellValue } from '../../../../../adapters/googleSheets/cells';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type {
   ResolveEntityInput,
@@ -101,6 +92,17 @@ import type {
   UpdateInput,
   DeleteInput,
 } from '../../../adapter';
+
+import { GoogleSheetsAdapter } from '../index';
+import { SPREADSHEET_META_TYPE, cellAddressesInWhere } from '../schema_catalog';
+import {
+  makeMetaPosition,
+  makeStablePosition,
+  positionData,
+  positionRecordId,
+} from '../../../types';
+import { sheetCellValue } from '../../../../../adapters/googleSheets/cells';
+
 
 // ---------------------------------------------------------------------------
 // Fixtures + fake client

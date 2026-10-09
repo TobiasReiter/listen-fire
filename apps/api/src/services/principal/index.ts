@@ -7,7 +7,6 @@
 //
 // No product code branches on the answer; only this file knows there is one.
 
-import type { Request } from 'express';
 import {
   createStaticDirectory,
   createStaticPrincipalProvider,
@@ -19,6 +18,8 @@ import {
   type PrincipalProvider,
   type PrincipalRequest,
 } from 'principal';
+
+import type { Request } from 'express';
 
 import { AUTH_COOKIE } from '../../constants';
 import { verifyStaticSessionToken } from '../auth/static_session';

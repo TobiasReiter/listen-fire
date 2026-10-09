@@ -13,9 +13,11 @@
 // uniqueness lookup for adapter-declared `unique` config fields.
 
 import { sql } from 'kysely';
-import { getAutomationsQb } from '../../../lib/kysely';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
+
+import { getAutomationsQb } from '../../../lib/kysely';
 import { parseRunMode, type TriggerRunMode } from '../triggers/run_mode';
 import { resolveAdapterSlug, siblingKindsForAdapter } from '../adapters/registry';
 

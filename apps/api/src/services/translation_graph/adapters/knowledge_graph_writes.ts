@@ -32,13 +32,14 @@
 // Both of these are WIRE vocabulary — the generated enums the endpoints accept,
 // not knowledge code. Imported from the generated types for the same reason the
 // ids are: a spelling both sides agree on, checked by the compiler.
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { MutationContext, MutationSourceType } from '../mutation_context';
+import type { FieldEvidence, ParentAssociation, ParentLink, Resource } from '../adapter';
+
 import ChangeSource from '../../../generated/kysely/knowledge/ChangeSource';
 import { normalizeAdapterType } from '../../knowledge_pipeline/output_v3/linked_objects';
 import { kgFetch, kgFetchOrNull, type KgCredentials, type WireOntology } from './kg_client';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
-import type { MutationContext, MutationSourceType } from '../mutation_context';
-import type { FieldEvidence, ParentAssociation, ParentLink, Resource } from '../adapter';
 import { persistKgResources } from './knowledge_graph_resources';
 import { logger } from '../../logger';
 

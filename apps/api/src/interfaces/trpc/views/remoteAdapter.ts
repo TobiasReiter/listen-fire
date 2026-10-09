@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { UserId } from '../../../generated/kysely/core/User';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { RemoteAdapterManifestInput } from '../../../services/translation_graph/adapters/remote/manifest';
@@ -12,8 +15,6 @@ import {
   type RemoteAdapterRow,
 } from '../../../services/translation_graph/adapters/remote/store';
 import { installRemoteAdapterFromManifest } from '../../../services/translation_graph/adapters/remote/install';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { UserId } from '../../../generated/kysely/core/User';
 
 /**
  * tRPC router for managing remote Translation Graph adapter installs.

@@ -1,6 +1,7 @@
 import { RequestHandler, Request, Response } from 'express';
-
 import { currentPrincipal } from 'principal';
+
+import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
 
 import { currentContext } from '../../services/context';
 import { catchingRoutes } from './async_route';
@@ -10,7 +11,6 @@ import { getQb } from '../../lib/kysely';
 import { TeamId } from '../../generated/kysely/core/Team';
 import { loadTriggerById } from '../../services/translation_graph/storage/tg_table';
 import { receiveTriggerEvent } from '../../services/translation_graph/triggers/event_store';
-import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
 import {
   createEmailAdapter,
   normaliseInboundEmailPayload,

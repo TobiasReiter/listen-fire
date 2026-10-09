@@ -1,8 +1,6 @@
 // Agent tool suite
 
 import type { FieldMapping, TraversalStep, FilterExpression, OutputV3Config, Expression } from '../schemas';
-import { ConfigState } from './config_state';
-import { validate } from './validator';
 import type {
   OntologySummary,
   AdapterMetadataProvider,
@@ -10,6 +8,9 @@ import type {
   ToolResult,
   ValidationResult,
 } from './types';
+
+import { ConfigState } from './config_state';
+import { validate } from './validator';
 
 // ---------------------------------------------------------------------------
 // Agent Tool Session — stateful wrapper holding config + context

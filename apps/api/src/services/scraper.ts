@@ -1,13 +1,14 @@
 import { backOff } from 'exponential-backoff';
 import { htmlToText } from 'html-to-text';
 
+import type { CostSource } from '../lib/run_cost';
+
 import { SECOND } from '../constants';
 import { logger } from './logger';
 import { sendSlackNotification } from '../lib/slack';
 import { Queue } from '../lib/utils/queue';
 import { getEnvVar } from '../lib/utils/environment';
 import { looksLikeNonHtmlAddress } from '../lib/utils/url';
-import type { CostSource } from '../lib/run_cost';
 import { assertRunBudget, reportRunCost } from '../lib/run_spend';
 
 // Web Unlocker uses a dedicated zone, distinct from the LinkedIn Dataset API zone.

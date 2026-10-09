@@ -133,17 +133,19 @@ jest.mock('../../adapters/resolve', () => ({
 }));
 
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
-import { dispatchMutationEvent } from '../mutation_dispatch';
+import { tenantIdOf } from 'engine-contracts';
+
 import type {
   Adapter,
   RuntimeCapabilities,
 } from '../../adapter';
-import { containerAssociation } from '../../adapter';
 import type { MutationContext } from '../../mutation_context';
 import type { RecordMutationEvent } from '../record_mutation_event';
-import { makeStablePosition, positionRecordId } from '../../types';
-import { tenantIdOf } from 'engine-contracts';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
+
+import { dispatchMutationEvent } from '../mutation_dispatch';
+import { containerAssociation } from '../../adapter';
+import { makeStablePosition, positionRecordId } from '../../types';
 import { teamOfTenant } from '../../movement/tenant';
 
 const { findTriggersByKind } = jest.requireMock('../../storage/tg_table') as {

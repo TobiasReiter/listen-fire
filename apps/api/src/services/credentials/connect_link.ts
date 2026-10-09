@@ -37,6 +37,11 @@
 
 import { randomBytes } from 'node:crypto';
 
+import type { PickerActionKind } from './picker_spec';
+import type { ConnectTokenId } from '../../generated/kysely/automations/ConnectToken';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { UserId } from '../../generated/kysely/core/User';
+
 import { getAutomationsQb, getCoreQb } from '../../lib/kysely';
 import { getEnvVar } from '../../lib/utils/environment';
 import { services } from '../../adapters/registry';
@@ -48,15 +53,12 @@ import {
 import { getRemoteAdapter, rowToManifest } from '../translation_graph/adapters/remote/store';
 import { isKeyEntryConnectable } from './connect_form_spec';
 import { isIntrinsicProvisionable } from './intrinsic_provision';
-import type { PickerActionKind } from './picker_spec';
 import {
   builtInBotUsername,
   SHARED_TELEGRAM_CREDENTIAL_NAME,
 } from '../translation_graph/adapters/telegram/handshake';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
-import type { ConnectTokenId } from '../../generated/kysely/automations/ConnectToken';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { UserId } from '../../generated/kysely/core/User';
+
 
 // ---------------------------------------------------------------------------
 // Human-readable credential naming

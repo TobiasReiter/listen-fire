@@ -1,4 +1,5 @@
 import type { IntentEntry, UsingListenFireHandbook } from './types';
+
 import { gettingAround } from './chapters/getting_around';
 import { connectBuildAutomate } from './chapters/connect_build_automate';
 import { renderConnectingIntegrations } from './chapters/connecting_integrations';

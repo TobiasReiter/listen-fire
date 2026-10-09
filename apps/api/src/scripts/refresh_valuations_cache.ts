@@ -16,6 +16,8 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../generated/kysely/core/Team';
+
 import { Context } from '../services/context';
 import { getCachedInvestmentsValuation, refreshInventoryCache } from '../lib/valuations/cache';
 import { getInvestmentsValuation } from '../lib/valuations/valuation';
@@ -23,7 +25,6 @@ import { getValuationsQb } from '../lib/kysely';
 import { userPrincipal } from '../services/principal';
 import CurrencyIsoCode from '../generated/kysely/valuations/CurrencyIsoCode';
 import { InvestmentValuation } from '../lib/valuations/valuation/types';
-import type { TeamId } from '../generated/kysely/core/Team';
 
 // The two paths reach the same numbers by different arithmetic (SQL SUM vs a
 // JS reduce over lots), so they agree to floating-point noise, not to the bit.

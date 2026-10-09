@@ -1,5 +1,6 @@
-import { logger } from '../../../logger';
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
+
+import { logger } from '../../../logger';
 
 interface WebhookV3Config {
   url: string;

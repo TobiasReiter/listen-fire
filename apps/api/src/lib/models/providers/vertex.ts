@@ -3,8 +3,9 @@
 
 import { AnthropicVertex } from '@anthropic-ai/vertex-sdk';
 
-import { googleAuth, googleModelRegion, googleServiceAccount } from '../../google_cloud';
 import type { ChatProvider } from '../chat';
+
+import { googleAuth, googleModelRegion, googleServiceAccount } from '../../google_cloud';
 
 let client: AnthropicVertex | undefined;
 

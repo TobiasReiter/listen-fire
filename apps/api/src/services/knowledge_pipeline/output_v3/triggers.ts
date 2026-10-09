@@ -1,9 +1,3 @@
-import { getQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
-import { executeOutputs } from './execute';
-import { evaluateFilter } from './filter';
-import { initializeV3Adapter } from './adapters';
-import { outputV3ConfigSchema } from './schemas';
 import type { OutputExecutionContext } from './resolve';
 import type { Changeset, ApplyResult } from '../types';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
@@ -11,6 +5,13 @@ import type { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
 import type { SystemContext } from '../extract';
+
+import { outputV3ConfigSchema } from './schemas';
+import { initializeV3Adapter } from './adapters';
+import { evaluateFilter } from './filter';
+import { executeOutputs } from './execute';
+import { logger } from '../../logger';
+import { getQb } from '../../../lib/kysely';
 
 // -- Extraction trigger --
 

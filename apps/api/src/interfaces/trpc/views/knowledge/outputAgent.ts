@@ -3,11 +3,12 @@
 import { z } from 'zod';
 import { observable } from '@trpc/server/observable';
 
+import type { AgentUpdate } from '../../../../lib/openai/types';
+
 import { currentContext } from '../../../../services/context';
 import { trpc } from '../../trpc';
 import { runOutputAgent } from '../../../../lib/knowledge/output_agent';
 import { mq } from '../../../../lib/message_queue';
-import type { AgentUpdate } from '../../../../lib/openai/types';
 import { LlmUsageContext } from '../../../../lib/llm_usage';
 import { userProcedure as sharedUserProcedure } from '../../procedures';
 

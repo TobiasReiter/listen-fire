@@ -17,6 +17,8 @@
  * intrinsic slugs carry dashes and aren't importable yet).
  */
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getAutomationsQb } from '../../../lib/kysely';
@@ -25,7 +27,6 @@ import { WRITE_METHODS } from '../../../services/translation_graph/adapter';
 import { importIdentifier } from '../../../services/translation_graph/movement/schema_projection';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
 
 export type AdapterCatalogEntry = {
   /** Canonical adapter slug — the engine's routing identity. */

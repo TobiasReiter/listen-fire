@@ -5,6 +5,7 @@
 // legacy app.
 
 import { Router } from 'express';
+
 import type { Request, Response } from 'express';
 
 import { verifySlackSignature } from '../../services/webhook_sync/providers/slack';

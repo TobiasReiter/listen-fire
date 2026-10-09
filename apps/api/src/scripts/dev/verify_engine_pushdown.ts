@@ -19,14 +19,15 @@
  * Postgres advisory locks.
  */
 import type { InstanceSchema } from 'movement-lang';
+import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { runMovement } from '../../services/movement_engine/run';
 import { staticCatalogSnapshot } from '../../services/translation_graph/movement/catalog';
 import { createManualAdapter } from '../../services/translation_graph/adapters/manual';
 import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
-import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { probeEngineHost } from './lib/probe_host';
 import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 

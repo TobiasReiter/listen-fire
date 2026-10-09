@@ -15,16 +15,19 @@
 // entry's name, purpose and body, weighted in that order. Deterministic, and
 // explainable from the entry itself.
 
+import { getMovementHandbook } from './index';
+
 import {
   describeFieldType,
   standardLibrary,
   type Builtin,
   type BuiltinParam,
 } from 'movement-lang';
+
+import type { Chapter, EngineClaim } from './types';
+
 import { listChapterSections, sliceChapterSection } from '../../handbook_section';
 import { exampleProgram, exampleText, frontEntries, type FrontExample } from './front_page';
-import { getMovementHandbook } from './index';
-import type { Chapter, EngineClaim } from './types';
 
 export const LANGUAGE_SEARCH_KINDS = ['function', 'concept', 'recipe'] as const;
 export type LanguageSearchKind = (typeof LANGUAGE_SEARCH_KINDS)[number];

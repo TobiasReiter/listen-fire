@@ -9,7 +9,6 @@
 // throw — a sheet append has no addressable row to mutate.
 
 import type { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
-import { logger } from '../../../logger';
 import type {
   RelatedResult,
   ResolveEntityInput,
@@ -21,6 +20,8 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
+
+import { logger } from '../../../logger';
 import { containerAssociation } from '../../adapter';
 import { makeStablePosition } from '../../types';
 import {

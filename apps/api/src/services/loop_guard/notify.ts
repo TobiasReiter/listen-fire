@@ -10,11 +10,13 @@
 // notification"); until it exists we emit a plain-language, jargon-free log line
 // addressed to the team so the message content is already written for the user.
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { GuardSignal } from './types';
+
 import { getCoreQb } from '../../lib/kysely';
 import { sendSlackNotification } from '../../lib/slack';
-import type { TeamId } from '../../generated/kysely/core/Team';
 import { logger } from '../logger';
-import type { GuardSignal } from './types';
+
 
 const SIGNAL_LABEL: Record<GuardSignal, string> = {
   trigger_rate: 'per-automation rate limit',

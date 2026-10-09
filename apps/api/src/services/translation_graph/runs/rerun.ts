@@ -8,12 +8,14 @@
 // orchestration. The old pipeline_input/output-keyed re-run is gone with
 // tg_run.
 
-import { getAutomationsQb, getQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { TriggerRunTriggerType } from './trigger_run';
+
+import { getAutomationsQb, getQb } from '../../../lib/kysely';
 import { triggerEventSchema, type TriggerEvent } from '../triggers/types';
 import { dispatchTriggerByIdEvent } from '../triggers/router';
-import type { TriggerRunTriggerType } from './trigger_run';
+
 
 export async function rerunTriggerRun(input: {
   runId: TriggerRunId;

@@ -11,6 +11,10 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { UserId } from '../../../generated/kysely/core/User';
+import type { TeamInviteId } from '../../../generated/kysely/core/TeamInvite';
+
 import { currentContext } from '../../../services/context';
 import { TeamInviteService } from '../../../services/team_invite';
 import {
@@ -21,9 +25,6 @@ import {
 import { trpc } from '../trpc';
 import { UserService } from '../../../services/user';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { UserId } from '../../../generated/kysely/core/User';
-import type { TeamInviteId } from '../../../generated/kysely/core/TeamInvite';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 import { neverAsAny } from '../../../lib/utils/types';
 

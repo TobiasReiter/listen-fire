@@ -36,6 +36,7 @@
 // value to a same-typed parameter always does.
 
 import { parseProgram, checkProgram, mockCatalog, type Diagnostic } from 'movement-lang';
+
 import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
 import { gmailEntryPoints, GMAIL_MAILBOX_DESCRIPTOR, describeGmailType } from '../schema';
 import { GMAIL_MESSAGE_TYPE_ID, GMAIL_ATTACHMENT_TYPE_ID } from '../types';

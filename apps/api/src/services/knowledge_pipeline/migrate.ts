@@ -1,20 +1,20 @@
 import { sql } from 'kysely';
-
-import { getKnowledgeQb } from '../../lib/kysely';
-import { execute } from '../../lib/prompts/execute';
-import { promptDef } from '../../lib/prompts/definition';
-import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from '../../lib/utils/parse_json';
 import { z } from 'zod';
 
-import { searchFacts } from './facts';
-import { logger } from '../logger';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
 import type { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { PropertyId } from '../../generated/kysely/knowledge/Property';
 import type { TeamId } from '../../generated/kysely/core/Team';
+
+import { getKnowledgeQb } from '../../lib/kysely';
+import { execute } from '../../lib/prompts/execute';
+import { promptDef } from '../../lib/prompts/definition';
+import { anthropicChat } from '../../lib/anthropic';
+import { parseJson } from '../../lib/utils/parse_json';
+import { searchFacts } from './facts';
+import { logger } from '../logger';
 import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity';
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import { recordChange, ChangeSource, ChangeKind, propertyToChangeValue, changeValuesEqual } from '../../lib/knowledge/changes';

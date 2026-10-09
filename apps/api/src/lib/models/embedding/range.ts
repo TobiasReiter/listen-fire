@@ -3,8 +3,9 @@
 // imports it, and the embedding entry point imports the map; and free of the
 // provider clients, so reading a model's width loads none of them.
 
-import { neverAsAny } from '../../utils/types';
 import type { Provider } from '../map';
+
+import { neverAsAny } from '../../utils/types';
 
 /** The widths a wire model can produce, inclusive. */
 export interface EmbeddingRange {

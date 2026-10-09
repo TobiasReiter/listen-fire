@@ -81,6 +81,15 @@ jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
 });
 
 import { Readable } from 'node:stream';
+
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type {
+  ResolveEntityInput,
+  WriteInput,
+  UpdateInput,
+  DeleteInput,
+} from '../../../adapter';
+
 import { DropboxAdapter } from '../index';
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import {
@@ -89,13 +98,6 @@ import {
   requireStructuredId,
   dropboxWebUrl,
 } from '../types';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type {
-  ResolveEntityInput,
-  WriteInput,
-  UpdateInput,
-  DeleteInput,
-} from '../../../adapter';
 
 // The pretty type names are the framework identity — a position's
 // `recordType` / an entry's `typeId`. No system prefix (rule 5): the

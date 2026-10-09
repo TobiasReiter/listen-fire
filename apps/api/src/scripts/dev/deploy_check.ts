@@ -9,7 +9,6 @@
  *   DELETE FROM automations.deploy_check WHERE release_tag = 'dev';
  */
 import './_profile_loader';
-
 import { deployCheckMain } from '../deploy_check';
 
 deployCheckMain()

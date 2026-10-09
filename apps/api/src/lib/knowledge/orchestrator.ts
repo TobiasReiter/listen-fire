@@ -1,3 +1,7 @@
+import type { MessageThoughts } from './agent_types';
+import type { AgentUpdate } from '../openai/types';
+import type { AgentConversationId } from '../../generated/kysely/public/AgentConversation';
+
 import { currentContext } from '../../services/context';
 import { logger } from '../../services/logger';
 import { getNavigation } from '../../services/navigation_state';
@@ -6,10 +10,7 @@ import {
   compactIfDue,
   selectRecentWindowAssistantIds,
 } from '../../services/agent_running_state';
-import type { MessageThoughts } from './agent_types';
 import { mq } from '../message_queue';
-import type { AgentUpdate } from '../openai/types';
-import type { AgentConversationId } from '../../generated/kysely/public/AgentConversation';
 import {
   getAgent,
   initAgentRegistry,

@@ -8,26 +8,18 @@
 // loudly when something not-yet-built is invoked.
 
 import { Readable } from 'node:stream';
-import type { ReadableStream as WebReadableStream } from 'node:stream/web';
+
 import { LRUCache } from 'lru-cache';
 import { z } from 'zod';
-import { decryptToken } from '../../../lib/credentials';
-import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
-import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../lib/recording';
-import { streamFileRef } from '../engine/files/retrieve';
+
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
-import {
-  attioCredsParser,
-  getAttioClient,
-} from '../../../adapters/attio/apiClient';
 import type { AttioRecord } from '../../../adapters/attio/apiClient';
 import type { AttioAttribute } from '../../../adapters/attio/interface';
 import type { TriggerEvent } from '../triggers/types';
 import type { SnapshotInput } from '../adapter';
-import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type {
   ActorCandidate,
   ActorIdentity,
@@ -59,14 +51,32 @@ import type {
   WriteResult,
   LinkedObjectCandidate,
 } from '../adapter';
+import type { UniquenessConstraints } from '../uniqueness';
+
+import type { Expression } from '#shared/expression/types';
+import { decryptToken } from '../../../lib/credentials';
+import { getAutomationsQb } from '../../../lib/kysely';
+import { logger } from '../../logger';
+import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../lib/recording';
+import { streamFileRef } from '../engine/files/retrieve';
+
+import {
+  attioCredsParser,
+  getAttioClient,
+} from '../../../adapters/attio/apiClient';
+
+
+import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
+
+
 import { fileHandle, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from '../adapter';
 import { BaseAdapter } from './base';
 import { stubTargetOf, type EdgesFromResult } from '../adapter';
 import { uniformWalk } from './hop';
 import { UPDATE_NOT_FOUND, isHttp404 } from './not_found';
 import { naturalName } from './name_resolution';
-import type { UniquenessConstraints } from '../uniqueness';
-import type { Expression } from '#shared/expression/types';
+
+
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,
@@ -82,6 +92,7 @@ import {
   type SchemaTypeDescriptor,
   type SourcePosition,
 } from '../types';
+
 import type { EdgeCapability, FieldCapability } from '#shared/expression/types';
 
 // ── Inbound webhook envelope (consumed by `preprocessInbound`) ──────────────

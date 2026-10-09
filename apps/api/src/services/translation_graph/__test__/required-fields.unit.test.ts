@@ -1,9 +1,10 @@
+import type { SchemaFieldDescriptor, TGFieldMapping } from '../types';
+
 import {
   requiredFieldStatuses,
   unsatisfiedRequiredFields,
   seedRequiredFieldMappings,
 } from '../required_fields';
-import type { SchemaFieldDescriptor, TGFieldMapping } from '../types';
 
 function field(over: Partial<SchemaFieldDescriptor> & { fieldId: string }): SchemaFieldDescriptor {
   return {

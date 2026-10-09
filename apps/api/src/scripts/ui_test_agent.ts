@@ -6,6 +6,7 @@ import './dev/_profile_loader';
 
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
+
 import { chromium, type Page, type Browser } from 'playwright';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -15,10 +16,13 @@ import { getTemplate } from '../lib/knowledge/templates/index';
 import { generateJWT } from '../lib/middleware/authentication/token';
 import { encryptToken } from '../lib/credentials';
 import { getEnvVar } from '../lib/utils/environment';
+
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { PipelineConfigurationId } from '../generated/kysely/public/PipelineConfiguration';
 import type { ExternalServiceCredentialsId } from '../generated/kysely/automations/ExternalServiceCredentials';
+
 import ExternalServiceType from '../generated/kysely/automations/ExternalServiceType';
+
 import type { OntologyTemplate } from '../lib/knowledge/templates/types';
 
 // ── Config ──────────────────────────────────────────────────

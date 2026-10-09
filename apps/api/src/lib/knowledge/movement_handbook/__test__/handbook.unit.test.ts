@@ -11,18 +11,20 @@ import {
   type InstanceSchema,
   type PositionSchema,
 } from 'movement-lang';
+
+import type { InstanceChain } from 'movement-lang';
+import type { ChapterId, EngineClaim } from '../types';
+
 import {
   KG_EVENT_RECORD_EDGE_NAME,
   KG_EVENT_TYPE_NAME,
   KG_NODE_TYPE_META_TYPE,
   KG_SUBSCRIBABLE_EVENTS,
 } from '../../../../services/translation_graph/adapters/knowledge_graph';
-import type { InstanceChain } from 'movement-lang';
 import adapterSchemas from './adapter_schemas.fixture.json';
 import { registeredPluginSpecs } from '../../../../services/translation_graph/movement/catalog';
 import { proseViolations } from './prose_rules';
 import { chapterRoute } from '../../../handbook_section';
-import type { ChapterId, EngineClaim } from '../types';
 import { frontPageClaims } from '../front_page';
 import { controlFormClaims } from '../language_search';
 import {

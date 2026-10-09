@@ -4,9 +4,10 @@
 // not available to them; this is the same `team_membership` read against the
 // global connection.
 
-import { getCoreQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
+
+import { getCoreQb } from '../../lib/kysely';
 
 /** Whether a `team_membership(user_id, team_id)` row exists — the sole
  *  authority on where a person may act (C-6/D20). */

@@ -23,6 +23,9 @@
  *
  */
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { MovementId } from '../../../generated/kysely/automations/Movement';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getKnowledgeQb, getAutomationsQb, getQb } from '../../../lib/kysely';
@@ -34,9 +37,6 @@ import {
 import { describeSource } from '../../../lib/automation/describe';
 import { resolveAutomationName } from '../../../lib/automation/naming';
 import { listAskRecordsForTeam } from '../../../services/interaction/ask_records';
-
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
 /**

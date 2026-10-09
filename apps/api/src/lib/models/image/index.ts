@@ -1,10 +1,11 @@
 // Image generation behind the model map: the caller names a registry model and
 // gpt-image-1's knobs, and the map decides which vendor draws it.
 
+import type { ImageModelName } from '../registry';
+
 import { assertRunBudget } from '../../run_spend';
 import { neverAsAny } from '../../utils/types';
 import { assertCallable, resolveModel } from '../map';
-import type { ImageModelName } from '../registry';
 import { geminiGenerateImage } from './gemini';
 import { openAiGenerateImage } from './openai';
 

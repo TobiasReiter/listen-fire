@@ -18,8 +18,9 @@ jest.mock('../../../services/context', () => ({
   currentContext: () => ({ user: { id: 'u1' } }),
 }));
 
-import { AffinityAPIClient } from '../apiClient';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import { AffinityAPIClient } from '../apiClient';
 import { withSegment } from '../../../services/translation_graph/segment_scope';
 
 /** One run segment's host scope, as the engine opens it for a run. */

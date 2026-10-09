@@ -4,6 +4,7 @@
 // an id. DB / registry / adapter seams mocked.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { listMovementRows } from '../store';
 import {
   movementCatalogSnapshotForTeam,

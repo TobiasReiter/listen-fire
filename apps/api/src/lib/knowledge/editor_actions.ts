@@ -28,8 +28,9 @@
 //
 // activity layer
 
-import { mq } from '../message_queue';
 import type { AgentUpdate, EditorAction } from '../openai/types';
+
+import { mq } from '../message_queue';
 
 /** A single executePlan operation: name-keyed, `{ kind, args }`. */
 interface PlanOp {

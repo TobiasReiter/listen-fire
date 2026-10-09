@@ -20,6 +20,7 @@ import {
   languageVersionDiagnostic,
   parseProgram,
 } from 'movement-lang';
+
 import type {
   Catalog,
   Diagnostic,
@@ -29,11 +30,13 @@ import type {
   Span,
 } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { CatalogGap } from './catalog';
+import type { MovementValidityStatus } from './store';
+
 import { listUnsupportedConstructs } from '../../movement_engine/interpretable';
 import { movementCatalogForTeam } from './catalog';
-import type { CatalogGap } from './catalog';
 import { stepTimer, type StepTimer } from './timing';
-import type { MovementValidityStatus } from './store';
+
 
 export interface AuthoringDiagnostic {
   code: string;

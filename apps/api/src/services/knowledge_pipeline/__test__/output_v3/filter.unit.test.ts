@@ -15,9 +15,10 @@ jest.mock('../../../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import { resolveFieldRef } from '../../output_v3/filter';
 import type { NodeData } from '../../output_v3/filter';
 import type { FieldRef } from '../../output_v3/schemas';
+
+import { resolveFieldRef } from '../../output_v3/filter';
 
 // ---------------------------------------------------------------------------
 // Fixtures

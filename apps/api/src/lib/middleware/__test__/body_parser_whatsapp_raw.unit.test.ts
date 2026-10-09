@@ -5,9 +5,11 @@
 
 import { createHmac } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 
 import express from 'express';
+
+import type { AddressInfo } from 'node:net';
+
 
 import { jsonBodyParser } from '../body_parser';
 import { whatsappProvider } from '../../../services/webhook_sync/providers/whatsapp';

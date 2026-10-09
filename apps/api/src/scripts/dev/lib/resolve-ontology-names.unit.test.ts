@@ -1,12 +1,13 @@
-import {
-  resolveOntologyNamesInBody,
-  type OntologyMaps,
-} from './resolve-ontology-names';
 import type {
   ActionNode,
   TranslationGraphRowBody,
 } from '../../../services/translation_graph/types';
 import type { Expression } from '../../../services/knowledge_pipeline/output_v3/expression';
+
+import {
+  resolveOntologyNamesInBody,
+  type OntologyMaps,
+} from './resolve-ontology-names';
 
 function buildMaps(): OntologyMaps {
   return {

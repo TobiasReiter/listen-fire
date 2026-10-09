@@ -10,6 +10,7 @@
 import type { DiscriminableEvent } from '../../adapter';
 import type { PollSource } from '../../poll_source';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   DEALROOM_MAX_LIMIT,
   DEALROOM_MAX_OFFSET,

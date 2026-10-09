@@ -3,10 +3,11 @@
 // dry-run firings emit nothing (best-effort, never throwing into the firing).
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { MovementRunResult } from '../../../movement_engine/run';
+
 import OpsEventType from '../../../../generated/kysely/public/OpsEventType';
 import OpsDetailLevel from '../../../../generated/kysely/automations/OpsDetailLevel';
 import OpsSeverity from '../../../../generated/kysely/public/OpsSeverity';
-import type { MovementRunResult } from '../../../movement_engine/run';
 
 // ── Mocks (variables must be `mock`-prefixed for jest-hoist to work) ─────────
 

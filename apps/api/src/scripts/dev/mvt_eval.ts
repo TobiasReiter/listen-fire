@@ -36,14 +36,18 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 
 import { anthropicToolLoop, type TurnEvent } from '../../lib/anthropic';
 import { parseChatModelName } from '../../lib/models/registry';
+
 import type { ChatModelName } from '../../lib/models/registry';
+
 import {
   createMovementAgentTools,
   movementToolDefinitions,
 } from '../../lib/knowledge/movement_agent';
 import { buildMovementFrontMatter } from '../../lib/knowledge/movement_handbook';
 import { validateMovementForTeam } from '../../services/translation_graph/movement/authoring';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { ensureDevLoopTeam, buildAgentContext } from './_lib';
 import { LlmUsageContext } from '../../lib/llm_usage';
 import { bucketDiagnostics, type ValidationLike } from './lib/diagnostic_families';

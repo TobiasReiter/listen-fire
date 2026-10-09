@@ -33,6 +33,7 @@ jest.mock('../../../adapters/affinity/apiClient', () => ({
 }));
 
 import crypto from 'node:crypto';
+
 import { affinityProvider } from '../providers/affinity';
 
 let storedCredential: Record<string, unknown> = { apiKey: 'k' };

@@ -5,8 +5,10 @@
  * `info.message` to the rest-metadata too, in any NODE_ENV.
  */
 
-import { Writable } from 'stream';
+import { Writable } from "node:stream";
+
 import winston from 'winston';
+
 import { logger } from '../logger';
 
 // Captures through a transport on the real logger rather than spying on

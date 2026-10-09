@@ -9,6 +9,10 @@
 //
 // chunk F
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { AskId } from '../../generated/kysely/asks/Ask';
+import type { MovementId } from '../../generated/kysely/automations/Movement';
+
 import { getQb, getAutomationsQb } from '../../lib/kysely';
 import {
   listAsksForTeam,
@@ -25,9 +29,6 @@ import {
 } from '../translation_graph/adapters/ask/surface_view';
 import { answerAskById } from '../translation_graph/adapters/ask/answer_door';
 import { resolveAutomationName } from '../../lib/automation/naming';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { AskId } from '../../generated/kysely/asks/Ask';
-import type { MovementId } from '../../generated/kysely/automations/Movement';
 
 /** One new-store question, projected for the "your asks" surface. Field names
  *  mirror the legacy `OpenAskSummary` (question / detail / interactionType /

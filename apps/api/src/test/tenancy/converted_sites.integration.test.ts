@@ -26,6 +26,9 @@ import { randomUUID } from 'node:crypto';
 
 import * as db from '@prisma/client';
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { UserId } from '../../generated/kysely/core/User';
+
 import { getCoreQb, getKnowledgeQb, getValuationsQb } from '../../lib/kysely';
 import { Context } from '../../services/context';
 import { userPrincipal } from '../../services/principal';
@@ -36,8 +39,6 @@ import { upsertCompanyAsset } from '../../lib/datasources/asset';
 import { upsertAssetTransfer } from '../../lib/datasources/asset_transfer';
 import { getOrCreateTransactionByAssetTransfers } from '../../lib/datasources/data_layer';
 import LegalEntityType from '../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { UserId } from '../../generated/kysely/core/User';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const anyVals = (v: Record<string, unknown>) => v as any;

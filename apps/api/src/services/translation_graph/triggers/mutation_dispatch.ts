@@ -11,14 +11,15 @@
 // column shape no longer exists; v3 ActionTree-based mutation triggers continue
 // to fire through the existing output_v3/triggers.ts pipeline.
 
-import { logger } from '../../logger';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { EvaluationResult } from '../engine/types';
 import type { RecordMutationEvent } from './record_mutation_event';
+import type { TriggerEvent } from './types';
+
+import { logger } from '../../logger';
 import { findTriggersByKind } from '../storage/tg_table';
 import { movementForTrigger, runMovementFiring } from '../movement/execute';
 import { runModeGate } from './run_mode';
-import type { TriggerEvent } from './types';
 import { consultEchoSuppression } from './echo_suppression';
 import { resolveAdapter } from '../adapters/resolve';
 import { resolveAdapterSlug } from '../adapters/registry';

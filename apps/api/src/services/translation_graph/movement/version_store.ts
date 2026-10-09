@@ -19,10 +19,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { LanguageVersion } from 'movement-lang';
-
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { MovementVersionId } from '../../../generated/kysely/automations/MovementVersion';
+
 import { getAutomationsQb } from '../../../lib/kysely';
 
 export interface MovementVersionRow {

@@ -6,8 +6,9 @@
 //
 // The adapter makes the event discriminable; the engine discriminates it.
 
-import { makeStablePosition, makeUnstablePosition, type SourcePosition } from '../../types';
 import type { DiscriminableEvent, EventType } from '../../adapter';
+
+import { makeStablePosition, makeUnstablePosition, type SourcePosition } from '../../types';
 
 export interface DiscriminationResult {
   /** The typed root position to seed the trigger's evaluation with. */

@@ -15,6 +15,9 @@
 
 import { createHmac } from 'node:crypto';
 
+import type { MutationEventEnvelope } from '../../../lib/knowledge/store/events';
+import type { MutationOutboxId } from '../../../generated/kysely/knowledge/MutationOutbox';
+
 import { SECOND } from '../../../constants';
 import { getKnowledgeQb } from '../../../lib/kysely';
 import { worker } from '../../../lib/worker';
@@ -22,8 +25,6 @@ import { handleError } from '../../../lib/errors';
 import { logger } from '../../logger';
 import { neverAsAny } from '../../../lib/utils/types';
 import { mutationDelivery } from './delivery_mode';
-import type { MutationEventEnvelope } from '../../../lib/knowledge/store/events';
-import type { MutationOutboxId } from '../../../generated/kysely/knowledge/MutationOutbox';
 
 const DRAIN_INTERVAL = 2 * SECOND;
 const BATCH_SIZE = 100;

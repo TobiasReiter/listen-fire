@@ -15,6 +15,7 @@ function describedTarget(target: WalkedNodeShape | undefined): WalkedDescribedNo
 }
 
 import { makeUnstablePosition } from '../../types';
+
 import type { EdgesFromResult } from '../../adapter';
 import type { SchemaFieldDescriptor } from '../../types';
 

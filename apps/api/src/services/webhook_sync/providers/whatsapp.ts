@@ -14,7 +14,10 @@
 // dispatch. (See the flagged note in that file.)
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
+
 import { z } from 'zod';
+
+import type { WebhookEvent, WebhookProvider, WebhookRegistration } from './interface';
 
 import { normalizeWhatsappPhone } from '../../translation_graph/adapters/acting_user/phone';
 import {
@@ -24,7 +27,6 @@ import {
   type WhatsappAttachment,
   type WhatsappPayload,
 } from '../../translation_graph/adapters/whatsapp/types';
-import type { WebhookEvent, WebhookProvider, WebhookRegistration } from './interface';
 
 // ── Meta envelope schema (tolerant — extra fields pass through) ─────────────
 

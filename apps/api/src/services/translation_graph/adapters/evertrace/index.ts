@@ -8,7 +8,6 @@
 // `filter.ts`; the write bodies are `write.ts`.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   Adapter,
   AdapterManifest,
@@ -26,6 +25,8 @@ import type {
   WriteResult,
 } from '../../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
+import type { Expression } from '#shared/expression/types';
+
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,
@@ -33,7 +34,7 @@ import {
   makeUnstablePosition,
   positionData,
 } from '../../types';
-import type { Expression } from '#shared/expression/types';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { BaseAdapter } from '../base';
 import { uniformWalk } from '../hop';
 import { naturalName } from '../name_resolution';

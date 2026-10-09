@@ -8,8 +8,10 @@
 import express from 'express';
 import { Router } from 'express';
 
-import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type { ConnectTokenLookup } from '../../../services/credentials/connect_link';
+import type { AddressInfo } from 'node:net';
+
+import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 const lookupConnectToken = jest.fn<Promise<ConnectTokenLookup>, [string]>();
@@ -50,7 +52,7 @@ import { connectRouter } from '../connect';
 
 // ── Tiny in-process HTTP harness (no supertest dep) ─────────────────────────
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+
 
 let server: Server;
 let baseUrl: string;

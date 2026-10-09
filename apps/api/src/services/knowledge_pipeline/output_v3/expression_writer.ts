@@ -4,6 +4,10 @@
 // tool-use approach
 
 import type { Expression } from '#shared/expression/types';
+
+import { anthropicToolLoop } from '../../../lib/anthropic';
+import { logger } from '../../logger';
+
 import {
   serialize,
   parse,
@@ -14,8 +18,6 @@ import {
   type ValidationResult,
   type Completion,
 } from '#shared/expression/formula';
-import { anthropicToolLoop } from '../../../lib/anthropic';
-import { logger } from '../../logger';
 
 // ── Context: what the LLM needs to know about the schema ──
 

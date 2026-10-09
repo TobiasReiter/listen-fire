@@ -3,12 +3,14 @@
 // and a parked one are left alone.
 
 import { randomUUID } from 'node:crypto';
-import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
-import { cleanupTeam } from '../../../../test/harness/cleanup';
-import { testWorkContext } from '../../../../test/harness/work';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../../generated/kysely/automations/TriggerEvent';
+
+import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
+import { cleanupTeam } from '../../../../test/harness/cleanup';
+import { testWorkContext } from '../../../../test/harness/work';
 import { noteFirstFiringLeaseLost, runOrphanSweepHandler } from '../trigger_run';
 import { getMovementRunStatus } from '../../movement/run_now';
 

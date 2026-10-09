@@ -2,7 +2,9 @@
 // client, no adapter — an Expression in, Slack's `oldest`/`latest` out.
 
 import { parseMovementExpression } from 'movement-lang';
+
 import type { Expression } from '#shared/expression/types';
+
 import { historyWindowFromWhere } from '../history_window';
 
 const NOW = Date.parse('2026-08-20T12:00:00.000Z');

@@ -2,13 +2,14 @@
 // and the PollSource (poll.ts). The wire shape itself lives in
 // `adapters/gmail/apiClient.ts`; this is only the credential half.
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
 import { gmailCredentialShape } from '../../../credentials/app_id';
 import { neverAsAny } from '../../../../lib/utils/types';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 import {
   GmailApiClient,
   checkGmailMailboxAllowed,

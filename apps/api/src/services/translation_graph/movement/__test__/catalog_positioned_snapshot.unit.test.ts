@@ -11,10 +11,12 @@
 // positioned schema, and it must carry it under the key the checker looks it up
 // by. Either half alone still gives the editor nothing.
 
+import { fromCatalogSnapshot } from 'movement-lang';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { resolveAdapter } from '../../adapters/resolve';
 import { clearIntrospectionCache } from '../instance_cache';
-import { fromCatalogSnapshot } from 'movement-lang';
 import { movementCatalogSnapshotForTeam } from '../catalog';
 
 jest.mock('../../../../lib/kysely', () => {

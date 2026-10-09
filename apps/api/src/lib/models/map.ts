@@ -11,12 +11,13 @@
 
 import { z } from 'zod';
 
+import type { Capability, ChatModelName, ModelName } from './registry';
+
 import { isGoogleServiceAccountConfigured, missingGoogleServiceAccountVars } from '../google_cloud';
 import { neverAsAny } from '../utils/types';
 import { embeddingDestinations } from './embedding/destinations';
 import { embeddingRange } from './embedding/range';
 import { chatModelNames, hasCapability, isModelName, modelNames, models } from './registry';
-import type { Capability, ChatModelName, ModelName } from './registry';
 
 export const providers = ['anthropic', 'vertex', 'openai', 'gemini'] as const;
 export type Provider = (typeof providers)[number];

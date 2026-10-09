@@ -2,16 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { execute } from '../../lib/prompts/execute';
-import { promptDef } from '../../lib/prompts/definition';
-import { logger } from '../logger';
-import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import type { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
 import type {
   InputPropertyMapping,
   InputMetadata,
 } from '../../adapters/pipeline/inbound/metadata';
-import { inputPropertyMappingSchema } from '../../adapters/pipeline/inbound/metadata';
 import type {
   ExtractedProperty,
   ExtractedEvidence,
@@ -22,6 +17,13 @@ import type {
   ExtractionTreeNode,
   ExtractionTreePropertyDef,
 } from './types';
+
+import { execute } from '../../lib/prompts/execute';
+import { promptDef } from '../../lib/prompts/definition';
+import { logger } from '../logger';
+import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
+import { inputPropertyMappingSchema } from '../../adapters/pipeline/inbound/metadata';
+
 
 function coerceToPropertyType(
   raw: string | number | boolean,

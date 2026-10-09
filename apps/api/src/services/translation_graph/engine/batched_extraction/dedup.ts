@@ -24,7 +24,6 @@
 //     skipped (per the 2026-05-22 design ruling).
 
 import type { EphemeralNode } from '../../types';
-import { positionData } from '../../types';
 import type {
   Adapter,
   DedupRules,
@@ -32,6 +31,8 @@ import type {
 } from '../../adapter';
 import type { Bundle } from './bundle';
 import type { SyntheticSchema } from './schema_synthesis';
+
+import { positionData } from '../../types';
 
 // ── Public types ──────────────────────────────────────────────────────────
 

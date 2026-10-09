@@ -8,9 +8,11 @@
 // from the verify step rather than a throw is what makes the window, if one
 // ever reopens, answer the way every other rejection does.
 
-import express from 'express';
-import type { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
+
+import express from 'express';
+
+import type { Server } from 'node:http';
 
 const ORIGINAL_TOKEN_SECRET = process.env.TOKEN_SECRET;
 process.env.TOKEN_SECRET = 'test-token-secret';

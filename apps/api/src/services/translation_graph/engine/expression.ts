@@ -14,7 +14,6 @@ import { randomUUID } from 'node:crypto';
 
 import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
 import type { AggregationFunction, TraversalStep } from '#shared/expression/types';
-import { isObjectSpread, objectMemberExpression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type {
   ActingUser,
@@ -23,14 +22,16 @@ import type {
   FieldEvidence,
   Resource,
 } from '../adapter';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
 import type { ResourceFilter } from '../../knowledge_pipeline/output_v3/schemas';
-import { resourcePositionsFromExtractNode } from './resources';
 import type { TriggerEvent } from '../triggers/types';
 import type { EphemeralNode, ExpressionType, SourcePosition } from '../types';
+import type { runKgQuery as RunKgQueryFn } from '../../knowledge_pipeline/output_v3/kg_query_runner';
+import type { ActionResultRecord } from './action_plan';
+
+import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { resourcePositionsFromExtractNode } from './resources';
 import { isEphemeralPosition, positionData } from '../types';
 import { getAutomationsQb } from '../../../lib/kysely';
-import type { runKgQuery as RunKgQueryFn } from '../../knowledge_pipeline/output_v3/kg_query_runner';
 import {
   evaluateExtractStep,
   evaluateExtractValue,
@@ -41,7 +42,9 @@ import {
 } from './evaluator';
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 import { resolvePositionResources } from './files/resources';
-import type { ActionResultRecord } from './action_plan';
+
+
+import { isObjectSpread, objectMemberExpression } from '#shared/expression/types';
 
 /**
  * Node-scoped accumulator for the resources an action's evaluation touched

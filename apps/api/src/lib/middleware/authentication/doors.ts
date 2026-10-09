@@ -14,7 +14,6 @@
 // user is not a member of.
 
 import type { Request, Response } from 'express';
-
 import type { ResolvedIdentity } from '../../../services/principal/core_provider';
 
 interface InboundDoor {

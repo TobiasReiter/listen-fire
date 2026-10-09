@@ -9,13 +9,14 @@
 // The filter/stamp behaviour is still covered directly below via
 // `matchesResourceFilter` / `stampResourceIds`.
 
-import { EmailAdapter, EMAIL_ADAPTER_TYPE, EMAIL_RECORD_TYPE_ID } from '../../../adapters/email';
 import type { EmailPayload } from '../../../adapters/email';
-import { makeStablePosition } from '../../../types';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import { matchesResourceFilter, resolvePositionResources, stampResourceIds } from '../resources';
 import type { Resource } from '../../../adapter';
 import type { ResourceId } from '../../../../../generated/kysely/knowledge/Resource';
+
+import { matchesResourceFilter, resolvePositionResources, stampResourceIds } from '../resources';
+import { makeStablePosition } from '../../../types';
+import { EmailAdapter, EMAIL_ADAPTER_TYPE, EMAIL_RECORD_TYPE_ID } from '../../../adapters/email';
 
 const TEAM_ID = 'team-1' as TeamId;
 

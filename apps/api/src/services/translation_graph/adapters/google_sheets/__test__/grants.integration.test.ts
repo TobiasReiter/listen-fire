@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
+
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import ExternalServiceType from '../../../../../generated/kysely/automations/ExternalServiceType';
 import { cleanupTeam } from '../../../../../test/harness/cleanup';
 import { grantItem, DRIVE_FOLDER_MIME } from '../../../../credentials/granted_items';

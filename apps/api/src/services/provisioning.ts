@@ -16,10 +16,11 @@
 // broke the original self-serve signup. Self-serve layers its trial grant +
 // waitlist flip on top of this; nothing account-shaped lives only there.
 
-import { getCoreQb, getQb } from '../lib/kysely';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { UserId } from '../generated/kysely/core/User';
 import type { PipelineConfigurationId } from '../generated/kysely/public/PipelineConfiguration';
+
+import { getCoreQb, getQb } from '../lib/kysely';
 
 export type ProvisionedTeam = {
   teamId: TeamId;

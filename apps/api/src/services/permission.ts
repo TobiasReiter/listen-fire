@@ -1,9 +1,10 @@
 import * as db from '@prisma/client';
 
-import { currentContext } from './context';
-import { getCoreQb } from '../lib/kysely';
 import type { UserId } from '../generated/kysely/core/User';
 import type { TeamId } from '../generated/kysely/core/Team';
+
+import { currentContext } from './context';
+import { getCoreQb } from '../lib/kysely';
 
 /**
  * Flat team-membership access. `team_membership(user_id, team_id, access)` is

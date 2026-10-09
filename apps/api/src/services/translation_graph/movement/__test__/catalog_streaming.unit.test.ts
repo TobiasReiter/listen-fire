@@ -4,17 +4,20 @@
 // constructs). DB / registry / adapter seams mocked; the real projection,
 // cache, and referenced-set logic run.
 
+import { credentialArgOf } from 'movement-lang';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { WalkedDescribedNode, WalkedNodeShape } from '../walk';
+
 import { resolveAdapter } from '../../adapters/resolve';
 import { clearIntrospectionCache } from '../instance_cache';
-import { credentialArgOf } from 'movement-lang';
 import {
   describeMovementInstance,
   movementCatalogForTeam,
   movementCatalogSnapshotForTeam,
 } from '../catalog';
 import { assessMovementValidity } from '../authoring';
-import type { WalkedDescribedNode, WalkedNodeShape } from '../walk';
+
 /** Narrow an edge's landing to a DESCRIBED one. The union makes this explicit
  *  at every call site, which is the point — a reader cannot reach for fields
  *  without first deciding whether it is holding a stub. */

@@ -34,6 +34,7 @@ import {
   type InstanceSchema,
   type PositionSchema,
 } from 'movement-lang';
+
 import { getMovementHandbook } from '../../../lib/knowledge/movement_handbook';
 
 /** A movement source the capture drives demand from, with a label for reporting. */

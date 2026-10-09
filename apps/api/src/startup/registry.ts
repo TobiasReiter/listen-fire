@@ -11,11 +11,12 @@
 // out: automations' drain claims leased rows and steps each run under its own
 // lease, so it runs on every instance.
 
+import type { Unit } from '../products';
+
 import { ADVISORY_LOCK_SCOPES } from '../constants';
 import { acquireAdvisoryLock } from '../lib/pg';
 import { runInBackground } from '../lib/utils/background';
 import { runNamedWorker } from '../lib/worker';
-import type { Unit } from '../products';
 
 /**
  * One background-processing lock id per unit, inside the existing application

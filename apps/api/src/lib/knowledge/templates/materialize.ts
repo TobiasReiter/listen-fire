@@ -1,4 +1,8 @@
+import { getTemplate } from './index';
+
 import { Kysely } from 'kysely';
+
+import type { Expression } from '#shared/expression/types';
 
 import KnowledgeSchema from '../../../generated/kysely/knowledge/KnowledgeSchema';
 import { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
@@ -11,10 +15,9 @@ import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValue
 import PropertyIdentity from '../../../generated/kysely/knowledge/PropertyIdentity';
 import EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
 import NodeTypeCategory from '../../../generated/kysely/knowledge/NodeTypeCategory';
-import { getTemplate } from './index';
 import { OntologyTemplate, ExtractionTreeNode, TemplateUniquenessConstraint } from './types';
 import { getTemplateIcon } from './icons';
-import type { Expression } from '#shared/expression/types';
+
 
 function resolveExpressionKeys(
   expr: Expression,

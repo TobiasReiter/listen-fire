@@ -4,8 +4,9 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
+import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import { RemoteAdapterManifestFile } from '../manifest';
 import { installRemoteAdapterFromManifest } from '../install';
 import { linkRemoteAdapterCredential, getRemoteAdapter } from '../store';

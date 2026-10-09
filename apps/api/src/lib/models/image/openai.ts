@@ -2,11 +2,13 @@
 
 import { z } from 'zod';
 
+import type { Resolved } from '../map';
+import type { GeneratedImage, ImageRequest } from './index';
+
 import { logger } from '../../../services/logger';
 import { recordLlmUsage } from '../../llm_usage';
-import type { Resolved } from '../map';
 import { openAiClient } from '../providers/openai';
-import type { GeneratedImage, ImageRequest } from './index';
+
 
 // The values gpt-image-1 takes, from the images reference
 // (https://developers.openai.com/api/reference/python/resources/images/methods/generate,

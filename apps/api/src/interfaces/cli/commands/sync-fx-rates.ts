@@ -1,12 +1,16 @@
+import { setTimeout } from 'node:timers/promises';
+
 import Bottleneck from 'bottleneck';
 import { Command, command, metadata, option } from 'clime';
 import * as db from '@prisma/client';
 import { addDays, differenceInDays, endOfYesterday, format as formatDate, min } from 'date-fns';
-import type { HistoricalHistoryResult } from 'yahoo-finance2/esm/src/modules/historical';
 import sortBy from 'lodash/sortBy';
+import * as Sentry from '@sentry/node';
+
+import type { HistoricalHistoryResult } from 'yahoo-finance2/esm/src/modules/historical';
 import type { ChartResultArray } from 'yahoo-finance2/esm/src/modules/chart';
 
-import * as Sentry from '@sentry/node';
+
 import { initSentry } from '../../../lib/sentry';
 import { fetchDailyCurrency } from '../../../lib/datasources/yahoo_finance';
 import { CurrencyAsset } from '../../../lib/datasources/currency';
@@ -19,7 +23,6 @@ import { Context } from '../../../services/context';
 import { UserOptions } from '../options';
 import { prismaClient } from '../../../prisma';
 import { notNull } from '../../../lib/utils/nullability';
-import { setTimeout } from 'node:timers/promises';
 
 const FALLBACK_FIRST_DATE = new Date('2000-01-03');
 

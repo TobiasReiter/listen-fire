@@ -13,10 +13,11 @@ import '../../services';
 
 import { randomUUID } from 'node:crypto';
 
-import { getCoreQb, getKnowledgeQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
+
+import { getCoreQb, getKnowledgeQb } from '../../lib/kysely';
 import ResourceType from '../../generated/kysely/knowledge/ResourceType';
 import { ApiKeyService } from '../../services/api_key';
 import { postgresRawTextStore } from '../../services/translation_graph/movement/raw_text_store';

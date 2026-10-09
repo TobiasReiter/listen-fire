@@ -7,9 +7,10 @@
  *   pnpm tg:prune --team <uuid>   → scope to one team
  */
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { pruneTriggerRuns } from '../../services/translation_graph/runs/prune';
 import { releaseLlmUsageRunReferences } from '../../lib/llm_usage';
-import type { TeamId } from '../../generated/kysely/core/Team';
 
 function parseArgs(): { days: number; teamId?: TeamId } {
   const args = process.argv.slice(2);

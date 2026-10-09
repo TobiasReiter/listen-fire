@@ -19,6 +19,11 @@
 // than importing the legacy module — the new runtime is the production
 // surface and must own its dependencies.
 
+import type { PersonContext, ResolvedField } from './extracted_fields';
+import type { TransformImpl, TransformOutput } from './registry';
+import type { PluginManifest } from './registry';
+import type { TransformSignature } from '../../types';
+
 import { services } from '../../../../adapters/registry';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { parseJson } from '../../../../lib/utils/parse_json';
@@ -26,11 +31,8 @@ import { runFields } from '../../../../lib/llm_usage';
 import { logger } from '../../../logger';
 import { WebSearchService, resolveWebSearchProvider } from '../../../web_search';
 import { resolvePersonContext } from './extracted_fields';
-import type { PersonContext, ResolvedField } from './extracted_fields';
 import { importIdentifier } from '../../movement/schema_projection';
-import type { TransformImpl, TransformOutput } from './registry';
-import type { PluginManifest } from './registry';
-import type { TransformSignature } from '../../types';
+
 
 // ── Signature ─────────────────────────────────────────────────────────────
 

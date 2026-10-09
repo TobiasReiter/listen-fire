@@ -35,9 +35,10 @@ import './_profile_loader';
 // Register the service adapters the API server boots so `saveMovement` runs the
 // real provision path (catalog assembly, listener reconciliation).
 import '../../services';
-
 import { getAutomationsQb } from '../../lib/kysely';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { ensureDevLoopTeam, ensureDevLoopSlackCredential } from './_lib';
 import { saveMovement } from '../../services/translation_graph/movement/provision';
 

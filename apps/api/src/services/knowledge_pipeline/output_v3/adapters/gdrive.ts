@@ -1,10 +1,11 @@
 import type { GoogleDriveClient } from '../../../../adapters/google/driveClient';
+import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
+
 import { services } from '../../../../adapters/registry';
 import { logger } from '../../../logger';
 import { buildLLMContext, resolvePreserveTags } from '../resolve';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { HAIKU_MODEL } from '../../../agent_running_state';
-import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
 
 function driveUrl(id: string, type: 'folder' | 'file'): string {
   return type === 'folder'

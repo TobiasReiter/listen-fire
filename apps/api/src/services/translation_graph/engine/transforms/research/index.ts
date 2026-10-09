@@ -14,15 +14,6 @@
 // engine is asked, so a bare name in a message costs the same nothing whichever
 // engine is running. Every other decision belongs to the engine.
 
-import { runFields } from '../../../../../lib/llm_usage';
-import { logger } from '../../../../logger';
-import { normaliseUrl } from '../fetch_resource';
-import { distinctiveContextTerms, distinctiveOrganisation } from '../search_hygiene';
-import { agenticEngine } from './agentic';
-import { constrainedEngine } from './constrained';
-import { emptyUsage } from './contract';
-import { RESEARCH_HANDBOOK_SECTION } from './research_handbook_section';
-import { importIdentifier } from '../../../movement/schema_projection';
 import type { PluginManifest, TransformImpl, TransformOutput } from '../registry';
 import type {
   ResearchEngine,
@@ -32,6 +23,16 @@ import type {
   ResearchResult,
 } from './contract';
 import type { TransformSignature } from '../../../types';
+
+import { runFields } from '../../../../../lib/llm_usage';
+import { logger } from '../../../../logger';
+import { normaliseUrl } from '../fetch_resource';
+import { distinctiveContextTerms, distinctiveOrganisation } from '../search_hygiene';
+import { agenticEngine } from './agentic';
+import { constrainedEngine } from './constrained';
+import { emptyUsage } from './contract';
+import { RESEARCH_HANDBOOK_SECTION } from './research_handbook_section';
+import { importIdentifier } from '../../../movement/schema_projection';
 
 export * from './contract';
 export { constrainedEngine } from './constrained';

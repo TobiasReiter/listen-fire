@@ -14,9 +14,10 @@ jest.mock('../../../../logger', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { FileRef, ParentLink, WriteInput } from '../../../adapter';
+import type { GmailApiClient } from '../client';
+
 import { GmailApiError } from '../../../../../adapters/gmail/apiClient';
 import { decodeGmailMessage } from '../../../../../adapters/gmail/mime';
-import type { GmailApiClient } from '../client';
 import { GmailAdapter } from '../index';
 import { GMAIL_MESSAGE_DISPLAY_NAME } from '../types';
 

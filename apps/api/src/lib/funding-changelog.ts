@@ -1,9 +1,10 @@
-import { getQb, getValuationsQb } from './kysely';
-import { currentContext } from '../services/context';
 import type { FundingChangelogId } from '../generated/kysely/valuations/FundingChangelog';
 import type { LegalEntityId } from '../generated/kysely/valuations/LegalEntity';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { UserId } from '../generated/kysely/core/User';
+
+import { currentContext } from '../services/context';
+import { getQb, getValuationsQb } from './kysely';
 
 export async function logFundingChange(options: {
   legalEntityId: string;

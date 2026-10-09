@@ -12,6 +12,7 @@
 // and the walk hydrates every target rather than stubbing.
 
 import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+
 import { META_RECORD_TYPE } from '../../types';
 import {
   DEALROOM_COMPANIES_COLLECTION,

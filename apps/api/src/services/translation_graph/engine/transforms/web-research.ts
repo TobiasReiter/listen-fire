@@ -30,6 +30,10 @@
 
 import { z } from 'zod';
 
+import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
+import type { SearchHit } from './search_hygiene';
+import type { TransformSignature } from '../../types';
+
 import { anthropicChatStructured } from '../../../../lib/anthropic';
 import { runFields } from '../../../../lib/llm_usage';
 import { looksLikeNonHtmlAddress } from '../../../../lib/utils/url';
@@ -47,9 +51,6 @@ import {
 } from './search_hygiene';
 import { WEB_RESEARCH_HANDBOOK_SECTION } from './web_research_handbook_section';
 import { importIdentifier } from '../../movement/schema_projection';
-import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
-import type { SearchHit } from './search_hygiene';
-import type { TransformSignature } from '../../types';
 
 // ── Signature ─────────────────────────────────────────────────────────────
 

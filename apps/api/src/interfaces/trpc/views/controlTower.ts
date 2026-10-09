@@ -18,6 +18,9 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { AskId } from '../../../generated/kysely/asks/Ask';
+
 import { currentContext } from '../../../services/context';
 import { UserService } from '../../../services/user';
 import { trpc } from '../trpc';
@@ -34,8 +37,6 @@ import {
   answerAskRecordForTeam,
   type AskRecordSummary,
 } from '../../../services/interaction/ask_records';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { AskId } from '../../../generated/kysely/asks/Ask';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
 const controlTowerRouter = (procedure: typeof trpc.procedure) => {

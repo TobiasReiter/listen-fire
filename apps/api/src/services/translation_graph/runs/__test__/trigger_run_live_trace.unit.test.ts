@@ -89,8 +89,9 @@ jest.mock('../../../context', () => ({
   currentContext: jest.fn().mockReturnValue(null),
 }));
 
-import { TriggerRunRecorder } from '../trigger_run';
 import type { MovementTraceEntry } from '../../../movement_engine/expression';
+
+import { TriggerRunRecorder } from '../trigger_run';
 
 const TEAM_ID = 'team-live' as TeamId;
 

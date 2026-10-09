@@ -34,6 +34,19 @@
 import { z } from 'zod';
 
 import type { ChatModelName } from '../../../../../lib/models/registry';
+import type { PageFetchResult, WebSearchResult, WebToolEvent } from '../../../../../lib/anthropic';
+import type { SearchHit } from '../search_hygiene';
+import type { ProfileRead } from './profile_read';
+import type {
+  AnsweredExtent,
+  ResearchBudget,
+  ResearchEngine,
+  ResearchInput,
+  ResearchOptions,
+  ResearchResult,
+  ResearchUsage,
+} from './contract';
+
 import {
   anthropicChatStructured,
   anthropicWebChat,
@@ -63,18 +76,6 @@ import {
   USAGE_NOT_MEASURED,
 } from './contract';
 import { describeProfile, readProfile } from './profile_read';
-import type { PageFetchResult, WebSearchResult, WebToolEvent } from '../../../../../lib/anthropic';
-import type { SearchHit } from '../search_hygiene';
-import type { ProfileRead } from './profile_read';
-import type {
-  AnsweredExtent,
-  ResearchBudget,
-  ResearchEngine,
-  ResearchInput,
-  ResearchOptions,
-  ResearchResult,
-  ResearchUsage,
-} from './contract';
 
 const LOG = '[transform:research:agentic]';
 

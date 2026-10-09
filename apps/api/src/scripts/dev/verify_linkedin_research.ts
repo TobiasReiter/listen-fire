@@ -24,12 +24,12 @@ import './_profile_loader';
 // search index alone, which is a legitimate run but not the one this checks.
 import '../../services';
 import '../../services/translation_graph/engine/transforms/register-bundled';
-
 import { services } from '../../adapters/registry';
 import { runInContext } from '../../services/context/utils';
 import { getTransform } from '../../services/translation_graph/engine/transforms';
 import { makeStablePosition } from '../../services/translation_graph/types';
 import { ensureDevLoopTeam } from './_lib';
+
 import type { ContextDependentInput } from '../../services/translation_graph/engine/transforms';
 
 async function main() {

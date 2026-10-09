@@ -8,12 +8,13 @@
  *
  * Usage: FAKE_BASE=http://localhost:6199/affinity ts-node … verify_affinity_pushdown.ts
  */
-import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
-import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
-import { makeMetaPosition } from '../../services/translation_graph/types';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import type { Expression } from '#shared/expression/types';
+
+import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
+import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
+import { makeMetaPosition } from '../../services/translation_graph/types';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6199/affinity';
 

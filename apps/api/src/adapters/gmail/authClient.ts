@@ -20,8 +20,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
-import type { Credentials } from 'google-auth-library';
 import { z } from 'zod';
+
+import type { Credentials } from 'google-auth-library';
 
 import { decryptToken, encryptToken } from '../../lib/credentials';
 import { getAutomationsQb } from '../../lib/kysely';

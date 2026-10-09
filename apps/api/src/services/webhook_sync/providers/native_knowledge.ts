@@ -19,8 +19,11 @@
 // (`providerKeyForSlug`), so the door it provisions and the door registered
 // here are one door.
 
-import crypto from 'crypto';
+import crypto from "node:crypto";
+
 import { z } from 'zod';
+
+import type { WebhookEvent, WebhookProvider, WebhookRegistration } from './interface';
 
 import { MUTATION_EVENT_TYPES } from '../../../lib/knowledge/store/events';
 import { actorSchema } from '../../translation_graph/mutation_context';
@@ -28,7 +31,6 @@ import {
   deregisterKnowledgeWebhook,
   registerKnowledgeWebhook,
 } from '../../translation_graph/adapters/knowledge_graph_webhook';
-import type { WebhookEvent, WebhookProvider, WebhookRegistration } from './interface';
 
 /** The provider key the inbound route and the subscription row agree on. */
 export const NATIVE_KNOWLEDGE_PROVIDER_KEY = 'KG_MUTATION';

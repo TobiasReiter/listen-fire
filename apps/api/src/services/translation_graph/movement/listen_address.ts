@@ -27,8 +27,9 @@
 // (listen_subscriptions.ts), so that state is unrepresentable.
 
 import type { ListenConfigKey } from '../adapter';
-import { hopStep, type AddressStep } from './listen_narrowing';
 import type { CachedAdapterInstance } from './instance_cache';
+
+import { hopStep, type AddressStep } from './listen_narrowing';
 
 /** The hops that form an adapter's event address, in declaration order. */
 export function addressHops(

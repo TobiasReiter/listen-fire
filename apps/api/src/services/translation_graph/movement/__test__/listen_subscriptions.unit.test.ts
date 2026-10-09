@@ -153,9 +153,10 @@ jest.mock('../../adapters/resolve', () => ({
   })),
 }));
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { syncListenSubscriptions } from '../listen_subscriptions';
 import { resolveAdapter } from '../../adapters/resolve';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const kyselyMock = require('../../../../lib/kysely') as {

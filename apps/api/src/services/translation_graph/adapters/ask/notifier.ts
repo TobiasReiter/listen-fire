@@ -20,11 +20,12 @@
 // the time we get here, and readable over `GET /v1/asks/:id` — a delivery that
 // never lands loses a notification, never an answer.
 
+import type { AskRecord } from './store';
+
 import { getAsksQb } from '../../../../lib/kysely';
 import { logger } from '../../../logger';
 import { neverAsAny } from '../../../../lib/utils/types';
 import { askSettleDelivery } from './delivery_mode';
-import type { AskRecord } from './store';
 
 /** What a deployment does when an ask settles. */
 export interface AskSettledNotifier {

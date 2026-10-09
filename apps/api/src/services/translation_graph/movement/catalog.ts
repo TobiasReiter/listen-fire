@@ -56,13 +56,15 @@ import {
   type PluginSpec,
   type ResolveFile,
 } from 'movement-lang';
+
 import type { Expression } from '#shared/expression/types';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { AdapterManifest, ConfigBlock } from '../adapter';
+
 import { neverAsAny } from '../../../lib/utils/types';
 import { availableChatModels } from '../../../lib/models/map';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 import { getAutomationsQb } from '../../../lib/kysely';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import type { AdapterManifest, ConfigBlock } from '../adapter';
 import {
   makeMetaPosition,
   positionLabel,

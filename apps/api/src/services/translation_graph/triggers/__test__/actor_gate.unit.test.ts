@@ -5,10 +5,11 @@
 // rule. The resolver is called WITHOUT trigger context — creator
 // override / fallbackToCreatorIfActorUnregistered must not pass the gate.
 
-import { consultActorGate, inboundActorGateEnabled } from '../actor_gate';
 import type { Adapter, ActingUser, ActorCandidate } from '../../adapter';
 import type { TriggerEvent } from '../types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
+import { consultActorGate, inboundActorGateEnabled } from '../actor_gate';
 
 const TEAM_ID = 'team-1' as TeamId;
 

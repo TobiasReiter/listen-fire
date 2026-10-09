@@ -14,21 +14,23 @@
 //     the code — the unit + integration tests above pin the behavior)
 
 import { randomUUID } from 'node:crypto';
+
 import { sql } from 'kysely';
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { UserId } from '../../generated/kysely/core/User';
+import type { AgentConversationId } from '../../generated/kysely/public/AgentConversation';
+import type { TriggerId } from '../../generated/kysely/automations/Trigger';
+import type { PipelineConfigurationId } from '../../generated/kysely/public/PipelineConfiguration';
+
+import { cleanupTeam } from '../../test/harness/cleanup';
+import { getAutomationsQb, getCoreQb, getQb } from '../../lib/kysely';
 import {
   getNavigation,
   navigateTo,
   extendNavigation,
   resolveByName,
 } from '../navigation_state';
-import { getAutomationsQb, getCoreQb, getQb } from '../../lib/kysely';
-import { cleanupTeam } from '../../test/harness/cleanup';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { UserId } from '../../generated/kysely/core/User';
-import type { AgentConversationId } from '../../generated/kysely/public/AgentConversation';
-import type { TriggerId } from '../../generated/kysely/automations/Trigger';
-import type { PipelineConfigurationId } from '../../generated/kysely/public/PipelineConfiguration';
 
 interface Seeded {
   teamId: TeamId;

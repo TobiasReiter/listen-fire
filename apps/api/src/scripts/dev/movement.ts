@@ -46,8 +46,10 @@ import path from 'node:path';
 
 import { getQb } from '../../lib/kysely';
 import { encryptToken } from '../../lib/credentials';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import {
   buildAgentContext,
@@ -63,7 +65,9 @@ import {
   type TeamMovementCatalog,
 } from '../../services/translation_graph/movement/catalog';
 import { indexManifestsByName, listAdapterManifests } from '../../services/translation_graph/adapters/registry';
+
 import { referencedConstructions, type InstanceSchema } from 'movement-lang';
+
 import {
   describableAdapters,
   handbookCaptureSources,

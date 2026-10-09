@@ -57,10 +57,6 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { mq } from '../../../lib/message_queue';
-import { unsafeCurrentContext } from '../../../services/context';
-import { logger } from '../../logger';
-import { recordUserMilestone, recordTeamMilestone } from '../../../lib/journey';
 import {
   BridgeError,
   MovementParseError,
@@ -70,6 +66,7 @@ import {
   scanName,
   unwrapCredentialArg,
 } from 'movement-lang';
+
 import type {
   Diagnostic,
   ImportStatement,
@@ -82,13 +79,18 @@ import type {
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
+import type { TriggerRunMode } from '../triggers/run_mode';
+
+import { mq } from '../../../lib/message_queue';
+import { unsafeCurrentContext } from '../../../services/context';
+import { logger } from '../../logger';
+import { recordUserMilestone, recordTeamMilestone } from '../../../lib/journey';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { getAdapterManifest, inboundAddressFor } from '../adapters/registry';
 import { syncListenSubscriptions } from './listen_subscriptions';
 import { addressHops, resolveListenAddress } from './listen_address';
 import { cachedAdapterInstance } from './instance_cache';
 import { positionArgValues } from './catalog';
-import type { TriggerRunMode } from '../triggers/run_mode';
 import { movementWriteRunMode } from './dry_run';
 import {
   manualListenerMovements,

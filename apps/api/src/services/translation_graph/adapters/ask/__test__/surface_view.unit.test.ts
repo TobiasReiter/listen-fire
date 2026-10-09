@@ -1,6 +1,8 @@
 // The new-store ask → surface projection: the family fixes the control and the
 // answer shape (3_adapter_contract §B), so pin that mapping. Pure — no DB.
 
+import type { AskRecord } from '../store';
+
 import {
   askInteractionType,
   askViewOptions,
@@ -8,7 +10,6 @@ import {
   askResultType,
   FAMILY_TO_INTERACTION,
 } from '../surface_view';
-import type { AskRecord } from '../store';
 
 function ask(partial: Partial<AskRecord>): AskRecord {
   return {

@@ -7,8 +7,9 @@
 // cost-resume driver) went with billing, and the one thing left is a wire
 // between two products rather than a worker.
 
-import { meterKnowledgeLlmUsage } from '../services/knowledge/arbitration/meter_usage';
 import type { WorkerRegistry } from './registry';
+
+import { meterKnowledgeLlmUsage } from '../services/knowledge/arbitration/meter_usage';
 
 const residualWorkers: WorkerRegistry = {
   unit: 'residual',

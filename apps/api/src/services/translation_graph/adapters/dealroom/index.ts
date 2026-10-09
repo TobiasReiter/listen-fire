@@ -7,7 +7,6 @@
 // pushdown is `filter.ts`.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   Adapter,
   AdapterManifest,
@@ -19,6 +18,8 @@ import type {
   RelatedResult,
 } from '../../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
+
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,

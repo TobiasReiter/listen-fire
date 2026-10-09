@@ -5,7 +5,6 @@
  *   pnpm drain:once [--limit <n>] [--max-passes <n>]
  */
 import './_profile_loader';
-
 import { drainOnceAndExit } from '../drain_once';
 
 void drainOnceAndExit();

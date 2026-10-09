@@ -12,8 +12,9 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 
 // credentialLifecycle imports Attio API clients and token registries that

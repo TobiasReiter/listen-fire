@@ -34,10 +34,10 @@
  */
 
 import './_profile_loader';
-
 import '../../services';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { ensureDevLoopTeam } from './_lib';
 import { describeMovementInstance } from '../../services/translation_graph/movement/catalog';
 

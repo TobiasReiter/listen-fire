@@ -23,6 +23,18 @@
 import { z } from 'zod';
 
 import type { ChatModelName } from '../../../../../lib/models/registry';
+import type { ProfileIdentity } from '../linkedin_identity';
+import type { SearchHit } from '../search_hygiene';
+import type {
+  AnsweredExtent,
+  ResearchConfidence,
+  ResearchEngine,
+  ResearchInput,
+  ResearchOptions,
+  ResearchResult,
+  ResearchUsage,
+} from './contract';
+
 import { SECOND } from '../../../../../constants';
 import { anthropicChatStructured, meterAnthropicUsage } from '../../../../../lib/anthropic';
 import { DocumentSourceService } from '../../../../../lib/document_sources';
@@ -57,17 +69,6 @@ import {
   stripVerificationOpener,
 } from './contract';
 import { readProfile } from './profile_read';
-import type { ProfileIdentity } from '../linkedin_identity';
-import type { SearchHit } from '../search_hygiene';
-import type {
-  AnsweredExtent,
-  ResearchConfidence,
-  ResearchEngine,
-  ResearchInput,
-  ResearchOptions,
-  ResearchResult,
-  ResearchUsage,
-} from './contract';
 
 const LOG = '[transform:research:constrained]';
 

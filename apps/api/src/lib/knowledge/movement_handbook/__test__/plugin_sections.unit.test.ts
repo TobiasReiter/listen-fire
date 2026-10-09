@@ -9,6 +9,7 @@
 // nobody can trust to be running.
 
 import type { PluginManifest } from '../../../../services/translation_graph/engine/transforms/registry';
+
 import { readBook } from '../../library';
 import { pluginSectionChapters, getMovementHandbook } from '../index';
 import { proseViolations } from './prose_rules';

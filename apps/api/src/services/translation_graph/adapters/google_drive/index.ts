@@ -18,16 +18,8 @@
 // redirecting to fake-channels for the dev-loop test-harness team (mirrors
 // Attio / Airtable / Sheets).
 
-import { decryptToken } from '../../../../lib/credentials';
-import { getAutomationsQb } from '../../../../lib/kysely';
-import { listGrantedItems, DRIVE_FOLDER_MIME } from '../../../credentials/granted_items';
-import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
-import { services } from '../../../../adapters/registry';
-import { GoogleDriveClient } from '../../../../adapters/google/driveClient';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   AdapterManifest,
   DeleteInput,
@@ -45,15 +37,24 @@ import type {
   WriteResult,
   EdgesFromResult,
 } from '../../adapter';
-import { fileHandle, ownedFileSource } from '../../adapter';
 import type { TriggerType } from '../../triggers/types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
-import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../types';
 import type { DriveItem } from '../../../../adapters/google/driveClient';
+
+import { decryptToken } from '../../../../lib/credentials';
+import { getAutomationsQb } from '../../../../lib/kysely';
+import { listGrantedItems, DRIVE_FOLDER_MIME } from '../../../credentials/granted_items';
+import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
+import { logger } from '../../../logger';
+import { services } from '../../../../adapters/registry';
+import { GoogleDriveClient } from '../../../../adapters/google/driveClient';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
+import { fileHandle, ownedFileSource } from '../../adapter';
+import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../types';
 import { BaseAdapter } from '../base';
 import { naturalName } from '../name_resolution';
 import {

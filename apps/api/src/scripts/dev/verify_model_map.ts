@@ -68,6 +68,7 @@ import { embeddingDestinations } from '../../lib/models/embedding/destinations';
 import { generateImage } from '../../lib/models/image';
 import { assertModelMapConfigured, resolveModel } from '../../lib/models/map';
 import { parseChatModelName } from '../../lib/models/registry';
+
 import type {
   ChatModelName,
   EmbeddingModelName,
@@ -75,6 +76,7 @@ import type {
   ModelName,
   TranscriptionModelName,
 } from '../../lib/models/registry';
+
 import { transcribe } from '../../lib/models/transcription';
 
 /** The model each capability's legs call. */

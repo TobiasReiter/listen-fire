@@ -21,13 +21,15 @@ import {
   parseProgram,
   type CatalogSnapshot,
 } from 'movement-lang';
+
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
 import { AFFINITY_MANIFEST } from '../../services/translation_graph/adapters/affinity';
 import { instanceSchemaFromDescriptors } from '../../services/translation_graph/movement/schema_projection';
 import { makeStablePosition } from '../../services/translation_graph/types';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6291/affinity';
 

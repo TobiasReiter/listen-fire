@@ -2,11 +2,12 @@
 // (index.ts) and the PollSource (poll.ts). The wire shape itself lives in
 // `adapters/dealroom/apiClient.ts`; this is only the credential half.
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 import {
   DealroomApiClient,
   dealroomCredsParser,

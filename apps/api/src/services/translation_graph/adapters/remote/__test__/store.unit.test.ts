@@ -174,6 +174,8 @@ jest.mock('../../../../../lib/kysely', () => {
   return { getQb: () => qb, getCoreQb: () => qb, getAutomationsQb: () => qb };
 });
 
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
 import {
   upsertRemoteAdapter,
   getRemoteAdapter,
@@ -182,7 +184,6 @@ import {
   rowToManifest,
   parseStoredManifest,
 } from '../store';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 const TEAM_ID = 'team-1' as TeamId;
 const OTHER_TEAM = 'team-2' as TeamId;

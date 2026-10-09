@@ -1,4 +1,5 @@
 import { emojify } from 'node-emoji';
+
 import { OpsEvent } from '../../generated/kysely/public/OpsEvent';
 
 const BODY_CAP = 500;

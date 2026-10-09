@@ -34,6 +34,9 @@ import { mkdtempSync, rmSync, writeFileSync as writeFile } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import type { Judgement, RunRecord } from '../../../scripts/dev/eval_research';
+import type { ResearchUsage } from '../engine/transforms/research';
+
 import {
   compressVerdicts,
   mergeRecords,
@@ -43,8 +46,6 @@ import {
   sameSite,
   selectFixtures,
 } from '../../../scripts/dev/eval_research';
-import type { Judgement, RunRecord } from '../../../scripts/dev/eval_research';
-import type { ResearchUsage } from '../engine/transforms/research';
 
 const usage = (over: Partial<ResearchUsage> = {}): ResearchUsage => ({
   modelCalls: 1,

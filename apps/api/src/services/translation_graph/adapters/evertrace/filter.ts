@@ -13,6 +13,7 @@
 
 import type { Expression } from '#shared/expression/types';
 import type { EvertraceSignalFilter } from '../../../../adapters/evertrace/apiClient';
+
 import { EVERTRACE_PROFILE_TAGS, EVERTRACE_SIGNAL_KINDS } from './types';
 
 /** One pushable signal field: the names a WHERE may spell it, and where its

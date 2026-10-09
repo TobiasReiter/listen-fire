@@ -1,6 +1,6 @@
 import { Command, Options, command, metadata, option } from 'clime';
-
 import * as Sentry from '@sentry/node';
+
 import { initSentry } from '../../../lib/sentry';
 import { prismaClient } from '../../../prisma';
 import { TESTING_TEAM_NAME, TESTING_USER_EMAIL } from '../../../constants';

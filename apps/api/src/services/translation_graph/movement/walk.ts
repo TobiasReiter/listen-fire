@@ -19,8 +19,9 @@
 import type { FieldType } from 'movement-lang';
 import type { EdgesFromResult, EdgeTargetNode } from '../adapter';
 import type { SchemaFieldDescriptor, SchemaReferenceDescriptor, SchemaTypeDescriptor } from '../types';
-import { positionLabelEntry, referenceTargetTypeIds } from '../types';
 import type { UniquenessConstraints } from '../uniqueness';
+
+import { positionLabelEntry, referenceTargetTypeIds } from '../types';
 import { fieldTypeFromDescriptor } from './schema_projection';
 import { narrowByOf } from './narrowing';
 

@@ -1,11 +1,12 @@
 // Embeddings behind the model map: the caller names a registry model and a
 // width, and the map decides which vendor computes the vectors.
 
+import type { Resolved } from '../map';
+import type { EmbeddingModelName } from '../registry';
+
 import { assertRunBudget } from '../../run_spend';
 import { neverAsAny } from '../../utils/types';
 import { assertCallable, resolveModel } from '../map';
-import type { Resolved } from '../map';
-import type { EmbeddingModelName } from '../registry';
 import { geminiEmbed } from './gemini';
 import { openAiEmbed } from './openai';
 

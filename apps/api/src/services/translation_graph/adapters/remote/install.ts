@@ -10,12 +10,15 @@
 // The secret NEVER enters the stored manifest: it goes straight into the
 // encrypted credential row; only the resulting FK is persisted on the install.
 
-import { mintRemoteCredential } from '../../../credentials/remote_credential';
+import { fetchRemoteManifest } from './index';
+
+import { MANIFEST_PROTOCOL_VERSION } from 'engine-contracts';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { UserId } from '../../../../generated/kysely/core/User';
-import { MANIFEST_PROTOCOL_VERSION } from 'engine-contracts';
+
+import { mintRemoteCredential } from '../../../credentials/remote_credential';
 import { loadRemoteAdapterSecret } from '../resolve';
-import { fetchRemoteManifest } from './index';
 import { RemoteAdapterManifestFile, RemoteAdapterManifestInput } from './manifest';
 import { remoteSlugRefusal } from './slugs';
 import { upsertRemoteAdapter } from './store';

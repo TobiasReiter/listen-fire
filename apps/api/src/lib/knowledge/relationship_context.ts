@@ -1,5 +1,3 @@
-import { getKnowledgeQb } from '../kysely';
-import { resolveDisplayNames } from './resolve_display_name';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
@@ -9,6 +7,9 @@ import type {
   ExtractedProperty,
   ResolutionDecision,
 } from '../../services/knowledge_pipeline/types';
+
+import { resolveDisplayNames } from './resolve_display_name';
+import { getKnowledgeQb } from '../kysely';
 
 // -- Types --
 

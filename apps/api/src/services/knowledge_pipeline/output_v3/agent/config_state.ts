@@ -1,6 +1,7 @@
 // Config state container
 
-import { randomUUID } from 'crypto';
+import { randomUUID } from "node:crypto";
+
 import type {
   OutputV3Config,
   TreeNode,

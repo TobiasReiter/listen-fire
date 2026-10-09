@@ -43,6 +43,7 @@ import type { EphemeralNode } from '../../types';
 import type { Adapter, Fact, Resource } from '../../adapter';
 import type { StoredUniquenessConstraints } from '../../../knowledge_pipeline/uniqueness_constraints';
 import type { LlmClient } from './llm_call';
+
 import { assembleBundle, type Bundle } from './bundle';
 import { buildSyntheticSchema, type SyntheticSchema } from './schema_synthesis';
 import {

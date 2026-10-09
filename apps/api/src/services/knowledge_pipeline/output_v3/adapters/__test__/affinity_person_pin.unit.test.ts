@@ -18,9 +18,10 @@ jest.mock('../../resolve', () => ({
   loadResources: jest.fn(async () => null),
 }));
 
+import type { AffinityOperations } from '../../../../../adapters/affinity/operations';
+
 import { createAffinityV3Adapter } from '../affinity';
 import { resolveFieldMapping } from '../../resolve';
-import type { AffinityOperations } from '../../../../../adapters/affinity/operations';
 
 const BOUND_PERSON_ID = 777;
 const EMAIL = 'ada@example.com';

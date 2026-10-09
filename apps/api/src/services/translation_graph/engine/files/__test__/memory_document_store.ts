@@ -5,9 +5,10 @@
 
 import { Readable } from 'node:stream';
 
-import { services } from '../../../../../adapters/registry';
 import type { DocumentProvider } from '../../../../../adapters/document/interface';
 import type { FileRef } from '../../../adapter';
+
+import { services } from '../../../../../adapters/registry';
 
 export interface MemoryDocumentStore {
   /** Store `content` and answer the descriptor of the stored file. */

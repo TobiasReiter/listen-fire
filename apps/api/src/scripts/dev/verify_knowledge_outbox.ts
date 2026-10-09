@@ -24,16 +24,19 @@
  *   pnpm dev:movement run kg_write_probe
  */
 import './_profile_loader';
-
 import { getKnowledgeQb, getQb } from '../../lib/kysely';
 import { ensureDevLoopTeam } from './_lib';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
+
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import { createNode, openKnowledgeStore, setProperties } from '../../lib/knowledge/store';
 import ChangeSource from '../../generated/kysely/knowledge/ChangeSource';
+
 import type { MutationEventEnvelope } from '../../lib/knowledge/store/events';
+
 import { drainOnce, readOutboxHealth, registerLocalMutationSubscriber } from '../../services/knowledge/mutation_outbox/worker';
 
 const AUTOMATION_CONTEXT = {

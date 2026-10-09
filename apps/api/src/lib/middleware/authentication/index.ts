@@ -13,13 +13,14 @@ import { runWithPrincipalSync, type Principal } from 'principal';
 import { ZodError } from 'zod';
 
 import type { InboundDoor } from './doors';
+import type { CoreAuthOutcome } from '../../../services/principal/core_provider';
+
 import { currentContext } from '../../../services/context';
 import {
   authenticateRequest,
   completeDoorAuthentication,
   installContextIdentity,
 } from '../../../services/principal';
-import type { CoreAuthOutcome } from '../../../services/principal/core_provider';
 import { recordUserMilestone } from '../../journey';
 import { logger } from '../../../services/logger';
 

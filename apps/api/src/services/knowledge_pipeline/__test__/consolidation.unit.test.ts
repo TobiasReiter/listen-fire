@@ -89,10 +89,11 @@ jest.mock('../../../lib/knowledge/relationship_context', () => ({
 }));
 
 // Must import after mocks are set up
-import { deduplicateSubgraph } from '../extract';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { Expression } from '#shared/expression/types';
 import type { ConstraintEntry } from '../uniqueness_constraints';
+
+import { deduplicateSubgraph } from '../extract';
 
 // ---------------------------------------------------------------------------
 // Helpers

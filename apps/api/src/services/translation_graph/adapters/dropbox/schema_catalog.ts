@@ -20,13 +20,14 @@
 // up-hop is path-derived. The optional `parent` FIELD on each write shape is
 // the root-action pin (a Dropbox folder PATH); absent ⇒ the Dropbox root.
 
-import { META_RECORD_TYPE } from '../../types';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
 } from '../../types';
+
+import { META_RECORD_TYPE } from '../../types';
 import { DISPLAY_NAME_BY_KIND, structuredIdFor } from './types';
 
 export const DROPBOX_FOLDER_TYPE = DISPLAY_NAME_BY_KIND.folder;

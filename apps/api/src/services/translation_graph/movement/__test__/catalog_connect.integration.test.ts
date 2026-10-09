@@ -8,9 +8,11 @@
 // agent-facing view at DISCOVERY time — before any credential exists.
 
 import { randomUUID } from 'node:crypto';
+
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { getCoreQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { movementCatalogSnapshotForTeam, toAgentCatalogView } from '../catalog';
 import { installRemoteAdapterFromManifest } from '../../adapters/remote/install';
 import { RemoteAdapterManifestFile } from '../../adapters/remote/manifest';

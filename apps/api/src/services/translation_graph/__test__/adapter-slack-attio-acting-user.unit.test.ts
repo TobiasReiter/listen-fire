@@ -72,11 +72,12 @@ jest.mock('../../../adapters/attio/apiClient', () => ({
   attioCredsParser: { safeParse: (v: unknown) => ({ success: true, data: v }) },
 }));
 
+import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
+import type { ActorCandidate } from '../adapter';
+
 import { SlackAdapter } from '../adapters/slack';
 import { AttioAdapter } from '../adapters/attio';
 import { resolveActingUser } from '../adapters/acting_user/resolve';
-import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
-import type { ActorCandidate } from '../adapter';
 
 const TEAM_ID = 'team-1' as TeamId;
 

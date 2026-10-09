@@ -17,6 +17,8 @@
 //     `startedHere: false` — either another instance holds the unit's lock, or
 //     the worker has nothing to do here and `idleReason` says what.
 
+import type { RegisteredWorker, WorkerRegistry } from './registry';
+
 import { LISTEN_FIRE_VERSION } from '../constants';
 import { logger } from '../services/logger';
 import { workerTick } from '../lib/worker';
@@ -25,7 +27,6 @@ import { asksWorkers } from './asks';
 import { automationsWorkers } from './automations';
 import { coreStartup } from './core';
 import { knowledgeWorkers } from './knowledge';
-import type { RegisteredWorker, WorkerRegistry } from './registry';
 import { residualWorkers } from './residual';
 import { valuationsWorkers } from './valuations';
 

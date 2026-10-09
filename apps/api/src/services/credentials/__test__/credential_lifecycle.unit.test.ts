@@ -1,5 +1,6 @@
-import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 
 const mockIdentify = jest.fn();
 const mockRegisterToken = jest.fn();

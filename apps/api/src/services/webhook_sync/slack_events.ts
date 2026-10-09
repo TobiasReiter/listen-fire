@@ -9,6 +9,8 @@
 //
 // A workspace with no Slack credential (not installed / uninstalled) is dropped.
 
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { parseSlackEvents } from './providers/slack';
@@ -19,7 +21,6 @@ import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { SLACK_ADAPTER_TYPE, slackEventToDiscriminable } from '../translation_graph/adapters/slack';
 import { SLACK_APP_ID } from '../credentials/app_id';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
-import type { TeamId } from '../../generated/kysely/core/Team';
 
 /** The provider key SLACK triggers are routed by (= `trigger.kind`). */
 const SLACK_PROVIDER_KEY = 'SLACK';

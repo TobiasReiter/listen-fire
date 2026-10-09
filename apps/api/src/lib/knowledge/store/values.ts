@@ -5,12 +5,13 @@
 
 import { sql } from 'kysely';
 
-import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
-import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
-import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
 import type { EdgeTypeId } from '../../../generated/kysely/knowledge/EdgeType';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
 import type EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
+
+import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
+import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
+import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
 import { isWritableBy } from '../writable_by';
 import { coerceNumeric, unionTextSet } from '../property_policies';
 

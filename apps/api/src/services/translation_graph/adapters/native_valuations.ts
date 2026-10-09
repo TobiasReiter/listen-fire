@@ -11,10 +11,8 @@
 // until each is fleshed out.
 
 import { z } from 'zod';
-import { parseValuationsEvents } from '../../webhook_sync/providers/native_valuations';
-import { webhookEventToDiscriminable } from '../../webhook_sync/event_conversion';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type {
   Adapter,
   AdapterManifest,
@@ -40,6 +38,13 @@ import type {
   ResolveEntityResult,
   ExternalRecordRef,
 } from '../adapter';
+import type { TriggerEvent, TriggerType } from '../triggers/types';
+import type { EdgeSequencing, Expression } from '#shared/expression/types';
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { parseValuationsEvents } from '../../webhook_sync/providers/native_valuations';
+import { webhookEventToDiscriminable } from '../../webhook_sync/event_conversion';
+import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import { BaseAdapter } from './base';
 import { uniformWalk } from './hop';
 import {
@@ -60,14 +65,11 @@ import {
   type SchemaTypeDescriptor,
   type SourcePosition,
 } from '../types';
-import type { TriggerEvent, TriggerType } from '../triggers/types';
 import { writeParentLinks, type ParentLink, type ParentAssociation } from '../adapter';
-import type { EdgeSequencing, Expression } from '#shared/expression/types';
 import { logger } from '../../logger';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { apiBaseUrl } from '../../../lib/api_base_url';
 import { describeError } from '../../../lib/utils/error';
-import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import { decryptToken } from '../../../lib/credentials';
 
 export const NATIVE_VALUATIONS_ADAPTER_TYPE = 'native-valuations';

@@ -13,10 +13,8 @@
 
 import { Readable } from 'node:stream';
 
-import { isNaturalOrder } from '#shared/expression/order_limit';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   Adapter,
   AdapterManifest,
@@ -32,8 +30,10 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
+
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
+import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,
@@ -74,6 +74,8 @@ import {
   encodeAttachmentId,
 } from './types';
 import { replyTargetFromParent, sendGmailMessage } from './write';
+
+import { isNaturalOrder } from '#shared/expression/order_limit';
 
 export {
   GMAIL_ADAPTER_TYPE,

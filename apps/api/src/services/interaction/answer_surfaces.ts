@@ -5,6 +5,9 @@
 // MCP `answerForTeam` door that resolves an ask the calling team owns through
 // the ONE answer door (the same transition the link page + Slack buttons drive).
 
+import type { AskId } from '../../generated/kysely/asks/Ask';
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { getAsk as getNewStoreAsk, listAsksForTeam as listNewStoreAsks, type AskRecord } from '../translation_graph/adapters/ask/store';
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { answerAskById } from '../translation_graph/adapters/ask/answer_door';
@@ -14,8 +17,6 @@ import {
   askViewCorrect,
   askResultType,
 } from '../translation_graph/adapters/ask/surface_view';
-import type { AskId } from '../../generated/kysely/asks/Ask';
-import type { TeamId } from '../../generated/kysely/core/Team';
 
 /** The result of resolving an answer through the ONE answer door — the ask id
  *  (as the surfaces' request handle), the run (if any) that was awaiting, and

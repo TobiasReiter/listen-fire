@@ -29,15 +29,17 @@ jest.mock('../../../../lib/credentials', () => ({
   decryptToken: jest.fn(async () => JSON.stringify({ apiKey: 'k', baseUrl: 'http://vals.test/api/v1' })),
 }));
 
-import { decryptToken } from '../../../../lib/credentials';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { MutationContext } from '../../mutation_context';
+
+import { decryptToken } from '../../../../lib/credentials';
 import {
   NATIVE_VALUATIONS_ADAPTER_TYPE,
   createNativeValuationsAdapter,
 } from '../native_valuations';
 import { ADAPTER_META_TYPE_ID, META_RECORD_TYPE, makeStablePosition } from '../../types';
 import { instanceSchemaFromDescriptors } from '../../movement/schema_projection';
-import type { MutationContext } from '../../mutation_context';
+
 
 const adapter = () =>
   createNativeValuationsAdapter({ teamId: 'team-1' as TeamId, credentialsId: 'cred-1' });

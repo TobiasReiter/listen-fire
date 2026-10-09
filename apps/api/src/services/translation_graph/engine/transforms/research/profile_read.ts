@@ -17,13 +17,14 @@
 // One reading, shared — two readings would attribute the same page to two
 // different people.
 
+import type { ProfileIdentity } from '../linkedin_identity';
+import type { SearchHit } from '../search_hygiene';
+
 import { services } from '../../../../../adapters/registry';
 import { SECOND } from '../../../../../constants';
 import { logger } from '../../../../logger';
 import { describeError } from '../fetch_resource';
 import { canonicalProfileUrl, isThin, matchesSlug, readTitle } from '../linkedin_identity';
-import type { ProfileIdentity } from '../linkedin_identity';
-import type { SearchHit } from '../search_hygiene';
 
 /** Only spent when the index gave a thin headline, and it has to fit inside
  *  the wall clock alongside the searches. */

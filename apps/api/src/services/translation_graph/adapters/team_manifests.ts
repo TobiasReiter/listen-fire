@@ -5,6 +5,7 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { AdapterManifest } from '../adapter';
+
 import { listAdapterManifests } from './registry';
 import { listRemoteAdapters } from './remote/store';
 import { remoteAdapterManifest, RemoteAdapterManifestFile } from './remote/manifest';

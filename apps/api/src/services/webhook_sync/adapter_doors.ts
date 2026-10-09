@@ -16,10 +16,12 @@
 // credential shared by several teams' installs needs the team named as well.
 
 import { createHash, timingSafeEqual } from 'node:crypto';
+
 import type { IncomingHttpHeaders } from 'node:http';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import { teamIdSchema } from '../../lib/team_id';
 import type { DiscriminableEvent, EventType } from '../translation_graph/adapter';
+
+import { teamIdSchema } from '../../lib/team_id';
 import { loadRemoteAdapterSecret, resolveAdapter } from '../translation_graph/adapters/resolve';
 import { RemoteAdapterManifestFile } from '../translation_graph/adapters/remote/manifest';
 import { mayBeRemoteSlug } from '../translation_graph/adapters/remote/slugs';

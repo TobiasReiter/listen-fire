@@ -13,9 +13,10 @@
 // landing route (connect.ts) calls `intrinsicProvisionerForType` on submit;
 // `addCredential` calls the same provisioner for its own intrinsic branch.
 
-import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
+
+import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { ApiKeyService } from '../api_key';
 import { platformTokenRegistry } from '../translation_graph/engine/platform_token_registry_db';
 import { NATIVE_VALUATIONS_ADAPTER_TYPE } from '../translation_graph/adapters/native_valuations';

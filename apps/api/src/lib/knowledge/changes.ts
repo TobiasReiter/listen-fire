@@ -1,13 +1,14 @@
 // change recording utility
-import { getKnowledgeQb } from '../kysely';
-import ChangeSource from '../../generated/kysely/knowledge/ChangeSource';
-import ChangeKind from '../../generated/kysely/knowledge/ChangeKind';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { PropertyId } from '../../generated/kysely/knowledge/Property';
 import type { EdgeId } from '../../generated/kysely/knowledge/Edge';
 import type { EvidenceId } from '../../generated/kysely/knowledge/Evidence';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
+
+import ChangeKind from '../../generated/kysely/knowledge/ChangeKind';
+import ChangeSource from '../../generated/kysely/knowledge/ChangeSource';
+import { getKnowledgeQb } from '../kysely';
 import { currentContext, unsafeCurrentContext } from '../../services/context';
 import { mq } from '../message_queue';
 

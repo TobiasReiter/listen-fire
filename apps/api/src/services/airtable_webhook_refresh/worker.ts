@@ -14,13 +14,14 @@
 // time. Failures are contained per row — one bad credential never starves the
 // rest.
 
-import { HOUR } from '../../constants';
-import { getAutomationsQb } from '../../lib/kysely';
-import { logger } from '../logger';
 import type { WorkHandler } from '../work/kinds';
 import type { WorkKindRegistration } from '../work/drain';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
+
+import { logger } from '../logger';
+import { getAutomationsQb } from '../../lib/kysely';
+import { HOUR } from '../../constants';
 import { MOVEMENT_LISTEN_PROVISIONER } from '../translation_graph/movement/listen_subscriptions';
 import { createAirtableAdapter } from '../translation_graph/adapters/airtable';
 

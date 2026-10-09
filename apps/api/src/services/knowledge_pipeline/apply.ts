@@ -1,17 +1,18 @@
 import { z } from 'zod';
 
-import { getKnowledgeQb } from '../../lib/kysely';
-import { execute } from '../../lib/prompts/execute';
-import { promptDef } from '../../lib/prompts/definition';
-import EvaluationStrategy from '../../generated/kysely/knowledge/EvaluationStrategy';
-import PropertyCardinality from '../../generated/kysely/knowledge/PropertyCardinality';
-import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { PropertyId } from '../../generated/kysely/knowledge/Property';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
 import type { EdgeId } from '../../generated/kysely/knowledge/Edge';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { Changeset, ChangesetProperty, ApplyResult } from './types';
+
+import { getKnowledgeQb } from '../../lib/kysely';
+import { execute } from '../../lib/prompts/execute';
+import { promptDef } from '../../lib/prompts/definition';
+import EvaluationStrategy from '../../generated/kysely/knowledge/EvaluationStrategy';
+import PropertyCardinality from '../../generated/kysely/knowledge/PropertyCardinality';
+import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import { isWritableBy } from '../../lib/knowledge/writable_by';
 import { recordChanges, ChangeSource, ChangeKind, propertyToChangeValue, changeValuesEqual, type RecordChangeParams } from '../../lib/knowledge/changes';
 

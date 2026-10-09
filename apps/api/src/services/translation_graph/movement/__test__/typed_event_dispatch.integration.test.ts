@@ -25,12 +25,18 @@ jest.mock('../../adapters/resolve', () => {
   return { ...actual, resolveAdapter: jest.fn() };
 });
 
-import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
-import { cleanupTeam } from '../../../../test/harness/cleanup';
+import { eventAddressKey } from 'movement-lang';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../../generated/kysely/public/PipelineConfiguration';
+import type { Adapter, RuntimeCapabilities } from '../../adapter';
+import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
+import type { TriggerEvent } from '../../triggers/types';
+
+import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
+import { cleanupTeam } from '../../../../test/harness/cleanup';
 import { dispatchTriggerByIdEvent } from '../../triggers/router';
 import { inspectMovementRun, listMovementRuns } from '../run_now';
 import {
@@ -43,11 +49,8 @@ import {
   makeStablePosition,
   positionData,
 } from '../../types';
-import type { Adapter, RuntimeCapabilities } from '../../adapter';
 import { containerAssociation } from '../../adapter';
-import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
-import { eventAddressKey } from 'movement-lang';
-import type { TriggerEvent } from '../../triggers/types';
+
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;

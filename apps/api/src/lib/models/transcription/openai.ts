@@ -3,10 +3,11 @@
 
 import { toFile } from 'openai';
 
+import type { TranscriptionRequest, TranscriptionResult } from './index';
+
 import { logger } from '../../../services/logger';
 import { openAiClient } from '../providers/openai';
 import { sniffContainer } from './audio_format';
-import type { TranscriptionRequest, TranscriptionResult } from './index';
 
 // The endpoint 400s on any extension outside this set, and a channel that
 // delivers nameless audio (a WhatsApp voice note's name falls back to the

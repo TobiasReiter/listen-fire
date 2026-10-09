@@ -5,6 +5,19 @@ import Anthropic from '@anthropic-ai/sdk';
 import { backOff } from 'exponential-backoff';
 import { z } from 'zod';
 
+import type {
+  PageFetchResult,
+  PageFetcher,
+  PageReader,
+  PageRequest,
+  SearchRequest,
+  WebSearcher,
+  WebSearchResult,
+  WebToolEvent,
+} from './web_tools';
+import type { Provider } from '../models/map';
+import type { ChatModelName } from '../models/registry';
+
 import { buildStructuredTool, extractStructuredResult } from './structured';
 import {
   defaultPageReader,
@@ -21,20 +34,7 @@ import {
   webChatTools,
   WEB_FETCH_MAX_CONTENT_TOKENS,
 } from './web_tools';
-import type {
-  PageFetchResult,
-  PageFetcher,
-  PageReader,
-  PageRequest,
-  SearchRequest,
-  WebSearcher,
-  WebSearchResult,
-  WebToolEvent,
-} from './web_tools';
-
 import { chatCallFor } from '../models/chat';
-import type { Provider } from '../models/map';
-import type { ChatModelName } from '../models/registry';
 import { Queue } from '../utils/queue';
 import { neverAsAny } from '../utils/types';
 import { logger } from '../../services/logger';

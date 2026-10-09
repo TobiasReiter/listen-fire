@@ -19,9 +19,10 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
-import { getAutomationsQb } from '../../../../lib/kysely';
 import type { DiscriminableEvent } from '../../adapter';
 import type { PollSource } from '../../poll_source';
+
+import { getAutomationsQb } from '../../../../lib/kysely';
 import { eventConfigList } from '../../triggers/listen_config';
 import {
   readStoredSystemEventsFromDb,

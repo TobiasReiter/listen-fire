@@ -7,6 +7,7 @@
 // (lib/knowledge/query_agent.ts), rewritten for the person asking.
 
 import type { Handbook, ChapterId, Chapter, IntentEntry } from './types';
+
 import { asking } from './chapters/asking';
 import { changing } from './chapters/changing';
 import { grounding } from './chapters/grounding';

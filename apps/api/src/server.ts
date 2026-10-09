@@ -5,11 +5,12 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import * as trpcExpress from '@trpc/server/adapters/express';
+import { assertParserReady } from 'movement-lang';
+import * as Sentry from '@sentry/node';
 
 import './services';
 import { prismaClient } from './prisma';
 import { initSentry } from './lib/sentry';
-import * as Sentry from '@sentry/node';
 import { logger } from './services/logger';
 import { currentContext } from './services/context';
 
@@ -41,7 +42,6 @@ import { assertRunCostCapConfigured } from './lib/run_spend';
 import { assertExtractionTiersConfigured } from './services/movement_engine/ai_tiers';
 import { assertMaxCallDepthConfigured } from './services/movement_engine/call_depth';
 import { assertWriteLockTimeoutConfigured } from './services/write_locks/write_locks';
-import { assertParserReady } from 'movement-lang';
 import { assertEngineChoiceConfigured } from './services/movement_engine/rust_engine';
 import { assertBrightDataSerpRateConfigured } from './services/web_search';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';

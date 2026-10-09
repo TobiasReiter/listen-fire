@@ -9,10 +9,11 @@
 
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
-import { execute } from '../../../../lib/prompts/execute';
-import { askJev } from '../../../../lib/jev/client';
 import type { ExternalRecordRef } from '../../adapter';
 import type { UniquenessConstraints } from '../../uniqueness';
+
+import { execute } from '../../../../lib/prompts/execute';
+import { askJev } from '../../../../lib/jev/client';
 import { arbitrateEntityCandidates, judgeEntityMatch, JUDGE_MODEL } from '../entity_match';
 
 // Mock ONLY the LLM call. entity_match imports just `execute` from this module.

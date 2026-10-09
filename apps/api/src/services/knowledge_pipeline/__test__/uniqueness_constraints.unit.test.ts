@@ -22,6 +22,8 @@ import type {
   ExtractedEdge,
 } from '../types';
 import type { Expression } from '#shared/expression/types';
+import type { StoredUniquenessConstraints, ConstraintEntry } from '../uniqueness_constraints';
+
 import {
   validateUniquenessConstraints,
   resolveExpressionInSubgraph,
@@ -32,7 +34,6 @@ import {
   parseConstraintText,
   serializeConstraintEntries,
 } from '../uniqueness_constraints';
-import type { StoredUniquenessConstraints, ConstraintEntry } from '../uniqueness_constraints';
 
 // ── Test IDs ──
 

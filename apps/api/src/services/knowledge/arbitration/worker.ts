@@ -14,6 +14,10 @@
 // records the reason on its heartbeat, and `/health` publishes both the depth
 // and the missing key. Losing arbitration is visible; it is never silent.
 
+import type { PropertyArbitrationId } from '../../../generated/kysely/knowledge/PropertyArbitration';
+import type { PropertyId } from '../../../generated/kysely/knowledge/Property';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { SECOND } from '../../../constants';
 import { getKnowledgeQb } from '../../../lib/kysely';
 import { worker } from '../../../lib/worker';
@@ -21,9 +25,6 @@ import { handleError } from '../../../lib/errors';
 import { logger } from '../../logger';
 import { isKnowledgeLlmConfigured } from '../../../lib/knowledge/llm';
 import { arbitrateProperty } from './evaluate';
-import type { PropertyArbitrationId } from '../../../generated/kysely/knowledge/PropertyArbitration';
-import type { PropertyId } from '../../../generated/kysely/knowledge/Property';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 
 const ARBITRATE_INTERVAL = 5 * SECOND;
 const BATCH_SIZE = 20;

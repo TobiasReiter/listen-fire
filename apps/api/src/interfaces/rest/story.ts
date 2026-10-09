@@ -25,11 +25,12 @@
 // it `/story/story.js` 404s and the page stays empty.
 
 import { Router } from 'express';
+
 import type { Request, Response } from 'express';
+import type { StoryView } from '../../services/translation_graph/movement/story_view';
 
 import { lookupStoryToken } from '../../services/translation_graph/movement/story_token';
 import { servedStoryView } from '../../services/translation_graph/movement/story_view';
-import type { StoryView } from '../../services/translation_graph/movement/story_view';
 
 const storyRouter: ReturnType<typeof Router> = Router();
 

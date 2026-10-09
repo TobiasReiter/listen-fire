@@ -1,14 +1,15 @@
 import { z } from 'zod';
 import { sql } from 'kysely';
 import { TRPCError } from '@trpc/server';
+
+import type { OpsEventId } from '../../../generated/kysely/public/OpsEvent';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getQb } from '../../../lib/kysely';
 import { anthropicChatStructured } from '../../../lib/anthropic';
 import { platformAdminProcedure } from '../procedures';
 import { encodeCursor, decodeCursor } from './cursor';
-
-import type { OpsEventId } from '../../../generated/kysely/public/OpsEvent';
 import OpsEventType from '../../../generated/kysely/public/OpsEventType';
 import OpsSeverity from '../../../generated/kysely/public/OpsSeverity';
 import OpsRunStatus from '../../../generated/kysely/public/OpsRunStatus';

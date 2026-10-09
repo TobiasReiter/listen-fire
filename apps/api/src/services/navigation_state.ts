@@ -14,9 +14,10 @@
 
 import { sql } from 'kysely';
 
-import { getQb, getAutomationsQb } from '../lib/kysely';
 import type { AgentConversationId } from '../generated/kysely/public/AgentConversation';
 import type { TeamId } from '../generated/kysely/core/Team';
+
+import { getQb, getAutomationsQb } from '../lib/kysely';
 import { neverAsAny } from '../lib/utils/types';
 
 // ── Types ────────────────────────────────────────────────────────────────

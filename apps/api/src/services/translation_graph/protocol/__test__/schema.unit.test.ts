@@ -1,9 +1,5 @@
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 
-import type { Adapter } from '../../adapter';
-import { BASE_RUNTIME_CAPABILITIES } from '../../adapter';
-import { createAdapterProtocolHandler } from '../server';
 import {
   MANIFEST_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
@@ -22,6 +18,12 @@ import {
   WireResolveEntityResult,
   METHODS,
 } from 'engine-contracts';
+
+import type { AddressInfo } from 'node:net';
+import type { Adapter } from '../../adapter';
+
+import { BASE_RUNTIME_CAPABILITIES } from '../../adapter';
+import { createAdapterProtocolHandler } from '../server';
 
 // A representative source position — the wire mirror of `SourcePosition`.
 const samplePosition = {

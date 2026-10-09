@@ -3,6 +3,10 @@
 // refresh, which the `linked_object_refresh` work row runs
 // (linked_object_refresh.ts).
 import { z } from 'zod';
+
+import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { getAutomationsQb, getKnowledgeQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { decryptToken } from '../../lib/credentials';
@@ -10,8 +14,6 @@ import { AttioAPIClient, attioCredsParser } from '../../adapters/attio/apiClient
 import { buildRecordData } from '../knowledge_pipeline/output_v3/adapters/attio';
 import { normalizeAdapterType } from '../knowledge_pipeline/output_v3/linked_objects';
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../lib/recording';
-import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
-import type { TeamId } from '../../generated/kysely/core/Team';
 
 /** What one refresh needs, as plain data so it rides the work payload. */
 export const linkedObjectRefreshSchema = z.object({

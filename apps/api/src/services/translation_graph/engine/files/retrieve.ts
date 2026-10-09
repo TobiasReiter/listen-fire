@@ -10,6 +10,7 @@
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { Adapter, EarlierFileSource, FileRef, FileSource, ResolveFileRefResult } from '../../adapter';
+
 import { DOCUMENT_STORE_OWNER } from './document_store';
 
 /** How the owning instance is resolved: production's `resolveAdapter` unless a

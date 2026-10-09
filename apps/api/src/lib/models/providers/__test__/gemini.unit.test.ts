@@ -4,13 +4,14 @@
 // The SDK client is mocked at its constructor, so nothing reaches a network;
 // the wire itself is proven against the fake Gemini in apps/fake-channels.
 
-import type Anthropic from '@anthropic-ai/sdk';
 import {
   FinishReason,
   FunctionCallingConfigMode,
   GenerateContentResponse,
   ThinkingLevel,
 } from '@google/genai';
+
+import type Anthropic from '@anthropic-ai/sdk';
 import type { Content, GenerateContentConfig, Part } from '@google/genai';
 
 const genaiCtor = jest.fn();

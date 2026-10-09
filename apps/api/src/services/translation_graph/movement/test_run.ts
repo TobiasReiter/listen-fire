@@ -18,14 +18,15 @@
 //   (Test run rewired off the TG engine onto a movement dry-run)
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { CapturedWrite } from '../engine/dry_run_adapter';
+import type { TriggerEvent } from '../triggers/types';
+
 import { anthropicChat } from '../../../lib/anthropic';
 import { runCostCapFromEnv } from '../../../lib/run_spend';
 import { logger } from '../../logger';
 import { runMovement } from '../../movement_engine/run';
-import type { CapturedWrite } from '../engine/dry_run_adapter';
 import { resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
-import type { TriggerEvent } from '../triggers/types';
 import { loadTriggerById } from '../storage/tg_table';
 import { runCatalogSnapshotForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';

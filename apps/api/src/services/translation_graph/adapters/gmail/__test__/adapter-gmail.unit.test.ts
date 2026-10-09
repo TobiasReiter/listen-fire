@@ -12,7 +12,8 @@ jest.mock('../../../../logger', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { Expression } from '#shared/expression/types';
-import { applyHopOrderLimit, hopPushdown } from '#shared/expression/order_limit';
+import type { GmailApiClient } from '../client';
+
 import {
   ADAPTER_META_TYPE_ID,
   makeMetaPosition,
@@ -26,7 +27,6 @@ import {
   type GmailProfile,
 } from '../../../../../adapters/gmail/apiClient';
 import { decodeGmailMessage } from '../../../../../adapters/gmail/mime';
-import type { GmailApiClient } from '../client';
 import { GmailAdapter, GMAIL_MANIFEST, createGmailAdapter } from '../index';
 import { GmailPollSource, listenQuery } from '../poll';
 import { combineGmailQueries, gmailQueryFromWhere } from '../filter';
@@ -39,6 +39,8 @@ import {
   GMAIL_MESSAGE_TYPE_ID,
   decodeAttachmentId,
 } from '../types';
+
+import { applyHopOrderLimit, hopPushdown } from '#shared/expression/order_limit';
 
 const TEAM = 'team-1' as TeamId;
 

@@ -26,9 +26,11 @@
  * gets past `parseEvents` is shaped the way the TG runtime expects.
  */
 
-import crypto from 'crypto';
+import crypto from "node:crypto";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { slackProvider, parseSlackEvents } from '../providers/slack';
 // Avoid importing '../providers' (the aggregate index) because it pulls in
@@ -39,7 +41,6 @@ import {
   SlackAdapter,
   SLACK_ADAPTER_TYPE,
 } from '../../translation_graph/adapters/slack';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 import {
   type SourcePosition,
   makeStablePosition,

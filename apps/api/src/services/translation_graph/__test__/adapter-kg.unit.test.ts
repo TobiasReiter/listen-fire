@@ -389,11 +389,12 @@ jest.mock('../../../lib/kysely', () => ({
 // Subject under test (loaded after mocks are in place)
 // ---------------------------------------------------------------------------
 
+import type { SourcePosition } from '../types';
+
 import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE, KG_RESOURCE_TYPE_ID } from '../adapters/knowledge_graph';
 import { persistKgResources } from '../adapters/knowledge_graph_resources';
 import { RESOURCES_REFERENCE_FIELD_ID, type ResourceFilter } from '../adapter';
 import { makeStablePosition } from '../types';
-import type { SourcePosition } from '../types';
 
 const TEAM_ID = 'team-1' as TeamId;
 const KG_CREDENTIALS_ID = 'kg-credential-1';

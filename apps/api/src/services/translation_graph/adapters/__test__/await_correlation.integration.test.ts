@@ -5,10 +5,11 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
-import { cleanupTeam } from '../../../../test/harness/cleanup';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
+
+import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
+import { cleanupTeam } from '../../../../test/harness/cleanup';
 import {
   registerAwaitCorrelation,
   loadCorrelatedParks,

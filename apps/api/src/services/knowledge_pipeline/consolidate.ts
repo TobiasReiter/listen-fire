@@ -1,20 +1,9 @@
 import { randomUUID } from 'node:crypto';
+
 import { sql } from 'kysely';
 import { z } from 'zod';
 
-import { getKnowledgeQb } from '../../lib/kysely';
-import { execute } from '../../lib/prompts/execute';
-import { promptDef } from '../../lib/prompts/definition';
-import { logger } from '../logger';
-import { resolveDisplayNames } from '../../lib/knowledge/resolve_display_name';
-import {
-  loadEdgeTypeMeta,
-  buildRelationshipContextFromDb,
-  buildRelationshipContextFromSubgraph,
-  formatEntityContext,
-} from '../../lib/knowledge/relationship_context';
 import type { EdgeTypeMetaMap } from '../../lib/knowledge/relationship_context';
-import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
@@ -33,13 +22,26 @@ import type {
   ChangesetNode,
   ChangesetProperty,
 } from './types';
+import type { StoredUniquenessConstraints } from './uniqueness_constraints';
+
 import {
   searchCandidatesByConstraints,
   loadConstraintsForNodeTypes,
   collectEdgeTypeIds,
   isEdgeToEntry,
 } from './uniqueness_constraints';
-import type { StoredUniquenessConstraints } from './uniqueness_constraints';
+import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
+import {
+  loadEdgeTypeMeta,
+  buildRelationshipContextFromDb,
+  buildRelationshipContextFromSubgraph,
+  formatEntityContext,
+} from '../../lib/knowledge/relationship_context';
+import { resolveDisplayNames } from '../../lib/knowledge/resolve_display_name';
+import { logger } from '../logger';
+import { promptDef } from '../../lib/prompts/definition';
+import { execute } from '../../lib/prompts/execute';
+import { getKnowledgeQb } from '../../lib/kysely';
 
 // -- Topological sort (constraint-driven) --
 

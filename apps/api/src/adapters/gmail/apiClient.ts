@@ -21,6 +21,8 @@
 import { google, type gmail_v1 } from 'googleapis';
 import { z } from 'zod';
 
+import type { GmailConnectMethod } from './connect_method';
+
 import {
   GMAIL_READONLY_SCOPE,
   GMAIL_SEND_SCOPE,
@@ -36,7 +38,6 @@ import {
   redeemGmailRefreshToken,
   type GmailTokens,
 } from './authClient';
-import type { GmailConnectMethod } from './connect_method';
 
 /** The scopes a connected mailbox is reached through — read and send, nothing
  *  else. Exported so `describe` can name them without a second spelling. */

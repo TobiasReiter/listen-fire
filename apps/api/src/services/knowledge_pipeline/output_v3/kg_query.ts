@@ -6,13 +6,14 @@
 // Runtime execution lives in kg_query_runner.ts so this module stays free of
 // the DB/Prisma import chain (validators run in lightweight unit tests).
 
-import { parseAnyCypher, ParseError } from '../../../lib/knowledge/cypher/parser';
-import { isMutation } from '../../../lib/knowledge/cypher/types';
 import type {
   CypherQuery,
   Expression as CypherExpression,
   PatternPath,
 } from '../../../lib/knowledge/cypher/types';
+
+import { parseAnyCypher, ParseError } from '../../../lib/knowledge/cypher/parser';
+import { isMutation } from '../../../lib/knowledge/cypher/types';
 
 export class KgQueryValidationError extends Error {
   constructor(message: string) {

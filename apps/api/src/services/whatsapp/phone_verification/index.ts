@@ -4,9 +4,10 @@
 // routing now requires. Under `WHATSAPP_LINK_VERIFICATION=trust` the code step
 // is skipped and the claim itself earns it (see link_verification.ts).
 
-import { getAutomationsQb } from '../../../lib/kysely';
 import type { UserId } from '../../../generated/kysely/core/User';
 import type { PhoneVerificationId } from '../../../generated/kysely/automations/PhoneVerification';
+
+import { getAutomationsQb } from '../../../lib/kysely';
 import { logger } from '../../logger';
 import { sendVerificationCode } from '../metaApi';
 import { maskPhoneNumber, whatsappLinkVerification } from './link_verification';

@@ -5,10 +5,11 @@
 
 import { randomUUID } from 'node:crypto';
 import http from 'node:http';
+
 import type { AddressInfo } from 'node:net';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import ExternalServiceType from '../../../../../generated/kysely/automations/ExternalServiceType';
 import { startFakeCrmServer, type FakeCrmServer } from '../../../../../scripts/dev/fake_crm_adapter';
 import { RemoteAdapterManifestInput } from '../manifest';

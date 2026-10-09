@@ -1,7 +1,7 @@
 import { Command, command, metadata } from 'clime';
 import { google } from 'googleapis';
-
 import * as Sentry from '@sentry/node';
+
 import { initSentry } from '../../../lib/sentry';
 import { runInContext } from '../../../services/context/utils';
 import { UserOptions } from '../options';

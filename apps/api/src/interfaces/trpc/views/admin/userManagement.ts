@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { trpc } from '../../trpc';
 import { currentContext } from '../../../../services/context';
 import { ProvisioningService } from '../../../../services/provisioning';
@@ -15,7 +17,6 @@ import {
   GLOBAL_DEFAULT_OPS_DETAIL_LEVEL,
   setTeamDetailLevel as setTeamDetailLevelService,
 } from '../../../../services/team/ops_detail';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import { neverAsAny } from '../../../../lib/utils/types';
 
 const userSchema = z.object({

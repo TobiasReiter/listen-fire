@@ -1,9 +1,10 @@
 // Retention prune for trigger_run. Disabled by default; enable by scheduling
 // `pnpm tg:prune` (or the exported function) on a cron when volume warrants.
 
-import { getAutomationsQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+
+import { getAutomationsQb } from '../../../lib/kysely';
 
 export interface PruneTriggerRunsInput {
   /** Rows older than this many days are deleted. Defaults to 7. */

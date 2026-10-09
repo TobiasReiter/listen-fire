@@ -17,9 +17,10 @@
 // `correlationKey` when an inbound reply arrives. This module only holds the
 // map, the two adapter-agnostic reaps, and the keeper contract.
 
-import { getAutomationsQb, getQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+
+import { getAutomationsQb, getQb } from '../../../lib/kysely';
 
 /** One resolvable await park — the adapter-agnostic leaf the resume driver steps
  *  forward (`resumeAwaitRun` re-enters here and re-checks the edge live). The

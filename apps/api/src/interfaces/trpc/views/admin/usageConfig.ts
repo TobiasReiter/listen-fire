@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
-import { trpc } from '../../trpc';
-import { getQb } from '../../../../lib/kysely';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TeamUsageConfigId } from '../../../../generated/kysely/public/TeamUsageConfig';
+
+import { trpc } from '../../trpc';
+import { getQb } from '../../../../lib/kysely';
 
 const usageConfigRouter = (procedure: typeof trpc.procedure) => {
   return trpc.router({

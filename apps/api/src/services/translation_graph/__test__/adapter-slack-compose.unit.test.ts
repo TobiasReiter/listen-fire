@@ -19,9 +19,10 @@ jest.mock('../../../lib/anthropic', () => ({
   },
 }));
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { SlackAdapter, SLACK_MESSAGE_TYPE_ID } from '../adapters/slack';
 import { composeSlackMessage } from '../adapters/slack/compose';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 
 const TEAM_ID = 'team-1' as TeamId;
 const COMPOSED = '*Thanks @[Ada Okafor] for leading the Acme round!* 🎉';

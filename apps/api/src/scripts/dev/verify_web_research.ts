@@ -27,6 +27,7 @@ import '../../services';
 import '../../services/translation_graph/engine/transforms/register-bundled';
 
 import { parseProgram } from 'movement-lang';
+
 import { runInContext } from '../../services/context/utils';
 import { buildExtractSpec, materializeExtract } from '../../services/movement_engine/extraction';
 import { makeAnthropicLlmClient } from '../../services/translation_graph/movement/llm_clients';
@@ -35,6 +36,7 @@ import { getTransform } from '../../services/translation_graph/engine/transforms
 import { makeStablePosition } from '../../services/translation_graph/types';
 import { WebSearchService } from '../../services/web_search';
 import { ensureDevLoopTeam } from './_lib';
+
 import type { ExtractExpression, ExprSlot } from 'movement-lang';
 import type { MovementTraceEntry } from '../../services/movement_engine/expression';
 import type { ContextDependentInput } from '../../services/translation_graph/engine/transforms';

@@ -6,11 +6,6 @@
 // the adapter translates the author's natural names on the first line of each
 // write method, as the contract requires.
 
-import {
-  EvertraceApiError,
-  type EvertraceApiClient,
-  type EvertraceSearchFilterRow,
-} from '../../../../adapters/evertrace/apiClient';
 import type {
   DeleteInput,
   DeleteResult,
@@ -19,6 +14,12 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
+
+import {
+  EvertraceApiError,
+  type EvertraceApiClient,
+  type EvertraceSearchFilterRow,
+} from '../../../../adapters/evertrace/apiClient';
 import { writeParentLinks, containerAssociation } from '../../adapter';
 import { neverAsAny } from '../../../../lib/utils/types';
 import { UPDATE_NOT_FOUND } from '../not_found';

@@ -4,6 +4,8 @@
  * ONE event caused — and fails if that event also changed something its
  * assertions never mention.
  */
+import type { Fixture } from '../task';
+
 import {
   diffSnapshots,
   flattenAttioRecord,
@@ -14,7 +16,6 @@ import {
   sentEmailCount,
   type Snapshot,
 } from '../end_state';
-import type { Fixture } from '../task';
 import { founderAcknowledgement } from '../tasks/founder_acknowledgement';
 
 const company = (id: string, name: string, extra: Record<string, string[]> = {}) => ({

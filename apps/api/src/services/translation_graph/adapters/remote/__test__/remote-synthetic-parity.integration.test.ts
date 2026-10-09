@@ -32,17 +32,18 @@ import type {
   DedupRules,
   FilterTranslationResult,
 } from '../../../adapter';
-import { unsupportedAssociation, writeParentLinks } from '../../../adapter';
 import type { FieldEvidence } from '../../../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../../types';
 import type { TriggerType } from '../../../triggers/types';
 import type { Expression } from '#shared/expression/types';
+import type { RemoteAdapter, RemoteAdapterConfig } from '../index';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
 import { BaseAdapter } from '../../base';
 import { naturalName } from '../../name_resolution';
 import { createAdapterProtocolHandler } from '../../../protocol/server';
 import { createRemoteAdapter, fetchRemoteManifest } from '../index';
-import type { RemoteAdapter, RemoteAdapterConfig } from '../index';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import { unsupportedAssociation, writeParentLinks } from '../../../adapter';
 
 /** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
 const CONFIG_TEAM_ID = '00000000-0000-4000-8000-0000000000c1' as TeamId;

@@ -19,12 +19,13 @@
 
 import { createHmac } from 'node:crypto';
 
+import type { OutboundDeliveryId } from '../../generated/kysely/valuations/OutboundDelivery';
+
 import { SECOND } from '../../constants';
 import { getValuationsQb } from '../../lib/kysely';
 import { worker } from '../../lib/worker';
 import { handleError } from '../../lib/errors';
 import { logger } from '../logger';
-import type { OutboundDeliveryId } from '../../generated/kysely/valuations/OutboundDelivery';
 
 const DELIVERY_INTERVAL = 5 * SECOND;
 const BATCH_SIZE = 100;

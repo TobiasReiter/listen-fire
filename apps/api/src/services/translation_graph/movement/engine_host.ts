@@ -7,7 +7,6 @@
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TenantId } from 'engine-contracts';
-
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MovementTraceEntry } from '../../movement_engine/expression';
 import type { ExtractCallLlmClient } from '../../movement_engine/extraction_call';

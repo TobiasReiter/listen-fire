@@ -2,13 +2,14 @@
 // the engine: the TG transform registry, and the document store a plugin's
 // fetched files land in.
 
+import type { TransformInvocationResult, TransformInvokeInput } from '../../movement_engine/extraction';
+import type { Costed, Priced } from '../../movement_engine/host';
+import type { FileRef } from '../adapter';
+
 import { runFields } from '../../../lib/llm_usage';
 import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from '../../../lib/run_cost';
 import { DocumentService } from '../../document';
 import { logger } from '../../logger';
-import type { TransformInvocationResult, TransformInvokeInput } from '../../movement_engine/extraction';
-import type { Costed, Priced } from '../../movement_engine/host';
-import type { FileRef } from '../adapter';
 import { documentStoreFileRef } from '../engine/files/document_store';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
 import { makeEphemeralPosition } from '../types';

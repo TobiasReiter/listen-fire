@@ -5,6 +5,10 @@
  * File values ride the write (upload flow, Message as initial_comment).
  */
 
+import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { MutationContext } from '../mutation_context';
+
 import {
   SlackAdapter,
   SLACK_MESSAGE_TYPE_ID,
@@ -18,9 +22,6 @@ import {
   reactionAnchorFromParent,
   replyAnchorFromParent,
 } from '../adapters/slack/write';
-import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { MutationContext } from '../mutation_context';
 
 const TEAM_ID = 'team-1' as TeamId;
 

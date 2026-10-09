@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
+
 import { mutationContextSchema } from '../mutation_context';
 
 // ── RecordMutationEvent: post-commit, record-level event ───────────────────

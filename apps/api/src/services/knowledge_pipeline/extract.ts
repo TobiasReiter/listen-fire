@@ -1,27 +1,13 @@
 import { randomUUID } from 'node:crypto';
+
 import { z } from 'zod';
 
-import { execute } from '../../lib/prompts/execute';
-import { parseJson } from '../../lib/utils/parse_json';
-import { promptDef } from '../../lib/prompts/definition';
-import { PromptFragment } from '../../lib/prompts/fragments';
-import { anthropicChat } from '../../lib/anthropic';
-import { logger } from '../logger';
-import { sendSlackNotification } from '../../lib/slack';
-import {
-  buildRelationshipContextFromSubgraph,
-  formatEntityContext,
-} from '../../lib/knowledge/relationship_context';
 import type { EdgeTypeMetaMap, EdgeTypeMeta } from '../../lib/knowledge/relationship_context';
-import { getKnowledgeQb } from '../../lib/kysely';
-import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import { findDedupGroups, loadConstraintsForNodeTypes } from './uniqueness_constraints';
 import type { FuzzyCandidate } from './uniqueness_constraints';
 import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
-import { RawTextService } from '../raw_text';
 import type { Fact } from './facts';
 import type {
   Segment,
@@ -38,6 +24,23 @@ import type {
   ExtractedNodeResource,
   ExtractedSubgraph,
 } from './types';
+
+import { execute } from '../../lib/prompts/execute';
+import { parseJson } from '../../lib/utils/parse_json';
+import { promptDef } from '../../lib/prompts/definition';
+import { PromptFragment } from '../../lib/prompts/fragments';
+import { anthropicChat } from '../../lib/anthropic';
+import { logger } from '../logger';
+import { sendSlackNotification } from '../../lib/slack';
+import {
+  buildRelationshipContextFromSubgraph,
+  formatEntityContext,
+} from '../../lib/knowledge/relationship_context';
+import { getKnowledgeQb } from '../../lib/kysely';
+import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
+import { findDedupGroups, loadConstraintsForNodeTypes } from './uniqueness_constraints';
+import { RawTextService } from '../raw_text';
+
 
 // -- Context formatting --
 
@@ -1877,7 +1880,7 @@ async function extractFromSegmentsInner(
   }
 
   const useOpus = entityCount != null && entityCount >= ENTITY_DENSITY_OPUS_THRESHOLD;
-  let contextText = formatSegments(segments, textMap);
+  const contextText = formatSegments(segments, textMap);
   logger.info('[extraction] Routing decision', {
     hasProgressive,
     entityCount: entityCount ?? 'unknown',

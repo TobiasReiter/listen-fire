@@ -23,8 +23,15 @@
 // and authors automations off it, so judgement matters more than per-turn
 // cost — see UNIFIED_AGENT_MODEL below.
 
-import type { Kysely } from 'kysely';
 import { z } from 'zod';
+
+import type { Kysely } from 'kysely';
+import type { ChatModelName } from '../models/registry';
+import type { ResourceChangeEvent } from '../message_queue/queues/resourceChanges';
+import type { AgentUpdate } from '../openai/types';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { NodeId } from '../../generated/kysely/knowledge/Node';
+import type { ToolTrace, SuggestedAction } from './agent_types';
 
 import {
   anthropicChat,
@@ -33,21 +40,15 @@ import {
   type TurnEvent,
 } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
-import type { ChatModelName } from '../models/registry';
 import { currentContext } from '../../services/context';
 import { logger } from '../../services/logger';
 import { mq } from '../message_queue';
-import type { ResourceChangeEvent } from '../message_queue/queues/resourceChanges';
-import type { AgentUpdate } from '../openai/types';
 import { getAutomationsQb, getKnowledgeQb, getQb } from '../kysely';
 import {
   getAdapterManifest,
   adapterRequiredCredentialType,
 } from '../../services/translation_graph/adapters/registry';
-import type { TeamId } from '../../generated/kysely/core/Team';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
-import type { NodeId } from '../../generated/kysely/knowledge/Node';
-
 import { parseJson } from '../utils/parse_json';
 import { getLibraryShelf, readBook } from './library';
 import { getMovementDoctrine } from './movement_handbook';
@@ -55,7 +56,6 @@ import { executeCypher, getSchema, stripCypherComments, ParseError, TranspileErr
 import { parseAnyCypher } from './cypher/parser';
 import { isMutation } from './cypher/types';
 import { getNodeDetail } from './knowledge_query';
-import type { ToolTrace, SuggestedAction } from './agent_types';
 import { searchFacts } from '../../services/knowledge_pipeline/facts';
 import {
   createEntity,

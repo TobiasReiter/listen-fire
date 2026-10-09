@@ -8,6 +8,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { UserId } from '../../../../generated/kysely/core/User';
+
 import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
 import { Context } from '../../../../services/context';
 import { userPrincipal } from '../../../../services/principal';
@@ -16,8 +19,6 @@ import { TeamInviteService } from '../../../../services/team_invite';
 import { cleanupTeam } from '../../../../test/harness/cleanup';
 import { trpc } from '../../trpc';
 import { teamMembersRouter } from '../teamMembers';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { UserId } from '../../../../generated/kysely/core/User';
 
 async function makeTeam(): Promise<TeamId> {
   const teamId = randomUUID() as TeamId;

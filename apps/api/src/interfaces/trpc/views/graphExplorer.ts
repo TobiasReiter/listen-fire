@@ -30,6 +30,9 @@
 import { parseTraversalPath } from 'movement-lang';
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { UserId } from '../../../generated/kysely/core/User';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getCoreQb } from '../../../lib/kysely';
@@ -40,9 +43,6 @@ import {
   SYSTEM_FOOTNOTES,
 } from '../../../services/translation_graph/graph_explorer/build';
 import { walkedNodeFrom, type WalkedNode } from '../../../services/translation_graph/movement/walk';
-
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { UserId } from '../../../generated/kysely/core/User';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
 export type GraphExplorerInstance = {

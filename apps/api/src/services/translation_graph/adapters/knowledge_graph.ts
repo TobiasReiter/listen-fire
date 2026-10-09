@@ -18,32 +18,12 @@
 //     UUID never rides a position.
 
 import { z } from 'zod';
-import { hydrateTargets, typeAddressedPositions, uniformWalk } from './hop';
-import { KNOWLEDGE_GRAPH_HANDBOOK_SECTION } from './knowledge_graph_handbook_section';
+
 import type { EdgesFromResult } from '../adapter';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
 import type { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
-import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
-import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
-import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import { getKnowledgeQb } from '../../../lib/kysely';
-import { mutationDelivery } from '../../knowledge/mutation_outbox/delivery_mode';
-import {
-  KgOntologyCache,
-  kgFetch,
-  kgFetchOrNull,
-  loadKgCredentials,
-  type KgCredentials,
-  type WireEdgeType,
-  type WireOntology,
-  type WirePropertyType,
-} from './kg_client';
-import {
-  deregisterKnowledgeWebhook,
-  registerKnowledgeWebhook,
-} from './knowledge_graph_webhook';
 import type {
   Adapter,
   RuntimeCapabilities,
@@ -74,6 +54,28 @@ import type {
   WriteInput,
   WriteResult,
 } from '../adapter';
+
+import { hydrateTargets, typeAddressedPositions, uniformWalk } from './hop';
+import { KNOWLEDGE_GRAPH_HANDBOOK_SECTION } from './knowledge_graph_handbook_section';
+import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
+import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
+import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
+import { getKnowledgeQb } from '../../../lib/kysely';
+import { mutationDelivery } from '../../knowledge/mutation_outbox/delivery_mode';
+import {
+  KgOntologyCache,
+  kgFetch,
+  kgFetchOrNull,
+  loadKgCredentials,
+  type KgCredentials,
+  type WireEdgeType,
+  type WireOntology,
+  type WirePropertyType,
+} from './kg_client';
+import {
+  deregisterKnowledgeWebhook,
+  registerKnowledgeWebhook,
+} from './knowledge_graph_webhook';
 import { RESOURCES_REFERENCE_FIELD_ID, writeParentLinks } from '../adapter';
 import { recordMutationEventSchema } from '../triggers/record_mutation_event';
 import {

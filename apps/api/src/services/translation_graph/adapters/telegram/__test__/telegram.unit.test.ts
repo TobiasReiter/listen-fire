@@ -13,6 +13,9 @@
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { TriggerEvent } from '../../../triggers/types';
+import type { TelegramUpdate } from '../types';
+import type { FileRef } from '../../../adapter';
+
 import { makeStablePosition, makeUnstablePosition } from '../../../types';
 
 // ── Module-scope mocks ──────────────────────────────────────────────────────
@@ -87,8 +90,6 @@ import {
   type TelegramMessagePayload,
 } from '../index';
 import { TELEGRAM_LINKED_USER_TYPE_ID } from '../types';
-import type { TelegramUpdate } from '../types';
-import type { FileRef } from '../../../adapter';
 import { discriminateEvent } from '../../../engine/inbound/discriminate';
 import { webhookEventToDiscriminable } from '../../../../webhook_sync/event_conversion';
 

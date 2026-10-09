@@ -85,6 +85,9 @@ jest.mock('../../../../lib/kysely', () => ({
   })),
 }));
 
+import type { BindingEndpoint } from '../../../movement_engine/host';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   encodeInstanceKey,
   encodeEndpoint,
@@ -92,8 +95,6 @@ import {
   findBoundCounterpart,
   deleteBinding,
 } from '../record_bindings';
-import type { BindingEndpoint } from '../../../movement_engine/host';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 const TEAM = 'team-1' as TeamId;
 

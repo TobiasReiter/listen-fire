@@ -2,7 +2,6 @@ import { type Kysely, sql } from 'kysely';
 
 import { getQb } from '../../kysely';
 import { unwrapAgentQueryRows } from '../query_agent_utils';
-
 import { parseAnyCypher, ParseError } from './parser';
 import { isMutation } from './types';
 import { transpile, loadOntology, TranspileError, type OntologyCache, type CypherParams } from './transpiler';

@@ -9,13 +9,15 @@
 //     the manual Settings ("Create subscription") path.
 // Both are thin callers of the register/deregister helpers here.
 
-import crypto from 'crypto';
+import crypto from "node:crypto";
+
 import { z } from 'zod';
+
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 
 import { getAutomationsQb } from '../../../lib/kysely';
 import { decryptToken } from '../../../lib/credentials';
 import { apiBaseUrl } from '../../../lib/api_base_url';
-import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 
 /** The Valuations events a `listen to <vals> { events: [...] }` may subscribe
  *  to — exactly the `row.type` strings the Valuations outbox worker emits, so

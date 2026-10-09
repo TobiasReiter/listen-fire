@@ -21,10 +21,11 @@
  *
  * Usage: FAKE_BASE=http://localhost:6291/affinity ts-node … verify_affinity_list_entry_upsert.ts
  */
-import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
-import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
+import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6291/affinity';
 

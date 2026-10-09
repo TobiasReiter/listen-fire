@@ -85,7 +85,6 @@ jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
   };
 });
 
-import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import {
   checkProgram,
   fromCatalogSnapshot,
@@ -93,13 +92,17 @@ import {
   scanInstanceChains,
   type CatalogSnapshot,
 } from 'movement-lang';
+
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { ResolveEntityInput } from '../../../adapter';
+import type { Expression } from '#shared/expression/types';
+import type { SourcePosition } from '../../../types';
+
+import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { AffinityAdapter, AFFINITY_MANIFEST } from '../index';
 import { decodedFixedType, listScopedFieldDisplayNames } from '../types';
 import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
 import { refineInstanceSchema } from '../../../movement/refinements';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { ResolveEntityInput } from '../../../adapter';
-import type { Expression } from '#shared/expression/types';
 import {
   isStablePosition,
   makeMetaPosition,
@@ -108,7 +111,7 @@ import {
   positionLabel,
   positionRecordId,
 } from '../../../types';
-import type { SourcePosition } from '../../../types';
+
 
 // ---------------------------------------------------------------------------
 // Fake apiClient + operations

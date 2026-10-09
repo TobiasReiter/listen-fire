@@ -6,10 +6,11 @@
 // off and the edge it hangs off by, and says which of those parents this same
 // rehearsal invented a moment ago.
 
-import { newDryRunRehearsal, wrapAdapterForDryRun } from '../dry_run_adapter';
 import type { CapturedWrite } from '../dry_run_adapter';
 import type { Adapter } from '../../adapter';
 import type { MutationContext } from '../../mutation_context';
+
+import { newDryRunRehearsal, wrapAdapterForDryRun } from '../dry_run_adapter';
 
 const MUTATION = {} as MutationContext;
 

@@ -15,8 +15,10 @@
 // calls out of `handleStart`), which is what makes deferring the dispatch safe:
 // nothing the sender sees depends on work done after the ack.
 
-import express, { type Router } from 'express';
 import { createServer, type Server } from 'node:http';
+
+import express, { type Router } from 'express';
+
 import type { AddressInfo } from 'node:net';
 
 const handleSharedBotInbound = jest.fn();

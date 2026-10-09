@@ -20,16 +20,25 @@
 // sibling of the
 //   async-conversation surface; this is the DIRECT (non-agent) half.
 
+import { randomUUID } from "node:crypto";
+
 import { Router, type RequestHandler } from 'express';
-import { randomUUID } from 'crypto';
 import { z } from 'zod';
-
 import { currentPrincipal } from 'principal';
+import {
+  before,
+  CURRENT_LANGUAGE_VERSION,
+  getMovementCompletions,
+  languageVersionView,
+  type LanguageVersion,
+  type LanguageVersionView,
+} from 'movement-lang';
 
-import { getKnowledgeQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { UserId } from '../../../generated/kysely/core/User';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
+
+import { getKnowledgeQb } from '../../../lib/kysely';
 import { mintConnectLink } from '../../../services/credentials/connect_link';
 import { mintGrantAccessLink } from '../../../services/credentials/grant_access';
 import {
@@ -38,7 +47,6 @@ import {
   userHasVerifiedWhatsappNumber,
 } from '../../../services/whatsapp/phone_verification';
 import { WHATSAPP_MOVEMENTS_WA_ME_LINK } from '../../../services/translation_graph/adapters/whatsapp';
-
 import { readBook } from '../../../lib/knowledge/library';
 import {
   LANGUAGE_SEARCH_KINDS,
@@ -106,15 +114,6 @@ import { abortRun, resumeRun } from '../../../services/interaction/operator';
 import { RunBusy } from '../../../services/movement_engine/run_lease';
 import { MovementEngineError } from '../../../services/movement_engine/errors';
 import { UserService } from '../../../services/user';
-import {
-  before,
-  CURRENT_LANGUAGE_VERSION,
-  getMovementCompletions,
-  languageVersionView,
-  type LanguageVersion,
-  type LanguageVersionView,
-} from 'movement-lang';
-
 import { registerRoute } from '../../mcp/registry';
 import {
   ToolTeamError,

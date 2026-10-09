@@ -8,9 +8,10 @@
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { SystemEventId } from '../../../../generated/kysely/automations/SystemEvent';
+import type { SystemEventKind, SystemEventPayload } from './types';
+
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { getEnvVar } from '../../../../lib/utils/environment';
-import type { SystemEventKind, SystemEventPayload } from './types';
 
 /** One stored platform event. */
 export interface StoredSystemEvent {

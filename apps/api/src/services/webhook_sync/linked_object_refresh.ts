@@ -3,8 +3,10 @@
 // provider read, so it runs as its own row, never in the request, and
 // independently of the event's dispatch rows.
 import { randomUUID } from 'node:crypto';
-import { logger } from '../logger';
+
 import type { WorkHandler } from '../work/kinds';
+
+import { logger } from '../logger';
 import { registerWorkKinds } from '../work/drain';
 import { enqueueWork } from '../work/store';
 import {

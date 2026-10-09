@@ -5,16 +5,17 @@
 
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 
 import express, { type Router } from 'express';
+
+import type { AddressInfo } from 'node:net';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { UserId } from '../../../../../generated/kysely/core/User';
 
 import { getCoreQb, getValuationsQb } from '../../../../../lib/kysely';
 import { Context } from '../../../../../services/context';
 import { userPrincipal } from '../../../../../services/principal';
 import LegalEntityType from '../../../../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { UserId } from '../../../../../generated/kysely/core/User';
 import { legalEntitiesRouter } from '../resources';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

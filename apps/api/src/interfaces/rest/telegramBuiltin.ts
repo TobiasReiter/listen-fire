@@ -20,9 +20,11 @@
 // `TELEGRAM_WEBHOOK_SECRET` before processing. That is the only thing proving
 // the POST genuinely came from Telegram.
 
+import { timingSafeEqual } from "node:crypto";
+
 import { Router } from 'express';
+
 import type { Request, Response } from 'express';
-import { timingSafeEqual } from 'crypto';
 
 import {
   handleSharedBotInbound,

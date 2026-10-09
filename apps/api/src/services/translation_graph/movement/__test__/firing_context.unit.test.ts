@@ -37,10 +37,11 @@ jest.mock('../../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { Context, currentContext, unsafeCurrentContext } from '../../../context';
 import { withFiringContext } from '../firing_context';
 import { userPrincipal } from '../../../principal';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 const TEAM = 'team-1' as TeamId;
 const firing = { teamId: TEAM, triggerId: 'trigger-1' };

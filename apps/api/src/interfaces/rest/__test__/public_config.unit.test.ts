@@ -7,9 +7,11 @@
 // answered here instead, from the SAME variables the API validates tokens
 // against — so a button can never offer a provider the API would refuse.
 
-import express from 'express';
-import type { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
+
+import express from 'express';
+
+import type { Server } from 'node:http';
 
 import { publicConfigFrom } from '../public_config';
 import { preAuthRouter } from '../capabilities';

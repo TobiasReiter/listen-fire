@@ -6,6 +6,7 @@
 import type { DiscriminableEvent } from '../../adapter';
 import type { PollSource } from '../../poll_source';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import {
   GranolaClient,
   GRANOLA_NOTE_EVENT_TAG,

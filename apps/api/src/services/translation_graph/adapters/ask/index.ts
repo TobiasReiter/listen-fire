@@ -45,8 +45,6 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink, unsupportedAssociation } from '../../adapter';
-import { UPDATE_NOT_FOUND } from '../not_found';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
@@ -54,14 +52,17 @@ import type {
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
-import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../types';
-import { BaseAdapter } from '../base';
-import { uniformWalk } from '../hop';
 import type {
   AwaitableCapability,
   AwaitPoint,
   AwaitResolution,
 } from '../../awaitable';
+
+import { singleParentLink, unsupportedAssociation } from '../../adapter';
+import { UPDATE_NOT_FOUND } from '../not_found';
+import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../types';
+import { BaseAdapter } from '../base';
+import { uniformWalk } from '../hop';
 import {
   ASK_FAMILIES,
   ASK_ANSWER_TYPES,

@@ -2,6 +2,7 @@ import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { FilterExpression, FilterCondition, FieldRef, Selection } from './schemas';
 import type { AdapterResult } from './adapters/types';
 import type { OutputExecutionContext } from './resolve';
+
 import { resolveFieldMapping } from './resolve';
 import { evaluateExpression } from './evaluate';
 

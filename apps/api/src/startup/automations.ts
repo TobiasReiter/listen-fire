@@ -8,6 +8,8 @@
 // one run at once: the unit takes no advisory lock, and any number of
 // instances may drain side by side, in either mode.
 
+import type { WorkerRegistry } from './registry';
+
 import { neverAsAny } from '../lib/utils/types';
 import { mounts } from '../products';
 import { claimLoopTick } from '../lib/worker';
@@ -28,7 +30,6 @@ import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
 import { ensureAutomationsPeriodicWork, registerCoreWork } from '../services/work/register';
-import type { WorkerRegistry } from './registry';
 
 type Env = Record<string, string | undefined>;
 

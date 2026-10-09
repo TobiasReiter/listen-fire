@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import PipelineOutputType from '../../../generated/kysely/public/PipelineOutputType';
 import { FieldDefinition, NodeTypeDefinition } from '../../pipeline/outbound/nodeTypes';
 import { SLACK_NODE_TYPES } from './types';

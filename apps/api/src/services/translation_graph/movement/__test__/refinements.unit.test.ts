@@ -5,8 +5,10 @@
 // (copy-on-write) keyed for the checker.
 
 import { parseTraversalPath, refinementKey, scanInstanceChains } from 'movement-lang';
+
 import type { InstanceSchema } from 'movement-lang';
 import type { SchemaTypeDescriptor } from '../../types';
+
 import { narrowForInspection, refineInstanceSchema } from '../refinements';
 
 const SPREADSHEET = 'Spreadsheet';

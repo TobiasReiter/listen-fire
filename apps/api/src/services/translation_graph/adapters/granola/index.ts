@@ -5,7 +5,6 @@
 // summary/transcript as TEXT `#resources`. Source-only: no writes.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   ActorCandidate,
   ActorIdentity,
@@ -18,15 +17,17 @@ import type {
   RelatedResult,
 } from '../../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
-import { uniformWalk } from '../hop';
 import type { Expression } from '#shared/expression/types';
+import type { TriggerEvent } from '../../triggers/types';
+
+import { uniformWalk } from '../hop';
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,
   makeUnstablePosition,
   positionData,
 } from '../../types';
-import type { TriggerEvent } from '../../triggers/types';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { BaseAdapter } from '../base';
 import {
   GRANOLA_ADAPTER_TYPE,

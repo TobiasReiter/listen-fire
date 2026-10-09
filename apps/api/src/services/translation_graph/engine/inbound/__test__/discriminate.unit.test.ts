@@ -1,6 +1,7 @@
+import type { EventType } from '../../../adapter';
+
 import { discriminateEvent } from '../discriminate';
 import { isStablePosition, positionData, positionRecordId } from '../../../types';
-import type { EventType } from '../../../adapter';
 
 const TYPES: EventType[] = [
   { tag: 'company.updated', positionType: 'attio:companies', match: { path: 'id.object_id', equals: 'obj-co' } },

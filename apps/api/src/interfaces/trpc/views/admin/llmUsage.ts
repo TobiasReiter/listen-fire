@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { sql } from 'kysely';
 
-import { trpc } from '../../trpc';
-import { getQb } from '../../../../lib/kysely';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { DealflowPipelineId } from '../../../../generated/kysely/public/DealflowPipeline';
 import type { AgentConversationId } from '../../../../generated/kysely/public/AgentConversation';
+
+import { getQb } from '../../../../lib/kysely';
+import { trpc } from '../../trpc';
 
 const llmUsageRouter = (procedure: typeof trpc.procedure) =>
   trpc.router({

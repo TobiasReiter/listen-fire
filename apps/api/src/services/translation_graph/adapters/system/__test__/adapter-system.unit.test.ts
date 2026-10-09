@@ -11,6 +11,8 @@ jest.mock('../../../../logger', () => ({
 jest.mock('../../../../../lib/kysely', () => ({ getAutomationsQb: jest.fn() }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { StoredSystemEvent, StoredSystemEventReader } from '../events';
+
 import { makeMetaPosition, makeUnstablePosition } from '../../../types';
 import { SYSTEM_ADAPTER_TYPE, SYSTEM_MANIFEST, SystemAdapter } from '../index';
 import {
@@ -19,7 +21,6 @@ import {
   type FailedRunReader,
   type SystemCheckpoint,
 } from '../poll';
-import type { StoredSystemEvent, StoredSystemEventReader } from '../events';
 import {
   RELEASE_APPLIED,
   RUN_FAILED,

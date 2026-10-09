@@ -15,8 +15,10 @@
 // produces a message that lands outside the thread it was meant for.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import { logger } from '../../../logger';
 import type { FileRef, ParentLink, WriteResult } from '../../adapter';
+import type { GmailApiClient } from './client';
+
+import { logger } from '../../../logger';
 import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import {
   GmailApiError,
@@ -30,7 +32,6 @@ import {
   type GmailOutboundAttachment,
 } from '../../../../adapters/gmail/compose';
 import { splitAddressHeader } from '../../../../adapters/gmail/mime';
-import type { GmailApiClient } from './client';
 import { GMAIL_ADAPTER_TYPE, GMAIL_MESSAGE_DISPLAY_NAME } from './types';
 
 /** The parent of a reply, as the write path reads it off the position that was

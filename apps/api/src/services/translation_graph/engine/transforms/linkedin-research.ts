@@ -23,6 +23,12 @@
 
 import { z } from 'zod';
 
+import type { ResolvedField } from './extracted_fields';
+import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
+import type { Anchors, SearchHit } from './search_hygiene';
+import type { ProfileIdentity } from './linkedin_identity';
+import type { TransformSignature } from '../../types';
+
 import { services } from '../../../../adapters/registry';
 import { MINUTE, SECOND } from '../../../../constants';
 import { anthropicChat, anthropicChatStructured } from '../../../../lib/anthropic';
@@ -50,11 +56,6 @@ import {
 } from './linkedin_identity';
 import { LINKEDIN_RESEARCH_HANDBOOK_SECTION } from './linkedin_research_handbook_section';
 import { importIdentifier } from '../../movement/schema_projection';
-import type { ResolvedField } from './extracted_fields';
-import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
-import type { Anchors, SearchHit } from './search_hygiene';
-import type { ProfileIdentity } from './linkedin_identity';
-import type { TransformSignature } from '../../types';
 
 // ── Signature ─────────────────────────────────────────────────────────────
 

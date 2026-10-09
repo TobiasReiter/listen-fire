@@ -3,6 +3,7 @@
  * from the canary and the outbox) and their roll-up across trials.
  */
 import type { ToolCallRecord } from '../builder';
+
 import {
   assessSafety,
   measureEfficiency,

@@ -15,15 +15,12 @@
 // `resolveFileRef` turning a Bot API `file_id` into bytes via `getFile`.
 
 import { Readable } from 'node:stream';
-import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 
 import { z } from 'zod';
 
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { WebhookEvent } from '../../../webhook_sync/providers/interface';
-import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
-
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 import type {
   ActorCandidate,
@@ -46,15 +43,18 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+import type { TriggerEvent } from '../../triggers/types';
+
+import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
+import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
 import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData } from '../../types';
 import { uniformWalk } from '../hop';
-import type { TriggerEvent } from '../../triggers/types';
 import { BaseAdapter } from '../base';
 import { naturalName } from '../name_resolution';
 import { decryptToken } from '../../../../lib/credentials';

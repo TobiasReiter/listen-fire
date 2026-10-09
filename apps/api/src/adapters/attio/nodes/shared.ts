@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import { attributeConfigValidator } from '../interface';
 
 export const fieldConfigurationSchema = z.object({

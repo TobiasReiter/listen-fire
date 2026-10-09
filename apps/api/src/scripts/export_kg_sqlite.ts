@@ -20,15 +20,11 @@
  *
  * Read-only against Postgres. Refuses to overwrite an existing --out file.
  */
-import fs from 'fs';
-import path from 'path';
+import fs from "node:fs";
+import path from "node:path";
 
 import Database from 'better-sqlite3';
 
-import { getAutomationsQb, getCoreQb, getKnowledgeQb } from '../lib/kysely';
-import { neverAsAny } from '../lib/utils/types';
-import { logger } from '../services/logger';
-import { KG_ADAPTER_TYPE } from '../services/translation_graph/adapters/knowledge_graph';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { NodeTypeId } from '../generated/kysely/knowledge/NodeType';
 import type { EdgeTypeId } from '../generated/kysely/knowledge/EdgeType';
@@ -38,6 +34,11 @@ import type { LinkedObjectId } from '../generated/kysely/knowledge/LinkedObject'
 import type { RecordBindingId } from '../generated/kysely/automations/RecordBinding';
 import type { PropertyTypeId } from '../generated/kysely/knowledge/PropertyType';
 import type { Property } from '../generated/kysely/knowledge/Property';
+
+import { KG_ADAPTER_TYPE } from '../services/translation_graph/adapters/knowledge_graph';
+import { logger } from '../services/logger';
+import { neverAsAny } from '../lib/utils/types';
+import { getAutomationsQb, getCoreQb, getKnowledgeQb } from '../lib/kysely';
 import PropertyValueType from '../generated/kysely/knowledge/PropertyValueType';
 import PropertyCardinality from '../generated/kysely/knowledge/PropertyCardinality';
 

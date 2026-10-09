@@ -18,8 +18,10 @@ jest.mock('../../../../lib/recording', () => ({
 }));
 
 import { Readable } from 'node:stream';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { FileRef } from '../../adapter';
+
 import { isStablePosition, makeMetaPosition } from '../../types';
 import * as grantedItems from '../../../credentials/granted_items';
 import { GoogleDriveAdapter } from '../google_drive';

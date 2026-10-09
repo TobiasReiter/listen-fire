@@ -2,6 +2,7 @@ import { randomBytes, createHash } from 'node:crypto';
 
 import { z } from 'zod';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
+
 import { logger } from '../../services/logger';
 import { encryptToken } from '../../lib/credentials';
 import { getAutomationsQb } from '../../lib/kysely';

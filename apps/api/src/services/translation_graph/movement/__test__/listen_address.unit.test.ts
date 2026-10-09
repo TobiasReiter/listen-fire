@@ -6,6 +6,8 @@
 // (a fixture matching one adapter's shape cannot tell derived from
 // hardcoded).
 
+import type { ListenConfigKey } from '../../adapter';
+
 import {
   addressHops,
   canonicalAddress,
@@ -13,7 +15,6 @@ import {
   resolveListenAddress,
   resolvedAddressOfJson,
 } from '../listen_address';
-import type { ListenConfigKey } from '../../adapter';
 
 const LISTEN_CONFIG: ListenConfigKey[] = [
   { key: 'shelf', required: true, narrows: { collection: 'Shelf', matchField: 'Id' } },

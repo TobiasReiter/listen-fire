@@ -20,8 +20,8 @@
 // the API's `files/move_v2` re-parent is a recorded capability gap).
 
 import { Readable } from 'node:stream';
+
 import type { DropboxClient } from '../../../../adapters/dropbox/apiClient';
-import { logger } from '../../../logger';
 import type {
   DeleteInput,
   DeleteResult,
@@ -33,10 +33,12 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink } from '../../adapter';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
+
+import { logger } from '../../../logger';
+import { singleParentLink } from '../../adapter';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import {
   DROPBOX_ADAPTER_TYPE,
   dropboxWebUrl,

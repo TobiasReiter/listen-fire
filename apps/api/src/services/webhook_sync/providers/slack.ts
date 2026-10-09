@@ -18,8 +18,10 @@
 // the adapter contract honest without forcing it to know about envelope
 // wrapping.
 
-import crypto from 'crypto';
+import crypto from "node:crypto";
+
 import { z } from 'zod';
+
 import type {
   WebhookProvider,
   WebhookEvent,

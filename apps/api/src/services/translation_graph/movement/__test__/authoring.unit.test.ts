@@ -28,9 +28,11 @@ jest.mock('../catalog', () => ({
 }));
 
 import { BridgeError } from 'movement-lang';
+
 import type { Catalog, InstanceSchema } from 'movement-lang';
-import { assessMovementValidity, diagnoseMovementSource, validateMovementForTeam } from '../authoring';
 import type { AuthoringDiagnostic } from '../authoring';
+
+import { assessMovementValidity, diagnoseMovementSource, validateMovementForTeam } from '../authoring';
 import { movementCatalogForTeam } from '../catalog';
 
 const emailSchema: InstanceSchema = {

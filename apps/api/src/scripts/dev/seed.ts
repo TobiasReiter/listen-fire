@@ -8,10 +8,11 @@
  * Idempotent. Pins the team id to TEST_HARNESS_TEAM_ID so that
  * fake-channels base-url injection (lib/recording.ts) kicks in.
  */
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { ensureDevLoopTeam, DEV_LOOP_TEAM_NAME } from './_lib';
 import { getQb, getKnowledgeQb, getAutomationsQb } from '../../lib/kysely';
 import { releaseLlmUsageRunReferences } from '../../lib/llm_usage';
-import type { TeamId } from '../../generated/kysely/core/Team';
 
 const flags = new Set(process.argv.slice(2));
 const PRETTY = flags.has('--pretty');

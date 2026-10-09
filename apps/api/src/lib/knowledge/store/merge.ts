@@ -11,15 +11,16 @@
 // transaction commits.
 
 import { randomUUID } from 'node:crypto';
+
 import { sql } from 'kysely';
 
-import EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
-import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
 import type { EdgeId } from '../../../generated/kysely/knowledge/Edge';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
 import type { PropertyId } from '../../../generated/kysely/knowledge/Property';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
+import type { MutationCollector } from './events';
+
 import { ChangeKind, propertyToChangeValue, recordChange, recordChanges, type RecordChangeParams } from '../changes';
 import { assertWritable, type PropertyTypeFacts } from './values';
 import {
@@ -28,7 +29,8 @@ import {
   type KnowledgeWriteDb,
   type WriteContext,
 } from './write';
-import type { MutationCollector } from './events';
+import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
+import EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
 
 export interface PropertyToReEvaluate {
   propertyId: PropertyId;

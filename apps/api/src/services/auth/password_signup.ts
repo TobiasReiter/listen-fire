@@ -12,6 +12,7 @@
 // on this branch, so a stranger's signup is refused before an email is sent.
 
 import { createHash, randomBytes } from 'node:crypto';
+
 import { sql } from 'kysely';
 
 import { getCoreQb } from '../../lib/kysely';

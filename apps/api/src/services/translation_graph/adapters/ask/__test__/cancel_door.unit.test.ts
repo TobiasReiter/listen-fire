@@ -29,10 +29,11 @@ jest.mock('../../../../logger', () => ({
   },
 }));
 
+import type { AskId } from '../../../../../generated/kysely/asks/Ask';
+
 import { cancelAskAndWake } from '../answer_door';
 import { resetAskSettledNotifierForTests } from '../notifier';
 import { notifyEngineOfSettledAsks } from '../../../../asks/in_process_notifier';
-import type { AskId } from '../../../../../generated/kysely/asks/Ask';
 
 const ASK_ID = '00000000-0000-4000-8000-000000000001' as AskId;
 const CANCELLED = { ok: true, ask: { id: ASK_ID, teamId: 'team-1', state: 'expired', callbackUrl: 'https://creator.test/hook' } };

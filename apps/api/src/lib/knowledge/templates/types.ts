@@ -1,7 +1,8 @@
+import type { Expression } from '#shared/expression/types';
+
 import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
 import EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
 import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
-import type { Expression } from '#shared/expression/types';
 
 type EdgeFilter = {
   side: 'source' | 'target';

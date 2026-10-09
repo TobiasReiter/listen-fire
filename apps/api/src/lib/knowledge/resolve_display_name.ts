@@ -1,4 +1,5 @@
 import type { Expression } from '#shared/expression/types';
+
 import { getKnowledgeQb } from '../kysely';
 import { NodeId } from '../../generated/kysely/knowledge/Node';
 import { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';

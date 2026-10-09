@@ -6,10 +6,11 @@
  */
 
 import type { MessageAttachment } from '@slack/web-api';
+import type { ExternalServiceCredentialsId } from '../generated/kysely/automations/ExternalServiceCredentials';
+
 import { getAutomationsQb } from '../lib/kysely';
 import { decryptToken } from '../lib/credentials';
 import { getSlackClient, slackCredsParser } from '../adapters/slack/webApi/apiClient';
-import type { ExternalServiceCredentialsId } from '../generated/kysely/automations/ExternalServiceCredentials';
 
 // ── Config ──────────────────────────────────────────────────────────────
 

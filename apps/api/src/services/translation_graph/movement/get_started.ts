@@ -5,8 +5,8 @@
 // a listConnections and a describeConnection per system.
 
 import type { TeamRef } from 'principal';
-
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { renderFrontPage } from '../../../lib/knowledge/movement_handbook/front_page';
 import { describeMovementInstance, movementCatalogSnapshotForTeam } from './catalog';
 import { renderConnectionsDigest, type SystemDigestInput } from './connection_digest';

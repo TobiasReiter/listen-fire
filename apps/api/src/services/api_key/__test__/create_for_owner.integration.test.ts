@@ -7,10 +7,12 @@
 // text[] scopes, the FKs) so a Kysely insert-shape mistake can't hide.
 
 import { randomUUID } from 'node:crypto';
-import { getCoreQb } from '../../../lib/kysely';
-import { cleanupTeam } from '../../../test/harness/cleanup';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { UserId } from '../../../generated/kysely/core/User';
+
+import { getCoreQb } from '../../../lib/kysely';
+import { cleanupTeam } from '../../../test/harness/cleanup';
 import { ApiKeyService, API_KEY_PREFIX } from '..';
 
 describe('ApiKeyService.createForOwner / revokeById (real DB)', () => {

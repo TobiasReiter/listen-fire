@@ -5,13 +5,16 @@
 // shape is defined by services/valuations_outbox/worker.ts:buildPayload —
 // `{event, timestamp, actor: {type, id}, data: {id, before, after}}`.
 
-import crypto from 'crypto';
+import crypto from "node:crypto";
+
 import { z } from 'zod';
+
 import type {
   WebhookEvent,
   WebhookProvider,
   WebhookRegistration,
 } from './interface';
+
 import {
   NATIVE_VALUATIONS_SUBSCRIBABLE_EVENTS,
   registerValuationsWebhook,

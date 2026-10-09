@@ -5,6 +5,9 @@
 import { randomUUID } from 'node:crypto';
 
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { UserId } from '../../../../generated/kysely/core/User';
+
 import { getCoreQb, getValuationsQb } from '../../../../lib/kysely';
 import { Context } from '../../../../services/context';
 import { getCompanyFunding, findCompanies } from '../reads';
@@ -14,8 +17,6 @@ import AssetType from '../../../../generated/kysely/valuations/AssetType';
 import PriceType from '../../../../generated/kysely/valuations/PriceType';
 import InvestmentType from '../../../../generated/kysely/valuations/InvestmentType';
 import LegalEntityType from '../../../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { UserId } from '../../../../generated/kysely/core/User';
 import { userPrincipal } from '../../../../services/principal';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

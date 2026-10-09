@@ -46,21 +46,27 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { getAutomationsQb, getKnowledgeQb } from '../../lib/kysely';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { findTriggersByKind } from '../../services/translation_graph/storage/tg_table';
 import { pollTriggerNow } from '../../services/poll_source/worker';
 import { EVERTRACE_API_VERSION } from '../../adapters/evertrace/apiClient';
 import { dispatchTriggerByIdEvent } from '../../services/translation_graph/triggers/router';
 import { dispatchMutationEvent } from '../../services/translation_graph/triggers/mutation_dispatch';
 import { userEditContext } from '../../services/translation_graph/mutation_context';
+
 import type { RecordMutationEvent } from '../../services/translation_graph/triggers/record_mutation_event';
 import type { TriggerEvent } from '../../services/translation_graph/triggers/types';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
+
 import { Context } from '../../services/context';
 import { prismaClient } from '../../prisma';
+
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
+
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { encryptToken } from '../../lib/credentials';
 import { ensureDevLoopTeam } from './_lib';

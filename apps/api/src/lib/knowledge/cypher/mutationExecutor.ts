@@ -1,21 +1,7 @@
 import { sql } from 'kysely';
+
 import type { Kysely } from 'kysely';
-
-import { getQb, getKnowledgeQb } from '../../kysely';
-import { unwrapAgentQueryRows } from '../query_agent_utils';
-import {
-  createEntity,
-  updateEntity,
-  updateRelationship,
-  deleteEntity,
-  createRelationship,
-  deleteRelationship,
-} from '../query_agent_crud';
-import { deleteEdge, type KnowledgeWriteDb } from '../store';
-import { ChangeSource } from '../changes';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
-
 import type {
   MutationCypherQuery,
   MutationClause,
@@ -33,8 +19,23 @@ import type {
   ReturnClause,
   ReturnItem,
 } from './types';
-import { transpile, loadOntology, type OntologyCache, type CypherParams } from './transpiler';
 import type { CypherResult } from './index';
+
+import { getQb, getKnowledgeQb } from '../../kysely';
+import { unwrapAgentQueryRows } from '../query_agent_utils';
+import {
+  createEntity,
+  updateEntity,
+  updateRelationship,
+  deleteEntity,
+  createRelationship,
+  deleteRelationship,
+} from '../query_agent_crud';
+import { deleteEdge, type KnowledgeWriteDb } from '../store';
+import { ChangeSource } from '../changes';
+import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
+import { transpile, loadOntology, type OntologyCache, type CypherParams } from './transpiler';
+
 
 // --- Types ---
 

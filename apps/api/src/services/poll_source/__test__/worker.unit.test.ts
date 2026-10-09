@@ -86,6 +86,7 @@ jest.mock('../../logger', () => ({
 }));
 
 import type { WorkRow } from '../../work/kinds';
+
 import { testWorkContext } from '../../../test/harness/work';
 import {
   pollReconcileHandler,

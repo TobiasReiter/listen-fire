@@ -24,14 +24,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import type { Kysely } from 'kysely';
-
-import { getAutomationsQb, getQb, globalQb } from '../../../../lib/kysely';
-import { encryptToken } from '../../../../lib/credentials';
 import type CoreSchema from '../../../../generated/kysely/core/CoreSchema';
 import type AutomationsSchema from '../../../../generated/kysely/automations/AutomationsSchema';
 import type { UserId } from '../../../../generated/kysely/core/User';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { encryptToken } from '../../../../lib/credentials';
+import { getAutomationsQb, getQb, globalQb } from '../../../../lib/kysely';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { logger } from '../../../logger';
 

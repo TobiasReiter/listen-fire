@@ -1,9 +1,10 @@
 // Image generation on Gemini: a `generateContent` call to an image model, asked
 // for an image back, whose reply carries the picture as an inline part.
 
+import type { GeneratedImage, ImageRequest } from './index';
+
 import { logger } from '../../../services/logger';
 import { geminiClient } from '../providers/gemini';
-import type { GeneratedImage, ImageRequest } from './index';
 
 /** What Gemini draws: the square, 1K picture image generation on Google has
  *  always asked for. */

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import PipelineOutputType from '../../../generated/kysely/public/PipelineOutputType';
 import { Granularity } from './configSchema';
 

@@ -7,9 +7,11 @@
 // interfaces/rest/__test__/connect_intrinsic.unit.test.ts (mount the router under
 // test on a real server, drive it with fetch — no supertest dependency in this repo).
 
+import { createServer, type Server } from 'node:http';
+
 import express from 'express';
 import { Router } from 'express';
-import { createServer, type Server } from 'node:http';
+
 import type { AddressInfo } from 'node:net';
 
 const applyMarkdown = jest.fn();

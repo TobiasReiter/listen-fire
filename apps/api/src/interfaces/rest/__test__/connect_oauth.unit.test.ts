@@ -7,8 +7,10 @@
 import express from 'express';
 import { Router } from 'express';
 
-import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import type { ConnectTokenLookup } from '../../../services/credentials/connect_link';
+import type { AddressInfo } from 'node:net';
+
+import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 
 const lookupConnectToken = jest.fn<Promise<ConnectTokenLookup>, [string]>();
 const consumeConnectToken = jest.fn<Promise<boolean>, [string]>();
@@ -27,7 +29,7 @@ jest.mock('../../../services/credentials/persist_credential', () => ({
 import { connectRouter } from '../connect';
 
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+
 
 let server: Server;
 let baseUrl: string;

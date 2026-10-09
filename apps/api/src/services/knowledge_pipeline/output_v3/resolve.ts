@@ -1,16 +1,10 @@
 import { z } from 'zod';
 
-import { getKnowledgeQb, getQb } from '../../../lib/kysely';
-import { HAIKU_MODEL } from '../../agent_running_state';
-import { anthropicChat, anthropicChatStructured } from '../../../lib/anthropic';
-import { logger } from '../../logger';
-import { signDocumentUrl } from '../../../lib/document_link';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { EdgeId } from '../../../generated/kysely/knowledge/Edge';
 import type { EdgeTypeId } from '../../../generated/kysely/knowledge/EdgeType';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
-import ResourceType from '../../../generated/kysely/knowledge/ResourceType';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
 import type { Changeset } from '../types';
 import type {
@@ -28,9 +22,16 @@ import type {
 } from './schemas';
 import type { FieldConstraints, ResourceContext, AdapterResult } from './adapters/types';
 import type { NodeData } from './filter';
+import type { SystemContext } from '../extract';
+
 import { resolveFieldRef, evaluateFilter } from './filter';
 import { loadLinkedObjects } from './linked_objects';
-import type { SystemContext } from '../extract';
+import ResourceType from '../../../generated/kysely/knowledge/ResourceType';
+import { signDocumentUrl } from '../../../lib/document_link';
+import { logger } from '../../logger';
+import { anthropicChat, anthropicChatStructured } from '../../../lib/anthropic';
+import { HAIKU_MODEL } from '../../agent_running_state';
+import { getKnowledgeQb, getQb } from '../../../lib/kysely';
 import { evaluateExpression } from './evaluate';
 import { fieldMappingToExpression } from './expression';
 
@@ -536,7 +537,7 @@ async function aggregate(
   }
 
   // Apply ordering if specified
-  let ordered = [...values];
+  const ordered = [...values];
   if (config.orderBy) {
     // For aggregation ordering, values are already primitive — just sort them
     const dir = config.orderDirection ?? 'asc';

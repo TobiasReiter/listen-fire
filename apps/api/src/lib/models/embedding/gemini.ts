@@ -1,11 +1,12 @@
 // Embeddings on Gemini, through `@google/genai`. For `gemini-embedding-001` on
 // Vertex the SDK speaks the model's `:predict` method, one text per instance.
 
+import type { Resolved } from '../map';
+import type { EmbeddingRequest, EmbeddingResult } from './index';
+
 import { countTokens } from '../../chunking';
 import { recordLlmUsage } from '../../llm_usage';
 import { geminiClient } from '../providers/gemini';
-import type { Resolved } from '../map';
-import type { EmbeddingRequest, EmbeddingResult } from './index';
 import { GEMINI_EMBEDDING_MODELS } from './range';
 
 /**

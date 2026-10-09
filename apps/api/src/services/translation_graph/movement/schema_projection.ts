@@ -21,6 +21,8 @@
 // adapter, the KG included; the engine/host carries no translation. The
 // projection here only produces the checker's `InstanceSchema`.
 
+import { unionDisplay, unionKey, unionVariants } from 'movement-lang';
+
 import type {
   CollectionSchema,
   DiscriminatedWriteShape,
@@ -31,18 +33,18 @@ import type {
   WritableRootSchema,
   WriteUnionShape,
 } from 'movement-lang';
-import { unionDisplay, unionKey, unionVariants } from 'movement-lang';
 import type { AdapterManifest } from '../adapter';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
 } from '../types';
-import { referenceTargetTypeIds } from '../types';
 import type { FieldCapability } from '#shared/expression/types';
 import type { UniquenessConstraints } from '../uniqueness';
+
+import { referenceTargetTypeIds } from '../types';
+import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
 
 /**
  * Project a descriptor's native uniqueness constraints (OR-of-AND of the

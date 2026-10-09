@@ -29,8 +29,8 @@
 // are the template), with `displayName === fieldId`.
 
 import http from 'node:http';
-
 import { randomUUID } from 'node:crypto';
+
 import { z } from 'zod';
 
 import type {
@@ -54,15 +54,17 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../services/translation_graph/adapter';
-import { BASE_RUNTIME_CAPABILITIES, containerAssociation } from '../../services/translation_graph/adapter';
 import type { AwaitPoint, AwaitResolution } from '../../services/translation_graph/awaitable';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
 } from '../../services/translation_graph/types';
+import type { RemoteAdapterManifestFile } from '../../services/translation_graph/adapters/remote/manifest';
+
+import { BASE_RUNTIME_CAPABILITIES, containerAssociation } from '../../services/translation_graph/adapter';
 import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../services/translation_graph/types';
 import { AdapterBadRequestError, createAdapterProtocolHandler } from '../../services/translation_graph/protocol/server';
-import type { RemoteAdapterManifestFile } from '../../services/translation_graph/adapters/remote/manifest';
+
 
 /** Slug the engine routes on — the `acme_crm` in `import { acme_crm } from adapters`. */
 export const FAKE_CRM_ADAPTER_TYPE = 'acme_crm';

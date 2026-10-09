@@ -1,4 +1,5 @@
 import { edgeIsReadable, edgeIsWritable } from 'movement-lang';
+
 import type { EdgeSchema, InstanceSchema, WritableRootSchema } from 'movement-lang';
 
 // An `EdgeSchema`'s two promises are stored sparsely, and they default OPPOSITE

@@ -52,7 +52,11 @@ jest.mock('mime', () => ({
   },
 }));
 
+import { parseProgram, checkProgram, mockCatalog, type Catalog } from 'movement-lang';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { SchemaTypeDescriptor, SourcePosition } from '../types';
+
 import {
   WhatsappAdapter,
   WHATSAPP_ADAPTER_TYPE,
@@ -69,9 +73,7 @@ import { normalizeWhatsappPhone } from '../adapters/acting_user/phone';
 import { discriminateEvent } from '../engine/inbound/discriminate';
 import { parseWhatsappEvents } from '../../webhook_sync/providers/whatsapp';
 import { webhookEventToDiscriminable } from '../../webhook_sync/event_conversion';
-import type { SchemaTypeDescriptor, SourcePosition } from '../types';
 import { makeStablePosition, makeUnstablePosition } from '../types';
-import { parseProgram, checkProgram, mockCatalog, type Catalog } from 'movement-lang';
 import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
 
 const TEAM_ID = 'team-1' as TeamId;

@@ -39,6 +39,8 @@
 // derived from `BaseAdapter` is, by convention, an external-system
 // adapter.
 
+import { eventAddressEventName } from 'movement-lang';
+
 import type {
   Adapter,
   RuntimeCapabilities,
@@ -54,11 +56,11 @@ import type {
   WriteInput,
   WriteResult,
 } from '../adapter';
-import { eventAddressEventName } from 'movement-lang';
-import { BASE_RUNTIME_CAPABILITIES } from '../adapter';
 import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../types';
-import { positionData } from '../types';
 import type { TriggerType } from '../triggers/types';
+
+import { BASE_RUNTIME_CAPABILITIES } from '../adapter';
+import { positionData } from '../types';
 import {
   AdapterNameDriftError,
   memoizedResolver,

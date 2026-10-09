@@ -1,10 +1,12 @@
-import type { AttioOperations } from '../../../../adapters/attio/operations';
-import { services } from '../../../../adapters/registry';
 import { LRUCache } from 'lru-cache';
+
+import type { AttioOperations } from '../../../../adapters/attio/operations';
+import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, FieldConstraints } from './types';
+
+import { services } from '../../../../adapters/registry';
 import { logger } from '../../../logger';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { HAIKU_MODEL } from '../../../agent_running_state';
-import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, FieldConstraints } from './types';
 import { resolveConfigField, StaleLinkedObjectError } from './types';
 import { classifyFieldValues, getUniqueFields, getFuzzyFields } from './search';
 import { buildLLMContext, resolvePreserveTags } from '../resolve';

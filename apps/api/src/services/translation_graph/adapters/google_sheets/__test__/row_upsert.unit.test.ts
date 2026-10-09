@@ -5,6 +5,8 @@
 // columns. Authors opt in via `unique by (`Column`)` — raw row numbers are
 // never the authoring surface.
 
+import type { GoogleSheetsApiClient } from '../../../../../adapters/googleSheets/apiClient';
+
 import {
   resolveEntity,
   updateRecord,
@@ -14,7 +16,6 @@ import {
 } from '../row';
 import { loadTableCatalog, tableTypeNamesOf, resolveTable } from '../schema_catalog';
 import { parseA1Cell } from '../../../../../adapters/googleSheets/cells';
-import type { GoogleSheetsApiClient } from '../../../../../adapters/googleSheets/apiClient';
 
 const COLUMNS = [
   { columnIndex: 0, columnName: 'Name', columnType: 'TEXT' },

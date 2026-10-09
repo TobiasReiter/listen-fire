@@ -31,7 +31,6 @@
 // manual subsumes web
 // owner-resolvable FileRef handles
 
-import { services } from '../../../../adapters/registry';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type {
   ActorCandidate,
@@ -44,20 +43,22 @@ import type {
   ResolveFileRefResult,
   EdgesFromResult,
 } from '../../adapter';
-import { fileHandle, ownedFileSource } from '../../adapter';
-import { uniformWalk } from '../hop';
-import { MANUAL_HANDBOOK_SECTION } from './handbook_section';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+import type { TriggerEvent } from '../../triggers/types';
+
+import { services } from '../../../../adapters/registry';
+import { fileHandle, ownedFileSource } from '../../adapter';
+import { uniformWalk } from '../hop';
+import { MANUAL_HANDBOOK_SECTION } from './handbook_section';
 import {
   META_RECORD_TYPE,
   makeUnstablePosition,
   positionData,
 } from '../../types';
-import type { TriggerEvent } from '../../triggers/types';
 import { BaseAdapter } from '../base';
 
 /** Stable adapter identifier — the trigger `kind` of manual-derived rows. */

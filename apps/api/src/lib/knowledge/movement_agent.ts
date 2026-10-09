@@ -16,13 +16,15 @@
 // updates, registered under the 'movement' domain.
 
 import { z } from 'zod';
+import { getMovementCompletions } from 'movement-lang';
+
+import type { AgentUpdate } from '../openai/types';
+import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { anthropicToolLoop, type TurnEvent } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
 import { currentContext } from '../../services/context';
 import { mq } from '../message_queue';
-import type { AgentUpdate } from '../openai/types';
-import type { TeamId } from '../../generated/kysely/core/Team';
 import { splitChapterRoute } from '../handbook_section';
 import {
   buildMovementFrontMatter,
@@ -43,7 +45,6 @@ import {
   listMovements,
   saveMovement,
 } from '../../services/translation_graph/movement/provision';
-import { getMovementCompletions } from 'movement-lang';
 import { beatForToolCall } from './build_beats';
 
 const SYSTEM_PROMPT = `You are the movement author for Listen-Fire — a well-trained consultant who turns a user's plain-language brief into a working movement program.

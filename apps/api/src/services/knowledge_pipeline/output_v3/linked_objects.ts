@@ -1,8 +1,10 @@
 import { sql } from 'kysely';
-import { getKnowledgeQb } from '../../../lib/kysely';
+
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type LinkedObjectSource from '../../../generated/kysely/knowledge/LinkedObjectSource';
+
+import { getKnowledgeQb } from '../../../lib/kysely';
 
 // unified linked object model
 

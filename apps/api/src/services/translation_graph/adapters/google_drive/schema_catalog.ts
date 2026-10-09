@@ -32,6 +32,7 @@ import type {
   SchemaFieldDescriptor,
   SchemaTypeDescriptor,
 } from '../../types';
+
 import { META_RECORD_TYPE } from '../../types';
 import { DISPLAY_NAME_BY_KIND, structuredIdFor } from './types';
 

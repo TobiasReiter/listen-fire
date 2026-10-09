@@ -12,8 +12,10 @@
 // not the interpreter) and the credential lifecycle hook install fires.
 
 import { randomUUID } from 'node:crypto';
-import express from 'express';
 import { createServer, type Server } from 'node:http';
+
+import express from 'express';
+
 import type { AddressInfo } from 'node:net';
 
 jest.mock('../../../services/credentials/credential_lifecycle', () => ({
@@ -25,14 +27,16 @@ jest.mock('../../../services/translation_graph/movement/execute', () => {
 });
 
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
-import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
-import { cleanupTeam } from '../../../test/harness/cleanup';
+
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { MovementVersionId } from '../../../generated/kysely/automations/MovementVersion';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
+
+import { cleanupTeam } from '../../../test/harness/cleanup';
+import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
 import {
   FAKE_CRM_ADAPTER_TYPE,
   FAKE_CRM_COMPANY_CREATED,

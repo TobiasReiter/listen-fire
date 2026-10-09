@@ -4,13 +4,15 @@
 // `resolveFileRef` answers (a URL, or not at all).
 
 import { Readable } from 'node:stream';
-import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import { PROTOCOL_VERSION } from 'engine-contracts';
+
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Adapter, GetRelatedInput, RelatedPage, RelatedResult } from '../../adapter';
+
 import { BASE_RUNTIME_CAPABILITIES } from '../../adapter';
 import { makeMetaPosition, makeStablePosition } from '../../types';
 import { AdapterBadRequestError, createAdapterProtocolHandler, DRAINED_PAGE_LIMIT } from '../server';
-import { PROTOCOL_VERSION } from 'engine-contracts';
 
 function baseAdapter(overrides: Partial<Adapter> = {}): Adapter {
   return {

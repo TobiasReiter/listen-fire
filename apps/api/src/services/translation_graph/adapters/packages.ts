@@ -7,13 +7,15 @@
 // load, so a package module mid-load in an import cycle is never captured
 // half-built.
 
-import { AIRTABLE_WORK_KINDS } from '../../airtable_webhook_refresh/worker';
 import type { WorkKindRegistration } from '../../work/drain';
 import type { LandingSynthesizer } from '../movement/generic_landings';
+import type { AwaitKeeper } from './await_correlation';
+
+import { AIRTABLE_WORK_KINDS } from '../../airtable_webhook_refresh/worker';
 import { ASK_ADAPTER_TYPE, askResponseDescriptorFor } from './ask';
 import { askAwaitKeeper } from './ask/await_keeper';
 import { ASK_WORK_KINDS } from './ask/closed_sweep';
-import type { AwaitKeeper } from './await_correlation';
+
 
 /** Every package's own work kinds, for the process that drains. */
 export function adapterWorkKinds(): WorkKindRegistration[] {

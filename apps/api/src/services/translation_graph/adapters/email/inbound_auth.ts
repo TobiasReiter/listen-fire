@@ -10,11 +10,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import type { Request, Response } from 'express';
+import type { InboundDoor } from '../../../../lib/middleware/authentication/doors';
+import type { ResolvedIdentity } from '../../../principal/core_provider';
 
 import { handleError } from '../../../../lib/errors';
-import type { InboundDoor } from '../../../../lib/middleware/authentication/doors';
 import { getEnvVar } from '../../../../lib/utils/environment';
-import type { ResolvedIdentity } from '../../../principal/core_provider';
 import { verifyInboundEmailRequest } from './inbound_door';
 import { verifyResendInboundRequest } from './resend_inbound';
 

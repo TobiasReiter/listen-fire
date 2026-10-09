@@ -3,8 +3,9 @@
 // one spans memberships, and multi-team ambiguity is refused with the list
 // attached rather than silently resolved to the home team.
 
-import type { Principal } from 'principal';
 import { TeamScopeError } from 'principal';
+
+import type { Principal } from 'principal';
 
 interface Row {
   [column: string]: unknown;

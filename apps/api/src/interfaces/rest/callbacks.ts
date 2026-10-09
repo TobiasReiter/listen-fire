@@ -11,8 +11,9 @@
 
 import { Router, type Request, type Response } from 'express';
 
-import { getCallback, type CallbackRecord } from '../../services/movement_engine/callback_store';
 import type { CallbackParamSpec } from 'engine-contracts';
+
+import { getCallback, type CallbackRecord } from '../../services/movement_engine/callback_store';
 import { fireCallback, type CallbackFireOutcome } from '../../services/movement_engine/callback_fire';
 import { logger } from '../../services/logger';
 

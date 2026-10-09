@@ -13,12 +13,13 @@
 // drain is `delivery.ts` beside this file, and the nudge is a poll — so the
 // unit carries no message-queue dependency out of the carve.
 
+import type NativeDatabaseOperation from '../../generated/kysely/valuations/NativeDatabaseOperation';
+import type { ValuationsChangeOutboxId } from '../../generated/kysely/valuations/ValuationsChangeOutbox';
+
 import { SECOND } from '../../constants';
 import { handleError } from '../../lib/errors';
 import { getValuationsQb } from '../../lib/kysely';
 import { worker } from '../../lib/worker';
-import type NativeDatabaseOperation from '../../generated/kysely/valuations/NativeDatabaseOperation';
-import type { ValuationsChangeOutboxId } from '../../generated/kysely/valuations/ValuationsChangeOutbox';
 
 const BATCH_SIZE = 100;
 

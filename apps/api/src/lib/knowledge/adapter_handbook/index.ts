@@ -10,6 +10,7 @@
 // doc. (Future: generate public docs pages from the handbooks.)
 
 import type { Handbook, ChapterId, Chapter, IntentEntry } from './types';
+
 import { overview } from './chapters/overview';
 import { protocol } from './chapters/protocol';
 import { schema } from './chapters/schema';

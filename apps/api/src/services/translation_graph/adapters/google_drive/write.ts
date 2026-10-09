@@ -21,8 +21,8 @@
 // the API's `files.update`/`files.delete` are a recorded capability gap).
 
 import { Readable } from 'node:stream';
+
 import type { GoogleDriveClient } from '../../../../adapters/google/driveClient';
-import { logger } from '../../../logger';
 import type {
   DeleteInput,
   DeleteResult,
@@ -34,10 +34,12 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink } from '../../adapter';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
+
+import { logger } from '../../../logger';
+import { singleParentLink } from '../../adapter';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import {
   GOOGLE_DRIVE_ADAPTER_TYPE,
   driveUrl,

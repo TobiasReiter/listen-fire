@@ -10,8 +10,9 @@
 // (see ensureBridge / insertLinkedObjectBridge). The TG runs query
 // joins back to that data here rather than per-adapter wiring.
 
-import { getKnowledgeQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import { getKnowledgeQb } from '../../../lib/kysely';
 import { normalizeAdapterType } from '../../knowledge_pipeline/output_v3/linked_objects';
 
 export interface AppliedActionPlanWire {

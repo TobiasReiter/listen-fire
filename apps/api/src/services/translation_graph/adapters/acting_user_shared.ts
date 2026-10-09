@@ -10,6 +10,7 @@
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { UserId } from '../../../generated/kysely/core/User';
 import type { ActingUser } from '../adapter';
+
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { normalizeWhatsappPhone } from './acting_user/phone';
 

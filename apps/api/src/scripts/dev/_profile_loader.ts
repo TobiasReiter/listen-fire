@@ -25,6 +25,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+
 import dotenv from 'dotenv';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');

@@ -7,9 +7,10 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { decryptToken } from '../../../lib/credentials';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 
 jest.mock('../credential_lifecycle', () => ({

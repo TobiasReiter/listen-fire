@@ -18,6 +18,7 @@ import { getCoreQb, getValuationsQb } from '../../lib/kysely';
 import { generateJWT } from '../../lib/middleware/authentication/token';
 import { runInContext } from '../../services/context/utils';
 import LegalEntityType from '../../generated/kysely/valuations/LegalEntityType';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
 

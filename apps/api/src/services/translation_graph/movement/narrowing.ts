@@ -18,6 +18,8 @@
 //     That is what lets an EVENT's edge narrow to a table: the event never
 //     enumerates the tables, the meta walk does.
 
+import type { Expression } from '#shared/expression/types';
+
 import {
   evaluatePredicate,
   flattenAndConjuncts,
@@ -25,7 +27,6 @@ import {
   leafReadKey,
   pureLeafReads,
 } from '#shared/expression/filter';
-import type { Expression } from '#shared/expression/types';
 
 /** A candidate the predicate runs against: the labelled facts the adapter
  *  minted onto the member's position (Airtable's `{ Name }`, Sheets'

@@ -16,10 +16,11 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { getAutomationsQb } from '../../../lib/kysely';
-import { getEnvVar } from '../../../lib/utils/environment';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import { getAutomationsQb } from '../../../lib/kysely';
+import { getEnvVar } from '../../../lib/utils/environment';
 
 /** Prefixed like the ask token, and for the same reason: a route can tell what
  *  kind of capability it was handed before it queries anything. */

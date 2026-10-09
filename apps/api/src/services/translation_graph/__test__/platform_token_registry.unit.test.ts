@@ -1,9 +1,10 @@
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { Actor } from '../mutation_context';
+
 import {
   InMemoryPlatformTokenRegistry,
   shouldDropAsNativeEcho,
 } from '../engine/platform_token_registry';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { Actor } from '../mutation_context';
 
 const team1 = 'team-1' as TeamId;
 const team2 = 'team-2' as TeamId;

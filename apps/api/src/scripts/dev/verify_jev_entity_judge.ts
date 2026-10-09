@@ -8,8 +8,9 @@
  *
  * Usage: JEV_KEY=... npx tsx apps/api/src/scripts/dev/verify_jev_entity_judge.ts
  */
-import { judgeEntityMatchViaJev } from '../../services/translation_graph/engine/entity_match';
 import type { ExternalRecordRef } from '../../services/translation_graph/adapter';
+
+import { judgeEntityMatchViaJev } from '../../services/translation_graph/engine/entity_match';
 
 function candidate(data: Record<string, unknown>, externalId: string): ExternalRecordRef {
   return { adapterType: 'attio', externalId, recordType: 'attio:companies', data };

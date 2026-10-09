@@ -27,6 +27,7 @@ import './_profile_loader';
 import '../../services';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { ensureDevLoopRemoteAdapter, ensureDevLoopTeam } from './_lib';
 import { saveMovement } from '../../services/translation_graph/movement/provision';
 import { runMovementNow } from '../../services/translation_graph/movement/run_now';

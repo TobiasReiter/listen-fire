@@ -27,11 +27,14 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { STORY_APP_RESOURCE_URI, STORY_RESULT_META_KEY } from '#shared/constants/story_app';
+import type { McpToolResult, ToolApp } from './server';
 
 import { lookupStoryToken } from '../../services/translation_graph/movement/story_token';
 import { servedStoryView } from '../../services/translation_graph/movement/story_view';
-import type { McpToolResult, ToolApp } from './server';
+
+import { STORY_APP_RESOURCE_URI, STORY_RESULT_META_KEY } from '#shared/constants/story_app';
+
+
 
 /** Where the bundler leaves the single-file view — beside the link page's
  *  bundle, and deployed with it, so the two can never be different releases. */

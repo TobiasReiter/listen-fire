@@ -13,10 +13,11 @@
 // way (verified against the Slack API docs, design resolution 6).
 
 import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient';
-import { logger } from '../../../logger';
 import type { FileRef, WriteResult } from '../../adapter';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
+
+import { logger } from '../../../logger';
+import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import { SLACK_ADAPTER_TYPE } from './types';
 import { finalizeMessageText } from './mentions';
 

@@ -30,20 +30,24 @@
 // config because that config's testMatch owns `*.integration.test.ts`.
 
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 
+import type { AddressInfo } from 'node:net';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { EmailAdapter, EmailPayload } from '../../email';
+import type { Adapter } from '../../../adapter';
+import type { SourcePosition } from '../../../types';
+import type { TriggerEvent } from '../../../triggers/types';
+import type { RemoteAdapterConfig } from '../index';
+
 import {
   createEmailAdapter,
   EMAIL_ADAPTER_TYPE,
   EMAIL_RECORD_TYPE_ID,
 } from '../../email';
-import type { EmailAdapter, EmailPayload } from '../../email';
-import type { Adapter } from '../../../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../../../adapter';
 import { containerAssociation } from '../../../adapter';
 import { makeUnstablePosition, positionData } from '../../../types';
-import type { SourcePosition } from '../../../types';
+
 
 /** Walk the explicit `attachments` edge and read each attachment's payload. */
 async function attachmentsVia(adapter: Adapter, position: SourcePosition): Promise<Record<string, unknown>[]> {
@@ -54,14 +58,14 @@ async function attachmentsVia(adapter: Adapter, position: SourcePosition): Promi
   });
   return related.map((r) => (positionData(r.position) ?? {}) as Record<string, unknown>);
 }
-import type { TriggerEvent } from '../../../triggers/types';
+
 import { createAdapterProtocolHandler } from '../../../protocol/server';
 import {
   createRemoteAdapter,
   fetchRemoteManifest,
   RemoteAdapter,
 } from '../index';
-import type { RemoteAdapterConfig } from '../index';
+
 
 const TEST_TEAM_ID = '00000000-0000-0000-0000-000000000001' as TeamId;
 const TEST_SECRET = 'test-secret';

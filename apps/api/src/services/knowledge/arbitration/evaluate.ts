@@ -16,20 +16,21 @@
 
 import { z } from 'zod';
 
-import { ChangeSource } from '../../../lib/knowledge/changes';
-import { knowledgeLlmStructured } from '../../../lib/knowledge/llm';
+import type { NodeId } from '../../../generated/kysely/knowledge/Node';
+import type { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
+import type { EdgeId } from '../../../generated/kysely/knowledge/Edge';
+import type { PropertyId } from '../../../generated/kysely/knowledge/Property';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
+import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
 import {
   loadPropertyTypes,
   openKnowledgeStore,
   setProperties,
   type KnowledgeWriteDb,
 } from '../../../lib/knowledge/store';
-import EvidenceType from '../../../generated/kysely/knowledge/EvidenceType';
-import type { NodeId } from '../../../generated/kysely/knowledge/Node';
-import type { NodeTypeId } from '../../../generated/kysely/knowledge/NodeType';
-import type { EdgeId } from '../../../generated/kysely/knowledge/Edge';
-import type { PropertyId } from '../../../generated/kysely/knowledge/Property';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { knowledgeLlmStructured } from '../../../lib/knowledge/llm';
+import { ChangeSource } from '../../../lib/knowledge/changes';
 
 /**
  * Why an arbitration finished. Every one of these is a RESOLVED question — the

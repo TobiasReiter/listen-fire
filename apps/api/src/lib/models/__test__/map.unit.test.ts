@@ -1,3 +1,5 @@
+import type { DefaultModelUse } from '../map';
+
 import {
   assertCallable,
   assertModelMapConfigured,
@@ -9,7 +11,6 @@ import {
   providerServes,
   resolveModel,
 } from '../map';
-import type { DefaultModelUse } from '../map';
 
 const GOOGLE = {
   GOOGLE_PRIVATE_KEY: 'pk',

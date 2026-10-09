@@ -10,22 +10,8 @@
 // Affinity API client + operations wrapper on first use, and redirects to
 // fake-channels for the dev-loop test-harness team (mirrors Attio / Airtable).
 
-import { decryptToken } from '../../../../lib/credentials';
-import { getAutomationsQb } from '../../../../lib/kysely';
-import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
-import { isAdapterCallCeilingExceeded } from '../../segment_scope';
-import {
-  AffinityAPIClient,
-  getAffinityClient,
-  INTERACTION_TYPE,
-} from '../../../../adapters/affinity/apiClient';
-import { AffinityOperations } from '../../../../adapters/affinity/operations';
-import { AFFINITY_HANDBOOK_SECTION } from './handbook_section';
-import { AFFINITY_SUBSCRIBABLE_EVENTS, parseAffinityEvents } from './inbound';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   Adapter,
   AdapterManifest,
@@ -48,13 +34,29 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { singleParentLink } from '../../adapter';
 import type { TriggerType } from '../../triggers/types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
+import type { Expression } from '#shared/expression/types';
+
+import { decryptToken } from '../../../../lib/credentials';
+import { getAutomationsQb } from '../../../../lib/kysely';
+import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
+import { logger } from '../../../logger';
+import { isAdapterCallCeilingExceeded } from '../../segment_scope';
+import {
+  AffinityAPIClient,
+  getAffinityClient,
+  INTERACTION_TYPE,
+} from '../../../../adapters/affinity/apiClient';
+import { AffinityOperations } from '../../../../adapters/affinity/operations';
+import { AFFINITY_HANDBOOK_SECTION } from './handbook_section';
+import { AFFINITY_SUBSCRIBABLE_EVENTS, parseAffinityEvents } from './inbound';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
+import { singleParentLink } from '../../adapter';
 import {
   META_RECORD_TYPE,
   isStablePosition,
@@ -65,8 +67,6 @@ import {
 import { BaseAdapter } from '../base';
 import { targetStubs, typeAddressedPositions } from '../hop';
 import { naturalName } from '../name_resolution';
-import { flattenAndConjuncts } from '#shared/expression/filter';
-import type { Expression } from '#shared/expression/types';
 import {
   AFFINITY_ADAPTER_TYPE,
   AFFINITY_ENTITY_TYPE,
@@ -98,6 +98,9 @@ import {
   AFFINITY_PEOPLE_EDGE,
   AFFINITY_EMPLOYER_EDGE_IDS,
 } from './schema_catalog';
+
+import { flattenAndConjuncts } from '#shared/expression/filter';
+
 
 /** Whether an edge name is one of the two the built-in person↔organization
  *  association is published under — the display name from either side, or the

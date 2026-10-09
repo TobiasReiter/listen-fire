@@ -10,9 +10,10 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
 import { getCoreQb } from '../../../../../lib/kysely';
 import { cleanupTeam } from '../../../../../test/harness/cleanup';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import {
   ASK_TOKEN_PREFIX,
   answerAsk,

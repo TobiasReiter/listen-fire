@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { UserEmailId } from '../../../generated/kysely/core/UserEmail';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { checkUsage, getBillingContacts, type UsageStatus } from '../../../services/usage';
 import { getCoreQb, getQb } from '../../../lib/kysely';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { UserEmailId } from '../../../generated/kysely/core/UserEmail';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
 const usageRouter = (procedure: typeof trpc.procedure) => {

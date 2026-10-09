@@ -9,6 +9,12 @@ import { canonicalJson } from 'engine-contracts/conformance';
 
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { MutationContext } from '../services/translation_graph/mutation_context';
+import type { RelatedResult } from '../services/translation_graph/adapter';
+import type {
+  SchemaEntryPoint,
+  SchemaTypeDescriptor,
+} from '../services/translation_graph/types';
+
 import {
   ADAPTER_TEAM_HEADER,
   RemoteProtocolError,
@@ -25,11 +31,6 @@ import {
   type RemoteManifest,
 } from '../services/translation_graph/adapters/remote';
 import { makeMetaPosition } from '../services/translation_graph/types';
-import type { RelatedResult } from '../services/translation_graph/adapter';
-import type {
-  SchemaEntryPoint,
-  SchemaTypeDescriptor,
-} from '../services/translation_graph/types';
 import { isUuid, startHostDouble, type HostDouble } from './adapter_conformance_host';
 
 export type CheckStatus = 'PASS' | 'FAIL' | 'SKIP';

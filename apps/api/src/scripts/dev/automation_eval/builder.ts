@@ -17,8 +17,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
 
-import { AUTOMATION_MCP_PATH } from '../../../interfaces/mcp/paths';
 import type { Task } from './task';
+
+import { AUTOMATION_MCP_PATH } from '../../../interfaces/mcp/paths';
 import { addMessageUsage, costUsd, emptyUsage, type TokenUsage } from './usage';
 
 type Variant = 'noskill' | 'skill';

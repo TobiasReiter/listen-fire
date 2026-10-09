@@ -6,15 +6,19 @@
 // trigger_run migration rests on, so it's verified through the real path.
 
 import { randomUUID } from 'node:crypto';
+
 import { sql } from 'kysely';
-import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
-import { cleanupTeam } from '../../../../test/harness/cleanup';
+
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { EvaluationResult } from '../../engine/types';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
+import type { TriggerEvent } from '../../triggers/types';
+
+import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
+import { cleanupTeam } from '../../../../test/harness/cleanup';
 import { TriggerRunRecorder } from '../trigger_run';
 import { flattenTriggerRunPlans, parseTriggerRunSteps } from '../trigger_run_read';
-import type { TriggerEvent } from '../../triggers/types';
+
 
 function evalResult(opts: {
   writes: number;

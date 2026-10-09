@@ -20,10 +20,11 @@ import { sql } from 'kysely';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
+import type { TriggerEvent } from './types';
+
 import { getAutomationsQb } from '../../../lib/kysely';
 import { logger } from '../../logger';
 import { dispatchTriggerByIdEvent } from './router';
-import type { TriggerEvent } from './types';
 
 function jsonb(value: unknown): unknown {
   return sql`${JSON.stringify(value)}::jsonb` as unknown;

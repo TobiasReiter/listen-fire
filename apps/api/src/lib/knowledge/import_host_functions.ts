@@ -7,6 +7,8 @@
 //
 // import application using pipeline patterns
 
+import type { CollectedNode, CollectedEdge } from './import_sandbox';
+
 import { getKnowledgeQb } from '../kysely';
 import { TeamId } from '../../generated/kysely/core/Team';
 import { NodeId } from '../../generated/kysely/knowledge/Node';
@@ -14,7 +16,6 @@ import { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity';
-import type { CollectedNode, CollectedEdge } from './import_sandbox';
 import {
   createNode,
   link,

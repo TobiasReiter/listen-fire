@@ -1,9 +1,10 @@
 // Embeddings on OpenAI.
 
-import { recordLlmUsage } from '../../llm_usage';
-import { openAiClient } from '../providers/openai';
 import type { Resolved } from '../map';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
+
+import { recordLlmUsage } from '../../llm_usage';
+import { openAiClient } from '../providers/openai';
 import { OPENAI_EMBEDDING_DIMENSIONS } from './range';
 
 export async function openAiEmbed(

@@ -3,11 +3,12 @@ import { Readable } from 'node:stream';
 import { Browser, Page, Locator } from 'playwright';
 import jsPDF from 'jspdf';
 
+import type { AICrawlResult } from '../lib/document_sources/ai_crawler';
+
 import { ImageService } from './images';
 import { sendSlackNotification } from '../lib/slack';
 import { handleError } from '../lib/errors';
 import { aiCaptureContent, reportAIResult, getScrollTiles } from '../lib/document_sources/ai_crawler';
-import type { AICrawlResult } from '../lib/document_sources/ai_crawler';
 import { logger } from './logger';
 
 type Screenshot = { width: number; height: number; data: Buffer };

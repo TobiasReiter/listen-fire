@@ -4,6 +4,7 @@
 // base/table catalog cache (LRU + TTL, keyed by base — mirrors Attio).
 
 import { LRUCache } from 'lru-cache';
+
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
@@ -12,6 +13,7 @@ import type {
   SchemaTypeDescriptor,
 } from '../../types';
 import type { AirtableAPIClient } from '../../../../adapters/airtable/apiClient';
+
 import {
   LINK_FIELD_TYPE,
   READ_ONLY_FIELD_TYPES,

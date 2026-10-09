@@ -30,13 +30,14 @@ jest.mock('../../../movement_engine/await_wake', () => ({
 }));
 jest.mock('../../../work/drain', () => ({ notifyWork: jest.fn() }));
 
+import type { WriteInput, UpdateInput } from '../../adapter';
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+
 import { AskAdapter } from '../ask';
 import { notifyEngineOfSettledAsks } from '../../../asks/in_process_notifier';
 import { AskResponseRefused } from '../ask/answer_door';
 import { UPDATE_NOT_FOUND } from '../not_found';
 import { makeStablePosition, makeUnstablePosition } from '../../types';
-import type { WriteInput, UpdateInput } from '../../adapter';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 const TEAM = 'team-1' as TeamId;
 

@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import PipelineOutputType from '../../../generated/kysely/public/PipelineOutputType';
+
 import type { FieldDefinition, NodeTypeDefinition } from '../../pipeline/outbound/nodeTypes';
+
+import PipelineOutputType from '../../../generated/kysely/public/PipelineOutputType';
 import { SLACK_NODE_TYPES } from './types';
 
 const slackPreviewConfigSchema = z.object({

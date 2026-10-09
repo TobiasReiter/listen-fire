@@ -43,8 +43,10 @@ import { randomUUID } from 'node:crypto';
 import { getAutomationsQb } from '../../lib/kysely';
 import { encryptToken } from '../../lib/credentials';
 import { defaultAppIdForType } from '../../services/credentials/app_id';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { ensureDevLoopTeam } from './_lib';
 import { saveMovement } from '../../services/translation_graph/movement/provision';

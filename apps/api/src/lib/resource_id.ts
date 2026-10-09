@@ -3,6 +3,7 @@
 // GUID-shaped id: Postgres' `uuid` takes one whatever its version bits.
 
 import { z } from 'zod';
+
 import type { ResourceId } from '../generated/kysely/knowledge/Resource';
 
 export const resourceIdSchema = z.custom<ResourceId>((value) => z.guid().safeParse(value).success);

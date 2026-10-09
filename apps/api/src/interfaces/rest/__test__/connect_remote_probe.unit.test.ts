@@ -4,12 +4,14 @@
 // spent or a credential minted. The probe and the server are real; only the
 // token store, the install row and the credential mint are doubles.
 
-import express, { Router } from 'express';
 import http, { createServer, type Server } from 'node:http';
+
+import express, { Router } from 'express';
+
 import type { AddressInfo } from 'node:net';
+import type { ConnectTokenLookup } from '../../../services/credentials/connect_link';
 
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import type { ConnectTokenLookup } from '../../../services/credentials/connect_link';
 
 const lookupConnectToken = jest.fn<Promise<ConnectTokenLookup>, [string]>();
 const consumeConnectToken = jest.fn<Promise<boolean>, [string]>();

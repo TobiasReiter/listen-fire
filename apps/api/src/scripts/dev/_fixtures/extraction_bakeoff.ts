@@ -19,7 +19,6 @@ import type {
   ExtractStage,
   Span,
 } from 'movement-lang';
-
 import type { FieldType } from 'movement-lang';
 import type { TransformInvocationResult } from '../../../services/movement_engine/extraction';
 

@@ -4,6 +4,7 @@
 // engine_claims.unit.test.ts take `frontPageClaims()` alongside them).
 
 import { HANDBOOK_POINTERS, HANDBOOK_POINTER_BY_CODE } from 'movement-lang';
+
 import { readBook } from '../../library';
 import { CONCEPTS, TS_EXCEPT, exampleProgram, frontPageClaims, frontSection, renderFrontPage } from '../front_page';
 import { proseViolations } from './prose_rules';

@@ -20,7 +20,6 @@
  */
 
 import '../services';
-
 import { LISTEN_FIRE_VERSION } from '../constants';
 import { mounts } from '../products';
 import { logger } from '../services/logger';

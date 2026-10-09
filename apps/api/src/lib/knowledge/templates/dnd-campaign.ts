@@ -1,7 +1,8 @@
+import type { OntologyTemplate } from './types';
+
 import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
 import EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
 import { prop, fuzzy, exact, edge } from './types';
-import type { OntologyTemplate } from './types';
 
 const dndCampaign: OntologyTemplate = {
   key: 'dnd-campaign',

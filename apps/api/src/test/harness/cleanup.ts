@@ -17,8 +17,9 @@
 
 import { sql } from 'kysely';
 
-import { getKnowledgeQb, getQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
+
+import { getKnowledgeQb, getQb } from '../../lib/kysely';
 
 /**
  * Tables in the `knowledge` schema scoped by `team_id`. Order matters:

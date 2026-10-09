@@ -1,10 +1,11 @@
 import { z } from 'zod';
 
+import type { PropertyInfo, EdgeInfo } from '#shared/expression/formula';
+
 import { currentContext } from '../../../../services/context';
 import { trpc } from '../../trpc';
 import { getKnowledgeQb } from '../../../../lib/kysely';
 import { writeExpression, type ExpressionWriterContext } from '../../../../services/knowledge_pipeline/output_v3/expression_writer';
-import type { PropertyInfo, EdgeInfo } from '#shared/expression/formula';
 import { userProcedure as sharedUserProcedure } from '../../procedures';
 
 const expressionWriterRouter = (procedure: typeof trpc.procedure) => {

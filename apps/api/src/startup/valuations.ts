@@ -1,13 +1,14 @@
 // Valuations' background workers: its own two-step delivery pipeline (V-16).
 // Changes become deliveries, deliveries become signed POSTs.
 
+import type { WorkerRegistry } from './registry';
+
 import { startValuationsOutboxWorker } from '../services/valuations_outbox/worker';
 import {
   DELIVERY_WORKER,
   readDeliveryHealth,
   startValuationsDeliveryWorker,
 } from '../services/valuations_outbox/delivery';
-import type { WorkerRegistry } from './registry';
 
 const valuationsWorkers: WorkerRegistry = {
   unit: 'valuations',

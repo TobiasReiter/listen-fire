@@ -5,14 +5,15 @@
 // call inside a transaction holds the connection open for the length of an API
 // call, and the store never calls a model at all (K-5).
 
-import { execute } from '../prompts/execute';
-import { evaluationPromptDef, setPropertyValue } from '../../services/knowledge_pipeline/apply';
-import EvaluationStrategy from '../../generated/kysely/knowledge/EvaluationStrategy';
-import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { EdgeId } from '../../generated/kysely/knowledge/Edge';
 import type { PropertyId } from '../../generated/kysely/knowledge/Property';
 import type { TeamId } from '../../generated/kysely/core/Team';
+
+import { execute } from '../prompts/execute';
+import { evaluationPromptDef, setPropertyValue } from '../../services/knowledge_pipeline/apply';
+import EvaluationStrategy from '../../generated/kysely/knowledge/EvaluationStrategy';
+import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import { getKnowledgeQb } from '../kysely';
 import {
   mergeEdges as mergeEdgesInStore,

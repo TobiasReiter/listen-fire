@@ -18,9 +18,6 @@ jest.mock('../../../movement/execute', () => ({
 
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
-import { getAutomationsQb, getCoreQb, getQb } from '../../../../../lib/kysely';
-import { cleanupTeam } from '../../../../../test/harness/cleanup';
-import { testWorkContext } from '../../../../../test/harness/work';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../../../generated/kysely/automations/TriggerRun';
@@ -28,6 +25,10 @@ import type { MovementId } from '../../../../../generated/kysely/automations/Mov
 import type { PipelineConfigurationId } from '../../../../../generated/kysely/public/PipelineConfiguration';
 import type { TriggerEvent } from '../../../triggers/types';
 import type { AwaitResolution } from '../../../awaitable';
+
+import { testWorkContext } from '../../../../../test/harness/work';
+import { cleanupTeam } from '../../../../../test/harness/cleanup';
+import { getAutomationsQb, getCoreQb, getQb } from '../../../../../lib/kysely';
 import { TriggerRunRecorder } from '../../../runs/trigger_run';
 import { registerAwaitWork } from '../../../../movement_engine/await_resume';
 import { enqueueAwaitWake } from '../../../../movement_engine/await_wake';

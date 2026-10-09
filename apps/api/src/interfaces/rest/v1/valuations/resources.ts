@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { sql } from 'kysely';
+import { type Router } from 'express';
 
 import LegalEntityType from '../../../../generated/kysely/valuations/LegalEntityType';
 import InvestmentStatus from '../../../../generated/kysely/valuations/InvestmentStatus';
@@ -13,11 +14,9 @@ import PriceType from '../../../../generated/kysely/valuations/PriceType';
 import EventType from '../../../../generated/kysely/valuations/EventType';
 import ValuationType from '../../../../generated/kysely/valuations/ValuationType';
 import InvestmentRoundType from '../../../../generated/kysely/valuations/InvestmentRoundType';
-
 import { paginationQuery } from './shared';
 import { buildCrudRouter } from './crud';
 import { mintUniqueSlug } from '../../../../lib/valuations/slug';
-import { type Router } from 'express';
 
 // ── Legal Entities ──
 

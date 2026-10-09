@@ -23,6 +23,7 @@ import type {
   EvertraceSearch,
   EvertraceSignal,
 } from '../../../../adapters/evertrace/apiClient';
+
 import { logger } from '../../../logger';
 import { eventConfigList } from '../../triggers/listen_config';
 import { narrowsAnything, signalFilterFromSearchRows } from './saved_search';

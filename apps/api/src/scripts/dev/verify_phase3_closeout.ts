@@ -20,7 +20,9 @@ import { createServer } from 'node:http';
 import { createHmac, randomUUID } from 'node:crypto';
 
 import { getAsksQb, getAutomationsQb, getKnowledgeQb, getValuationsQb } from '../../lib/kysely';
+
 import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
+
 import ResourceType from '../../generated/kysely/knowledge/ResourceType';
 import { createAsk, getAsk } from '../../services/translation_graph/adapters/ask/store';
 import { answerAskByToken } from '../../services/translation_graph/adapters/ask/answer_door';
@@ -30,7 +32,9 @@ import { deliverOnce, signPayload } from '../../services/valuations_outbox/deliv
 import { summarizeNodes } from '../../lib/knowledge/store';
 import { openKnowledgeStore } from '../../lib/knowledge/store/write';
 import { sessionContextArgs as automationsSessionContextArgs } from '../../lib/automations/session';
+
 import { sql } from 'kysely';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 

@@ -11,13 +11,14 @@ jest.mock('../../../../logger', () => ({
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { Expression } from '#shared/expression/types';
+
 import {
   ADAPTER_META_TYPE_ID,
   makeMetaPosition,
   makeStablePosition,
   positionRecordId,
 } from '../../../types';
-import type { Expression } from '#shared/expression/types';
 import {
   DEALROOM_MAX_OFFSET,
   DealroomOffsetCapError,

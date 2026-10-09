@@ -90,16 +90,19 @@ jest.mock('../../../engine/files/expose', () => ({
   })),
 }));
 
+import { scanInstanceChains } from 'movement-lang';
+
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { ResolveEntityInput } from '../../../adapter';
+
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { AirtableAdapter } from '../index';
 import { coerceAirtableValue } from '../record';
 import { makeStablePosition, makeMetaPosition, makeUnstablePosition, positionData } from '../../../types';
 import { eventsFromPayload } from '../webhook';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { ResolveEntityInput } from '../../../adapter';
 import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
 import { refineInstanceSchema } from '../../../movement/refinements';
-import { scanInstanceChains } from 'movement-lang';
+
 
 // ---------------------------------------------------------------------------
 // Fake API client + table fixtures

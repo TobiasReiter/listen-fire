@@ -11,11 +11,12 @@
 // body; 413 for a body over 1 MB.
 
 import express, { Router } from 'express';
-import type { Request, Response } from 'express';
 import { z } from 'zod';
+import { AdapterEmitBody as EmitBody, AdapterWakeBody as WakeBody } from 'engine-contracts';
+
+import type { Request, Response } from 'express';
 
 import { MB } from '../../constants';
-import { AdapterEmitBody as EmitBody, AdapterWakeBody as WakeBody } from 'engine-contracts';
 import {
   authenticateAdapterDoor,
   emitAdapterEvents,

@@ -30,6 +30,8 @@
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 
+import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { getAdapterManifest } from '../../services/translation_graph/adapters/registry';
 import { bindFlowToUser, extractStateFromUrl } from '../../lib/oauthFlows';
 import { claimPendingCredentials } from '../../lib/pendingCredentials';
@@ -67,7 +69,6 @@ import {
   pickerSpecForActionKind,
   type PickerSpec,
 } from '../../services/credentials/picker_spec';
-import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import { logger } from '../../services/logger';
 import { slackAppDisplayName } from '../../lib/brand';
 

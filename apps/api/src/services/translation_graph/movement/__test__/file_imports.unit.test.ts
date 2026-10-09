@@ -93,10 +93,14 @@ jest.mock('../../adapters/resolve', () => ({
   }),
 }));
 
+import { fromCatalogSnapshot } from 'movement-lang';
+import { tenantIdOf } from 'engine-contracts';
+
+import type { TriggerEvent } from '../../triggers/types';
+
 import { runMovement } from '../../../movement_engine/run';
 import { MovementEngineError } from '../../../movement_engine/expression';
 import { listUnsupportedConstructs } from '../../../movement_engine/interpretable';
-import { fromCatalogSnapshot } from 'movement-lang';
 import { staticCatalogSnapshot } from '../catalog';
 import { diagnoseMovementSource } from '../authoring';
 import { assembleMovementFileSources, resolverOverSources } from '../files';
@@ -107,9 +111,7 @@ import {
   type Resource,
 } from '../../adapter';
 import { containerAssociation } from '../../adapter';
-import type { TriggerEvent } from '../../triggers/types';
 import { makeUnstablePosition, positionData } from '../../types';
-import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../../../movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');

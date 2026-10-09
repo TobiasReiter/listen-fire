@@ -5,9 +5,11 @@
 // marker), so the web app's existing "am I signed in?" check works unchanged.
 // Logout drops the same pair, in the same shape core's logout produces.
 
-import express from 'express';
-import type { Server } from 'node:http';
 import { AddressInfo } from 'node:net';
+
+import express from 'express';
+
+import type { Server } from 'node:http';
 
 const ORIGINAL_ENV = {
   TOKEN_SECRET: process.env.TOKEN_SECRET,

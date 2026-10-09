@@ -26,8 +26,10 @@
 // and are full forwarders here (advertised → forwarded; absent → pruned).
 
 import { Readable } from 'node:stream';
-import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 
+import { METHODS, WireManifestProtocolVersion } from 'engine-contracts';
+
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type {
   Adapter,
   RuntimeCapabilities,
@@ -76,17 +78,16 @@ import type {
   SchemaTypeDescriptor,
   SourcePosition,
 } from '../../types';
-import { exposeFile } from '../../engine/files/expose';
-import { fileOwner, hasFileSource, streamFileRef } from '../../engine/files/retrieve';
-import { DOCUMENT_STORE_OWNER } from '../../engine/files/document_store';
 import type { TriggerEvent, TriggerType } from '../../triggers/types';
 import type { Expression } from '#shared/expression/types';
-
-import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
 import type { AuthStrategy } from '../../protocol/client';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import { METHODS, WireManifestProtocolVersion } from 'engine-contracts';
 import type { MethodName } from 'engine-contracts';
+
+import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
+import { DOCUMENT_STORE_OWNER } from '../../engine/files/document_store';
+import { fileOwner, hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import { exposeFile } from '../../engine/files/expose';
 import {
   isFileRef,
   iterateRelatedPages,

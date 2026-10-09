@@ -3,8 +3,9 @@
 // settles; a withdrawn one closes its ask; a parked one is described by the
 // question it asked.
 
-import { getAsksQb } from '../../../../lib/kysely';
 import type { AwaitKeeper } from '../await_correlation';
+
+import { getAsksQb } from '../../../../lib/kysely';
 import { abandonAskAwaits, loadResolvableAskAwaits } from './await_store';
 import { askIdSchema } from './store';
 import { ASK_ADAPTER_TYPE } from './type';

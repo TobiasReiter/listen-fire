@@ -11,6 +11,8 @@
 // that path, owned by the runtime that actually uses it and free of
 // dealflow types.
 
+import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
+
 import { services } from '../../../../adapters/registry';
 import { SECOND } from '../../../../constants';
 import { extractDocumentTextTool } from '../../../../lib/agent/tools/extract_document_text';
@@ -19,7 +21,6 @@ import { handleError } from '../../../../lib/errors';
 import { logger } from '../../../logger';
 import { RawTextService } from '../../../raw_text';
 import { ResourceService } from '../../../resource';
-import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
 
 type FetchedSegment = {
   resourceId: ResourceId;

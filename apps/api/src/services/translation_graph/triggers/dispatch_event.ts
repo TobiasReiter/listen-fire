@@ -8,16 +8,22 @@
 // that common tail, so the two front doors stay the only difference between the
 // webhook and poll inbound paths.
 import { randomUUID } from 'node:crypto';
+
 import { z } from 'zod';
-import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
+
 import type { WorkContext, WorkHandler } from '../../work/kinds';
-import { registerWorkHandler } from '../../work/drain';
-import { enqueueWork } from '../../work/store';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { DiscriminableEvent, EventType } from '../adapter';
 import type { TriggerType } from '../mutation_context';
+import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+import type { SettleReport } from '../../work/harness';
+
+import { getAutomationsQb } from '../../../lib/kysely';
+import { logger } from '../../logger';
+import { registerWorkHandler } from '../../work/drain';
+import { enqueueWork } from '../../work/store';
 import { triggerEventSchema, type TriggerEvent } from './types';
 import { discriminateEvent } from '../engine/inbound/discriminate';
 import { dispatchTriggerByIdEvent } from './router';
@@ -27,13 +33,11 @@ import {
   markTriggerEventFailed,
 } from './event_store';
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
-import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
-import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import { runningSegment } from '../runs/trigger_run';
 import { ORPHAN_AFTER } from '../../movement_engine/run_lease';
 import { neverAsAny } from '../../../lib/utils/types';
 import { settleUnresumableRun } from '../../interaction/run_failure';
-import type { SettleReport } from '../../work/harness';
+
 
 /** One trigger's durable receipt for one inbound event — the handoff between
  *  the capture half (pre-ack) and the dispatch half (post-ack), carried as the

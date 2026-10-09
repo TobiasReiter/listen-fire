@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../generated/kysely/core/Team';
+import type { NodeTypeId } from '../generated/kysely/knowledge/NodeType';
+
 import { getCoreQb, getKnowledgeQb } from '../lib/kysely';
 import { materializeTemplate } from '../lib/knowledge/templates/materialize';
 import { runOntologyAgent } from '../lib/knowledge/ontology_agent';
 import { Context } from '../services/context';
-import type { TeamId } from '../generated/kysely/core/Team';
-import type { NodeTypeId } from '../generated/kysely/knowledge/NodeType';
 import { userPrincipal } from '../services/principal';
 
 // -- Helpers --

@@ -149,16 +149,18 @@ jest.mock('../../../lib/kysely', () => {
 // We're using non-harness ids so no need to stub here.
 
 import { Readable } from 'node:stream';
+
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { SourcePosition } from '../types';
+import type { FileRef, WriteInput } from '../adapter';
+
+import { ADAPTER_META_TYPE_ID, isStablePosition, makeMetaPosition, makeStablePosition, makeUnstablePosition, positionRecordId } from '../types';
 import {
   AttioAdapter,
   ATTIO_LIST_ENTRY_TYPE_ID,
   ATTIO_LISTS_EDGE,
   ATTIO_WEBHOOK_EVENT_TYPE_ID,
 } from '../adapters/attio';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { SourcePosition } from '../types';
-import { ADAPTER_META_TYPE_ID, isStablePosition, makeMetaPosition, makeStablePosition, makeUnstablePosition, positionRecordId } from '../types';
-import type { FileRef, WriteInput } from '../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
 import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
 import { instanceSchemaFromDescriptors } from '../movement/schema_projection';

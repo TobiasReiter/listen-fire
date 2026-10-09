@@ -33,6 +33,11 @@
 
 import { z } from 'zod';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { MovementId } from '../../../generated/kysely/automations/Movement';
+import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
+import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+
 import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getQb, getAutomationsQb } from '../../../lib/kysely';
@@ -72,10 +77,6 @@ import {
   type StoryViewResult,
 } from '../../../services/translation_graph/movement/story_view';
 import { listMovementRows } from '../../../services/translation_graph/movement/store';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { MovementId } from '../../../generated/kysely/automations/Movement';
-import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
-import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import { reportedFailureReason } from '../../../services/translation_graph/runs/trigger_run';
 import { UserService } from '../../../services/user';
 import { userProcedure as sharedUserProcedure } from '../procedures';

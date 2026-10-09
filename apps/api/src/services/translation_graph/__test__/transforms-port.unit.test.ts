@@ -81,8 +81,10 @@ import { getTransform } from '../engine/transforms';
 import { vcUrlRetrievalImpl, _extractCandidateUrls } from '../engine/transforms/vc-url-retrieval';
 import { fetchUrlImpl, FETCH_URL_PLUGIN_MANIFEST } from '../engine/transforms/fetch-url';
 import { linkedinEnrichmentImpl } from '../engine/transforms/linkedin-enrichment';
+
 import type { ContextDependentInput, PreExtractionInput } from '../engine/transforms';
 import type { SourcePosition } from '../types';
+
 import { makeStablePosition } from '../types';
 import { services } from '../../../adapters/registry';
 import { logger } from '../../logger';

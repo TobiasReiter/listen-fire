@@ -20,8 +20,9 @@ import type {
   Resource,
   ResourceFilter,
 } from '../../adapter';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../../adapter';
 import type { SourcePosition } from '../../types';
+
+import { RESOURCES_REFERENCE_FIELD_ID } from '../../adapter';
 import { positionData } from '../../types';
 
 /**

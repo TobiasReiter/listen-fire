@@ -22,14 +22,15 @@
  * from the write and dispatching them downstream both survived.
  */
 import './_profile_loader';
-
 import { runInContext } from '../../services/context/utils';
 import { getKnowledgeQb } from '../../lib/kysely';
 import { trpcRouter } from '../../interfaces/trpc';
 import { ensureDevLoopTeam } from './_lib';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyId } from '../../generated/kysely/knowledge/Property';
+
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 
 async function main() {

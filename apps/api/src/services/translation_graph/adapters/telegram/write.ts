@@ -14,8 +14,9 @@
 // (design §6.4 resolution 3); a group send anchors on the inbound message
 // that addressed the bot.
 
-import { logger } from '../../../logger';
 import type { WriteResult } from '../../adapter';
+
+import { logger } from '../../../logger';
 import { TELEGRAM_ADAPTER_TYPE } from './types';
 
 // ── Base-URL-aware Bot API client ───────────────────────────────────────────

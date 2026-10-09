@@ -2,17 +2,18 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
-import { getKnowledgeQb } from '../../lib/kysely';
-import { logger } from '../logger';
 import type { Expression, EdgeStep } from '#shared/expression/types';
-import { expressionSchema } from './output_v3/expression';
-import { isBlankIdentityValue } from '../translation_graph/uniqueness';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
 import type { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExtractedSubgraph, ExtractedNode, ExtractedProperty, ExtractedEdge } from './types';
+
+import { isBlankIdentityValue } from '../translation_graph/uniqueness';
+import { expressionSchema } from './output_v3/expression';
+import { logger } from '../logger';
+import { getKnowledgeQb } from '../../lib/kysely';
 
 // ── Types ──
 

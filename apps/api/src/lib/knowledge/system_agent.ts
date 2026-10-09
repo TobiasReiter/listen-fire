@@ -1,13 +1,15 @@
 import { z } from 'zod';
 
+import type { AgentUpdate } from '../openai/types';
+import type { TeamId } from '../../generated/kysely/core/Team';
+import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
+
 import { anthropicToolLoop, type TurnEvent } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
 import { currentContext } from '../../services/context';
 import { mq } from '../message_queue';
-import type { AgentUpdate } from '../openai/types';
 import { listTgRuns, getTgRun } from '../../services/system_debug';
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
+
 
 const SYSTEM_PROMPT = `You are the System agent for Listen-Fire. You help users debug what happened to information they sent through the system.
 

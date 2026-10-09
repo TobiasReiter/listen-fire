@@ -19,14 +19,8 @@
 // the API client on first use, redirecting to fake-channels for the dev-loop
 // test-harness team (mirrors Attio / Airtable).
 
-import { decryptToken } from '../../../../lib/credentials';
-import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
-import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
-import { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
-import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import type {
   AdapterManifest,
   DeleteInput,
@@ -42,17 +36,25 @@ import type {
   WriteInput,
   WriteResult,
 } from '../../adapter';
-import { writeParentLinks, unsupportedAssociation } from '../../adapter';
 import type { TriggerType } from '../../triggers/types';
-import {
-  META_RECORD_TYPE,
-  makeStablePosition,
-  positionData,
-} from '../../types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
+} from '../../types';
+import type { Expression } from '#shared/expression/types';
+
+import { decryptToken } from '../../../../lib/credentials';
+import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
+import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
+import { logger } from '../../../logger';
+import { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
+import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
+import { writeParentLinks, unsupportedAssociation } from '../../adapter';
+import {
+  META_RECORD_TYPE,
+  makeStablePosition,
+  positionData,
 } from '../../types';
 import { BaseAdapter } from '../base';
 import { targetStubs } from '../hop';
@@ -89,7 +91,6 @@ import {
   type SheetsTableCatalog,
 } from './schema_catalog';
 import { parseA1Cell } from '../../../../adapters/googleSheets/cells';
-import type { Expression } from '#shared/expression/types';
 import { grantSpreadsheet, listGrantedSpreadsheets } from './grants';
 import {
   createRecord as rowCreateRecord,

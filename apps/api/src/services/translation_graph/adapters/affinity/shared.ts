@@ -6,12 +6,13 @@
 // the LOCATION formatter the underlying operations already owns).
 
 import type { AffinityAPIClient } from '../../../../adapters/affinity/apiClient';
-import { valueType, locationFieldValue } from '../../../../adapters/affinity/apiClient';
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
+import type { ParentAssociation, ParentLink, WriteInput } from '../../adapter';
+
+import { valueType, locationFieldValue } from '../../../../adapters/affinity/apiClient';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { logger } from '../../../logger';
 import { isAdapterCallCeilingExceeded } from '../../segment_scope';
-import type { ParentAssociation, ParentLink, WriteInput } from '../../adapter';
 import { writeParentLinks } from '../../adapter';
 import {
   decodedFixedType,

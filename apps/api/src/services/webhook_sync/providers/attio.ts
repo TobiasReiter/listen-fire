@@ -1,16 +1,18 @@
 // Attio webhook provider
-import crypto from 'crypto';
+import crypto from "node:crypto";
+
 import type {
   WebhookProvider,
   WebhookRegistration,
 } from './interface';
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+
 import { decryptToken } from '../../../lib/credentials';
 import { getAutomationsQb } from '../../../lib/kysely';
 import {
   AttioAPIClient,
   attioCredsParser,
 } from '../../../adapters/attio/apiClient';
-import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 
 // Attio's webhook contract is split: this provider owns SIGNATURE verification
 // + subscription registration; event EXTRACTION moved to the adapter's async

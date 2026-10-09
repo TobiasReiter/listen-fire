@@ -26,10 +26,11 @@
 //
 // the floor
 
+import type { GuardDecision } from './types';
+
 import { logger } from '../logger';
 import { guardKeys, incrementAndSum } from './store';
 import { guardEnabled, guardMode, resolveThresholds } from './thresholds';
-import type { GuardDecision } from './types';
 
 export type { GuardDecision } from './types';
 export { recordExternalWrites, recordLlmTokens } from './usage';

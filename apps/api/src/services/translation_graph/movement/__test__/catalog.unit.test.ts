@@ -16,7 +16,10 @@
 //      edge outbound names) at the engine boundary. The KG is not special;
 //      its resolver is built from its introspection like any adapter's.
 
+import { unionKey } from 'movement-lang';
+
 import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+
 import {
   credentialImportNames,
   fieldTypeFromDescriptor,
@@ -29,7 +32,6 @@ import {
   naturalName,
   AdapterNameDriftError,
 } from '../../adapters/name_resolution';
-import { unionKey } from 'movement-lang';
 
 // ── 1. Import-name projection ───────────────────────────────────────────────
 

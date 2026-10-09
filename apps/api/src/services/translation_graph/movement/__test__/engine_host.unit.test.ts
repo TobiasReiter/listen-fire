@@ -27,10 +27,12 @@ jest.mock('../raw_text_store', () => ({
 }));
 
 import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
-import { productionEngineHost } from '../engine_host';
-import { inMemoryRawTextStore } from '../raw_text_store';
+
 import type { Adapter } from '../../adapter';
 import type { CapturedWrite } from '../../engine/dry_run_adapter';
+
+import { productionEngineHost } from '../engine_host';
+import { inMemoryRawTextStore } from '../raw_text_store';
 import { userEditContext } from '../../mutation_context';
 import { teamOfTenant } from '../tenant';
 

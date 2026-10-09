@@ -49,14 +49,19 @@
  *   pnpm dev:extraction-bakeoff --conditions A,B,C \
  *     --fixtures reconcile_long,nested_synthesis --reps 3 --out /tmp/round2
  */
-import { BARE_HOST } from '../../services/movement_engine/host_kit';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ExtractExpression } from 'movement-lang';
-
-import { anthropicChatDetailed } from '../../lib/anthropic';
 import type { ChatModelName } from '../../lib/models/registry';
+import type { MovementTraceEntry } from '../../services/movement_engine/expression';
+import type {
+  LlmCallInput,
+  LlmClient,
+} from '../../services/translation_graph/engine/batched_extraction';
+
+import { BARE_HOST } from '../../services/movement_engine/host_kit';
+import { anthropicChatDetailed } from '../../lib/anthropic';
 import { parseJsonReply } from '../../lib/prompts/execute';
 import { logger } from '../../services/logger';
 import { makeAnthropicLlmClient } from '../../services/translation_graph/movement/llm_clients';
@@ -74,11 +79,6 @@ import {
   extractionSettings,
   type TierCallSettings,
 } from '../../services/movement_engine/ai_tiers';
-import type { MovementTraceEntry } from '../../services/movement_engine/expression';
-import type {
-  LlmCallInput,
-  LlmClient,
-} from '../../services/translation_graph/engine/batched_extraction';
 import {
   FIXTURES,
   resolveDeclaredType,

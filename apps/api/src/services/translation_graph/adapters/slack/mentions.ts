@@ -16,6 +16,7 @@
 // C8 / M6 / M7
 
 import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient';
+
 import { logger } from '../../../logger';
 
 type SlackClient = ReturnType<typeof getSlackClient>;

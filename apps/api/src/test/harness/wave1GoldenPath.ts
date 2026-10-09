@@ -29,11 +29,12 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { getCoreQb, getKnowledgeQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';
 import type { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
+
+import { getCoreQb, getKnowledgeQb } from '../../lib/kysely';
 
 export interface Wave1GoldenPathSeed {
   teamId: TeamId;

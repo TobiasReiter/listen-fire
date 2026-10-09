@@ -7,9 +7,9 @@
 // as HTTP 200 — see `3_model.md` "Envelope".
 
 import { z } from 'zod';
+import { PROTOCOL_VERSION, RpcResponse } from 'engine-contracts';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import { PROTOCOL_VERSION, RpcResponse } from 'engine-contracts';
 import type { RpcErrorShape } from 'engine-contracts';
 
 /**

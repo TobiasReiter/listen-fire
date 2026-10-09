@@ -7,6 +7,9 @@ import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { UserId } from '../../../../generated/kysely/core/User';
+
 import { getCoreQb, getValuationsQb } from '../../../../lib/kysely';
 import { Context } from '../../../../services/context';
 import { buildMcpServer, createMcpRouter } from '../../server';
@@ -16,8 +19,6 @@ import CurrencyIsoCode from '../../../../generated/kysely/valuations/CurrencyIso
 import AssetType from '../../../../generated/kysely/valuations/AssetType';
 import EventType from '../../../../generated/kysely/valuations/EventType';
 import LegalEntityType from '../../../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { UserId } from '../../../../generated/kysely/core/User';
 import { userPrincipal } from '../../../../services/principal';
 import { valuationQueryInput } from '../../../../lib/valuations/query';
 

@@ -10,8 +10,9 @@
 // surface shows is a pure function of the family — there is no runtime
 // disagreement possible between what the person sees and what the store keeps.
 
-import { neverAsAny } from '../../../../lib/utils/types';
 import type { AskFamily, AskRecord } from './store';
+
+import { neverAsAny } from '../../../../lib/utils/types';
 
 /** The control-kind each family renders as, in the vocabulary the shared
  *  link-page + web controls already switch on (Check → yes/no, Choose → one

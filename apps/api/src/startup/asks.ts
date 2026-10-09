@@ -3,13 +3,14 @@
 // and the workers surface says so with a reason, because a registered worker
 // that is not running must not read the same as one that is wedged.
 
+import type { WorkerRegistry } from './registry';
+
 import { askSettleDelivery } from '../services/translation_graph/adapters/ask/delivery_mode';
 import {
   ASK_WEBHOOK_DRAINER,
   readAskDeliveryHealth,
   startAskWebhookDrainer,
 } from '../services/asks/webhook_delivery/worker';
-import type { WorkerRegistry } from './registry';
 
 function idleReason(health: { signingConfigured: boolean }): string | null {
   if (askSettleDelivery() !== 'webhook') return 'settle notifications are delivered in-process';

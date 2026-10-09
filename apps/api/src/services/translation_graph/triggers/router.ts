@@ -7,13 +7,15 @@
 // hooks) call into this module rather than constructing engine contexts
 // themselves. This is the seam between "events arrive" and "engine runs".
 
-import { handleError } from '../../../lib/errors';
-import { logger } from '../../logger';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
-import { resolveAdapter } from '../adapters/resolve';
 import type { EvaluationResult } from '../engine/types';
+import type { TriggerEvent } from './types';
+
+import { handleError } from '../../../lib/errors';
+import { logger } from '../../logger';
+import { resolveAdapter } from '../adapters/resolve';
 import {
   shouldDropAsNativeEcho,
   type PlatformTokenRegistry,
@@ -23,7 +25,6 @@ import {
   TriggerRunRecorder,
   type TriggerRunTriggerType,
 } from '../runs/trigger_run';
-import type { TriggerEvent } from './types';
 import { runModeGate } from './run_mode';
 import { consultEchoSuppression } from './echo_suppression';
 import { consultActorGate } from './actor_gate';

@@ -18,8 +18,9 @@
 // exclusion) lives in getBaseQuery and is covered by
 // investmentsAcquisitionExclusion.
 
-import { applyPortfolioLens, withHoldingsLens } from '../portfolioLens';
 import type { AcquirerRef, LensRow } from '../portfolioLens';
+
+import { applyPortfolioLens, withHoldingsLens } from '../portfolioLens';
 
 interface Row extends LensRow {
   id: string;

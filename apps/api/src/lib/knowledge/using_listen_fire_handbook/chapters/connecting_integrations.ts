@@ -1,4 +1,5 @@
 import type { Chapter } from '../types';
+
 import {
   listAdapterCapabilities,
   type AdapterCapabilitySummary,

@@ -1,8 +1,9 @@
+import type { OntologyTemplate } from './types';
+
 import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
 import EvaluationStrategy from '../../../generated/kysely/knowledge/EvaluationStrategy';
 import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
 import { prop, edge, fuzzy, exact } from './types';
-import type { OntologyTemplate } from './types';
 
 const vcDealflow: OntologyTemplate = {
   key: 'vc-dealflow',

@@ -11,7 +11,6 @@ import {
   type WorkKind,
   type WorkRow,
 } from './kinds';
-
 import { logger } from '../logger';
 import { claimDueWork, completeWork, deferWork, heartbeatWork, releaseWork } from './store';
 

@@ -4,12 +4,8 @@
 // via read-only adapters (P12).
 
 import { z } from 'zod';
-import {
-  expressionSchema,
-  filterExpressionSchema,
-  traversalStepSchema,
-} from '../knowledge_pipeline/output_v3/schemas';
-import { uniquenessConstraintsSchema } from './uniqueness';
+import { before, type DeclaredEffectRow, type LanguageVersion } from 'movement-lang';
+
 import type { UniquenessConstraints } from './uniqueness';
 import type {
   EphemeralOriginRef,
@@ -22,7 +18,14 @@ import type {
 import type { FilterExpression, TraversalStep } from '../knowledge_pipeline/output_v3/schemas';
 import type { Expression } from '../knowledge_pipeline/output_v3/expression';
 import type { EdgeCapability, EdgeSequencing, FieldCapability } from '#shared/expression/types';
-import { before, type DeclaredEffectRow, type LanguageVersion } from 'movement-lang';
+
+import { uniquenessConstraintsSchema } from './uniqueness';
+import {
+  expressionSchema,
+  filterExpressionSchema,
+  traversalStepSchema,
+} from '../knowledge_pipeline/output_v3/schemas';
+
 
 // The `translation_graph` / `schema_type` tables were dropped (kill-tg phase
 // 6), so their kysely id brands are gone. These TG-body schemas are vestigial

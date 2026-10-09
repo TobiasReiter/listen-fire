@@ -14,11 +14,13 @@
 // ephemeral vs persistent
 
 import { z } from 'zod';
+
 import type { Expression } from '#shared/expression/types';
 import type { MetaEdgeStep } from '#shared/expression/types';
 import type { EphemeralNode, SourcePosition } from '../../types';
 import type { Batcher, ExtractScope, EnrichmentBinding } from './batcher';
 import type { FieldShape } from '../batched_extraction/schema_synthesis';
+
 import { projectEnrichWithArgument, ANON_EXTRACT_ALIAS } from '../batched_extraction/collect_extract_fields';
 
 /**

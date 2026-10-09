@@ -29,6 +29,8 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { TeamId } from '../../../generated/kysely/core/Team';
+
 import { getCoreQb, getValuationsQb } from '../../kysely';
 import { Context } from '../../../services/context';
 import { getInvestmentsValuation } from '../valuation';
@@ -37,7 +39,6 @@ import AssetType from '../../../generated/kysely/valuations/AssetType';
 import PriceType from '../../../generated/kysely/valuations/PriceType';
 import InvestmentType from '../../../generated/kysely/valuations/InvestmentType';
 import LegalEntityType from '../../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../../generated/kysely/core/Team';
 import { userPrincipal } from '../../../services/principal';
 
 const TXN1_DATE = '2024-01-01'; // invest $50k for 20 A-shares

@@ -12,9 +12,10 @@
 // employer check and the address check are three parts of one question about
 // one record that cannot change between them.
 
+import type { AffinityAPIClient } from '../apiClient';
+
 import { AffinityOperations } from '../operations';
 import { createNoopTracer } from '../../../services/translation_graph/adapters/affinity/shared';
-import type { AffinityAPIClient } from '../apiClient';
 
 const PERSON_ID = 77;
 const ORG_ID = 501;

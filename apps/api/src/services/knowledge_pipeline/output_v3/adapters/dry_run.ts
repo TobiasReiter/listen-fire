@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { logger } from '../../../logger';
+
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
+
+import { logger } from '../../../logger';
 
 /**
  * Wraps a real V3Adapter for dry-run mode. Write-mode actions are forced into

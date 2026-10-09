@@ -3,6 +3,7 @@
 // without dragging in Prisma/Kysely.
 
 import type { Kysely } from 'kysely';
+
 import { executeCypher } from '../../../lib/knowledge/cypher';
 import { getKnowledgeQb } from '../../../lib/kysely';
 import { validateKgQuery } from './kg_query';

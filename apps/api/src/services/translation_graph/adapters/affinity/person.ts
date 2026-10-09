@@ -4,7 +4,6 @@
 // write custom-field values.
 
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
 import type {
   WriteInput,
   WriteResult,
@@ -12,6 +11,8 @@ import type {
   UpdateResult,
   UpdateWriteResult,
 } from '../../adapter';
+
+import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
 import { writeParentLinks } from '../../adapter';
 import { logger } from '../../../logger';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE } from './types';

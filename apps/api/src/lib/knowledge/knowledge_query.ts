@@ -1,15 +1,17 @@
 import { sql } from 'kysely';
 
+import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
+import type { SourceRef } from './agent_types';
+
 import { getQb, getKnowledgeQb } from '../kysely';
 import { logger } from '../../services/logger';
 import { anthropicChat } from '../anthropic';
 import { TeamId } from '../../generated/kysely/core/Team';
 import { NodeId } from '../../generated/kysely/knowledge/Node';
-import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
 import { resolveDisplayNames } from './resolve_display_name';
 import { buildRelationshipContextFromDb, formatEntityContext } from './relationship_context';
 import { unwrapAgentQueryRows } from './query_agent_utils';
-import type { SourceRef } from './agent_types';
+
 
 const QUERY_PLANNER_PROMPT = `You are a query planner for a knowledge graph stored in PostgreSQL. You receive the user's question and conversation context. Your job:
 

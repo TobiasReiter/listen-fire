@@ -17,6 +17,7 @@ import {
   expressionOfSlot,
   pathRootName,
 } from 'movement-lang';
+
 import type {
   ConstructionCall,
   MovementDeclaration,

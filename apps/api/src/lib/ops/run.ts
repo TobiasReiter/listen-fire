@@ -1,3 +1,6 @@
+import type { OpsEventId } from '../../generated/kysely/public/OpsEvent';
+import type { TeamId } from '../../generated/kysely/core/Team';
+
 import { getQb } from '../kysely';
 import { logger } from '../../services/logger';
 import { unsafeCurrentContext } from '../../services/context';
@@ -6,8 +9,6 @@ import OpsEventType from '../../generated/kysely/public/OpsEventType';
 import OpsSeverity from '../../generated/kysely/public/OpsSeverity';
 import OpsRunStatus from '../../generated/kysely/public/OpsRunStatus';
 import OpsDetailLevel from '../../generated/kysely/automations/OpsDetailLevel';
-import type { OpsEventId } from '../../generated/kysely/public/OpsEvent';
-import type { TeamId } from '../../generated/kysely/core/Team';
 import { meetsDetailLevel } from './types';
 import { getTeamDetailLevel } from '../../services/team/ops_detail';
 

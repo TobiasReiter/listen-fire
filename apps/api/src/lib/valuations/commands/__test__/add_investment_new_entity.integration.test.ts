@@ -13,6 +13,9 @@
 import { randomUUID } from 'node:crypto';
 
 
+import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { UserId } from '../../../../generated/kysely/core/User';
+
 import { getCoreQb, getValuationsQb } from '../../../kysely';
 import { Context } from '../../../../services/context';
 import { applyInvestment, resolveInvestmentEntities } from '../investment';
@@ -20,8 +23,6 @@ import { applyRound, resolveRoundEntities } from '../round';
 import CurrencyIsoCode from '../../../../generated/kysely/valuations/CurrencyIsoCode';
 import AssetType from '../../../../generated/kysely/valuations/AssetType';
 import LegalEntityType from '../../../../generated/kysely/valuations/LegalEntityType';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { UserId } from '../../../../generated/kysely/core/User';
 import { userPrincipal } from '../../../../services/principal';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

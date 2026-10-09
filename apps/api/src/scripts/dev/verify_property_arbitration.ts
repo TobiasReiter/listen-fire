@@ -25,7 +25,6 @@
  * Run: pnpm dev:script verify_property_arbitration
  */
 import './_profile_loader';
-
 import { getKnowledgeQb } from '../../lib/kysely';
 import { ensureDevLoopTeam } from './_lib';
 import { ChangeSource } from '../../lib/knowledge/changes';
@@ -44,6 +43,7 @@ import PropertyCardinality from '../../generated/kysely/knowledge/PropertyCardin
 import PropertyValueType from '../../generated/kysely/knowledge/PropertyValueType';
 import NodeTypeCategory from '../../generated/kysely/knowledge/NodeTypeCategory';
 import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 import type { PropertyTypeId } from '../../generated/kysely/knowledge/PropertyType';

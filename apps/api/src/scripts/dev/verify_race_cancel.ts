@@ -22,7 +22,6 @@
  */
 import './_profile_loader';
 import '../../services';
-
 import { ensureDevLoopTeam, ensureDevLoopSlackCredential } from './_lib';
 import { saveMovement } from '../../services/translation_graph/movement/provision';
 

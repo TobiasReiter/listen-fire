@@ -13,8 +13,9 @@
 // never identity: a display name is renameable, and a persisted trigger routed
 // by name would silently stop matching after a rename.
 
-import { getAutomationsQb } from '../../../lib/kysely';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { getAutomationsQb } from '../../../lib/kysely';
 import { decryptToken } from '../../../lib/credentials';
 import { apiBaseUrl } from '../../../lib/api_base_url';
 import { describeError } from '../../../lib/utils/error';
