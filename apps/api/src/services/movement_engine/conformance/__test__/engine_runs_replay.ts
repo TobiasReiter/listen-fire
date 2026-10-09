@@ -155,13 +155,21 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
   return { same, skipped: Object.fromEntries(skipped), diverged };
 }
 
+const HARVEST_CHECK_TIMEOUT_MS = 1_800_000;
+
 export function replayCorpus(corpus: keyof typeof FLOORS): void {
   // Hundreds of whole runs per target.
   jest.setTimeout(600_000);
   if (process.env.UPDATE_ENGINE_RUNS === '1') {
-    it('every harvested recording replays on the TypeScript engine, or a known reason says why not', async () => {
-      await checkHarvest(corpus);
-    });
+    // The check replays the harvest twice over (in process and over the HTTP
+    // double), which outgrows the replay suites' own limit.
+    it(
+      'every harvested recording replays on the TypeScript engine, or a known reason says why not',
+      async () => {
+        await checkHarvest(corpus);
+      },
+      HARVEST_CHECK_TIMEOUT_MS,
+    );
     return;
   }
   const recordings = recordingsOf(corpus);

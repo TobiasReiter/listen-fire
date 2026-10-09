@@ -29,7 +29,13 @@ function heldAt(clock, at) {
   });
 }
 
-if (process.env.UPDATE_ENGINE_RUNS === '1' && DIR !== undefined) {
+// Corpus test files whose entries are never recorded. The recorded corpora
+// grow deliberately against the fixture size budget; the binding × consumer
+// matrix is a DEFERRED decision.
+const UNRECORDED = ['src/services/movement_engine/__test__/binding_consumer_matrix.unit.test.ts'];
+const testFile = path.relative(path.resolve(__dirname, '../../../../..'), expect.getState().testPath || '');
+
+if (process.env.UPDATE_ENGINE_RUNS === '1' && DIR !== undefined && !UNRECORDED.includes(testFile)) {
   globalThis.Date = heldAt(globalThis.Date, HARVEST_NOW);
   // Likewise the random UUIDs a test's own host mints (the production host's
   // segment ids, a fake's record ids): numbered per test file instead.
@@ -46,7 +52,7 @@ if (process.env.UPDATE_ENGINE_RUNS === '1' && DIR !== undefined) {
 
   const RUN = path.resolve(__dirname, '../../run.ts');
   const RECORDER = path.resolve(__dirname, '../recorder.ts');
-  const file = path.relative(path.resolve(__dirname, '../../../../..'), expect.getState().testPath || '');
+  const file = testFile;
   const lines = [];
 
   jest.mock(RUN, () => {
