@@ -76,22 +76,17 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import type { ExtractCallLlmInput, ExtractCallLlmResult } from '../extraction_call';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000077' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000077');
 
 function fakeAdapter(adapterType: string): Adapter {
   let n = 0;
@@ -139,7 +134,7 @@ const crmSchema: InstanceSchema = {
   writableRoots: { company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } } },
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: crmSchema },
@@ -218,10 +213,12 @@ async function run(body: string[], answers: Record<string, { reply: unknown; del
     event: event(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }) => fakeAdapter(adapterType),
-    extractCallLlm: llm.client,
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: { resolve: ({ adapterType }) => fakeAdapter(adapterType) },
+      llm: { extractCall: llm.client },
+    }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { writes, result, calls: llm.calls };
 }
@@ -266,13 +263,15 @@ describe('the production shape: MAP enriches each entry in place', () => {
     expect(readBack(writes)).toEqual(['Acme Inc|infra|acme.com', 'Beta|fintech|-']);
 
     const rows = localRows(result);
-    // Two creates, then Beta's one update (no website), then Acme's two.
+    // Two creates, then each member's updates in the order the members stand
+    // (the write ledger orders a fan-out's writes by flow, not by which
+    // finished first): Acme's two, then Beta's one (no website).
     expect(rows.map((w) => [w.outcome, w.writtenValues])).toEqual([
       ['create', { name: 'Acme' }],
       ['create', { name: 'Beta' }],
-      ['update', { thesis: 'fintech' }],
       ['update', { name: 'Acme Inc', thesis: 'infra' }],
       ['update', { website: 'acme.com' }],
+      ['update', { thesis: 'fintech' }],
     ]);
     for (const row of rows) {
       expect(row).toMatchObject({ adapterType: 'local', recordType: 'entries', committed: false, local: { edge: 'entries' } });

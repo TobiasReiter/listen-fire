@@ -110,31 +110,25 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { writeFileSync } from 'node:fs';
 
-import { CURRENT_LANGUAGE_VERSION, mockCatalog, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import type { ExtractCallLlmInput, ExtractCallLlmResult } from '../extraction_call';
 import type { MovementTransformInvoker } from '../extraction';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
 import { runMovement, runFailureCause, type MovementRunResult } from '../run';
 import { MovementEngineError } from '../errors';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import { makeStablePosition, positionData, positionRecordId, META_RECORD_TYPE } from '../../translation_graph/types';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import { ACME, BETA, GAMMA, cellId, cells, expectationAt, row, type Cell, type Rec } from './binding_consumer_matrix.cells';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000088' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000088');
 const VERSION: LanguageVersion = CURRENT_LANGUAGE_VERSION;
 
 // ── Triage: cells whose right answer nobody has decided ─────────────────────
@@ -192,7 +186,7 @@ const SUMMARISE = 'summarise';
 /** A plugin whose argument declares no type: it hands back the text it was
  *  given, or the name among the fields it was given. */
 const RELAY = 'relay';
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: credentialArg, schema: emailSchema },
     attio: { constructionArgs: credentialArg, schema: systemSchema },
@@ -201,8 +195,8 @@ const catalog = mockCatalog({
   credentials: { inbox_cred: { adapters: ['email'] }, crm_cred: { adapters: ['attio'] }, sheet_cred: { adapters: ['sheets'] } },
   plugins: {
     ...(fetchUrl !== undefined ? { fetch_url: fetchUrl } : {}),
-    [SUMMARISE]: { args: ['data'], argTypes: { data: 'json' }, requiredArgs: ['data'], effects: { ai: true }, output: { kind: 'value', type: 'text' } },
-    [RELAY]: { args: ['data'], requiredArgs: ['data'], effects: { ai: true }, output: { kind: 'value', type: 'text' } },
+    [SUMMARISE]: { args: ['data'], priced: false, argTypes: { data: 'json' }, requiredArgs: ['data'], effects: { ai: true }, output: { kind: 'value', type: 'text' } },
+    [RELAY]: { args: ['data'], priced: false, requiredArgs: ['data'], effects: { ai: true }, output: { kind: 'value', type: 'text' } },
   },
 });
 
@@ -365,10 +359,6 @@ const extractLlm = {
 };
 
 const transformInvoker: MovementTransformInvoker = {
-  declaredOutput: (plugin) =>
-    plugin === SUMMARISE || plugin === RELAY
-      ? { kind: 'value', type: { kind: 'string' } }
-      : (getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-')))?.signature.output,
   async invoke({ plugin, config }) {
     const data = config.data;
     if (plugin === RELAY && typeof data === 'string') return { text: data };
@@ -413,11 +403,12 @@ async function runCell(cell: Cell): Promise<Outcome> {
       event: event(),
       teamId: TEAM_ID,
       catalog,
-      resolveAdapter: ({ adapterType }) => (adapterType === 'attio' ? systemAdapter() : plainAdapter(adapterType)),
-      extractCallLlm: extractLlm,
-      transformInvoker,
+      host: makeTestHost({
+        writeSink: (w) => sink.push(w),
+        adapters: { resolve: ({ adapterType }) => (adapterType === 'attio' ? systemAdapter() : plainAdapter(adapterType)) },
+        llm: { extractCall: extractLlm, transforms: transformInvoker },
+      }),
       dryRun: true,
-      writeSink: (w) => sink.push(w),
     });
     return { kind: 'ran', rows: rowsOf(sink, result) };
   } catch (error) {

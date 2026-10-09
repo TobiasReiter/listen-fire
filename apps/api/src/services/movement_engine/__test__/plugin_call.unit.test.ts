@@ -521,7 +521,6 @@ describe("a call written in place as a plugin's argument is the value it compute
     const attio = makeFakeAdapter('attio');
     const calls: Recorded[] = [];
     const invoker: MovementTransformInvoker = {
-      declaredOutput: (plugin) => realOutput(plugin),
       async invoke({ plugin, config }) {
         calls.push({ plugin, config });
         return { text: calls.length === 1 ? 'https://acme.example/about' : 'About Acme.' };
