@@ -28,6 +28,7 @@ export default {
   setupFilesAfterEnv: [
     path.join(CONFORMANCE, 'v1.setup.cjs'),
     path.join(CONFORMANCE, 'triage.setup.cjs'),
+    '<rootDir>/src/test/movement_lang_source.setup.ts',
     // Hands the corpus's version to every evaluation its context omits.
     '<rootDir>/src/test/conformance_pin.setup.ts',
     // Under MOVEMENT_ENGINE=rust: count the Rust evaluator's answers, and
