@@ -1014,6 +1014,15 @@ The rule for what this engine reproduces of JavaScript:
     a later sibling's call until every earlier sibling had numbered its
     calls, which is a sequential fan: it would change the order the host is
     asked in, which the recorded runs hold.
+  - a cut at a UTF-16 surrogate pair (a text cut at 80, 200 or 1,000 UTF-16
+    units, or a file bounded for the prompt, landing mid-pair): a Rust
+    string cannot hold a lone surrogate, so this engine never splits the
+    pair and drops it whole; JavaScript's `slice` keeps the high half.
+    Specified as: a cut never splits a pair.
+  - a fractional `EXTRACTION_FILE_CHARS`: the shim floors it before this
+    engine sees it, so the truncation marker prints the whole number
+    ("first 2 of …"); the TypeScript's marker prints the fraction ("first
+    2.5 of …"). Specified as: the bound is a whole number of characters.
 
 ## The check
 

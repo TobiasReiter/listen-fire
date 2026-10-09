@@ -5,8 +5,9 @@
 // and the plugin invoker received. The corpora (`extraction.unit` and its
 // neighbours) and the recorded runs are the broad oracle; these pin what
 // they cannot: the cost cap on an aliased priced plugin, a model's number
-// past the double range crossing the boundary, and a library declaration's
-// words read through the real declaration lookup.
+// past the double range crossing the boundary, a library declaration's
+// words read through the real declaration lookup, and a model's, a plugin's
+// or a file reader's answer the eval wire cannot carry.
 
 import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movement-lang';
 
@@ -14,7 +15,7 @@ import { tenantIdOf } from 'engine-contracts';
 import type { Adapter } from '../../translation_graph/adapter';
 import type { LlmCallResult } from '../../translation_graph/engine/batched_extraction/llm_call';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TransformInvocationResult } from '../extraction';
+import type { FileTextResolution, TransformInvocationResult } from '../extraction';
 
 import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation } from '../../translation_graph/adapter';
@@ -28,7 +29,7 @@ import { resetRustRunStats, rustRunStats } from '../rust_stats';
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b3');
 
 const emailSchema: InstanceSchema = {
-  positions: { message: { properties: { subject: 'text', text: 'text' }, edges: {} } },
+  positions: { message: { properties: { subject: 'text', text: 'text', deck: 'file' }, edges: {} } },
   collections: {},
   writableRoots: {},
 };
@@ -88,10 +89,13 @@ const EVENT: TriggerEvent = {
 
 interface Case {
   source: string;
-  replies?: unknown[];
+  replies?: readonly unknown[];
   invoked?: TransformInvocationResult;
   spend?: Pick<RunMovementInput, 'priorSpentMicrodollars' | 'costCapMicrodollars' | 'suspendAt'>;
   files?: Record<string, { source: string }>;
+  /** What the host's file reader answers, for every file. */
+  fileText?: FileTextResolution;
+  event?: TriggerEvent;
 }
 
 /** One run on one engine: what it returned or threw, and what the model
@@ -102,9 +106,10 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
   const asked: unknown[] = [];
   const invoked: unknown[] = [];
   const replies = [...(c.replies ?? [])];
+  const fileText = c.fileText;
   const input: RunMovementInput = {
     source: PRELUDE + c.source,
-    event: EVENT,
+    event: c.event ?? EVENT,
     teamId: TEAM_ID,
     catalog: c.files !== undefined ? { ...catalog, files: c.files } : catalog,
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
@@ -125,6 +130,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
           },
         },
       },
+      files: fileText !== undefined ? { resolveFileText: async () => fileText } : {},
     }),
   };
   try {
@@ -290,6 +296,38 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       const expected = 'error' in twice ? runFailureCause(twice.error) : undefined;
       expect(String(cause)).toContain('was answered with something the guide does not describe, twice.');
       expect(String(cause)).toBe(String(expected));
+    });
+  });
+
+  describe("a plugin's or a file reader's answer this engine cannot read (a named divergence: the TypeScript reads on)", () => {
+    // `JSON.parse`, so the surrogate and the key are the answer's own.
+    const lone = JSON.parse('{"text":"\\ud800"}');
+    // Inside a member: a stray top-level `__proto__` is no member either
+    // engine reads, so the shim's object drops it and both read on. A file
+    // reader's members are texts, so only a surrogate can reach one.
+    const proto = JSON.parse('{"text":"a page","data":{"__proto__":{"x":1}}}');
+    const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
+    const plugin = ['import { fetch_url } from plugins', 'movement m(msg: <inbox-[:message]->>) {', '  page = fetch_url(url: msg.`text`)', '}'].join('\n');
+    const file = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
+    const withDeck: TriggerEvent = { ...EVENT, payload: { subject: 'Acme', text: 'Acme raised 3 million.', deck } };
+    const reply = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
+
+    it.each([
+      ["a plugin's answer", 'a lone surrogate', { source: plugin, invoked: lone }, "'fetch_url''s answer", 'text'],
+      ["a plugin's answer", 'a `__proto__` key', { source: plugin, invoked: proto }, "'fetch_url''s answer", 'data'],
+      ["a file reader's answer", 'a lone surrogate', { source: file, event: withDeck, fileText: lone, replies: [reply] }, "a file's text", 'text'],
+    ] as const)('fails the statement when %s holds %s, naming the member', async (_whose, _what, c, named, member) => {
+      const ts = await runOn('ts', c);
+      resetRustRunStats();
+      const rust = await runOn('rust', c);
+      // Never the shim's fault, never a refusal: the host was asked.
+      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, shimFaults: 0, declined: {} });
+      // TypeScript reads the answer as it is.
+      expect('result' in ts).toBe(true);
+      expect('error' in rust && rust.error).toBeInstanceOf(MovementRunFailed);
+      const cause = String('error' in rust ? runFailureCause(rust.error) : undefined);
+      expect(cause).toContain('MOVENG_UNSUPPORTED');
+      expect(cause).toContain(`${named} holding a \`__proto__\` key or a lone surrogate (in ${member})`);
     });
   });
 
