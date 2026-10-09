@@ -345,6 +345,8 @@ import {
 import { checkPinned, type CheckInput } from './program_check';
 import {
   ENGINE_CHOICE_TS,
+  dryAdmitResume,
+  dryAdmitRun,
   engineChoice,
   noteEngine,
   resumeSegmentInRust,
@@ -638,7 +640,10 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
     });
   }
   const { program, prepared } = parseAndCheck(input);
-  return inRunContext(input, (context) => new Interpreter(input, { ...prepared, context }).run(program));
+  return inRunContext(input, (context) => {
+    dryAdmitRun({ input, context });
+    return new Interpreter(input, { ...prepared, context }).run(program);
+  });
 }
 
 /** Whether `MOVEMENT_ENGINE` routes runs to the Rust engine; a run it does
@@ -732,7 +737,8 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // A parked state the Rust engine resumes (its own or the TypeScript
   // engine's: the state is one shape) is the Rust engine's to admit, with
   // its program, as `runMovement` routes a run.
-  if (routesToRust(input) && rustResumeRefusal(input) === undefined) {
+  const toRust = routesToRust(input);
+  if (toRust && rustResumeRefusal(input) === undefined) {
     return inRunContext(input, async (context) => {
       const outcome = await resumeSegmentInRust({ input, context });
       if ('ran' in outcome) return outcome.ran;
@@ -741,7 +747,13 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
     });
   }
   const { program, prepared } = parseAndCheck(input);
-  return inRunContext(input, (context) => resumeInterpreter(input, { program, prepared, context }));
+  return inRunContext(input, (context) => {
+    // A resume the shim refused under `MOVEMENT_ENGINE=rust` is already
+    // counted as not admitted; only one `MOVEMENT_ENGINE` kept from Rust is
+    // asked about.
+    if (!toRust) dryAdmitResume({ input, context });
+    return resumeInterpreter(input, { program, prepared, context });
+  });
 }
 
 function resumeInterpreter(

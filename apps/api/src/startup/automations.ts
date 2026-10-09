@@ -27,6 +27,7 @@ import {
   type WorkNotifier,
 } from '../services/work/drain';
 import { MODES_VAR as SYSTEM_AUTH_MODES_VAR, systemAuthConfig } from '../services/system_auth';
+import { flushAdmissionRollupOnPass } from '../services/movement_engine/admission_rollup';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
@@ -110,11 +111,14 @@ function assertAutomationsDrainConfigured(env: Env = process.env): void {
   workNotifierFor(drainMode(env), env);
 }
 
-/** The worker pulse one drain pass records, in either mode. */
-function passRecorder(): ((result: DrainResult) => void) | undefined {
+/** What one drain pass records, in either mode: the worker pulse, and (at
+ *  most once a minute) what the admission dry runs found since the last. */
+function passRecorder(): (result: DrainResult) => void {
   const recordPass = claimLoopTick();
-  if (!recordPass) return undefined;
-  return (result) => recordPass({ failing: drainPassFailing(result) });
+  return (result) => {
+    recordPass?.({ failing: drainPassFailing(result) });
+    flushAdmissionRollupOnPass();
+  };
 }
 
 function startDrain(env: Env): StopDrainLoop | undefined {
@@ -124,11 +128,10 @@ function startDrain(env: Env): StopDrainLoop | undefined {
   switch (mode) {
     case 'loop': {
       console.warn(`[startup] ${DRAIN_WORKER_ID}: drain mode "loop" (in-process, every ${DRAIN_EVERY_MS} ms)`);
-      const onPass = passRecorder();
       return startDrainLoop({
         everyMs: DRAIN_EVERY_MS,
         ensure: ensureAutomationsPeriodicWork,
-        ...(onPass ? { onPass } : {}),
+        onPass: passRecorder(),
       });
     }
     case 'external':

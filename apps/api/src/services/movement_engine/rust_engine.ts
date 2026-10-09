@@ -34,7 +34,7 @@ import { maxFileChars } from './extraction';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
 import type { RunContext } from './run_context';
 import { serve, type RouteContext } from './rust_host';
-import { rustEvalStats, rustRunStats } from './rust_stats';
+import { emptyAdmissionTally, holdAdmissionVerdict, rustEvalStats, rustRunStats, tallyVerdict } from './rust_stats';
 import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
 
 export { RustShimError, plainJson } from './rust_wire';
@@ -78,10 +78,12 @@ export function engineChoice(env: Record<string, string | undefined> = process.e
   throw new Error(`MOVEMENT_ENGINE is "${value}": it must be "rust" or "ts"`);
 }
 
-/** For a process's boot: a bad `MOVEMENT_ENGINE` fails startup rather than
- *  every run. */
+/** For a process's boot: a bad `MOVEMENT_ENGINE` or
+ *  `MOVEMENT_ENGINE_DRY_RUN_EVERY` fails startup rather than every run (or,
+ *  for the dry run, every dry run, silently). */
 export function assertEngineChoiceConfigured(env: Record<string, string | undefined> = process.env): void {
   engineChoice(env);
+  admissionDryRunEvery(env);
 }
 
 /** What a segment in the Rust engine runs: the run's input and the segment
@@ -219,12 +221,108 @@ export const ENGINE_CHOICE_TS = 'movement_engine_ts';
 export function rustResumeRefusal(
   input: Pick<ResumeMovementInput, 'runId' | 'answer' | 'deferRaceSettlement'>,
 ): string | undefined {
-  const reason =
-    input.answer !== undefined ? 'resume_answer'
-    : input.deferRaceSettlement === true ? 'resume_defers_race_settlement'
-    : undefined;
+  const reason = resumeRefusalOf(input);
   if (reason !== undefined) notAdmitted(input, reason);
   return reason;
+}
+
+function resumeRefusalOf(input: Pick<ResumeMovementInput, 'answer' | 'deferRaceSettlement'>): string | undefined {
+  return input.answer !== undefined ? 'resume_answer'
+    : input.deferRaceSettlement === true ? 'resume_defers_race_settlement'
+    : undefined;
+}
+
+// ── The admission dry run ─────────────────────────────────────────────────────
+
+/**
+ * What the Rust engine's admission says of a run the TypeScript engine is
+ * about to run, counted (`rustRunStats.dryRun`) and held for the host to
+ * persist (`holdAdmissionVerdict`), without running it in Rust. Never throws
+ * and never changes the run: a dry run that cannot reach a verdict is
+ * counted as a fault and nothing else.
+ */
+export function dryAdmitRun(segment: RustSegment, engine?: EngineProtocol): void {
+  dryAdmit(segment, undefined, engine);
+}
+
+/** `dryAdmitRun` for a parked run the TypeScript engine resumes. */
+export function dryAdmitResume(segment: RustSegment<ResumeMovementInput>, engine?: EngineProtocol): void {
+  const { input } = segment;
+  dryAdmit(segment, { shimRefusal: resumeRefusalOf(input), state: input.state, ...(input.reenter === true ? { reenter: true } : {}) }, engine);
+}
+
+/** Whether a dry run asks about one firing in this many: 1 asks about
+ *  every firing, 0 about none. Unset is 1. */
+export function admissionDryRunEvery(env: Record<string, string | undefined> = process.env): number {
+  const value = env.MOVEMENT_ENGINE_DRY_RUN_EVERY;
+  if (value === undefined || value.trim() === '') return 1;
+  const every = Number(value);
+  if (!Number.isInteger(every) || every < 0) {
+    throw new Error(`MOVEMENT_ENGINE_DRY_RUN_EVERY is "${value}": it must be a whole number, 0 to turn the dry run off`);
+  }
+  return every;
+}
+
+/** A dry run's resume: the shim's own refusal of it, if any, and what the
+ *  engine's start entry resumes. */
+type DryResume = { shimRefusal: string | undefined; state: unknown; reenter?: true };
+
+function dryAdmit(
+  { input, context }: RustSegment,
+  resume: DryResume | undefined,
+  engine: EngineProtocol | undefined,
+): void {
+  const stats = rustRunStats.dryRun;
+  try {
+    const every = admissionDryRunEvery();
+    stats.firings += 1;
+    if (every === 0 || (stats.firings - 1) % every !== 0) return;
+    const reasons = admissionReasons({ input, context }, resume, engine);
+    const languageVersion = context.languageVersion;
+    tallyVerdict(stats, reasons);
+    tallyVerdict((stats.byVersion[String(languageVersion)] ??= emptyAdmissionTally()), reasons);
+    if (input.runId !== undefined) holdAdmissionVerdict({ runId: input.runId, languageVersion, reasons });
+  } catch (error) {
+    stats.faults += 1;
+    logger.warn(`movement engine: admission dry run fault run=${input.runId ?? '-'}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Every reason the Rust engine would refuse the run for, first first; none
+ * when it would start it. The shim's own input checks first, as a real run
+ * meets them; then the engine's start entry, whose admission is pure over
+ * its parse and the input: a refusal is its `done`, and an admitted run's
+ * first step is the `check.program` request, which is never answered — the
+ * segment is finished there, so nothing reaches the host.
+ */
+function admissionReasons(
+  { input, context }: RustSegment,
+  resume: DryResume | undefined,
+  engine: EngineProtocol | undefined,
+): string[] {
+  if (resume?.shimRefusal !== undefined) return [resume.shimRefusal];
+  const start = segmentInput(
+    input,
+    context,
+    resume !== undefined ? { state: resume.state, ...(resume.reenter === true ? { reenter: true } : {}) } : undefined,
+  );
+  if (start === undefined) return [EVENT_DOES_NOT_CROSS];
+  const segment = engine ?? openWasmEngine();
+  try {
+    const step = segment.start(start);
+    if ('pending' in step) return [];
+    const done = record(step.done, 'the dry run start');
+    if (!('refused' in done)) {
+      throw new RustShimError(`the Rust engine's start ended with ${Object.keys(done).join(', ') || 'nothing'}, neither a request nor a refusal`);
+    }
+    const first = string(done.refused, 'the Rust engine refused');
+    // Every reason, once the engine names them all; until then, the first.
+    const all = Array.isArray(done.reasons) ? done.reasons.map((reason, i) => string(reason, `the Rust engine refusal reason ${i}`)) : [];
+    return [first, ...all.filter((reason) => reason !== first)];
+  } finally {
+    segment.finish();
+  }
 }
 
 /**

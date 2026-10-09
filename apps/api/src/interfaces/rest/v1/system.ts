@@ -258,7 +258,9 @@ const drainAutomationsHandler: RequestHandler = async (req, res) => {
 /** What the movement engines did in THIS process since it started: which
  *  engine `MOVEMENT_ENGINE` chose, and the Rust engine's counters (why each
  *  run it did not run went to the TypeScript engine, by reason; what it ran,
- *  declined and asked its host; what the evaluator switch answered). The
+ *  declined and asked its host; what the evaluator switch answered; and, in
+ *  `runs.dryRun`, what its admission would have refused each run the
+ *  TypeScript engine ran for, by first and every reason and by version). The
  *  counters are per process and start at zero with it, so each instance
  *  answers for itself, over its uptime. */
 const engineStatsHandler: RequestHandler = (_req, res) => {

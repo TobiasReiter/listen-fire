@@ -77,4 +77,25 @@ describe('GET /system/engine-stats', () => {
     expect(typeof body.uptimeSeconds).toBe('number');
     expect(Number.isNaN(Date.parse(String(body.since)))).toBe(false);
   });
+
+  it('answers what the admission dry runs found of the runs the TypeScript engine ran, by first and every reason, and by version', async () => {
+    const tally = { sampled: 3, admitted: 1, first: { plugin_call: 2 }, all: { plugin_call: 2, 'statement:call': 1 } };
+    rustRunStats.dryRun = { firings: 4, faults: 0, ...tally, byVersion: { '3': tally } };
+    const res = await fetch(`${baseUrl}/system/engine-stats`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      runs: {
+        dryRun: {
+          firings: 4,
+          sampled: 3,
+          admitted: 1,
+          faults: 0,
+          first: { plugin_call: 2 },
+          all: { plugin_call: 2, 'statement:call': 1 },
+          byVersion: { '3': { sampled: 3, admitted: 1, first: { plugin_call: 2 }, all: { plugin_call: 2, 'statement:call': 1 } } },
+        },
+      },
+    });
+  });
 });

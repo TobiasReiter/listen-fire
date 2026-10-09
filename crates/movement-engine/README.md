@@ -417,6 +417,33 @@ mutation — the TypeScript engine throws the same.
 - **`GET /api/v1/system/engine-stats`** (system scope, like `/tg-runs`):
   `{engine, uptimeSeconds, since, runs, evaluator}`, this process's counters
   since it started.
+- **The admission dry run** (`rustRunStats.dryRun`, under `runs.dryRun` in
+  engine-stats): every run and resume the TypeScript engine runs because
+  `MOVEMENT_ENGINE` did not choose this engine is also put to this engine's
+  admission, without running it. The shim builds the segment input a real
+  run would, calls the start entry, and reads the first step: a `refused`
+  done is the verdict, and an admitted run's first step (`check.program`) is
+  never answered; the segment is finished there. So the dry run makes no
+  host call and changes nothing about the run, and a fault in it is counted
+  (`faults`) and logged at warn, never thrown. It counts `firings` (runs it
+  could ask about), `sampled` (runs it asked about), `admitted`, `first` (refused
+  runs by the reason named first, the one a real run is counted by), `all`
+  (refused runs by every reason named, once each, when the engine names them
+  all; the first alone until then) and `byVersion` (the same, by the run's
+  pinned language version). It misses what admission cannot see: declines
+  after the check (`event_field_dated`) and mid-run hand-backs.
+  `MOVEMENT_ENGINE_DRY_RUN_EVERY=N` asks about one firing in N (default 1,
+  every firing; 0 turns it off; boot refuses anything but a whole number).
+  It costs one parse per firing asked about (measured on the engine-runs
+  corpora: 7B Task 1's report).
+- **The daily roll-up**: each process holds its verdicts and, at most once a
+  minute after a drain pass, writes them into one `ops_event` row per day
+  (`detail.kind = "engine_admission_dry_run"`: tallies by version, refused
+  runs by reason and automation id). Reasons, versions and opaque ids only.
+  `pnpm engine:refusals --days N [--json]` sums the rows into the burn-down
+  in demand order: for each reason, the runs it blocked, how many
+  automations, and the five with the most runs; by first reason and by every
+  reason. The operator event store keeps 14 days, so N is at most 14.
 
 ## The run
 

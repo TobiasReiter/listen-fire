@@ -99,6 +99,7 @@ const PURE_FILES = [
 /** Host implementations that still live in this directory: they wire the
  *  engine to Postgres, the work queue and the run recorder. */
 const HOST_SIDE_FILES = [
+  'admission_rollup.ts',
   'await_description.ts',
   'await_resume.ts',
   'await_wake.ts',
