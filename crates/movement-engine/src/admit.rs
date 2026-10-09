@@ -616,17 +616,15 @@ impl Names<'_> {
     }
 
     fn slot(&self, slot: &ExprSlot) -> Admitted {
-        let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return refuse("expression_does_not_lower") };
-        let Ok(expr) = movement_parser::lowering::lower_expression(&tree, &slot.raw) else { return refuse("expression_does_not_lower") };
-        self.expression(&expr)
+        self.expression(&lowered(&slot.raw)?)
     }
 
     fn condition(&self, slot: &ExprSlot) -> Admitted {
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return refuse("condition_does_not_lower") };
-        let Ok(condition) = movement_parser::lowering::lower_condition(&tree, &slot.raw) else {
-            return refuse("condition_does_not_lower");
-        };
-        self.conjunct(&condition)
+        match movement_parser::lowering::lower_condition(&tree, &slot.raw) {
+            Ok(condition) => self.conjunct(&condition),
+            Err(refusal) => refuse(lowering_refused(&refusal, "condition_does_not_lower")),
+        }
     }
 
     fn conjunct(&self, condition: &MovementCondition) -> Admitted {
@@ -719,6 +717,23 @@ impl Names<'_> {
     }
 }
 
+/// An expression slot, lowered.
+fn lowered(raw: &str) -> Result<Expression, String> {
+    let Ok(tree) = movement_parser::expr::parse_expression(raw) else { return Err("expression_does_not_lower".into()) };
+    movement_parser::lowering::lower_expression(&tree, raw).map_err(|refusal| lowering_refused(&refusal, "expression_does_not_lower"))
+}
+
+/// A closure is not a value the shared tree lowers, yet from version 3 the
+/// TypeScript engine runs a collection op written inside an expression, its
+/// closure with it, by binding the call first (checker/nested_calls.ts): a
+/// closure the lowering refuses is that construct, not the checker's miss.
+fn lowering_refused(refusal: &movement_parser::lowering::LoweringRefusal, otherwise: &str) -> String {
+    match refusal.code.as_deref() {
+        Some("MOV_EXPR_CLOSURE_POSITION") => "expression_closure".into(),
+        _ => otherwise.into(),
+    }
+}
+
 /// `await sleep(…)`, the only await this engine parks on.
 fn sleep_only(source: &AwaitSource) -> Admitted {
     match source {
@@ -732,8 +747,7 @@ fn sleep_only(source: &AwaitSource) -> Admitted {
 fn unique_clause(raw: &str) -> Admitted {
     let mut keys = 0;
     for part in crate::unique::split_conjuncts(raw) {
-        let Ok(tree) = movement_parser::expr::parse_expression(&part.raw) else { return refuse("expression_does_not_lower") };
-        let Ok(expr) = movement_parser::lowering::lower_expression(&tree, &part.raw) else { return refuse("expression_does_not_lower") };
+        let expr = lowered(&part.raw)?;
         for conjunct in crate::unique::and_conjuncts(&expr) {
             if crate::unique::identity_key(conjunct).is_some() {
                 keys += 1;
@@ -809,6 +823,37 @@ mod tests {
             ("  r = M(msg)", "function_call"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+        }
+    }
+
+    /// Main's v0.10.2–v0.10.9 language changes (the merge's port list): each
+    /// construct this engine does not run is refused by a name of its own,
+    /// and the scan rules the parser mirrors are admitted.
+    #[test]
+    fn refuses_mains_new_constructs_by_name_and_admits_its_scan_rules() {
+        for (body, reason) in [
+            ("  held = { k: 1 }\n  write held.k { a: 1 }", "write_position_member_path"),
+            ("  held = { k: { name: \"a\" } }\n  write crm-[:companies]-> { ...held.k }", "write_spread_path"),
+            ("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }", "node_spread_path"),
+            ("  n = node { name: \"a\" }\n  write n { name: \"b\" }", "write_position_not_record"),
+            ("  g = graph { name: \"a\", entries: { name: \"x\" } }\n  g-[e:entries]-> {\n    write e { name: \"b\" }\n  }", "block_head_node_root"),
+            ("  g = graph { name: \"a\", entries: { name: \"x\" } }\n  if EXISTS(g-[:entries]->) {\n    x = 1\n  }", "expression:exists"),
+            ("  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }", "expression_closure"),
+            ("  if COUNT(FILTER([msg.`subject`], (s) => s != \"\")) > 0 {\n    x = 1\n  }", "expression_closure"),
+            ("  write crm-[c:companies]-> { unique by (`name` == AT(MAP([1], (v) => v), 0)) name: \"a\" }", "expression_closure"),
+            ("  x = [MAP([1], f)]", "function:map"),
+            ("  held = { k: { inner: msg.`subject` } }\n  x = held.k.inner", "traversal_terminal"),
+            ("  rows = crm-[c:companies]-> {\n    return c\n  }", "name_not_value"),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }", "name_not_value"),
+        ] {
+            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+        }
+        assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}")).as_deref(), Some("import_from_plugins"));
+        for body in [
+            "  `a\\`b` = msg.`subject`\n  `c\\\\d` = \"${`a\\`b`}!\"\n  write crm-[:companies]-> { name: `c\\\\d` }",
+            "  write crm-[:companies]-> { name: UPPER( # a \"quoted\" {aside}\n    msg.`subject`) }",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
         }
     }
 

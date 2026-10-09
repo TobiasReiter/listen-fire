@@ -269,7 +269,8 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read |
 | `write_bind` | a write with `bind` |
 | `write_tuple` | a tuple write |
-| `write_position_not_record` | `write x { … }` where `x` is not a write's handle or a block's hop alias |
+| `write_position_not_record` | `write x { … }` where `x` is not a write's handle or a block's hop alias (a node or graph entry the run built, updated in place, among them) |
+| `write_position_member_path` | `write m.k { … }`: a write from the record a map's member holds |
 | `write_root_expression`, `match_root_expression` | a linked write or match rooted at an expression |
 | `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at a name that is not an instance, a handle, the event or a block's hop alias |
 | `write_node_root`, `match_node_root` | a write or a match into an edge of a node this run built (the in-process stand-in adapter is the TypeScript engine's) |
@@ -281,6 +282,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `unique_by_without_key` | a `unique by` clause with no key (no bare field, parent or `field == value`) |
 | `unique_by_reads_beyond_candidate` | a `unique by` conjunct that is not a pure predicate over the candidate |
 | `write_spread_source` | a write spread of a name that is not a value, a handle, a node or the event |
+| `write_spread_path`, `node_spread_path` | `...m.k` in a write, or in a graph literal: a spread of what a map's member holds |
 | `graph_shape` | `graph<Shape> { … }` |
 | `node_spread` | a spread in a `node { … }` literal |
 | `node_spread_source` | a graph spread of a name that is not a value, a handle or a node |
@@ -289,6 +291,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `node_traversal_entry` | a traversal entry |
 | `is_test` | an `IS` condition |
 | `condition_does_not_lower`, `expression_does_not_lower` | a slot that does not lower (the checker's miss) |
+| `expression_closure` | a closure inside an expression: a collection op written in place (`{ all: MAP(xs, (x) => …) }`), which the TypeScript engine runs as a call bound first (from version 3) |
 | `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance) |
 | `traversal_root` | a field read rooted at a name that is not the event, a value, a handle, a node or a block's hop alias |
 | `traversal_steps` | a field read that walks an edge (`msg-[:replies]->.x`), in a body, a hop's WHERE or its ORDER BY key: traversal inside an expression |
@@ -836,6 +839,11 @@ The rule for what this engine reproduces of JavaScript:
   - a hop's ORDER BY over keys of mixed types: one total order over every
     key kind (say: nulls, then numbers, then text), so no sort algorithm's
     merge decides where a record lands.
+  - extraction call-site numbering: the number in an extraction's prompt
+    (`x:<node>#<n>`) follows the order concurrent siblings reach the site,
+    so a host answering at another speed sees another prompt; numbered by
+    the site's place in the fan instead (the recorded runs allow-list the
+    cases that depend on it until then).
 
 ## The check
 

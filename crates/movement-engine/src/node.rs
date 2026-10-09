@@ -64,15 +64,14 @@ impl Node {
     fn set_edge(&mut self, name: &str, landings: Vec<Binding>) {
         self.delete_field(name);
         self.field_order.retain(|f| f != name);
-        // A node the graph builds on its edge has landed there.
+        // A node the graph builds on its edge has landed there; first edge wins.
         for landing in &landings {
             if let Binding::Node(node) = landing {
-                // A landing that is this node itself is borrowed already,
-                // and stays unmarked.
-                if let Ok(mut node) = node.try_borrow_mut() {
-                    if node.landed_on.is_none() {
-                        node.landed_on = Some(name.to_string());
-                    }
+                // A landing that is this node itself is the one borrowed now.
+                if std::ptr::eq(node.as_ptr().cast_const(), &*self) {
+                    self.landed_on.get_or_insert_with(|| name.to_string());
+                } else {
+                    node.borrow_mut().landed_on.get_or_insert_with(|| name.to_string());
                 }
             }
         }
@@ -356,5 +355,20 @@ fn as_map_list(value: &Js) -> Option<Vec<JsObject>> {
         Js::Object(_) => dict(value).map(|o| vec![o]),
         Js::Array(list) if !list.items.is_empty() => list.items.iter().map(dict).collect(),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_node_landed_on_an_edge_is_marked_by_the_first_edge_itself_included() {
+        let graph = Rc::new(RefCell::new(Node::default()));
+        let other = Rc::new(RefCell::new(Node::default()));
+        graph.borrow_mut().set_edge("me", vec![Binding::Node(graph.clone()), Binding::Node(other.clone())]);
+        graph.borrow_mut().set_edge("again", vec![Binding::Node(graph.clone()), Binding::Node(other.clone())]);
+        assert_eq!(graph.borrow().landed_on.as_deref(), Some("me"));
+        assert_eq!(other.borrow().landed_on.as_deref(), Some("me"));
     }
 }

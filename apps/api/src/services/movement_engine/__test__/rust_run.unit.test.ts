@@ -457,6 +457,14 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       [movement('  x = FIRST(msg.`subject`)'), 'expression:aggregate'],
       [movement('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), 'is_test'],
+      // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
+      [movement('  held = { k: 1 }\n  write held.k { a: 1 }'), 'write_position_member_path'],
+      [movement('  held = { k: { name: "a" } }\n  write crm-[:companies]-> { ...held.k }'), 'write_spread_path'],
+      [movement('  held = { k: { name: "a" } }\n  g = graph { ...held.k }'), 'node_spread_path'],
+      [movement('  n = node { name: "a" }\n  write n { name: "b" }'), 'write_position_not_record'],
+      [movement('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }'), 'expression_closure'],
+      [movement('  held = { k: { inner: 1 } }\n  x = held.k.inner'), 'traversal_terminal'],
+      [`import { fetch_url } from plugins\n${movement('  x = 1')}`, 'import_from_plugins'],
     ] as const) {
       resetRustRunStats();
       const { outcome, resolved } = await segmentOf(source);
