@@ -314,6 +314,17 @@ describe("main's language changes on both engines", () => {
     );
   });
 
+  it('a body rebinding a file-level value: refused by name, failed by the TypeScript engine', async () => {
+    const source = [PRELUDE, 'tag = "x"', 'movement m(msg: <inbox-[:message]->>) {', '  tag = 1', '}'].join('\n');
+    const ts = await runOn('ts', source);
+    expect(ts.error).toContain('MOV_SHADOWED_NAME');
+    resetRustEvalStats();
+    resetRustRunStats();
+    const rust = await runOn('rust', source);
+    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { name_shadowed: 1 }, declined: {}, hostCalls: {} });
+    expect(seen(rust)).toEqual(seen(ts));
+  });
+
   it('a # comment inside brackets is skipped (2ee8959ba6, 48009be49a, 51bca6a37b): mirrored, run whole in Rust', async () => {
     await onBoth(
       movement('  write crm-[:companies]-> { name: UPPER( # a "quoted" {aside} (', '    msg.`subject`) }'),

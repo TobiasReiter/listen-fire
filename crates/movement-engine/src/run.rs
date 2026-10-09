@@ -1743,6 +1743,22 @@ mod tests {
         assert_eq!(crate::park::resume_refusal(&wire(suspended)), None);
     }
 
+    /// The file scope is rebuilt from the program on resume, so a declared
+    /// shape there is the program's; anywhere else it is a local shape this
+    /// engine does not rebuild.
+    #[test]
+    fn a_shape_is_resumed_in_the_file_scope_only() {
+        let state = |file: Json, body: Json| {
+            json!({ "version": 1, "address": "s0", "bindingName": null, "scopeChain": [{ "bindings": file }, { "bindings": body }] })
+        };
+        let shape = json!({ "kind": "shape", "name": "Lead" });
+        assert_eq!(crate::park::resume_refusal(&wire(state(json!({ "Lead": shape }), json!({})))), None);
+        assert_eq!(
+            crate::park::resume_refusal(&wire(state(json!({}), json!({ "Lead": shape })))).as_deref(),
+            Some("resume_state_kind:shape")
+        );
+    }
+
     #[test]
     fn a_malformed_state_of_a_known_kind_fails_the_resume_loudly() {
         // Its kinds are all this engine's, so admission lets it by; the

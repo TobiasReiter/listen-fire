@@ -55,6 +55,10 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
     }
     let movement_names: BTreeSet<String> = movements.iter().map(|m| m.name.clone()).collect();
     let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
+    // `resolveCallee`: as written, or from version 3 in any letter case.
+    let movement_named = |callee: &str| {
+        movement_names.contains(callee) || (language_version >= 3 && movement_names.iter().any(|m| m.to_lowercase() == callee.to_lowercase()))
+    };
     // File-level values, in source order: each may read the ones before it.
     let mut file_values: Vec<(&str, &RValue)> = Vec::new();
     for statement in &program.statements {
@@ -76,6 +80,13 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
                 RValue::Construct { .. } => {
                     file_names.insert(assign.name.clone());
                     instances.insert(assign.name.clone());
+                }
+                // A call whose callee the file declares is a call, not the
+                // built-in's value it would otherwise read as (run.ts
+                // `resolvedRValue`), and a file has no event to make it about
+                // (`fileLevelCall`).
+                RValue::Call { call } if plugin_named(&call.callee) || movement_named(&call.callee) => {
+                    return Some("file_call".into());
                 }
                 RValue::Expr { .. } | RValue::Call { .. } => {
                     file_names.insert(assign.name.clone());
@@ -769,7 +780,7 @@ impl Names<'_> {
             Expression::Not { expression } | Expression::Negate { expression } => self.walk(expression, scoped),
             // A plugin called in place, bound first from version 3
             // (checker/nested_calls.ts): its invocation.
-            Expression::Function { fn_, .. } if names_plugin(self.plugins, fn_, 3) => refuse("plugin_call"),
+            Expression::Function { fn_, .. } if names_plugin(self.plugins, fn_, self.language_version) => refuse("plugin_call"),
             Expression::Function { fn_, args } => {
                 if !FUNCTIONS.contains(&fn_.as_str()) {
                     return refuse(format!("function:{fn_}"));
@@ -1068,5 +1079,9 @@ mod tests {
             assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some(reason), "{value}");
         }
         assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}page = fetch_url()\n{movement}")).as_deref(), Some("file_call"));
+        // A plugin or a movement called at file level, in either call form.
+        for value in ["page = fetch_url(url: \"x\")", "page = FETCH_URL(url: \"x\")", "r = m(msg: 1)", "r = M(1)"] {
+            assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}{value}\n{movement}")).as_deref(), Some("file_call"), "{value}");
+        }
     }
 }

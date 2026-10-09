@@ -469,6 +469,7 @@ describe('a whole run in the Rust engine', () => {
       [`import { fetch_url } from plugins\n${movement('  fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = { page: fetch_url(msg.`text`) }')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\npage = fetch_url()\n${movement('  x = 1')}`, 'file_call'],
+      [`import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`, 'file_call'],
       // What reads a declaration is refused where it stands.
       [`node Deal { name: <text> }\n${movement('  found = extract from [msg.`text`] {\n    node deal: <Deal>\n  }')}`, 'rvalue:extract'],
       [`node Deal { name: <text> }\n${movement('  g = graph<Deal> { name: "a" }')}`, 'graph_shape'],

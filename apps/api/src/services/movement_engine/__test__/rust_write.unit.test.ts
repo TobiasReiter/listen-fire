@@ -595,10 +595,12 @@ describe('parks in the Rust engine', () => {
       '  write crm-[:companies]-> { name: label, stage: rules }',
       '}',
     ].join('\n');
+    // The catalog carries the plugin the program imports, or the run below
+    // proves nothing about one.
+    expect(fetchUrl).toBeDefined();
     const event = webhook({ subject: 'Acme' });
     const { ts, rust } = await agree({ source, event });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's1' });
-    expect(fetchUrl).toBeDefined();
     // Key for key, in order: the file scope's plugin, shape and values included.
     expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
     const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
