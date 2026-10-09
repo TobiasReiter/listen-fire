@@ -349,6 +349,8 @@ import {
   dryAdmitRun,
   engineChoice,
   noteEngine,
+  recordTypeScriptRun,
+  refusalOutcome,
   resumeSegmentInRust,
   runSegmentInRust,
   rustResumeRefusal,
@@ -633,6 +635,8 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
     return inRunContext(input, async (context) => {
       const outcome = await runSegmentInRust({ input, context });
       if ('ran' in outcome) return outcome.ran;
+      const refusal = refusalOutcome(outcome.declined);
+      if (refusal !== undefined) throw refusal;
       // Refused or declined before any host-visible effect: the interpreter
       // runs it, in the same segment.
       const { program, prepared } = parseAndCheck(input);
@@ -641,7 +645,7 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   }
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) => {
-    dryAdmitRun({ input, context });
+    recordTypeScriptRun(input, dryAdmitRun({ input, context }));
     return new Interpreter(input, { ...prepared, context }).run(program);
   });
 }
@@ -738,20 +742,27 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // engine's: the state is one shape) is the Rust engine's to admit, with
   // its program, as `runMovement` routes a run.
   const toRust = routesToRust(input);
-  if (toRust && rustResumeRefusal(input) === undefined) {
+  const shimRefusal = toRust ? rustResumeRefusal(input) : undefined;
+  if (toRust && shimRefusal === undefined) {
     return inRunContext(input, async (context) => {
       const outcome = await resumeSegmentInRust({ input, context });
       if ('ran' in outcome) return outcome.ran;
+      const refusal = refusalOutcome(outcome.declined);
+      if (refusal !== undefined) throw refusal;
       const { program, prepared } = parseAndCheck(input);
       return resumeInterpreter(input, { program, prepared, context });
     });
+  }
+  if (shimRefusal !== undefined) {
+    const refusal = refusalOutcome(shimRefusal);
+    if (refusal !== undefined) throw refusal;
   }
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) => {
     // A resume the shim refused under `MOVEMENT_ENGINE=rust` is already
     // counted as not admitted; only one `MOVEMENT_ENGINE` kept from Rust is
     // asked about.
-    if (!toRust) dryAdmitResume({ input, context });
+    if (!toRust) recordTypeScriptRun(input, dryAdmitResume({ input, context }));
     return resumeInterpreter(input, { program, prepared, context });
   });
 }

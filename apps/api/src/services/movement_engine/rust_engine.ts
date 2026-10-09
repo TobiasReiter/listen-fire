@@ -39,6 +39,7 @@ import {
   emptyAdmissionTally,
   holdAdmissionVerdict,
   recordDryRunDuration,
+  recordRunEngine,
   rustEvalStats,
   rustRunStats,
   tallyVerdict,
@@ -86,12 +87,45 @@ export function engineChoice(env: Record<string, string | undefined> = process.e
   throw new Error(`MOVEMENT_ENGINE is "${value}": it must be "rust" or "ts"`);
 }
 
-/** For a process's boot: a bad `MOVEMENT_ENGINE` or
- *  `MOVEMENT_ENGINE_DRY_RUN_EVERY` fails startup rather than every run (or,
+/** What happens to a run `MOVEMENT_ENGINE=rust` routes and the Rust engine
+ *  refuses or declines: `ts` runs it on the TypeScript engine, `none` fails
+ *  it with the reason (the setting to run with once nothing is refused, so a
+ *  refusal is an error and not a silent slow path). */
+export type EngineFallback = 'ts' | 'none';
+
+/** The one place `MOVEMENT_ENGINE_FALLBACK` is read. Unset is `ts`. */
+export function engineFallback(env: Record<string, string | undefined> = process.env): EngineFallback {
+  const value = env.MOVEMENT_ENGINE_FALLBACK;
+  if (value === undefined || value === '' || value === 'ts') return 'ts';
+  if (value === 'none') return 'none';
+  throw new Error(`MOVEMENT_ENGINE_FALLBACK is "${value}": it must be "ts" or "none"`);
+}
+
+/** For a process's boot: a bad `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`
+ *  or `MOVEMENT_ENGINE_DRY_RUN_EVERY` fails startup rather than every run (or,
  *  for the dry run, every dry run, silently). */
 export function assertEngineChoiceConfigured(env: Record<string, string | undefined> = process.env): void {
-  engineChoice(env);
+  const choice = engineChoice(env);
+  // No fallback with no Rust engine would fail every run, whatever its program.
+  if (engineFallback(env) === 'none' && choice !== 'rust') {
+    throw new Error('MOVEMENT_ENGINE_FALLBACK is "none", which fails every run the Rust engine refuses: it needs MOVEMENT_ENGINE=rust');
+  }
   admissionDryRunEvery(env);
+}
+
+/** The error a refused run fails with under `MOVEMENT_ENGINE_FALLBACK=none`. */
+function refusedWithoutFallback(reason: string): MovementEngineError {
+  return new MovementEngineError(
+    'MOVENG_UNSUPPORTED',
+    `the Rust engine does not run this movement (${reason}), and MOVEMENT_ENGINE_FALLBACK=none leaves no other engine to run it`,
+    { reason },
+  );
+}
+
+/** What a run the Rust engine did not take does next: the TypeScript engine
+ *  runs it (`undefined`), or the run fails (`fallback=none`). */
+export function refusalOutcome(reason: string): MovementEngineError | undefined {
+  return engineFallback() === 'none' ? refusedWithoutFallback(reason) : undefined;
 }
 
 /** What a segment in the Rust engine runs: the run's input and the segment
@@ -161,7 +195,7 @@ async function segmentInRust(
   rustRunStats.admitted += 1;
   if ('declined' in outcome) {
     rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
-    noteEngine(input, 'ts', outcome.declined);
+    noteEngine(input, engineFallback() === 'none' ? 'rust' : 'ts', outcome.declined);
     return outcome;
   }
   rustRunStats.ranWhole += 1;
@@ -197,7 +231,7 @@ const ADMITTED = 'admitted';
 /** A run that never ran in Rust: counted by its reason, and logged. */
 function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string): { declined: string } {
   rustRunStats.notAdmitted[reason] = (rustRunStats.notAdmitted[reason] ?? 0) + 1;
-  noteEngine(input, 'ts', reason);
+  noteEngine(input, engineFallback() === 'none' ? 'rust' : 'ts', reason);
   return { declined: reason };
 }
 
@@ -213,6 +247,20 @@ export function noteEngine(input: Pick<RunMovementInput, 'runId'>, engine: Engin
   const line = `movement engine: engine=${engine} run=${input.runId ?? '-'} reason=${reason}`;
   if (reason === ENGINE_CHOICE_TS) logger.debug(line);
   else logger.info(line);
+  // A run `MOVEMENT_ENGINE` did not route is recorded with the dry run's
+  // verdict instead (`recordTypeScriptRun`).
+  if (reason !== ENGINE_CHOICE_TS) recordEngine(input, engine, reason === ADMITTED ? null : reason);
+}
+
+function recordEngine(input: Pick<RunMovementInput, 'runId'>, engine: EngineChoice, reason: string | null): void {
+  if (input.runId !== undefined) recordRunEngine({ runId: input.runId, engine, reason });
+}
+
+/** A run `MOVEMENT_ENGINE` kept on the TypeScript engine, with the first
+ *  reason the Rust engine's admission gave for it (undefined: it would
+ *  take it, or the dry run was not asked or faulted). */
+export function recordTypeScriptRun(input: Pick<RunMovementInput, 'runId'>, reasons: string[] | undefined): void {
+  recordEngine(input, 'ts', reasons?.[0] ?? null);
 }
 
 /** Why the TypeScript engine runs a run that `MOVEMENT_ENGINE` did not route. */
@@ -249,14 +297,14 @@ function resumeRefusalOf(input: Pick<ResumeMovementInput, 'answer' | 'deferRaceS
  * and never changes the run: a dry run that cannot reach a verdict is
  * counted as a fault and nothing else.
  */
-export function dryAdmitRun(segment: RustSegment, engine?: EngineProtocol): void {
-  dryAdmit(segment, undefined, engine);
+export function dryAdmitRun(segment: RustSegment, engine?: EngineProtocol): string[] | undefined {
+  return dryAdmit(segment, undefined, engine);
 }
 
 /** `dryAdmitRun` for a parked run the TypeScript engine resumes. */
-export function dryAdmitResume(segment: RustSegment<ResumeMovementInput>, engine?: EngineProtocol): void {
+export function dryAdmitResume(segment: RustSegment<ResumeMovementInput>, engine?: EngineProtocol): string[] | undefined {
   const { input } = segment;
-  dryAdmit(segment, { shimRefusal: resumeRefusalOf(input), state: input.state, ...(input.reenter === true ? { reenter: true } : {}) }, engine);
+  return dryAdmit(segment, { shimRefusal: resumeRefusalOf(input), state: input.state, ...(input.reenter === true ? { reenter: true } : {}) }, engine);
 }
 
 /** Whether a dry run asks about one firing in this many: 1 asks about
@@ -279,15 +327,15 @@ function dryAdmit(
   { input, context }: RustSegment,
   resume: DryResume | undefined,
   engine: EngineProtocol | undefined,
-): void {
+): string[] | undefined {
   // A rehearsal is an author trying a program, not a firing: it is not
   // demand to burn down.
-  if (input.dryRun === true) return;
+  if (input.dryRun === true) return undefined;
   const stats = rustRunStats.dryRun;
   try {
     const every = admissionDryRunEvery();
     stats.firings += 1;
-    if (every === 0 || (stats.firings - 1) % every !== 0) return;
+    if (every === 0 || (stats.firings - 1) % every !== 0) return undefined;
     const clock = currentDryRunClock();
     const startedAt = clock?.();
     const reasons = admissionReasons({ input, context }, resume, engine);
@@ -296,9 +344,11 @@ function dryAdmit(
     tallyVerdict(stats, reasons);
     tallyVerdict((stats.byVersion[String(languageVersion)] ??= emptyAdmissionTally()), reasons);
     if (input.runId !== undefined) holdAdmissionVerdict({ runId: input.runId, languageVersion, reasons });
+    return reasons;
   } catch (error) {
     stats.faults += 1;
     logger.warn(`movement engine: admission dry run fault run=${input.runId ?? '-'}: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
   }
 }
 

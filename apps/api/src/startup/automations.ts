@@ -31,6 +31,7 @@ import {
 import { MODES_VAR as SYSTEM_AUTH_MODES_VAR, systemAuthConfig } from '../services/system_auth';
 import { flushAdmissionRollupOnPass } from '../services/movement_engine/admission_rollup';
 import { assertEngineChoiceConfigured } from '../services/movement_engine/rust_engine';
+import { recordRunEnginesOnRows } from '../services/movement_engine/run_engine_record';
 import { setDryRunClock } from '../services/movement_engine/rust_stats';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
@@ -158,6 +159,7 @@ async function registerAutomationsWork(): Promise<void> {
   // Every entry that runs movements comes through here (the server's wire,
   // drain:once), so the engine settings are checked here for all of them.
   assertEngineChoiceConfigured();
+  recordRunEnginesOnRows();
   setDryRunClock(() => performance.now());
   registerCoreWork();
   registerWorkKinds(adapterWorkKinds());

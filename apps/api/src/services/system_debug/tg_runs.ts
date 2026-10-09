@@ -43,6 +43,8 @@ export async function listTgRuns({
       'trigger_run.completed_at',
       'trigger_run.failed_at',
       'trigger_run.failure_reason',
+      'trigger_run.engine',
+      'trigger_run.engine_reason',
       'trigger_run.created_at',
     ])
     .orderBy('trigger_run.created_at desc')
@@ -62,6 +64,8 @@ export async function listTgRuns({
     completedAt: r.completed_at,
     failedAt: r.failed_at,
     failureReason: reportedFailureReason(r),
+    engine: r.engine,
+    engineReason: r.engine_reason,
     createdAt: r.created_at,
   }));
 }
@@ -98,6 +102,8 @@ export async function getTgRun({ teamId, runId }: GetTriggerRunArgs) {
     completedAt: row.completed_at,
     failedAt: row.failed_at,
     failureReason: reportedFailureReason(row),
+    engine: row.engine,
+    engineReason: row.engine_reason,
     createdAt: row.created_at,
   };
 }

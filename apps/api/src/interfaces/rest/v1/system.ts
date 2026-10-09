@@ -14,7 +14,7 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
-import { engineChoice } from '../../../services/movement_engine/rust_engine';
+import { engineChoice, engineFallback } from '../../../services/movement_engine/rust_engine';
 import { dryRunDurationSummary, rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
 import {
   requireSystemAction,
@@ -267,6 +267,7 @@ const engineStatsHandler: RequestHandler = (_req, res) => {
   const uptimeSeconds = Math.round(process.uptime());
   return res.status(200).json({
     engine: engineChoice(),
+    fallback: engineFallback(),
     uptimeSeconds,
     since: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
     // The recent dry runs' cost rides with their counts.

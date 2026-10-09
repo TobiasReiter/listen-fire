@@ -112,6 +112,7 @@ const HOST_SIDE_FILES = [
   'lease_fence.ts',
   'limit_pause.ts',
   'park_sink.ts',
+  'run_engine_record.ts',
   'run_lease.ts',
   'single_flight.ts',
   'test_host.ts',

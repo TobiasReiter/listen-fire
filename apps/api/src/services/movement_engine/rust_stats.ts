@@ -217,3 +217,26 @@ export function holdAdmissionVerdict(verdict: AdmissionVerdict): void {
 export function takeAdmissionVerdicts(): AdmissionVerdict[] {
   return admissionVerdicts.splice(0, admissionVerdicts.length);
 }
+
+// ── Which engine ran a run ────────────────────────────────────────────────────
+
+/** What the engine decided for one segment of a run: the engine that ran it,
+ *  and the first reason the Rust engine's admission gave for not running it
+ *  (null when it did, or would have). */
+export interface RunEngineRecord {
+  runId: string;
+  engine: 'ts' | 'rust';
+  reason: string | null;
+}
+
+let runEngineRecorder: ((record: RunEngineRecord) => void) | undefined;
+
+/** The host installs where a decision goes (the run row); the engine writes
+ *  no rows of its own, so with none installed a decision goes nowhere. */
+export function setRunEngineRecorder(recorder: ((record: RunEngineRecord) => void) | undefined): void {
+  runEngineRecorder = recorder;
+}
+
+export function recordRunEngine(record: RunEngineRecord): void {
+  runEngineRecorder?.(record);
+}
