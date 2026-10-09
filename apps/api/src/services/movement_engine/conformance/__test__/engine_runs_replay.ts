@@ -30,11 +30,13 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  Raised at chunk 6A Task 4, folds, EXISTS, IS tests and a record named
  *  twice (2026-10-09): 256 and 313 on Rust, less a margin of 2. Raised at
  *  chunk 7A Task 1, admission walking only what the fired movement reaches
- *  (2026-10-09): 257 and 314 on Rust, less a margin of 2.
+ *  (2026-10-09): 257 and 314 on Rust, less a margin of 2. Raised at chunk 7A
+ *  Task 2, calls and the graphs a run builds (2026-10-09): 312 and 379 on
+ *  Rust, less a margin of 2.
  *  Raise them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 255 },
-  v2: { recordings: 542, rust: 312 },
+  v1: { recordings: 443, rust: 310 },
+  v2: { recordings: 542, rust: 377 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);

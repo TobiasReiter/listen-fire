@@ -29,11 +29,15 @@ const path = require('node:path');
 // v2 352 whole; the floors are those less a margin of 2. Chunk 7A Task 1
 // (admission walks only the movements the fired one reaches, and names every
 // reason, 2026-10-09) runs v1 290, v2 353 whole: an unreached helper no
-// longer refuses its file; the floors are those less a margin of 2. A floor
+// longer refuses its file; the floors are those less a margin of 2. Chunk
+// 7A Task 2 (calls to helper movements, the graphs a run builds, lazy walks,
+// shaped graphs, 2026-10-09) runs v1 394, v2 469 whole (the binding x
+// consumer matrix's admitted cells among them: 48 and 50); the floors are
+// those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 288, v2: 351 };
+const RAN_WHOLE_FLOOR = { v1: 392, v2: 467 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

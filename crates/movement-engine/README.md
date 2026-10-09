@@ -1418,6 +1418,6 @@ admitted: {reason: count}` (by first reason, largest first), `Rust runs not
 admitted, every reason: {reason: count}` (each run counted under every
 reason it holds), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 288, v2 351). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 392, v2 467). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.
