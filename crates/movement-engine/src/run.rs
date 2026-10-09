@@ -149,7 +149,7 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
     let ledger = crate::ledger::Ledger::new(&input.spend);
     let mut done = match run(&host, &input, &ledger).await {
         Ok(result) => json!({ "result": result }),
-        Err(Stop::Refused(reason)) => return json!({ "refused": reason }),
+        Err(Stop::Refused(reasons)) => return json!({ "refused": reasons[0], "reasons": reasons }),
         Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
         Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
         Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
@@ -168,8 +168,9 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
 
 /// How a run stops early.
 pub(crate) enum Stop {
-    /// Not admitted: nothing but the parse and the walk happened.
-    Refused(String),
+    /// Not admitted: nothing but the parse and the walk happened. Every
+    /// reason the walk met, the first first; never empty.
+    Refused(Vec<String>),
     /// Past admission, before any host-visible effect.
     Declined(String),
     Thrown(Failure),
@@ -318,19 +319,17 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let version = input.language_version;
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
-    let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
+    let root = program::parse(&input.source, version).map_err(|_| Stop::Refused(vec!["source_does_not_parse".into()]))?;
     // What a plugin call binds is the snapshot's to say, read off the input.
     let plugins = serde_json::from_str::<CatalogPlugins>(input.catalog.get()).ok();
-    if let Some(reason) = crate::admit::refusal(&root.program, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins))) {
-        return Err(Stop::Refused(reason));
+    let movements = crate::admit::reachable(&root.program, input.movement_name.as_deref(), version);
+    let mut reasons = crate::admit::refusals(&root.program, &movements, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
+    reasons.extend(crate::admit::input_refusal(&root.program, &movements, input.spend.cap_microdollars.is_some(), &input.suspend_at));
+    if let Some(resume) = &input.resume {
+        reasons.extend(crate::park::resume_refusal(&resume.state));
     }
-    if let Some(reason) = crate::admit::input_refusal(&root.program, input.spend.cap_microdollars.is_some(), &input.suspend_at) {
-        return Err(Stop::Refused(reason));
-    }
-    if let Some(resume) = &input.resume
-        && let Some(reason) = crate::park::resume_refusal(&resume.state)
-    {
-        return Err(Stop::Refused(reason));
+    if !reasons.is_empty() {
+        return Err(Stop::Refused(reasons));
     }
     let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
     let event = env::decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
@@ -635,18 +634,7 @@ impl Run<'_> {
     }
 
     fn select_movement<'m>(&self, movements: &[&'m MovementDeclaration]) -> Result<&'m MovementDeclaration, Stop> {
-        let wanted = self.input.movement_name.as_deref().filter(|w| !w.is_empty());
-        let found = match wanted {
-            Some(wanted) => movements.iter().find(|m| m.name == wanted).or_else(|| {
-                // From version 3 the fired name is a function's, in any case.
-                (self.version() >= 3)
-                    .then(|| movements.iter().find(|m| m.name.to_lowercase() == wanted.to_lowercase()))
-                    .flatten()
-            }),
-            None if movements.len() == 1 => movements.first(),
-            None => None,
-        };
-        found.copied().ok_or_else(|| {
+        crate::admit::entry_of(movements, self.input.movement_name.as_deref(), self.version()).ok_or_else(|| {
             Stop::Thrown(Failure::engine(
                 "MOVENG_NOT_FOUND",
                 match self.input.movement_name.as_deref() {
@@ -1937,8 +1925,36 @@ mod tests {
         let source = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}";
         let (done, seen) = drive(source, json!(["o", 1, []]), plain_host(json!({})));
         // Refused on this engine's own parse: not even the check is asked.
-        assert_eq!(done, json!({ "refused": "plugin_call" }));
+        assert_eq!(done, json!({ "refused": "plugin_call", "reasons": ["plugin_call"] }));
         assert!(seen.is_empty());
+    }
+
+    /// The refused `done` carries every reason, the first as `refused`; a
+    /// movement the entry does not reach refuses nothing, and the run goes on
+    /// to its check.
+    #[test]
+    fn a_refusal_names_every_reason_and_an_unreached_movement_none() {
+        let first_step = |source: &str| {
+            let input = json!({
+                "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [], "movementName": "m",
+                "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({})), "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
+            });
+            crate::begin(&input.to_string()).unwrap().start().unwrap()
+        };
+        let prelude = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\n";
+        let helper = "movement helper(e: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}\n";
+        let refused = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = AI(\"why\")\n  helper(e: msg)\n}}\n{helper}");
+        match first_step(&refused) {
+            Step::Done(done) => {
+                assert_eq!(done, json!({ "refused": "expression:llm", "reasons": ["expression:llm", "statement:call", "plugin_call"] }))
+            }
+            Step::Pending(pending) => panic!("asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
+        }
+        let unreached = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}\n{helper}");
+        match first_step(&unreached) {
+            Step::Pending(pending) => assert_eq!(pending.iter().map(|r| (r.family, r.method.as_str())).collect::<Vec<_>>(), [("check", "program")]),
+            Step::Done(done) => panic!("{done}"),
+        }
     }
 
     /// The file scope as `prepareMovement` builds it: an import of a plugin
@@ -2076,7 +2092,7 @@ mod tests {
             });
             let mut segment = crate::begin(&input.to_string()).unwrap();
             match segment.start().unwrap() {
-                Step::Done(done) => assert_eq!(done, json!({ "refused": reason })),
+                Step::Done(done) => assert_eq!(done, json!({ "refused": reason, "reasons": [reason] })),
                 Step::Pending(pending) => panic!("{reason}: asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
             }
         }

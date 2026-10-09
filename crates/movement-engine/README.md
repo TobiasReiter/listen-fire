@@ -27,7 +27,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight; `map_concurrent` runs a fan at most so many at a time (fans.ts `mapConcurrent`) |
 | `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `llm.client`, `llm.transforms`, `park.sink`, `control.cancel`, `locks`, `trace`, `clock`, `files`, `ids`), plus the engine's own (`check`, `builtins`, `log`); every host request names the segment |
 | `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the cap met (`exceeded`) once a budget refusal is charged, a priced plugin refused before the host is asked once the cap is spent (`plugin_refusal`), the charges handed back with `done` |
-| `admit` | admission: the allow-list walk over this engine's own parse, before the check; a refusal's stable reason (below) |
+| `admit` | admission: the allow-list walk over this engine's own parse of the file and the movements the entry reaches, before the check; every stable reason a refusal holds (below) |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors; the folds; what a walk, an `EXISTS` over a record, or a count needs asked of the run |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
@@ -242,30 +242,61 @@ this order, and the program is parsed once, here:
 
 Either way the shim runs the program on the TypeScript engine.
 
-### The reasons
+### What admission walks
 
-Each is a stable snake_case string: the one log line per run names it, and
-`rustRunStats` counts it (`notAdmitted` for the first two places,
-`declined` for the third).
+- **The file, whole.** Its imports, declarations and file-level values:
+  `prepareMovement` binds every one, on either engine, whichever movement
+  fires.
+- **The movements the entry reaches** (`admit::reachable`). The entry is the
+  movement the segment fires (`movementName`, picked as `selectMovement`
+  picks it: exactly, or from version 3 in any letter case; else the file's
+  only movement). Then every movement a reached movement's text names,
+  transitively, in source order.
+- **Nothing else.** A movement no reached movement names cannot run, so
+  what it holds refuses nothing.
+- **Why that is sound.** Either engine enters a movement's body only by
+  resolving a name the running body wrote: a call's callee (run.ts
+  `runCall`), a combinator's named arm (`armBodyAt` → `movementDeclaration`),
+  a movement handed where a closure goes (`closureOf`), and on resume the
+  call frames those made. Name resolution is lexical (`resolveCallee`,
+  `Environment.resolve`); there is no name built at run time. The walk reads
+  every string the movement's AST holds, whole (a callee, an arm's name)
+  and through the shared name scan (`scan_name`, so a slot's text and a
+  backtick-quoted name count), in any letter case. String literals' words
+  count too, so the set read is never smaller than what can run.
+- **No entry picked** (none named and more than one movement, or a name the
+  file lacks): every movement is walked. The run throws MOVENG_NOT_FOUND
+  after the check on either engine anyway.
 
-**The shim's input checks** (`notAdmitted`):
+The walk does not stop at a reason. Each statement is walked whatever the
+one before it needed, an `if`'s arms past its condition, a block's body past
+its head. A refused `done` carries every reason met, in the order met, each
+once (`{refused: <first>, reasons: [<first>, …]}`). The input's and the
+parked state's reasons follow the program's. The first is the one a walk
+that stopped there would give; `rustRunStats.notAdmitted` counts each run
+under it, and `rustRunStats.allReasons` under each reason the run holds.
 
-| reason | the input |
-|---|---|
-| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a `Date`, a class instance, a lone surrogate) |
-| `resume_answer` | a resume that answers into its leaf (an ask) |
-| `resume_defers_race_settlement` | a resume that defers a race's settlement |
+### The port list
 
-**Admission: the file** (`notAdmitted`):
+Every reason below is a construct, input or state this engine does not run
+yet, and so a port toward zero refusals: what the TypeScript engine does
+there is the specification, mirrored here. Each is a stable snake_case
+string: the one log line per run names the first, and `rustRunStats` counts
+it (`notAdmitted` and `allReasons` for the first two places, `declined` for
+the third). "Needs" says what this engine must gain to run it. A size is
+given where one was estimated (S, M, L); the rest are unsized. The
+constructs this engine already runs are "The run" below.
 
-| reason | the construct |
-|---|---|
-| `source_does_not_parse` | the source does not parse here (the TypeScript engine throws the parse error) |
-| `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` |
-| `file_assignment` | a file-level binding that is neither an instance construction nor a value (a file-level `extract`, …) |
-| `file_call` | a file-level construction spelled with a movement's or a plugin's name (a call) |
-| `file_statement:<kind>` | any other file-level statement, by the AST's `kind` (`write`, `call`, …) |
-| `movement_value_param` | a movement taking a value (`n: <number[]>`) |
+**The file** (admission):
+
+| reason | the construct | needs |
+|---|---|---|
+| `source_does_not_parse` | the source does not parse here (the TypeScript engine throws the parse error) | to go on to `check.program`, so the checker throws its own MOVENG_PARSE text |
+| `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` | the file scope from the check's `link` (imported movements and shapes, `libraryShape`/`shapeChain`), calls into library movements |
+| `file_assignment` | a file-level binding that is neither an instance construction nor a value (a file-level `extract`, node, graph) | file-level evaluation of those right-hand sides |
+| `file_call` | a file-level construction or call spelled with a movement's or a plugin's name | `fileLevelCall`'s semantics (a call with no event) |
+| `file_statement:<kind>` | any other file-level statement, by the AST's `kind` (`write`, `call`, `match`, …) | statements at file scope |
+| `movement_value_param` | a reached movement taking a value (`n: <number[]>`) | a parameter binding kind that is a value, with the checker's coercion rules for it |
 
 A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
 (`rules = "…"`) are admitted: each binds a name and runs nothing, as
@@ -277,119 +308,136 @@ plugin call a plugin, and an `IS` test a node declaration; what else reads
 one is refused where it stands (`graph_shape`, `node_declared_entry`,
 `is_test_declared_record`).
 
-**Admission: a body** (`notAdmitted`; every movement in the file is walked):
+**Names** (a reached body):
 
-| reason | the construct |
-|---|---|
-| `name_shadowed` | a body binds a name the movement's parameters or the file bind |
-| `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name |
-| `statement:<kind>` | a statement other than a binding, `write`, `match`, `link`, `unlink`, `delete`, `if`, a traversal block, `await sleep(…)`, `ERROR(…)` and `return` (`call`, `combinator`, `collection`, `refresh`) |
-| `block_head_rootless`, `block_head_expression_root` | a block head with no root, or rooted at an expression (`AT(rows, 0)-[c:company]->`) |
-| `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle, the event, an enclosing block's hop alias or what an extraction yielded |
-| `block_head_extract_hop` | a head over what an extraction yielded whose hop carries a WHERE (the TypeScript refuses it), an ORDER BY, a LIMIT or an incoming direction (which the TypeScript does not read) |
-| `block_multi_hop` | a head that walks more than one hop (`crm-[c:companies]->-[d:deals]->`) |
-| `block_head_resources`, `block_head_step`, `block_head_does_not_lower` | a `_resources` head (off the event or off what an extraction yielded), a hop that is not an edge, a head the probe cannot read |
-| `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame, which this engine does not keep |
-| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a match, a link, a node or graph literal, a construction, an extraction, a plugin's call and `await sleep(…)` (`extractCall`, `callback`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `extract`, `node`, `write`, `match` and `link` |
-| `extract_tier` | `extract "careful" from […]`: what a tier buys is the deployment's (`EXTRACTION_TIERS`), which this engine does not read |
-| `await_not_sleep` | an `await` of anything but `sleep(…)` |
-| `movement_call` | a construction in a body spelled with a movement's name |
-| `plugin_call` | a plugin's call this engine does not make: inside an expression (`{ page: p(…) }`), spelled in another letter case than imported, or of a plugin the input's snapshot does not describe; a `through` stage naming no imported plugin |
-| `plugin_call:records` | a call of a plugin whose declared output is `records` (one record per thing fetched), which this engine does not bind |
-| `plugin_call_form` | a plugin's call with a positional argument, or an argument that is not a value (a call, a node, a write) |
-| `function_call` | a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 |
-| `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read |
-| `write_bind` | a write with `bind` |
-| `write_tuple` | a tuple write |
-| `write_position_not_record` | `write x { … }` where `x` is not a write's handle or a block's hop alias (a node or graph entry the run built, updated in place, among them) |
-| `write_position_member_path` | `write m.k { … }`: a write from the record a map's member holds |
-| `write_root_expression`, `match_root_expression` | a linked write or match rooted at an expression |
-| `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at a name that is not an instance, a handle, the event or a block's hop alias |
-| `write_node_root`, `match_node_root` | a write or a match into an edge of a node this run built (the in-process stand-in adapter is the TypeScript engine's) |
-| `write_multi_hop`, `match_multi_hop` | a linked write or match that walks more (or less) than one edge |
-| `match_tuple`, `match_position` | a match over a tuple of paths, or of a bare alias |
-| `link_node` | `link n -[:e]-> …` where `n` is a node this run built (an appended landing) |
-| `link_endpoint_not_handle` | a `link` or `unlink` endpoint that is not a write's (or a match's) handle |
-| `delete_not_record` | `delete x` where `x` is not a handle or a block's hop alias |
-| `unique_by_without_key` | a `unique by` clause with no key (no bare field, parent or `field == value`) |
-| `unique_by_reads_beyond_candidate` | a `unique by` conjunct that is not a pure predicate over the candidate |
-| `write_spread_source` | a write spread of a name that is not a value, a handle, a node or the event |
-| `write_spread_path`, `node_spread_path` | `...m.k` in a write, or in a graph literal: a spread of what a map's member holds |
-| `graph_shape` | `graph<Shape> { … }` |
-| `node_spread` | a spread in a `node { … }` literal |
-| `node_spread_source` | a graph spread of a name that is not a value, a handle or a node |
-| `node_event_entry` | a node entry holding the event itself |
-| `node_declared_entry` | a declared edge entry (`kids: <T>`) |
-| `node_traversal_entry` | a traversal entry |
-| `is_test_declared_record` | `x IS <Decl>` (a node declaration) where `x` is the event, a handle or a landed record: its structure is its system's types, compared by the checker's assignability, which this engine does not carry |
-| `is_test_declared_graph` | `x IS <Decl>` where `x` is a `graph { … }` literal, which may hold a system's records |
-| `condition_does_not_lower`, `expression_does_not_lower` | a slot that does not lower (the checker's miss) |
-| `expression_closure` | a closure inside an expression: a collection op written in place (`{ all: MAP(xs, (x) => …) }`), which the TypeScript engine runs as a call bound first (from version 3) |
-| `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance), other than `x = <name>` of a record (a second name for it), `x == null` / `x != null` of any bound name, and an `EXISTS`, `IS` or walk rooted at it |
-| `traversal_root` | a field read rooted at a name that is not the event, a value, a handle, a node or a block's hop alias; a walk (or an `EXISTS` over hops, or a pick) rooted at a name that is not the event, an instance, a handle, a hop alias or what an extraction yielded |
-| `traversal_step`, `exists_step` | a walk's hop, or an `EXISTS`'s, that is not an edge |
-| `traversal_meta_edge` | a hop (a block head's, a walk's, a pick's, a write's or a match's target) over a `#`-prefixed edge: the engine's own meta references, which the TypeScript read wrapper hands the adapter unrestamped |
-| `walk_extract_hop`, `exists_extract_hop` | a hop down what an extraction yielded with a WHERE (the TypeScript refuses it), or, inside `EXISTS`, with an ORDER BY or a LIMIT |
-| `exists_over_value` | `EXISTS(v-[…]->)` or `EXISTS(v WHERE …)` of a value (the TypeScript refuses it) |
-| `exists_node` | `EXISTS(n-[…]->)` of a node this run built |
-| `walk_records` | a bare walk (`crm-[c:companies]->`) read as a value: a list of records, which a value cannot hold here |
-| `aggregate_records` | `FIRST`/`LAST`/`ONLY`/`SUM`/… of a bare walk anywhere but as a binding's whole right-hand side (`x = FIRST(…)`); `COUNT` of one is admitted |
-| `select_multi_hop` | `x = FIRST(…)` of a walk of more than one hop |
-| `aggregate:only` | `ONLY(e)` of anything but a name (its failure spells `e` back, as the formula serializer does) |
-| `aggregate:sort_key` | `SORT(xs, key)` whose key is not a field name |
-| `aggregate:llm` | the `llm` fold |
-| `traversal_steps` | a field read rooted at a held name (`c.\`name\``) that also walks hops before it |
-| `traversal_terminal` | a walk ending in anything but a field |
-| `static_number` | a numeric literal JSON cannot carry (`Infinity`, `-0`) |
-| `proto_key` | a `__proto__` key written in an object literal |
-| `within_compare` | `WITHIN` |
-| `meta:<key>` | `@user_*` and `@actor_*` (looked up through the host), and any other key the dispatch's `meta.bag` carries: only `@current_date` and `@current_timestamp` are read here |
-| `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, …) |
-| `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `meta`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); a rootless `EXISTS(-[…]->)` is `expression:exists` |
+| reason | the construct | needs |
+|---|---|---|
+| `name_shadowed` | a body binds a name the movement's parameters or the file bind | the TypeScript's environment rebinding rules (what a later binding does to an earlier one) |
+| `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name | the same rules |
+| `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance, a node, an extraction's record), other than `x = <name>` of a record (a second name for it), `x == null` / `x != null` of any bound name, and an `EXISTS`, `IS` or walk rooted at it | the TypeScript's per-kind consumer behaviour: its errors and conversions when a record binding is read as text, a list, an argument or a spread (the record model held as a value) |
 
-`parallel` is not run here: it prints `statement:combinator` or
-`rvalue:combinator` and the TypeScript engine runs the whole program (it
-unlocks four recorded runs, and chunk 6A spent its budget on extraction; the
-next slice's first item).
+**Statements and right-hand sides** (a reached body):
+
+| reason | the construct | needs |
+|---|---|---|
+| `statement:call`, `movement_call`, `function_call` | a call statement; a construction in a body spelled with a movement's name; a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 | call frames (call depth, `c` address steps, called scopes) and a call journal for replay |
+| `rvalue:closure`, `rvalue:lazy`, `rvalue:inlineBlock`, `rvalue:members`, `expression_closure` | closures and lazy walks as values; a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), run by the TypeScript as a call bound first (from version 3) | closure and lazy-walk binding kinds, with the call frames above |
+| `statement:combinator`, `rvalue:combinator` | `parallel`, `race` | spawned arms in the executor, the in-run lock gate table (FIFO, shared or exclusive), a write-ordering ledger (write_ledger.ts), arm traces spliced in order, frames and joins in park state, race settlement (losers cancelled) |
+| `await_not_sleep` | an `await` of anything but `sleep(…)` (parallel, race, until, a callback, a landing) | the same, and the await kinds' park states |
+| `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame | fan-out frames that join parked iterations |
+| `statement:collection`, `rvalue:collection` | MAP, FILTER, … as statements or right-hand sides | bounded fan-out (fans.ts `mapConcurrent`) with closures |
+| `rvalue:callback` | a callback | `park.callbacks.*`, a callback binding kind, and the callback body's entry ("Entries never routed" below) |
+| `statement:refresh` | `refresh` | its semantics (no corpus case runs one) |
+| `rvalue:extractCall` | the version-3 `extract(…)` call form | its prompt blocks, `llm.extractCall.call`, site ids `xc:<shape>#<n>` |
+| `rvalue:<kind>` | any other right-hand side, by its AST `kind`; for `return`, also `extract`, `node`, `write`, `match` and `link` | a returned record binding (a return value that is a record) |
+| `extract_tier` | `extract "careful" from […]` | the deployment's tier table (ai_tiers.ts `EXTRACTION_TIERS`) as input |
+| `plugin_call` | a plugin's call this engine does not make: inside an expression (`{ page: p(…) }`), spelled in another letter case than imported, or of a plugin the input's snapshot does not describe; a `through` stage naming no imported plugin | a call bound inside an expression (checker `nested_calls`), any-case resolution |
+| `plugin_call:records` | a call of a plugin whose declared output is `records` | a records-output binding kind |
+| `plugin_call_form` | a plugin's call with a positional argument, or an argument that is not a value (a call, a node, a write) | positional arguments; arguments of every kind |
+| `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read | the built-ins' call forms |
+
+**Writes, matches, links, deletes** (a reached body):
+
+| reason | the construct | needs |
+|---|---|---|
+| `write_bind` | a write with `bind` | `park.bindings.*` |
+| `write_tuple`, `match_tuple`, `match_position` | a tuple write; a match over a tuple of paths, or of a bare alias | a tuple binding kind, per-slot writes |
+| `write_position_not_record`, `delete_not_record` | `write x { … }` or `delete x` where `x` is not a write's handle or a block's hop alias (a node or graph entry the run built among them) | node-entry update in place |
+| `write_position_member_path` | `write m.k { … }`: a write from the record a map's member holds | a member-path record binding |
+| `write_root_expression`, `match_root_expression`, `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at an expression, or at a name that is not an instance, a handle, the event or a block's hop alias | the TypeScript's root resolution |
+| `write_node_root`, `match_node_root`, `link_node` | a write, a match or a link into an edge of a node this run built | the in-process stand-in adapter (local_edge_adapter.ts), appended landings |
+| `write_multi_hop`, `match_multi_hop` | a linked write or match that walks more (or less) than one edge | the TypeScript's error, or its multi-hop semantics |
+| `link_endpoint_not_handle` | a `link` or `unlink` endpoint that is not a write's (or a match's) handle | endpoints that are landed records or nodes |
+| `write_spread_source`, `write_spread_path`, `node_spread`, `node_spread_path`, `node_spread_source` | a write spread of a name that is not a value, a handle, a node or the event; `...m.k` in a write or a graph literal; a spread in a `node { … }` literal; a graph spread of a name that is not a value, a handle or a node | spreads of records and of map members |
+| `unique_by_without_key`, `unique_by_reads_beyond_candidate` | a `unique by` clause with no key (no bare field, parent or `field == value`); a conjunct that is not a pure predicate over the candidate | the TypeScript's post-filter for impure conjuncts |
+
+**Nodes and graphs** (a reached body):
+
+| reason | the construct | needs |
+|---|---|---|
+| `node_declared_entry`, `node_traversal_entry`, `node_event_entry`, `graph_shape`, `rvalue:node`, `exists_node` | a declared edge entry (`kids: <T>`), a traversal entry, an entry holding the event, `graph<Shape> { … }`, a returned node, `EXISTS(n-[…]->)` of a node this run built | node-literal entries of every kind, the `reference` stamp, copy plans that walk edges (behind the `graph_copy_walks_edges` guard) |
+| `is_test_declared_record`, `is_test_declared_graph` | `x IS <Decl>` (a node declaration) where `x` is the event, a handle, a landed record, or a `graph { … }` literal | a checker stamp carrying the assignability verdict (the checker stays TypeScript, behind `check.program`) |
+
+**Traversal blocks and heads** (a reached body):
+
+| reason | the construct | needs |
+|---|---|---|
+| `block_head_rootless`, `block_head_expression_root`, `block_head_value_root`, `block_head_node_root`, `block_head_root` | a block head with no root; rooted at an expression (`AT(rows, 0)-[c:company]->`), a value (a list of records), a node or graph the run built, or anything but an instance, a write's handle, the event, an enclosing block's hop alias or what an extraction yielded | heads rooted at every binding kind |
+| `block_multi_hop`, `block_head_step`, `block_head_does_not_lower` | a head of more than one hop, a hop that is not an edge, a head the probe cannot read | multi-hop walks |
+| `block_head_extract_hop` | a head over what an extraction yielded whose hop carries a WHERE (the TypeScript refuses it), an ORDER BY, a LIMIT or an incoming direction (which it does not read) | the TypeScript's refusal and readings there |
+| `block_head_resources`, `walk_records` | a `_resources` head (off the event or an extraction); a bare walk read as a value (a list of records) | resource descriptors (FileRef) crossing as the descriptor; a list of records as a value |
+| `traversal_meta_edge` | a hop over a `#`-prefixed edge: the engine's own meta references, which the TypeScript read wrapper hands the adapter unrestamped | the meta-edge walks over run-built accumulants (run.ts `metaEdgeBindings`), the adapter pass-through without restamping (kg.ts) |
+| `select_multi_hop`, `traversal_root`, `traversal_step`, `traversal_steps`, `traversal_terminal`, `walk_extract_hop`, `exists_step`, `exists_extract_hop`, `exists_over_value` | `x = FIRST(…)` of a walk of more than one hop; a field read or walk rooted at a name not held as its root; a hop that is not an edge; a field read off a held name that also walks hops; a walk ending in anything but a field; a hop down an extraction with a WHERE (or, in `EXISTS`, an ORDER BY or a LIMIT); `EXISTS(v-[…]->)` or `EXISTS(v WHERE …)` of a value | the full walk evaluator, with the TypeScript's errors for the forms it refuses |
+
+**Expressions** (a reached body, or a file-level value):
+
+| reason | the construct | needs |
+|---|---|---|
+| `aggregate:llm`, `aggregate:only`, `aggregate:sort_key`, `aggregate_records` | the `llm` fold; `ONLY(e)` of anything but a name; `SORT(xs, key)` whose key is not a field name; `FIRST`/`LAST`/`ONLY`/`SUM`/… of a bare walk anywhere but a binding's whole right-hand side (`COUNT` of one is admitted) | the llm fold through the host, record sorts, record-valued folds |
+| `expression:<type>`, `expression:exists` | an expression kind that needs the host, by its lowered `type` (`llm`, `meta`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); a rootless `EXISTS(-[…]->)` | host reads in expressions (AI(), KG values) |
+| `meta:<key>` | `@user_*` and `@actor_*`, and any other key of the dispatch's `meta.bag` (only `@current_date` and `@current_timestamp` are read here) | the acting-user and actor lookups |
+| `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, `file`, …) | the built-ins `CHUNKS`, `DOMAIN_OF`, `FILE`, … |
+| `within_compare` | `WITHIN` | WITHIN against the pinned instant |
+| `static_number`, `proto_key` | a numeric literal JSON cannot carry (`Infinity`, `-0`); a `__proto__` key written in an object literal | wire support for those values (the transition artefacts' strings and keys rows) |
+| `condition_does_not_lower`, `expression_does_not_lower` | a slot that does not lower (the checker's miss) | lowering coverage, or the slot handed to the check |
 
 A hop's WHERE and ORDER BY key, and a write's or a match's target WHERE, are
 walked as expressions scoped at the landed record (the candidate, for a
-target): a bare name (`property`, `edge_property`) is the record's
-field (or a value the body binds of that name), and the rest is the
-expression walk above.
+target): a bare name (`property`, `edge_property`) is the record's field
+(or a value the body binds of that name), and the rest is the expression
+walk above.
 
-**Admission: the input** (`notAdmitted`; `admit::input_refusal`, on the
-parse, before anything is asked):
+**The input** (admission; `admit::input_refusal`, over the reached
+movements, before anything is asked):
 
-| reason | what the input would make the run do |
-|---|---|
-| `cost_cap_inside_block` | a capped run with a priced step in a block's body — a write, a match or a link that matches, an extraction, a plugin's call: the cap can be met at any of them, and a flow suspended in an iteration is joined by the fan-out's frame, which this engine does not keep |
-| `suspend_at_inside_block` | a `suspendAt` address with an `i` step: likewise |
-| `suspend_at_call` | a `suspendAt` address with a `c` step (before a statement's k-th call): this engine keeps no call journal to run a statement again by |
+| reason | what the input would make the run do | needs |
+|---|---|---|
+| `cost_cap_inside_block` | a capped run with a priced step in a block's body (a write, a match or a link that matches, an extraction, a plugin's call): the cap can be met at any of them | suspension inside fan-out iterations, joined by the fan-out's frame |
+| `suspend_at_inside_block` | a `suspendAt` address with an `i` step | the same |
+| `suspend_at_call` | a `suspendAt` address with a `c` step (before a statement's k-th call) | a call journal to run a statement again by |
 
-**Admission: a parked state** (`notAdmitted`; `park::resume_refusal`):
+**A parked state** (admission; `park::resume_refusal`). A run the TypeScript
+engine parked must resume here, so each is a port too:
 
-| reason | the state |
-|---|---|
-| `resume_state_does_not_read` | it does not read off the wire |
-| `resume_state_version` | a version other than 1 |
-| `resume_state_frames`, `resume_state_until` | frames, an `until` |
-| `resume_state_journal` | a journal with a call in it (a suspension's journal is empty when this engine wrote it) |
-| `resume_state_suspended` | a `suspended` other than `true` |
-| `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) |
-| `resume_state_kind:<kind>` | a binding of a kind this engine does not rebuild (`extractRoot`, `extractPosition`, `localShape`, a `shape` outside the file scope, …); the file scope is rebuilt from the program, so a declared shape there is not the state's. This engine writes an extraction's emission into a park as the TypeScript does, and the TypeScript engine resumes it |
-| `resume_state_returned_records` | a bound block's returned records (this engine binds none but the empty set) |
-| `resume_state_extraction_origin` | an extraction among a binding's origins |
-| `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) |
-| `resume_state_deferred_edge` | a node's edge that is not landed, or names a landing |
+| reason | the state | needs |
+|---|---|---|
+| `resume_state_does_not_read` | it does not read off the wire | — |
+| `resume_state_version` | a version other than 1 | — |
+| `resume_state_frames`, `resume_state_until` | frames, an `until` | frames and joins (parallel and race arms, `b` branches, `keepArmCount`, `recordJoin`), `until` |
+| `resume_state_journal` | a journal with a call in it | the call journal |
+| `resume_state_suspended` | a `suspended` other than `true` | — |
+| `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) | `i` and `c` steps and parallel branches |
+| `resume_state_kind:<kind>` | a binding of a kind this engine does not rebuild (`extractRoot`, `extractPosition`, `sourcePosition`, `shapePosition`, `lazyWalk`, `callback`, `resource`, `recordValue`, `localShape`, a `shape` outside the file scope, `tuple`, `closure`, `blockMeta`); this engine writes an extraction's emission into a park as the TypeScript does, but does not read one back | each kind's rehydration (serialize.ts `rehydrate`) |
+| `resume_state_returned_records` | a bound block's returned records | positions with landings |
+| `resume_state_extraction_origin` | an extraction among a binding's origins | extraction provenance on resume |
+| `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) | the record model held as a value |
+| `resume_state_deferred_edge` | a node's edge that is not landed, or names a landing | deferred edges and landings |
+
+**The shim's input checks** (`notAdmitted`, one reason each):
+
+| reason | the input | needs |
+|---|---|---|
+| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or any non-plain prototype, a binding-shaped record outside parked state, a shared open reference, an array hole, an own `__proto__` key, a lone surrogate) | a `Date`, a lone surrogate and a `__proto__` key on the wire (the transition artefacts' surrogate and prototype rows) |
+| `resume_answer` | a resume that answers into its leaf (an ask) | the answer's binding rematerialised (`rematerialiseAnswer`) |
+| `resume_defers_race_settlement` | a resume that defers a race's settlement | the race settlement entry |
 
 **After the check** (`declined`):
 
-| reason | what the stamps say |
-|---|---|
-| `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` |
-| `graph_copy_walks_edges` | a graph's record spread whose copy plan walks the record's edges (the checker stamps one only on a shaped graph, which admission refuses: a guard) |
-| `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read (a shim fault in all but name) |
+| reason | what the stamps say | needs |
+|---|---|---|
+| `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` | a `Date` value on the wire (or a ruling that adapters never answer one) |
+| `graph_copy_walks_edges` | a graph's record spread whose copy plan walks the record's edges (stamped only on a shaped graph, which admission refuses: a guard) | the copy plan's edge walk, with `graph_shape` |
+| `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read | to become errors: shim faults in all but name |
+
+**Not refusals, still TypeScript.** Zero refusals is not zero TypeScript:
+
+- **Hand-backs mid-run.** An admitted run still asks the TypeScript
+  standard library for a reading this engine does not reproduce
+  (`builtins.function`, `builtins.compare`; the evaluator's `fallback`), or
+  fails loudly ("Errors a run can meet mid-run" below).
+- **Entries never routed.** `settleRaceFrame` (a race settled after a batch
+  resume) and `fireCallbackBody` (a callback's body) have no entry here:
+  every race settlement and callback body runs on TypeScript.
 
 ### What admission cannot decide
 
@@ -410,7 +458,9 @@ mutation — the TypeScript engine throws the same.
   `shim_fault` for one the shim faulted; `movement_engine_ts` when
   `MOVEMENT_ENGINE` did not choose this engine). At info under
   `MOVEMENT_ENGINE=rust`; at debug under `ts`.
-- **`rustRunStats`** (rust_stats.ts): `notAdmitted` and `declined` by reason;
+- **`rustRunStats`** (rust_stats.ts): `notAdmitted` by first reason,
+  `allReasons` by every reason a run not admitted holds (one count per run
+  per reason), and `declined` by reason;
   `routed`, the segments this engine started, its admission's refusals
   among them; `admitted`, those its admission let by (`routed` less the
   refusals); `ranWhole`; `shimFaults`; `hostCalls` by `family.method`.
@@ -722,7 +772,7 @@ of its own, spliced back in the order written. A call site is numbered
 (`x:<node>#<n>`) when its region is planned, as the TypeScript numbers it:
 in the order the walk reaches the regions, which is the tree's order
 wherever the host answers in the order asked (every frozen case and every
-recording; "Spec the tail" below).
+recording; "Transition artefacts to mirror" below).
 
 A field of an extracted entity reads as `readEmissionField` reads it: its
 value (null when absent), cited by the field's origin (`{kind:
@@ -858,7 +908,7 @@ fails); none produces a different answer.
   lone surrogate (the shim carries the rest and names what it left out,
   `uncarried`): the statement fails with MOVENG_UNSUPPORTED naming the
   members. The TypeScript reads on. (A model reply that does is a
-  validation failure instead: "Spec the tail" below.)
+  validation failure instead: "Transition artefacts to mirror" below.)
 - A value held in a binding is shaped like an engine binding (an object
   whose `kind` names one, the TypeScript's `bindingOf`): reading its field,
   comparing it by `==`, or spreading it fails with MOVENG_UNSUPPORTED ("this
@@ -870,7 +920,7 @@ fails); none produces a different answer.
   MOVENG_UNSUPPORTED. TypeScript compares two records by identity.
 - A hop's ORDER BY over more than 64 records whose keys mix numbers with
   other kinds, or a `SORT` over more than 64 such members:
-  MOVENG_UNSUPPORTED ("Spec the tail" below). TypeScript orders them by
+  MOVENG_UNSUPPORTED ("Transition artefacts to mirror" below). TypeScript orders them by
   V8's merge.
 - `x IS <Decl>` of a node whose landing under a declared edge is a system's
   record (a handle, a landed record): MOVENG_UNSUPPORTED, as that landing's
@@ -992,8 +1042,10 @@ conjuncts' fields in order, a false one ending the reads.)
 - `{failed: {error, result}}`: the body failed, and `result` is what the run
   had when it did (the shim throws `MovementRunFailed`);
 - `{thrown: error}`: it failed before the body ran;
-- `{refused: reason}`: admission refused the program or its parked state
-  on this engine's own parse; nothing was asked of the host;
+- `{refused: reason, reasons}`: admission refused the program, its input
+  or its parked state on this engine's own parse; nothing was asked of the
+  host. `reasons` is every reason met, `reason` first ("What admission
+  walks");
 - `{declined: reason}`: past the check, nothing the host can see has
   happened; run the program another way.
 
@@ -1008,7 +1060,7 @@ builds the TypeScript's error from the figures), or `{hostError: ref}`: the
 error a host call failed with, by the `ref` its answer carried. A run that
 suspends at its cap ends in a parked `result`.
 
-## Spec the tail, mirror the cheap core
+## Mirroring JavaScript
 
 The rule for what this engine reproduces of JavaScript:
 
@@ -1016,34 +1068,62 @@ The rule for what this engine reproduces of JavaScript:
   `String(number)` through `ryu-js`, `Math.round`, `toFixed`, `%`), strict
   equality, truthiness, key order, UTF-16 lengths and comparisons. Each is
   pinned by the test the table above names.
-- **The expensive tail is specified, not mirrored.** The regex dialect,
-  permissive date parsing (V8's legacy parser, local time), Unicode case
-  tables and prototype-key quirks get the language's own semantics. Until
-  then this engine answers only what it reproduces and hands the rest back
-  (`fallback`, `builtins.*`).
-- **One reading differs today: Unicode case mapping.** `toLowerCase` /
+- **The expensive tail is mirrored too, as it is retired** (Henry,
+  2026-10-09: the TypeScript engine is retired and no language version is
+  added for it). Each row below becomes the TypeScript's behaviour in Rust,
+  under a `before`/`since` conditional where it differs by version, pinned
+  by an oracle generated from TypeScript. Until a row is mirrored, this
+  engine answers only what it reproduces and hands the rest back
+  (`fallback`, `builtins.*`), or refuses or fails as the row says.
+
+### Transition artefacts to mirror
+
+Sizes are estimates (XS, S, M, L).
+
+| # | the artefact | here today | the mirror | size |
+|---|---|---|---|---|
+| 1 | the regex dialect | `js_regex` reads most of it; hands back lookbehind, named groups and `\k<name>`, octal and `\c` escapes, a class escape at a range end, groups nested past 100, a step or depth budget met | `js_regex` kept and made complete, with no budget (a budget diverges where TypeScript is merely slow); oracle regex.json | M |
+| 2 | date parsing | ISO texts only; V8's legacy forms handed back, including under every `<` between two texts with a digit (filter.rs) and ORDER BY | V8's legacy parser ported (dateparser.cc: keyword tables, parenthesised comments, zone names, two-digit years), fuzzed against Node; an ISO date-time without offset read in a local zone that becomes a run input | L |
+| 3 | Unicode case mapping | Rust's tables (Unicode 17); a known divergence (detail below) | Node's ICU (Unicode 16): code points assigned after 16 unmapped, the cased and final-sigma deltas fixed (U+0295); the data pinned to Node 22's ICU | S |
+| 4 | ORDER BY and `SORT` over mixed key kinds | V8's binary insertion to 64 records; past 64 with mixed kinds, MOVENG_UNSUPPORTED (detail below) | V8's TimSort ported exactly (run detection, merge_lo/merge_hi, galloping); oracle by seeded mixed-key lists | M to L |
+| 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | read as any other field | a fixed table of `Object.prototype` member names with zod's issue text per declared type, and the prototype-set semantics, in crate::extract::validate; the oracle marks these replies (`prototype_key`) | M |
+| 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | 0 |
+| 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | follows 9 |
+| 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
+| 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
+| 10 | a fractional `EXTRACTION_FILE_CHARS` | floored by the shim | the raw number passed, cut at its truncation, printed with ryu-js number text | XS |
+| 11 | records held in values (binding-shaped dicts: `bindingOf` walks the prototype chain), `Object.prototype` field reads, identity comparison of records | MOVENG_UNSUPPORTED mid-run, or handed back | the TypeScript's readings, with the record model (`name_not_value`) | — |
+| 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
+| 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
+| 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |
+
+#### The rows in detail
+
+Rows 3 and 4 are the two a run admitted here can meet today:
+
+- **Row 3: one reading differs.** `toLowerCase` /
   `toUpperCase` follow Rust's tables (Unicode 17); Node 22's ICU follows
   Unicode 16. A character whose properties changed between the two can map
   differently. The known case is U+0295 (ʕ), which counts as cased for the
   final-sigma rule in Rust and not in Node: `"ΑΣʕ"` lowers to `αςʕ` here and
-  `ασʕ` in TypeScript. This is an accepted divergence, pinned by
-  `stdlib::tests::case_mapping_follows_rusts_unicode_tables`, and is not
+  `ασʕ` in TypeScript. Pinned by
+  `stdlib::tests::case_mapping_follows_rusts_unicode_tables`, and not
   handed back.
-- **One reading fails loudly: a hop's ORDER BY over keys that mix numbers
-  with other kinds, past 64 records.** The sort is V8's (crate::order_limit):
-  binary insertion up to 64 items, which reproduces V8 exactly for any
-  comparator; past 64 V8 merges its runs, which this engine reproduces for
-  every total order. Mixed number and text keys are not one (the comparator
-  has cycles), so there V8's merge alone decides where records land. Rather
-  than order them differently, the run fails with MOVENG_UNSUPPORTED naming
-  the ORDER BY and the record count. Ruled: no silent divergence (the
-  order_limit pin holds every set of 64 or fewer, mixed included).
-- **The specification lands as a language-version change.** A version
-  conditional at the point of difference, and a checker diagnostic under the
-  new version for any construct whose meaning changes. Saved movements keep
-  their pin, and with it JavaScript's behaviour, on the TypeScript engine
-  until that version is deprecated. **Deferred** to the next
-  language-version bump:
+- **Row 4: one reading fails loudly: a hop's ORDER BY over keys that mix
+  numbers with other kinds, past 64 records.** The sort is V8's
+  (crate::order_limit): binary insertion up to 64 items, which reproduces
+  V8 exactly for any comparator; past 64 V8 merges its runs, which this
+  engine reproduces for every total order. Mixed number and text keys are
+  not one (the comparator has cycles), so there V8's merge alone decides
+  where records land. Rather than order them differently, the run fails
+  with MOVENG_UNSUPPORTED naming the ORDER BY and the record count. Ruled:
+  no silent divergence (the order_limit pin holds every set of 64 or
+  fewer, mixed included).
+
+What each of rows 1, 2, 4, 5 to 10 does today, in the TypeScript and here
+(written when these were to be specified by a language-version bump; the
+mirror replaces that plan):
+
   - the regex dialect (the hand-written matcher, `js_regex`, is a
     transition artefact that the bump retires);
   - date parsing (what a date text may be, and no local time);
@@ -1122,10 +1202,9 @@ The rule for what this engine reproduces of JavaScript:
 ### Known divergences
 
 Where this engine differs from the TypeScript engine on a program that
-checks and that admission lets through. Each is pinned or unreachable as
-said; the deferred language-version changes above are the others.
-
-None is known beyond those.
+checks and that admission lets through: row 3 above (pinned), and the rows
+that refuse, hand back or fail loudly rather than differ. None is known
+beyond those.
 
 ## The check
 
@@ -1236,8 +1315,10 @@ The teardown prints `Rust evaluator: {…}` (expressions not admitted,
 admitted, answered, fallbacks by reason), `Rust runs: {runsRouted,
 runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
-admitted: {reason: count}` (largest first), and fails a run in which Rust
+admitted: {reason: count}` (by first reason, largest first), `Rust runs not
+admitted, every reason: {reason: count}` (each run counted under every
+reason it holds), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 287, v2 350). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 288, v2 351). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

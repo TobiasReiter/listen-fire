@@ -175,7 +175,7 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
                         let text = reply["reply"].as_str().unwrap();
                         let verdict = &reply["verdict"];
                         let read = validate::read_reply(region, &reply_of(text));
-                        // The one known divergence (README, "Spec the tail"): the
+                        // The one known divergence (README, "Transition artefacts to mirror"): the
                         // expectation is TypeScript's with zod's prototype reads
                         // taken out, so this engine is held to all the rest.
                         let divergent = verdict.get("divergence").is_some();

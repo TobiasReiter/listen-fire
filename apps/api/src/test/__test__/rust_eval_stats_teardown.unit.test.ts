@@ -47,10 +47,13 @@ describe('the teardown', () => {
   });
 
   /** The teardown of a v2 run narrowed to some files, over one file's stats. */
-  function tearDownWith(runs: { routed: number; admitted: number; ranWhole: number }) {
+  function tearDownWith(
+    runs: { routed: number; admitted: number; ranWhole: number },
+    reasons: { notAdmitted?: Record<string, number>; allReasons?: Record<string, number> } = {},
+  ) {
     const dir = mkdtempSync(path.join(tmpdir(), 'rust-stats-'));
     made.push(dir);
-    const stats = { notAdmitted: 0, admitted: 1, answered: 1, fallback: {}, runs: { ...runs, shimFaults: 0, notAdmitted: {}, declined: {}, hostCalls: {} }, file: 'x.unit.test.ts' };
+    const stats = { notAdmitted: 0, admitted: 1, answered: 1, fallback: {}, runs: { ...runs, shimFaults: 0, notAdmitted: {}, allReasons: {}, ...reasons, declined: {}, hostCalls: {} }, file: 'x.unit.test.ts' };
     writeFileSync(path.join(dir, '1.jsonl'), `${JSON.stringify(stats)}\n`);
     process.env.MOVEMENT_ENGINE = 'rust';
     process.env.MOVEMENT_RUST_EVAL_STATS_DIR = dir;
@@ -66,5 +69,16 @@ describe('the teardown', () => {
 
   it('passes a narrowed run that admitted nothing, below the floor', async () => {
     await expect(tearDownWith({ routed: 4, admitted: 0, ranWhole: 0 })).resolves.toBeUndefined();
+  });
+
+  it('prints the runs not admitted by first reason, then by every reason each holds', async () => {
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    await tearDownWith(
+      { routed: 3, admitted: 0, ranWhole: 0 },
+      { notAdmitted: { statement_call: 2, name_not_value: 1 }, allReasons: { name_not_value: 3, statement_call: 2, block_park: 1 } },
+    );
+    const lines = log.mock.calls.map(([line]) => String(line));
+    expect(lines).toContain('Rust runs not admitted: {"statement_call":2,"name_not_value":1}');
+    expect(lines).toContain('Rust runs not admitted, every reason: {"name_not_value":3,"statement_call":2,"block_park":1}');
   });
 });

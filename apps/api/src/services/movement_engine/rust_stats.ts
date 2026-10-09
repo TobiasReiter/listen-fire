@@ -32,7 +32,11 @@ export function resetRustEvalStats(): void {
  *   checks before a segment opened (an input that cannot cross the eval
  *   wire, a resume this engine does not answer), or by the engine's own
  *   admission on its own parse before it asked its host for anything
- *   (crates/movement-engine's README lists every reason);
+ *   (crates/movement-engine's README lists every reason). One count per
+ *   run, under the first reason;
+ * - `allReasons`: the same runs, each counted under every reason it holds
+ *   (the engine's admission walks on past the first; a shim input check
+ *   names one), so a reason a first one hides is still counted;
  * - `routed`: segments the Rust engine started, its admission refusals
  *   among them;
  * - `admitted`: routed segments its admission let by (`routed` less its
@@ -54,6 +58,7 @@ export const rustRunStats: {
   ranWhole: number;
   shimFaults: number;
   notAdmitted: Record<string, number>;
+  allReasons: Record<string, number>;
   declined: Record<string, number>;
   hostCalls: Record<string, number>;
 } = {
@@ -62,6 +67,7 @@ export const rustRunStats: {
   ranWhole: 0,
   shimFaults: 0,
   notAdmitted: {},
+  allReasons: {},
   declined: {},
   hostCalls: {},
 };
@@ -72,6 +78,7 @@ export function resetRustRunStats(): void {
   rustRunStats.ranWhole = 0;
   rustRunStats.shimFaults = 0;
   rustRunStats.notAdmitted = {};
+  rustRunStats.allReasons = {};
   rustRunStats.declined = {};
   rustRunStats.hostCalls = {};
 }

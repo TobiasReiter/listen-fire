@@ -16,6 +16,7 @@
 //! mid-run"). What needs the checker's stamps is refused after the check
 //! and before any effect (`run::Run::stamp_decline`).
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use movement_parser::ast::{
@@ -69,70 +70,174 @@ impl Plugins<'_> {
     }
 }
 
-/// Why this engine does not run `program`, or `None` when it does. Every
-/// movement in the file is walked, not only the one an event dispatches.
-/// A cost cap refuses nothing: a run that meets it suspends (crate::park).
-pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<'_>) -> Option<String> {
+/// The movement a segment runs (`selectMovement`): the one named, exactly
+/// or from version 3 in any letter case (the fired name is a function's),
+/// else the file's only movement. `None` when none is picked, and the run
+/// throws MOVENG_NOT_FOUND after the check, on either engine.
+pub(crate) fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>, language_version: u32) -> Option<&'m ast::MovementDeclaration> {
+    match wanted.filter(|w| !w.is_empty()) {
+        Some(wanted) => movements.iter().find(|m| m.name == wanted).or_else(|| {
+            (language_version >= 3).then(|| movements.iter().find(|m| m.name.to_lowercase() == wanted.to_lowercase())).flatten()
+        }),
+        None if movements.len() == 1 => movements.first(),
+        None => None,
+    }
+    .copied()
+}
+
+/// The movements a run of `entry` can execute, in source order: the entry
+/// and every movement a reached body names, transitively. Either engine
+/// enters a movement's body only by resolving a name the running body
+/// wrote — a call's callee (run.ts `runCall`), a combinator's named arm
+/// (`armBodyAt`, `movementDeclaration`), a movement handed where a closure
+/// goes (`closureOf`) — and a name is lexical (`resolveCallee`,
+/// `Environment.resolve`), so a movement no reached body spells is never
+/// run. A body spells a name in a structured field (a callee, an arm) or
+/// inside a slot's verbatim text; every one of both is read here, in any
+/// letter case, a string literal's words included, so the set is never
+/// smaller than what can run. With no entry picked every movement is
+/// walked.
+pub fn reachable<'p>(program: &'p ast::Program, entry: Option<&str>, language_version: u32) -> Vec<&'p ast::MovementDeclaration> {
+    let movements: Vec<&ast::MovementDeclaration> =
+        program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
+    let Some(entry) = entry_of(&movements, entry, language_version) else { return movements };
+    let mut reached = vec![entry];
+    let mut next = 0;
+    while let Some(movement) = reached.get(next).copied() {
+        // A tree that does not serialise is read as naming every movement.
+        let Some(spelled) = names_spelled(movement) else { return movements };
+        for other in &movements {
+            if !reached.iter().any(|r| std::ptr::eq(*r, *other)) && spelled.contains(&other.name.to_lowercase()) {
+                reached.push(other);
+            }
+        }
+        next += 1;
+    }
+    movements.into_iter().filter(|m| reached.iter().any(|r| std::ptr::eq(*r, *m))).collect()
+}
+
+/// Every name `movement` spells, lowercased: each string the AST holds
+/// whole (a structured name) and each name the shared scan reads in it (a
+/// slot's text, bare or backtick-quoted).
+fn names_spelled(movement: &ast::MovementDeclaration) -> Option<BTreeSet<String>> {
+    fn strings(value: &serde_json::Value, names: &mut BTreeSet<String>) {
+        match value {
+            serde_json::Value::String(text) => {
+                names.insert(text.to_lowercase());
+                let units: Vec<u16> = text.encode_utf16().collect();
+                let mut at = 0;
+                while at < units.len() {
+                    match movement_parser::scan::scan_name(&units, at) {
+                        Some((name, end)) => {
+                            names.insert(name.to_lowercase());
+                            at = end;
+                        }
+                        None => at += 1,
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| strings(item, names)),
+            serde_json::Value::Object(members) => members.values().for_each(|member| strings(member, names)),
+            _ => {}
+        }
+    }
+    let mut names = BTreeSet::new();
+    strings(&serde_json::to_value(movement).ok()?, &mut names);
+    Some(names)
+}
+
+/// Every reason the walk meets, deduplicated, in the order it meets them.
+#[derive(Default)]
+struct Reasons(RefCell<Vec<String>>);
+
+impl Reasons {
+    fn note(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        let mut reasons = self.0.borrow_mut();
+        if !reasons.contains(&reason) {
+            reasons.push(reason);
+        }
+    }
+
+    fn noted(&self, admitted: Admitted) {
+        if let Err(reason) = admitted {
+            self.note(reason);
+        }
+    }
+}
+
+/// Why this engine does not run `program`: every reason, in the order the
+/// walk meets them, empty when it runs it. The first is the one a walk that
+/// stopped at it would have given; the rest are what it would have hidden
+/// (each statement is walked whatever the one before it needed). The file's
+/// declarations and values are walked whole (`prepareMovement` binds every
+/// one), and of its movements those in `movements` (`reachable`). A cost
+/// cap refuses nothing: a run that meets it suspends (crate::park).
+pub fn refusals(program: &ast::Program, movements: &[&ast::MovementDeclaration], language_version: u32, catalog: &Plugins<'_>) -> Vec<String> {
+    let reasons = Reasons::default();
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
-    let mut movements: Vec<&ast::MovementDeclaration> = Vec::new();
     let mut plugins = BTreeSet::new();
     // What a plain call of each imported plugin binds, by its local name.
     let mut plugin_binds: BTreeMap<String, PluginBinds> = BTreeMap::new();
     for statement in &program.statements {
-        match statement {
-            Statement::Movement(movement) => movements.push(movement),
-            Statement::Import(import) if matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins") => {
-                for name in &import.names {
-                    let local = name.alias.clone().unwrap_or_else(|| name.name.clone());
-                    plugin_binds.insert(local.clone(), catalog.binds(&name.name, language_version));
-                    plugins.insert(local);
-                }
+        if let Statement::Import(import) = statement
+            && matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins")
+        {
+            for name in &import.names {
+                let local = name.alias.clone().unwrap_or_else(|| name.name.clone());
+                plugin_binds.insert(local.clone(), catalog.binds(&name.name, language_version));
+                plugins.insert(local);
             }
-            _ => {}
         }
     }
-    let movement_names: BTreeSet<String> = movements.iter().map(|m| m.name.clone()).collect();
+    let movement_names: BTreeSet<String> =
+        program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m.name.clone()) } else { None }).collect();
     let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
     // `resolveCallee`: as written, or from version 3 in any letter case.
     let movement_named = |callee: &str| {
         movement_names.contains(callee) || (language_version >= 3 && movement_names.iter().any(|m| m.to_lowercase() == callee.to_lowercase()))
     };
     // File-level values, in source order: each may read the ones before it.
-    let mut file_values: Vec<(&str, &RValue)> = Vec::new();
+    // One already refused binds its name and is not walked again.
+    let mut file_values: Vec<(&str, Option<&RValue>)> = Vec::new();
     for statement in &program.statements {
         match statement {
             Statement::Import(import) => {
                 match &import.source {
                     ImportSource::Builtin { namespace } if namespace == "adapters" || namespace == "credentials" || namespace == "plugins" => {}
-                    ImportSource::Builtin { namespace } => return Some(format!("import_from_{namespace}")),
-                    ImportSource::File { .. } => return Some("import_from_file".into()),
+                    ImportSource::Builtin { namespace } => reasons.note(format!("import_from_{namespace}")),
+                    ImportSource::File { .. } => reasons.note("import_from_file"),
                 }
                 for name in &import.names {
                     file_names.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()));
                 }
             }
-            Statement::Assign(assign) => match &assign.value {
-                RValue::Construct { construct } if movement_names.contains(&construct.callee) || plugin_named(&construct.callee) => {
-                    return Some("file_call".into());
+            Statement::Assign(assign) => {
+                file_names.insert(assign.name.clone());
+                match &assign.value {
+                    RValue::Construct { construct } if movement_names.contains(&construct.callee) || plugin_named(&construct.callee) => {
+                        reasons.note("file_call");
+                        file_values.push((&assign.name, None));
+                    }
+                    RValue::Construct { .. } => {
+                        instances.insert(assign.name.clone());
+                    }
+                    // A call whose callee the file declares is a call, not the
+                    // built-in's value it would otherwise read as (run.ts
+                    // `resolvedRValue`), and a file has no event to make it about
+                    // (`fileLevelCall`).
+                    RValue::Call { call } if plugin_named(&call.callee) || movement_named(&call.callee) => {
+                        reasons.note("file_call");
+                        file_values.push((&assign.name, None));
+                    }
+                    RValue::Expr { .. } | RValue::Call { .. } => file_values.push((&assign.name, Some(&assign.value))),
+                    _ => {
+                        reasons.note("file_assignment");
+                        file_values.push((&assign.name, None));
+                    }
                 }
-                RValue::Construct { .. } => {
-                    file_names.insert(assign.name.clone());
-                    instances.insert(assign.name.clone());
-                }
-                // A call whose callee the file declares is a call, not the
-                // built-in's value it would otherwise read as (run.ts
-                // `resolvedRValue`), and a file has no event to make it about
-                // (`fileLevelCall`).
-                RValue::Call { call } if plugin_named(&call.callee) || movement_named(&call.callee) => {
-                    return Some("file_call".into());
-                }
-                RValue::Expr { .. } | RValue::Call { .. } => {
-                    file_names.insert(assign.name.clone());
-                    file_values.push((&assign.name, &assign.value));
-                }
-                _ => return Some("file_assignment".into()),
-            },
+            }
             // A declared shape binds its name at file scope (run.ts
             // `interpretFileStatement`); a `type` is the checker's alone. What
             // either declares is read by the constructs naming it, which are
@@ -145,12 +250,9 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
             }
             Statement::Listen(_) => {}
             Statement::Movement(movement) => {
-                if movement.params.iter().any(|p| matches!(p.type_, Some(ParamTypeRef::Value(_)))) {
-                    return Some("movement_value_param".into());
-                }
                 file_names.insert(movement.name.clone());
             }
-            other => return Some(format!("file_statement:{}", statement_kind(other))),
+            other => reasons.note(format!("file_statement:{}", statement_kind(other))),
         }
     }
     let none = BTreeSet::new();
@@ -161,25 +263,26 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
         .collect();
     let mut values = BTreeSet::new();
     for (name, value) in &file_values {
-        let names = Names {
-            events: &none,
-            values: &values,
-            handles: &none,
-            nodes: &none,
-            landings: &none,
-            instances: BTreeSet::new(),
-            body_instances: &none,
-            file_names: &file_names,
-            movements: &movement_names,
-            plugins: &plugins,
-            plugin_binds: &plugin_binds,
-            extracts: &none,
-            graphs: &none,
-            shapes: &shapes,
-            language_version,
-        };
-        if let Err(reason) = names.rvalue(value) {
-            return Some(reason);
+        if let Some(value) = value {
+            let names = Names {
+                reasons: &reasons,
+                events: &none,
+                values: &values,
+                handles: &none,
+                nodes: &none,
+                landings: &none,
+                instances: BTreeSet::new(),
+                body_instances: &none,
+                file_names: &file_names,
+                movements: &movement_names,
+                plugins: &plugins,
+                plugin_binds: &plugin_binds,
+                extracts: &none,
+                graphs: &none,
+                shapes: &shapes,
+                language_version,
+            };
+            reasons.noted(names.rvalue(value));
         }
         values.insert(name.to_string());
     }
@@ -187,6 +290,7 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
     // A declared shape's words are read in the file's scope once an
     // extraction asks for them.
     let file_scope = Names {
+        reasons: &reasons,
         events: &none,
         values: &file_values,
         handles: &none,
@@ -204,25 +308,27 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
         language_version,
     };
     for statement in &program.statements {
-        if let Statement::Shape(shape) = statement
-            && let Err(reason) = file_scope.shape_words(&shape.root)
-        {
-            return Some(reason);
+        if let Statement::Shape(shape) = statement {
+            reasons.noted(file_scope.shape_words(&shape.root));
         }
     }
-    for movement in &movements {
+    for movement in movements {
+        if movement.params.iter().any(|p| matches!(p.type_, Some(ParamTypeRef::Value(_)))) {
+            reasons.note("movement_value_param");
+        }
         let params: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
         let mut bound = Bound { plugin_binds: plugin_binds.clone(), events: params.clone(), ..Bound::default() };
         bound.collect(&movement.body, &[]);
         let events: BTreeSet<String> = params.union(&bound.event_aliases).cloned().collect();
         if bound.sites.iter().any(|(n, _, _)| params.contains(n) || file_names.contains(n)) {
-            return Some("name_shadowed".into());
+            reasons.note("name_shadowed");
         }
         if bound.rebound() {
-            return Some("name_rebound".into());
+            reasons.note("name_rebound");
         }
         let values = bound.values.union(&file_values).cloned().collect();
         let names = Names {
+            reasons: &reasons,
             events: &events,
             values: &values,
             handles: &bound.handles,
@@ -239,11 +345,9 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
             shapes: &shapes,
             language_version,
         };
-        if let Err(reason) = names.body(&movement.body, Within::Body) {
-            return Some(reason);
-        }
+        names.body(&movement.body, Within::Body);
     }
-    None
+    reasons.0.into_inner()
 }
 
 /// Why this engine does not run `program` with this input, or `None`: a
@@ -252,7 +356,7 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
 /// later (`interpretBlock`), which this engine does not do. A cost cap can
 /// be met at any judged write, so a capped run with a write in a block is
 /// refused; so is a `suspendAt` address inside one (an `i` step).
-pub fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]) -> Option<String> {
+pub fn input_refusal(program: &ast::Program, movements: &[&ast::MovementDeclaration], capped: bool, suspend_at: &[String]) -> Option<String> {
     if suspend_at.iter().any(|address| address.split('.').any(|step| step.starts_with('i'))) {
         return Some("suspend_at_inside_block".into());
     }
@@ -270,7 +374,7 @@ pub fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]
         })
         .flat_map(|import| import.names.iter().map(|name| name.alias.clone().unwrap_or_else(|| name.name.clone())))
         .collect();
-    if capped && program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if priced_in_block(&m.body, false, &plugins))) {
+    if capped && movements.iter().any(|m| priced_in_block(&m.body, false, &plugins)) {
         return Some("cost_cap_inside_block".into());
     }
     None
@@ -560,6 +664,8 @@ fn refuse(reason: impl Into<String>) -> Admitted {
 
 /// One movement's names, as its body may read them.
 struct Names<'n> {
+    /// Where each statement's reason goes, so the walk goes on past it.
+    reasons: &'n Reasons,
     /// The movement's parameters: the event.
     events: &'n BTreeSet<String>,
     values: &'n BTreeSet<String>,
@@ -587,8 +693,11 @@ struct Names<'n> {
 }
 
 impl Names<'_> {
-    fn body(&self, statements: &[Statement], within: Within) -> Admitted {
-        statements.iter().try_for_each(|statement| self.statement(statement, within))
+    /// Every statement, each one's reason noted and the next walked.
+    fn body(&self, statements: &[Statement], within: Within) {
+        for statement in statements {
+            self.reasons.noted(self.statement(statement, within));
+        }
     }
 
     fn statement(&self, statement: &Statement, within: Within) -> Admitted {
@@ -632,13 +741,13 @@ impl Names<'_> {
             Statement::Await(statement) => sleep(&statement.r#await.source),
             Statement::If(statement) => {
                 for arm in &statement.arms {
-                    self.condition(&arm.condition)?;
-                    self.body(&arm.body, within)?;
+                    self.reasons.noted(self.condition(&arm.condition));
+                    self.body(&arm.body, within);
                 }
-                match &statement.else_arm {
-                    Some(arm) => self.body(&arm.body, within),
-                    None => Ok(()),
+                if let Some(arm) = &statement.else_arm {
+                    self.body(&arm.body, within);
                 }
+                Ok(())
             }
             Statement::Block(statement) => self.block(&statement.block),
             Statement::Error(statement) => self.slot(&statement.message),
@@ -653,8 +762,9 @@ impl Names<'_> {
     /// and ORDER BY key position-scoped expressions the evaluator runs, its
     /// body in the slice and with no park in it.
     fn block(&self, block: &TraversalBlock) -> Admitted {
-        self.head(&block.head)?;
-        self.body(&block.body, Within::Block)
+        self.reasons.noted(self.head(&block.head));
+        self.body(&block.body, Within::Block);
+        Ok(())
     }
 
     fn head(&self, head: &PathHead) -> Admitted {
@@ -1349,6 +1459,16 @@ fn refuse_meta_edge(edge: &str) -> Admitted {
 mod tests {
     use super::*;
 
+    /// The first reason, as a walk that stopped there gives it: the entry
+    /// is the file's only movement, or every movement when there are more.
+    fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<'_>) -> Option<String> {
+        refusals(program, &reachable(program, None, language_version), language_version, catalog).into_iter().next()
+    }
+
+    fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]) -> Option<String> {
+        super::input_refusal(program, &reachable(program, None, 3), capped, suspend_at)
+    }
+
     const PRELUDE: &str = "import { email, attio } from adapters\nimport { dealflow_inbox, acme_main } from credentials\ninbox = email(credentials: dealflow_inbox)\ncrm = attio(credentials: acme_main)\n";
 
     fn refused(body: &str) -> Option<String> {
@@ -1360,6 +1480,75 @@ mod tests {
     fn file(source: &str) -> Option<String> {
         let program = movement_parser::stmt::parse_program(source, 3, false).expect("the test's program parses");
         refusal(&program, 3, &Plugins(None))
+    }
+
+    /// Every reason, the entry named: what `run` hands the shim.
+    fn reasons_of(source: &str, entry: &str, language_version: u32) -> Vec<String> {
+        let program = movement_parser::stmt::parse_program(source, language_version, false).expect("the test's program parses");
+        refusals(&program, &reachable(&program, Some(entry), language_version), language_version, &Plugins(None))
+    }
+
+    /// A movement nothing the entry reaches names is not walked: what it
+    /// holds cannot run. One the entry names, directly or through another,
+    /// is — by a call, a named arm, a movement handed as a closure, in any
+    /// letter case, bare or backtick-quoted.
+    #[test]
+    fn walks_the_entry_and_what_it_reaches_and_nothing_else() {
+        let helper = "movement helper(e: <inbox-[:message]->>) {\n  x = AI(\"why\")\n}\n";
+        // The helper after the entry: movements are walked in source order.
+        let entry = |body: &str| format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}\n{helper}");
+        assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "m", 3), Vec::<String>::new(), "an unreached helper");
+        assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "helper", 3), ["expression:llm"], "the helper as the entry");
+        for (body, first) in [
+            ("  helper(e: msg)", "statement:call"),
+            ("  r = helper(e: msg)", "movement_call"),
+            ("  r = HELPER(msg)", "function_call"),
+            ("  r = await parallel([helper])", "await_not_sleep"),
+            ("  r = MAP([msg], helper)", "function:map"),
+            ("  x = \"${`helper`}\"", "name_not_value"),
+        ] {
+            let reasons = reasons_of(&entry(body), "m", 3);
+            assert_eq!(reasons.first().map(String::as_str), Some(first), "{body}: {reasons:?}");
+            assert!(reasons.iter().any(|r| r == "expression:llm"), "{body} reaches the helper: {reasons:?}");
+        }
+        // Transitively: the entry names `middle`, which names `helper`.
+        let chain = format!("{PRELUDE}{helper}movement middle(e: <inbox-[:message]->>) {{\n  helper(e: e)\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  middle(e: msg)\n}}");
+        assert_eq!(reasons_of(&chain, "m", 3), ["expression:llm", "statement:call"]);
+        // A movement taking a value is refused only where it can run.
+        let valued = format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
+        assert_eq!(reasons_of(&valued, "m", 3), Vec::<String>::new());
+        assert_eq!(reasons_of(&valued, "v", 3).first().map(String::as_str), Some("movement_value_param"));
+        // No entry picked (none named, or one named the file lacks): the run
+        // throws MOVENG_NOT_FOUND after the check on either engine; every
+        // movement is walked.
+        let program = movement_parser::stmt::parse_program(&entry("  x = 1"), 3, false).unwrap();
+        assert_eq!(reachable(&program, None, 3).len(), 2);
+        assert_eq!(reachable(&program, Some("nowhere"), 3).len(), 2);
+        // Before version 3 the fired name is exact; from it, any case.
+        assert_eq!(reachable(&program, Some("M"), 3).iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["m"]);
+        let v2 = movement_parser::stmt::parse_program(&entry("  x = 1"), 2, false).unwrap();
+        assert_eq!(reachable(&v2, Some("M"), 2).len(), 2);
+        // The file's values and declarations are walked whatever the entry.
+        let valued_file = format!("{PRELUDE}y = AI(\"why\")\n{helper}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
+        assert_eq!(reasons_of(&valued_file, "m", 3), ["expression:llm"]);
+    }
+
+    /// The walk goes on past a statement's reason, into the next statement,
+    /// an `if`'s arms past its condition and a block's body past its head:
+    /// every reason, each once, in the order met, the first the one a walk
+    /// that stopped there gives.
+    #[test]
+    fn notes_every_reason_in_the_order_met() {
+        let body = "  x = AI(\"why\")\n  y = AI(\"again\")\n  if x WITHIN \"7d\" {\n    write msg { a: 1 }\n  }\n  v = 1\n  v-[c:companies]-> {\n    z = TEXT.CHUNKS(c.`name`)\n    await sleep(1h)\n  }\n  helper(e: msg)";
+        let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+        assert_eq!(
+            reasons_of(&source, "m", 3),
+            ["expression:llm", "within_compare", "write_position_not_record", "block_head_value_root", "expression_does_not_lower", "block_park", "statement:call"]
+        );
+        assert_eq!(refused(body).as_deref(), Some("expression:llm"));
+        // The file's reasons come first, then each movement's, in source order.
+        let file_first = format!("import {{ x }} from \"./lib.mov\"\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  inbox = 1\n  y = AI(\"why\")\n}}");
+        assert_eq!(reasons_of(&file_first, "m", 3), ["import_from_file", "name_shadowed", "expression:llm"]);
     }
 
     #[test]

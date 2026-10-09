@@ -15,6 +15,7 @@ import path from 'node:path';
 import { canonicalJson, hostRecordingSchema, type HostRecording, type ReplayTarget, type ReplayVerdict } from 'engine-contracts/conformance';
 
 import { httpTarget, rustTarget, typescriptTarget } from '../replay';
+import { rustRunStats } from '../../rust_stats';
 
 const FIXTURES = path.resolve(__dirname, '../__fixtures__');
 
@@ -27,11 +28,13 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  margin of 2. Raised at chunk 6A Task 3b, the extraction keyword and plugin
  *  calls in Rust (2026-10-09): 195 and 234 on Rust, less a margin of 2.
  *  Raised at chunk 6A Task 4, folds, EXISTS, IS tests and a record named
- *  twice (2026-10-09): 256 and 313 on Rust, less a margin of 2.
+ *  twice (2026-10-09): 256 and 313 on Rust, less a margin of 2. Raised at
+ *  chunk 7A Task 1, admission walking only what the fired movement reaches
+ *  (2026-10-09): 257 and 314 on Rust, less a margin of 2.
  *  Raise them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 254 },
-  v2: { recordings: 542, rust: 311 },
+  v1: { recordings: 443, rust: 255 },
+  v2: { recordings: 542, rust: 312 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);
@@ -203,8 +206,14 @@ export function replayCorpus(corpus: keyof typeof FLOORS): void {
   });
 
   it('replay identically against the Rust engine, every recording it runs whole', async () => {
+    const before = { ...rustRunStats.allReasons };
     const { same, skipped, diverged } = await replayAll(rustTarget, recordings);
+    const everyReason = Object.entries(rustRunStats.allReasons)
+      .map(([reason, count]): [string, number] => [reason, count - (before[reason] ?? 0)])
+      .filter(([, count]) => count > 0)
+      .sort(([, a], [, b]) => b - a);
     console.log(`${corpus}: ${same} of ${recordings.length} recordings replayed on the Rust engine; skipped ${JSON.stringify(skipped)}`);
+    console.log(`${corpus}: recordings the Rust engine refused, by every reason each holds: ${JSON.stringify(Object.fromEntries(everyReason))}`);
     expect(diverged).toEqual([]);
     expect(same).toBeGreaterThanOrEqual(FLOORS[corpus].rust);
   });

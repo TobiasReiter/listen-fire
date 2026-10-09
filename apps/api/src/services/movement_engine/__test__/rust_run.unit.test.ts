@@ -511,6 +511,43 @@ describe('a whole run in the Rust engine', () => {
       expect(rustRunStats.declined).toEqual({});
       expect(rustRunStats.hostCalls).toEqual({});
     }
+    // A refused run counts once under its first reason, and once under
+    // each reason it holds: the walk goes on past the first.
+    resetRustRunStats();
+    const many = movement('  x = AI("why?")\n  y = @user_email\n  z = AI("again")\n  if msg.`subject` WITHIN "7d" {\n    w = 1\n  }');
+    const { outcome, resolved } = await segmentOf(many);
+    expect(outcome).toEqual({ declined: 'expression:llm' });
+    expect(resolved).toEqual([]);
+    expect(rustRunStats).toMatchObject({
+      notAdmitted: { 'expression:llm': 1 },
+      allReasons: { 'expression:llm': 1, 'meta:user_email': 1, within_compare: 1 },
+      declined: {},
+      hostCalls: {},
+    });
+  });
+});
+
+describe('admission walks what the entry reaches', () => {
+  const helper = (body: string) => `movement helper(e: <inbox-[:message]->>) {\n${body}\n}\n`;
+  const entry = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}\n`;
+
+  it('runs a program whose unreached helper holds what this engine does not run, as the TypeScript engine does', async () => {
+    for (const unsupported of ['  x = AI("why?")', '  x = @user_email', '  r = await parallel([() => {\n    y = 1\n  }])']) {
+      const { result } = await agree({
+        source: `${helper(unsupported)}${entry('  s = msg.`subject`\n  return UPPER(s)')}`,
+        event: webhook({ subject: 'Acme' }),
+        movementName: 'm',
+      });
+      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 1, notAdmitted: {}, allReasons: {} });
+      expect(result?.movementName).toBe('m');
+    }
+  });
+
+  it('refuses what a reached helper holds, under every reason on the way to it', async () => {
+    resetRustRunStats();
+    const { outcome } = await segmentOfMovement(`${entry('  helper(e: msg)')}${helper('  x = AI("why?")')}`, 'm');
+    expect(outcome).toEqual({ declined: 'statement:call' });
+    expect(rustRunStats).toMatchObject({ notAdmitted: { 'statement:call': 1 }, allReasons: { 'statement:call': 1, 'expression:llm': 1 }, hostCalls: {} });
   });
 });
 
@@ -526,6 +563,18 @@ async function segmentOf(source: string) {
     return { outcome: await runSegmentInRust({ input, context }), resolved };
   } catch (error) {
     return { outcome: { error }, resolved };
+  }
+}
+
+/** `segmentOf`, firing the movement named. */
+async function segmentOfMovement(source: string, movementName: string) {
+  const host = makeTestHost({ adapters: { resolve: () => fakeEmail().adapter } });
+  const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
+  const input = { source: PRELUDE + source, event: webhook({}), teamId: TEAM_ID, catalog, host, movementName };
+  try {
+    return { outcome: await runSegmentInRust({ input, context }) };
+  } catch (error) {
+    return { outcome: { error } };
   }
 }
 

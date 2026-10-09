@@ -7,7 +7,7 @@
 //! declares refused (`entitySchemaFor`) — with zod's issues, in zod's order
 //! and words, and what the read coerced (`CoercionTracker`).
 //!
-//! One zod accident is not reproduced (README, "Spec the tail"): zod reads a
+//! One zod accident is not reproduced (README, "Transition artefacts to mirror"): zod reads a
 //! declared key through the object's prototype, so a field named after an
 //! `Object.prototype` member (`constructor`, `toString`, …) that the reply
 //! leaves out is a function, and fails, and a `__proto__` the reply writes
@@ -580,7 +580,7 @@ mod tests {
 
     /// A number past the double range crosses the eval wire as the
     /// `Infinity` `JSON.parse` made of it, and is refused as zod refuses it
-    /// (README, "Spec the tail"); over a JSON host it is already `null`,
+    /// (README, "Transition artefacts to mirror"); over a JSON host it is already `null`,
     /// which reads clean on both engines.
     #[test]
     fn a_number_past_the_double_range_is_refused_as_zod_refuses_it() {

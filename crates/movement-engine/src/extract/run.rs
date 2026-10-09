@@ -958,7 +958,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
 
 /// What the reply says unread: a reply the eval wire could not carry is one
 /// issue at its root, retried and failed as any reply the guide does not
-/// describe ("Spec the tail" in the README).
+/// describe ("Transition artefacts to mirror" in the README).
 fn read_reply(region: &Region<'_>, reply: &Reply) -> Result<validate::Read, Vec<Issue>> {
     if reply.unreadable {
         return Err(vec![Issue { path: Vec::new(), message: UNREADABLE_REPLY.into() }]);

@@ -147,7 +147,7 @@ async function segmentInRust(
     }
     throw error;
   }
-  if ('refused' in outcome) return notAdmitted(input, outcome.refused);
+  if ('refused' in outcome) return notAdmitted(input, outcome.refused, outcome.reasons);
   rustRunStats.admitted += 1;
   if ('declined' in outcome) {
     rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
@@ -184,9 +184,11 @@ export const EVENT_DOES_NOT_CROSS = 'event_does_not_cross';
 /** The reason a run the Rust engine ran is logged with. */
 const ADMITTED = 'admitted';
 
-/** A run that never ran in Rust: counted by its reason, and logged. */
-function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string): { declined: string } {
+/** A run that never ran in Rust: counted by its first reason and under each
+ *  of its reasons, and logged by its first. */
+function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string, reasons: readonly string[] = [reason]): { declined: string } {
   rustRunStats.notAdmitted[reason] = (rustRunStats.notAdmitted[reason] ?? 0) + 1;
+  for (const each of new Set(reasons)) rustRunStats.allReasons[each] = (rustRunStats.allReasons[each] ?? 0) + 1;
   noteEngine(input, 'ts', reason);
   return { declined: reason };
 }
@@ -362,7 +364,7 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
 /** What a segment ended in: its result, a refusal by its admission (nothing
  *  ran but its parse), or a decline after its check (nothing the host can
  *  see happened). */
-type RunOutcome = { ran: MovementRunResult } | { refused: string } | { declined: string };
+type RunOutcome = { ran: MovementRunResult } | { refused: string; reasons: string[] } | { declined: string };
 
 /**
  * The segment's `done` (crates/movement-engine/src/run.rs says its shapes):
@@ -375,7 +377,7 @@ export function readRunResult(
   run: { context: Pick<RunContext, 'trace' | 'ledger'>; hostErrors: unknown[] },
 ): RunOutcome {
   const outcome = record(done, 'the Rust engine result');
-  if ('refused' in outcome) return { refused: string(outcome.refused, 'the Rust engine refused') };
+  if ('refused' in outcome) return refusalOf(outcome);
   if ('declined' in outcome) return { declined: string(outcome.declined, 'the Rust engine declined') };
   // What the segment's priced calls spent was charged to the run's account
   // as each answer passed through the shim (rust_host.ts), so a fault cannot
@@ -395,6 +397,17 @@ export function readRunResult(
   }
   if ('result' in outcome) return { ran: resultOf(outcome.result, trace) };
   throw new RustShimError(`the Rust engine finished with ${Object.keys(outcome).join(', ') || 'nothing'}, which this shim does not decode`);
+}
+
+/** An admission refusal: its first reason, and every reason, the first
+ *  first (crates/movement-engine/src/run.rs). */
+function refusalOf(outcome: Record<string, unknown>): { refused: string; reasons: string[] } {
+  const refused = string(outcome.refused, 'the Rust engine refused');
+  const { reasons } = outcome;
+  if (!Array.isArray(reasons) || reasons[0] !== refused) {
+    throw new RustShimError('the Rust engine refused with its reasons, the refused one first');
+  }
+  return { refused, reasons: reasons.map((reason, i) => string(reason, `the Rust engine refusal reason ${i}`)) };
 }
 
 const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'extractionSites', 'parked', 'parkedAddress', 'cancelled']);

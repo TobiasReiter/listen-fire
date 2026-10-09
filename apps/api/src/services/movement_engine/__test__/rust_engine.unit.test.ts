@@ -490,7 +490,14 @@ describe('the Rust engine shim', () => {
     expect(readRunResult(reported, { context: charged, hostErrors: [] })).toMatchObject({ ran: { movementName: 'm' } });
     expect(() => readRunResult(reported, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(readRunResult({ declined: 'a shape' }, { context: context(), hostErrors: [] })).toEqual({ declined: 'a shape' });
-    expect(readRunResult({ refused: 'statement:block' }, { context: context(), hostErrors: [] })).toEqual({ refused: 'statement:block' });
+    expect(readRunResult({ refused: 'statement:block', reasons: ['statement:block', 'block_park'] }, { context: context(), hostErrors: [] })).toEqual({
+      refused: 'statement:block',
+      reasons: ['statement:block', 'block_park'],
+    });
+    // A refusal names every reason, its own first.
+    for (const refusal of [{ refused: 'statement:block' }, { refused: 'statement:block', reasons: ['block_park', 'statement:block'] }, { refused: 'x', reasons: ['x', 1] }]) {
+      expect(() => readRunResult(refusal, { context: context(), hostErrors: [] })).toThrow(RustShimError);
+    }
     const original = new TypeError('the adapter broke');
     expect(() => readRunResult({ thrown: { hostError: 0 } }, { context: context(), hostErrors: [original] })).toThrow(original);
     expect(() =>

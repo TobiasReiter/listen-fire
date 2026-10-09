@@ -91,17 +91,24 @@ export const typescriptTarget: ReplayTarget = {
 export const rustTarget: ReplayTarget = {
   name: 'rust',
   async replay(recording) {
-    const before = { routed: rustRunStats.routed, ranWhole: rustRunStats.ranWhole, declined: { ...rustRunStats.declined } };
+    const before = {
+      routed: rustRunStats.routed,
+      ranWhole: rustRunStats.ranWhole,
+      notAdmitted: { ...rustRunStats.notAdmitted },
+      declined: { ...rustRunStats.declined },
+    };
     const verdict = await underEngine('rust', () =>
       replayThrough(recording, (conversation) => inProcess(conversation, recording.methods)),
     );
     if (rustRunStats.ranWhole > before.ranWhole) return verdict;
+    const grew = (now: Record<string, number>, then: Record<string, number>) =>
+      Object.entries(now).filter(([reason, count]) => count > (then[reason] ?? 0)).map(([reason]) => reason);
+    const refused = grew(rustRunStats.notAdmitted, before.notAdmitted);
+    if (refused.length > 0) return { kind: 'skipped', reason: `the Rust engine refused it: ${refused.join('; ')}` };
     if (rustRunStats.routed === before.routed) {
       return { kind: 'skipped', reason: 'the shim does not route this program to the Rust engine' };
     }
-    const declined = Object.entries(rustRunStats.declined)
-      .filter(([reason, count]) => count > (before.declined[reason] ?? 0))
-      .map(([reason]) => reason);
+    const declined = grew(rustRunStats.declined, before.declined);
     return { kind: 'skipped', reason: `the Rust engine declined it: ${declined.join('; ') || 'no reason counted'}` };
   },
 };

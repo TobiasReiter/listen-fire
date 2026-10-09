@@ -57,6 +57,7 @@ describe('GET /system/engine-stats', () => {
     rustRunStats.routed = 3;
     rustRunStats.ranWhole = 2;
     rustRunStats.notAdmitted = { 'statement:block': 4, limit_paused: 1 };
+    rustRunStats.allReasons = { 'statement:block': 4, block_park: 2, limit_paused: 1 };
     rustRunStats.declined = { event_field_dated: 1 };
     const res = await fetch(`${baseUrl}/system/engine-stats`);
     expect(res.status).toBe(200);
@@ -69,6 +70,7 @@ describe('GET /system/engine-stats', () => {
         ranWhole: 2,
         shimFaults: 0,
         notAdmitted: { 'statement:block': 4, limit_paused: 1 },
+        allReasons: { 'statement:block': 4, block_park: 2, limit_paused: 1 },
         declined: { event_field_dated: 1 },
         hostCalls: {},
       },

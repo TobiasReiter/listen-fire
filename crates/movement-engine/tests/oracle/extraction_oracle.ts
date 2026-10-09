@@ -550,7 +550,7 @@ class Replies {
  * after an `Object.prototype` member that the reply leaves out is a function,
  * and fails `expected object, received function`; a `__proto__` the reply
  * writes becomes the record's prototype rather than its own key. The Rust
- * engine reads both as any other field (README, "Spec the tail"). The
+ * engine reads both as any other field (README, "Transition artefacts to mirror"). The
  * expectation for such a reply is TypeScript's with exactly that taken out:
  * those issues dropped (the retry and the failure's detail worked out from
  * what is left), a `__proto__` record kept as an own key, and a reply with no
