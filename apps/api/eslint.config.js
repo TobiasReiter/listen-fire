@@ -14,6 +14,8 @@ module.exports = tseslint.config(
       'src/generated/kysely/types.ts',
       // An older release's tests, verbatim — linted as that release's tree.
       'src/__conformance__/**',
+      // Excluded from sweep (6A edits concurrently)
+      'src/services/movement_engine/**',
     ],
   },
   eslint.configs.recommended,
