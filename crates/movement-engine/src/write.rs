@@ -149,8 +149,15 @@ impl Run<'_> {
         if write.bind.is_some() {
             return Err(thrown(Failure::unsupported("a bound write", "the Rust engine runs identity writes")));
         }
-        if let WriteTarget::Position { alias, .. } = &write.target {
-            return self.position_write(alias, &lines, binding_name, scope).await;
+        match &write.target {
+            WriteTarget::Position { root: PathRoot::Name { name }, .. } => {
+                return self.position_write(name, &lines, binding_name, scope).await;
+            }
+            // Admission refuses it (`write_position_member_path`).
+            WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => {
+                return Err(thrown(Failure::unsupported("a write from a member path", "the Rust engine runs writes from a name")));
+            }
+            WriteTarget::Linked { .. } | WriteTarget::Tuple { .. } => {}
         }
         let resolved = self.write_target(&write.target, scope, Verb::Write).await?;
         let evaluated = self.write_fields(&lines, &resolved.adapter, &resolved.record_type, scope).await?;

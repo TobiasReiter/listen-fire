@@ -7,7 +7,8 @@
 //! entries are newline-terminated; termination is suspended inside
 //! unbalanced ( ) [ ] { }, inside double-quoted strings (which may span
 //! newlines and carry ${…} interpolation), and inside backtick-quoted names.
-//! `#` starts a comment to end of line, outside strings and backticks.
+//! `#` starts a comment to end of line, outside strings and backticks, at any
+//! bracket depth except directly inside a hop's brackets (`-[#linked]->`).
 //! Expression positions are NOT parsed here: they are captured verbatim as
 //! `ExprSlot`s for the expression grammar.
 //!
@@ -18,7 +19,10 @@ use std::collections::HashSet;
 
 use crate::ast::*;
 use crate::lexer::{KEYWORDS, MAX_DEPTH, TOO_DEEP};
-use crate::scan::{call_style_if_message, ident_end, scan_backtick_name, scan_ident, scan_name};
+use crate::scan::{
+    Opaque, OpaqueKind, TooDeep, call_style_if_message, ident_end, is_closer, is_opener, opens_hop, scan_backtick_name,
+    scan_ident, scan_member_path, scan_name, skip_opaque, skip_string,
+};
 use crate::util::utf16::{Utf16, is_ident_char, is_ident_start, is_js_space, to_string, trim, trim_end, trim_start};
 use crate::version::{before, since};
 
@@ -78,14 +82,6 @@ fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-fn is_closer(c: u16) -> bool {
-    c == unit(')') || c == unit(']') || c == unit('}')
-}
-
-fn is_opener(c: u16) -> bool {
-    c == unit('(') || c == unit('[') || c == unit('{')
-}
-
 fn closer_of(open: u16) -> u16 {
     match open {
         0x28 => unit(')'),
@@ -99,6 +95,24 @@ fn closer_of(open: u16) -> u16 {
 fn spell_name(name: &str) -> String {
     let units: Vec<u16> = name.encode_utf16().collect();
     if ident_end(&units, 0) == Some(units.len()) { name.to_string() } else { format!("`{name}`") }
+}
+
+/// A path ROOT re-spelled as source text (ast.ts `spellPathRoot`).
+fn spell_path_root(root: &PathRoot) -> String {
+    match root {
+        PathRoot::Name { name } => spell_name(name),
+        PathRoot::Expression { expr } => expr.raw.clone(),
+    }
+}
+
+/// The name a member-path root binds for its write (ast.ts
+/// `memberPathBindingName`): the path's names joined, or `None` for a root
+/// that is not one member path.
+fn member_path_binding_name(expr: &ExprSlot) -> Option<String> {
+    let units: Vec<u16> = expr.raw.encode_utf16().collect();
+    let raw = trim(&units);
+    let (names, end) = scan_member_path(raw, 0)?;
+    (end == raw.len()).then(|| names.join("."))
 }
 
 /// The bare name a WHERE-less single hop lands on (`-[:company]->`; an alias
@@ -683,31 +697,28 @@ impl Parser {
         Ok(name)
     }
 
-    /// Consumes a complete double-quoted string (may span newlines; `${…}` is
-    /// a balanced region, which is where this recurses).
+    /// Consumes a complete string (may span newlines; a double-quoted one's
+    /// `${…}` is a balanced region).
     fn scan_string(&mut self) -> SResult<()> {
-        self.deeper(|p| {
-            let start = p.pos;
-            p.pos += 1;
-            while !p.eof() {
-                if p.is('\\') {
-                    p.pos += 2;
-                    continue;
-                }
-                if p.is('"') {
-                    p.pos += 1;
-                    return Ok(());
-                }
-                if p.is('$') && p.is_at(1, '{') {
-                    p.pos += 2;
-                    p.scan_balanced(&Scan::new("}", "the ${…} interpolation"))?;
-                    p.pos += 1;
-                    continue;
-                }
-                p.pos += 1;
+        match skip_string(self.src.units(), self.pos, self.src.len()) {
+            Ok(Some(end)) => {
+                self.pos = end;
+                Ok(())
             }
-            p.fail_at("Unterminated string — expected a closing '\"'", start)
-        })
+            Ok(None) => self.unterminated(false, self.pos),
+            Err(TooDeep) => self.fail(TOO_DEEP),
+        }
+    }
+
+    fn unterminated<T>(&self, name: bool, start: usize) -> SResult<T> {
+        let (what, shown) = if name {
+            ("backtick-quoted name", "'`'".to_string())
+        } else if self.src.at(start) == Some(unit('\'')) {
+            ("string", "\"'\"".to_string())
+        } else {
+            ("string", "'\"'".to_string())
+        };
+        self.fail_at(format!("Unterminated {what} — expected a closing {shown}"), start)
     }
 
     fn read_quoted_string(&mut self, context: &str) -> SResult<(String, Span)> {
@@ -736,7 +747,7 @@ impl Parser {
     /// and where meaningful content ended (trailing whitespace and comments
     /// excluded).
     fn scan_balanced(&mut self, options: &Scan) -> SResult<(Stop, usize)> {
-        let mut brackets: Vec<(u16, usize)> = Vec::new();
+        let mut brackets: Vec<(u16, usize, bool)> = Vec::new();
         // An `IF` may span lines; `ELSE IF` continues a chain one END closes,
         // so only an `IF` not after `ELSE` opens a level.
         let mut if_depth = 0usize;
@@ -746,27 +757,25 @@ impl Parser {
             if brackets.is_empty() && if_depth == 0 && in_set(c, options.stops) {
                 return Ok((Some(c), content_end));
             }
-            if c == unit('#') && options.comments && brackets.is_empty() {
-                while !self.eof() && !self.is('\n') {
-                    self.pos += 1;
+            let in_hop = match brackets.last() {
+                None => !options.comments,
+                Some(&(_, _, hop)) => hop,
+            };
+            match skip_opaque(self.src.units(), self.pos, in_hop, self.src.len()) {
+                Ok(Some(Opaque::Skipped { kind, end })) => {
+                    self.pos = end;
+                    if kind != OpaqueKind::Comment {
+                        content_end = self.pos;
+                    }
+                    prev_else = false;
+                    continue;
                 }
-                prev_else = false;
-                continue;
-            }
-            if c == unit('"') {
-                self.scan_string()?;
-                content_end = self.pos;
-                prev_else = false;
-                continue;
-            }
-            if c == unit('`') {
-                self.read_backtick_name()?;
-                content_end = self.pos;
-                prev_else = false;
-                continue;
+                Ok(Some(Opaque::Unterminated { name, start })) => return self.unterminated(name, start),
+                Err(TooDeep) => return self.fail(TOO_DEEP),
+                Ok(None) => {}
             }
             if is_opener(c) {
-                brackets.push((c, self.pos));
+                brackets.push((c, self.pos, opens_hop(self.src.units(), self.pos, self.src.len())));
                 self.pos += 1;
                 content_end = self.pos;
                 prev_else = false;
@@ -774,7 +783,7 @@ impl Parser {
             }
             if is_closer(c) {
                 let ch = to_string(&[c]);
-                let Some((open, offset)) = brackets.pop() else {
+                let Some((open, offset, _)) = brackets.pop() else {
                     return self.fail(format!("Unbalanced '{ch}' in {}", options.context));
                 };
                 let want = closer_of(open);
@@ -830,7 +839,7 @@ impl Parser {
             }
             self.pos += 1;
         }
-        if let Some(&(open, offset)) = brackets.last() {
+        if let Some(&(open, offset, _)) = brackets.last() {
             return self.fail_at(
                 format!(
                     "Unbalanced '{}' — no matching '{}' before end of file",
@@ -1413,44 +1422,34 @@ impl Parser {
     /// grammar to fall back to.
     fn scan_expression_root_end(&self) -> Option<usize> {
         let src = self.src.units();
-        let mut depth = 0usize;
+        let mut hops: Vec<bool> = Vec::new();
         let mut i = self.pos;
         while i < src.len() {
             let c = src[i];
-            if c == unit('\n') || (c == unit('#') && depth == 0) {
+            // A head is written on one line, and a comment ends the line's code.
+            if c == unit('\n') {
                 return None;
             }
-            if depth == 0 && (c == unit(',') || c == unit(';')) {
+            if hops.is_empty() && (c == unit(',') || c == unit(';')) {
                 return None;
             }
-            if c == unit('"') {
-                i += 1;
-                while i < src.len() && src[i] != unit('"') {
-                    i += if src[i] == unit('\\') { 2 } else { 1 };
+            match skip_opaque(src, i, hops.last().copied().unwrap_or(false), src.len()) {
+                Ok(Some(Opaque::Skipped { kind: OpaqueKind::String | OpaqueKind::Name, end })) => {
+                    i = end;
+                    continue;
                 }
-                if i >= src.len() {
-                    return None;
-                }
-                i += 1;
-                continue;
+                Ok(Some(_)) | Err(TooDeep) => return None,
+                Ok(None) => {}
             }
-            if c == unit('`') {
-                let (_, close) = scan_backtick_name(src, i)?;
-                i = close + 1;
-                continue;
-            }
-            if depth == 0 && c == unit('-') && src.get(i + 1) == Some(&unit('[')) {
+            if hops.is_empty() && c == unit('-') && src.get(i + 1) == Some(&unit('[')) {
                 let end = self.pos + trim_end(&src[self.pos..i]).len();
                 return self.is_expression_root(end).then_some(end);
             }
             if is_opener(c) {
-                depth += 1;
+                hops.push(opens_hop(src, i, src.len()));
             } else if is_closer(c) {
                 // A closer with nothing open belongs to whoever opened it.
-                if depth == 0 {
-                    return None;
-                }
-                depth -= 1;
+                hops.pop()?;
             }
             i += 1;
         }
@@ -1529,10 +1528,11 @@ impl Parser {
     /// `match <path> { unique by (…) … }` — after the keyword.
     fn parse_match_expression(&mut self, start: usize) -> SResult<MatchExpression> {
         let target = self.parse_write_target(Finder::Match)?;
-        if let WriteTarget::Position { alias, span } = &target {
+        if let WriteTarget::Position { root, span } = &target {
+            let held = spell_path_root(root);
             return Err(ParseError {
                 message: format!(
-                    "'{alias}' is already a record — a match FINDS one, from where records are: a hop ('match {alias}-[:Edge]-> {{ … }}') or an instance's collection ('match crm-[:companies]-> {{ … }}')"
+                    "'{held}' is already a record — a match FINDS one, from where records are: a hop ('match {held}-[:Edge]-> {{ … }}') or an instance's collection ('match crm-[:companies]-> {{ … }}')"
                 ),
                 loc: span.start,
             });
@@ -1597,33 +1597,7 @@ impl Parser {
         if self.is('(') {
             return self.parse_tuple_write_target(target_start, kw);
         }
-        // A write's parent is ONE named record whose identity it carries; an
-        // expression has no name to carry, so it is refused with the repair.
-        if let Some(expr_parent_end) = self.scan_expression_root_end() {
-            return self.fail(format!(
-                "A {kw}'s parent is a NAMED record — bind it first ('parent = {}', then '{kw} parent-[:edge]-> {{ … }}'). A {kw} starts from one record whose identity it carries (the graph it lands in, its 'bind' counterpart, who it is attributed to), and an expression has no name to carry.",
-                self.text(self.pos, expr_parent_end)
-            ));
-        }
-        let Some((first, first_end)) = scan_name(self.src.units(), self.pos) else {
-            return self.fail(format!(
-                "Expected a {kw} target after '{kw}' — a linked path like '<instance>-[:edge]->' or 'parent-[:edge]->', or a tuple '(a-[:e]->, b-[:f]->)' — found {}",
-                self.describe_here()
-            ));
-        };
-        self.pos = first_end;
-        if self.is('.') {
-            let dot_start = self.pos;
-            self.pos += 1;
-            let type_name = self.read_name(&format!("a type name after '{first}.'"))?;
-            return self.fail_at(
-                format!(
-                    "{} targets name the edge, not the type — use '{kw} {first}-[:{type_name}]-> {{ … }}'. The flat '{first}.{type_name}' form is no longer a {kw} target.",
-                    if keyword == Finder::Write { "Write" } else { "Match" }
-                ),
-                dot_start,
-            );
-        }
+        let root = self.parse_write_root(kw)?;
         if self.starts_hop() {
             let hops_start = self.pos;
             loop {
@@ -1634,11 +1608,67 @@ impl Parser {
             }
             let hops_raw = self.text(hops_start, self.pos);
             let explicit_type = self.try_read_explicit_write_type()?;
-            let path = PathHead { root: Some(PathRoot::Name { name: first }), hops_raw, span: self.span_from(target_start) };
+            let path = PathHead { root: Some(root), hops_raw, span: self.span_from(target_start) };
             return Ok(WriteTarget::Linked { path, explicit_type, span: self.span_from(target_start) });
         }
-        // A bare name updates the record at that bound position in place.
-        Ok(WriteTarget::Position { alias: first, span: self.span_from(target_start) })
+        // A bare name or member path updates the record it holds in place
+        // (`write a { … }`, `write m.k { … }`).
+        Ok(WriteTarget::Position { root, span: self.span_from(target_start) })
+    }
+
+    /// Where a write or a match starts: the record a NAME holds, or the one a
+    /// MEMBER PATH reaches (`m.k`, `m.k.inner`), read exactly as `x = m.k`
+    /// would bind it. Any other expression is bound to a name first.
+    fn parse_write_root(&mut self, kw: &str) -> SResult<PathRoot> {
+        let start = self.pos;
+        let src = self.src.units();
+        let (member, name) = match scan_member_path(src, start) {
+            Some((_, end)) => (Some(end), None),
+            None => (None, scan_name(src, start)),
+        };
+        let end = member.or(name.as_ref().map(|&(_, end)| end));
+        let Some(end) = end.filter(|&end| !matches!(src.get(end), Some(&c) if c == unit('(') || c == unit('['))) else {
+            return self.refuse_write_root_expression(kw);
+        };
+        self.pos = end;
+        if let Some((name, _)) = name {
+            return Ok(PathRoot::Name { name });
+        }
+        Ok(PathRoot::Expression { expr: self.slot(self.text(start, end), self.span_between(start, end)) })
+    }
+
+    /// A write's root that is neither a name nor a member path: the repair is
+    /// to bind it first. With no expression to name, the target is missing.
+    fn refuse_write_root_expression<T>(&mut self, kw: &str) -> SResult<T> {
+        let expr_end = match self.scan_expression_root_end() {
+            Some(end) => Some(end),
+            None => self.scan_write_root_expression_end(),
+        };
+        if let Some(expr_end) = expr_end {
+            return self.fail(format!(
+                "A {kw} starts from a record a name or a member path holds ('parent', 'm.k') — bind this one first: 'parent = {}', then '{kw} parent-[:edge]-> {{ … }}' or '{kw} parent {{ … }}'.",
+                self.text(self.pos, expr_end)
+            ));
+        }
+        self.fail(format!(
+            "Expected a {kw} target after '{kw}' — a linked path like '<instance>-[:edge]->' or 'parent-[:edge]->', or a tuple '(a-[:e]->, b-[:f]->)' — found {}",
+            self.describe_here()
+        ))
+    }
+
+    /// Where a write's EXPRESSION root ends when no hop follows it: a call or
+    /// an index on a name (`FIRST(xs)`, `rows[0]`), up to the body's `{`.
+    /// Peeks only.
+    fn scan_write_root_expression_end(&mut self) -> Option<usize> {
+        let save = self.pos;
+        let (_, name_end) = scan_name(self.src.units(), save)?;
+        if !matches!(self.src.at(name_end), Some(c) if c == unit('(') || c == unit('[')) {
+            return None;
+        }
+        let scanned = self.scan_balanced(&Scan::new("{\n", "the write target"));
+        self.pos = save;
+        let (_, content_end) = scanned.ok()?;
+        (content_end > save).then_some(content_end)
     }
 
     /// `bind <name>` between the write target and the body. Contextual.
@@ -1671,8 +1701,16 @@ impl Parser {
                     self.describe_here()
                 ));
             };
-            if !matches!(path.root, Some(PathRoot::Name { .. })) {
-                return self.fail_at("Every tuple path starts at a bound handle — name the parent", target_start);
+            let held = match &path.root {
+                Some(PathRoot::Name { .. }) => true,
+                Some(PathRoot::Expression { expr }) => member_path_binding_name(expr).is_some(),
+                None => false,
+            };
+            if !held {
+                return self.fail_at(
+                    "Every tuple path starts at a record a name or a member path holds — bind the parent first",
+                    target_start,
+                );
             }
             paths.push(path);
             self.skip_all_ws();
@@ -1788,12 +1826,20 @@ impl Parser {
                 "'{spelled}' spreads a record's fields into the write — name the record right after it: '{spelled}e'"
             ));
         }
-        let source = self.read_name(&format!("the record to spread after '{spelled}'"))?;
-        Ok(Some(WriteSpread {
-            source,
-            semantics: fill.then_some(FieldWriteMode::Fill),
-            span: self.span_from(start),
-        }))
+        let root = self.read_name(&format!("the record to spread after '{spelled}'"))?;
+        // `...m.k`: a record held under a key of a map spreads as that record.
+        let mut members: Vec<String> = Vec::new();
+        while self.is('.') && self.src.at(self.pos + 1).is_some_and(|c| is_ident_start(c) || c == unit('`')) {
+            self.pos += 1;
+            members.push(self.read_name(&format!("the key to read after '{spelled}{root}.'"))?);
+        }
+        let (source, path) = if members.is_empty() {
+            (root, None)
+        } else {
+            let spelled_path = std::iter::once(&root).chain(&members).map(|n| spell_name(n)).collect::<Vec<_>>().join(".");
+            (spelled_path, Some(SpreadPath { root, members }))
+        };
+        Ok(Some(WriteSpread { source, path, semantics: fill.then_some(FieldWriteMode::Fill), span: self.span_from(start) }))
     }
 
     fn parse_unique_clause(&mut self, entry_start: usize) -> SResult<UniqueClause> {
@@ -2192,7 +2238,12 @@ impl Parser {
                         );
                     }
                     let source = spread.source;
-                    spreads.push(MapSpread { source: source.clone(), after: entries.len(), span: spread.span });
+                    spreads.push(MapSpread {
+                        source: source.clone(),
+                        path: spread.path,
+                        after: entries.len(),
+                        span: spread.span,
+                    });
                     p.finish_node_entry(&source)?;
                     continue;
                 }

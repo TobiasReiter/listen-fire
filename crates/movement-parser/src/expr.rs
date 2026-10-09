@@ -83,7 +83,7 @@ fn unit(c: char) -> u16 {
 impl<'a> ExpressionParser<'a> {
     fn new(src: &'a Utf16, start: usize, limit: usize, depth: usize) -> Self {
         Self {
-            sc: Scanner { src, limit },
+            sc: Scanner { src, origin: start, limit },
             pos: start,
             previous: Previous::Start,
             stop_at_newline: false,

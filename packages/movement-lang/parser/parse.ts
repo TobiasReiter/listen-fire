@@ -5,6 +5,7 @@
 
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from '../language_version';
 import type { ExprSlot, Loc, Program, RValue } from './ast';
+import { originalSlot } from '../expression/bridge';
 import { rustParseNestedCall, rustParseProgram, type StatementParse } from './rust_parser';
 
 export class MovementParseError extends Error {
@@ -43,8 +44,25 @@ export function parseNestedCall(
   at: { start: number; end: number },
   languageVersion: LanguageVersion,
 ): RValue {
-  return refusedAsError(rustParseNestedCall(slot, at, languageVersion));
+  // Read once per place in the program, as a call on its own line is: the
+  // checker records what it settles on the call's statements (a spread's copy
+  // plan, a walk's), and the engine runs those same statements.
+  const origin = originalSlot(slot);
+  let read = nestedCallReads.get(origin);
+  if (read === undefined) {
+    read = new Map();
+    nestedCallReads.set(origin, read);
+  }
+  const key = `${languageVersion}@${at.start}-${at.end}`;
+  let value = read.get(key);
+  if (value === undefined) {
+    value = refusedAsError(rustParseNestedCall(slot, at, languageVersion));
+    read.set(key, value);
+  }
+  return value;
 }
+
+const nestedCallReads = new WeakMap<ExprSlot, Map<string, RValue>>();
 
 function refusedAsError<T>(parse: StatementParse<T>): T {
   if (parse.ok) return parse.value;

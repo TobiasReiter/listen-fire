@@ -200,8 +200,10 @@ pub enum WriteTarget {
         explicit_type: Option<String>,
         span: Span,
     },
+    /// `write a { … }`, `write m.k { … }`: the record a name or a member
+    /// path holds, updated in place.
     Position {
-        alias: String,
+        root: PathRoot,
         span: Span,
     },
 }
@@ -280,11 +282,22 @@ pub struct FieldEntry {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct WriteSpread {
+    /// The spread record's bound name, or a member path as written (`path`
+    /// then says what it reads).
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<SpreadPath>,
     /// Only ever `fill`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantics: Option<FieldWriteMode>,
     pub span: Span,
+}
+
+/// `...m.k`: the bound name, then the keys read off it, in order.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SpreadPath {
+    pub root: String,
+    pub members: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -368,6 +381,8 @@ pub enum NodeEntry {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MapSpread {
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<SpreadPath>,
     pub after: usize,
     pub span: Span,
 }

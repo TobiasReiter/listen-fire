@@ -494,8 +494,11 @@ impl Names<'_> {
         }
         match &write.target {
             WriteTarget::Tuple { .. } => return refuse("write_tuple"),
-            WriteTarget::Position { alias, .. } => {
-                if !self.handles.contains(alias) && !self.landings.contains(alias) {
+            // `write m.k { … }`: the record a map holds, bound for the write
+            // alone (run.ts `bindSlotValue`), which this engine does not.
+            WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => return refuse("write_position_member_path"),
+            WriteTarget::Position { root: PathRoot::Name { name }, .. } => {
+                if !self.handles.contains(name) && !self.landings.contains(name) {
                     return refuse("write_position_not_record");
                 }
             }
@@ -505,6 +508,9 @@ impl Names<'_> {
             unique_clause(&clause.predicate.raw)?;
         }
         for spread in write.spreads.iter().flatten() {
+            if spread.path.is_some() {
+                return refuse("write_spread_path");
+            }
             let held = self.values.contains(&spread.source)
                 || self.handles.contains(&spread.source)
                 || self.nodes.contains(&spread.source)
@@ -578,6 +584,9 @@ impl Names<'_> {
         }
         let records = |name: &str| self.handles.contains(name) || self.nodes.contains(name);
         for spread in literal.spreads.iter().flatten() {
+            if spread.path.is_some() {
+                return refuse("node_spread_path");
+            }
             if !self.values.contains(&spread.source) && !records(&spread.source) {
                 return refuse("node_spread_source");
             }
@@ -792,6 +801,10 @@ mod tests {
             ("  write crm-[:companies]-> { ...crm }", "write_spread_source"),
             ("  g = graph { owner: msg }", "node_event_entry"),
             ("  g = graph { ...msg }", "node_spread_source"),
+            ("  held = { k: 1 }\n  write held.k { a: 1 }", "write_position_member_path"),
+            ("  held = { k: 1 }\n  write crm-[:companies]-> { ...held.k }", "write_spread_path"),
+            ("  held = { k: 1 }\n  g = graph { ...held.k }", "node_spread_path"),
+            ("  held = { k: 1 }\n  write held.k-[:e]-> { a: 1 }", "write_root_expression"),
             ("  x = MAP([1], (v) => v)", "builtin_call_form"),
             ("  r = M(msg)", "function_call"),
         ] {

@@ -9,6 +9,7 @@
 use serde::Serialize;
 
 use crate::util::utf16::{Utf16, is_ascii_digit, is_ident_char, is_ident_start, is_js_space, opt_is, to_string};
+use crate::scan::{TooDeep, is_directly_in_hop, is_hop_interior, matching_close, scan_backtick_name_within};
 
 /// An expression the grammar refuses: the message, and the UTF-16 offset
 /// into the text the parser was given (`ExpressionSyntaxError.offset`).
@@ -175,6 +176,9 @@ fn unit(c: char) -> u16 {
 /// the few the TypeScript grammar makes on the unbounded string say so.
 pub struct Scanner<'a> {
     pub src: &'a Utf16,
+    /// Where this parse began, outside every bracket it reads: what tells a
+    /// `#` comment from a hop head (`is_directly_in_hop`).
+    pub origin: usize,
     pub limit: usize,
 }
 
@@ -188,10 +192,18 @@ impl<'a> Scanner<'a> {
         opt_is(self.at(i), c)
     }
 
-    /// Past the whitespace at `pos`; whether it crossed a newline.
+    /// Past the whitespace and `#` comments at `pos` (a `#` directly inside a
+    /// hop's brackets begins a head, `-[#linked]->`); whether it crossed a
+    /// newline.
     pub fn skip_ws(&self, mut pos: usize) -> (usize, bool) {
         let mut newline = false;
         while let Some(u) = self.at(pos) {
+            if u == unit('#') && !is_directly_in_hop(self.src.units(), self.origin, pos) {
+                while self.at(pos).is_some_and(|u| u != unit('\n')) {
+                    pos += 1;
+                }
+                continue;
+            }
             if !is_js_space(u) {
                 break;
             }
@@ -287,57 +299,14 @@ impl<'a> Scanner<'a> {
     /// `start` is just inside `-[` / `<-[`: a hop opens with `:`, `#`, or an
     /// alias (`name:`). Anything else is a minus and a list.
     pub fn is_hop_interior(&self, start: usize) -> bool {
-        let mut i = start;
-        while self.at(i).is_some_and(is_js_space) {
-            i += 1;
-        }
-        // Unbounded, as the TypeScript reads `this.src[i]`.
-        let c = self.src.at(i);
-        if opt_is(c, ':') || opt_is(c, '#') {
-            return true;
-        }
-        let mut end = match c {
-            Some(u) if u == unit('`') => {
-                let mut j = i + 1;
-                while j < self.limit && !self.is(j, '`') {
-                    j += if self.is(j, '\\') { 2 } else { 1 };
-                }
-                if j >= self.limit {
-                    return false;
-                }
-                j + 1
-            }
-            Some(u) if is_ident_start(u) => {
-                let mut j = i + 1;
-                while self.at(j).is_some_and(is_ident_char) {
-                    j += 1;
-                }
-                j
-            }
-            _ => return false,
-        };
-        while self.at(end).is_some_and(is_js_space) {
-            end += 1;
-        }
-        opt_is(self.src.at(end), ':')
+        is_hop_interior(self.src.units(), start, self.limit)
     }
 
     pub fn scan_backtick(&self, start: usize) -> PResult<(String, usize)> {
-        let mut i = start + 1;
-        let mut name: Vec<u16> = Vec::new();
-        while let Some(u) = self.at(i) {
-            if u == unit('`') {
-                return Ok((to_string(&name), i + 1));
-            }
-            if u == unit('\\') && i + 1 < self.limit {
-                name.extend(self.at(i + 1));
-                i += 2;
-                continue;
-            }
-            name.push(u);
-            i += 1;
+        match scan_backtick_name_within(self.src.units(), start, self.limit) {
+            Some((name, close)) => Ok((name, close + 1)),
+            None => fail("Unterminated backtick-quoted name", start),
         }
-        fail("Unterminated backtick-quoted name", start)
     }
 
     fn lex_string(&self, start: usize) -> PResult<(usize, QuoteChar, Vec<Segment>)> {
@@ -358,7 +327,11 @@ impl<'a> Scanner<'a> {
                     segments.push(Segment::Text(to_string(&text)));
                 }
                 text.clear();
-                let close = self.find_interpolation_close(i + 2, 0)?;
+                let close = match matching_close(self.src.units(), i + 1, self.limit) {
+                    Ok(Some(close)) => close,
+                    Ok(None) => return fail("Unterminated ${…} interpolation", i),
+                    Err(TooDeep) => return fail(TOO_DEEP, i),
+                };
                 segments.push(Segment::Interpolation(Interpolation { start: i + 2, end: close }));
                 i = close + 1;
                 continue;
@@ -375,98 +348,10 @@ impl<'a> Scanner<'a> {
         fail("Unterminated string literal", start)
     }
 
-    /// `start` is just after `${`; the index of the matching `}`. `depth`
-    /// counts the strings nested inside interpolations so far.
-    pub fn find_interpolation_close(&self, start: usize, depth: usize) -> PResult<usize> {
-        if depth > MAX_DEPTH {
-            return fail(TOO_DEEP, start);
-        }
-        let mut braces = 1usize;
-        let mut i = start;
-        while let Some(c) = self.at(i) {
-            if c == unit('"') || c == unit('\'') {
-                i = self.skip_quoted(i, depth + 1)?;
-                continue;
-            }
-            if c == unit('`') {
-                i = self.scan_backtick(i)?.1;
-                continue;
-            }
-            if c == unit('{') {
-                braces += 1;
-            } else if c == unit('}') {
-                braces -= 1;
-                if braces == 0 {
-                    return Ok(i);
-                }
-            }
-            i += 1;
-        }
-        fail("Unterminated ${…} interpolation", start - 2)
-    }
-
-    /// The index just past a quoted string starting at `start`
-    /// (interpolations skipped whole).
-    pub fn skip_quoted(&self, start: usize, depth: usize) -> PResult<usize> {
-        let quote = self.at(start);
-        let double = opt_is(quote, '"');
-        let mut i = start + 1;
-        while let Some(c) = self.at(i) {
-            if c == unit('\\') {
-                i += 2;
-                continue;
-            }
-            if double && c == unit('$') && opt_is(self.src.at(i + 1), '{') {
-                i = self.find_interpolation_close(i + 2, depth)? + 1;
-                continue;
-            }
-            if Some(c) == quote {
-                return Ok(i + 1);
-            }
-            i += 1;
-        }
-        fail("Unterminated string literal", start)
-    }
-
-    /// The index of the bracket closing the one at `open`, skipping literals.
+    /// The index of the bracket closing the one at `open`, skipping
+    /// literals and comments (scan.rs `matching_close`).
     pub fn matching_close(&self, open: usize) -> Option<usize> {
-        let mut stack: Vec<u16> = Vec::new();
-        let mut i = open;
-        while let Some(c) = self.at(i) {
-            if c == unit('"') || c == unit('\'') {
-                i = self.skip_quoted(i, 0).ok()?;
-                continue;
-            }
-            if c == unit('`') {
-                let close = self.src.index_of(unit('`'), i + 1)?;
-                if close >= self.limit {
-                    return None;
-                }
-                i = close + 1;
-                continue;
-            }
-            let pair = if c == unit('(') {
-                Some(')')
-            } else if c == unit('[') {
-                Some(']')
-            } else if c == unit('{') {
-                Some('}')
-            } else {
-                None
-            };
-            if let Some(close) = pair {
-                stack.push(unit(close));
-            } else if c == unit(')') || c == unit(']') || c == unit('}') {
-                if stack.pop() != Some(c) {
-                    return None;
-                }
-                if stack.is_empty() {
-                    return Some(i);
-                }
-            }
-            i += 1;
-        }
-        None
+        matching_close(self.src.units(), open, self.limit).ok().flatten()
     }
 }
 
@@ -476,7 +361,7 @@ mod tests {
 
     fn lex_all(text: &str) -> PResult<Vec<Token>> {
         let src = Utf16::new(text);
-        let scanner = Scanner { src: &src, limit: src.len() };
+        let scanner = Scanner { src: &src, origin: 0, limit: src.len() };
         let mut pos = 0;
         let mut previous = Previous::Start;
         let mut out = Vec::new();
@@ -585,12 +470,14 @@ mod tests {
     }
 
     #[test]
-    fn a_hash_is_not_a_comment_in_an_expression() {
-        // `#` comments are the statement scanner's; an expression slot never holds one.
-        assert_eq!(
-            lex_all("a # b").unwrap_err(),
-            SyntaxError { message: "Unrecognised character '#'".into(), pos: 2 }
-        );
+    fn a_hash_is_a_comment_except_directly_inside_a_hop() {
+        // A `#` comment runs to the end of its line, at any bracket depth.
+        assert_eq!(kinds("a # b"), vec![Tok::Name { text: "a".into(), quoted: false }, Tok::Eof]);
+        assert_eq!(lex_all("(a # ) b\n)").unwrap().len(), 4);
+        // Directly inside a hop's brackets it begins a head.
+        let src = Utf16::new("x-[#linked]->");
+        let scanner = Scanner { src: &src, origin: 0, limit: src.len() };
+        assert_eq!(scanner.skip_ws(3), (3, false));
     }
 
     #[test]
@@ -626,9 +513,9 @@ mod tests {
     #[test]
     fn matching_close_skips_literals() {
         let src = Utf16::new("(a, \")\", `)`) => x");
-        let scanner = Scanner { src: &src, limit: src.len() };
+        let scanner = Scanner { src: &src, origin: 0, limit: src.len() };
         assert_eq!(scanner.matching_close(0), Some(12));
         let src = Utf16::new("(a]");
-        assert_eq!(Scanner { src: &src, limit: src.len() }.matching_close(0), None);
+        assert_eq!(Scanner { src: &src, origin: 0, limit: src.len() }.matching_close(0), None);
     }
 }
