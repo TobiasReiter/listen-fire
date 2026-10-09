@@ -45,7 +45,7 @@ afterAll(async () => {
 });
 
 describe('park reasons owned by units', () => {
-  it('a leaf parked as ask (the pre-migration reason) loads and resumes through the normal claim and finish', async () => {
+  it('a leaf parked as ask (the pre-migration reason) is claimable and finishable through the normal claim and finish', async () => {
     await park('legacy-ask', 'ask');
     expect(await claimParkedLeaf({ runId, address: 'legacy-ask', parkReason: 'ask' })).toEqual({
       state: { address: 'legacy-ask' },

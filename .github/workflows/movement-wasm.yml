@@ -40,6 +40,7 @@ on:
       - "apps/api/src/test/rust_eval_stats*"
       - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
+      - "apps/api/src/test/conformance_pin.setup.ts"
       # The host-conformance kit's format and replay rules.
       - "packages/engine-contracts/conformance/**"
       - ".github/workflows/movement-wasm.yml"
@@ -63,6 +64,7 @@ on:
       - "apps/api/src/test/rust_eval_stats*"
       - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
+      - "apps/api/src/test/conformance_pin.setup.ts"
       # The host-conformance kit's format and replay rules.
       - "packages/engine-contracts/conformance/**"
       - ".github/workflows/movement-wasm.yml"
