@@ -12,8 +12,9 @@ import type { EngineHost } from '../host';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { positionData } from '../../translation_graph/types';
 import { MovementEngineError } from '../errors';
-import { runMovement, type RunMovementInput } from '../run';
-import { assertEngineChoiceConfigured, engineFallback } from '../rust_engine';
+import { resumeMovement, runMovement, type RunMovementInput } from '../run';
+import { assertEngineChoiceConfigured, engineFallback, refusalOutcome, runSegmentInRust, type EngineProtocol } from '../rust_engine';
+import { openRunContext } from '../run_context';
 import { resetRustRunStats, setRunEngineRecorder, type RunEngineRecord } from '../rust_stats';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 
@@ -131,13 +132,13 @@ describe('the engine a run records', () => {
     await underConfig({}, () => run(ADMITTED, 'run-admitted'));
     expect(recorded).toEqual([
       { runId: 'run-refused', engine: 'ts', reason: 'expression_closure' },
-      { runId: 'run-admitted', engine: 'ts', reason: null },
+      { runId: 'run-admitted', engine: 'ts', reason: 'admitted' },
     ]);
   });
 
   it('records rust and no reason for a run the Rust engine ran', async () => {
     await underConfig({ engine: 'rust' }, () => run(ADMITTED));
-    expect(recorded).toEqual([{ runId: 'run-1', engine: 'rust', reason: null }]);
+    expect(recorded).toEqual([{ runId: 'run-1', engine: 'rust', reason: 'admitted' }]);
   });
 
   it('records ts and the refusal for a run the Rust engine refused and TypeScript ran', async () => {
@@ -166,6 +167,39 @@ describe('MOVEMENT_ENGINE_FALLBACK=none', () => {
   it('runs a run the Rust engine admits as it does with a fallback', async () => {
     const result = await underConfig({ engine: 'rust', fallback: 'none' }, () => run(ADMITTED));
     expect(result.movementName).toBe('m');
-    expect(recorded).toEqual([{ runId: 'run-1', engine: 'rust', reason: null }]);
+    expect(recorded).toEqual([{ runId: 'run-1', engine: 'rust', reason: 'admitted' }]);
+  });
+
+  it('fails a resume the shim refuses before any run context opens, and records the refusal', async () => {
+    const host = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
+    const failure = await underConfig({ engine: 'rust', fallback: 'none' }, () =>
+      resumeMovement({ ...inputOf(ADMITTED, host, 'run-resume'), state: { version: 1 } as never, answer: true }),
+    ).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'resume_answer' } });
+    expect(recorded).toEqual([{ runId: 'run-resume', engine: 'rust', reason: 'resume_answer' }]);
+  });
+
+  it('fails a run the engine admits and then declines, recording the decline', async () => {
+    const host = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
+    const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
+    const engine: EngineProtocol = {
+      start: () => ({ done: { declined: 'test_decline' } }),
+      answer: () => {
+        throw new Error('test: nothing to answer');
+      },
+      finish: () => undefined,
+    };
+    await underConfig({ engine: 'rust', fallback: 'none' }, async () => {
+      const outcome = await runSegmentInRust({ input: inputOf(ADMITTED, host, 'run-declined'), context }, engine);
+      expect(outcome).toEqual({ declined: 'test_decline' });
+      expect(refusalOutcome('test_decline')).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'test_decline' } });
+    });
+    expect(recorded).toEqual([{ runId: 'run-declined', engine: 'rust', reason: 'test_decline' }]);
+  });
+
+  it('records no rehearsal', async () => {
+    const host = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
+    await underConfig({}, () => runMovement({ ...inputOf(ADMITTED, host, 'run-rehearsal'), dryRun: true }));
+    expect(recorded).toEqual([]);
   });
 });

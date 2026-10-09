@@ -243,24 +243,26 @@ function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string): { 
  * was not chosen. At info under `MOVEMENT_ENGINE=rust`, where it is the
  * evidence of what the Rust engine takes; at debug otherwise.
  */
-export function noteEngine(input: Pick<RunMovementInput, 'runId'>, engine: EngineChoice, reason: string): void {
+export function noteEngine(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, engine: EngineChoice, reason: string): void {
   const line = `movement engine: engine=${engine} run=${input.runId ?? '-'} reason=${reason}`;
   if (reason === ENGINE_CHOICE_TS) logger.debug(line);
   else logger.info(line);
   // A run `MOVEMENT_ENGINE` did not route is recorded with the dry run's
   // verdict instead (`recordTypeScriptRun`).
-  if (reason !== ENGINE_CHOICE_TS) recordEngine(input, engine, reason === ADMITTED ? null : reason);
+  if (reason !== ENGINE_CHOICE_TS) recordEngine(input, engine, reason);
 }
 
-function recordEngine(input: Pick<RunMovementInput, 'runId'>, engine: EngineChoice, reason: string | null): void {
-  if (input.runId !== undefined) recordRunEngine({ runId: input.runId, engine, reason });
+function recordEngine(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, engine: EngineChoice, reason: string | null): void {
+  // A rehearsal has no run row.
+  if (input.runId !== undefined && input.dryRun !== true) recordRunEngine({ runId: input.runId, engine, reason });
 }
 
 /** A run `MOVEMENT_ENGINE` kept on the TypeScript engine, with the first
- *  reason the Rust engine's admission gave for it (undefined: it would
- *  take it, or the dry run was not asked or faulted). */
-export function recordTypeScriptRun(input: Pick<RunMovementInput, 'runId'>, reasons: string[] | undefined): void {
-  recordEngine(input, 'ts', reasons?.[0] ?? null);
+ *  reason the Rust engine's admission gave for it, or `admitted` when it
+ *  would take it (undefined reasons: the dry run was not asked or faulted,
+ *  recorded as no reason). */
+export function recordTypeScriptRun(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, reasons: string[] | undefined): void {
+  recordEngine(input, 'ts', reasons === undefined ? null : (reasons[0] ?? ADMITTED));
 }
 
 /** Why the TypeScript engine runs a run that `MOVEMENT_ENGINE` did not route. */

@@ -49,9 +49,9 @@ describe('a run row records its engine', () => {
     recordRunEngine({ runId, engine: 'ts', reason: 'expression_closure' });
     await settleRunEngineRecords();
     expect(await engineOf(runId)).toEqual({ engine: 'ts', engine_reason: 'expression_closure' });
-    recordRunEngine({ runId, engine: 'rust', reason: null });
+    recordRunEngine({ runId, engine: 'rust', reason: 'admitted' });
     await settleRunEngineRecords();
-    expect(await engineOf(runId)).toEqual({ engine: 'rust', engine_reason: null });
+    expect(await engineOf(runId)).toEqual({ engine: 'rust', engine_reason: 'admitted' });
   });
 
   it('writes in the order the decisions were made', async () => {
