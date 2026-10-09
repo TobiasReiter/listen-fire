@@ -820,7 +820,7 @@ export interface ExtractRuntime {
 
 // ── Materialisation ─────────────────────────────────────────────────────────
 
-interface Segment {
+export interface Segment {
   classification: string;
   content: string;
 }
@@ -881,7 +881,7 @@ interface FileResolution {
 
 /** One site of a planned LLM call: a (node, stage) plus the nested
  *  sites batched into the same call (through-free descendants). */
-interface CallSite {
+export interface CallSite {
   siteId: string;
   spec: ExtractNodeSpec;
   stageIndex: number;
@@ -1235,34 +1235,7 @@ class Materializer {
     single: boolean,
     options?: { skipOwnThrough?: boolean },
   ): CallSite {
-    const stage = spec.stages[stageIndex];
-    if (!options?.skipOwnThrough && stageIndex === 0 && stage.through.length > 0) {
-      // Handled by the caller (fenced child); defensive.
-      throw new MovementEngineError(
-        'MOVENG_RUNTIME',
-        `internal: region rooted at a fenced stage of '${spec.name}'`,
-      );
-    }
-    const siteId = `x:${sanitizeSiteName(spec.name)}#${++this.siteCounter}`;
-    return {
-      siteId,
-      spec,
-      stageIndex,
-      single,
-      // One interned ref per call site — every emission's field origins
-      // share it by reference. `dataSources` is filled when the call is
-      // issued (`extractRegion`), once the stage's enrichments are known.
-      ref: {
-        siteId,
-        node: spec.name,
-        description: spec.description,
-        stage: stageIndex,
-        dataSources: [],
-      },
-      children: stage.children
-        .filter((c) => (c.stages[0]?.through ?? []).length === 0)
-        .map((c) => this.buildRegion(c, 0, false)),
-    };
+    return planRegion(spec, stageIndex, single, () => ++this.siteCounter, options);
   }
 
   /** Stamp the call's data-source context onto every site ref the
@@ -1508,17 +1481,7 @@ class Materializer {
       );
       return cause;
     }
-    const answered = telemetry.lastReply?.parsedJson;
-    const keys = answered && typeof answered === 'object' ? Object.keys(answered) : [];
-    // Two different failures reach here, and naming the wrong one sends the
-    // next reader after the wrong thing: the reply never used the answer key at
-    // all, or it used the key and then wrote something inside it the guide does
-    // not describe (an entity answered under keys nothing declared, say).
-    const detail = keys.includes(region.siteId)
-      ? `The reply answered under \`${region.siteId}\`, but ${firstIssue(cause)}. `
-      : keys.length > 0
-        ? `The reply came back under ${quoteKeys(keys)}, not \`${region.siteId}\`. `
-        : 'The reply carried nothing the schema could read. ';
+    const detail = unansweredDetail(region, telemetry.lastReply?.parsedJson, cause);
     return new MovementEngineError(
       'MOVENG_RUNTIME',
       `The extraction of \`${region.spec.name}\` (${region.siteId}) was answered with something the guide does not describe, twice. ` +
@@ -1569,14 +1532,12 @@ class Materializer {
     if (parsed.success) return parsed.data;
 
     // Same validate-then-retry-once loop as the TG batcher's phases.
-    const lines = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`);
-    const issues = lines.join('\n');
     // The issues are what the retry was ASKED to fix — the most direct
     // statement there is of how the first reply missed.
-    opts.telemetry.retried = lines.slice(0, TRACE_ISSUE_LINES);
+    opts.telemetry.retried = issueLines(parsed.error.issues).slice(0, TRACE_ISSUE_LINES);
     const retry = await this.runtime.llm.call({
       system: opts.system,
-      userMessage: `${opts.userMessage}\n\n---\n\nYour previous response had validation errors:\n${issues}\n\n${retryInstruction(opts.region, parsed.error.issues)}`,
+      userMessage: retryUserMessage(opts.userMessage, opts.region, parsed.error.issues),
       label: `${opts.label}_retry`,
       ...opts.settings,
     });
@@ -1858,6 +1819,63 @@ class Materializer {
     });
     return result;
   }
+}
+
+/**
+ * The call a region makes: its site, and the sites of every through-free
+ * descendant batched into it, each numbered by `nextSite` as it is reached
+ * (the region's own site first, then its children depth first).
+ */
+export function planRegion(
+  spec: ExtractNodeSpec,
+  stageIndex: number,
+  single: boolean,
+  nextSite: () => number,
+  options?: { skipOwnThrough?: boolean },
+): CallSite {
+  const stage = spec.stages[stageIndex];
+  if (!options?.skipOwnThrough && stageIndex === 0 && stage.through.length > 0) {
+    // Handled by the caller (fenced child); defensive.
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      `internal: region rooted at a fenced stage of '${spec.name}'`,
+    );
+  }
+  const siteId = `x:${sanitizeSiteName(spec.name)}#${nextSite()}`;
+  return {
+    siteId,
+    spec,
+    stageIndex,
+    single,
+    // One interned ref per call site — every emission's field origins
+    // share it by reference. `dataSources` is filled when the call is
+    // issued (`extractRegion`), once the stage's enrichments are known.
+    ref: {
+      siteId,
+      node: spec.name,
+      description: spec.description,
+      stage: stageIndex,
+      dataSources: [],
+    },
+    children: stage.children
+      .filter((c) => (c.stages[0]?.through ?? []).length === 0)
+      .map((c) => planRegion(c, 0, false, nextSite)),
+  };
+}
+
+/** Which of the two failures a rejected reply was, in the failure message's
+ *  voice. */
+export function unansweredDetail(region: CallSite, answered: unknown, cause: z.ZodError): string {
+  const keys = answered && typeof answered === 'object' ? Object.keys(answered) : [];
+  // Two different failures reach here, and naming the wrong one sends the
+  // next reader after the wrong thing: the reply never used the answer key at
+  // all, or it used the key and then wrote something inside it the guide does
+  // not describe (an entity answered under keys nothing declared, say).
+  return keys.includes(region.siteId)
+    ? `The reply answered under \`${region.siteId}\`, but ${firstIssue(cause)}. `
+    : keys.length > 0
+      ? `The reply came back under ${quoteKeys(keys)}, not \`${region.siteId}\`. `
+      : 'The reply carried nothing the schema could read. ';
 }
 
 /** The rejection's first complaint, in the failure message's voice: where in
@@ -2476,7 +2494,7 @@ function quoteKeys(keys: string[]): string {
  * issue named, then raised. An extraction that genuinely found nothing still
  * says so the way it always did, with an empty array under the key.
  */
-function responseSchemaFor(region: CallSite, sink?: CoercionTracker): z.ZodTypeAny {
+export function responseSchemaFor(region: CallSite, sink?: CoercionTracker): z.ZodTypeAny {
   return z.preprocess(
     envelopeReader(region, sink),
     z
@@ -2557,6 +2575,17 @@ function isDeclaredRecord(value: unknown, declared: Set<string>): boolean {
   return keys.length > 0 && keys.every((k) => declared.has(k));
 }
 
+/** The validation issues as the retry prompt and the trace list them. */
+export function issueLines(issues: z.ZodIssue[]): string[] {
+  return issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`);
+}
+
+/** The second attempt's prompt: the first one, then what was wrong with the
+ *  reply to it. */
+export function retryUserMessage(userMessage: string, region: CallSite, issues: z.ZodIssue[]): string {
+  return `${userMessage}\n\n---\n\nYour previous response had validation errors:\n${issueLines(issues).join('\n')}\n\n${retryInstruction(region, issues)}`;
+}
+
 /**
  * What the retry asks for, which is not the same question in both cases.
  *
@@ -2579,7 +2608,7 @@ function retryInstruction(region: CallSite, issues: z.ZodIssue[]): string {
 
 /** The envelope a region is asking for, written out — a field is the
  *  `{ evidence, value }` pair, a child node a bare array of its own records. */
-function envelopeExample(region: CallSite): string {
+export function envelopeExample(region: CallSite): string {
   const fields = region.spec.stages[region.stageIndex].fields.map(
     (f) => `"${f.name}": {"evidence": string|null, "value": …}`,
   );
@@ -2587,7 +2616,7 @@ function envelopeExample(region: CallSite): string {
   return `{"${region.siteId}": [ { ${[...fields, ...children].join(', ')} } ] }`;
 }
 
-function countSites(site: CallSite): number {
+export function countSites(site: CallSite): number {
   return 1 + site.children.reduce((acc, c) => acc + countSites(c), 0);
 }
 
@@ -2658,7 +2687,7 @@ function guideSection(site: CallSite, parent: CallSite | undefined): string[] {
   return sections;
 }
 
-function buildSystemPrompt(region: CallSite): string {
+export function buildSystemPrompt(region: CallSite): string {
   return [
     'You are an information-extraction system.',
     '',
@@ -2692,7 +2721,7 @@ function buildSystemPrompt(region: CallSite): string {
  *  keeps: "this call read 6.2k, its sibling read 1.2k" is the first useful
  *  fact about a call that came back with nothing, and the total alone can
  *  never say it. */
-function renderUserMessage(
+export function renderUserMessage(
   segments: Segment[],
   entity:
     | {
@@ -2732,7 +2761,7 @@ function renderUserMessage(
   return { text: rendered.join('\n\n'), parts };
 }
 
-function transformResultSegments(plugin: string, result: TransformInvocationResult): Segment[] {
+export function transformResultSegments(plugin: string, result: TransformInvocationResult): Segment[] {
   const segments: Segment[] = [];
   if (result.text) segments.push({ classification: 'FRAGMENT', content: result.text });
   if (result.data && Object.keys(result.data).length > 0) {
@@ -2741,7 +2770,7 @@ function transformResultSegments(plugin: string, result: TransformInvocationResu
   return segments;
 }
 
-function segmentForDatum(datum: unknown): Segment {
+export function segmentForDatum(datum: unknown): Segment {
   if (typeof datum === 'string') return { classification: 'TEXT', content: datum };
   if (typeof datum === 'object' && datum !== null) {
     const r = datum as { content?: unknown; type?: unknown };

@@ -11,7 +11,9 @@
 //     alternation and empty iterations;
 //   - order_limit.json: a hop's pushdown and ORDER BY / LIMIT plan
 //     (./order_limit_oracle.ts; not ./order_limit, which Node resolves to
-//     the .json beside it).
+//     the .json beside it);
+//   - extraction.json: the extraction keyword's specs, regions, prompts and
+//     reply verdicts, and the priced-plugin cap (./extraction_oracle.ts).
 // Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
 // read local time (an offset-less date-time is local to `new Date`), so the
 // process runs in UTC wherever it is started.
@@ -35,6 +37,7 @@ import {
 } from '../../../../packages/movement-lang/expression/stdlib';
 import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
 import { compareValues } from '../../../../packages/shared/expression/filter';
+import { writeExtractionOracle } from './extraction_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
@@ -278,7 +281,10 @@ console.log(`regex.json: ${regexCases.length} cases`);
 
 // Awaited, and a failure fails the generator: CI's "oracle is current" step
 // must not pass on a pin that was never written.
-writeOrderLimitOracle(mulberry32(5)).catch((error: unknown) => {
+(async () => {
+  await writeOrderLimitOracle(mulberry32(5));
+  await writeExtractionOracle(mulberry32(20261009));
+})().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });

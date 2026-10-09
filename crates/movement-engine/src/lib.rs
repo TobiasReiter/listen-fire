@@ -19,6 +19,7 @@ pub mod env;
 pub mod env_services;
 pub mod eval;
 pub mod executor;
+pub mod extract;
 pub mod filter;
 pub mod host;
 pub mod js;

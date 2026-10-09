@@ -25,7 +25,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 |---|---|
 | `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight |
 | `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `park.sink`, `control.cancel`, `locks`, `trace`), plus the engine's own (`check`, `builtins`); every host request names the segment |
-| `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the cap met (`exceeded`) once a budget refusal is charged, the charges handed back with `done` |
+| `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the cap met (`exceeded`) once a budget refusal is charged, a priced plugin refused before the host is asked once the cap is spent (`plugin_refusal`), the charges handed back with `done` |
 | `admit` | admission: the allow-list walk over this engine's own parse, before the check; a refusal's stable reason (below) |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
@@ -41,7 +41,8 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`), and the per-flow buffer they wait in until their statement ends |
-| `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path; the file's declarations (`Declarations`: shapes, `type`s, plugin imports, by local name) |
+| `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path; the declarations (`Declarations`: the root's and each library's shapes and `type`s, each shape with the file that wrote it, and the plugin imports, by local name) |
+| `extract` | the extraction keyword without its model loop: the spec resolved per firing and the calls planned over it (`spec`), each call's system, user and retry messages (`prompt`), a reply read as zod reads it (`validate`) |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers and Unicode normalisation, from the JavaScript runtime (WASM) or natively (below); never a clock |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
@@ -193,6 +194,14 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `JSON.stringify` (TEXT.SERIALISE) | its quoting and two-space layout; keys sorted by UTF-16 unit, then laid out in object order (index keys first) as `Object.fromEntries` does | `js::tests::json_stringify_indents_as_javascript_does`, `stdlib::tests::text_members` |
 | object-literal prototypes | `MAGNITUDE_SUFFIXES["constructor"]` is `Object`, so `"5 constructor"` is NaN; `MONTH_NAMES["constructor"]` fails `validParts` like no month | `stdlib::tests::figures_read_as_the_regex_reads_them` |
 | a dict whose `kind` names a binding kind | the TypeScript reads it as a record (`bindingOf`, whose `kind in describeBinding` walks the prototype chain, so `"toString"` and `"constructor"` count): its `==`, spreads and record arguments go back to TypeScript, and the shim sends no such value | `stdlib::tests::record_detection_walks_the_prototype_chain_as_in_does`, `tests::maps_keep_javascript_key_order` |
+
+`tests/extraction_pin.rs` holds crate::extract and the priced-plugin cap to
+tests/oracle/extraction.json: 160 seeded programs (library files, `extends`,
+declared and borrowed types, `through` stages) with the spec, every region's
+site ids, system prompt and retry envelope, and about 2,200 seeded replies
+read (data, coercions, or zod's issues, the retry message and the failure's
+detail); 120 user messages; 17 `from` data; 80 priced-plugin ledgers. It is
+written by tests/oracle/generate.ts with the others, and CI diffs it too.
 
 `tests/stdlib_oracle.rs` holds every built-in and the comparator to the
 TypeScript's own answers (tests/oracle/stdlib.json, 10,455 cases), number
@@ -848,6 +857,17 @@ The rule for what this engine reproduces of JavaScript:
   - a hop's ORDER BY over keys of mixed types: one total order over every
     key kind (say: nulls, then numbers, then text), so no sort algorithm's
     merge decides where a record lands.
+  - a reply field named after an `Object.prototype` member
+    (`constructor`, `toString`, …): zod reads a declared key through the
+    object's prototype, so a reply that leaves the field out hands zod a
+    function, which fails the call (`expected object, received
+    function`). crate::extract::validate reads the field absent; the
+    oracle marks those replies (`divergence: "prototype_key"`) and pins
+    only that this engine does not fail them.
+  - a reply number past ±1.8e308: `JSON.parse` reads it as `Infinity`,
+    which zod's number check refuses (`expected number, received
+    number`); across the host boundary it is `null`, which reads clean.
+    A field's number is a finite double, or absent.
   - extraction call-site numbering: the number in an extraction's prompt
     (`x:<node>#<n>`) follows the order concurrent siblings reach the site,
     so a host answering at another speed sees another prompt; numbered by

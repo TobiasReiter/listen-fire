@@ -71,46 +71,109 @@ pub struct Checked {
     pub declarations: Declarations,
 }
 
-/// The declarations a program's constructs read, each by the name the root
-/// file binds: a graph's or an extraction's shape, a field's borrowed type, a
-/// plugin's registered name (its spec is the catalog snapshot's).
+/// The file that wrote a declaration: the scope its words are evaluated in,
+/// the `type`s its fields read and the names its `extends` resolves against
+/// (run.ts keeps a shape binding's `fileEnv` or `library` for the same).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DeclaringFile {
+    Root,
+    /// A linked library, by its path.
+    Library(String),
+}
+
+/// `node <Name> { … }` as written, and the file that wrote it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclaredShape {
+    pub declaration: ast::ShapeDeclaration,
+    pub file: DeclaringFile,
+}
+
+/// What one file declares for the constructs that read it, each by the name
+/// the file binds.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Declarations {
-    /// `node <Name> { … }`: the root's own, and those it imports from a file.
-    pub shapes: BTreeMap<String, ast::ShapeDeclaration>,
+pub struct FileDeclarations {
+    /// `node <Name> { … }`: the file's own, and those it imports from a file.
+    pub shapes: BTreeMap<String, DeclaredShape>,
     /// `type <Name> = <"a" | "b">`: its options, in order.
     pub types: BTreeMap<String, Vec<String>>,
+}
+
+/// The declarations a program's constructs read: a graph's or an
+/// extraction's shape, a field's declared type, a plugin's registered name
+/// (its spec is the catalog snapshot's).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Declarations {
+    pub root: FileDeclarations,
     /// `import { … } from plugins`: the local name, the plugin as registered.
     pub plugins: BTreeMap<String, String>,
+    /// Each linked library's, by path: where a library declaration's base
+    /// and `type`s are found (run.ts `libraryShape`, `typesOfLibrary`).
+    pub libraries: BTreeMap<String, FileDeclarations>,
 }
 
 impl Declarations {
+    /// The declarations visible in `file`.
+    pub fn of_file(&self, file: &DeclaringFile) -> Option<&FileDeclarations> {
+        match file {
+            DeclaringFile::Root => Some(&self.root),
+            DeclaringFile::Library(path) => self.libraries.get(path),
+        }
+    }
+
     fn of(program: &ast::Program, imports: &[Import], files: &BTreeMap<String, (File, Vec<Import>)>) -> Result<Declarations, String> {
-        let mut declarations = Declarations::default();
+        let mut declarations = Declarations { root: file_declarations(program, &DeclaringFile::Root, imports, files)?, ..Declarations::default() };
         for statement in &program.statements {
-            match statement {
-                ast::Statement::Shape(shape) => {
-                    declarations.shapes.insert(shape.name.clone(), shape.clone());
+            if let ast::Statement::Import(import) = statement
+                && matches!(&import.source, ast::ImportSource::Builtin { namespace } if namespace == "plugins")
+            {
+                for name in &import.names {
+                    declarations.plugins.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()), name.name.clone());
                 }
-                ast::Statement::Type(declared) => {
-                    declarations.types.insert(declared.name.clone(), declared.options.clone());
-                }
-                ast::Statement::Import(import) if matches!(&import.source, ast::ImportSource::Builtin { namespace } if namespace == "plugins") => {
-                    for name in &import.names {
-                        declarations.plugins.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()), name.name.clone());
-                    }
-                }
-                _ => {}
             }
         }
-        for import in imports.iter().filter(|i| i.kind == "shape") {
-            let (file, _) = files.get(&import.file).ok_or_else(|| format!("the shape \"{}\" is imported from the unlinked file \"{}\"", import.local, import.file))?;
-            let declared = declaration_at(&file.program, &import.declaration)
-                .ok_or_else(|| format!("no shape declaration at {} in \"{}\"", import.declaration, import.file))?;
-            declarations.shapes.insert(import.local.clone(), declared.clone());
+        for (path, (file, imports)) in files {
+            declarations.libraries.insert(path.clone(), file_declarations(&file.program, &DeclaringFile::Library(path.clone()), imports, files)?);
         }
         Ok(declarations)
     }
+}
+
+/// One file's shapes and `type`s: what it imports, and its own declarations
+/// over them (`libraryShape` looks at a library's own first; the checker
+/// refuses a file that both declares and imports one name).
+fn file_declarations(
+    program: &ast::Program,
+    file: &DeclaringFile,
+    imports: &[Import],
+    files: &BTreeMap<String, (File, Vec<Import>)>,
+) -> Result<FileDeclarations, String> {
+    let imported = |local: &str| -> Result<Option<DeclaredShape>, String> {
+        let Some(import) = imports.iter().find(|i| i.kind == "shape" && i.local == local) else { return Ok(None) };
+        let (linked, _) = files.get(&import.file).ok_or_else(|| format!("the shape \"{}\" is imported from the unlinked file \"{}\"", import.local, import.file))?;
+        let declared = declaration_at(&linked.program, &import.declaration)
+            .ok_or_else(|| format!("no shape declaration at {} in \"{}\"", import.declaration, import.file))?;
+        Ok(Some(DeclaredShape { declaration: declared.clone(), file: DeclaringFile::Library(import.file.clone()) }))
+    };
+    let mut declarations = FileDeclarations::default();
+    let mut own = BTreeMap::new();
+    for statement in &program.statements {
+        match statement {
+            ast::Statement::Shape(shape) => {
+                own.insert(shape.name.clone(), DeclaredShape { declaration: shape.clone(), file: file.clone() });
+            }
+            ast::Statement::Type(declared) => {
+                declarations.types.insert(declared.name.clone(), declared.options.clone());
+            }
+            _ => {}
+        }
+    }
+    for import in imports.iter().filter(|i| i.kind == "shape") {
+        if let Some(shape) = imported(&import.local)? {
+            declarations.shapes.insert(import.local.clone(), shape);
+        }
+    }
+    declarations.shapes.extend(own);
+    Ok(declarations)
 }
 
 /// The shape declaration a link's `/statements/<i>` names.
@@ -273,8 +336,12 @@ mod tests {
         assert_eq!(checked.imports[0].declaration, "/statements/0");
         let (deals, _) = &checked.files["deals"];
         assert_eq!(deals.tree.pointer("/statements/0/name"), Some(&json!("Deal")));
-        // The imported shape is among the root's declarations, by its local name.
-        assert_eq!(checked.declarations.shapes["Deal"].root.fields[0].name, "name");
+        // The imported shape is among the root's declarations, by its local
+        // name, and knows the file that wrote it.
+        let deal = &checked.declarations.root.shapes["Deal"];
+        assert_eq!(deal.declaration.root.fields[0].name, "name");
+        assert_eq!(deal.file, DeclaringFile::Library("deals".into()));
+        assert_eq!(checked.declarations.libraries["deals"].shapes["Deal"].file, DeclaringFile::Library("deals".into()));
     }
 
     #[test]
@@ -282,9 +349,9 @@ mod tests {
         let source = "import { attio } from adapters\nimport { fetch_url as fetch, research } from plugins\ncrm = attio()\ntype Stage = <\"lead\" | \"won\">\nnode Lead: \"a lead\" {\n  name: <text> \"its name\"\n  stage: <Stage>\n  node founder: \"each founder\" { first: <text> }\n}\nmovement m(e: <crm>) {\n  x = 1\n}";
         let checked = join_check(parse(source, 3).unwrap(), &json!({ "diagnostics": [], "stamps": [] }), 3).unwrap();
         let declarations = &checked.declarations;
-        assert_eq!(declarations.types["Stage"], ["lead", "won"]);
+        assert_eq!(declarations.root.types["Stage"], ["lead", "won"]);
         assert_eq!(declarations.plugins.iter().map(|(l, p)| (l.as_str(), p.as_str())).collect::<Vec<_>>(), [("fetch", "fetch_url"), ("research", "research")]);
-        let lead = &declarations.shapes["Lead"];
+        let lead = &declarations.root.shapes["Lead"].declaration;
         assert_eq!(lead.root.fields.iter().map(|f| (f.name.as_str(), f.type_.as_str())).collect::<Vec<_>>(), [("name", "text"), ("stage", "Stage")]);
         assert_eq!(lead.root.children[0].name, "founder");
         let unlinked = json!({
