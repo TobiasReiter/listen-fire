@@ -831,6 +831,17 @@ impl Run<'_> {
                         let emission = self.extraction(extract, scope).await?;
                         scope.declare(assign.name.clone(), Binding::Extracted { emission, root: true });
                     }
+                    // A plugin's name in a construction's spelling is its call
+                    // (`constructionAsCall`).
+                    RValue::Construct { construct } if matches!(scope.resolve(&construct.callee), Some(Binding::Plugin(_))) => {
+                        let args: Vec<(String, ExprSlot)> = construct.args.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
+                        let bound = self.plugin_call(&construct.callee, &args, scope).await?;
+                        scope.declare(assign.name.clone(), bound);
+                    }
+                    RValue::Call { call } if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
+                        let bound = self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
+                        scope.declare(assign.name.clone(), bound);
+                    }
                     // An instance constructed in a body, as at file scope; a
                     // movement's name in that spelling is a call.
                     RValue::Construct { construct } => {
@@ -891,6 +902,11 @@ impl Run<'_> {
                 Ok(Flow::Returned)
             }
             Statement::Block(statement) => self.block(&statement.block, None, scope, at, path).await,
+            // A plugin called for what it does: its value goes nowhere.
+            Statement::Call(call) if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
+                self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
+                Ok(Flow::FellThrough)
+            }
             Statement::If(statement) => {
                 for (index, arm) in statement.arms.iter().enumerate() {
                     let taken = self.condition(&arm.condition, scope).await?;
@@ -1228,6 +1244,20 @@ impl Run<'_> {
     async fn ask_bool(&self, request: host::Request) -> Result<bool, Failure> {
         Ok(self.ask(request).await?.is_some_and(|v| v.as_bool() == Some(true)))
     }
+}
+
+/// A plugin call's named arguments; admission lets by no other kind.
+fn plugin_args(call: &ast::CallStatement) -> Result<Vec<(String, ExprSlot)>, Stop> {
+    call.args
+        .iter()
+        .map(|arg| match arg {
+            ast::CallArg::Expr { name: Some(name), expr } => Ok((name.clone(), expr.clone())),
+            _ => Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("'{}' is a plugin, and a plugin's arguments are named values — the checker should have caught this", call.callee),
+            ))),
+        })
+        .collect()
 }
 
 /// `Array.prototype`'s own names, which `in` finds on any list.

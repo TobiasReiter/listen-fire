@@ -29,6 +29,7 @@ pub mod ledger;
 pub mod node;
 pub mod order_limit;
 pub mod park;
+pub mod plugin;
 pub mod program;
 pub mod run;
 pub mod stdlib;

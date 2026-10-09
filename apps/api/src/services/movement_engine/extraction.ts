@@ -789,6 +789,10 @@ export interface ExtractRuntime {
    *  plugin from the extract source (its `fedArgs`) and which arguments it
    *  must be handed (its `requiredArgs`). */
   plugins: PluginSpecs;
+  /** The name a plugin a stage writes is registered under: an aliased
+   *  import (`import { fetch_url as fetch }`) writes `fetch`. Absent, the
+   *  written name is taken as the registered one. */
+  registeredPlugin?: (written: string) => string;
   /** Evaluates an expression slot in the interpreter's current scope —
    *  `from` data and non-field plugin arguments resolve through this.
    *  Returns the value WITH its trail (E4): the `from` slots' origins
@@ -1773,7 +1777,12 @@ class Materializer {
     // Engine-injected `auto` params (e.g. vc_url_retrieval's `text`): fed
     // from the extract source text, not author-supplied. Done last so the
     // author can't override them.
-    const spec = pluginSpecNamed(this.runtime.plugins, plugin.plugin);
+    //
+    // The plugin is looked up, and invoked, by the name it is registered
+    // under: by the name the stage wrote, an aliased import was found in no
+    // snapshot, so a priced one escaped the run's cost cap.
+    const registered = this.runtime.registeredPlugin?.(plugin.plugin) ?? plugin.plugin;
+    const spec = pluginSpecNamed(this.runtime.plugins, registered);
     for (const fed of spec?.fedArgs ?? []) config[fed.name] = this.sourceText;
 
     // The URL the invocation was pointed at — the one argument worth naming
@@ -1801,7 +1810,7 @@ class Materializer {
 
     const elapsed = await stopwatch(this.world.clock);
     const result = await this.runtime.transformInvoker.invoke({
-      plugin: plugin.plugin,
+      plugin: registered,
       config,
       extractedContext: { ...context },
     });

@@ -7284,6 +7284,10 @@ class Interpreter {
         llm: this.llmClient(),
         transformInvoker: this.priced.transforms,
         plugins: this.input.catalog.plugins,
+        registeredPlugin: (written) => {
+          const binding = env.resolve(written);
+          return binding?.kind === 'plugin' ? binding.plugin : written;
+        },
         evalSlot: (slot) => this.evaluateSlot(slot, { env }),
         resolveFileText: this.fileTextResolver(),
         trace: this.trace,
