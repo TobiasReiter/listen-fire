@@ -307,6 +307,8 @@ pub(crate) struct Run<'a> {
     pub(crate) reply_digests: std::cell::Cell<usize>,
     /// The files whose bytes could not be fetched, warned of once each.
     pub(crate) unfetched_files: RefCell<Vec<String>>,
+    /// Log lines not yet handed to the shim.
+    pub(crate) log_lines: RefCell<Vec<Json>>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -364,6 +366,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         extraction_sites: RefCell::default(),
         reply_digests: std::cell::Cell::new(0),
         unfetched_files: RefCell::default(),
+        log_lines: RefCell::default(),
     };
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
@@ -1237,6 +1240,11 @@ impl Run<'_> {
     /// `closing`: the hand-over as the segment ends, whose failure is the
     /// shim's to log and never the run's.
     async fn hand_over_trace(&self, closing: bool) -> Result<(), Failure> {
+        let lines = std::mem::take(&mut *self.log_lines.borrow_mut());
+        if !lines.is_empty() {
+            // A line the shim could not write is not the run's failure.
+            let _ = self.ask(host::log::write(lines)).await;
+        }
         let entries = self.trace.take();
         if entries.is_empty() {
             return Ok(());
@@ -1244,10 +1252,10 @@ impl Run<'_> {
         self.ask(host::trace::append(self.segment(), &entries, closing)).await.map(|_| ())
     }
 
-    /// A line on the platform's log where the TypeScript engine writes one;
-    /// a line the shim could not write is not the run's failure.
-    pub(crate) async fn log(&self, level: &str, message: &str, fields: serde_json::Map<String, Json>) {
-        let _ = self.ask(host::log::line(level, message, Json::Object(fields))).await;
+    /// A line on the platform's log where the TypeScript engine writes one,
+    /// kept until the statement's trace is handed over.
+    pub(crate) fn log(&self, level: &str, message: &str, fields: serde_json::Map<String, Json>) {
+        self.log_lines.borrow_mut().push(json!({ "level": level, "message": message, "fields": fields }));
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
@@ -1693,7 +1701,7 @@ mod tests {
         );
         // The `if`'s gate is handed over after the arm's first statement, as
         // the TypeScript publishes after every statement at any depth.
-        assert_eq!(seen[6].args, json!({ "entries": [{ "kind": "gate", "outcome": true }], "segmentId": "g1" }));
+        assert_eq!(appended(&seen[6]), json!([{ "kind": "gate", "outcome": true }]));
         // Every request the host serves names the segment.
         assert!(seen.iter().filter(|r| r.family != "check").all(|r| r.args["segmentId"] == json!("g1")));
         // The source adapter reads the payload under the parameter's
@@ -1842,11 +1850,25 @@ mod tests {
         assert_eq!(call["budget"], json!({ "remainingMicrodollars": null }));
         // The blank entity is counted empty and dropped; the trace names
         // what was extracted.
-        let entry = &seen[9].args["entries"][0];
+        let entries = appended(&seen[9]);
+        let entry = &entries[0];
+        // In the TypeScript's key order, the members `extractRegion` writes.
+        let Js::Array(wired) = env::decode(&seen[9].args["entries"]).unwrap() else { panic!("a list") };
+        let Js::Object(first) = &wired.items[0] else { panic!("an entry") };
+        assert_eq!(
+            first.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            ["kind", "node", "inputChars", "inputs", "emissions", "model", "durationMs", "reply", "empty", "dropped", "entities"]
+        );
         assert_eq!(entry["emissions"], json!({ "extract result": 1 }));
         assert_eq!((entry["empty"].clone(), entry["dropped"].clone()), (json!({ "co": 1 }), json!({ "co": 1 })));
         assert_eq!(entry["entities"], json!({ "extract result": [{ "fields": { "digest": "a raise" } }], "co": [{ "fields": { "name": "Acme" } }] }));
-        assert_eq!(seen[12].args["entries"], json!([{ "kind": "block", "root": "deals-[c:co]->", "positions": 1 }]));
+        assert_eq!(appended(&seen[12]), json!([{ "kind": "block", "root": "deals-[c:co]->", "positions": 1 }]));
+    }
+
+    /// What a `trace.append` handed over, its entries off the eval wire.
+    fn appended(request: &PendingRequest) -> Json {
+        assert_eq!(request.args["wire"], json!(true));
+        env::json_of_js(&env::decode(&request.args["entries"]).unwrap())
     }
 
     /// A plain JSON value on the eval wire.

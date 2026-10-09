@@ -782,6 +782,7 @@ mod tests {
             extraction_sites: RefCell::default(),
             reply_digests: std::cell::Cell::new(0),
             unfetched_files: RefCell::default(),
+            log_lines: RefCell::default(),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },

@@ -15,6 +15,7 @@ use crate::host;
 use crate::js::{self, Js, JsObject};
 use crate::run::{Failure, Run, Stop};
 use crate::trace::TraceEntry;
+use crate::unique::get as member;
 
 use super::run::{Materializer, PluginResult, thrown};
 
@@ -29,7 +30,7 @@ pub(crate) struct FromData {
     pub(crate) sources: Vec<u32>,
     pub(crate) resources: Vec<Js>,
     /// Every source file as the trace tells it.
-    pub(crate) files: Vec<Json>,
+    pub(crate) files: Vec<Js>,
 }
 
 /// One source file's contribution (`FileResolution`).
@@ -38,7 +39,7 @@ pub(crate) struct FileResolution {
     resource: Js,
     /// The segment its text makes and the `file` origin citing it.
     text: Option<(Segment, u32)>,
-    traced: Json,
+    traced: Js,
 }
 
 /// `isFileRef`: a branded descriptor.
@@ -57,12 +58,6 @@ pub(crate) fn file_handle(file: &Js) -> Option<String> {
     }
 }
 
-fn member(value: &Js, key: &str) -> Js {
-    match value {
-        Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
-        _ => Js::Undefined,
-    }
-}
 
 /// `{...(x !== undefined ? { key: x } : {})}`.
 fn present(entries: &mut Vec<(&'static str, Js)>, key: &'static str, value: Js) {
@@ -348,7 +343,7 @@ impl Materializer<'_, '_> {
             }
             fields.insert("chars".into(), json!(ceiling));
             fields.insert("of".into(), json!(of));
-            self.run.log("warn", "[movement:extract] truncating a source file for the prompt", fields).await;
+            self.run.log("warn", "[movement:extract] truncating a source file for the prompt", fields);
         }
         let segment = match (&text, &bounded) {
             (Some(_), Some((content, _, _))) => {
@@ -364,30 +359,21 @@ impl Materializer<'_, '_> {
             }
             _ => None,
         };
-        let mut named = serde_json::Map::new();
-        for key in ["name", "contentType"] {
-            let value = member(file, key);
-            if !matches!(value, Js::Undefined) {
-                named.insert(key.into(), env::json_of_js(&value));
-            }
-        }
-        let traced = if !readable {
-            named.insert("unreadable".into(), env::json_of_js(&unreadable));
-            let detail = member(&result, "detail");
-            if !matches!(detail, Js::Undefined) {
-                named.insert("detail".into(), env::json_of_js(&detail));
-            }
-            Json::Object(named)
+        let mut traced = Vec::new();
+        present(&mut traced, "name", member(file, "name"));
+        present(&mut traced, "contentType", member(file, "contentType"));
+        if !readable {
+            traced.push(("unreadable", unreadable.clone()));
+            present(&mut traced, "detail", member(&result, "detail"));
         } else if let Some((_, chars, truncated_from)) = &bounded {
-            named.insert("chars".into(), json!(chars));
+            traced.push(("chars", Js::Number(*chars as f64)));
             if let Some(from) = truncated_from {
-                named.insert("truncatedFrom".into(), json!(from));
+                traced.push(("truncatedFrom", Js::Number(*from as f64)));
             }
-            Json::Object(named)
         } else {
-            named.insert("unreadable".into(), json!("no_text"));
-            Json::Object(named)
-        };
+            traced.push(("unreadable", Js::str("no_text")));
+        }
+        let traced = env::object_of(traced);
         let read = text.as_deref().map(|t| (t, &raw_text_id));
         let resource = self.run.stamp_resources(vec![file_resource(file, read)]).await.map_err(thrown)?.remove(0);
         let resolution = FileResolution { resource, text: segment, traced };

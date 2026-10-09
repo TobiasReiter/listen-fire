@@ -19,6 +19,7 @@
 
 import { applyStdlib, languageVersionDiagnostic, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
 import { isFileRef } from 'engine-contracts';
+import { z } from 'zod';
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
@@ -69,8 +70,7 @@ export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
   'check.program': 'the TypeScript checker, which the Rust engine asks for until the checker is Rust',
   'builtins.function': 'a TypeScript standard-library member, for a reading the Rust engine hands back',
   'builtins.compare': "the shared comparator, for a reading the Rust engine hands back",
-  'log.info': "the platform's log, for a line the TypeScript engine writes at the same point",
-  'log.warn': "the platform's log, for a warning the TypeScript engine writes at the same point",
+  'log.write': "the platform's log, for the lines the TypeScript engine writes (sent as a statement ends)",
 };
 
 /**
@@ -308,7 +308,9 @@ const ROUTES: Record<string, Route> = {
    *  result's), handed on to the host's. */
   async 'trace.append'(request, { host, context }) {
     segmentOf(request);
-    const entries = request.entries;
+    // On the eval wire, so each entry keeps the key order the engine wrote.
+    if (request.wire !== true) throw new RustShimError('trace.append carries its entries on the eval wire');
+    const entries = new WireOut({ asData: true }).read(request.entries);
     if (!Array.isArray(entries)) throw new RustShimError('trace.append entries are a list');
     if (request.closing !== undefined && request.closing !== true) throw new RustShimError('trace.append closing is true or absent');
     context.trace.entries.push(...entries.map(traceEntry));
@@ -329,13 +331,19 @@ const ROUTES: Record<string, Route> = {
     }
     return undefined;
   },
-  /** A line on the platform's log, the run it belongs to named. */
-  async 'log.info'(request, { context }) {
-    logger.info(string(request.message, 'log.info message'), { ...record(request.fields, 'log.info fields'), ...runLogFields(context) });
-    return undefined;
-  },
-  async 'log.warn'(request, { context }) {
-    logger.warn(string(request.message, 'log.warn message'), { ...record(request.fields, 'log.warn fields'), ...runLogFields(context) });
+  /** Lines on the platform's log, each `{level, message, fields}`, the run
+   *  they belong to named. */
+  async 'log.write'(request, { context }) {
+    const lines = request.lines;
+    if (!Array.isArray(lines)) throw new RustShimError('log.write lines are a list');
+    for (const line of lines) {
+      const { level, message, fields } = record(line, 'a log line');
+      const text = string(message, 'a log line message');
+      const meta = { ...record(fields, 'a log line fields'), ...runLogFields(context) };
+      if (level === 'warn') logger.warn(text, meta);
+      else if (level === 'info') logger.info(text, meta);
+      else throw new RustShimError(`a log line's level is info or warn, not ${JSON.stringify(level)}`);
+    }
     return undefined;
   },
   /** A built-in the Rust engine hands back for these arguments, answered by
@@ -607,34 +615,92 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
 type ExtractionTraceEntry = Extract<MovementRunResult['trace'][number], { kind: 'extraction' }>;
 type PluginTraceEntry = Extract<MovementRunResult['trace'][number], { kind: 'plugin' }>;
 
-/** An extraction's trace entry (crates/movement-engine/src/extract/run.rs):
- *  its required members read here, the rest carried as the engine wrote
- *  them. */
-function extractionTraceEntry(entry: Record<string, unknown>): ExtractionTraceEntry {
-  const { inputChars, emissions } = entry;
-  if (typeof inputChars !== 'number') throw new RustShimError('an extraction trace entry counts its input');
-  if (!isCountTable(emissions)) throw new RustShimError('an extraction trace entry counts its emissions');
-  if (!isExtractionTraceEntry(entry)) throw new RustShimError('an extraction trace entry has the shape the engine writes');
-  return entry;
-}
+const counts = z.record(z.string(), z.number());
+const pluginOutcome = z.object({ plugin: z.string(), outcome: z.enum(['skipped', 'empty', 'dropped']) });
+const tracedFile = z.union([
+  z.object({ name: z.string().optional(), contentType: z.string().optional(), chars: z.number(), truncatedFrom: z.number().optional() }),
+  z.object({
+    name: z.string().optional(),
+    contentType: z.string().optional(),
+    unreadable: z.enum(['unsupported_type', 'bytes_unavailable', 'extraction_failed', 'no_text']),
+    detail: z.string().optional(),
+  }),
+]);
 
+/** An extraction's trace entry as crates/movement-engine/src/extract/run.rs
+ *  writes it, held to expression.ts's type member by member. */
+const extractionTraceEntrySchema: z.ZodType<ExtractionTraceEntry> = z.strictObject({
+  kind: z.literal('extraction'),
+  node: z.string().optional(),
+  inputChars: z.number(),
+  inputs: z.array(z.object({ classification: z.string(), chars: z.number() })).optional(),
+  inputsTruncated: z.number().optional(),
+  files: z.array(tracedFile).optional(),
+  filesTruncated: z.number().optional(),
+  model: z.string().optional(),
+  durationMs: z.number().optional(),
+  effortSteppedDown: z.object({ from: z.string(), to: z.string() }).optional(),
+  continued: z.literal(true).optional(),
+  continuations: z.number().optional(),
+  skipped: z.enum(['empty_source', 'no_enrichment']).optional(),
+  plugins: z.array(pluginOutcome).optional(),
+  failed: z.literal('invalid_reply').optional(),
+  fallback: z.literal('kept_previous_stage').optional(),
+  retried: z.array(z.string()).optional(),
+  reply: z
+    .object({
+      why: z.array(z.enum(['no_entities', 'dropped_records', 'retried', 'failed'])),
+      keys: z.array(z.string()),
+      sample: z.string(),
+      path: z.string().optional(),
+    })
+    .optional(),
+  emissions: counts,
+  empty: counts.optional(),
+  dropped: counts.optional(),
+  coerced: z.record(z.string(), z.array(z.string())).optional(),
+  evidenceCoerced: z.record(z.string(), z.array(z.string())).optional(),
+  envelopeRepaired: z.string().optional(),
+  entities: z.record(z.string(), z.array(z.object({ fields: z.record(z.string(), z.string().nullable()) }))).optional(),
+  truncatedCount: counts.optional(),
+});
+
+/** A plugin's trace entry, likewise. */
+const pluginTraceEntrySchema: z.ZodType<PluginTraceEntry> = z.strictObject({
+  kind: z.literal('plugin'),
+  plugin: z.string(),
+  node: z.string().optional(),
+  url: z.string().optional(),
+  durationMs: z.number(),
+  chars: z.number().optional(),
+  fields: z.array(z.string()).optional(),
+  skippedParam: z.string().optional(),
+  outcome: z.string().optional(),
+  returned: z.enum(['value', 'absent']).optional(),
+});
+
+/** The entry as the engine wrote it, in its own key order (a parse would
+ *  rebuild it in the schema's), once the schema has read it whole. */
 function isExtractionTraceEntry(entry: Record<string, unknown>): entry is ExtractionTraceEntry {
-  return entry.kind === 'extraction' && typeof entry.inputChars === 'number' && isCountTable(entry.emissions);
-}
-
-function isCountTable(value: unknown): value is Record<string, number> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.values(value).every((n) => typeof n === 'number');
-}
-
-function pluginTraceEntry(entry: Record<string, unknown>): PluginTraceEntry {
-  if (typeof entry.durationMs !== 'number') throw new RustShimError('a plugin trace entry times its invocation');
-  string(entry.plugin, 'a plugin trace entry plugin');
-  if (!isPluginTraceEntry(entry)) throw new RustShimError('a plugin trace entry has the shape the engine writes');
-  return entry;
+  return extractionTraceEntrySchema.safeParse(entry).success;
 }
 
 function isPluginTraceEntry(entry: Record<string, unknown>): entry is PluginTraceEntry {
-  return entry.kind === 'plugin' && typeof entry.plugin === 'string' && typeof entry.durationMs === 'number';
+  return pluginTraceEntrySchema.safeParse(entry).success;
+}
+
+function extractionTraceEntry(entry: Record<string, unknown>): ExtractionTraceEntry {
+  if (!isExtractionTraceEntry(entry)) {
+    throw new RustShimError(`an extraction trace entry has the shape the engine writes: ${extractionTraceEntrySchema.safeParse(entry).error?.message}`);
+  }
+  return entry;
+}
+
+function pluginTraceEntry(entry: Record<string, unknown>): PluginTraceEntry {
+  if (!isPluginTraceEntry(entry)) {
+    throw new RustShimError(`a plugin trace entry has the shape the engine writes: ${pluginTraceEntrySchema.safeParse(entry).error?.message}`);
+  }
+  return entry;
 }
 
 function adapterCallName(request: HostRequest): string | undefined {

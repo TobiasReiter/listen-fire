@@ -59,7 +59,7 @@ pub struct Plugins<'a>(pub Option<&'a JsMap<PluginSpec>>);
 impl Plugins<'_> {
     fn binds(&self, registered: &str, language_version: u32) -> PluginBinds {
         let Some(specs) = self.0 else { return PluginBinds::Unknown };
-        let Some(spec) = specs.get(&registered.replace('-', "_")) else { return PluginBinds::Unknown };
+        let Some(spec) = crate::plugin::spec_named(specs, registered) else { return PluginBinds::Unknown };
         match crate::plugin::output_under(spec, language_version) {
             Some(PluginOutput::Value { .. }) => PluginBinds::Value,
             Some(PluginOutput::Record { .. }) => PluginBinds::Record,
@@ -736,7 +736,7 @@ impl Names<'_> {
                 }
                 for arg in &plugin.args {
                     let bare = crate::js::trim(&arg.value.raw);
-                    if is_identifier(bare) {
+                    if crate::js::is_identifier(bare) {
                         if self.holds_other_than_value(bare) {
                             return refuse("name_not_value");
                         }
@@ -1034,12 +1034,6 @@ impl Names<'_> {
             other => refuse(format!("expression:{}", crate::eval::kind_of(other))),
         }
     }
-}
-
-/// `/^[A-Za-z_][A-Za-z0-9_]*$/`.
-fn is_identifier(raw: &str) -> bool {
-    let mut chars = raw.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Whether `callee` resolves to an imported plugin (`resolveCallee`): as

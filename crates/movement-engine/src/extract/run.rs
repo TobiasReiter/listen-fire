@@ -38,7 +38,7 @@ use crate::host;
 use crate::js::{self, Js, JsObject};
 use crate::program::DeclaringFile;
 use crate::run::{Failure, Run, Stop};
-use crate::trace::TraceEntry;
+use crate::trace::{Members, TraceEntry};
 
 /// How much of the walk runs at once, per fan (extraction.ts `STAGE_FAN_OUT`).
 pub const STAGE_FAN_OUT: usize = 4;
@@ -50,7 +50,7 @@ const TRACE_REPLY_CHARS: usize = 1000;
 const TRACE_REPLY_DIGESTS: usize = 5;
 /// Validation issues quoted when the retry fires.
 const TRACE_ISSUE_LINES: usize = 8;
-const TRACE_URL_CHARS: usize = 200;
+pub(crate) const TRACE_URL_CHARS: usize = 200;
 /// Entities declaring at least this many sites ask the larger model
 /// (model_choice.ts `ENTITY_DENSITY_OPUS_THRESHOLD`).
 const ENTITY_DENSITY_OPUS_THRESHOLD: usize = 30;
@@ -88,10 +88,7 @@ pub(crate) struct PluginResult {
 
 impl PluginResult {
     fn of(answer: &Js) -> PluginResult {
-        let member = |key: &str| match answer {
-            Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
-            _ => Js::Undefined,
-        };
+        let member = |key: &str| crate::unique::get(&answer, key);
         let text = match member("text") {
             Js::String(text) => Some(text),
             _ => None,
@@ -123,6 +120,21 @@ impl PluginResult {
     pub(crate) fn text(&self) -> Option<&str> {
         self.text.as_deref().filter(|t| !t.is_empty())
     }
+
+    /// What a `plugin` trace entry says of what came back: the text's
+    /// length, the data's fields, the plugin's own outcome.
+    pub(crate) fn trace_into(&self, entry: &mut Members) {
+        if let Some(text) = self.text() {
+            entry.set("chars", Js::Number(js::utf16_len(text) as f64));
+        }
+        let fields = self.data_keys();
+        if !fields.is_empty() {
+            entry.set("fields", Js::array(fields.into_iter().map(Js::String).collect()));
+        }
+        if let Some(outcome) = &self.outcome {
+            entry.set("outcome", Js::str(outcome.clone()));
+        }
+    }
 }
 
 /// One plugin of a stage that ran for an entity, by the name the stage wrote.
@@ -146,7 +158,7 @@ impl<'r, 'h> Sink<'r, 'h> {
     }
 
     fn push(&self, entry: TraceEntry) {
-        if matches!(&entry, TraceEntry::Extraction(members) if members.contains_key("reply")) {
+        if matches!(&entry, TraceEntry::Extraction(members) if members.get("reply").is_some()) {
             self.run.reply_digests.set(self.run.reply_digests.get() + 1);
         }
         self.place(entry);
@@ -251,7 +263,7 @@ pub(crate) struct Materializer<'r, 'h> {
     /// The `from […]` text, fed to a plugin's extraction-fed arguments.
     source_text: RefCell<String>,
     /// Every source file, as each call's trace entry tells it.
-    source_files: RefCell<Vec<Json>>,
+    source_files: RefCell<Vec<Js>>,
     pub(crate) file_memo: RefCell<Vec<(String, super::resources::FileResolution)>>,
     /// The site refs (`ExtractSiteRef`) of the calls made so far, by site id.
     site_refs: RefCell<Vec<(String, Js)>>,
@@ -337,10 +349,7 @@ impl Run<'_> {
     pub(crate) async fn priced(&self, request: host::Request) -> Result<Js, Failure> {
         let answer = self.ask(request).await?.unwrap_or(Json::Null);
         let answer = env::decode(&answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
-        let member = |key: &str| match &answer {
-            Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
-            _ => Js::Undefined,
-        };
+        let member = |key: &str| crate::unique::get(&answer, key);
         let cost = member("cost");
         let cost = (!matches!(cost, Js::Undefined)).then(|| env::json_of_js(&cost));
         self.ledger
@@ -375,7 +384,7 @@ impl Run<'_> {
 
     /// `pluginSpecNamed`: dashes read as underscores.
     pub(crate) fn plugin_spec(&self, registered: &str) -> Option<&movement_parser::catalog::types::PluginSpec> {
-        self.catalog.plugins.get(&registered.replace('-', "_"))
+        crate::plugin::spec_named(&self.catalog.plugins, registered)
     }
 
     /// One invocation (`llm.transforms.invoke`): refused before the host is
@@ -499,8 +508,8 @@ impl<'r, 'h> Materializer<'r, 'h> {
         let shape = self.shape(region, &user);
         if js::trim(&user.text).is_empty() {
             let mut entry = shape;
-            entry.insert("skipped".into(), json!("empty_source"));
-            entry.insert("emissions".into(), json!({ region.spec.name.clone(): 0 }));
+            entry.set("skipped", Js::str("empty_source"));
+            entry.set("emissions", tally(&region.spec.name, 0));
             sink.push(TraceEntry::Extraction(entry));
             return Ok(Vec::new());
         }
@@ -515,7 +524,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
                 // which keeps its previous stage; the root has nothing to
                 // fall back to.
                 let kept = entity.map(|e| e.enrichments);
-                let raised = self.failed_call(region, &shape, &telemetry, &issues, sink, kept).await;
+                let raised = self.failed_call(region, &shape, &telemetry, &issues, sink, kept);
                 return if kept.is_some() { Ok(Vec::new()) } else { Err(thrown(raised)) };
             }
         };
@@ -553,13 +562,13 @@ impl<'r, 'h> Materializer<'r, 'h> {
             why.push("retried");
         }
         let mut entry = shape.clone();
-        entry.insert("emissions".into(), json!({ region.spec.name.clone(): entities.len() }));
-        entry.extend(self.outcome(&telemetry, &why, sink, None, &shape).await);
+        entry.set("emissions", tally(&region.spec.name, entities.len()));
+        entry.extend(self.outcome(&telemetry, &why, sink, None, &shape));
         if !empty.is_empty() {
-            entry.insert("empty".into(), counts(&empty));
+            entry.set("empty", counts(&empty));
         }
         if !dropped.is_empty() {
-            entry.insert("dropped".into(), counts(&dropped));
+            entry.set("dropped", counts(&dropped));
         }
         coercion_members(&read.coercions, &mut entry);
         sink.push(TraceEntry::Extraction(entry));
@@ -590,23 +599,24 @@ impl<'r, 'h> Materializer<'r, 'h> {
     }
 
     /// What every trace entry of a call carries: what it read.
-    fn shape(&self, region: &Region<'_>, user: &prompt::UserMessage) -> Map<String, Json> {
-        let mut shape = Map::new();
-        shape.insert("node".into(), json!(region.spec.name));
-        shape.insert("inputChars".into(), json!(js::utf16_len(&user.text)));
-        let parts: Vec<Json> = user.parts.iter().map(|(classification, chars)| json!({ "classification": classification, "chars": chars })).collect();
+    fn shape(&self, region: &Region<'_>, user: &prompt::UserMessage) -> Members {
+        let mut shape = Members::default();
+        shape.set("node", Js::str(region.spec.name.clone()));
+        shape.set("inputChars", number(js::utf16_len(&user.text)));
+        let parts: Vec<Js> =
+            user.parts.iter().map(|(classification, chars)| env::object_of(vec![("classification", Js::str(classification.clone())), ("chars", number(*chars))])).collect();
         if !parts.is_empty() {
-            shape.insert("inputs".into(), Json::Array(parts.iter().take(TRACE_INPUT_PARTS).cloned().collect()));
+            shape.set("inputs", Js::array(parts.iter().take(TRACE_INPUT_PARTS).cloned().collect()));
         }
         if parts.len() > TRACE_INPUT_PARTS {
-            shape.insert("inputsTruncated".into(), json!(parts.len() - TRACE_INPUT_PARTS));
+            shape.set("inputsTruncated", number(parts.len() - TRACE_INPUT_PARTS));
         }
         let files = self.source_files.borrow();
         if !files.is_empty() {
-            shape.insert("files".into(), Json::Array(files.iter().take(TRACE_INPUT_PARTS).cloned().collect()));
+            shape.set("files", Js::array(files.iter().take(TRACE_INPUT_PARTS).cloned().collect()));
         }
         if files.len() > TRACE_INPUT_PARTS {
-            shape.insert("filesTruncated".into(), json!(files.len() - TRACE_INPUT_PARTS));
+            shape.set("filesTruncated", number(files.len() - TRACE_INPUT_PARTS));
         }
         shape
     }
@@ -635,10 +645,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
     async fn call_model(&self, system: &str, user_message: &str, label: &str, model: &str) -> Result<Reply, Stop> {
         let call = host::llm::ClientCall { system, user_message, label, model, effort: EXTRACTION_EFFORT, max_tokens: None };
         let answer = self.run.priced(host::llm::client_call(self.run.segment(), call, self.run.ledger.budget())).await.map_err(thrown)?;
-        let member = |key: &str| match &answer {
-            Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
-            _ => Js::Undefined,
-        };
+        let member = |key: &str| crate::unique::get(&answer, key);
         let uncarried = uncarried(&answer);
         Ok(Reply {
             unreadable: uncarried.iter().any(|m| m == "parsedJson"),
@@ -658,39 +665,37 @@ impl<'r, 'h> Materializer<'r, 'h> {
     /// `outcome`: what the call was (its model, how long, a continued answer,
     /// the retry's issues), and, when it misbehaved and the run's digest
     /// budget has room, what the model replied.
-    async fn outcome(&self, telemetry: &Telemetry, why: &[&str], sink: &Sink<'_, '_>, focus: Option<&(String, Js)>, shape: &Map<String, Json>) -> Map<String, Json> {
-        let mut out = Map::new();
-        out.insert("model".into(), json!(telemetry.model));
+    fn outcome(&self, telemetry: &Telemetry, why: &[&str], sink: &Sink<'_, '_>, focus: Option<&(String, Js)>, shape: &Members) -> Members {
+        let mut out = Members::default();
+        out.set("model", Js::str(telemetry.model.clone()));
         if let Some(reply) = &telemetry.last_reply {
             if let Some(stepped) = &reply.effort_stepped_down {
-                out.insert("effortSteppedDown".into(), env::json_of_js(stepped));
+                out.set("effortSteppedDown", stepped.clone());
             }
             if reply.continuations > 0.0 {
-                out.insert("continued".into(), json!(true));
-                out.insert("continuations".into(), env::json_of_js(&Js::Number(reply.continuations)));
+                out.set("continued", Js::Bool(true));
+                out.set("continuations", Js::Number(reply.continuations));
                 let mut fields = Map::new();
-                fields.insert("node".into(), shape.get("node").cloned().unwrap_or(Json::Null));
-                fields.insert("inputChars".into(), shape.get("inputChars").cloned().unwrap_or(Json::Null));
+                fields.insert("node".into(), shape.get("node").map_or(Json::Null, env::json_of_js));
+                fields.insert("inputChars".into(), shape.get("inputChars").map_or(Json::Null, env::json_of_js));
                 fields.insert("continuations".into(), env::json_of_js(&Js::Number(reply.continuations)));
-                self.run
-                    .log(
-                        "warn",
-                        "[movement:extract] the answer ran past its output ceiling and was continued — records near the end of the input may be missing; cut the input into pieces",
-                        fields,
-                    )
-                    .await;
+                self.run.log(
+                    "warn",
+                    "[movement:extract] the answer ran past its output ceiling and was continued — records near the end of the input may be missing; cut the input into pieces",
+                    fields,
+                );
             }
         }
         if let Some(ms) = telemetry.duration_ms {
-            out.insert("durationMs".into(), env::json_of_js(&Js::Number(ms)));
+            out.set("durationMs", Js::Number(ms));
         }
         if let Some(retried) = &telemetry.retried {
-            out.insert("retried".into(), json!(retried));
+            out.set("retried", Js::array(retried.iter().map(|line| Js::str(line.clone())).collect()));
         }
         if !sink.digest_budget_spent()
             && let Some(digest) = telemetry.last_reply.as_ref().and_then(|reply| reply_digest(reply, why, focus))
         {
-            out.insert("reply".into(), digest);
+            out.set("reply", digest);
         }
         out
     }
@@ -698,10 +703,10 @@ impl<'r, 'h> Materializer<'r, 'h> {
     /// `failedCall`: the failing call on the trace, its reply's offending
     /// entity in the digest, and the run's error naming it — unless the call
     /// was refining an entity that stands (`kept`), which keeps it.
-    async fn failed_call(
+    fn failed_call(
         &self,
         region: &Region<'_>,
-        shape: &Map<String, Json>,
+        shape: &Members,
         telemetry: &Telemetry,
         issues: &[Issue],
         sink: &Sink<'_, '_>,
@@ -710,15 +715,15 @@ impl<'r, 'h> Materializer<'r, 'h> {
         let answered = telemetry.last_reply.as_ref().map_or(Js::Undefined, |r| r.parsed_json.clone());
         let focus = offending_entity(&answered, issues.first().map_or(&[], |i| i.path.as_slice()));
         let mut entry = shape.clone();
-        entry.insert("emissions".into(), json!({ region.spec.name.clone(): 0 }));
-        entry.insert("failed".into(), json!("invalid_reply"));
+        entry.set("emissions", tally(&region.spec.name, 0));
+        entry.set("failed", Js::str("invalid_reply"));
         if let Some(kept) = kept {
-            entry.insert("fallback".into(), json!("kept_previous_stage"));
+            entry.set("fallback", Js::str("kept_previous_stage"));
             if !kept.is_empty() {
-                entry.insert("plugins".into(), Json::Array(kept.iter().map(|e| json!({ "plugin": e.plugin, "outcome": "dropped" })).collect()));
+                entry.set("plugins", Js::array(kept.iter().map(|e| plugin_outcome(&e.plugin, "dropped")).collect()));
             }
         }
-        entry.extend(self.outcome(telemetry, &["failed"], sink, focus.as_ref(), shape).await);
+        entry.extend(self.outcome(telemetry, &["failed"], sink, focus.as_ref(), shape));
         sink.push(TraceEntry::Extraction(entry));
         if let Some(kept) = kept {
             let mut fields = Map::new();
@@ -726,13 +731,11 @@ impl<'r, 'h> Materializer<'r, 'h> {
             fields.insert("site".into(), json!(region.site_id));
             fields.insert("stage".into(), json!(region.stage_index));
             fields.insert("droppedEnrichments".into(), json!(kept.iter().map(|e| e.plugin.clone()).collect::<Vec<_>>()));
-            self.run
-                .log(
-                    "warn",
-                    "[movement:extract] a per-entity call was answered with something the guide does not describe — keeping the entity as its previous stage left it",
-                    fields,
-                )
-                .await;
+            self.run.log(
+                "warn",
+                "[movement:extract] a per-entity call was answered with something the guide does not describe — keeping the entity as its previous stage left it",
+                fields,
+            );
         }
         let detail = validate::unanswered_detail(region, &answered, issues);
         let held = match &focus {
@@ -778,7 +781,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
                     let mut fields = Map::new();
                     fields.insert("node".into(), json!(spec.name));
                     fields.insert("plugins".into(), json!(stage.through.iter().map(|p| p.plugin.clone()).collect::<Vec<_>>()));
-                    self.run.log("info", "[movement:extract] stage has no enrichment for this entity — skipping the call", fields).await;
+                    self.run.log("info", "[movement:extract] stage has no enrichment for this entity — skipping the call", fields);
                     emission.stage_index = next;
                     self.resolve_fenced_children(&mut emission, next, &walk, &sink).await?;
                     continue;
@@ -906,7 +909,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
         for arg in &plugin.args {
             let raw = js::trim(&arg.value.raw);
             let value = match context.get(raw) {
-                Some(value) if is_identifier(raw) => value.clone(),
+                Some(value) if js::is_identifier(raw) => value.clone(),
                 _ => self.run.evaluate_slot(&arg.value, self.scope).await?.value,
             };
             config.set(arg.name.clone(), value);
@@ -928,35 +931,26 @@ impl<'r, 'h> Materializer<'r, 'h> {
             fields.insert("plugin".into(), json!(plugin.plugin));
             fields.insert("param".into(), json!(param));
             fields.insert("written".into(), json!(plugin.args.iter().any(|a| a.name == *param)));
-            self.run.log("info", "[movement:transform] required argument is empty — skipping this entity", fields).await;
-            let mut entry = Map::new();
-            entry.insert("plugin".into(), json!(plugin.plugin));
-            entry.insert("node".into(), json!(node));
-            entry.insert("durationMs".into(), json!(0));
-            entry.insert("skippedParam".into(), json!(param));
+            self.run.log("info", "[movement:transform] required argument is empty — skipping this entity", fields);
+            let mut entry = Members::default();
+            entry.set("plugin", Js::str(plugin.plugin.clone()));
+            entry.set("node", Js::str(node));
+            entry.set("durationMs", Js::Number(0.0));
+            entry.set("skippedParam", Js::str(param.clone()));
             sink.push(TraceEntry::Plugin(entry));
             return Ok(None);
         }
         let started = self.run.clock_now().await.map_err(thrown)?;
         let result = self.run.invoke(&registered, &config, context).await.map_err(thrown)?;
         let duration = self.run.clock_now().await.map_err(thrown)? - started;
-        let mut entry = Map::new();
-        entry.insert("plugin".into(), json!(plugin.plugin));
-        entry.insert("node".into(), json!(node));
+        let mut entry = Members::default();
+        entry.set("plugin", Js::str(plugin.plugin.clone()));
+        entry.set("node", Js::str(node));
         if let Some(url) = url {
-            entry.insert("url".into(), json!(url));
+            entry.set("url", Js::str(url));
         }
-        entry.insert("durationMs".into(), env::json_of_js(&Js::Number(duration)));
-        if let Some(text) = result.text() {
-            entry.insert("chars".into(), json!(js::utf16_len(text)));
-        }
-        let fields = result.data_keys();
-        if !fields.is_empty() {
-            entry.insert("fields".into(), json!(fields));
-        }
-        if let Some(outcome) = &result.outcome {
-            entry.insert("outcome".into(), json!(outcome));
-        }
+        entry.set("durationMs", Js::Number(duration));
+        result.trace_into(&mut entry);
         sink.push(TraceEntry::Plugin(entry));
         Ok(Some(result))
     }
@@ -1060,23 +1054,14 @@ fn has_enrichment_content(enrichments: &[Enriched]) -> bool {
 /// stage's plugins did for this entity.
 fn note_pointless_stage(pipeline: &[ast::PluginCall], enrichments: &[Enriched], node: &str, sink: &Sink<'_, '_>) {
     let ran = |name: &str| enrichments.iter().any(|e| e.plugin == name);
-    let plugins: Vec<Json> = pipeline
-        .iter()
-        .map(|p| json!({ "plugin": p.plugin, "outcome": if ran(&p.plugin) { "empty" } else { "skipped" } }))
-        .collect();
-    let mut entry = Map::new();
-    entry.insert("node".into(), json!(node));
-    entry.insert("inputChars".into(), json!(0));
-    entry.insert("skipped".into(), json!("no_enrichment"));
-    entry.insert("plugins".into(), Json::Array(plugins));
-    entry.insert("emissions".into(), json!({ node: 0 }));
+    let plugins: Vec<Js> = pipeline.iter().map(|p| plugin_outcome(&p.plugin, if ran(&p.plugin) { "empty" } else { "skipped" })).collect();
+    let mut entry = Members::default();
+    entry.set("node", Js::str(node));
+    entry.set("inputChars", number(0));
+    entry.set("skipped", Js::str("no_enrichment"));
+    entry.set("plugins", Js::array(plugins));
+    entry.set("emissions", tally(node, 0));
     sink.push(TraceEntry::Extraction(entry));
-}
-
-/// `/^[A-Za-z_][A-Za-z0-9_]*$/`.
-fn is_identifier(raw: &str) -> bool {
-    let mut chars = raw.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// `isBlank`: absent, or text of only spaces.
@@ -1090,27 +1075,51 @@ fn is_blank(value: Option<&Js>) -> bool {
 }
 
 /// Per-name counts as the trace writes them.
-fn counts(counts: &[(String, f64)]) -> Json {
-    Json::Object(counts.iter().map(|(name, n)| (name.clone(), json!(*n as u64))).collect())
+fn counts(counts: &[(String, f64)]) -> Js {
+    let mut object = JsObject::new();
+    for (name, n) in counts {
+        object.set(name.clone(), Js::Number(*n));
+    }
+    Js::object(object)
+}
+
+/// `{[node]: n}`.
+fn tally(node: &str, n: usize) -> Js {
+    counts(&[(node.to_string(), n as f64)])
+}
+
+fn number(n: usize) -> Js {
+    Js::Number(n as f64)
+}
+
+/// `{plugin, outcome}`.
+fn plugin_outcome(plugin: &str, outcome: &str) -> Js {
+    env::object_of(vec![("plugin", Js::str(plugin)), ("outcome", Js::str(outcome))])
 }
 
 /// What the read coerced, on the call's entry.
-fn coercion_members(coercions: &Coercions, entry: &mut Map<String, Json>) {
-    let keyed = |list: &[(String, Vec<String>)]| Json::Object(list.iter().map(|(k, v)| (k.clone(), json!(v))).collect());
+fn coercion_members(coercions: &Coercions, entry: &mut Members) {
+    let keyed = |list: &[(String, Vec<String>)]| {
+        let mut object = JsObject::new();
+        for (key, values) in list {
+            object.set(key.clone(), Js::array(values.iter().map(|v| Js::str(v.clone())).collect()));
+        }
+        Js::object(object)
+    };
     if !coercions.values.is_empty() {
-        entry.insert("coerced".into(), keyed(&coercions.values));
+        entry.set("coerced", keyed(&coercions.values));
     }
     if !coercions.evidence.is_empty() {
-        entry.insert("evidenceCoerced".into(), keyed(&coercions.evidence));
+        entry.set("evidenceCoerced", keyed(&coercions.evidence));
     }
     if let Some(envelope) = &coercions.envelope {
-        entry.insert("envelopeRepaired".into(), json!(envelope));
+        entry.set("envelopeRepaired", Js::str(envelope.clone()));
     }
 }
 
 /// `replyDigest`: the keys a misbehaving reply answered under, and the head
 /// of it — or the entity the rejection named.
-fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, Js)>) -> Option<Json> {
+fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, Js)>) -> Option<Js> {
     if why.is_empty() {
         return None;
     }
@@ -1123,15 +1132,15 @@ fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, Js)>) -> Op
         Some((_, entity)) => js::json_stringify(entity, 0),
         None => reply.raw_text.clone().unwrap_or_else(|| js::json_stringify(&reply.parsed_json, 0)),
     };
-    let mut digest = json!({
-        "why": why,
-        "keys": keys.into_iter().take(TRACE_INPUT_PARTS).collect::<Vec<_>>(),
-        "sample": emission::cut(&body, TRACE_REPLY_CHARS),
-    });
+    let mut digest = vec![
+        ("why", Js::array(why.iter().map(|w| Js::str(*w)).collect())),
+        ("keys", Js::array(keys.into_iter().take(TRACE_INPUT_PARTS).map(Js::String).collect())),
+        ("sample", Js::str(emission::cut(&body, TRACE_REPLY_CHARS))),
+    ];
     if let Some((at, _)) = focus {
-        digest["path"] = json!(at);
+        digest.push(("path", Js::str(at.clone())));
     }
-    Some(digest)
+    Some(env::object_of(digest))
 }
 
 /// `offendingEntity`: the record a rejection's path lands inside, found by
@@ -1168,19 +1177,23 @@ fn offending_entity(reply: &Js, path: &[PathKey]) -> Option<(String, Js)> {
 fn record_extracted_entities(run: &Run<'_>, from: usize, root: &Emission) {
     run.trace.amend(from, |entries| {
         let target = entries.iter_mut().rev().find_map(|entry| match entry {
-            TraceEntry::Extraction(members) if members.get("skipped") != Some(&json!("no_enrichment")) => Some(members),
+            TraceEntry::Extraction(members) if !matches!(members.get("skipped"), Some(Js::String(why)) if why == "no_enrichment") => Some(members),
             _ => None,
         });
         let Some(target) = target else { return };
-        if target.contains_key("skipped") {
+        if target.get("skipped").is_some() {
             return;
         }
         let (entities, truncated) = emission::traced_entities(root);
-        if !entities.is_empty() {
-            target.insert("entities".into(), Json::Object(entities));
+        if let Js::Object(object) = &entities
+            && !object.entries().is_empty()
+        {
+            target.set("entities", entities.clone());
         }
-        if !truncated.is_empty() {
-            target.insert("truncatedCount".into(), Json::Object(truncated));
+        if let Js::Object(object) = &truncated
+            && !object.entries().is_empty()
+        {
+            target.set("truncatedCount", truncated.clone());
         }
     });
 }

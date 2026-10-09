@@ -336,7 +336,10 @@ pub mod trace {
     /// hand-over as the segment ends (the shim's own marker, never the
     /// host's): its failure is logged, not the run's.
     pub fn append(segment: &str, entries: &[crate::trace::TraceEntry], closing: bool) -> Request {
-        let mut args = json!({ "entries": entries });
+        // On the eval wire, so each entry's members keep the TypeScript's
+        // order (serde's maps sort them).
+        let entries = crate::env::encode_plain(&crate::js::Js::array(entries.iter().map(crate::trace::TraceEntry::to_js).collect()));
+        let mut args = json!({ "entries": entries, "wire": true });
         if closing {
             args["closing"] = json!(true);
         }
@@ -418,11 +421,12 @@ pub mod builtins {
 pub mod log {
     use super::*;
 
-    /// A line on the platform's log (`logger.info` / `logger.warn`), the
-    /// run it belongs to added by the shim: what the TypeScript engine logs
-    /// at the same point. `level` is `info` or `warn`.
-    pub fn line(level: &str, message: &str, fields: Json) -> Request {
-        Request { family: Family::Log, method: level.into(), args: json!({ "message": message, "fields": fields }) }
+    /// Lines on the platform's log (`logger.info` / `logger.warn`), each
+    /// `{level, message, fields}`, the run they belong to added by the
+    /// shim: what the TypeScript engine logs, sent as a statement ends so a
+    /// line costs no yield inside a fan.
+    pub fn write(lines: Vec<Json>) -> Request {
+        Request { family: Family::Log, method: "write".into(), args: json!({ "lines": lines }) }
     }
 }
 

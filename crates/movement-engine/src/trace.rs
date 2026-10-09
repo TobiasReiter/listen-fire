@@ -11,10 +11,10 @@
 
 use std::cell::RefCell;
 
-use serde::Serialize;
+use crate::env;
+use crate::js::{self, Js};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone)]
 pub enum TraceEntry {
     /// A movement pinned to a deprecated language version.
     Warning { code: String, message: String },
@@ -27,10 +27,64 @@ pub enum TraceEntry {
     /// yielded: the body runs once per landing.
     Block { root: String, positions: usize },
     /// One extraction call, or the call a stage skipped (crate::extract):
-    /// its members as extraction.ts writes them.
-    Extraction(serde_json::Map<String, serde_json::Value>),
+    /// its members as extraction.ts writes them, in its order.
+    Extraction(Members),
     /// One plugin invocation, a stage's or a plain call's.
-    Plugin(serde_json::Map<String, serde_json::Value>),
+    Plugin(Members),
+}
+
+/// An entry's members (all but `kind`), in the order the TypeScript writes
+/// them: the trace is persisted as JSON, and its key order is the reader's.
+#[derive(Debug, Clone, Default)]
+pub struct Members(Vec<(String, Js)>);
+
+impl Members {
+    /// `entry[key] = value`: a key already there keeps its place.
+    pub fn set(&mut self, key: &str, value: Js) {
+        js::insert_in_object_order(&mut self.0, key.to_string(), value);
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Js> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    /// The members of `other`, after these.
+    pub fn extend(&mut self, other: Members) {
+        for (key, value) in other.0 {
+            self.set(&key, value);
+        }
+    }
+}
+
+impl TraceEntry {
+    /// The entry as expression.ts's `MovementTraceEntry` object.
+    pub fn to_js(&self) -> Js {
+        let kind = |k: &str| ("kind", Js::str(k));
+        match self {
+            TraceEntry::Warning { code, message } => {
+                env::object_of(vec![kind("warning"), ("code", Js::str(code.clone())), ("message", Js::str(message.clone()))])
+            }
+            TraceEntry::Gate { outcome } => env::object_of(vec![kind("gate"), ("outcome", Js::Bool(*outcome))]),
+            TraceEntry::FieldMiss { binding, field, available } => env::object_of(vec![
+                kind("field_miss"),
+                ("binding", Js::str(binding.clone())),
+                ("field", Js::str(field.clone())),
+                ("available", Js::array(available.iter().map(|k| Js::str(k.clone())).collect())),
+            ]),
+            TraceEntry::Block { root, positions } => {
+                env::object_of(vec![kind("block"), ("root", Js::str(root.clone())), ("positions", Js::Number(*positions as f64))])
+            }
+            TraceEntry::Extraction(members) | TraceEntry::Plugin(members) => {
+                let name = if matches!(self, TraceEntry::Extraction(_)) { "extraction" } else { "plugin" };
+                let mut object = js::JsObject::new();
+                object.set("kind".into(), Js::str(name));
+                for (key, value) in &members.0 {
+                    object.set(key.clone(), value.clone());
+                }
+                Js::object(object)
+            }
+        }
+    }
 }
 
 /// One flow's trace entries not yet handed to the host, in the order they

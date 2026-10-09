@@ -380,7 +380,7 @@ describe('the Rust engine shim', () => {
               seen.length === 0
                 ? [
                     request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE)),
-                    request(2, 'trace', 'append', inSegment(segmentId, { entries: [] })),
+                    request(2, 'trace', 'append', inSegment(segmentId, { entries: ['l', 0, []], wire: true })),
                   ]
                 : [],
           }

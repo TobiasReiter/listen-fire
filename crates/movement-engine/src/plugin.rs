@@ -11,18 +11,23 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use movement_parser::catalog::types::{PluginOutput, PluginSpec};
-use serde_json::{Map, json};
+use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 
 use crate::bindings::{Binding, Node, Scope};
-use crate::env::{self, Trail, ValueBinding};
-use crate::js::{self, Js, JsObject};
+use crate::env::{Trail, ValueBinding};
+use crate::js::{Js, JsObject};
 use crate::run::{Failure, Run, Stop};
-use crate::trace::TraceEntry;
+use crate::trace::{Members, TraceEntry};
 
 /// The field a `record` output hands its fetched text back under.
 const FETCHED_TEXT_FIELD: &str = "text";
-const TRACE_URL_CHARS: usize = 200;
+
+/// `pluginSpecNamed`: a plugin by either spelling — a program writes
+/// `vc_url_retrieval` for a plugin registered as `vc-url-retrieval`, and the
+/// snapshot keys the underscore one.
+pub fn spec_named<'p>(plugins: &'p JsMap<PluginSpec>, plugin: &str) -> Option<&'p PluginSpec> {
+    plugins.get(&plugin.replace('-', "_"))
+}
 
 /// `pluginOutputUnder`: the output a movement pinned at `language_version`
 /// gets — an earlier one for a pin before the change, else the current.
@@ -43,6 +48,12 @@ impl Run<'_> {
                 format!("'{written}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this"),
             )));
         };
+        if let PluginOutput::Records { .. } = declared {
+            return Err(Stop::Thrown(Failure::unsupported(
+                &format!("binding what '{written}' fetched as records"),
+                "the Rust engine binds a plugin's value or record output",
+            )));
+        }
         let mut config = JsObject::new();
         let mut origins: Vec<u32> = Vec::new();
         for (name, slot) in args {
@@ -83,30 +94,16 @@ impl Run<'_> {
                 let node = Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() };
                 (Binding::Node(Rc::new(RefCell::new(node))), handed_back)
             }
-            PluginOutput::Records { .. } => {
-                return Err(Stop::Thrown(Failure::unsupported(
-                    &format!("binding what '{written}' fetched as records"),
-                    "the Rust engine binds a plugin's value or record output",
-                )));
-            }
+            PluginOutput::Records { .. } => unreachable!("refused before the invocation"),
         };
-        let mut entry = Map::new();
-        entry.insert("plugin".into(), json!(registered));
+        let mut entry = Members::default();
+        entry.set("plugin", Js::str(registered.clone()));
         if let Some(Js::String(url)) = config.get("url") {
-            entry.insert("url".into(), json!(crate::extract::emission::cut(url, TRACE_URL_CHARS)));
+            entry.set("url", Js::str(crate::extract::emission::cut(url, crate::extract::run::TRACE_URL_CHARS)));
         }
-        entry.insert("durationMs".into(), env::json_of_js(&Js::Number(duration)));
-        if let Some(text) = result.text() {
-            entry.insert("chars".into(), json!(js::utf16_len(text)));
-        }
-        let fields = result.data_keys();
-        if !fields.is_empty() {
-            entry.insert("fields".into(), json!(fields));
-        }
-        if let Some(outcome) = &result.outcome {
-            entry.insert("outcome".into(), json!(outcome));
-        }
-        entry.insert("returned".into(), json!(if handed_back { "value" } else { "absent" }));
+        entry.set("durationMs", Js::Number(duration));
+        result.trace_into(&mut entry);
+        entry.set("returned", Js::str(if handed_back { "value" } else { "absent" }));
         self.trace(TraceEntry::Plugin(entry));
         Ok(binding)
     }

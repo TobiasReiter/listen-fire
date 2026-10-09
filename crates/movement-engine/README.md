@@ -425,7 +425,7 @@ TypeScript takes through its host is a host request here:
 | `llm.transforms.invoke` | each `through` plugin per entity, and a plugin's plain call ("Plugin calls" below); `{segmentId, plugin, config, extractedContext, budget}`, the plugin by its registered name | `host.llm.transforms.invoke`, on the eval wire both ways; its cost charged |
 | `files.resolveFileText` | each source file an extraction's `from […]` names, once per file | `host.files.resolveFileText`, on the eval wire both ways; its cost charged |
 | `ids.mint` | an extraction's resources without ids, once per batch: the `from` text, each source file, the bundle pipeline's files, then every record's fetched files in the tree's order | `host.ids.mint`: `count` distinct texts, or the run fails |
-| `log.info`, `log.warn` | where the TypeScript engine writes a log line (an extraction's skipped stage, a plugin's empty argument, a continued answer, a truncated file, a refinement kept) | the platform's logger, the run's id added; never the run's failure |
+| `log.write` | the log lines the TypeScript engine writes (an extraction's skipped stage, a plugin's empty argument, a continued answer, a truncated file, a refinement kept), kept and sent as the statement's trace is handed over, so a line costs no yield inside a fan | the platform's logger, the run's id added; never the run's failure |
 
 An origin id is an index in the run's own table (below): no host or result
 sees one. Every id a host or a result sees comes from `ids.mint`.
@@ -848,12 +848,12 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 | `park.sink.commitLimitPause {segmentId, limit: "cost", capMicrodollars, spentMicrodollars}` | `undefined`; asked only of a host that serves it and `commitSuspension` |
 | `clock.now {segmentId}` | `{nowIso}`, an ISO 8601 instant; any other answer fails the run |
 | `control.cancel.cancelled {segmentId}` / `control.cancel.cancelledNow {segmentId}` | a boolean: the cancel gate, debounced / not |
-| `trace.append {segmentId, entries, closing?: true}` (one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}`, `{kind: "field_miss", binding, field, available: [key…]}`, `{kind: "block", root, positions}`, an `extraction` entry or a `plugin` entry as expression.ts's `MovementTraceEntry` writes them |
+| `trace.append {segmentId, entries, closing?: true, wire: true}` (`entries` on the eval wire, each in expression.ts's key order; one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}`, `{kind: "field_miss", binding, field, available: [key…]}`, `{kind: "block", root, positions}`, an `extraction` entry or a `plugin` entry as expression.ts's `MovementTraceEntry` writes them |
 | `llm.client.call {segmentId, system, userMessage, label, model, effort?, maxTokens?, budget, wire: true}` | on the eval wire: `{parsedJson, rawText?, effortSteppedDown?, continuations?, cost?}`, or a budget refusal `{error: {kind: "budget", message}, cost?}` |
 | `llm.transforms.invoke {segmentId, plugin, config, extractedContext, budget, wire: true}` (`config` and `extractedContext` on the eval wire) | on the eval wire: `{text?, data?, records?, outcome?, cost?}`, or a budget refusal |
 | `files.resolveFileText {segmentId, file, budget, wire: true}` (`file` on the eval wire) | on the eval wire: `{text, rawTextId?}` or `{unreadable, detail?}`, and `cost?`, or a budget refusal |
 | `ids.mint {segmentId, count}` | `count` distinct texts |
-| `log.info {message, fields}` / `log.warn {message, fields}` | `undefined`: the line on the platform's log, the run's id added (the engine's own, like `check` and `builtins`) |
+| `log.write {lines: [{level, message, fields}]}` | `undefined`: the lines on the platform's log, the run's id added (the engine's own, like `check` and `builtins`) |
 | `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
 | `builtins.compare {op, left, right, now?}` | the same two shapes, for `compareValues(left, op, right, {now})`; `op` a `FilterOperator`; `now` (the `clock.now` answer the engine asked) on a `within` and only there |
 

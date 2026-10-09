@@ -296,30 +296,39 @@ const TRACE_ENTITY_CAP: usize = 20;
 const TRACE_VALUE_CHARS: usize = 200;
 
 /// `collectTracedEntities`: depth first, by node name, each record's fields
-/// as display text, at most twenty per name and the rest counted.
-pub(crate) fn traced_entities(root: &Emission) -> (serde_json::Map<String, serde_json::Value>, serde_json::Map<String, serde_json::Value>) {
-    let mut entities: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+/// as display text, at most twenty per name and the rest counted: the
+/// `entities` and `truncatedCount` objects, each in the order first met.
+pub(crate) fn traced_entities(root: &Emission) -> (Js, Js) {
+    let mut entities: Vec<(String, Vec<Js>)> = Vec::new();
     let mut truncated: Vec<(String, f64)> = Vec::new();
     collect_traced(root, &mut entities, &mut truncated);
-    let entities = entities.into_iter().map(|(k, v)| (k, serde_json::Value::Array(v))).collect();
-    let truncated = truncated.into_iter().map(|(k, v)| (k, serde_json::json!(v as u64))).collect();
-    (entities, truncated)
+    let mut by_alias = JsObject::new();
+    for (alias, list) in entities {
+        by_alias.set(alias, Js::array(list));
+    }
+    let mut counted = JsObject::new();
+    for (alias, n) in truncated {
+        counted.set(alias, Js::Number(n));
+    }
+    (Js::object(by_alias), Js::object(counted))
 }
 
-fn collect_traced(emission: &Emission, into: &mut Vec<(String, Vec<serde_json::Value>)>, truncated: &mut Vec<(String, f64)>) {
+fn collect_traced(emission: &Emission, into: &mut Vec<(String, Vec<Js>)>, truncated: &mut Vec<(String, f64)>) {
     if !emission.fields.entries().is_empty() {
         let alias = emission.node_name.clone();
         let at = match into.iter().position(|(name, _)| *name == alias) {
             Some(at) => at,
             None => {
-                into.push((alias.clone(), Vec::new()));
-                into.len() - 1
+                js::insert_in_object_order(into, alias.clone(), Vec::new());
+                into.iter().position(|(name, _)| *name == alias).expect("just inserted")
             }
         };
         if into[at].1.len() < TRACE_ENTITY_CAP {
-            let fields: serde_json::Map<String, serde_json::Value> =
-                emission.fields.entries().iter().map(|(name, value)| (name.clone(), traced_value(value))).collect();
-            into[at].1.push(serde_json::json!({ "fields": fields }));
+            let mut fields = JsObject::new();
+            for (name, value) in emission.fields.entries() {
+                fields.set(name.clone(), traced_value(value));
+            }
+            into[at].1.push(env::object_of(vec![("fields", Js::object(fields))]));
         } else {
             bump(truncated, &alias);
         }
@@ -333,14 +342,14 @@ fn collect_traced(emission: &Emission, into: &mut Vec<(String, Vec<serde_json::V
 
 /// `tracedValue`: absent stays null; anything else a text of at most 200
 /// UTF-16 units, marked where it was cut.
-fn traced_value(value: &Js) -> serde_json::Value {
+fn traced_value(value: &Js) -> Js {
     let text = match value {
-        Js::Undefined | Js::Null => return serde_json::Value::Null,
+        Js::Undefined | Js::Null => return Js::Null,
         Js::String(text) => text.clone(),
         Js::Array(_) | Js::Object(_) => js::json_stringify(value, 0),
         other => other.to_js_string(),
     };
-    serde_json::Value::String(cut(&text, TRACE_VALUE_CHARS))
+    Js::str(cut(&text, TRACE_VALUE_CHARS))
 }
 
 /// A text past `limit` UTF-16 units cut there and marked, as

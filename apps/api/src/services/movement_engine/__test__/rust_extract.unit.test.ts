@@ -20,8 +20,9 @@ import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeTestHost } from '../test_host';
-import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../test_host';
+import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
+import type { ParkedScopeState } from '../serialize';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b3');
@@ -40,9 +41,18 @@ const fetchUrl: PluginSpec = registered;
 /** A plugin that hands back one record per thing it found. */
 const findFiles: PluginSpec = { args: ['q'], priced: false, output: { kind: 'records', fields: { url: 'text' } } };
 
+const attioSchema: InstanceSchema = {
+  positions: { company: { properties: { name: 'text' }, edges: {} } },
+  collections: { companies: { target: 'company' } },
+  writableRoots: { company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } } },
+};
+
 const catalog = mockCatalogSnapshot({
-  adapters: { email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema } },
-  credentials: { dealflow_inbox: { adapters: ['email'] } },
+  adapters: {
+    email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
+    attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
+  },
+  credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
   plugins: { fetch_url: fetchUrl, find_files: findFiles },
 });
 
@@ -282,4 +292,86 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect(String(cause)).toBe(String(expected));
     });
   });
+
+  it("parks what an extraction yielded as the TypeScript does, and either engine's park resumes to the same writes", async () => {
+    const source = [
+      'import { attio } from adapters',
+      'import { acme_main } from credentials',
+      'crm = attio(credentials: acme_main)',
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  found = extract from [msg.`text`] {',
+      '    name: "the company"',
+      '    node founder: "each founder" {',
+      '      first: "first name"',
+      '    }',
+      '  }',
+      '  await sleep(1h)',
+      '  write crm-[:companies]-> { name: found.name }',
+      '  found-[f:founder]-> {',
+      '    write crm-[:companies]-> { name: f.first }',
+      '  }',
+      '}',
+    ].join('\n');
+    const reply = { 'x:extract_result#1': [{ name: wrap('Acme'), founder: [{ first: wrap('Ada') }, { first: wrap('Grace') }] }] };
+    /** A host whose CRM records what each create was handed. */
+    function hostWith(park: ReturnType<typeof makeFakeParkSink>, creates: unknown[]) {
+      const crm: Adapter = {
+        ...emailAdapter(),
+        adapterType: 'attio',
+        async createRecord(input) {
+          creates.push({ fields: input.fields, evidence: input.evidence, resources: input.resources });
+          return { adapterType: 'attio', externalId: `co-${creates.length}`, data: {} };
+        },
+      };
+      return makeTestHost({
+        adapters: { resolve: (r) => (r.adapterType === 'attio' ? crm : emailAdapter()) },
+        llm: { client: { call: async () => ({ parsedJson: reply }) } },
+        park: { sink: park.sink },
+      });
+    }
+    async function parkOn(engine: 'ts' | 'rust'): Promise<string> {
+      const previous = process.env.MOVEMENT_ENGINE;
+      process.env.MOVEMENT_ENGINE = engine;
+      try {
+        const park = makeFakeParkSink();
+        await runMovement({ ...baseInput(source), host: hostWith(park, []) });
+        expect(park.timerParks).toHaveLength(1);
+        return JSON.stringify(park.timerParks[0]?.state);
+      } finally {
+        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+        else process.env.MOVEMENT_ENGINE = previous;
+      }
+    }
+    async function resumedOnTypeScript(state: string) {
+      const previous = process.env.MOVEMENT_ENGINE;
+      process.env.MOVEMENT_ENGINE = 'ts';
+      try {
+        const creates: unknown[] = [];
+        const parsed: ParkedScopeState = JSON.parse(state);
+        await resumeMovement({ ...baseInput(source), state: parsed, host: hostWith(makeFakeParkSink(), creates) });
+        return creates;
+      } finally {
+        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+        else process.env.MOVEMENT_ENGINE = previous;
+      }
+    }
+    const ts = await parkOn('ts');
+    resetRustRunStats();
+    const rust = await parkOn('rust');
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+    expect(rust).toBe(ts);
+    const fromTs = await resumedOnTypeScript(ts);
+    expect(await resumedOnTypeScript(rust)).toEqual(fromTs);
+    // The resumed writes cite what was extracted, and carry its source.
+    expect(fromTs).toEqual([
+      expect.objectContaining({ fields: { name: 'Acme' }, evidence: { name: { quote: 'q', type: 'extraction' } }, resources: [expect.objectContaining({ type: 'TEXT' })] }),
+      expect.objectContaining({ fields: { name: 'Ada' } }),
+      expect.objectContaining({ fields: { name: 'Grace' } }),
+    ]);
+  });
 });
+
+/** A run's input on the shared catalog, its host the caller's. */
+function baseInput(source: string): Omit<RunMovementInput, 'host'> {
+  return { source: PRELUDE + source, event: EVENT, teamId: TEAM_ID, catalog, credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`) };
+}

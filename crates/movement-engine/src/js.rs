@@ -65,6 +65,12 @@ impl JsObject {
     }
 }
 
+/// `/^[A-Za-z_][A-Za-z0-9_]*$/`: a name written bare.
+pub fn is_identifier(raw: &str) -> bool {
+    let mut chars = raw.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// `object[key] = value` over any keyed list: array-index keys ascending
 /// first, then the rest as inserted; a key already there keeps its place.
 pub fn insert_in_object_order<V>(entries: &mut Vec<(String, V)>, key: String, value: V) {

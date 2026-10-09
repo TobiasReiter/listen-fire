@@ -463,7 +463,7 @@ describe('a whole run in the Rust engine', () => {
       [movement('  n = node { name: "a" }\n  write n { name: "b" }'), 'write_position_not_record'],
       [movement('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }'), 'expression_closure'],
       [movement('  held = { k: { inner: 1 } }\n  x = held.k.inner'), 'traversal_terminal'],
-      // A plugin's invocation, in each of its spellings (Task 2: the import itself is admitted).
+      // A call of a plugin the snapshot does not describe, in each of its spellings.
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url()')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  fetch_url(url: msg.`text`)')}`, 'plugin_call'],
