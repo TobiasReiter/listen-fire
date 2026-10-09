@@ -190,11 +190,12 @@ pub fn encode_plain(value: &Js) -> Json {
 
 /// A segment's wire with its host (rust_wire.ts's one `WireOut` per
 /// segment): every object or list the host sent — in the input's event and
-/// in its answers — by the id the wire gave it. An answer may name one sent
-/// before (`["r", id]`), and a request hands one back as itself (`["i",
-/// id]`), so an object an adapter answered reaches the next host call as
-/// that very object, as it does in the TypeScript engine; anything this
-/// engine built is written out.
+/// in its answers — by the id the wire gave it. Each value arrives whole (a
+/// back-reference only within it), so answers decode in whatever order the
+/// engine reads them and an object re-sent after a mutation reads as it now
+/// is. A request hands a sent one back as itself (`["i", id]`), so an object
+/// an adapter answered reaches the next host call as that very object, as it
+/// does in the TypeScript engine; anything this engine built is written out.
 #[derive(Default)]
 pub struct Wire {
     sent: RefCell<HashMap<u64, Js>>,
@@ -203,11 +204,10 @@ pub struct Wire {
 impl Wire {
     /// A value the host sent.
     pub fn decode(&self, json: &Json) -> Result<Js, String> {
-        let mut sent = self.sent.borrow_mut();
-        let mut decoder = Decoder { seen: std::mem::take(&mut *sent) };
-        let value = decoder.value(json);
-        *sent = decoder.seen;
-        value
+        let mut decoder = Decoder::default();
+        let value = decoder.value(json)?;
+        self.sent.borrow_mut().extend(decoder.seen);
+        Ok(value)
     }
 
     /// A value for a host request.
@@ -464,5 +464,23 @@ mod tests {
         let fresh = Js::array(vec![]);
         let pair = Js::array(vec![fresh.clone(), fresh, Js::Number(-0.0), Js::Number(f64::INFINITY)]);
         assert_eq!(encode(&pair), json!(["l", 0, [["l", 1, []], ["r", 1], ["n", "-0"], ["n", "Infinity"]]]));
+    }
+
+    #[test]
+    fn a_segment_reads_each_answer_whole_in_any_order() {
+        let wire = Wire::default();
+        // The same host object sent twice, mutated between: two ids, each
+        // read as it was when sent; the later one decoded first.
+        let later = wire.decode(&json!(["o", 1, [["n", 2], ["self", ["o", 2, [["k", ["l", 3, []]], ["again", ["r", 3]]]]]]])).unwrap();
+        let earlier = wire.decode(&json!(["o", 0, [["n", 1]]])).unwrap();
+        let n = |value: &Js| match value {
+            Js::Object(object) => object.get("n").cloned(),
+            _ => None,
+        };
+        assert!(matches!(n(&later), Some(Js::Number(2.0))));
+        assert!(matches!(n(&earlier), Some(Js::Number(1.0))));
+        assert_eq!(wire.encode(&later), json!(["i", 1]));
+        assert_eq!(wire.encode(&earlier), json!(["i", 0]));
+        assert!(wire.decode(&json!(["r", 0])).is_err());
     }
 }

@@ -340,7 +340,7 @@ pub(crate) struct Run<'a> {
     /// The movements running, the dispatched one first (`callStack`).
     pub(crate) call_stack: RefCell<Vec<String>>,
     /// The movements the dispatched one calls, each with the parameters a
-    /// call may bind to the event (crate::admit `event_params`).
+    /// call may bind to the event (crate::admit `Admission`).
     pub(crate) called: Vec<(String, Vec<String>)>,
     /// The segment's wire with its host: what the host sent, by id.
     pub(crate) wire: env::Wire,
@@ -360,7 +360,8 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let declared: Vec<&MovementDeclaration> =
         root.program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
     let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
-    let mut reasons = crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
+    let crate::admit::Admission { mut reasons, called } =
+        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
     let admitted_input = crate::admit::Input {
         capped: input.spend.cap_microdollars.is_some(),
         suspend_at: &input.suspend_at,
@@ -374,7 +375,6 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     if !reasons.is_empty() {
         return Err(Stop::Refused(reasons));
     }
-    let called = crate::admit::event_params(&root.program, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
     let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
     // The event crosses on the segment's wire: its objects are what the
     // host sent first.

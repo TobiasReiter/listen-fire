@@ -127,10 +127,14 @@ Step = {"pending": [{id, family, method, args}]} | {"done": result}
 - **One wire per segment** (`env::Wire`, rust_engine.ts's segment `WireOut`).
   The event and every value answer on the eval wire (an adapter's result, a
   priced call's, a built-in's) go out on the shim's one wire for the
-  segment, each object and list under an id unique in the segment; an answer
-  may name one sent before (`["r", id]`). A request hands an object the host
-  sent back as itself (`["i", id]`), when it is that very object, unchanged:
-  the shim gives the host the original. So a value an adapter answered (a
+  segment, each object and list under an id unique in the segment. Each
+  value is written whole: a back-reference (`["r", id]`) names only an
+  object earlier in the same value, so the engine decodes answers in
+  whatever order it reads them, and an object the host sends again (mutated
+  or not) crosses again, under a fresh id, as it now is. A request hands an
+  object the host sent back as itself (`["i", id]`), when it is that very
+  object, unchanged: the shim gives the host the original, whichever of its
+  ids the engine names. So a value an adapter answered (a
   `FileRef` read off a landing, carried in a node into a callee's write)
   reaches the next host call as the object it was, as in the TypeScript
   engine; anything the engine built is written out.
@@ -341,7 +345,7 @@ it as a value. A declared shape's words are walked in the file's scope (an
 extraction reads them there). An extraction reads a shape and a type, and a
 plugin call a plugin, an `IS` test a node declaration, and a declared edge
 (`kids: <Kid>`) the landing shape its writes mint; what else reads one is
-refused where it stands (`graph_shape`, `is_test_declared_record`).
+refused where it stands (`is_test_declared_record`).
 
 **Names** (a reached body):
 
@@ -1184,6 +1188,7 @@ Sizes are estimates (XS, S, M, L).
 | 1 | the regex dialect | `js_regex` reads most of it; hands back lookbehind, named groups and `\k<name>`, octal and `\c` escapes, a class escape at a range end, groups nested past 100, a step or depth budget met | `js_regex` kept and made complete, with no budget (a budget diverges where TypeScript is merely slow); oracle regex.json | M |
 | 2 | date parsing | ISO texts only; V8's legacy forms handed back, including under every `<` between two texts with a digit (filter.rs) and ORDER BY | V8's legacy parser ported (dateparser.cc: keyword tables, parenthesised comments, zone names, two-digit years), fuzzed against Node; an ISO date-time without offset read in a local zone that becomes a run input | L |
 | 3 | Unicode case mapping | Rust's tables (Unicode 17); a known divergence (detail below) | Node's ICU (Unicode 16): code points assigned after 16 unmapped, the cased and final-sigma deltas fixed (U+0295); the data pinned to Node 22's ICU | S |
+| 3a | the local edge's word split (`/[^\p{L}\p{N}]+/u`, FUZZY candidates) | src/letter_number.rs, generated from Node 22.20 (Unicode 16) by tests/oracle/letter_number.ts | regenerated with row 3's data whenever the pinned Node moves; the language's own Unicode version once one is named | XS |
 | 4 | ORDER BY and `SORT` over mixed key kinds | V8's binary insertion to 64 records; past 64 with mixed kinds, MOVENG_UNSUPPORTED (detail below) | V8's TimSort ported exactly (run detection, merge_lo/merge_hi, galloping); oracle by seeded mixed-key lists | M to L |
 | 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | read as any other field | a fixed table of `Object.prototype` member names with zod's issue text per declared type, and the prototype-set semantics, in crate::extract::validate; the oracle marks these replies (`prototype_key`) | M |
 | 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | 0 |
@@ -1195,6 +1200,7 @@ Sizes are estimates (XS, S, M, L).
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |
+| 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`) | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | — |
 
 #### The rows in detail
 

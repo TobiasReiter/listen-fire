@@ -52,7 +52,7 @@ impl Run<'_> {
             let index = self.begin_call();
             let name = self.callee_name(&call.callee, scope);
             let declaration = match scope.resolve(&name) {
-                Some(Binding::Movement(declared)) => self.declaration(&declared),
+                Some(Binding::Movement(declared)) => self.declaration(&declared)?,
                 Some(Binding::Opaque) => {
                     return Err(Stop::Thrown(Failure::unsupported(
                         &format!("calling the import '{}'", call.callee),
@@ -177,7 +177,7 @@ impl Run<'_> {
 
     /// The declaration a movement binding names, and its index among the
     /// program's statements (its body's AST path).
-    fn declaration(&self, name: &str) -> (MovementDeclaration, usize) {
+    fn declaration(&self, name: &str) -> Result<(MovementDeclaration, usize), Stop> {
         self.checked
             .root
             .program
@@ -188,7 +188,8 @@ impl Run<'_> {
                 Statement::Movement(m) if m.name == name => Some((m.clone(), i)),
                 _ => None,
             })
-            .expect("a movement binding names a movement the program declares")
+            // A parked state can name a movement a later edit removed.
+            .ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{name}' is not a movement this program declares"))))
     }
 
     /// `isValueParam`: a parameter typed by a value (`<number[]>`), a field

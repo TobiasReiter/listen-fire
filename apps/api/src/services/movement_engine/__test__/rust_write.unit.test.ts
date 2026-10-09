@@ -94,12 +94,15 @@ interface Store {
   landings?: Record<string, Record<string, unknown>>;
   /** The adapter links existing records. */
   links?: boolean;
+  /** Every createRecord answers the one object, mutated each time. */
+  sameAnswer?: boolean;
 }
 
 /** An adapter recording every call it gets, as `[method, input]`. */
 function fake(adapterType: string, store: Store = {}) {
   const calls: Array<[string, unknown]> = [];
   let minted = 0;
+  const answer = { adapterType, externalId: '', url: '', data: { minted } };
   const adapter: Adapter = {
     adapterType,
     supportedTriggers: [],
@@ -143,6 +146,12 @@ function fake(adapterType: string, store: Store = {}) {
       calls.push(['createRecord', input]);
       if (store.failCreate !== undefined) throw new Error(store.failCreate);
       minted += 1;
+      if (store.sameAnswer === true) {
+        answer.externalId = `${adapterType}-${minted}`;
+        answer.url = `https://x/${minted}`;
+        answer.data.minted = minted;
+        return answer;
+      }
       return { adapterType, externalId: `${adapterType}-${minted}`, url: `https://x/${minted}`, data: { minted } };
     },
     async updateRecord(input) {
@@ -351,6 +360,21 @@ const DEALFLOW = [
   '  write crm-[:companies]-> { name: "${co.externalId}!" }',
   '}',
 ].join('\n');
+
+describe('the answers a segment sends the Rust engine', () => {
+  it('reads an object an adapter answers again, mutated, as it now is', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  a = write crm-[:companies]-> { name: "one" }',
+      '  b = write crm-[:companies]-> { name: "two" }',
+      '  write a-[:notes]-> { body: "${a.`minted`} ${a.externalId} / ${b.`minted`} ${b.externalId}" }',
+      '}',
+    ].join('\n');
+    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }), attio: { sameAnswer: true } });
+    const bodies = rust.attio.filter(([method]) => method === 'createRecord').map(([, input]) => JSON.stringify(input));
+    expect(bodies.some((body) => body.includes('1 attio-1 / 2 attio-2'))).toBe(true);
+  });
+});
 
 describe('writes in the Rust engine', () => {
   it('creates, pipes the handle into a linked write and a second create, as the TypeScript engine does', async () => {

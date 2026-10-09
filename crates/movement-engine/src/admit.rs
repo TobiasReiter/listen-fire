@@ -179,7 +179,7 @@ pub fn refusals(
     entry: Option<&ast::MovementDeclaration>,
     language_version: u32,
     catalog: &Plugins<'_>,
-) -> Vec<String> {
+) -> Admission {
     let reasons = Reasons::default();
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
@@ -329,8 +329,22 @@ pub fn refusals(
             reasons.noted(file_scope.shape_words(&shape.root));
         }
     }
+    let mut called: Vec<(String, Vec<String>)> = Vec::new();
     for walk in walks(&callees, movements, entry) {
         let movement = walk.movement;
+        if walk.called && entry.is_some() {
+            let params = movement.params.iter().zip(&walk.signature).filter(|(_, k)| **k == Kind::Event).map(|(p, _)| p.name.clone());
+            match called.iter_mut().find(|(m, _)| *m == movement.name) {
+                Some((_, known)) => {
+                    for param in params {
+                        if !known.contains(&param) {
+                            known.push(param);
+                        }
+                    }
+                }
+                None => called.push((movement.name.clone(), params.collect())),
+            }
+        }
         // A movement no call reaches takes its parameters as the event: one
         // taking a value can only be entered by what is refused elsewhere.
         if !walk.called && movement.params.iter().any(|p| matches!(p.type_, Some(ParamTypeRef::Value(_)))) {
@@ -371,7 +385,16 @@ pub fn refusals(
         };
         names.body(&movement.body, Within::Body);
     }
-    reasons.0.into_inner()
+    Admission { reasons: reasons.0.into_inner(), called }
+}
+
+/// What admission found: why this engine does not run the program (empty
+/// when it does), and the movements a run of the entry calls, each with the
+/// parameters a call may bind to the event (`Run::stamp_decline` reads the
+/// event's dated fields through them).
+pub struct Admission {
+    pub reasons: Vec<String>,
+    pub called: Vec<(String, Vec<String>)>,
 }
 
 /// One movement as admission walks it: its parameters bound as a call
@@ -413,33 +436,6 @@ fn walks<'p>(callees: &'p Callees<'p>, movements: &[&'p ast::MovementDeclaration
     let order = |m: &ast::MovementDeclaration| callees.movements.iter().position(|d| std::ptr::eq(*d, m)).unwrap_or(usize::MAX);
     walks.sort_by_key(|w| order(w.movement));
     walks
-}
-
-/// The movements a run of `entry` calls, each with the parameters a call
-/// of it may bind to the event (`Run::stamp_decline` reads the event's
-/// dated fields through them).
-pub fn event_params(program: &ast::Program, entry: Option<&ast::MovementDeclaration>, language_version: u32, catalog: &Plugins<'_>) -> Vec<(String, Vec<String>)> {
-    let mut plugin_binds: BTreeMap<String, PluginBinds> = BTreeMap::new();
-    for statement in &program.statements {
-        if let Statement::Import(import) = statement
-            && matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins")
-        {
-            for name in &import.names {
-                plugin_binds.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()), catalog.binds(&name.name, language_version));
-            }
-        }
-    }
-    let callees = Callees::of(program, &plugin_binds, language_version);
-    let Some(entry) = entry else { return Vec::new() };
-    let mut called: Vec<(String, Vec<String>)> = Vec::new();
-    for walk in walks(&callees, &[entry], Some(entry)).into_iter().filter(|w| w.called) {
-        let params: Vec<String> = walk.movement.params.iter().zip(&walk.signature).filter(|(_, k)| **k == Kind::Event).map(|(p, _)| p.name.clone()).collect();
-        match called.iter_mut().find(|(m, _)| *m == walk.movement.name) {
-            Some((_, known)) => known.extend(params.into_iter().filter(|p| !known.contains(p)).collect::<Vec<_>>()),
-            None => called.push((walk.movement.name.clone(), params)),
-        }
-    }
-    called
 }
 
 /// Why this engine does not run `program` with this input, or `None`: a
@@ -509,20 +505,70 @@ fn sleeps(statements: &[Statement]) -> bool {
 }
 
 /// Whether a movement keeps a walk anywhere: `x = lazy …`, or a `lazy`
-/// entry in a node literal however deep.
+/// entry in a node literal however deep. A body a construct admission
+/// refuses where it stands (a combinator's arms, a callback's, a closure's)
+/// is not looked into: no run reaches it.
 fn holds_lazy(movement: &ast::MovementDeclaration) -> bool {
-    fn lazy(value: &serde_json::Value) -> bool {
+    fn statements(body: &[Statement]) -> bool {
+        body.iter().any(|statement| match statement {
+            Statement::Assign(ast::AssignStatement { value, .. }) | Statement::Return(ast::ReturnStatement { value, .. }) => rvalue(value),
+            Statement::Call(call) => call_args(call),
+            Statement::Block(statement) => statements(&statement.block.body),
+            Statement::If(statement) => statement.arms.iter().any(|arm| statements(&arm.body)) || statement.else_arm.as_ref().is_some_and(|arm| statements(&arm.body)),
+            Statement::Import(_)
+            | Statement::Shape(_)
+            | Statement::Type(_)
+            | Statement::Movement(_)
+            | Statement::Listen(_)
+            | Statement::Write(_)
+            | Statement::Match(_)
+            | Statement::Link(_)
+            | Statement::Unlink(_)
+            | Statement::Delete(_)
+            | Statement::Refresh(_)
+            | Statement::Await(_)
+            | Statement::Combinator(_)
+            | Statement::Collection(_)
+            | Statement::Error(_) => false,
+        })
+    }
+    fn rvalue(value: &RValue) -> bool {
         match value {
-            serde_json::Value::Object(members) => {
-                members.get("kind").and_then(serde_json::Value::as_str) == Some("lazy")
-                    || members.get("lazy") == Some(&serde_json::Value::Bool(true))
-                    || members.values().any(lazy)
-            }
-            serde_json::Value::Array(items) => items.iter().any(lazy),
-            _ => false,
+            RValue::Lazy { .. } => true,
+            RValue::Node { node } => node_literal(node),
+            RValue::Call { call } => call_args(call),
+            RValue::Block { block } => statements(&block.body),
+            RValue::Construct { .. }
+            | RValue::Write { .. }
+            | RValue::Match { .. }
+            | RValue::Link { .. }
+            | RValue::Extract { .. }
+            | RValue::ExtractCall { .. }
+            | RValue::Await { .. }
+            | RValue::Combinator { .. }
+            | RValue::Collection { .. }
+            | RValue::Members { .. }
+            | RValue::InlineBlock { .. }
+            | RValue::Callback { .. }
+            | RValue::Closure { .. }
+            | RValue::Expr { .. } => false,
         }
     }
-    serde_json::to_value(&movement.body).is_ok_and(|body| lazy(&body))
+    fn node_literal(node: &ast::NodeLiteral) -> bool {
+        node.entries.iter().any(|entry| match entry {
+            ast::NodeEntry::Traversal { lazy, mapping, .. } => *lazy || mapping.as_ref().is_some_and(node_literal),
+            ast::NodeEntry::Nodes { nodes, .. } => nodes.iter().any(node_literal),
+            ast::NodeEntry::Value { .. } | ast::NodeEntry::Declared { .. } => false,
+        })
+    }
+    fn call_args(call: &CallStatement) -> bool {
+        call.args.iter().any(|arg| match arg {
+            CallArg::Node { node, .. } => node_literal(node),
+            CallArg::Call { call, .. } => call_args(call),
+            CallArg::Expr { .. } | CallArg::Write { .. } | CallArg::Closure { .. } | CallArg::Type { .. } => false,
+        })
+    }
+    statements(&movement.body)
 }
 
 /// Whether a call's argument is a write or a call, at any depth: the step a
@@ -630,6 +676,10 @@ struct Callees<'p> {
     plugin_binds: &'p BTreeMap<String, PluginBinds>,
     /// The `type`s the file declares: a parameter typed by one takes a value.
     types: BTreeSet<String>,
+    /// The names the file's scope binds (its imports, shapes, values,
+    /// instances and movements): from version 3 one bound exactly is the
+    /// callee a call names, even in another letter case than a movement's.
+    file_scope: BTreeSet<String>,
     language_version: u32,
     returns: RefCell<Vec<((String, Signature), Option<Kind>)>>,
 }
@@ -638,23 +688,42 @@ impl<'p> Callees<'p> {
     fn of(program: &'p ast::Program, plugin_binds: &'p BTreeMap<String, PluginBinds>, language_version: u32) -> Callees<'p> {
         let mut movements = Vec::new();
         let mut types = BTreeSet::new();
+        let mut file_scope = BTreeSet::new();
         for statement in &program.statements {
             match statement {
-                Statement::Movement(m) => movements.push(m),
+                Statement::Movement(m) => {
+                    file_scope.insert(m.name.clone());
+                    movements.push(m);
+                }
                 Statement::Type(t) => {
                     types.insert(t.name.clone());
+                }
+                Statement::Import(import) => file_scope.extend(import.names.iter().map(|n| n.alias.clone().unwrap_or_else(|| n.name.clone()))),
+                Statement::Shape(shape) => {
+                    file_scope.insert(shape.name.clone());
+                }
+                Statement::Assign(assign) => {
+                    file_scope.insert(assign.name.clone());
                 }
                 _ => {}
             }
         }
-        Callees { movements, plugin_binds, types, language_version, returns: RefCell::default() }
+        Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default() }
     }
 
-    /// `resolveCallee` over the file's movements: exactly, or from version 3
-    /// in any letter case.
-    fn movement(&self, written: &str) -> Option<&'p ast::MovementDeclaration> {
-        self.movements.iter().copied().find(|m| m.name == written).or_else(|| {
-            (self.language_version >= 3).then(|| self.movements.iter().copied().find(|m| m.name.to_lowercase() == written.to_lowercase())).flatten()
+    /// The movement declared as `name`, exactly.
+    fn movement(&self, name: &str) -> Option<&'p ast::MovementDeclaration> {
+        self.movements.iter().copied().find(|m| m.name == name)
+    }
+
+    /// `resolveCallee` (run.ts `calleeName`): the movement a call names —
+    /// exactly, or from version 3 in any letter case unless the name is
+    /// bound exactly to something else (`bound_in_body`: the calling body
+    /// binds it).
+    fn callee(&self, written: &str, bound_in_body: bool) -> Option<&'p ast::MovementDeclaration> {
+        self.movement(written).or_else(|| {
+            let bound = bound_in_body || self.file_scope.contains(written);
+            (self.language_version >= 3 && !bound).then(|| self.movements.iter().copied().find(|m| m.name.to_lowercase() == written.to_lowercase())).flatten()
         })
     }
 
@@ -795,7 +864,7 @@ enum Kind {
 /// What a call binds a movement's parameters to, in declaration order.
 type Signature = Vec<Kind>;
 
-impl Bound<'_> {
+impl<'c> Bound<'c> {
     /// What a plain plugin call binds, by its output (anything but a record
     /// is read as a value, and what it does not bind is refused where the
     /// call stands).
@@ -936,10 +1005,13 @@ impl Bound<'_> {
         }
     }
 
-    /// The movement a call names (`resolveCallee`): as written, or from
-    /// version 3 in any letter case.
-    fn callee(&self, written: &str) -> Option<&'_ ast::MovementDeclaration> {
-        self.callees?.movement(written)
+    /// The movement a call names (`Callees::callee`).
+    fn callee(&self, written: &str) -> Option<&'c ast::MovementDeclaration> {
+        let bound_in_body = self.sites.iter().any(|(n, _, _)| n == written)
+            || self.params.iter().any(|(n, _)| n == written)
+            || self.events.contains(written)
+            || self.event_aliases.contains(written);
+        self.callees?.callee(written, bound_in_body)
     }
 
     /// What a right-hand side binds, for what a `return` of it hands back.
@@ -975,7 +1047,7 @@ impl Bound<'_> {
     /// known here.
     fn known_call_kind(&mut self, call: &CallStatement) -> Option<Kind> {
         let callees = self.callees?;
-        let declaration = callees.movement(&call.callee)?;
+        let declaration = self.callee(&call.callee)?;
         let mut signature: Vec<Option<Kind>> = vec![Some(Kind::Value); declaration.params.len()];
         let mut enters = true;
         for (position, arg) in call.args.iter().enumerate() {
@@ -1160,8 +1232,8 @@ impl Names<'_> {
                 // A bound block: what its iterations return is the binding.
                 RValue::Block { block } => self.block(block),
                 RValue::Await { r#await } => sleep(&r#await.source),
-                RValue::Construct { construct } if self.callees.movement(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
-                RValue::Call { call } if self.callees.movement(&call.callee).is_some() => self.call(call),
+                RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
+                RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
                 RValue::Construct { construct } if self.plugin(&construct.callee) => {
                     self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
                 }
@@ -1181,8 +1253,8 @@ impl Names<'_> {
                 // values; what a body returns is its call's value, any
                 // binding a right-hand side makes.
                 other if within == Within::Block => self.rvalue(other),
-                RValue::Call { call } if self.callees.movement(&call.callee).is_some() => self.call(call),
-                RValue::Construct { construct } if self.callees.movement(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
+                RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
+                RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
                 RValue::Expr { expr } => self.assigned(expr),
                 RValue::Call { call } => self.assigned(self.builtin_value(call)?),
@@ -1211,7 +1283,7 @@ impl Names<'_> {
             Statement::Block(statement) => self.block(&statement.block),
             Statement::Error(statement) => self.slot(&statement.message),
             Statement::Call(call) if self.plugin(&call.callee) => self.plugin_call(call),
-            Statement::Call(call) if self.callees.movement(&call.callee).is_some() => self.call(call),
+            Statement::Call(call) if self.callee(&call.callee).is_some() => self.call(call),
             other => refuse(format!("statement:{}", statement_kind(other))),
         }
     }
@@ -1225,7 +1297,7 @@ impl Names<'_> {
         if self.unknown_calls.contains(&call.span) {
             return refuse("movement_call");
         }
-        let Some(declaration) = self.callees.movement(&call.callee) else { return refuse("statement:call") };
+        let Some(declaration) = self.callee(&call.callee) else { return refuse("statement:call") };
         for (position, arg) in call.args.iter().enumerate() {
             let param = arg.name().map(String::from).or_else(|| declaration.params.get(position).map(|p| p.name.clone()));
             let takes_value = param.and_then(|p| declaration.params.iter().find(|d| d.name == p)).is_some_and(|p| self.callees.takes_value(p));
@@ -1234,7 +1306,7 @@ impl Names<'_> {
                 CallArg::Expr { expr, .. } => self.assigned(expr)?,
                 CallArg::Write { write, .. } => self.write(write)?,
                 CallArg::Node { node, .. } => self.node(node, node.graph.is_some())?,
-                CallArg::Call { call, .. } if self.callees.movement(&call.callee).is_some() => self.call(call)?,
+                CallArg::Call { call, .. } if self.callee(&call.callee).is_some() => self.call(call)?,
                 CallArg::Call { call, .. } if takes_value => self.slot(self.builtin_value(call)?)?,
                 CallArg::Call { call, .. } => self.assigned(self.builtin_value(call)?)?,
                 CallArg::Closure { .. } => return refuse("rvalue:closure"),
@@ -1606,6 +1678,11 @@ impl Names<'_> {
                 || self.lazies.contains(name)
                 || self.instances.contains(name)
                 || self.file_names.contains(name))
+    }
+
+    /// The movement a call names (`Callees::callee`).
+    fn callee(&self, written: &str) -> Option<&ast::MovementDeclaration> {
+        self.callees.callee(written, self.binds(written))
     }
 
     /// `CallScope.binds`: a name the file or the body binds, anywhere.
@@ -2050,7 +2127,7 @@ mod tests {
     fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<'_>) -> Option<String> {
         let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
         let entry = entry_of(&declared, None, language_version);
-        refusals(program, &reachable(program, None, language_version), entry, language_version, catalog).into_iter().next()
+        refusals(program, &reachable(program, None, language_version), entry, language_version, catalog).reasons.into_iter().next()
     }
 
     fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]) -> Option<String> {
@@ -2077,7 +2154,7 @@ mod tests {
         let program = movement_parser::stmt::parse_program(source, language_version, false).expect("the test's program parses");
         let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
         let picked = entry_of(&declared, Some(entry), language_version);
-        refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None))
+        refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None)).reasons
     }
 
     /// A movement nothing the entry reaches names is not walked: what it
@@ -2365,6 +2442,15 @@ mod tests {
         let lazy = parsed("", "  files = lazy msg-[a:attachments]->\n  await sleep(1h)");
         assert_eq!(capped(&lazy, input(false)).as_deref(), Some("lazy_park"));
         assert_eq!(capped(&lazy, Input { dry_run: true, ..input(false) }), None, "a rehearsal fast-forwards its sleep");
+        let entry = parsed("", "  n = node { title: \"t\", files: lazy msg-[a:attachments]-> }\n  await sleep(1h)");
+        assert_eq!(capped(&entry, input(false)).as_deref(), Some("lazy_park"), "a lazy entry in a node literal");
+        let argument = parsed(save, "  save(n: node { title: \"t\", files: lazy msg-[a:attachments]-> })\n  await sleep(1h)");
+        assert_eq!(capped(&argument, input(false)).as_deref(), Some("lazy_park"), "a lazy entry in a call's node argument");
+        // From version 3 a call's name bound exactly to something else (the
+        // file's `crm` instance) names that, not a movement in another case.
+        let shadowed = "movement CRM(t: <text>) {\n  await sleep(1h)\n}\n";
+        assert_eq!(reasons(shadowed, "  CRM(t: \"a\")"), ["call_park"]);
+        assert!(!reasons(shadowed, "  crm(t: \"a\")").contains(&"call_park".to_string()), "{:?}", reasons(shadowed, "  crm(t: \"a\")"));
     }
 
     /// Chunk 7A Task 2: the graphs a run builds, as heads, targets and

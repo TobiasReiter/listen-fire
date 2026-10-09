@@ -123,7 +123,7 @@ async function segmentInRust(
   // is refused here, before the engine has asked the host for anything.
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
-  const wire = new WireOut();
+  const wire = new WireOut({ whole: true });
   const start = segmentInput(input, context, resume, wire);
   if (start === undefined) return notAdmitted(input, EVENT_DOES_NOT_CROSS);
   rustRunStats.routed += 1;
@@ -249,7 +249,7 @@ export async function driveEngine(
     wire?: WireOut;
   },
 ): Promise<unknown> {
-  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [], positions: new Map(), wire: input.wire ?? new WireOut() };
+  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [], positions: new Map(), wire: input.wire ?? new WireOut({ whole: true }) };
   // A settle queue: each request in flight, as it settles, joins the queue
   // and wakes the one waiter. An answer costs O(1) however many requests are
   // in flight (a race over every one of them per answer was O(n) each).

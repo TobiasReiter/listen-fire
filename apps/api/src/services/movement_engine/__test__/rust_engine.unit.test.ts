@@ -636,3 +636,15 @@ describe('choosing the engine', () => {
     expect(rustRunStats.routed).toBe(0);
   });
 });
+
+describe("a segment's wire", () => {
+  it('writes each value whole, and hands every id it gave an object back as that object', () => {
+    const wire = new WireOut({ whole: true });
+    const shared = { n: 1 };
+    expect(wire.value({ a: shared, b: shared })).toEqual(['o', 0, [['a', ['o', 1, [['n', 1]]]], ['b', ['r', 1]]]]);
+    shared.n = 2;
+    expect(wire.value(shared)).toEqual(['o', 2, [['n', 2]]]);
+    expect(wire.read(['i', 1])).toBe(shared);
+    expect(wire.read(['i', 2])).toBe(shared);
+  });
+});

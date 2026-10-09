@@ -107,7 +107,12 @@ export const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\u
 export class WireOut {
   /** `asData`: a dict shaped like an engine binding crosses as the data it
    *  is (a parked state's descriptors), not refused as a record. */
-  constructor(private readonly options: { asData?: true } = {}) {
+  /** `whole`: each value is written whole — a back-reference only within
+   *  it — because a segment's engine decodes each answer on its own, in the
+   *  order it reads them, and an object re-sent after a mutation must cross
+   *  as it now is. Every id still names its object, so an object sent twice
+   *  has two ids, each handed back as that one object. */
+  constructor(private readonly options: { asData?: true; whole?: true } = {}) {
     this.asData = options.asData === true;
   }
 
@@ -128,14 +133,28 @@ export class WireOut {
 
   /** The objects and lists sent, by the id the wire gave them. */
   private readonly sent: object[] = [];
+  /** The ids of the objects written so far: a back-reference names one. */
   private readonly ids = new Map<object, number>();
   private readonly open = new Set<object>();
   readonly origins: ProvenanceOrigin[] = [];
   private readonly originIds = new Map<ProvenanceOrigin, number>();
 
+  /** How deep the value being written is: 0 between values. */
+  private writing = 0;
+
   /** `value` on the wire, or REFUSED where it would not cross as itself: a
    *  function, a Date, a class instance, a record, a lone surrogate. */
   value(value: unknown): unknown {
+    if (this.options.whole === true && this.writing === 0) this.ids.clear();
+    this.writing += 1;
+    try {
+      return this.write(value);
+    } finally {
+      this.writing -= 1;
+    }
+  }
+
+  private write(value: unknown): unknown {
     const kind = typeof value;
     switch (kind) {
       case 'undefined':
@@ -177,7 +196,7 @@ export class WireOut {
         for (let i = 0; i < value.length; i++) {
           // A hole is not `undefined` to every array method.
           if (!(i in value)) return REFUSED;
-          const item = this.value(value[i]);
+          const item = this.write(value[i]);
           if (item === REFUSED) return REFUSED;
           items.push(item);
         }
@@ -188,7 +207,7 @@ export class WireOut {
       const entries: unknown[] = [];
       for (const key of keys) {
         if (LONE_SURROGATE.test(key)) return REFUSED;
-        const item = this.value(Reflect.get(value, key));
+        const item = this.write(Reflect.get(value, key));
         if (item === REFUSED) return REFUSED;
         entries.push([key, item]);
       }
