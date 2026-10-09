@@ -686,6 +686,7 @@ impl Names<'_> {
         };
         let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
         let TraversalStep::Edge(step) = step else { return refuse("block_head_step") };
+        refuse_meta_edge(&step.edge_type_id)?;
         if let Some(filter) = &step.expression_filter {
             self.scoped(filter)?;
         }
@@ -751,6 +752,7 @@ impl Names<'_> {
     /// One hop of a walk: an edge, its WHERE and ORDER BY key scoped at the
     /// landed record.
     fn hop(&self, step: &movement_parser::lowering::expression::EdgeStep) -> Admitted {
+        refuse_meta_edge(&step.edge_type_id)?;
         // The hop's alias names the record it landed on, there.
         let mut landings = self.landings.clone();
         landings.extend(step.alias.iter().cloned());
@@ -1015,6 +1017,7 @@ impl Names<'_> {
             return refuse(format!("{verb}_root_not_held"));
         }
         match edge_shape(path) {
+            EdgeShape::One { edge, .. } if is_meta_edge(&edge) => refuse("traversal_meta_edge"),
             EdgeShape::One { where_: Some(where_), .. } => self.scoped(&where_.filter),
             EdgeShape::One { where_: None, .. } => Ok(()),
             EdgeShape::MultiHop | EdgeShape::Invalid(_) => refuse(format!("{verb}_multi_hop")),
@@ -1331,6 +1334,17 @@ fn unique_clause(raw: &str) -> Admitted {
     if keys == 0 { refuse("unique_by_without_key") } else { Ok(()) }
 }
 
+/// A `#`-prefixed edge names the engine's own meta references, which the
+/// TypeScript read wrapper hands the adapter without restamping the
+/// position; this engine does not run them.
+fn is_meta_edge(edge: &str) -> bool {
+    edge.starts_with('#')
+}
+
+fn refuse_meta_edge(edge: &str) -> Admitted {
+    if is_meta_edge(edge) { refuse("traversal_meta_edge") } else { Ok(()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1371,6 +1385,9 @@ mod tests {
             ("  x = AI(\"why?\")", "expression:llm"),
             ("  x = FIRST(crm-[:companies]->-[:deals]->)", "select_multi_hop"),
             ("  x = crm.`name`", "traversal_root"),
+            ("  x = FIRST(crm-[:#foo]->)", "traversal_meta_edge"),
+            ("  crm-[:#foo]-> {\n    y = 1\n  }", "traversal_meta_edge"),
+            ("  write crm-[:#foo]-> { name: \"a\" }", "traversal_meta_edge"),
             ("  n = node { a: 1 }\n  x = n-[:replies]->.`subject`", "traversal_root"),
             ("  x = \"${FIRST(crm-[c:companies]->)}\"", "aggregate_records"),
             ("  x = TEXT.CHUNKS(msg.`subject`)", "expression_does_not_lower"),

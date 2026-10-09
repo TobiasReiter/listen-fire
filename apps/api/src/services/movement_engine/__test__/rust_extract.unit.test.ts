@@ -162,6 +162,8 @@ async function agree(c: Case, onRust: { runsWhole: true } | { refused: string })
     if (ts.error instanceof MovementRunFailed && rustError instanceof MovementRunFailed) expect(rustError.partial).toEqual(ts.error.partial);
   } else {
     expect('result' in rust ? rust.result : rust.error).toEqual(ts.result);
+    // toEqual ignores key order; a trace entry's order is what a reader of the trace sees.
+    expect(JSON.stringify('result' in rust ? rust.result?.trace : undefined)).toBe(JSON.stringify(ts.result?.trace));
   }
   return ts;
 }

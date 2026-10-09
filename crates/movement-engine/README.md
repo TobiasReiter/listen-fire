@@ -328,6 +328,7 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 | `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance), other than `x = <name>` of a record (a second name for it), `x == null` / `x != null` of any bound name, and an `EXISTS`, `IS` or walk rooted at it |
 | `traversal_root` | a field read rooted at a name that is not the event, a value, a handle, a node or a block's hop alias; a walk (or an `EXISTS` over hops, or a pick) rooted at a name that is not the event, an instance, a handle, a hop alias or what an extraction yielded |
 | `traversal_step`, `exists_step` | a walk's hop, or an `EXISTS`'s, that is not an edge |
+| `traversal_meta_edge` | a hop (a block head's, a walk's, a pick's, a write's or a match's target) over a `#`-prefixed edge: the engine's own meta references, which the TypeScript read wrapper hands the adapter unrestamped |
 | `walk_extract_hop`, `exists_extract_hop` | a hop down what an extraction yielded with a WHERE (the TypeScript refuses it), or, inside `EXISTS`, with an ORDER BY or a LIMIT |
 | `exists_over_value` | `EXISTS(v-[…]->)` or `EXISTS(v WHERE …)` of a value (the TypeScript refuses it) |
 | `exists_node` | `EXISTS(n-[…]->)` of a node this run built |
@@ -788,7 +789,9 @@ a statement's boundary; its journal is empty: a statement this engine runs
 makes at most one call (a plugin's), and a suspension at its cap is taken
 before that call answers. The flow suspends:
 
-- **at its cost cap.** The engine never refuses a priced call itself. The
+- **at its cost cap.** The engine refuses a priced plugin itself, before
+  `llm.transforms.invoke`, once the run's own figures meet the cap (as
+  run_context.ts `pricedCalls` does); no other priced call. The
   host refuses one once its budget is spent (the meter refuses when the run
   has spent at or past its cap), and that refusal, once its cost is charged,
   is the cap met if the ledger's own figures say so (`spent >= cap`, counted
@@ -845,17 +848,17 @@ fails); none produces a different answer.
 
 - An adapter answers a value the eval wire cannot carry as itself (a
   `Date`, a class instance, a function): `RustShimError` from the shim.
-- A plugin's answer, or a file reader's, holding a `__proto__` key or a
-  lone surrogate (the shim carries the rest and names what it left out,
-  `uncarried`): the statement fails with MOVENG_UNSUPPORTED naming the
-  members. The TypeScript reads on. (A model reply that does is a
-  validation failure instead: "Spec the tail" below.) The
-  likely case — an event field the source's schema types as a date or a
+  The likely case — an event field the source's schema types as a date or a
   datetime (read by an expression, or written by a `...msg` spread as the
   checker's stamp names its fields) — is declined before the version warning
   is traced and before the source is resolved, read off the catalog
   snapshot (a `describe` would be an adapter call, after which nothing may
   decline).
+- A plugin's answer, or a file reader's, holding a `__proto__` key or a
+  lone surrogate (the shim carries the rest and names what it left out,
+  `uncarried`): the statement fails with MOVENG_UNSUPPORTED naming the
+  members. The TypeScript reads on. (A model reply that does is a
+  validation failure instead: "Spec the tail" below.)
 - A value held in a binding is shaped like an engine binding (an object
   whose `kind` names one, the TypeScript's `bindingOf`): reading its field,
   comparing it by `==`, or spreading it fails with MOVENG_UNSUPPORTED ("this
@@ -875,7 +878,7 @@ fails); none produces a different answer.
   `IS` (a `node { … }` literal nests nodes only; a `graph { … }` literal is
   refused, `is_test_declared_graph`).
 
-None of the first four is a built-in's reading, so none can be handed to the
+None of the first five is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
 brings.
 
@@ -924,7 +927,7 @@ are ignored.
 `{error: {message, name?, ref?}}`; `ref` numbers the very error object the
 host keeps, so a run that fails with it can name it.
 
-Every request but `check`'s and `builtins`' carries `segmentId`, and is the
+Every request but `check`'s, `builtins`' and `log.write`'s carries `segmentId`, and is the
 `EngineHost` method's request of the same path, in docs/contracts/host-families.md's
 shape. Where `wire: true`, the values named cross on the eval wire.
 
@@ -1122,11 +1125,7 @@ Where this engine differs from the TypeScript engine on a program that
 checks and that admission lets through. Each is pinned or unreachable as
 said; the deferred language-version changes above are the others.
 
-- **A `#`-prefixed hop over an open or undescribed position** passes the
-  checker (it refuses unknown `#` edges only on a closed, described schema).
-  TypeScript's read wrapper hands it to the adapter without restamping the
-  position; this engine restamps. No checked program over a closed schema
-  reaches it.
+None is known beyond those.
 
 ## The check
 

@@ -46,8 +46,12 @@ const emailSchema: InstanceSchema = {
 };
 
 const attioSchema: InstanceSchema = {
-  positions: { company: { properties: { name: 'text', stage: 'text' }, edges: {} } },
-  collections: { companies: { target: 'company' } },
+  positions: {
+    company: { properties: { name: 'text', stage: 'text' }, edges: {} },
+    // Open: the checker lets a `#`-prefixed hop through, as it does over an undescribed position.
+    bag: { properties: {}, edges: {}, openProperties: true },
+  },
+  collections: { companies: { target: 'company' }, bags: { target: 'bag' } },
   writableRoots: {},
 };
 
@@ -459,6 +463,10 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = LLM_AGG(["a"], "sum it")'), 'aggregate:llm'],
       [movement('  if EXISTS(msg-[:files]->-[#transform]->) {\n    x = 1\n  }'), 'exists_step'],
       [movement('  x = msg-[:files]->-[#transform]->.`name`'), 'traversal_step'],
+      // A `#`-prefixed edge is the engine's own meta reference: refused, not answered differently.
+      [movement('  crm-[b:bags]-> {\n    x = FIRST(b-[:#foo]->)\n  }'), 'traversal_meta_edge'],
+      [movement('  crm-[b:bags]-> {\n    b-[:#foo]-> {\n      y = 1\n    }\n  }'), 'traversal_meta_edge'],
+      [movement('  crm-[b:bags]-> {\n    write b-[:#foo]-> { name: "a" }\n  }'), 'traversal_meta_edge'],
       // A second name for a second name of the event is the event.
       [`node Lead { name: <text> }\n${movement('  m2 = msg\n  m3 = m2\n  if m3 IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_record'],
       [`node Lead { name: <text> }\n${movement('  if msg IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_record'],
