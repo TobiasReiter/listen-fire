@@ -8,6 +8,8 @@
 // one run at once: the unit takes no advisory lock, and any number of
 // instances may drain side by side, in either mode.
 
+import { performance } from 'node:perf_hooks';
+
 import type { WorkerRegistry } from './registry';
 
 import { neverAsAny } from '../lib/utils/types';
@@ -28,6 +30,8 @@ import {
 } from '../services/work/drain';
 import { MODES_VAR as SYSTEM_AUTH_MODES_VAR, systemAuthConfig } from '../services/system_auth';
 import { flushAdmissionRollupOnPass } from '../services/movement_engine/admission_rollup';
+import { assertEngineChoiceConfigured } from '../services/movement_engine/rust_engine';
+import { setDryRunClock } from '../services/movement_engine/rust_stats';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
@@ -151,6 +155,10 @@ function startDrain(env: Env): StopDrainLoop | undefined {
  *  inbound sync's. Handlers go first, before any await, so this process's
  *  first drain pass finds them; then every periodic row is ensured. */
 async function registerAutomationsWork(): Promise<void> {
+  // Every entry that runs movements comes through here (the server's wire,
+  // drain:once), so the engine settings are checked here for all of them.
+  assertEngineChoiceConfigured();
+  setDryRunClock(() => performance.now());
   registerCoreWork();
   registerWorkKinds(adapterWorkKinds());
   registerExposedFileWork();

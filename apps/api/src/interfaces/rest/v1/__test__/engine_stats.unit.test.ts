@@ -14,7 +14,7 @@ jest.mock('../../../../lib/knowledge/orchestrator', () => ({ runConversationTurn
 jest.mock('../../../../lib/llm_usage', () => ({ LlmUsageContext: jest.fn() }));
 jest.mock('principal', () => ({ currentPrincipal: jest.fn() }));
 
-import { resetRustEvalStats, resetRustRunStats, rustRunStats } from '../../../../services/movement_engine/rust_stats';
+import { recordDryRunDuration, resetRustEvalStats, resetRustRunStats, rustRunStats } from '../../../../services/movement_engine/rust_stats';
 import { systemRouter } from '../system';
 
 let server: Server;
@@ -81,6 +81,8 @@ describe('GET /system/engine-stats', () => {
   it('answers what the admission dry runs found of the runs the TypeScript engine ran, by first and every reason, and by version', async () => {
     const tally = { sampled: 3, admitted: 1, first: { plugin_call: 2 }, all: { plugin_call: 2, 'statement:call': 1 } };
     rustRunStats.dryRun = { firings: 4, faults: 0, ...tally, byVersion: { '3': tally } };
+    recordDryRunDuration(1);
+    recordDryRunDuration(4);
     const res = await fetch(`${baseUrl}/system/engine-stats`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -94,6 +96,7 @@ describe('GET /system/engine-stats', () => {
           first: { plugin_call: 2 },
           all: { plugin_call: 2, 'statement:call': 1 },
           byVersion: { '3': { sampled: 3, admitted: 1, first: { plugin_call: 2 }, all: { plugin_call: 2, 'statement:call': 1 } } },
+          durationMs: { timed: 2, p50: 4, p95: 4, p99: 4, max: 4 },
         },
       },
     });

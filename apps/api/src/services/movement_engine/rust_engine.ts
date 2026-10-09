@@ -34,7 +34,15 @@ import { maxFileChars } from './extraction';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
 import type { RunContext } from './run_context';
 import { serve, type RouteContext } from './rust_host';
-import { emptyAdmissionTally, holdAdmissionVerdict, rustEvalStats, rustRunStats, tallyVerdict } from './rust_stats';
+import {
+  currentDryRunClock,
+  emptyAdmissionTally,
+  holdAdmissionVerdict,
+  recordDryRunDuration,
+  rustEvalStats,
+  rustRunStats,
+  tallyVerdict,
+} from './rust_stats';
 import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
 
 export { RustShimError, plainJson } from './rust_wire';
@@ -272,12 +280,18 @@ function dryAdmit(
   resume: DryResume | undefined,
   engine: EngineProtocol | undefined,
 ): void {
+  // A rehearsal is an author trying a program, not a firing: it is not
+  // demand to burn down.
+  if (input.dryRun === true) return;
   const stats = rustRunStats.dryRun;
   try {
     const every = admissionDryRunEvery();
     stats.firings += 1;
     if (every === 0 || (stats.firings - 1) % every !== 0) return;
+    const clock = currentDryRunClock();
+    const startedAt = clock?.();
     const reasons = admissionReasons({ input, context }, resume, engine);
+    if (clock !== undefined && startedAt !== undefined) recordDryRunDuration(clock() - startedAt);
     const languageVersion = context.languageVersion;
     tallyVerdict(stats, reasons);
     tallyVerdict((stats.byVersion[String(languageVersion)] ??= emptyAdmissionTally()), reasons);

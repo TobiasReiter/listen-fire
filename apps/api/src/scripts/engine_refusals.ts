@@ -52,7 +52,7 @@ function table(title: string, rows: readonly ReasonDemand[]): string[] {
     `  ${'reason'.padEnd(width)}  ${'runs'.padStart(7)}  ${'autos'.padStart(5)}  top automations (runs)`,
     ...rows.map(
       (row) =>
-        `  ${row.reason.padEnd(width)}  ${String(row.runs).padStart(7)}  ${String(row.automations).padStart(5)}  ` +
+        `  ${row.reason.padEnd(width)}  ${String(row.runs).padStart(7)}  ${`${row.automations}${row.unnamedRuns > 0 ? '+' : ''}`.padStart(5)}  ` +
         row.top.map((top) => `${top.automation} (${top.runs})`).join(', '),
     ),
   ];

@@ -15,7 +15,7 @@ import { LlmUsageContext } from '../../../lib/llm_usage';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
 import { engineChoice } from '../../../services/movement_engine/rust_engine';
-import { rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
+import { dryRunDurationSummary, rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
 import {
   requireSystemAction,
   requireSystemCaller,
@@ -269,7 +269,8 @@ const engineStatsHandler: RequestHandler = (_req, res) => {
     engine: engineChoice(),
     uptimeSeconds,
     since: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
-    runs: rustRunStats,
+    // The recent dry runs' cost rides with their counts.
+    runs: { ...rustRunStats, dryRun: { ...rustRunStats.dryRun, durationMs: dryRunDurationSummary() } },
     evaluator: rustEvalStats,
   });
 };

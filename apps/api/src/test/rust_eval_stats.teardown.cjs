@@ -70,6 +70,9 @@ async function globalTeardown(globalConfig, projectConfig) {
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
   const runs = { routed: 0, admitted: 0, ranWhole: 0, shimFaults: 0, notAdmitted: {}, declined: {}, hostCalls: {} };
+  // The admission dry run asks only about runs MOVEMENT_ENGINE kept from
+  // Rust: under rust, it must have asked about none.
+  const dryRun = { firings: 0, sampled: 0 };
   const byFile = {};
   const refusedByFile = {};
   const add = (into, from) => {
@@ -91,6 +94,8 @@ async function globalTeardown(globalConfig, projectConfig) {
       if (Object.keys(stats.runs?.notAdmitted ?? {}).length > 0 && stats.file) add((refusedByFile[stats.file] ??= {}), stats.runs.notAdmitted);
       add(runs.declined, stats.runs?.declined);
       add(runs.hostCalls, stats.runs?.hostCalls);
+      dryRun.firings += stats.runs?.dryRun?.firings ?? 0;
+      dryRun.sampled += stats.runs?.dryRun?.sampled ?? 0;
     }
   }
   rmSync(dir, { recursive: true, force: true });
@@ -101,6 +106,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   // Why every run that did not run in Rust ran on the TypeScript engine: the
   // shim's input checks and the engine's own admission, by reason.
   console.log(`Rust runs not admitted: ${JSON.stringify(sorted(runs.notAdmitted))}`);
+  console.log(`Admission dry runs (none under rust): ${JSON.stringify(dryRun)}`);
   // Which files' runs the Rust engine ran whole, for a report.
   if (process.env.MOVEMENT_RUST_RUNS_BY_FILE === '1') {
     console.log(`Rust runs by file: ${JSON.stringify(byFile)}`);

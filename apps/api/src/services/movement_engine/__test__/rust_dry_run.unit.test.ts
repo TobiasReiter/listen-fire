@@ -22,7 +22,7 @@ import {
   type EngineProtocol,
   type EngineStep,
 } from '../rust_engine';
-import { admissionVerdicts, resetRustRunStats, rustRunStats } from '../rust_stats';
+import { admissionVerdicts, dryRunDurationSummary, resetRustRunStats, rustRunStats, setDryRunClock } from '../rust_stats';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000d1');
@@ -222,6 +222,31 @@ describe('a run the TypeScript engine runs', () => {
 });
 
 describe('the dry run against an engine double', () => {
+  it('skips a rehearsal: no engine started, no counter moved', async () => {
+    const { segment } = await failingSegment(ADMITTED, 'run-rehearsal');
+    const { engine, log } = startingWith({ pending: [] });
+    dryAdmitRun({ input: { ...segment.input, dryRun: true }, context: segment.context }, engine);
+    expect(log.started).toBe(0);
+    expect(rustRunStats.dryRun).toMatchObject({ firings: 0, sampled: 0 });
+    expect(admissionVerdicts).toEqual([]);
+  });
+
+  it("times each dry run by the host's clock, once one is installed", async () => {
+    const { segment } = await failingSegment(ADMITTED);
+    const { engine } = startingWith({ pending: [] });
+    dryAdmitRun(segment, engine);
+    expect(dryRunDurationSummary().timed).toBe(0);
+    let now = 0;
+    setDryRunClock(() => (now += 2.5));
+    try {
+      dryAdmitRun(segment, engine);
+      dryAdmitRun(segment, engine);
+    } finally {
+      setDryRunClock(undefined);
+    }
+    expect(dryRunDurationSummary()).toEqual({ timed: 2, p50: 2.5, p95: 2.5, p99: 2.5, max: 2.5 });
+  });
+
   it("never answers an admitted run's first request, and finishes the segment there", async () => {
     const { segment } = await failingSegment(ADMITTED);
     const { engine, log } = startingWith({ pending: [{ id: 0, family: 'check', method: 'program', args: {} }] });

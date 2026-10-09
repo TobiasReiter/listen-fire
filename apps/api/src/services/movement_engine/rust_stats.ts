@@ -83,6 +83,7 @@ export function resetRustRunStats(): void {
   rustRunStats.hostCalls = {};
   rustRunStats.dryRun = emptyDryRunStats();
   admissionVerdicts.length = 0;
+  dryRunDurations.length = 0;
 }
 
 /**
@@ -103,7 +104,8 @@ export interface AdmissionTally {
 
 /**
  * - `firings`: runs the TypeScript engine ran that a dry run could ask
- *   about (every run and resume `MOVEMENT_ENGINE` did not route);
+ *   about (every run and resume `MOVEMENT_ENGINE` did not route, but a
+ *   rehearsal);
  * - `sampled`, `admitted`, `first`, `all`: the dry runs asked (one firing
  *   in `MOVEMENT_ENGINE_DRY_RUN_EVERY`), as `AdmissionTally` says;
  * - `faults`: dry runs that ended in no verdict (the run itself is never
@@ -125,6 +127,22 @@ function emptyDryRunStats(): DryRunStats {
   return { firings: 0, faults: 0, ...emptyAdmissionTally(), byVersion: {} };
 }
 
+/** How many distinct reasons a tally keeps by name; past it, a new reason
+ *  counts under `OTHER_REASONS`. The engine's reasons are a fixed set well
+ *  under this, so the cap only bounds what a future engine could add. */
+export const REASONS_KEPT = 200;
+export const OTHER_REASONS = 'other';
+
+/** `key` while `counts` names fewer than `cap` keys (or already names it);
+ *  `overflow` after. */
+export function cappedKey(counts: Record<string, unknown>, key: string, cap: number, overflow: string): string {
+  return Object.hasOwn(counts, key) || Object.keys(counts).length < cap ? key : overflow;
+}
+
+function bump(counts: Record<string, number>, key: string): void {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
 /** Adds one dry run's verdict to `tally`: no reasons is admitted. */
 export function tallyVerdict(tally: AdmissionTally, reasons: readonly string[]): void {
   tally.sampled += 1;
@@ -133,8 +151,43 @@ export function tallyVerdict(tally: AdmissionTally, reasons: readonly string[]):
     tally.admitted += 1;
     return;
   }
-  tally.first[first] = (tally.first[first] ?? 0) + 1;
-  for (const reason of new Set(reasons)) tally.all[reason] = (tally.all[reason] ?? 0) + 1;
+  bump(tally.first, cappedKey(tally.first, first, REASONS_KEPT, OTHER_REASONS));
+  const counted = new Set<string>();
+  for (const reason of reasons) {
+    const key = cappedKey(tally.all, reason, REASONS_KEPT, OTHER_REASONS);
+    if (counted.has(key)) continue;
+    counted.add(key);
+    bump(tally.all, key);
+  }
+}
+
+/** How long recent dry runs took, in milliseconds, newest last: the last
+ *  `DURATIONS_KEPT`. Timed only once a host installs a clock
+ *  (`setDryRunClock`): the engine reads no clock of its own, and this one
+ *  feeds the counters alone, never a run. */
+export const DURATIONS_KEPT = 1_000;
+const dryRunDurations: number[] = [];
+let dryRunClock: (() => number) | undefined;
+
+export function setDryRunClock(clock: (() => number) | undefined): void {
+  dryRunClock = clock;
+}
+
+export function currentDryRunClock(): (() => number) | undefined {
+  return dryRunClock;
+}
+
+export function recordDryRunDuration(ms: number): void {
+  if (dryRunDurations.length >= DURATIONS_KEPT) dryRunDurations.shift();
+  dryRunDurations.push(ms);
+}
+
+/** The recent dry runs' durations, by percentile (milliseconds); nulls with
+ *  none timed. */
+export function dryRunDurationSummary(): { timed: number; p50: number | null; p95: number | null; p99: number | null; max: number | null } {
+  const sorted = [...dryRunDurations].sort((a, b) => a - b);
+  const at = (p: number) => (sorted.length === 0 ? null : (sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] ?? null));
+  return { timed: sorted.length, p50: at(0.5), p95: at(0.95), p99: at(0.99), max: sorted.length === 0 ? null : (sorted[sorted.length - 1] ?? null) };
 }
 
 /** One dry run's verdict, waiting for the host to persist it

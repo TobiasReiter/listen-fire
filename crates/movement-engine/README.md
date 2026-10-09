@@ -432,14 +432,25 @@ mutation — the TypeScript engine throws the same.
   all; the first alone until then) and `byVersion` (the same, by the run's
   pinned language version). It misses what admission cannot see: declines
   after the check (`event_field_dated`) and mid-run hand-backs.
-  `MOVEMENT_ENGINE_DRY_RUN_EVERY=N` asks about one firing in N (default 1,
-  every firing; 0 turns it off; boot refuses anything but a whole number).
-  It costs one parse per firing asked about (measured on the engine-runs
-  corpora: 7B Task 1's report).
+  A rehearsal is not asked about. `MOVEMENT_ENGINE_DRY_RUN_EVERY=N` asks
+  about one firing in N (default 1, every firing; 0 turns it off; every
+  entry that runs movements refuses anything but a whole number at boot).
+  What one costs: the event and the catalog serialised onto the wire, a
+  fresh WASM instance, this engine's parse of the program and of its
+  plugins, and, for an admitted run, the catalog load. So every run the
+  TypeScript engine runs now also opens a WASM instance: memory and garbage
+  collection under load grow with the firing rate, and sampling is the
+  remedy. `pnpm dev:engine-dry-run-latency` measures it over the recorded
+  corpora (p50 about 0.9 ms, p95 about 2 ms, p99 about 4 ms on a laptop);
+  `dryRun.durationMs` in engine-stats is the same over this process's last
+  1,000 dry runs (timed by the host's clock, which the engine never reads).
 - **The daily roll-up**: each process holds its verdicts and, at most once a
   minute after a drain pass, writes them into one `ops_event` row per day
   (`detail.kind = "engine_admission_dry_run"`: tallies by version, refused
-  runs by reason and automation id). Reasons, versions and opaque ids only.
+  runs by reason and automation id, at most 100 automations named per
+  reason with the rest counted, at most 200 reasons with the rest as
+  `other`). Reasons, versions and opaque ids only. The admin ops views
+  leave these rows out. drain:once writes its own before it exits.
   `pnpm engine:refusals --days N [--json]` sums the rows into the burn-down
   in demand order: for each reason, the runs it blocked, how many
   automations, and the five with the most runs; by first reason and by every

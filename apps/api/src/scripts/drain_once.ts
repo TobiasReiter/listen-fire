@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { globalQb } from '../lib/kysely';
 import { prismaClient } from '../prisma';
 import { mounts } from '../products';
+import { flushAdmissionRollup } from '../services/movement_engine/admission_rollup';
 import { drainUntilIdle, type DrainStop } from '../services/work/drain';
 import { registerAutomationsWork } from '../startup/automations';
 
@@ -72,6 +73,9 @@ export async function drainOnceMain(argv: readonly string[] = process.argv.slice
     ...(maxPasses !== undefined ? { maxPasses } : {}),
   });
   console.log(JSON.stringify(result));
+  // No pass hook outlives this process: what its runs' admission dry runs
+  // found is written before it exits.
+  await flushAdmissionRollup().catch((error: unknown) => console.warn('admission dry run roll-up flush failed', error));
   return EXIT_CODE[result.stopped];
 }
 
