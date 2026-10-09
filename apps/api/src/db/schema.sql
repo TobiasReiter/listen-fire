@@ -3926,8 +3926,9 @@ CREATE TABLE automations.parked_run (
     result jsonb,                          -- the branch's bindings (completed, awaiting its join); null when parked
     -- Which resume driver owns the leaf, so drivers don't cross-drain. 'limit' = an
     -- engine suspension at a run limit (the cost cap): resumed only by an explicit
-    -- resume of the whole run, never by a worker.
-    park_reason text NOT NULL DEFAULT 'ask' CONSTRAINT parked_run_park_reason_check CHECK (park_reason IN ('ask', 'timer', 'await', 'limit')),
+    -- resume of the whole run, never by a worker. The core owns 'timer', 'await' and
+    -- 'limit'; any other non-empty string is a unit's own reason (no default: a park names its owner).
+    park_reason text NOT NULL CONSTRAINT parked_run_park_reason_check CHECK (park_reason <> ''),
     wake_at timestamptz NULL,              -- absolute wake instant for timer parks; null for all other park_reason values
     created_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,

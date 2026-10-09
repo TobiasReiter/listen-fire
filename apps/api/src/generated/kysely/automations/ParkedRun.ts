@@ -21,7 +21,7 @@ export default interface ParkedRunTable {
 
   result: ColumnType<unknown | null, unknown | null, unknown | null>;
 
-  park_reason: ColumnType<string, string | undefined, string>;
+  park_reason: ColumnType<string, string, string>;
 
   wake_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 
