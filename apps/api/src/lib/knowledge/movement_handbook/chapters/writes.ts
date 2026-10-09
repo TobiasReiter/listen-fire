@@ -19,7 +19,7 @@ company = write crm-[:Companies]-> {
 
 - The body maps the target's **writable fields** to expressions — only fields it declares, so read the schema rather than guess. Fill every one the source supports, and never invent a value to fill a slot.
 - \`unique by (…)\` gives the record its identity, so a repeat event updates instead of duplicating.
-- \`...e\` writes every **field** of \`e\` as if each were its own line (\`name: e.name\`, \`stage: e.stage\`, …) — never its nested nodes, which are writes of their own. \`e\` is a record whose fields the automation spells out: an extracted record, a parameter typed on a declaration (\`d: <Deal>\` spreads exactly \`Deal\`'s fields), or a graph you built. A record read from a system is written field by field. A field the target lacks is flagged by name, and so is one that may be absent (use \`?...e\`, below). An explicit line for a field wins over the spread's value for it.
+- \`...e\` writes every **field** of \`e\` as if each were its own line (\`name: e.name\`, \`stage: e.stage\`, …) — never its nested nodes, which are writes of their own. \`e\` is a record whose fields the automation spells out: an extracted record, a parameter typed on a declaration (\`d: <Deal>\` spreads exactly \`Deal\`'s fields), a graph you built, or a record you wrote — however the name came to hold it (a \`FIRST\` pick, a \`MAP\` parameter, a map's key: \`...m.k\`). A record read from a system is written field by field. A field the target lacks is flagged by name, and so is one that may be absent (use \`?...e\`, below). An explicit line for a field wins over the spread's value for it.
 - The assignment gives you a **handle**: a position in the target's graph carrying the written fields plus results like \`externalId\` and \`url\`, read like any position (\`company.url\`).
 - A target may declare fields and connections its type **cannot exist without**; omit one and the write is flagged before it runs. Fix a missing connection by moving that parent into the write target (linked or tuple form, below); wrap a required field's \`AI()\` in \`COALESCE\`, since it can resolve to null.
 
@@ -127,6 +127,8 @@ write company-[:Team]-> { Name: enquiry.\`Contact Name\` }
 
 One effect, two assertions: the record *and* its link from \`company\`. The type comes from the edge, so the child can't be authored without its connection. Chains compose, which is why you write parents first: every child hangs off a handle already in hand.
 
+A parent is a name or a member path: \`write m.k-[:Team]-> { … }\` hangs the child off the record a map's key holds. Bind any other expression to a name first.
+
 The edge may be declared on **either side**: where only the child references back, write it at the root and \`link\` it instead. Never put a handle in a reference-shaped *field* (\`Partner: pa\`) — connections live in the write target, not the body.
 
 ### conversation-writes
@@ -192,7 +194,7 @@ crm-[record:Companies WHERE \`Categories\` == "Lead"]-> {
 }
 \`\`\`
 
-\`write <alias> { … }\` updates the record the alias already stands on — traversed, or a handle from earlier in the run. Nothing is left to resolve, so \`unique by\` is rejected, and there is no create to gate: set only the fields that change, and use \`link\`/\`unlink\` for connections. A target that can't update by id (an append-only channel, a drive that only creates files) is flagged at save.
+\`write <alias> { … }\` updates the record the alias already stands on — traversed, or a handle from earlier in the run — and \`write m.k { … }\` updates the one a map's key holds, as \`x = m.k\` then \`write x { … }\` would. Nothing is left to resolve, so \`unique by\` is rejected, and there is no create to gate: set only the fields that change, and use \`link\`/\`unlink\` for connections. A target that can't update by id (an append-only channel, a drive that only creates files) is flagged at save.
 
 ### removal
 

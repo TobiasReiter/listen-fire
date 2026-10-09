@@ -10,7 +10,6 @@
 // `uniquenessConstraints` unset.
 
 import type { AffinityAPIClient } from '../../../../adapters/affinity/apiClient';
-import { logger } from '../../../logger';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
@@ -23,7 +22,6 @@ import {
   AFFINITY_ENTITIES,
   AFFINITY_VALUE_TYPE,
   ENTITY_DISPLAY_NAMES,
-  isReadOnlyField,
   isReferenceValueType,
   listEntityKind,
   perListTypeName,
@@ -40,64 +38,17 @@ import {
 // The cache itself lives on the CLIENT (adapters/affinity/apiClient.ts), which
 // is the one layer already keyed by the credential — this was keyed by team,
 // which served a team's second Affinity connection the FIRST workspace's
-// schema, and a list-scoped ask skipped it entirely. What remains here is the
-// adapter's own reading of the catalog: the enrichment-source announcement.
+// schema, and a list-scoped ask skipped it entirely.
 
 export async function cachedFields(input: {
   client: AffinityAPIClient;
-  teamId: string;
   type: 'ORGANIZATION' | 'PERSON';
   listId?: number;
 }): Promise<AffinityFieldMeta[]> {
-  const fields = (await input.client.getFields({
+  return (await input.client.getFields({
     type: input.type,
     ...(input.listId != null ? { limitToListId: input.listId } : {}),
   })) as AffinityFieldMeta[];
-  logEnrichmentSources(
-    fields,
-    input.teamId,
-    input.listId != null ? `${input.type} on list ${input.listId}` : input.type,
-  );
-  return fields;
-}
-
-/** Every `enrichment_source` value this process has already announced, per
- *  team. Not a cache with a TTL — it is the record of what has been SAID, and
- *  saying it twice adds nothing. */
-const announcedEnrichmentSources = new Map<string, Set<string>>();
-
-/**
- * The distinct `enrichment_source` values this workspace uses, said ONCE each.
- *
- * `isReadOnlyField` reads any value but the "no provider" sentinel as a real
- * enrichment provider, and the sentinel could not be read off a production
- * workspace before shipping the rule. So the rule prints its own evidence: the
- * first describe against a live Affinity says in the log which values exist,
- * and either confirms the sentinel or names the one to add.
- *
- * A describe fetches the catalog once per list, and every list in a workspace
- * uses the same handful of values — so the same line was arriving thirty times
- * with nothing new in it. A line is worth printing when it carries a value
- * nobody has seen yet, which is exactly when the rule might be wrong; the rest
- * is repetition. The line still names the whole set, so one line remains the
- * whole answer.
- */
-function logEnrichmentSources(
-  fields: AffinityFieldMeta[],
-  teamId: string,
-  scope: string,
-): void {
-  const seen = new Set(
-    fields.map((f) => (f.enrichment_source == null ? 'null' : JSON.stringify(f.enrichment_source))),
-  );
-  const announced = announcedEnrichmentSources.get(teamId) ?? new Set<string>();
-  const fresh = [...seen].filter((value) => !announced.has(value));
-  if (fresh.length === 0) return;
-  for (const value of fresh) announced.add(value);
-  announcedEnrichmentSources.set(teamId, announced);
-  logger.warn(
-    `[AffinityAdapter] field catalog (${scope}): enrichment_source values seen — ${[...announced].sort().join(', ')}`,
-  );
 }
 
 /** The workspace's lists, named and typed. Cached on the client, per
@@ -667,10 +618,8 @@ function customFieldReference(
     // `applyCustomReferenceParentLinks` (shared.ts) matches the write's
     // edgeName back to this field and creates/updates the field value pointing
     // at the freshly written child — append for `allows_multiple`, replace for
-    // single. Both createOrganization and createPerson call it. An
-    // enrichment-sourced field is the one exception, and the link writer
-    // refuses it on the same predicate, so the promise matches the code.
-    writable: !isReadOnlyField(field),
+    // single. Both createOrganization and createPerson call it.
+    writable: true,
     description: `${displayName} — a ${targetEntity} reference field on this record. A linked write sets it to the ${targetEntity} written along the edge.`,
   };
 }
@@ -692,7 +641,11 @@ function customFieldDescriptor(
     kind: shape.kind,
     cardinality: field.allows_multiple ? 'many' : shape.cardinality,
     enumValues,
-    writable: !isReadOnlyField(field),
+    // Affinity documents no custom field whose value the API refuses —
+    // enriched ones included (`enrichment_source` names where a value came
+    // from, not who may set it) — so every field is writable, and a value
+    // Affinity does refuse fails the write naming the field.
+    writable: true,
     required: false,
     uiHint: enumValues ? 'select' : undefined,
   };
@@ -1105,7 +1058,6 @@ export async function describe(input: {
   if (customType) {
     const custom = await cachedFields({
       client: input.client,
-      teamId: input.teamId,
       type: customType,
       listId,
     });
@@ -1124,7 +1076,6 @@ export async function describe(input: {
     if (listCustomType) {
       const custom = await cachedFields({
         client: input.client,
-        teamId: input.teamId,
         type: listCustomType,
         listId,
       });

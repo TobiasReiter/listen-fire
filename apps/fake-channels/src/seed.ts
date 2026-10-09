@@ -43,11 +43,10 @@ export function seedDefaults(store: EntityStore) {
     console.log('  Seeded affinity: 7 fields, 1 list');
   }
 
-  // An ENRICHMENT-SOURCED field. Affinity populates it and the field-value API
-  // refuses it, so `describe` says `writable: false` and every write path drops
-  // it. Every other field carries the "no provider" sentinel, so the fake now
-  // exercises BOTH sides of the read-only rule rather than only the writable
-  // one. Own idempotency gate — additive, so an already-seeded store gains it.
+  // An ENRICHMENT-SOURCED field. Affinity populates it, and the field-value API
+  // still accepts a write to it (confirmed live 2026-10-07), so it is writable
+  // like the hand-maintained fields beside it. Own idempotency gate — additive,
+  // so an already-seeded store gains it.
   if (!store.get('affinity', 'field', '13')) {
     store.create('affinity', 'field', { id: 13, name: 'Employee Count', entity_type: 1, value_type: 3, list_id: null, enrichment_source: 'affinity-data', allows_multiple: false, track_changes: false, dropdown_options: null }, '13');
     console.log('  Seeded affinity: enrichment-sourced field 13 (Employee Count)');

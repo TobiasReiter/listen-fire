@@ -11,6 +11,9 @@
 
 import type { EdgeSequencing } from '@listen-fire/shared/expression/types';
 
+import { neverAsAny } from '../never';
+import { scanMemberPath } from './scan';
+
 export interface Loc {
   line: number; // 1-based
   col: number; // 1-based
@@ -98,6 +101,40 @@ export interface PathHead {
  */
 export function pathRootName(head: Pick<PathHead, 'root'>): string | undefined {
   return head.root?.kind === 'name' ? head.root.name : undefined;
+}
+
+/**
+ * Every root a write or match target starts from, each replaced by what `bind`
+ * makes of it — the one walk over the three target forms, so a rule about a
+ * target's roots is written once.
+ */
+export function mapTargetRoots(target: MatchTarget, bind: (root: PathRoot) => PathRoot): MatchTarget;
+export function mapTargetRoots(target: WriteTarget, bind: (root: PathRoot) => PathRoot): WriteTarget;
+export function mapTargetRoots(target: WriteTarget, bind: (root: PathRoot) => PathRoot): WriteTarget {
+  const head = (path: PathHead): PathHead => (path.root === undefined ? path : { ...path, root: bind(path.root) });
+  switch (target.kind) {
+    case 'position':
+      return { ...target, root: bind(target.root) };
+    case 'linked':
+      return { ...target, path: head(target.path) };
+    case 'tuple':
+      return { ...target, paths: target.paths.map(head) };
+    default:
+      return neverAsAny(target);
+  }
+}
+
+/**
+ * The name a write's MEMBER-PATH root is bound to for the write's own scope
+ * (`write m.k { … }` is `x = m.k` then `write x { … }`, with `x` spelled
+ * `m.k`, so a diagnostic about the record names the path the author wrote).
+ * `undefined` for a root that is not one member path — the parser lets no
+ * other expression start a write.
+ */
+export function memberPathBindingName(expr: ExprSlot): string | undefined {
+  const raw = expr.raw.trim();
+  const path = scanMemberPath(raw, 0);
+  return path !== null && path.end === raw.length ? path.names.join('.') : undefined;
 }
 
 // ── Top-level program ──
@@ -292,11 +329,12 @@ export type WriteTarget =
   | { kind: 'tuple'; paths: PathHead[]; explicitType?: string; span: Span }
   /**
    * `write a { … }` — update IN PLACE the record at the bound position
-   * `a` (a traversal alias or a prior write result). No creation, no
-   * identity resolution: you already have the exact record. Valid only
-   * when `a` is a stable record and its adapter supports updates.
+   * `a` (a traversal alias or a prior write result), or the one a member path
+   * holds (`write m.k { … }`). No creation, no identity resolution: you
+   * already have the exact record. Valid only when it is a stable record and
+   * its adapter supports updates.
    */
-  | { kind: 'position'; alias: string; span: Span };
+  | { kind: 'position'; root: PathRoot; span: Span };
 
 export interface WriteExpression {
   target: WriteTarget;
@@ -412,9 +450,26 @@ export interface FieldEntry {
  * fields ARE known: the checker resolves them from `e`'s type and records them
  * on the spread (`fields`), and the engine expands from that record.
  */
+/**
+ * `...m.k` — a spread whose record is held under a key of a map: the bound
+ * name, then the keys read off it, in order. Present only for such a path;
+ * `source` then spells the path as written.
+ */
+export interface SpreadPath {
+  root: string;
+  members: string[];
+}
+
+/** A spread's source as source text: the path as written, or the name. */
+export function spreadSourceText(spread: { source: string; path?: SpreadPath }): string {
+  return spread.path !== undefined ? spread.source : spellName(spread.source);
+}
+
 export interface WriteSpread {
-  /** The spread record's bound name. */
+  /** The spread record's bound name — or, for a member path, the path as
+   *  written (`path` then says what it reads). */
   source: string;
+  path?: SpreadPath;
   /** `?...` ⇒ `'fill'`; absent ⇒ a plain assignment. */
   semantics?: 'fill';
   /**
@@ -451,7 +506,7 @@ export function expandWriteSpreads(
       written.add(name);
       lines.push({
         name,
-        value: { raw: `${spellName(spread.source)}.${spellName(name)}`, span: spread.span },
+        value: { raw: `${spreadSourceText(spread)}.${spellName(name)}`, span: spread.span },
         ...(spread.semantics !== undefined ? { semantics: spread.semantics } : {}),
         spread: spread.source,
         span: spread.span,
@@ -613,8 +668,10 @@ export type NodeEntry =
  * nothing.
  */
 export interface MapSpread {
-  /** The map's (or the record's) bound name. */
+  /** The map's (or the record's) bound name — or, for a member path, the
+   *  path as written (`path` then says what it reads). */
   source: string;
+  path?: SpreadPath;
   /** How many entries were written before this spread — where among them it stands. */
   after: number;
   /** A record spread: what the snapshot copies, as the checker resolved it.

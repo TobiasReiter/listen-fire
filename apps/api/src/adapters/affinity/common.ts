@@ -5,6 +5,7 @@ import { anthropicChat } from '../../lib/anthropic';
 import { parseJson } from '../../lib/utils/parse_json';
 import { safeToUrl } from '../../lib/utils/url';
 import { AffinityAPIClient } from './apiClient';
+import { logger } from '../../services/logger';
 
 /** Email addresses are compared case-insensitively across every Affinity write
  *  path. Affinity enforces one person per address and adjudicates it with a
@@ -65,16 +66,54 @@ function splitNameByLastToken(name: string): { firstName: string; lastName: stri
   return { firstName: tokens.slice(0, -1).join(' '), lastName: tokens[tokens.length - 1] };
 }
 
+type AffinityOrganisation = Awaited<ReturnType<AffinityAPIClient['findManyOrganisations']>>[number];
+
+/** Which rule decided a match — logged on every decision so production shows
+ *  why a company was adopted or created. `none` hands the caller a create. */
+type OrganisationMatchPath = 'domain' | 'exact-private' | 'judge-private' | 'judge-global' | 'none';
+
+const ORGANISATION_JUDGE_SYSTEM = `You are a strict matcher that selects an organization ID from a provided list only when the match is highly likely. Otherwise, return null.
+
+Input (from the user):
+- A JSON object with shape { query: { name: string, domain: string | null, context: string | null }, organizations: Array<{ id: number, name: string | null, domain: string | null, domains: string[] | null, global: boolean }> }.
+- query.context, when present, is what else is known about the company being written (for example a description). Use it to corroborate or rule out a candidate.
+- global: false means the organization is in the user's own workspace. global: true means it comes from Affinity's shared global database and the user has never touched it.
+
+Matching rules (apply in this order):
+1) If query.domain is present, prioritize exact domain match after normalizing (ignore protocol and www). Also consider any value in organization.domains.
+2) If no domain match, consider name similarity but be conservative. Treat common or generic names (e.g. "BrightSpark", "Acme", "NextGen") as ambiguous unless there is a strong signal.
+3) Distinctive or famous names (e.g. "HubSpot", "Nostos Genomics") can be accepted on exact name match.
+4) Prefer a workspace candidate (global: false) over a global candidate (global: true) whenever the workspace candidate is plausible.
+5) Accept a global candidate when the name is distinctive and near-exact, AND, when query.context or query.domain is supplied, it does not contradict the candidate. Near-exact includes a brand-like token plus a generic suffix such as "AI", "Labs", "Technologies" (e.g. "Fyvie" vs "Fyvie AI").
+6) Never adopt a global candidate for a generic or common name (e.g. "Acme", "Nova", "Atlas") without a corroborating domain.
+7) Prefer returning null over a wrong match. Only output a match if you are confident.
+
+Output: Strictly JSON: either a number (the id) or null. No extra text.`;
+
 async function findMatchingOrganisation(
   client: AffinityAPIClient,
   {
     name,
     domain,
+    context,
   }: {
     name: string;
     domain?: string | null;
+    /** What else the caller knows about the company (a description, a one-line
+     *  summary). Only the judge reads it, to corroborate a name-only match. */
+    context?: string;
   },
 ) {
+  const decide = (path: OrganisationMatchPath, org: AffinityOrganisation | null) => {
+    logger.info('[affinity.findMatchingOrganisation] decided', {
+      path,
+      name,
+      domain: domain ?? null,
+      orgId: org?.id ?? null,
+    });
+    return org;
+  };
+
   const normalisedDomain = domain ? domainHost(domain) : null;
   if (normalisedDomain) {
     // Prioritize domain matching
@@ -91,7 +130,7 @@ async function findMatchingOrganisation(
         : false,
     );
     if (orgByDomain) {
-      return orgByDomain;
+      return decide('domain', orgByDomain);
     }
 
     // Fallback to close domain matches and exact name matches (within the private dataset)
@@ -99,46 +138,43 @@ async function findMatchingOrganisation(
       (org) => !org.global && org.name?.toLowerCase() === name.toLowerCase(),
     );
     if (orgByDomainByName) {
-      return orgByDomainByName;
+      return decide('exact-private', orgByDomainByName);
     }
   }
 
-  // Fallback to name matches
+  // One search answers both sets: Affinity's name search spans the workspace
+  // AND its global dataset, each record flagged `global`.
   const orgsByName = await client.findManyOrganisations({
     search: name,
-    includeGlobal: false,
+    includeGlobal: true,
   });
-  const orgByName = orgsByName.find((org) => org.name?.toLowerCase() === name.toLowerCase());
+
+  // An exact name adopts without asking only inside the workspace. A global
+  // record shares its name with every company of that name; it has to get
+  // past the judge.
+  const orgByName = orgsByName.find(
+    (org) => !org.global && org.name?.toLowerCase() === name.toLowerCase(),
+  );
   if (orgByName) {
-    return orgByName;
+    return decide('exact-private', orgByName);
   }
 
   if (!orgsByName.length) {
-    return null;
+    return decide('none', null);
   }
 
   const closeMatchId = await anthropicChat({
     label: 'affinity.findMatchingOrganisation',
-    system: `You are a strict matcher that selects an organization ID from a provided list only when the match is highly likely. Otherwise, return null.
-
-Input (from the user):
-- A JSON object with shape { query: { name: string, domain: string | null }, organizations: Array<{ id: number, name: string | null, domain: string | null, domains: string[] | null }> }.
-
-Matching rules (apply in this order):
-1) If query.domain is present, prioritize exact domain match after normalizing (ignore protocol and www). Also consider any value in organization.domains.
-2) If no domain match, consider name similarity but be conservative. Treat common or generic names (e.g. "BrightSpark", "Acme", "NextGen") as ambiguous unless there is a strong signal.
-3) Distinctive or famous names (e.g. "HubSpot", "Nostos Genomics") can be accepted on exact name match.
-4) Prefer returning null over a wrong match. Only output a match if you are confident.
-
-Output: Strictly JSON: either a number (the id) or null. No extra text.`,
+    system: ORGANISATION_JUDGE_SYSTEM,
     userMessage: JSON.stringify(
       {
-        query: { name, domain: domain ?? null },
+        query: { name, domain: domain ?? null, context: context ?? null },
         organizations: orgsByName.map((org) => ({
           id: org.id,
           name: org.name ?? null,
           domain: org.domain ?? null,
           domains: org.domains ?? null,
+          global: !!org.global,
         })),
       },
       null,
@@ -150,12 +186,12 @@ Output: Strictly JSON: either a number (the id) or null. No extra text.`,
 
   const closeMatch = parsedCloseMatchId
     ? orgsByName.find((org) => org.id === parsedCloseMatchId)
-    : null;
+    : undefined;
   if (closeMatch) {
-    return closeMatch;
+    return decide(closeMatch.global ? 'judge-global' : 'judge-private', closeMatch);
   }
 
-  return null;
+  return decide('none', null);
 }
 
 export { findMatchingOrganisation, normalizeEmail, ownsEmail, splitNameByLastToken };

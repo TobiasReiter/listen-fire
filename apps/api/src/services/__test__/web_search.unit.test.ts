@@ -13,7 +13,11 @@ jest.mock('../../lib/web_search', () => ({
   isAvailable: () => false,
 }));
 
-import { WebSearchService } from '../web_search';
+import {
+  parseBrightDataSerpPerMinute,
+  RollingMinuteLimiter,
+  WebSearchService,
+} from '../web_search';
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as never;
@@ -31,6 +35,10 @@ beforeEach(() => {
   process.env.GOOGLE_CX = 'google-cx';
   delete process.env.BRIGHT_DATA_ACCESS_TOKEN;
   delete process.env.BRIGHT_DATA_SERP_ZONE;
+  // Every Bright Data request in this process shares one pacing queue, and
+  // these tests make more than a default minute's worth between them; the
+  // pacing itself is under test below.
+  process.env.BRIGHT_DATA_SERP_PER_MINUTE = '1000';
 });
 
 afterEach(() => {
@@ -379,5 +387,89 @@ describe('WebSearchService.search — brightdata retries', () => {
     await jest.advanceTimersByTimeAsync(RETRY_DELAY_MS);
     await expectation;
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('BRIGHT_DATA_SERP_PER_MINUTE', () => {
+  it('defaults to 14 when unset or blank', () => {
+    expect(parseBrightDataSerpPerMinute(undefined)).toBe(14);
+    expect(parseBrightDataSerpPerMinute('  ')).toBe(14);
+  });
+
+  it('reads a positive whole number', () => {
+    expect(parseBrightDataSerpPerMinute('30')).toBe(30);
+  });
+
+  it.each(['fourteen', '0', '-5', '1.5', '14/min'])(
+    'refuses %p naming the variable',
+    (raw) => {
+      expect(() => parseBrightDataSerpPerMinute(raw)).toThrow(
+        `BRIGHT_DATA_SERP_PER_MINUTE="${raw}" is not a positive whole number`,
+      );
+    },
+  );
+});
+
+// Measured in production: thirty-odd searches demanded at once, and Bright
+// Data refusing most of them with "Please decrease your request rate to
+// 14/min". Requests now wait their turn instead.
+describe('Bright Data SERP pacing', () => {
+  const MINUTE_MS = 60_000;
+
+  beforeEach(() => {
+    // `Date` is faked too here: the limiter measures its minute with it.
+    jest.useFakeTimers();
+  });
+
+  it('N requests at once take at least (N - 14) / 14 minutes, and no longer', async () => {
+    const limiter = new RollingMinuteLimiter(() => 14);
+    const start = Date.now();
+    const grantedAt: number[] = [];
+    const turns = Array.from({ length: 42 }, () =>
+      limiter.take().then(() => grantedAt.push(Date.now() - start)),
+    );
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(grantedAt).toHaveLength(14);
+
+    await jest.advanceTimersByTimeAsync(MINUTE_MS - 1);
+    expect(grantedAt).toHaveLength(14);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(grantedAt).toHaveLength(28);
+
+    await jest.advanceTimersByTimeAsync(MINUTE_MS);
+    await Promise.all(turns);
+    expect(grantedAt).toHaveLength(42);
+    // (42 - 14) / 14 = two minutes for the last turn.
+    expect(Math.max(...grantedAt)).toBe(2 * MINUTE_MS);
+  });
+
+  it('serves callers in the order they arrived', async () => {
+    const limiter = new RollingMinuteLimiter(() => 1);
+    const order: number[] = [];
+    const turns = [1, 2, 3].map((n) => limiter.take().then(() => order.push(n)));
+
+    await jest.advanceTimersByTimeAsync(2 * MINUTE_MS);
+    await Promise.all(turns);
+    expect(order).toEqual([1, 2, 3]);
+  });
+
+  it('every search, retries included, goes through the shared queue', async () => {
+    await jest.isolateModulesAsync(async () => {
+      const { WebSearchService: isolated } = await import('../web_search');
+      process.env.WEB_SEARCH_PROVIDER = 'brightdata';
+      process.env.BRIGHT_DATA_ACCESS_TOKEN = 'token-123';
+      process.env.BRIGHT_DATA_SERP_ZONE = 'serp_zone';
+      process.env.BRIGHT_DATA_SERP_PER_MINUTE = '2';
+      fetchMock.mockImplementation(async () => jsonResponse({ organic: [] }));
+
+      const searches = ['a', 'b', 'c'].map((q) => isolated.search(q));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      await jest.advanceTimersByTimeAsync(MINUTE_MS);
+      await Promise.all(searches);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
   });
 });

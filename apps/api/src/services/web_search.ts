@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { SECOND } from '../constants';
+import { MINUTE, SECOND } from '../constants';
 import { Prompt } from '../lib/prompts';
 import { anthropicChat } from '../lib/anthropic';
 import { getEnvVar } from '../lib/utils/environment';
@@ -121,6 +121,75 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ── Pacing ─────────────────────────────────────────────────────────────────
+//
+// Bright Data throttles a SERP zone per target host once its success rate
+// drops, and says so with a 429 naming the rate it will accept ("Please
+// decrease your request rate to 14/min", measured in production). Sending
+// faster than that does not get answers sooner: every refused request costs a
+// 30-second wait and one of three attempts, and keeps the success rate low.
+// So requests wait their turn here instead of being sent and refused.
+
+export const BRIGHT_DATA_SERP_RATE_ENV_VAR = 'BRIGHT_DATA_SERP_PER_MINUTE';
+
+export const DEFAULT_BRIGHT_DATA_SERP_PER_MINUTE = 14;
+
+/** The rate, or the default when unset. Throws on a value that is set but is
+ *  not a positive whole number — a typo here must not read as "no limit". */
+export function parseBrightDataSerpPerMinute(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_BRIGHT_DATA_SERP_PER_MINUTE;
+  const perMinute = Number(raw.trim());
+  if (!Number.isInteger(perMinute) || perMinute <= 0) {
+    throw new Error(
+      `${BRIGHT_DATA_SERP_RATE_ENV_VAR}="${raw}" is not a positive whole number. ` +
+        `Set it to how many Bright Data SERP requests this process may send per minute ` +
+        `(e.g. ${BRIGHT_DATA_SERP_RATE_ENV_VAR}=${DEFAULT_BRIGHT_DATA_SERP_PER_MINUTE}), ` +
+        `or leave it unset for the default of ${DEFAULT_BRIGHT_DATA_SERP_PER_MINUTE}.`,
+    );
+  }
+  return perMinute;
+}
+
+/** Boot: refuse a malformed rate rather than letting the first search find out. */
+export function assertBrightDataSerpRateConfigured(env: NodeJS.ProcessEnv = process.env): void {
+  parseBrightDataSerpPerMinute(env[BRIGHT_DATA_SERP_RATE_ENV_VAR]);
+}
+
+/** Hands out turns so that no rolling minute holds more than `perMinute()` of
+ *  them. Callers are served in arrival order; one that arrives when the minute
+ *  is full waits until the oldest turn in it is a minute old. The rate is read
+ *  at each turn, so a test (or an operator, on restart) moves it by env alone. */
+export class RollingMinuteLimiter {
+  private granted: number[] = [];
+  private tail: Promise<void> = Promise.resolve();
+
+  constructor(private readonly perMinute: () => number) {}
+
+  take(): Promise<void> {
+    const turn = this.tail.then(() => this.waitForRoom());
+    this.tail = turn.catch(() => undefined);
+    return turn;
+  }
+
+  private async waitForRoom(): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      this.granted = this.granted.filter((at) => now - at < MINUTE);
+      if (this.granted.length < this.perMinute()) {
+        this.granted.push(now);
+        return;
+      }
+      await sleep(this.granted[0] + MINUTE - now);
+    }
+  }
+}
+
+// One per process: every search in it — every run, every plugin — shares the
+// zone's limit, so they share the queue too.
+const brightDataSerpLimiter = new RollingMinuteLimiter(() =>
+  parseBrightDataSerpPerMinute(process.env[BRIGHT_DATA_SERP_RATE_ENV_VAR]),
+);
+
 // What one attempt observed, for the per-attempt log line. Every field but
 // `durationMs` is absent when the fetch itself rejected.
 type BrightDataSerpAttemptTrace = {
@@ -128,6 +197,9 @@ type BrightDataSerpAttemptTrace = {
   status?: number;
   brdStatus?: string | null;
   brdError?: string | null;
+  // Bright Data's machine-readable reason (`sr_rate_limit`, `verifying`, …),
+  // which tells apart failures whose human-readable message is the same.
+  brdErrorCode?: string | null;
   bytes?: number;
 };
 
@@ -187,12 +259,14 @@ async function performBrightDataSerpAttempt(
 
   const brdStatus = response.headers.get('x-brd-status-code');
   const brdError = response.headers.get('x-brd-error');
+  const brdErrorCode = response.headers.get('x-brd-error-code');
   const text = await readCappedText(response).catch(() => '');
   const trace: BrightDataSerpAttemptTrace = {
     durationMs: Date.now() - start,
     status: response.status,
     brdStatus,
     brdError,
+    brdErrorCode,
     bytes: text.length,
   };
 
@@ -363,6 +437,8 @@ class WebSearch {
 
     const failures: string[] = [];
     for (let attempt = 1; ; attempt++) {
+      // A retry is a request the zone counts like any other, so it queues too.
+      await brightDataSerpLimiter.take();
       const outcome = await performBrightDataSerpAttempt(searchUrl);
       const trace = {
         attempt,
@@ -370,6 +446,7 @@ class WebSearch {
         status: outcome.status,
         brdStatus: outcome.brdStatus,
         brdError: outcome.brdError,
+        brdErrorCode: outcome.brdErrorCode,
         bytes: outcome.bytes,
       };
 

@@ -31,6 +31,8 @@ export async function resolveEntity(input: {
    *  cache; undefined for an unknown type (drift). */
   decoded: DecodedTypeId | undefined;
   resolve: ResolveEntityInput;
+  /** What else the write says about an organization, for the matcher's judge. */
+  organisationContext?: string;
 }): Promise<ResolveEntityResult> {
   // The bridge matches on `resolve.recordType` — the NATURAL type name, the
   // same currency the persisted `external_object_type` label carries now.
@@ -128,6 +130,7 @@ function resolveByBridge(resolve: ResolveEntityInput): ResolveEntityResult | nul
 async function resolveOrganization(input: {
   operations: AffinityOperations;
   resolve: ResolveEntityInput;
+  organisationContext?: string;
 }): Promise<ResolveEntityResult> {
   const { name, domain } = readOrgBuiltins(input.resolve.record);
   if (!name && !domain) return { candidates: [] };
@@ -137,6 +140,7 @@ async function resolveOrganization(input: {
     match = await input.operations.findMatchingOrganisation({
       name: name ?? '',
       domain: domain ?? null,
+      context: input.organisationContext,
     });
   } catch (err) {
     if (isAdapterCallCeilingExceeded(err)) throw err;

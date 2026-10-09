@@ -60,7 +60,7 @@ import type {
   NodeEdge,
   SourceRead,
 } from './expression';
-import { bindingOf, isDictValue } from './expression';
+import { bindValue, bindingOf, isDictValue } from './expression';
 import { settledAll } from './fans';
 import { isFileRef } from '../translation_graph/adapter';
 import { MovementEngineError } from './errors';
@@ -345,6 +345,7 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
         fields: binding.fields,
         fieldOrder: binding.fieldOrder,
         fieldProvenance: binding.fieldProvenance,
+        ...(binding.landedOn !== undefined ? { landedOn: binding.landedOn } : {}),
         edges,
       };
     }
@@ -553,6 +554,7 @@ async function rehydrateInPark(
       node.fields = inOrder(descriptor.fields, descriptor.fieldOrder);
       node.fieldOrder = descriptor.fieldOrder ?? Object.keys(descriptor.fields);
       node.fieldProvenance = descriptor.fieldProvenance;
+      if (descriptor.landedOn !== undefined) node.landedOn = descriptor.landedOn;
       const edges: Record<string, NodeEdge> = {};
       for (const [name, edge] of Object.entries(descriptor.edges)) {
         edges[name] =
@@ -578,13 +580,12 @@ async function rehydrateInPark(
         ...(descriptor.provenance !== undefined ? { provenance: descriptor.provenance } : {}),
         ...(descriptor.many === true ? { many: true } : {}),
       };
+    // Through the one binding constructor, so a park taken while a name held
+    // one record on the value plane resumes with the record bound as itself.
     case 'recordValue':
-      return {
-        kind: 'value',
-        value: await rehydrateValue(descriptor.value, ctx, park),
-        ...(descriptor.provenance !== undefined ? { provenance: descriptor.provenance } : {}),
-        ...(descriptor.many === true ? { many: true } : {}),
-      };
+      return bindValue(await rehydrateValue(descriptor.value, ctx, park), descriptor.provenance, {
+        many: descriptor.many === true,
+      });
     case 'callback':
       return {
         kind: 'callback',

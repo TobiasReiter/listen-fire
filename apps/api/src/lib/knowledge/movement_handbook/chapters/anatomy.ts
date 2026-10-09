@@ -147,6 +147,19 @@ deduped-[c:companies ORDER BY \`name\`]-> { … }
 - \`c = write deduped-[:companies]-> { … }\` hands back the landing, whose own nested nodes start empty and grow the same way.
 - \`order by arrival\` after a nested node's closing \`}\` in the declaration keeps the order its records were written, so \`FIRST\`, \`LAST\`, \`JOIN\` and \`LIMIT\` can read it. Without it the node is a set (traversal, *record-order*).
 
+Enrich a gathered record in place by writing to it:
+
+\`\`\`
+MAP(deduped-[:companies]->, { concurrency: 6 }, (c) => {
+  details = extractOne([TEXT.SERIALISE(c, 'JSON')], Detail)
+  if details != null { write c { thesis: details.thesis, website ?: details.website } }
+})
+\`\`\`
+
+- \`write c { … }\` merges the named fields into the record and leaves the rest as they were; \`?:\` fills only what is empty. The record keeps its place, its nested nodes are untouched, and every later read sees the new values.
+- Any name holding the record updates it: the handle a write handed back, a block's alias, a \`MAP\` parameter, a \`FIRST\`/\`AT\` pick. A record \`extract\`/\`extractOne\` handed back updates the same way. Two updates of one record take turns; updates of different records run together.
+- A field the nested node does not declare is refused when you save, and so is \`write g { … }\` on a whole \`graph { … }\` value, which is not a record.
+
 ### declared-structures
 
 Name a structure when a callee wants to say what it takes — with the same nesting the literal uses:
@@ -253,6 +266,7 @@ function \`Intake\`(msg: <inbox-[:Email]->>) {
 
 - Pass a bound name (the event, a write handle) when it already fits the parameter, or build the argument in place with \`graph<Lead> { … }\` from whatever the caller holds. Related records travel as nested nodes of that graph. A call that needs two unrelated things takes two parameters.
 - A record reached by walking a collection fits a parameter typed on the listener's address for the same kind of record.
+- A function that serialises or spreads a record parameter needs one whose fields the automation holds (built, extracted or written). Copy a record read from a system into \`graph<Lead> { … }\` first, or the call is refused.
 - The callee sees only its parameters and ITS OWN file's top-level names. An imported function runs against its own file's imports and constructions.
 - A callee's writes are recorded on the caller's run.
 

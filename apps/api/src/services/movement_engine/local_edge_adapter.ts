@@ -38,6 +38,7 @@ import {
   type WriteResult,
 } from '../translation_graph/adapter';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
+import type { LockRequest } from './effect_locks';
 import type { Binding, LocalLandingShape, NodeEdge } from './expression';
 
 /** The `adapterType` a write into the run's own graph records. Compared, never
@@ -111,6 +112,25 @@ function landingEdges(shape: LocalLandingShape | undefined): Record<string, Node
  *  nothing, so there the writes' own order is the only order there is). */
 function landingFieldOrder(declared: readonly string[], written: Record<string, unknown>): string[] {
   return [...declared, ...Object.keys(written).filter((f) => !declared.includes(f))];
+}
+
+const landingNumbers = new WeakMap<LocalLanding, number>();
+let nextLandingNumber = 0;
+
+/**
+ * What an update of a landing the run holds locks: the record itself, as an
+ * update of a system's record holds that record. A landing's only address is
+ * being itself — its index differs per edge, and the same node can sit on two
+ * — so the lock is named by the node's identity, and every update of it waits
+ * for every other whichever name or edge reached it.
+ */
+export function localRecordLock(landing: LocalLanding): LockRequest {
+  let number = landingNumbers.get(landing);
+  if (number === undefined) {
+    number = nextLandingNumber++;
+    landingNumbers.set(landing, number);
+  }
+  return { name: `record ${JSON.stringify(LOCAL_ADAPTER_TYPE)} landing ${number}`, mode: { kind: 'exclusive' } };
 }
 
 /** Trim, case fold, collapse whitespace. A multi-valued field folds to its
@@ -249,7 +269,8 @@ export interface LocalEdgeStore {
  */
 export function localEdgeAdapter(input: {
   edge: Extract<NodeEdge, { kind: 'landed' }>;
-  /** The edge's authored name — diagnostics only. */
+  /** The edge's authored name — what a landing created here records it
+   *  landed on, and diagnostics. */
   edgeName: string;
   references?: LocalEdgeReferences;
 }): LocalEdgeStore {
@@ -332,6 +353,7 @@ export function localEdgeAdapter(input: {
     async createRecord(write: WriteInput): Promise<WriteResult> {
       const landing: LocalLanding = {
         kind: 'nodePosition',
+        landedOn: input.edgeName,
         fields: { ...write.fields },
         fieldOrder: landingFieldOrder(input.edge.landingShape?.fields ?? [], write.fields),
         fieldProvenance: {},

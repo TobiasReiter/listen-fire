@@ -524,6 +524,119 @@ export interface PlaneType {
   fieldType?: FieldType;
 }
 
+/**
+ * What a function's record PARAMETER needs of the record it is handed — the
+ * half of its type its body decides. A system's record is opaque: its fields
+ * are read one at a time, so a consumer that needs every field in hand (a
+ * serialisation, a spread) refuses one. Inside the body the parameter is typed
+ * by its declared shape, which holds its fields, so the body is accepted and
+ * the requirement is filed here instead; every call site checks its argument
+ * against it, as TypeScript checks an argument against a parameter.
+ *
+ * One cell per parameter, shared by every walk of the body and carried on the
+ * parameter's position type (`PositionTypeRef.parameter`), so a name bound to
+ * the parameter, a list holding it or a closure over it records here too.
+ * A parameter passed on to another function's parameter takes on that one's
+ * requirement (`passedTo`), read when a call site asks — so a cycle of calls
+ * needs no fixpoint.
+ */
+export interface FieldsNeed {
+  fn: string;
+  param: string;
+  /** The first consumer in the body that needs the fields in hand. */
+  consumer?: string;
+  passedTo: Array<{ need: FieldsNeed; at: string }>;
+  /** The cell for the records reached THROUGH the parameter's edges, at any
+   *  depth: a body that walks to a child and serialises it needs the child's
+   *  fields in hand, which a record whose own fields are in hand may still not
+   *  offer (a system write's result: its children are the system's). */
+  reached?: FieldsNeed;
+  /** This cell is a parameter's `reached` cell. */
+  throughEdges?: true;
+}
+
+/** What a requirement is asked of: the record handed over itself, or the
+ *  records reached through its edges. */
+export type FieldsReach = 'record' | 'reached';
+
+/** Why `need`'s parameter needs the fields of its record (`record`) or of
+ *  what is reached through it (`reached`) in hand, if it does — directly, or
+ *  through the parameters it is passed on to. */
+export function fieldsNeededBy(
+  need: FieldsNeed,
+  reach: FieldsReach = 'record',
+  seen: Array<{ need: FieldsNeed; reach: FieldsReach }> = [],
+): string | undefined {
+  // A reached cell stands for every depth below the parameter, so what is
+  // reached from one of its records is reached from the parameter too.
+  const asked: FieldsReach = need.throughEdges === true ? 'record' : reach;
+  if (seen.some(s => s.need === need && s.reach === asked)) return undefined;
+  seen.push({ need, reach: asked });
+  if (asked === 'record' && need.consumer !== undefined) {
+    return need.throughEdges === true
+      ? `reaches a record through '${need.param}' and ${need.consumer}`
+      : need.consumer;
+  }
+  if (asked === 'reached' && need.reached !== undefined) {
+    const why = fieldsNeededBy(need.reached, 'record', seen);
+    if (why !== undefined) return why;
+  }
+  const onwardReaches: FieldsReach[] = need.throughEdges === true ? ['record', 'reached'] : [asked];
+  for (const onward of need.passedTo) {
+    for (const onwardReach of onwardReaches) {
+      const why = fieldsNeededBy(onward.need, onwardReach, seen);
+      if (why !== undefined) return `${onward.at}, and '${onward.need.fn}' ${why}`;
+    }
+  }
+  return undefined;
+}
+
+/** Files that `position`'s record — when it is a function's parameter — has
+ *  its fields read by `consumer`. A position that is no parameter is nobody's
+ *  business here. */
+export function noteFieldsNeeded(position: PositionTypeRef | undefined, consumer: string): void {
+  const need = parameterNeedOf(position);
+  if (need !== undefined) need.consumer ??= consumer;
+}
+
+/** The parameter cell a position carries, through a gate. */
+export function parameterNeedOf(position: PositionTypeRef | undefined): FieldsNeed | undefined {
+  if (position === undefined) return undefined;
+  if (position.kind === 'maybeEmpty') return parameterNeedOf(position.of);
+  return position.kind === 'position' || position.kind === 'union' ? position.parameter : undefined;
+}
+
+/** The cell for what is reached through `need`'s parameter — made on first
+ *  ask; a reached cell is its own (every depth shares it). */
+function reachedThrough(need: FieldsNeed): FieldsNeed {
+  if (need.throughEdges === true) return need;
+  need.reached ??= { fn: need.fn, param: need.param, passedTo: [], throughEdges: true };
+  return need.reached;
+}
+
+/** `landing`, walked from `from`, carrying the cell for what is reached
+ *  through `from`'s parameter: a body's need of the child is a need of what
+ *  the caller's record leads to, which is in hand exactly when the caller's
+ *  record's children are (`holdsReachedFieldsInHand`). */
+export function withParameterOf(
+  from: PositionTypeRef | undefined,
+  landing: PositionTypeRef | undefined,
+): PositionTypeRef | undefined {
+  const need = parameterNeedOf(from);
+  if (need === undefined || landing === undefined) return landing;
+  switch (landing.kind) {
+    case 'maybeEmpty': {
+      const of = withParameterOf(from, landing.of);
+      return of !== undefined ? { ...landing, of } : landing;
+    }
+    case 'position':
+    case 'union':
+      return { ...landing, parameter: reachedThrough(need) };
+    default:
+      return landing;
+  }
+}
+
 /** One parameter of a closure: its name, and what it accepts. */
 export interface ClosureParam extends PlaneType {
   name: string;
@@ -542,6 +655,16 @@ export type PositionTypeRef =
       address?: EventAddress;
       /** Fields a guard in scope has proven present — as on `extract`. */
       present?: ReadonlySet<string>;
+      /**
+       * The record is a landing on an appendable edge of a node THIS RUN
+       * BUILT (`deduped-[e:entries]->`). The run's own graph holds it and it
+       * has identity there, so `write e { … }` updates it in place exactly as
+       * it would a record in a system that updates by id.
+       */
+      runBuilt?: true;
+      /** The record is a function's parameter: what its body needs of it is
+       *  filed here (`FieldsNeed`). */
+      parameter?: FieldsNeed;
     }
   /** A union-typed position (`crm.record`); narrowed by `IS` tests. */
   | {
@@ -552,6 +675,7 @@ export type PositionTypeRef =
       narrowsEvent?: string;
       display?: string;
       address?: EventAddress;
+      parameter?: FieldsNeed;
     }
   // `narrowsEvent` above: the UNNARROWED event type this one narrows (the
   // event edge whose address pins base/table/action). Set only on an
@@ -647,6 +771,17 @@ export type PositionTypeRef =
        *  as unknown, the other is an error. */
       reads: Record<string, FieldType | undefined>;
       edges?: Record<string, LocalEdge>;
+      /** The landing `write deduped-[:entries]-> { … }` handed back: a record
+       *  on an edge of a node this run built, updatable in place as the
+       *  `position` kind's `runBuilt` is, with the edge's landing type — what
+       *  `write h { … }` may set. A value the run merely synthesised (a
+       *  `node { … }` or `graph<Shape> { … }` literal) is on no such edge, and
+       *  does not carry it. */
+      runBuilt?: { landing: PositionTypeRef };
+      /** A record `extract(…)` / `extractOne(…)` handed back: one the run
+       *  built, updatable in place like a landing — `fields` is what
+       *  `write r { … }` may set, the fields the extraction declared. */
+      extracted?: { fields: Record<string, SchemaFieldType> };
     };
 
 /** One edge of a checker-local node: the same `EdgeSchema` promises every other
@@ -675,6 +810,61 @@ export interface LocalEdge {
   references?: true;
 }
 
+/** Does the checker hold this record's fields IN HAND — see
+ *  `ExpressionTyping.holdsSpelledFields`, which is this plus the note a
+ *  parameter's body files. */
+export function holdsFieldsInHand(
+  position: PositionTypeRef | undefined,
+  isDeclaredGraphToken: ((token: object) => boolean) | undefined,
+): boolean {
+  if (position === undefined) return false;
+  switch (position.kind) {
+    case 'extract':
+    case 'handle':
+    case 'local':
+      return true;
+    case 'maybeEmpty':
+      return holdsFieldsInHand(position.of, isDeclaredGraphToken);
+    case 'position':
+    case 'union':
+      return isDeclaredGraphToken?.(position.instance.token) === true;
+    case 'meta':
+    case 'closure':
+      return false;
+    default:
+      return neverAsAny(position);
+  }
+}
+
+/** Does the checker hold IN HAND the fields of the records reached through
+ *  this record's edges? A walked child of a system's record — one traversed,
+ *  or a system write's own result — is the system's record, read one field at
+ *  a time; a record the run built (or extracted, or a declared shape's) holds
+ *  its children, unless it holds a system's records by reference. */
+export function holdsReachedFieldsInHand(
+  position: PositionTypeRef | undefined,
+  isDeclaredGraphToken: ((token: object) => boolean) | undefined,
+): boolean {
+  if (position === undefined) return false;
+  switch (position.kind) {
+    case 'extract':
+      return true;
+    case 'local':
+      return liveReferenceWithin(position, isDeclaredGraphToken) === undefined;
+    case 'maybeEmpty':
+      return holdsReachedFieldsInHand(position.of, isDeclaredGraphToken);
+    case 'handle':
+    case 'position':
+    case 'union':
+      return isDeclaredGraphToken?.(position.instance.token) === true;
+    case 'meta':
+    case 'closure':
+      return false;
+    default:
+      return neverAsAny(position);
+  }
+}
+
 /**
  * The first reference edge, at any depth inside a checker-local node, that
  * holds records read live from a system — a record whose fields the program
@@ -683,11 +873,14 @@ export interface LocalEdge {
 function liveReferenceWithin(
   position: PositionTypeRef,
   isDeclaredGraphToken: ((token: object) => boolean) | undefined,
+  /** Told of every record held by reference whose fields ARE in hand — a
+   *  function's parameter among them files its need through it. */
+  onParameter?: (held: PositionTypeRef | undefined) => void,
   seen = new Set<PositionTypeRef>(),
 ): string | undefined {
   if (seen.has(position)) return undefined;
   seen.add(position);
-  if (position.kind === 'maybeEmpty') return liveReferenceWithin(position.of, isDeclaredGraphToken, seen);
+  if (position.kind === 'maybeEmpty') return liveReferenceWithin(position.of, isDeclaredGraphToken, onParameter, seen);
   if (position.kind !== 'local') return undefined;
   for (const [name, edge] of Object.entries(position.edges ?? {})) {
     const target = edge.target?.kind === 'maybeEmpty' ? edge.target.of : edge.target;
@@ -698,7 +891,8 @@ function liveReferenceWithin(
     ) {
       return name;
     }
-    const nested = edge.target === undefined ? undefined : liveReferenceWithin(edge.target, isDeclaredGraphToken, seen);
+    if (edge.references === true) onParameter?.(target);
+    const nested = edge.target === undefined ? undefined : liveReferenceWithin(edge.target, isDeclaredGraphToken, onParameter, seen);
     if (nested !== undefined) return nested;
   }
   return undefined;
@@ -2686,6 +2880,9 @@ export function positionsMatch(arg: PositionTypeRef, param: PositionTypeRef): bo
  * synthesised node, none of which anything can tell apart — is not a yes.
  */
 export function sameStartingPoint(a: PositionTypeRef, b: PositionTypeRef): boolean {
+  // One type is the same as itself, whatever kind: `[h]` of a write's result
+  // is a list of THAT record, not of a record nobody can name.
+  if (a === b) return true;
   return positionsMatch(a, b) === true && positionsMatch(b, a) === true;
 }
 
@@ -3390,12 +3587,13 @@ export class ExpressionTyping {
        *  reading the name yields `record` or nothing. */
       isRecordName?: (name: string) => boolean;
       /** Is this name bound to a whole traversal block's return — a
-       *  COLLECTION, even though its type is the one record a member of it
-       *  carries (plurality lives in the traversal, never in a second type —
-       *  `ScopeSymbol.plural`)? The one reader is `checkStdlibRecordArg`
-       *  (`TEXT.PAIRS`'s argument): the engine reads a record's fields off
-       *  ONE landing, never a fan-out of them. */
-      isPluralName?: (name: string) => boolean;
+       *  COLLECTION, even though its position type is the one record a member
+       *  of it carries (plurality lives in the traversal, never in a second
+       *  type — `ScopeSymbol.plural`)? Answers the order the returns were
+       *  collected in, undefined for any other name. Read as a VALUE the name
+       *  is the list of those records (`bareNameType`), which is what the
+       *  engine hands a map field, a list member or a call argument. */
+      pluralOrderOf?: (name: string) => CollectionOrder | undefined;
       /** The value plane's half of the same fact: is this name bound to a
        *  walk read for a field (`pdfs = m-[a:Attachments]->.\`File\``) — one
        *  value per landing, typed as the one value? A spread reads it as the
@@ -3493,9 +3691,14 @@ export class ExpressionTyping {
   private bareNameType(name: string): FieldType | undefined {
     const scalar = this.scalarType(name);
     if (scalar !== undefined) return scalar;
-    const record = recordValueOf(this.rootType(name));
-    if (record !== undefined) return record;
-    return this.options.isRecordName?.(name) === true ? recordOf(undefined) : undefined;
+    const record =
+      recordValueOf(this.rootType(name))
+      ?? (this.options.isRecordName?.(name) === true ? recordOf(undefined) : undefined);
+    if (record === undefined) return undefined;
+    // A block's returned records are a LIST of them — the walk is many-valued,
+    // and so is its value.
+    const collected = this.options.pluralOrderOf?.(name);
+    return collected !== undefined ? listOf(record, collected) : record;
   }
 
   /**
@@ -3572,20 +3775,61 @@ export class ExpressionTyping {
    * through to the record plane and typed nothing.
    */
   private dictMemberRead(expr: Extract<Expression, { type: 'traverse' }>): { type: FieldType | undefined } | undefined {
-    if (before(this.options.languageVersion, 3)) return undefined;
-    if (expr.aliasRoot === undefined || expr.steps.length > 0 || expr.expression.type !== 'property') return undefined;
+    if (expr.aliasRoot === undefined || expr.steps.length > 0) return undefined;
     if (this.rootType(expr.aliasRoot) !== undefined) return undefined;
     const held = this.scalarType(expr.aliasRoot);
-    const dict = held !== undefined ? stripAbsent(held) : undefined;
-    if (dict === undefined || !isDictType(dict)) return undefined;
-    const key = expr.expression.propertyTypeId;
-    if (dict.shape === undefined) return { type: maybeAbsent(dict.of) };
-    if (!Object.hasOwn(dict.shape, key)) {
+    if (held === undefined) return undefined;
+    return this.readDictMember(held, expr.expression);
+  }
+
+  /**
+   * `k`, `k.f`, `k.inner.f` read off a dict of type `held`: `d.k` ends at the
+   * key; `d.k.f` reads on from what the key holds — a dict as a dict again
+   * (`d.k.inner`), a record as that record. Undefined when `held` is not a dict
+   * or `member` reads no key of it — and, `within` a dict read on, a key the
+   * inner dict was not written with: that read types as it did before nested
+   * dicts were read on, and is not refused.
+   */
+  private readDictMember(
+    held: FieldType,
+    member: Expression,
+    within = false,
+  ): { type: FieldType | undefined } | undefined {
+    const dict = stripAbsent(held);
+    if (!isDictType(dict)) return undefined;
+    const key =
+      member.type === 'property'
+        ? member.propertyTypeId
+        : member.type === 'traverse' && member.aliasRoot !== undefined
+          ? member.aliasRoot
+          : undefined;
+    if (key === undefined) return undefined;
+    if (within && dict.shape !== undefined && !Object.hasOwn(dict.shape, key)) return undefined;
+    const known = dict.shape === undefined ? dict.of : dict.shape[key] ?? undefined;
+    const nested = member.type === 'traverse' && member.steps.length === 0 && known !== undefined && isDictType(stripAbsent(known));
+    // Before version 3 a key read fell through to the record plane and typed
+    // nothing — except a key holding records (or a dict read on to them),
+    // which reads as the records it holds in every version, as a record bound
+    // to a name does.
+    if (before(this.options.languageVersion, 3) && !nested && !holdsRecords(known)) return undefined;
+    let type: FieldType | undefined;
+    if (dict.shape === undefined) type = maybeAbsent(dict.of);
+    else if (!Object.hasOwn(dict.shape, key)) {
       this.reportUnknownDictKey(key, Object.keys(dict.shape));
-      return { type: undefined };
+      type = undefined;
+    } else {
+      const slot = dict.shape[key] ?? undefined;
+      type = isMaybeAbsent(held) ? maybeAbsent(slot) : slot;
     }
-    const slot = dict.shape[key] ?? undefined;
-    return { type: isMaybeAbsent(held) ? maybeAbsent(slot) : slot };
+    if (member.type !== 'traverse') return { type };
+    if (nested && type !== undefined) {
+      const inner = this.readDictMember(type, member.expression, true);
+      if (inner !== undefined) return inner;
+      if (before(this.options.languageVersion, 3)) return undefined;
+    }
+    // A record held under the key is read on as that record.
+    const record = recordHeadPosition(type);
+    return { type: this.inferAt({ type: 'traverse', steps: member.steps, expression: member.expression }, record) };
   }
 
   /** Walk `body` with `proofs`' subjects read as PRESENT — the narrowing an
@@ -4292,7 +4536,7 @@ export class ExpressionTyping {
         : { of: present.of, mayBeAbsent };
     }
     const record = variantOf(present).kind === 'record' ? recordIn(present)?.position : undefined;
-    if (record !== undefined && this.holdsSpelledFields(record)) {
+    if (record !== undefined && this.holdsSpelledFields(record, "copies its fields into a map with '...'")) {
       const fields = recordFieldTypes(record);
       return fields !== undefined ? { keys: fields, mayBeAbsent } : { of: 'json', mayBeAbsent };
     }
@@ -4771,8 +5015,13 @@ export class ExpressionTyping {
         ordering = this.hopOrdering(from, step, this.lastEdgeSchema);
         orderingEdge = step.edgeTypeId;
         this.checkHopLimitOrder(step, ordering);
-        const next =
-          stepped !== undefined ? refineSelected(stepped, step.expressionFilter) : stepped;
+        // A record reached through a function's parameter is the caller's
+        // record's child: its fields are in hand exactly when the caller's
+        // are, so what the body needs of it is the parameter's need.
+        const next = withParameterOf(
+          from,
+          stepped !== undefined ? refineSelected(stepped, step.expressionFilter) : stepped,
+        );
         // The hop's own alias names the element it lands on, and the bracket's
         // WHERE and ORDER BY are expressions over that element — so the alias
         // is bound before either is typed (`-[e:X WHERE e.`F` == 1]->`, `ORDER
@@ -5032,7 +5281,7 @@ export class ExpressionTyping {
    * extraction's exported fields, a write's result — never off a live system
    * (fields come back one adapter call at a time; there is no "give me all of
    * them" to ask for) and never off a fan-out (it reads ONE landing, not
-   * many). `holdsSpelledFields` refuses the first; `isPluralName` the second
+   * many). `holdsSpelledFields` refuses the first; `pluralOrderOf` the second
    * — both checked here so the engine's `MOVENG_UNSUPPORTED` for either is
    * one a saved movement can never reach.
    */
@@ -5046,6 +5295,19 @@ export class ExpressionTyping {
     const type = args[declared.index];
     if (type === undefined) return; // unknown stays silent
     const stripped = stripAbsent(type);
+    const notSpelledOut = () =>
+      this.report(
+        TypedDiagnosticCodes.STDLIB_ARG_NOT_RECORD,
+        `\`${spec.namespace}.${spec.name}\` takes a record whose fields the program spells out — a dict literal, a \`node { … }\` literal, an extracted record or a declared one; build a dict of the fields you want from this record`,
+      );
+    // A block's whole return is a list of records, and the reach for it is
+    // reaching for the one record a member carries — answered as that.
+    const raw = rawArgs[declared.index];
+    const name = raw !== undefined ? bareName(raw) : undefined;
+    if (name !== undefined && this.options.pluralOrderOf?.(name) !== undefined) {
+      notSpelledOut();
+      return;
+    }
     // One of several dicts is still a dict whose keys the author wrote.
     if (unionMembers(stripped).length > 1 && unionMembers(stripped).every(isDictType)) return;
     if (!isRecordType(stripped) && !isDictType(stripped)) {
@@ -5056,15 +5318,7 @@ export class ExpressionTyping {
       return;
     }
     if (isDictType(stripped)) return; // a dict's keys are the ones the author wrote
-    const raw = rawArgs[declared.index];
-    const name = raw !== undefined ? bareName(raw) : undefined;
-    const plural = name !== undefined && this.options.isPluralName?.(name) === true;
-    if (plural || !this.holdsSpelledFields(recordIn(stripped)?.position)) {
-      this.report(
-        TypedDiagnosticCodes.STDLIB_ARG_NOT_RECORD,
-        `\`${spec.namespace}.${spec.name}\` takes a record whose fields the program spells out — a dict literal, a \`node { … }\` literal, an extracted record or a declared one; build a dict of the fields you want from this record`,
-      );
-    }
+    if (!this.holdsSpelledFields(recordIn(stripped)?.position, `reads every field of it with \`${spec.namespace}.${spec.name}\``)) notSpelledOut();
   }
 
   /**
@@ -5072,8 +5326,9 @@ export class ExpressionTyping {
    * so the only author-time mistake is the one the engine would otherwise
    * throw for — a record whose fields the program does not hold (read live
    * from a system, one field at a time, or the movement's own trigger).
-   * Same test as `checkStdlibRecordArg`, same reason; a record nested inside
-   * a list or dict is beyond what the type says here and fails the run, named.
+   * Same test as `checkStdlibRecordArg`, same reason, for one record or a
+   * list of them; a record nested inside a dict is beyond what the type says
+   * here and fails the run, named.
    */
   private checkStdlibWholeValueArg(
     spec: StdlibFunctionSpec,
@@ -5083,10 +5338,10 @@ export class ExpressionTyping {
     if (declared === undefined) return;
     const type = args[declared.index];
     if (type === undefined) return;
-    const stripped = stripAbsent(type);
-    if (!isRecordType(stripped)) return;
-    const position = recordIn(stripped)?.position;
-    if (!this.holdsSpelledFields(position)) {
+    const record = recordIn(type);
+    if (record === undefined) return;
+    const position = record.position;
+    if (!this.holdsSpelledFields(position, `writes it out with \`${spec.namespace}.${spec.name}\``)) {
       this.report(
         TypedDiagnosticCodes.STDLIB_ARG_NOT_RECORD,
         `\`${spec.namespace}.${spec.name}\` writes out a record whose fields the program spells out — a \`node { … }\` literal, an extracted record or a declared one; build a dict of the fields you want from this record`,
@@ -5096,7 +5351,11 @@ export class ExpressionTyping {
     // A graph holding references holds the real records, so one read live
     // from a system is refused through the graph as it is on its own.
     const liveEdge =
-      position === undefined ? undefined : liveReferenceWithin(position, this.options.isDeclaredGraphToken);
+      position === undefined
+        ? undefined
+        : liveReferenceWithin(position, this.options.isDeclaredGraphToken, held =>
+            noteFieldsNeeded(held, `writes out a graph holding it with \`${spec.namespace}.${spec.name}\` (line ${this.options.span.start.line})`),
+          );
     if (liveEdge !== undefined) {
       this.report(
         TypedDiagnosticCodes.STDLIB_ARG_NOT_RECORD,
@@ -5122,24 +5381,12 @@ export class ExpressionTyping {
    *  time, not the program's own words) or the bare instance root (`meta`)?
    *  A closure has no fields to spell out. `maybeEmpty` reads through to
    *  what it wraps — a gate changes presence, not which fields exist. */
-  private holdsSpelledFields(position: PositionTypeRef | undefined): boolean {
-    if (position === undefined) return false;
-    switch (position.kind) {
-      case 'extract':
-      case 'handle':
-      case 'local':
-        return true;
-      case 'maybeEmpty':
-        return this.holdsSpelledFields(position.of);
-      case 'position':
-      case 'union':
-        return this.options.isDeclaredGraphToken?.(position.instance.token) === true;
-      case 'meta':
-      case 'closure':
-        return false;
-      default:
-        return neverAsAny(position);
-    }
+  private holdsSpelledFields(position: PositionTypeRef | undefined, consumer: string): boolean {
+    const held = holdsFieldsInHand(position, this.options.isDeclaredGraphToken);
+    // A parameter's declared shape holds its fields here; whether the record
+    // a caller hands over does is that caller's to show.
+    if (held) noteFieldsNeeded(position, `${consumer} (line ${this.options.span.start.line})`);
+    return held;
   }
 
   /**

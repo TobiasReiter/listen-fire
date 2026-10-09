@@ -49,46 +49,84 @@ class GoogleDocsCrawler extends Crawler {
   }
 }
 
-// NOTE: this doesn't work in production because either
-// - it needs beefier hardware
-// - Google have something smart preventing scraping
+// The viewer's DOM is undocumented and has shifted before, but it currently
+// offers two stable contracts to key off: a page-number box whose
+// aria-label reads "Page N of M" (tracks the current page and carries the
+// total), and a full-size page image whose alt reads "Page N of M" (distinct
+// from the thumbnail strip's "A thumbnail image for page N"). Filling the box
+// and pressing Enter still navigates. Images render lazily, so a page's image
+// only gets a real src once it has been scrolled into view.
+const PAGE_BOX_LABEL_PATTERN = /^Page (\d+) of (\d+)$/;
+
+function parsePageBoxLabel(label: string): { page: number; total: number } | undefined {
+  const match = label.match(PAGE_BOX_LABEL_PATTERN);
+  if (!match) return undefined;
+  return { page: Number(match[1]), total: Number(match[2]) };
+}
+
 class GoogleDriveCrawler extends Crawler {
   protected async takeScreenshotsOfAllPages() {
-    const pageNumberController = this.page.locator('input[aria-label^="Page is"]');
-    let pageNumber = 1;
-
-    const screenshots: Screenshot[] = [];
-
     await this.page.waitForTimeout(1000);
     await this.page.waitForLoadState('domcontentloaded');
 
-    while (true /* eslint-disable-line no-constant-condition */) {
-      await pageNumberController.fill(String(pageNumber));
-      await pageNumberController.press('Enter');
+    // aria-label^="Page " alone also matches the zoom control
+    // ("Page zoom control"), so the label must be matched exactly.
+    const pageBox = this.page.getByRole('textbox', { name: PAGE_BOX_LABEL_PATTERN });
+    await pageBox.waitFor({ state: 'visible', timeout: 30000 });
 
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(200);
-      const slideLocator = await this.page.locator(`img[alt^="Page ${pageNumber} of "]`).nth(0);
-      await slideLocator.scrollIntoViewIfNeeded({ timeout: 60000 });
-      const box = await slideLocator.boundingBox({ timeout: 60000 });
+    const initialLabel = await pageBox.getAttribute('aria-label');
+    const initialParsed = initialLabel ? parsePageBoxLabel(initialLabel) : undefined;
+    if (!initialParsed) {
+      throw new Error(`Could not read page count from Drive viewer page box label: ${initialLabel}`);
+    }
+
+    const { total } = initialParsed;
+    const screenshots: Screenshot[] = [];
+
+    for (let pageNumber = 1; pageNumber <= total; pageNumber++) {
+      await pageBox.fill(String(pageNumber));
+      await pageBox.press('Enter');
+
+      const pageImage = this.page.locator(`img[alt="Page ${pageNumber} of ${total}"]`).nth(0);
+      await pageImage.waitFor({ state: 'attached', timeout: 30000 });
+      await pageImage.scrollIntoViewIfNeeded({ timeout: 30000 });
+
+      await pageImage.evaluate(
+        (img: HTMLImageElement) =>
+          new Promise<void>((resolve, reject) => {
+            if (img.complete && img.naturalWidth > 0) {
+              resolve();
+              return;
+            }
+            const timeout = setTimeout(() => reject(new Error('Image did not load in time')), 30000);
+            img.addEventListener(
+              'load',
+              () => {
+                clearTimeout(timeout);
+                resolve();
+              },
+              { once: true },
+            );
+            img.addEventListener(
+              'error',
+              () => {
+                clearTimeout(timeout);
+                reject(new Error('Image failed to load'));
+              },
+              { once: true },
+            );
+          }),
+      );
+
+      const box = await pageImage.boundingBox({ timeout: 30000 });
       if (box) {
-        const screenshot = await slideLocator.screenshot();
+        const screenshot = await pageImage.screenshot();
         screenshots.push({ width: box.width, height: box.height, data: screenshot });
       }
 
-      const alt = await slideLocator.getAttribute('alt');
-      if (!alt) {
-        throw new Error('Expected alt attribute to be present');
-      }
-
-      // if the current page is the last page, we're done
-      if (/^Page (\d+) of \1$$/.test(alt)) {
-        break;
-      }
-
-      pageNumber++;
-      // it's a little tricky to confirm that the effects of clicking the button
-      // have taken effect, so wait briefly to increase the chance of the render completing.
+      // it's a little tricky to confirm that the effects of filling the page
+      // box have taken effect, so wait briefly to increase the chance of the
+      // render completing.
       await new Promise((resolve) => setTimeout(resolve, 500)); // eslint-disable-line @typescript-eslint/no-loop-func
     }
 
@@ -217,4 +255,4 @@ class GoogleDocs {
 
 const GoogleDocsService = new GoogleDocs();
 
-export { GoogleDocsService };
+export { GoogleDocsService, parsePageBoxLabel };

@@ -55,3 +55,15 @@ describe('a backticked binding walks like a bare one', () => {
     );
   });
 });
+
+// A block head's hop alias is a name like any other: backtick-quoted, escapes
+// and all, it binds exactly as a bare alias does.
+describe('a backticked hop alias in a block head binds like a bare one', () => {
+  it.each([
+    ['a spaced alias', '`the check`'],
+    ['an escaped backtick', '`the\\`check`'],
+    ['an escaped backslash', '`the\\\\check`'],
+  ])('%s', (_label, alias) => {
+    expect(codes(`  e-[${alias}:Checks]-> {\n    t = ${alias}.\`Label\`\n  }`)).toEqual([]);
+  });
+});

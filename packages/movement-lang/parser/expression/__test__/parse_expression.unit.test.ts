@@ -360,6 +360,92 @@ describe('parseExpression', () => {
         args: [{ value: name('xs') }, { value: { kind: 'closure' } }],
       });
     });
+
+    // A `#` comment in a block body runs to the end of its line and nothing in
+    // it is read: prose with a quote, a backtick or a brace must neither open a
+    // literal nor close the body.
+    describe('a comment in a nested block body is prose', () => {
+      const body = (comment: string, extra = '') =>
+        [
+          '{',
+          `    # ${comment}`,
+          ...(extra ? [extra] : []),
+          '    page = fetch_url(url: x.website)',
+          '    return page',
+          '  }',
+        ].join('\n');
+      const nested = (b: string) => `FIRST(MAP([e], { onError: "warn" }, (x) => ${b}))`;
+      const blockOf = (text: string): string => {
+        const tree = parseExpression(text);
+        if (tree.kind !== 'call') throw new Error('expected a call');
+        const map = tree.args[0].value;
+        if (map.kind !== 'call') throw new Error('expected MAP');
+        const closure = map.args[2].value;
+        if (closure.kind !== 'closure' || closure.body.kind !== 'block') throw new Error('expected a block closure');
+        return text.slice(closure.body.at.start, closure.body.at.end);
+      };
+
+      it.each([
+        ['an apostrophe', "LinkedIn research isn't cheap"],
+        ['a lone backtick', 'runs only for `x with no website'],
+        ['a backtick pair', 'runs only for `x` with no website'],
+        ['a double quote', 'the "website field may be empty'],
+        ['a closing brace', 'no } here closes anything'],
+        ['an opening brace', 'nor does { open anything'],
+        ['all of them', 'isn\'t `x` "quoted" } {'],
+      ])('%s', (_label, comment) => {
+        const b = body(comment);
+        expect(blockOf(nested(b))).toBe(b);
+      });
+
+      it('a `#` inside a string after the comment is still the string', () => {
+        const b = body("isn't a boundary", '    tag = "issue #42 isn\'t } closed"');
+        expect(blockOf(nested(b))).toBe(b);
+      });
+
+      it('a `#` inside a string is never a comment', () => {
+        const b = '{\n    return "a # b }"\n  }';
+        expect(blockOf(nested(b))).toBe(b);
+      });
+
+      it('a `#` head inside a hop is the hop, not a comment', () => {
+        const b = '{\n    return FIRST(x-[#linked]->) }';
+        expect(blockOf(nested(b))).toBe(b);
+      });
+
+      it('a comment after a `#` hop head on the same line is still a comment', () => {
+        const b = "{\n    return FIRST(x-[#linked]->) # isn't } closed\n  }";
+        expect(blockOf(nested(b))).toBe(b);
+      });
+    });
+
+    // The body's end is found by the same rules the lexer reads it with, so no
+    // literal can hide a brace from one and show it to the other.
+    describe('a literal in a nested block body is read whole', () => {
+      const nested = (b: string) => `FIRST(MAP([e], { onError: "warn" }, (x) => ${b}))`;
+      const blockOf = (text: string): string => {
+        const tree = parseExpression(text);
+        if (tree.kind !== 'call') throw new Error('expected a call');
+        const map = tree.args[0].value;
+        if (map.kind !== 'call') throw new Error('expected MAP');
+        const closure = map.args[2].value;
+        if (closure.kind !== 'closure' || closure.body.kind !== 'block') throw new Error('expected a block closure');
+        return text.slice(closure.body.at.start, closure.body.at.end);
+      };
+
+      it.each([
+        ['a backtick name with an escaped backtick', '{\n    return x.`a\\`}`\n  }'],
+        ["a ' inside a \" string", '{\n    return "it\'s } here"\n  }'],
+        ["a \" inside a ' string", "{\n    return 'say \"hi\" }'\n  }"],
+        ['a brace in a string inside an interpolation', '{\n    return "a ${ "}" } b"\n  }'],
+      ])('%s', (_label, b) => {
+        expect(blockOf(nested(b))).toBe(b);
+      });
+
+      it('an escaped backtick is part of the name', () => {
+        expect(parseExpression('`a\\`b`')).toMatchObject({ kind: 'name', name: { text: 'a`b', quoted: true } });
+      });
+    });
   });
 
   describe('node and graph literals, inline declarations', () => {
@@ -515,5 +601,35 @@ describe('parseExpression', () => {
       expect(thrown).toBeInstanceOf(ExpressionSyntaxError);
       expect(thrown).toMatchObject({ message: "Unrecognised character '🌍'", offset: 4 });
     });
+  });
+});
+
+// A `#` comment runs to the end of its line wherever the expression grammar
+// reads — except directly inside a hop's brackets, where `#` begins a head.
+describe('# comments inside an expression', () => {
+  it('inside a list', () => {
+    expect(parse('[1, # note\n  2]')).toEqual(parse('[1, 2]'));
+  });
+
+  it('inside a map literal', () => {
+    expect(parse('{ a: 1, # note\n  b: 2 }')).toEqual(parse('{ a: 1, b: 2 }'));
+  });
+
+  it("after a closure's => on its own line", () => {
+    expect(parse('MAP(xs, (x) => # the doubled value\n  x * 2)')).toEqual(parse('MAP(xs, (x) => x * 2)'));
+  });
+
+  it('a # hop head still parses, and a comment after the hop is a comment', () => {
+    expect(parse('x-[#linked]-> # note')).toEqual(parse('x-[#linked]->'));
+    expect(parse('[x-[#linked]->, # note\n  y]')).toEqual(parse('[x-[#linked]->, y]'));
+  });
+
+  it("a comment inside a hop's config map is a comment", () => {
+    expect(parse('x-[:a { limit: 1, # note\n  order: 2 }]->')).toEqual(parse('x-[:a { limit: 1, order: 2 }]->'));
+  });
+
+  it('a # inside a string is text', () => {
+    expect(parseExpression('"a # b"')).toMatchObject({ kind: 'string' });
+    expect(parseExpression("'a # b'")).toMatchObject({ kind: 'string' });
   });
 });

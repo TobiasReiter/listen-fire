@@ -739,3 +739,15 @@ describe('a record is a value, so the collection ops carry records', () => {
     expect(codes(body)).toContain('MOV_HEAD_NOT_A_POSITION');
   });
 });
+
+// A comment inside a bracketed value is prose: the statement scan steps over
+// it and the expression grammar skips it, so the value checks as if unwritten.
+describe('a # comment inside a bracketed value', () => {
+  it.each([
+    ['a list', '  xs = [1, # the first\n    2]', '  xs = [1, 2]'],
+    ['a dict', '  d = { one: "a", # the first\n    two: "b" }', '  d = { one: "a", two: "b" }'],
+  ])('inside %s', (_label, commented, plain) => {
+    expect(codes(commented)).toEqual([]);
+    expect(codes(commented)).toEqual(codes(plain));
+  });
+});

@@ -22,7 +22,7 @@ import type { Loc, Span } from '../parser/ast';
 import { spellParamType } from '../parser/ast';
 import { MovementParseError, parseProgram } from '../parser/parse';
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from '../language_version';
-import { scanName } from '../parser/scan';
+import { CLOSER, opensHop, scanName, skipOpaque } from '../parser/scan';
 import {
   checkProgram,
   positionTypeOf,
@@ -310,7 +310,7 @@ export function getMovementCompletions(
   if (lineEnd === -1) lineEnd = source.length;
   const fullLine = source.slice(lineStart, lineEnd);
 
-  if (inComment(lineBefore)) return NO_COMPLETIONS;
+  if (inComment(before)) return NO_COMPLETIONS;
 
   const partialMatch = /[A-Za-z_][A-Za-z0-9_]*$/.exec(lineBefore);
   const partial = partialMatch?.[0] ?? '';
@@ -2005,24 +2005,33 @@ function filterByPrefix(
   });
 }
 
-/** Is the cursor inside a `#` comment (outside strings/backticks/hops)? */
-function inComment(lineBefore: string): boolean {
-  let inString = false;
-  let inTick = false;
-  for (let i = 0; i < lineBefore.length; i++) {
-    const ch = lineBefore[i];
-    if (inString) {
-      if (ch === '\\') i++;
-      else if (ch === '"') inString = false;
+/**
+ * Is the end of `before` inside a `#` comment? Read with the parser's own
+ * bracket scan: strings and quoted names are stepped over whole, and a `#`
+ * directly inside a hop's brackets begins a head (`-[#linked]->`), not a comment.
+ */
+function inComment(before: string): boolean {
+  const hops: boolean[] = [];
+  let i = 0;
+  while (i < before.length) {
+    const opaque = skipOpaque(before, i, { inHop: hops[hops.length - 1] ?? false });
+    if (opaque !== undefined) {
+      if (opaque.kind === 'comment' && opaque.end >= before.length) return true;
+      if (opaque.kind !== 'unterminated') {
+        i = opaque.end;
+        continue;
+      }
+      // An unclosed string runs to the cursor; an unclosed name ends its line.
+      if (opaque.what === 'string') return false;
+      const lineEnd = before.indexOf('\n', i);
+      if (lineEnd === -1) return false;
+      i = lineEnd;
       continue;
     }
-    if (inTick) {
-      if (ch === '`') inTick = false;
-      continue;
-    }
-    if (ch === '"') inString = true;
-    else if (ch === '`') inTick = true;
-    else if (ch === '#' && lineBefore[i - 1] !== '[') return true;
+    const c = before[i];
+    if (c in CLOSER) hops.push(opensHop(before, i));
+    else if (c === ')' || c === ']' || c === '}') hops.pop();
+    i++;
   }
   return false;
 }

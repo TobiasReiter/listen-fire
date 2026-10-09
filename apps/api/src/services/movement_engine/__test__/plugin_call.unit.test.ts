@@ -490,3 +490,59 @@ describe('a call the checker refuses fails the run before anything is invoked', 
     expect(calls).toEqual([]);
   });
 });
+
+// ── A call written in place as an argument ───────────────────────────────────
+
+describe("a call written in place as a plugin's argument is the value it computes", () => {
+  it("a built-in's call is evaluated and its value passed, as a bound name's would be", async () => {
+    const email = makeFakeAdapter('email');
+    const attio = makeFakeAdapter('attio');
+    const { invoker, calls } = stubInvoker({ fetch_url: { text: 'page' } });
+
+    await run(
+      [
+        'movement intake(m: <inbox-[:message]->>) {',
+        '  page = fetch_url(url: LOWER(m.`text`))',
+        '  shouted = fetch_url(url: UPPER(m.`text`))',
+        '}',
+      ].join('\n'),
+      invoker,
+      { email: email.adapter, attio: attio.adapter },
+    );
+
+    expect(calls).toEqual([
+      { plugin: 'fetch_url', config: { url: 'https://acme.example' } },
+      { plugin: 'fetch_url', config: { url: 'HTTPS://ACME.EXAMPLE' } },
+    ]);
+  });
+
+  it("a plugin's call runs first, and what it handed back is the outer call's argument", async () => {
+    const email = makeFakeAdapter('email');
+    const attio = makeFakeAdapter('attio');
+    const calls: Recorded[] = [];
+    const invoker: MovementTransformInvoker = {
+      declaredOutput: (plugin) => realOutput(plugin),
+      async invoke({ plugin, config }) {
+        calls.push({ plugin, config });
+        return { text: calls.length === 1 ? 'https://acme.example/about' : 'About Acme.' };
+      },
+    };
+
+    await run(
+      [
+        'movement intake(m: <inbox-[:message]->>) {',
+        '  page = fetch_url(url: fetch_url(url: m.`text`))',
+        '  co = write crm-[:companies]-> { name: m.`subject`, summary: COALESCE(page, "nothing") }',
+        '}',
+      ].join('\n'),
+      invoker,
+      { email: email.adapter, attio: attio.adapter },
+    );
+
+    expect(calls).toEqual([
+      { plugin: 'fetch_url', config: { url: 'https://acme.example' } },
+      { plugin: 'fetch_url', config: { url: 'https://acme.example/about' } },
+    ]);
+    expect(attio.creates[0]?.fields.summary).toBe('About Acme.');
+  });
+});

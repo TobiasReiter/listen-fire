@@ -43,6 +43,7 @@ import { assertMaxCallDepthConfigured } from './services/movement_engine/call_de
 import { assertWriteLockTimeoutConfigured } from './services/write_locks/write_locks';
 import { assertParserReady } from 'movement-lang';
 import { assertEngineChoiceConfigured } from './services/movement_engine/rust_engine';
+import { assertBrightDataSerpRateConfigured } from './services/web_search';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';
 import { rootHandler } from './lib/middleware/root_handler';
 import { HEALTH_CHECK_ENDPOINT, WORKERS_HEALTH_ENDPOINT } from './constants';
@@ -126,6 +127,10 @@ assertEngineChoiceConfigured();
 // reverse), is a deployment that believes its work drains when it does not.
 // Checked only where automations is mounted (the gate is inside).
 assertAutomationsDrainConfigured();
+
+// A search rate set to something that is not a positive whole number is a
+// deployment that believes its Bright Data searches are paced when they are not.
+assertBrightDataSerpRateConfigured();
 
 // A blocked event loop is the one failure this process cannot narrate: the
 // health check goes unanswered, the logs stop mid-sentence, and the platform

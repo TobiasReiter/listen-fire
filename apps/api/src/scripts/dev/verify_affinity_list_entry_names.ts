@@ -5,8 +5,8 @@
  * lands and reads back.
  *
  * Four things to see:
- *   1. Organization's hand-maintained custom fields are WRITABLE (the
- *      enrichment-sourced one is not);
+ *   1. Organization's custom fields are WRITABLE, the enrichment-sourced one
+ *      included;
  *   2. `List Entry — Pipeline` names its fields bare (`Deal Stage`, not
  *      `[Pipeline] Deal Stage`);
  *   3. the acceptance write typechecks with those bare names, and a made-up

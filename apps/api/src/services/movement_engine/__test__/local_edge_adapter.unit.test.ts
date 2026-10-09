@@ -16,8 +16,10 @@ import {
   distinctiveTokens,
   identityValuesEqual,
   localEdgeAdapter,
+  localRecordLock,
   sharesDistinctiveToken,
 } from '../local_edge_adapter';
+import { EffectLocks } from '../effect_locks';
 
 const MUTATION_CONTEXT = { source: { adapterType: 'local' } } as never;
 
@@ -189,5 +191,40 @@ describe('the store over an edge’s landings', () => {
       constraints: byName(false),
     });
     expect(s.store.capped()).toBe(false);
+  });
+});
+
+describe('the lock an update of a landing holds', () => {
+  const node = () => ({ kind: 'nodePosition' as const, fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} });
+
+  it('names the record by its identity: one node, one lock; two nodes, two', () => {
+    const a = node();
+    const b = node();
+    expect(localRecordLock(a)).toEqual(localRecordLock(a));
+    expect(localRecordLock(a).name).not.toBe(localRecordLock(b).name);
+    expect(localRecordLock(a).mode).toEqual({ kind: 'exclusive' });
+  });
+
+  it('makes two updates of one record take turns, and lets two records go together', async () => {
+    const locks = new EffectLocks();
+    const a = node();
+    const b = node();
+    const log: string[] = [];
+    const effect = (name: string) => async () => {
+      log.push(`${name} start`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      log.push(`${name} end`);
+    };
+    await Promise.all([
+      locks.withLocks([localRecordLock(a)], effect('a1')),
+      locks.withLocks([localRecordLock(a)], effect('a2')),
+    ]);
+    expect(log).toEqual(['a1 start', 'a1 end', 'a2 start', 'a2 end']);
+    log.length = 0;
+    await Promise.all([
+      locks.withLocks([localRecordLock(a)], effect('a')),
+      locks.withLocks([localRecordLock(b)], effect('b')),
+    ]);
+    expect(log.slice(0, 2)).toEqual(['a start', 'b start']);
   });
 });

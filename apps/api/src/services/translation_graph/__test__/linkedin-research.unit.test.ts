@@ -278,7 +278,7 @@ describe('identity', () => {
 // ── Budget ────────────────────────────────────────────────────────────────
 
 describe('the budget', () => {
-  it('runs at most three activity queries however many the planner returns', async () => {
+  it('runs one activity query however many the planner returns', async () => {
     mockSearch.mockResolvedValueOnce(RICH_INDEX_RESULT).mockResolvedValue({ items: [] });
     replies({
         plan: JSON.stringify({
@@ -288,8 +288,6 @@ describe('the budget', () => {
             '"Alex Example" q1',
             '"Alex Example" q2',
             '"Alex Example" q3',
-            '"Alex Example" q4',
-            '"Alex Example" q5',
           ],
           terms: ['Northwind Labs'],
         }),
@@ -297,15 +295,23 @@ describe('the budget', () => {
       });
 
     await invoke({ url: PROFILE_URL });
-    // 1 identity + 3 activity + 1 organisation.
-    expect(mockSearch).toHaveBeenCalledTimes(5);
+    // 1 identity + 1 activity + 1 organisation, which the activity search
+    // left uncovered.
+    expect(mockSearch).toHaveBeenCalledTimes(3);
     const queries = mockSearch.mock.calls.map((c) => c[0]);
-    expect(queries.slice(1, 4)).toEqual([
-      '"Alex Example" q1',
-      '"Alex Example" q2',
-      '"Alex Example" q3',
-    ]);
-    expect(queries[4]).toContain('site:crunchbase.com');
+    expect(queries[1]).toBe('"Alex Example" q1');
+    expect(queries[2]).toContain('site:crunchbase.com');
+  });
+
+  it('skips the organisation search when the activity search already named the organisation', async () => {
+    mockSearch.mockResolvedValueOnce(RICH_INDEX_RESULT).mockResolvedValue(ACTIVITY_RESULT);
+    replies({ plan: PLAN_REPLY, synthesis: SYNTHESIS_REPLY });
+
+    await invoke({ url: PROFILE_URL });
+    // 1 identity + 1 activity; the activity result names Northwind Labs.
+    expect(mockSearch).toHaveBeenCalledTimes(2);
+    const queries: string[] = mockSearch.mock.calls.map((c) => c[0]);
+    expect(queries.some((q) => q.includes('site:crunchbase.com'))).toBe(false);
   });
 
   it('reads at most two pages, and never a LinkedIn one', async () => {

@@ -106,11 +106,13 @@ Only return the JSON, nothing else. If you cannot evaluate a field, set its valu
   async findMatchingOrganisation({
     name,
     domain,
+    context,
   }: {
     name: string;
     domain?: string | null;
+    context?: string;
   }): Promise<{ id: number } | null> {
-    const match = await findMatchingOrganisationCommon(this.client, { name, domain });
+    const match = await findMatchingOrganisationCommon(this.client, { name, domain, context });
     return match ? { id: match.id } : null;
   }
 
@@ -317,7 +319,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
     fieldConfigurations,
     affinityId,
   }: {
-    searchQuery: { name: string; domain?: string | null };
+    searchQuery: { name: string; domain?: string | null; context?: string };
     userText: string;
     tracer: Tracer;
     fieldConfigurations: AffinityFieldConfiguration[];
@@ -337,7 +339,9 @@ Expect the user to provide a name. If for any reason the name cannot be split in
 
       // Check if we need to update the domain
       const existingOrg = await this.client.getOrganisationById(existingOrgId);
-      if (!existingOrg.domain && searchQuery.domain) {
+      // Affinity refuses a name or domain change on a global organization;
+      // writing its fields and list entries is what adopts it.
+      if (!existingOrg.domain && searchQuery.domain && !existingOrg.global) {
         tracer.add('orgSubAction', 'updateDomain');
         await this.client.updateOrganisation({
           id: existingOrgId,

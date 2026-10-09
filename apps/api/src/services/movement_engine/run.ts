@@ -83,6 +83,8 @@ import {
   aggregatedBarePath,
   bareName,
   isWalkProjection,
+  mapTargetRoots,
+  memberPathBindingName,
   pathRootName,
   probePathHead,
   spellPathHead,
@@ -166,6 +168,7 @@ import type {
   LinkTarget,
   LinkedExport,
   MatchExpression,
+  MatchTarget,
   LinkedFile,
   EventAddress,
   MovementCondition,
@@ -183,6 +186,7 @@ import type {
   TraversalBlock,
   WriteExpression,
   WriteSpread,
+  WriteTarget,
   FieldWriteMode,
   SuppliedSurface,
 } from 'movement-lang';
@@ -236,6 +240,8 @@ import {
   MovementEngineError,
   applyHopOrderLimit,
   bindingOf,
+  bindValue,
+  recordFields,
   closedHopPushdown,
   decidePurePredicate,
   decideWithClock,
@@ -274,7 +280,7 @@ import {
   type SummarisedOrigin,
 } from './provenance';
 import { surfaceReadAdapter } from './kg';
-import { localEdgeAdapter } from './local_edge_adapter';
+import { localEdgeAdapter, localRecordLock } from './local_edge_adapter';
 import {
   countShapeNodes,
   ExtractCallRunState,
@@ -1074,6 +1080,11 @@ function setGraphEdge(
 ): void {
   delete node.fields[name];
   node.fieldOrder = node.fieldOrder.filter((f) => f !== name);
+  // A node the graph builds on its edge has landed there: it is a record of
+  // the run's own graph from now on, updatable in place.
+  for (const landing of landings) {
+    if (landing.kind === 'nodePosition' && landing.landedOn === undefined) landing.landedOn = name;
+  }
   node.edges[name] = {
     kind: 'landed',
     landings,
@@ -1121,6 +1132,21 @@ function graphValueMisfit(
     }
   }
   return undefined;
+}
+
+/**
+ * The binding a spread copies from: its name's, or — for `...m.k` — what the
+ * map holds under the key, bound as `x = m.k` would bind it.
+ */
+function spreadSourceBinding(spread: MapSpread, env: Environment): Binding | undefined {
+  if (spread.path === undefined) return env.resolve(spread.source);
+  let bound = env.resolve(spread.path.root);
+  for (const key of spread.path.members) {
+    const held = bound?.kind === 'value' ? bound.value : undefined;
+    if (!isDictValue(held)) return undefined;
+    bound = bindValue(held[key] ?? null, bound?.kind === 'value' ? bound.provenance : undefined);
+  }
+  return bound;
 }
 
 /**
@@ -3851,12 +3877,7 @@ class Interpreter {
               return;
             }
             const { value, provenance } = await this.evaluateSlot(rhs.expr, { env });
-            env.declare(statement.name, {
-              kind: 'value',
-              value,
-              provenance,
-              ...(this.bindsManyValues(rhs.expr, env) ? { many: true } : {}),
-            });
+            env.declare(statement.name, bindValue(value, provenance, { many: this.bindsManyValues(rhs.expr, env) }));
             return;
           }
           case 'extract':
@@ -5765,17 +5786,20 @@ class Interpreter {
     const trails: Provenance[] = [];
     for (const arg of statement.args) {
       if (arg.name === undefined) continue; // refused above: never positional
-      if (arg.kind !== 'expr') {
-        // A plugin's parameters are values. A record passed into one has no
-        // meaning the plugin could act on, so it is refused here rather than
-        // arriving as an unreadable config entry.
+      if (arg.kind === 'write' || arg.kind === 'closure' || arg.kind === 'type') {
+        // A plugin's parameters are values: a write is an effect, and a
+        // function or a type is no value yet. The checker refuses each.
         throw unsupported(
           `a ${arg.kind} argument to the plugin '${statement.callee}'`,
           'a plugin takes values — pass a field or an expression',
         );
       }
-      const { value, provenance } = await this.evaluateSlot(arg.expr, { env });
-      config[arg.name] = value;
+      const { value, provenance } = await this.pluginArgValue(arg, env, body);
+      // A record reaches only an argument declared to take structured data
+      // (the checker refuses it anywhere else), and what that takes is the
+      // record's fields.
+      const record = bindingOf(value);
+      config[arg.name] = record !== undefined ? recordFields(record) : value;
       trails.push(provenance);
     }
     const elapsed = await stopwatch(this.context.clock);
@@ -5802,6 +5826,21 @@ class Interpreter {
     return binding;
   }
 
+  /** A plugin argument's value: what `v = <argument>` would bind, read back
+   *  as `v` is. A call (a built-in's or a function's) or a node literal
+   *  evaluates exactly as it does as a function's value argument. */
+  private async pluginArgValue(
+    arg: Extract<CallArg, { kind: 'expr' | 'call' | 'node' }>,
+    env: Environment,
+    body: BodyContext,
+  ): Promise<{ value: unknown; provenance: Provenance }> {
+    if (arg.kind === 'expr') return this.evaluateSlot(arg.expr, { env });
+    const bound = await this.evaluateCallArg(arg, env, body, { takesValue: true });
+    return bound.kind === 'value'
+      ? { value: bound.value, provenance: bound.provenance ?? NO_PROVENANCE }
+      : { value: bound, provenance: NO_PROVENANCE };
+  }
+
   private async evaluateCallArg(
     arg: CallArg,
     env: Environment,
@@ -5813,7 +5852,7 @@ class Interpreter {
     // parameter does. Only a POSITION parameter is held to positions below.
     if (arg.kind === 'expr' && options.takesValue) {
       const { value, provenance } = await this.evaluateSlot(arg.expr, { env });
-      return { kind: 'value', value, provenance };
+      return bindValue(value, provenance);
     }
     if (arg.kind === 'write') {
       return this.executeWrite(arg.write, undefined, env, body);
@@ -5843,37 +5882,27 @@ class Interpreter {
         `a ${arg.kind === 'closure' ? 'function' : 'type'} handed to a function's parameter — the checker should have caught this`,
       );
     }
-    const raw = arg.expr.raw.trim();
-    if (BARE_IDENT.test(raw)) {
-      const binding = env.resolve(raw);
-      if (!binding) {
-        throw new MovementEngineError(
-          'MOVENG_RUNTIME',
-          `'${raw}' is not in scope — the checker should have caught this`,
+    // A POSITION parameter takes the record the argument is bound to — the
+    // binding `x = <argument>` would make, whatever path produced the record
+    // (a name, a pick, a map field).
+    const binding = await this.bindSlotValue(arg.expr, env);
+    switch (binding.kind) {
+      case 'event':
+      case 'handle':
+      case 'shapePosition':
+      case 'extractRoot':
+      case 'extractPosition':
+      case 'sourcePosition':
+      case 'resource':
+      case 'nodePosition':
+      case 'lazyWalk':
+        return binding;
+      default:
+        throw unsupported(
+          `passing ${describeBinding[binding.kind]} ('${arg.expr.raw.trim()}') as a movement argument`,
+          'arguments are positions — pass the event, a write handle, or adapt with an inline shape-write',
         );
-      }
-      switch (binding.kind) {
-        case 'event':
-        case 'handle':
-        case 'shapePosition':
-        case 'extractRoot':
-        case 'extractPosition':
-        case 'sourcePosition':
-        case 'resource':
-        case 'nodePosition':
-        case 'lazyWalk':
-          return binding;
-        default:
-          throw unsupported(
-            `passing ${describeBinding[binding.kind]} ('${raw}') as a movement argument`,
-            'arguments are positions — pass the event, a write handle, or adapt with an inline shape-write',
-          );
-      }
     }
-    throw unsupported(
-      'computed expressions as movement arguments',
-      'arguments are positions — pass a bound position or adapt with an inline shape-write',
-    );
   }
 
   private async interpretIf(
@@ -6663,19 +6692,9 @@ class Interpreter {
     // Its own name first, so a parameter of the same name shadows it.
     if (binding.self !== undefined) child.declare(binding.self, binding);
     for (const param of binding.closure.params) {
-      const supplied = values[param.name] ?? null;
-      // A RECORD arrives as the record it is. A collection op hands each member
-      // back in the currency it arrived in, so a member may BE a binding — and
-      // declaring it as one is what makes the parameter behave like every other
-      // name bound to a record: its fields read, a block head walks it, a list
-      // literal holds it, and interpolating it is refused. Wrapping it in a
-      // value binding made it a record only the places that unwrap by hand
-      // could see.
-      const record = bindingOf(supplied);
-      child.declare(
-        param.name,
-        record ?? { kind: 'value', value: supplied, provenance: NO_PROVENANCE },
-      );
+      // A collection op hands each member back in the currency it arrived in,
+      // so a member may BE a record — and binds as one.
+      child.declare(param.name, bindValue(values[param.name] ?? null));
     }
     return this.interpretBody(binding.closure.body, child, body);
   }
@@ -8166,6 +8185,45 @@ class Interpreter {
 
   // ── Writes ──
 
+  /**
+   * A target that starts at a MEMBER PATH (`write m.k { … }`,
+   * `write m.k-[:child]-> { … }`) starts at the record the path holds, bound
+   * exactly as `x = m.k` binds it (`bindSlotValue`), into an environment of
+   * the write's own under the path's spelling — so every step after this
+   * reads a name, as the checker's `bindTargetRoots` has it. `undefined` when
+   * every root is a name already.
+   */
+  private async bindTargetRoots(
+    target: MatchTarget,
+    env: Environment,
+  ): Promise<{ target: MatchTarget; env: Environment } | undefined>;
+  private async bindTargetRoots(
+    target: WriteTarget,
+    env: Environment,
+  ): Promise<{ target: WriteTarget; env: Environment } | undefined>;
+  private async bindTargetRoots(
+    target: WriteTarget,
+    env: Environment,
+  ): Promise<{ target: WriteTarget; env: Environment } | undefined> {
+    const paths: Array<{ name: string; expr: ExprSlot }> = [];
+    const named = mapTargetRoots(target, (root) => {
+      if (root.kind === 'name') return root;
+      const name = memberPathBindingName(root.expr);
+      if (name === undefined) {
+        throw new MovementEngineError(
+          'MOVENG_RUNTIME',
+          `'${root.expr.raw}' starts a write — only a name or a member path can, and the parser should have refused it`,
+        );
+      }
+      paths.push({ name, expr: root.expr });
+      return { kind: 'name', name };
+    });
+    if (paths.length === 0) return undefined;
+    const own = env.child();
+    for (const { name, expr } of paths) own.declare(name, await this.bindSlotValue(expr, env));
+    return { target: named, env: own };
+  }
+
   /** Returns the binding the write produced (a handle, or an in-memory
    *  shape position) — declared under `bindingName` when one is given,
    *  and the argument-adaptation currency for inline call args. */
@@ -8175,6 +8233,12 @@ class Interpreter {
     env: Environment,
     body: BodyContext,
   ): Promise<Binding> {
+    const rooted = await this.bindTargetRoots(authored.target, env);
+    if (rooted !== undefined) {
+      const written = await this.executeWrite({ ...authored, target: rooted.target }, bindingName, rooted.env, body);
+      if (bindingName !== undefined) env.declare(bindingName, written);
+      return written;
+    }
     // A spread is the field lines it stands for — from here on nothing can
     // tell `...e` from the lines written out.
     const write: WriteExpression =
@@ -8858,8 +8922,17 @@ class Interpreter {
     bindingName: string | undefined,
     env: Environment,
   ): Promise<Binding> {
-    const binding = env.resolve(target.alias);
-    const resolved = await this.resolvePositionWriteTarget(target.alias, binding, env);
+    // A member-path root is bound to a name before a write runs
+    // (`bindTargetRoots`), so the root here is a name.
+    const alias = pathRootName(target);
+    if (alias === undefined) {
+      throw new MovementEngineError('MOVENG_RUNTIME', `'write ${spellPathRoot(target.root)} { … }' reached the update path unbound`);
+    }
+    const binding = env.resolve(alias);
+    if (binding?.kind === 'nodePosition') {
+      return this.executeLocalPositionWrite(write, { alias, landing: binding }, bindingName, env);
+    }
+    const resolved = await this.resolvePositionWriteTarget(alias, binding, env);
 
     const { fields, fieldProvenance, fieldSemantics, fieldEvidence, resources } =
       await this.evaluateWriteFields({ write, target: resolved.target, env });
@@ -8880,7 +8953,7 @@ class Interpreter {
     if ('notFound' in handle) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
-        `'write ${target.alias} { … }' — the record (${resolved.target.adapter.adapterType} ${resolved.externalId}) no longer exists`,
+        `'write ${alias} { … }' — the record (${resolved.target.adapter.adapterType} ${resolved.externalId}) no longer exists`,
       );
     }
 
@@ -8891,6 +8964,72 @@ class Interpreter {
       target: resolved.target,
       fieldProvenance,
     });
+  }
+
+  /**
+   * `write e { … }` where `e` is a landing the run holds on one of its own
+   * edges — the run's graph is the record's system, and it updates by id.
+   *
+   * Nothing here is a second update path: the engine stands in as the adapter
+   * over the one landing (`localEdgeAdapter`) and the ordinary merge runs on
+   * top of it, so `?:` / `+:` read the landing's current values exactly as
+   * they read a system record's. The landing object IS the record every other
+   * name holds, so the merge is seen by every later read, and its place on its
+   * edge never moves. Its nested edges are not fields, and nothing here
+   * touches them.
+   *
+   * The update holds the record (`localRecordLock`), as any update does: two
+   * flows of a MAP updating the same landing merge one after the other, and
+   * two updating different landings never wait for each other.
+   *
+   * The firing log gets the row a local create gets — `local`, no
+   * `externalId`, `committed: false` — because nothing left the run.
+   */
+  private async executeLocalPositionWrite(
+    write: WriteExpression,
+    target: { alias: string; landing: Extract<Binding, { kind: 'nodePosition' }> },
+    bindingName: string | undefined,
+    env: Environment,
+  ): Promise<Binding> {
+    const { alias, landing } = target;
+    const edgeName = landing.landedOn;
+    if (edgeName === undefined) {
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `'write ${alias} { … }' — '${alias}' is a node this run synthesised, not a record on one of its edges, so there is no record to update. Write it onto an edge ('write node-[:edge]-> { … }') and update what that hands back`,
+      );
+    }
+    const store = localEdgeAdapter({ edge: { kind: 'landed', landings: [landing] }, edgeName });
+    const destination: WriteDestination = { adapter: store.adapter, recordType: edgeName, parents: [] };
+    const { fields, fieldProvenance, fieldSemantics, fieldEvidence, resources } =
+      await this.evaluateWriteFields({ write, target: destination, env });
+    const record = await this.applyUpdate({
+      adapter: store.adapter,
+      recordType: edgeName,
+      externalId: '0',
+      fields,
+      fieldSemantics,
+      fieldEvidence,
+      resources,
+      parentLinks: [],
+      locks: [localRecordLock(landing)],
+    });
+    if ('notFound' in record) {
+      throw new MovementEngineError('MOVENG_RUNTIME', `'write ${alias} { … }' — the landing on '${edgeName}' is gone`);
+    }
+    // The trail of each value actually SENT; a field the fill gate suppressed
+    // keeps the trail it had.
+    for (const field of Object.keys(record.writtenValues)) {
+      landing.fieldProvenance[field] = fieldProvenance[field] ?? NO_PROVENANCE;
+    }
+    const { externalId: _local, ...row } = record;
+    this.recordLocalWrite({
+      record: { ...row, committed: false, local: { edge: edgeName } },
+      fieldProvenance,
+      bindingName,
+    });
+    if (bindingName !== undefined) env.declare(bindingName, landing);
+    return landing;
   }
 
   /**
@@ -9116,9 +9255,8 @@ class Interpreter {
       // reaching the record any other way never asks for.
       updateLocks: async (externalId) => {
         const landing = store.landingOf(externalId);
-        if (landing === undefined || landing.kind === 'nodePosition') {
-          return [recordLock(store.adapter, externalId)];
-        }
+        if (landing === undefined) return [recordLock(store.adapter, externalId)];
+        if (landing.kind === 'nodePosition') return [localRecordLock(landing)];
         const real = await realRecordOf(landing);
         return [
           recordLock(real.target.adapter, real.externalId),
@@ -9554,7 +9692,7 @@ class Interpreter {
   /** The map a `...v` spreads, as it is at run time — undefined when it is
    *  absent, which copies nothing, as TypeScript's `...undefined` does. */
   private spreadMap(spread: MapSpread, env: Environment): Record<string, unknown> | undefined {
-    const bound = env.resolve(spread.source);
+    const bound = spreadSourceBinding(spread, env);
     const value = bound?.kind === 'value' ? bound.value : undefined;
     if (bound?.kind === 'value' && (value === undefined || value === null)) return undefined;
     if (!isDictValue(value)) {
@@ -9576,7 +9714,7 @@ class Interpreter {
     node: Extract<Binding, { kind: 'nodePosition' }>,
     { spread, plan, env, shape }: { spread: MapSpread; plan: CopyPlan; env: Environment; shape: ShapeNode | undefined },
   ): Promise<void> {
-    const record = spreadRecord(spread, env.resolve(spread.source));
+    const record = spreadRecord(spread, spreadSourceBinding(spread, env));
     if (record === undefined) return;
     const copy = await this.snapshotRecord(record, plan, env);
     for (const field of plan.fields) {
@@ -10013,6 +10151,7 @@ class Interpreter {
         `${at} ${link.to.name}: an edge lands on a position — '${link.to.name}' is ${describeBinding[to.kind]}`,
       );
     }
+    if (to.kind === 'nodePosition' && to.landedOn === undefined) to.landedOn = link.edge;
     edge.landings.push(to);
   }
 
@@ -10040,6 +10179,12 @@ class Interpreter {
     bindingName: string | undefined,
     env: Environment,
   ): Promise<Binding> {
+    const rooted = await this.bindTargetRoots(match.target, env);
+    if (rooted !== undefined) {
+      const found = await this.executeMatch({ ...match, target: rooted.target }, bindingName, rooted.env);
+      if (bindingName !== undefined) env.declare(bindingName, found);
+      return found;
+    }
     const at = `match ${describeMatchTarget(match)}`;
     if (match.target.kind === 'linked') {
       const root = pathRootName(match.target.path);
@@ -10475,7 +10620,7 @@ class Interpreter {
       // `executePositionWrite` before resolving a create target.
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
-        `'write ${write.target.alias} { … }' is a position write — it should have been dispatched to the update path`,
+        `'write ${spellPathRoot(write.target.root)} { … }' is a position write — it should have been dispatched to the update path`,
       );
     }
 
@@ -11476,12 +11621,7 @@ class Interpreter {
     const selected = await this.selectedPositionBinding(slot, env);
     if (selected !== undefined) return selected;
     const evaluated = await this.evaluateSlot(slot, { env });
-    return {
-      kind: 'value',
-      value: evaluated.value,
-      provenance: evaluated.provenance,
-      ...(this.bindsManyValues(slot, env) ? { many: true } : {}),
-    };
+    return bindValue(evaluated.value, evaluated.provenance, { many: this.bindsManyValues(slot, env) });
   }
 
   /** A walk read for a field, or a second name for one: the value bound is

@@ -13,7 +13,10 @@
 // prompt over.
 //
 // Budget, acceptance rule and stop condition are fixed contracts, not author
-// knobs: six searches, two fetches, two model calls, three minutes. Spending
+// knobs: four searches at most and usually two or three, two fetches, two
+// model calls, three minutes. Searches are the scarce part: the search zone
+// accepts about fourteen a minute across every run in the process, so each
+// one a profile spends is time another profile waits. Spending
 // the budget without finding anything consistent returns nothing at all —
 // the pipeline skips a stage whose plugins found nothing, and absent fields
 // are the honest answer where no public signal exists.
@@ -140,9 +143,11 @@ export const LINKEDIN_RESEARCH_PLUGIN_MANIFEST: PluginManifest = {
 
 // ── Budget ────────────────────────────────────────────────────────────────
 
-/** At most six searches: two to establish identity, three for activity, one
- *  for the organisation. Two fetches. Two model calls. */
-const MAX_ACTIVITY_QUERIES = 3;
+/** At most four searches: one to establish identity (a second only when the
+ *  first did not turn up the profile), one for activity, and one for the
+ *  organisation only when the activity search said nothing about it. Two
+ *  fetches. Two model calls. */
+const MAX_ACTIVITY_QUERIES = 1;
 const MAX_FETCHES = 2;
 
 /** How long a fetched page is worth reading. The synthesiser sees an excerpt
@@ -253,7 +258,7 @@ const PLANNER_SYSTEM = `You are planning web searches to find out what a specifi
 You are given who they are, taken from their LinkedIn profile, and any other fields the record about them carries.
 
 Return ONLY valid JSON, no markdown, with:
-- "queries": at most 3 search queries aimed at RECENT activity. Between them cover: posts and articles under the person's name; press, funding or launch announcements naming them; event, podcast or conference appearances; pages of their organisation that list them. Quote the person's name. Do not search for their LinkedIn profile — we already have it. Each entry is an object: { "query": "...", "worth_reading": true|false } where worth_reading says whether a result from this query is likely to repay loading the whole page rather than reading its snippet.
+- "queries": the ONE search query most likely to surface their RECENT activity — posts and articles under their name, press, funding or launch announcements naming them, event, podcast or conference appearances, pages of their organisation that list them. Pick the single query that best covers what this person is likely to have in the public record; only one is run. Quote the person's name. Do not search for their LinkedIn profile — we already have it. Each entry is an object: { "query": "...", "worth_reading": true|false } where worth_reading says whether a result from this query is likely to repay loading the whole page rather than reading its snippet.
 - "terms": the 2 or 3 terms from the headline — the organisation, the field, the location — that a search result must be consistent with to be about THIS person and not a namesake.
 - "organisation": the organisation the headline names, "" if it names none. A LinkedIn headline often reads as one phrase rather than segments, so this is where the organisation is read out of it.
 
@@ -350,8 +355,8 @@ export const linkedinResearchImpl: TransformImpl = {
       fetchCandidates.push(link);
     };
     let activitySearches = 0;
-    for (const planned of plan.queries.slice(0, MAX_ACTIVITY_QUERIES)) {
-      if (!budgetLeft()) break;
+    for (const planned of plan.queries) {
+      if (activitySearches >= MAX_ACTIVITY_QUERIES || !budgetLeft()) break;
       // A query naming neither the person nor a real organisation searches for
       // the topic, not for them — every result it returns is somebody else's.
       if (!containsAnchor(planned.query, anchors)) {
@@ -380,8 +385,13 @@ export const linkedinResearchImpl: TransformImpl = {
     }
 
     // ── 4. Expand the organisation, then read the best two pages ──────────
+    // Only when the activity search said nothing about the organisation: a
+    // result that already names it is the context this search would buy.
+    const organisationCovered =
+      searchableOrganisation !== null &&
+      hits.some((hit) => containsAnchor(`${hit.title} ${hit.snippet}`, [searchableOrganisation]));
     let organisationSearched = false;
-    if (searchableOrganisation && budgetLeft()) {
+    if (searchableOrganisation && !organisationCovered && budgetLeft()) {
       organisationSearched = true;
       const results = await runSearch(`"${searchableOrganisation}" ${AGGREGATOR_SITES}`, LOG, run);
       for (const hit of results) {

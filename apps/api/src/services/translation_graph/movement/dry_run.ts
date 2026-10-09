@@ -128,8 +128,9 @@ export function movementWriteRunMode(
     const resolveOwner = (name: string): string => handleOwner.get(name) ?? name;
 
     const ownerOf = (write: WriteExpression): string | undefined => {
-      if (write.target.kind === 'position') return resolveOwner(write.target.alias);
-      const first = write.target.kind === 'linked' ? write.target.path : write.target.paths[0];
+      // A member-path root (`write m.k { … }`) is owned by no instance, as
+      // the `x` of `x = m.k` then `write x { … }` is not.
+      const first = write.target.kind === 'linked' ? write.target.path : write.target.kind === 'tuple' ? write.target.paths[0] : write.target;
       const root = first !== undefined ? pathRootName(first) : undefined;
       return root !== undefined ? resolveOwner(root) : undefined;
     };

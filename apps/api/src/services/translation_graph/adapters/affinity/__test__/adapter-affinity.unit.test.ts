@@ -254,10 +254,9 @@ const INTERACTIONS = [
 const RELATIONSHIP_STRENGTHS = [{ external_id: 7201, internal_id: 42, strength: 0.7 }];
 
 // A hand-maintained field carries Affinity's "no provider" sentinel, NOT null:
-// the v1 catalog fills `enrichment_source` in for every field. The fixture said
-// null for years, which is why nothing ever exercised the read-only branch and
-// why the rule that read any non-null value as an enrichment provider could
-// quietly make every custom field unwritable.
+// the v1 catalog fills `enrichment_source` in for every field. Enriched fields
+// (a real provider named) sit beside them and are exactly as writable —
+// Affinity accepts a field value on either.
 const ORG_FIELDS = [
   { id: 100, name: 'Stage', list_id: null, enrichment_source: 'none', value_type: 7, allows_multiple: false, dropdown_options: [{ id: 1, text: 'Seed', rank: 0, color: 0 }, { id: 2, text: 'Series A', rank: 1, color: 0 }] },
   { id: 101, name: 'Employees', list_id: null, enrichment_source: 'none', value_type: 3, allows_multiple: false, dropdown_options: null },
@@ -272,11 +271,11 @@ const ORG_FIELDS = [
   // A plain DROPDOWN (2). Unlike a RANKED_DROPDOWN (7), whose value arrives as
   // the whole option object, this one arrives as a bare option id.
   { id: 105, name: 'Segment', list_id: null, enrichment_source: 'none', value_type: 2, allows_multiple: false, dropdown_options: [{ id: 8, text: 'Enterprise', rank: 0, color: 0 }] },
-  // Enrichment-sourced AND list-scoped, so the per-list write variant has to
-  // drop a field as well as carry one.
+  // Enrichment-sourced AND list-scoped: the per-list write variant carries it
+  // like any other list field.
   { id: 106, name: '[Hot Leads] Affinity Score', list_id: 555, enrichment_source: 'affinity-data', value_type: 3, allows_multiple: false, dropdown_options: null },
-  // An enrichment-sourced REFERENCE field: an edge the link writer refuses, so
-  // the edge's own promise has to say so.
+  // An enrichment-sourced REFERENCE field: an edge the link writer serves
+  // like any other reference.
   { id: 107, name: 'Enriched Contact', list_id: null, enrichment_source: 'dealroom', value_type: 0 /* PERSON */, allows_multiple: false, dropdown_options: null },
   // A list-scoped REFERENCE field: an EDGE on the per-list type, so the prefix
   // has to come off the edge's name the same way it comes off a field's.
@@ -310,6 +309,8 @@ function makeAdapter(input?: {
   existingListEntry?: { id: number; listId: number; entityId: number };
   /** Affinity refuses every field-value write (a 422, say). */
   failFieldValueWrites?: boolean;
+  /** Affinity refuses field-value writes to just these fields, with a 422. */
+  refuseFieldIds?: number[];
 }): { adapter: AffinityAdapter; calls: FakeCalls } {
   const adapter = new AffinityAdapter({ teamId: 'team-aff' as TeamId, credentialsId: 'creds-1' });
   const calls: FakeCalls = {
@@ -395,6 +396,9 @@ function makeAdapter(input?: {
     createFieldValue: async (args: { field_id: number; entity_id?: number; list_entry_id?: number; value: unknown }) => {
       calls.createFieldValue.push(args);
       if (input?.failFieldValueWrites) throw new Error('Affinity Error: 422 (Unprocessable Entity)');
+      if (input?.refuseFieldIds?.includes(args.field_id)) {
+        throw new Error('Affinity Error: 422 (Unprocessable Entity): {"message":"Field is not editable"}');
+      }
       return {};
     },
     updateFieldValue: async (args: { id: number; value: unknown }) => {
@@ -574,8 +578,8 @@ describe('AffinityAdapter.describe', () => {
     // whole point of the rule; only a real provider closes a field.
     expect(byId.get('100')!.writable).toBe(true);
     expect(byId.get('101')!.writable).toBe(true);
-    // enrichment field → writable:false
-    expect(byId.get('102')!.writable).toBe(false);
+    // an enriched field is writable too — Affinity accepts the value
+    expect(byId.get('102')!.writable).toBe(true);
     // list-scoped field is excluded from the entity-level describe
     expect(byId.has('103')).toBe(false);
     // a Person-valued custom field is an EDGE, not a scalar field
@@ -590,9 +594,8 @@ describe('AffinityAdapter.describe', () => {
     expect(refsById.get('104')!.name).toBe('Primary Contact');
     expect(refsById.get('104')!.cardinality).toBe('one');
     expect(refsById.get('104')!.writable).toBe(true);
-    // An enrichment-sourced reference is still an edge (it reads), but the link
-    // writer refuses it, so the edge does not promise a write it cannot do.
-    expect(refsById.get('107')!.writable).toBe(false);
+    // An enrichment-sourced reference is an edge like any other, and writable.
+    expect(refsById.get('107')!.writable).toBe(true);
 
     // identity is the TG layer's concern — no invented native constraints …
     expect(descriptor!.uniquenessConstraints).toBeUndefined();
@@ -711,7 +714,7 @@ describe('AffinityAdapter.describe', () => {
     ]);
   });
 
-  it('an enrichment-sourced list field is dropped from the write, not written', async () => {
+  it('an enrichment-sourced list field is written like any other', async () => {
     const { adapter, calls } = makeAdapter();
     await adapter.createRecord({
       recordType: 'Organization List Entry',
@@ -719,7 +722,9 @@ describe('AffinityAdapter.describe', () => {
       parentLinks: [{ recordType: 'Organization', externalId: '42', edgeName: 'List Entries' }],
       mutationContext: {} as never,
     });
-    expect(calls.createFieldValue).toEqual([]);
+    expect(calls.createFieldValue).toEqual([
+      expect.objectContaining({ field_id: 106, value: 9, list_entry_id: 9999 }),
+    ]);
   });
 
   it('a membership write with no listName errors, naming the field', async () => {
@@ -1669,11 +1674,11 @@ describe('AffinityAdapter.resolveEntity', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. createRecord(organization) — built-in/custom split + read-only filtering
+// 4. createRecord(organization) — built-in/custom split
 // ---------------------------------------------------------------------------
 
 describe('AffinityAdapter.createRecord(organization)', () => {
-  it('splits built-ins from custom fields and skips enrichment (read-only) custom fields', async () => {
+  it('splits built-ins from custom fields and writes enriched custom fields too', async () => {
     const { adapter, calls } = makeAdapter();
     const result = await adapter.createRecord({
       // NATURAL currency: type displayName + field displayNames. Built-ins use
@@ -1687,21 +1692,27 @@ describe('AffinityAdapter.createRecord(organization)', () => {
         Domain: 'acme.com',
         Stage: 'Series A', // → field 100, ranked dropdown → option id 2
         Employees: '250', // → field 101, number → 250
-        'Crunchbase Rank': '5', // → field 102, enrichment field → dropped
+        'Crunchbase Rank': '5', // → field 102, enriched field → written
       },
       mutationContext: {} as never,
     });
 
     // built-ins drove createOrUpdateOrganisation
     expect(calls.createOrUpdateOrganisation).toHaveLength(1);
-    expect(calls.createOrUpdateOrganisation[0].searchQuery).toEqual({ name: 'Acme', domain: 'acme.com' });
+    // The custom text fields ride along as the matcher judge's context,
+    // labelled by the names the author wrote.
+    expect(calls.createOrUpdateOrganisation[0].searchQuery).toEqual({
+      name: 'Acme',
+      domain: 'acme.com',
+      context: 'Stage: Series A\nEmployees: 250\nCrunchbase Rank: 5',
+    });
 
     // custom field writes: ranked dropdown resolved to option id, number coerced;
-    // enrichment field 102 filtered out.
+    // the enriched field 102 written like the rest.
     const written = new Map(calls.createFieldValue.map((c) => [c.field_id, c.value]));
     expect(written.get(100)).toBe(2); // 'Series A' → option id 2
     expect(written.get(101)).toBe(250);
-    expect(written.has(102)).toBe(false);
+    expect(written.get(102)).toBe(5);
 
     expect(result.externalId).toBe('999');
     expect(result.data!.url).toBe('https://acme.affinity.co/companies/999');
@@ -1919,6 +1930,21 @@ describe('AffinityAdapter field writes fail loudly', () => {
     // Both fields were attempted — one refusal does not decide the others.
     expect(calls.createFieldValue).toHaveLength(2);
   });
+
+  it('ONE field Affinity refuses fails the write naming that field and its reason; the others land', async () => {
+    const { adapter, calls } = makeAdapter({ refuseFieldIds: [102] });
+    const write = adapter.createRecord({
+      recordType: 'Organization',
+      fields: { Name: 'Acme', Employees: '250', 'Crunchbase Rank': '5' },
+      mutationContext: {} as never,
+    });
+    await expect(write).rejects.toThrow(
+      /could not write field "Crunchbase Rank" \(Affinity Error: 422 .*Field is not editable.*\) on organization 999/,
+    );
+    await expect(write).rejects.not.toThrow(/Employees/);
+    // The refused field did not stop the one Affinity accepted.
+    expect(calls.createFieldValue.map((c) => c.field_id)).toEqual([101, 102]);
+  });
 });
 
 describe('AffinityAdapter reference edges on a list entry', () => {
@@ -2094,16 +2120,6 @@ describe('AffinityAdapter link / unlink an existing record', () => {
         mutationContext: MUTATION,
       }),
     ).rejects.toThrow(/Utter Nonsense/);
-    // An ENRICHMENT-sourced reference is refused on the same predicate the
-    // linked write refuses it on — the promise and the code agree.
-    await expect(
-      adapter.linkRecords({
-        from: { recordType: 'Organization', externalId: '42' },
-        edgeName: 'Enriched Contact',
-        to: { recordType: 'Person', externalId: '888' },
-        mutationContext: MUTATION,
-      }),
-    ).rejects.toThrow(/Enriched Contact/);
   });
 
   // The built-in person↔organization association, joined between two records
@@ -2179,18 +2195,20 @@ describe('AffinityAdapter link / unlink an existing record', () => {
     });
 
     // The association is NAMED, not inferred from "this edge is no custom
-    // reference field" — an enrichment-sourced reference the workspace will
-    // not let anyone write is still a refusal, not a silent employer link.
-    it('does not swallow an unwritable reference between the same two types', async () => {
-      const { adapter } = makeAdapter();
-      await expect(
-        adapter.linkRecords({
-          from: { recordType: 'Organization', externalId: '42' },
-          edgeName: 'Enriched Contact',
-          to: { recordType: 'Person', externalId: '888' },
-          mutationContext: MUTATION,
-        }),
-      ).rejects.toThrow(/Enriched Contact/);
+    // reference field" — a custom reference between the same two types (an
+    // enriched one here) is a field value, never an employer link.
+    it('an enriched reference between the same two types lands as its field, not as an employer', async () => {
+      const { adapter, calls } = makeAdapter();
+      await adapter.linkRecords({
+        from: { recordType: 'Organization', externalId: '42' },
+        edgeName: 'Enriched Contact',
+        to: { recordType: 'Person', externalId: '888' },
+        mutationContext: MUTATION,
+      });
+      expect(calls.createFieldValue).toEqual([
+        expect.objectContaining({ field_id: 107, value: 888 }),
+      ]);
+      expect(calls.updatePerson).toEqual([]);
     });
   });
 
@@ -2720,11 +2738,12 @@ ${body}
     expect(found.map((d) => d.code)).toContain('MOV_WRITE_UNKNOWN_FIELD');
   });
 
-  it("an ENRICHED list field is not writable — it is not in the variant either", async () => {
-    const found = await errorsFor(
-      '    write org-[:`List Entries`]-> { listName: "Hot Leads", `Affinity Score`: 9 }',
-    );
-    expect(found.map((d) => d.code)).toContain('MOV_WRITE_UNKNOWN_FIELD');
+  it('an ENRICHED list field is in the variant, so writing it validates clean', async () => {
+    expect(
+      await errorsFor(
+        '    write org-[:`List Entries`]-> { listName: "Hot Leads", `Affinity Score`: 9 }',
+      ),
+    ).toEqual([]);
   });
 
   it("the OTHER list's field is still rejected on this list (the variant is per-list)", async () => {
@@ -2740,11 +2759,10 @@ ${body}
     ).toEqual([]);
   });
 
-  it('an enrichment-sourced organization field is refused', async () => {
-    const found = await errorsFor(
-      '    write crm-[:`Organization`]-> { Name: "Acme", `Crunchbase Rank`: 5 }',
-    );
-    expect(found.map((d) => d.code)).toContain('MOV_WRITE_UNKNOWN_FIELD');
+  it('an enrichment-sourced organization field validates clean', async () => {
+    expect(
+      await errorsFor('    write crm-[:`Organization`]-> { Name: "Acme", `Crunchbase Rank`: 5 }'),
+    ).toEqual([]);
   });
 });
 

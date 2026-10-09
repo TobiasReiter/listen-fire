@@ -237,32 +237,6 @@ export const AFFINITY_VALUE_TYPE = {
 } as const;
 
 /**
- * Affinity's documented "this field has no enrichment provider" sentinel. The
- * v1 `/fields` catalog types `enrichment_source` as a string and fills it in
- * for EVERY field, so a hand-maintained field says `none` rather than saying
- * nothing.
- */
-export const AFFINITY_NO_ENRICHMENT_SOURCE = 'none';
-
-/**
- * Affinity custom fields backed by an enrichment source are system-populated
- * and not writable through the public field-value API. Surfaced in `describe`
- * with `writable: false` and dropped from writes.
- *
- * Read-only means a REAL provider — `affinity-data`, `dealroom`, `crunchbase`,
- * `pitchbook`. "No provider" arrives as the `none` sentinel, and (across API
- * versions and the fake) also as null, undefined or empty; all four are the
- * absence of a provider, so all four are writable. Treating the sentinel as a
- * provider is what made every custom field read-only and left the list-entry
- * write variant carrying nothing but its discriminant.
- */
-export function isReadOnlyField(field: { enrichment_source?: string | null }): boolean {
-  const source = field.enrichment_source?.trim();
-  if (source === undefined || source === '') return false;
-  return source.toLowerCase() !== AFFINITY_NO_ENRICHMENT_SOURCE;
-}
-
-/**
  * THE display name every list-scoped field carries on its own list's type,
  * keyed by field id.
  *

@@ -83,7 +83,17 @@ export function slotOfTree(slot: ExprSlot, tree: MExpr): ExprSlot {
       + slot.raw.slice(tree.at.end).replace(/[^\n]/g, ' ');
   const derived: ExprSlot = { raw, span: slot.span };
   slotTrees.set(derived, tree);
+  slotOrigins.set(derived, originalSlot(slot));
   return derived;
+}
+
+const slotOrigins = new WeakMap<ExprSlot, ExprSlot>();
+
+/** The slot the statement layer captured that `slot` was derived from
+ *  (`slotOfTree`) — `slot` itself when it is one. A derived slot keeps the
+ *  original's offsets, so a place in one is the same place in the other. */
+export function originalSlot(slot: ExprSlot): ExprSlot {
+  return slotOrigins.get(slot) ?? slot;
 }
 
 /** The slot as a value expression. */

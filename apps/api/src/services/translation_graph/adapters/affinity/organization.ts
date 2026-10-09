@@ -70,6 +70,9 @@ export async function createOrganization(input: {
   holderFor: ReferenceHolderResolver;
   /** Pre-resolved Affinity org id from the engine's resolveEntity, if any. */
   affinityId?: number;
+  /** What else the write says about the company, for the matcher's judge when
+   *  the operations layer searches again before creating. */
+  matchContext?: string;
 }): Promise<UpdateWriteResult> {
   const { operations, write } = input;
   const { builtins, custom } = partitionFields('organization', write.fields);
@@ -83,7 +86,7 @@ export async function createOrganization(input: {
 
   try {
     const result = await operations.createOrUpdateOrganisation({
-      searchQuery: { name: name ?? '', domain: domain ?? null },
+      searchQuery: { name: name ?? '', domain: domain ?? null, context: input.matchContext },
       userText: '',
       tracer: createNoopTracer(),
       fieldConfigurations: [],

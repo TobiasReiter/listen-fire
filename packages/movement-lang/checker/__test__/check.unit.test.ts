@@ -555,6 +555,20 @@ describe('name resolution', () => {
     expect(diagnostics[0].message).toMatch(/EXTRACT_VALUE is retired/);
   });
 
+  it('a comment with a quote or backtick inside a nested closure body does not break the expression', () => {
+    const diagnostics = check(
+      inMovement(
+        [
+          '  details = FIRST(MAP([msg], (x) => {',
+          "    # research isn't cheap, so it runs only for `x` with no \"website\"",
+          '    return x.`subject`',
+          '  }))',
+        ].join('\n'),
+      ),
+    );
+    expect(diagnostics.map(d => d.code)).not.toContain(C.EXPR_PARSE);
+  });
+
   it('aliases bound inside an expression do not leak false positives', () => {
     expectClean(
       inMovement('  write team-[:message]-> { text: FIRST(msg-[s:sender]->.`name`) }'),

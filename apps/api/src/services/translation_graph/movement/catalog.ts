@@ -266,9 +266,15 @@ function pluginSpecOf(impl: TransformImpl): PluginSpec {
     before: entry.before,
     output: pluginOutputOf(entry.output),
   }));
+  // Every argument's declared type, the auto-fed ones included: a plain call
+  // writes those itself.
+  const argTypes = Object.fromEntries(
+    signature.params.map((p) => [p.name, fieldTypeOfExpressionType(p.type)]),
+  );
   return {
     args: authorParams.map((p) => p.name),
     priced: impl.priced === true,
+    argTypes,
     ...(requiredArgs.length ? { requiredArgs } : {}),
     ...(signature.effects !== undefined ? { effects: signature.effects } : {}),
     ...(fedArgs.length ? { fedArgs } : {}),
@@ -315,8 +321,8 @@ function outputFieldType(field: { type: ExpressionType; optional?: boolean }): S
 }
 
 /**
- * `ExpressionType` → `SchemaFieldType`. Deliberately narrow: a plugin output is
- * scalars, lists of them, and nothing else. A `record` inside one would be a
+ * `ExpressionType` → `SchemaFieldType`. Deliberately narrow: a plugin's inputs
+ * and outputs are scalars, lists of them, and nothing else. A `record` inside one would be a
  * node, and a node needs a graph to belong to — a plugin output that wants one
  * is a `record` output at the top, whose fields are these.
  */

@@ -153,10 +153,10 @@ describe('what an expression head does NOT claim', () => {
   });
 });
 
-describe('a write’s parent is a NAMED record', () => {
+describe('a write’s parent is a record a name or a member path holds', () => {
   it('an expression parent is refused where it is written, with the binding to make', () => {
     expect(parseError('  write ONLY(rows)-[:founder]-> {\n    `Name`: "Jane Doe"\n  }')).toMatch(
-      /A write's parent is a NAMED record — bind it first \('parent = ONLY\(rows\)'/,
+      /A write starts from a record a name or a member path holds \('parent', 'm\.k'\) — bind this one first: 'parent = ONLY\(rows\)'/,
     );
   });
 
@@ -171,6 +171,6 @@ describe('a write’s parent is a NAMED record', () => {
   it('a tuple path names its parent too', () => {
     expect(
       parseError('  write (ONLY(rows)-[:e]->, b-[:f]->) {\n    `Name`: "Acme"\n  }'),
-    ).toMatch(/A write's parent is a NAMED record|Every tuple path starts at a bound handle/);
+    ).toMatch(/Every tuple path starts at a record a name or a member path holds/);
   });
 });

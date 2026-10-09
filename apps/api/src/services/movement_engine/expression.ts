@@ -424,6 +424,13 @@ export type Binding =
        *  round-trips through jsonb, which reorders keys). */
       fieldOrder: string[];
       fieldProvenance: Record<string, Provenance>;
+      /** The edge of a node this run built that this node is a landing on —
+       *  set when a write creates it there, or a `link` first appends it. A
+       *  landing has identity on that edge (it IS the record, held by
+       *  reference), so `write e { … }` updates it in place; a node on no
+       *  edge (a literal, an extracted record) has none to update. Also the
+       *  name the firing log records an update of it under. */
+      landedOn?: string;
       /** The arrow plane: one entry per edge the literal declared, LANDED
        *  (synthesised literals, or a walk already run) or DEFERRED (a `lazy`
        *  hop, walked afresh on every read). */
@@ -467,6 +474,25 @@ export function bindingOf(value: unknown): Binding | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const kind = (value as { kind?: unknown }).kind;
   return typeof kind === 'string' && kind in describeBinding ? (value as Binding) : undefined;
+}
+
+/**
+ * The ONE way a name is bound to what an expression evaluated to. A record
+ * binds as the record it is — whatever produced it: a traversal's landing
+ * picked by `FIRST`/`ONLY`/`AT`, a collection op's member, a field of a map
+ * that holds one, a block's returned record, an extraction's answer — so every
+ * consumer sees the same binding whichever path made it, and none has to ask
+ * where a name came from. Anything else binds on the value plane; `many` marks
+ * a walk read for a field (`isManyValued`).
+ */
+export function bindValue(
+  value: unknown,
+  provenance: Provenance = NO_PROVENANCE,
+  { many }: { many?: boolean } = {},
+): Binding {
+  const record = bindingOf(value);
+  if (record !== undefined) return record;
+  return { kind: 'value', value, provenance, ...(many === true ? { many: true } : {}) };
 }
 
 /**
@@ -566,6 +592,38 @@ const BINDING_IS_POSITION: Record<Binding['kind'], boolean> = {
   plugin: false,
   opaque: false,
 };
+
+/** One record the run holds — what a name bound to a record IS, read as a
+ *  value. Not the event (the movement's parameter, read through its source),
+ *  a block's many returns, a meta-node or a deferred walk. */
+function isOneRecord(binding: Binding): boolean {
+  switch (binding.kind) {
+    case 'handle':
+    case 'extractRoot':
+    case 'extractPosition':
+    case 'sourcePosition':
+    case 'resource':
+    case 'shapePosition':
+    case 'nodePosition':
+    case 'callback':
+      return true;
+    case 'event':
+    case 'instance':
+    case 'blockMeta':
+    case 'positions':
+    case 'tuple':
+    case 'closure':
+    case 'value':
+    case 'shape':
+    case 'movement':
+    case 'lazyWalk':
+    case 'plugin':
+    case 'opaque':
+      return false;
+    default:
+      return neverAsAny(binding);
+  }
+}
 
 /** The dot plane of a callback binding — the two reads the construct declares
  *  (`CALLBACK_READS` in the checker says the same thing, statically). */
@@ -1687,6 +1745,13 @@ function readBareName(name: string, ctx: MovementExprContext): MovementEvalResul
       provenance: { origins: binding.landings.flatMap(bindingEntityOrigins) },
     };
   }
+  if (isOneRecord(binding)) {
+    // One record reads as itself, however the name was bound to it — a
+    // traversal alias, a pick, a collection op's parameter, a map field. A
+    // consumer that takes data (an interpolation, a plugin's text argument) is
+    // refused it by the checker.
+    return { value: binding, provenance: { origins: bindingEntityOrigins(binding) } };
+  }
   if (binding.kind === 'tuple') {
     // The receipt read as a plain list — its slots' values, in order. That is
     // what `AT(r, i)` indexes and what a null check on a slot compares. A slot
@@ -1723,7 +1788,11 @@ async function evalValueMember(
   ctx: MovementExprContext,
 ): Promise<MovementEvalResult> {
   const position = ctx.scope === undefined ? memberPosition(expr, ctx) : undefined;
-  if (position !== undefined) {
+  // A name holding MANY records (an `extract(…)` answer, a block's returned
+  // records) is a list, and the member is that list — the same reading the bare
+  // name gets anywhere else. Stored as the binding, a later `MAP(x.entries, …)`
+  // would read back the engine's wrapper instead of the records.
+  if (position !== undefined && position.kind !== 'positions') {
     return { value: position, provenance: { origins: bindingEntityOrigins(position) } };
   }
   return evalMovementExpr(expr, ctx);
@@ -2361,8 +2430,9 @@ async function traverseFrom(
       // A synthesised node reads on BOTH planes: its entries by dot, its
       // synthesised landings by arrow. The arrow walk is the meta-node walker —
       // a landing is just another binding, so nested literals and blocks
-      // flatten through the same hops.
-      if (expr.steps.length > 0) {
+      // flatten through the same hops. `EXISTS(d-[:edge]->)` arrives as an
+      // exists terminal with no steps of its own, and walks too.
+      if (expr.steps.length > 0 || expr.expression.type === 'exists') {
         const reached = await walkMetaSteps([binding], expr.steps, name, ctx);
         const existsTerminal = existsTerminalOf(expr, name, { allowSteps: true });
         if (existsTerminal) return evaluateExists(existsTerminal, reached, ctx);
@@ -2410,6 +2480,14 @@ async function traverseFrom(
       // already gives it (run.ts `headIterationsFrom`).
       const held = heldRecords(binding.value, expr);
       if (held !== undefined) return traverseFrom(expr, name, held, ctx);
+      // `m.k.f` — the read goes on from what the key holds, bound as a name
+      // bound to it would be.
+      const member = expr.expression;
+      if (expr.steps.length === 0 && member.type === 'traverse' && member.aliasRoot !== undefined) {
+        const key = member.aliasRoot;
+        const { value, provenance } = readBindingField(binding, key, name);
+        return traverseFrom(member, `${name}.${key}`, bindValue(value, provenance), ctx);
+      }
       // EXISTS(x) on a value binding asks "does it hold a value?" —
       // null/undefined (an AI() that declared has_value: false, an
       // absent field projection) and empty lists answer false. This is
@@ -2827,6 +2905,13 @@ async function stepExistsCursor(
       );
     case 'blockMeta':
       return cursor.edges.get(step.edgeTypeId) ?? [];
+    case 'nodePosition': {
+      // A local graph's edge: its landings in hand, or a deferred walk run now
+      // — the same hop a block head takes from the node.
+      const edge = cursor.edges[step.edgeTypeId];
+      if (edge?.kind === 'deferred') return resolveDeferred(edge.walk, [], ctx, step.edgeTypeId);
+      return edge?.landings ?? [];
+    }
     case 'positions':
       return (
         await settledAll(cursor.landings.map((landing) => stepExistsCursor(landing, step, ctx)))
@@ -3822,8 +3907,6 @@ export function recordFields(binding: Binding): Record<string, unknown> {
     case 'callback':
       return { id: readCallbackField(binding, 'id'), url: readCallbackField(binding, 'url') };
     case 'value': {
-      const held = bindingOf(binding.value);
-      if (held !== undefined) return recordFields(held);
       if (isDictValue(binding.value)) return { ...binding.value };
       throw unsupported(`reading every field of ${describeHeldValue(binding.value)}`);
     }
@@ -3874,11 +3957,8 @@ function readBindingField(
     case 'extractRoot':
       return readEmissionField(binding.emission, field);
     case 'value': {
+      // One record is never held here — it binds as itself (`bindValue`).
       const value = binding.value;
-      // A RECORD held on the value plane (`deck = FIRST(pages)`) reads as the
-      // record it is — the dot-plane twin of a block head walking from one.
-      const held = bindingOf(value);
-      if (held !== undefined) return readBindingField(held, field, name);
       const projected =
         value !== null && typeof value === 'object' && !Array.isArray(value)
           ? ((value as Record<string, unknown>)[field] ?? null)

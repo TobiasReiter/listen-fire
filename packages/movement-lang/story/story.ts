@@ -46,7 +46,7 @@ import {
   constructionAsCall,
   isValueTypeRef,
   pathRootName,
-  spellName,
+  spreadSourceText,
   spellPathHead,
   spellValueType,
   typeNameOf,
@@ -1966,7 +1966,7 @@ class Projection {
     // A graph literal's `...v`: its keys are only known when it runs, so the
     // honest thing to show is the map they come from.
     for (const spread of literal.spreads ?? []) {
-      fields[`...${spread.source}`] = this.chip({ raw: spellName(spread.source), span: spread.span }, scope);
+      fields[`...${spread.source}`] = this.chip({ raw: spreadSourceText(spread), span: spread.span }, scope);
     }
     return { fields, children };
   }

@@ -28,8 +28,9 @@
 import { Loc, MovementDeclaration, ShapeDeclaration, Span } from '../parser/ast';
 import { FieldType, InstanceSchema } from './catalog';
 import type { EffectRow } from './effects';
+import type { CollectionOrder } from './typing';
 import type { CallCycle } from './call_cycles';
-import { PlaneType, PositionTypeRef, ReturnShape } from './typing';
+import { FieldsNeed, PlaneType, PositionTypeRef, ReturnShape } from './typing';
 
 export type SymbolKind =
   /** `import { attio } from adapters` */
@@ -110,6 +111,10 @@ export interface ScopeSymbol {
    * and the name holds one per landing. A spread reads it as those values.
    */
   plural?: true;
+  /** For a `plural` binding on the ARROW plane: the order the block's returns
+   *  were collected in — what the name reads as a list under, on the value
+   *  plane (a map field, a list member, a call argument). */
+  collectedOrder?: CollectionOrder;
   /**
    * The ACCESS PLANE of this binding (asks-as-adapter F13) — set on assignments
    * so a race receipt / block meta can route a name to the right plane. A `node`
@@ -162,6 +167,10 @@ export interface ScopeSymbol {
     /** The call cycle (strongly connected component) this function is in,
      *  when it is in one — `checker/call_cycles.ts`. */
     cycle?: CallCycle;
+    /** What the body needs of the record each record parameter is handed,
+     *  by parameter name — one cell per parameter, shared by every walk of
+     *  the body and every call site (`FieldsNeed`). */
+    paramNeeds?: Map<string, FieldsNeed>;
   };
 }
 

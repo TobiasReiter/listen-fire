@@ -16,7 +16,13 @@ const HARVEST = 'src/services/movement_engine/conformance/harvest';
 // eslint-disable-next-line local-rules/bottom-exports
 export default {
   ...unitConfig,
-  testMatch: ['<rootDir>/src/__conformance__/v1/**/*.unit.test.ts'],
+  // The binding × consumer matrix is not a corpus: it is written against
+  // today's tree and runs under every supported version, skipping the cells
+  // whose syntax version 1 does not have.
+  testMatch: [
+    '<rootDir>/src/__conformance__/v1/**/*.unit.test.ts',
+    '<rootDir>/src/services/movement_engine/__test__/binding_consumer_matrix.unit.test.ts',
+  ],
   testPathIgnorePatterns: ['/node_modules/'],
   resolver: path.join(CONFORMANCE, 'resolver.cjs'),
   setupFilesAfterEnv: [

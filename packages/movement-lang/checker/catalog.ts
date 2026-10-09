@@ -318,6 +318,14 @@ export interface PluginSpec {
    */
   priced: boolean;
   /**
+   * What each argument takes, by name — the plugin's declared input types. A
+   * call is checked against them as a movement's arguments are against its
+   * parameters: a record handed to an argument that takes text is refused
+   * where it is written, and an argument declared to take structured data
+   * (`json`) is handed a record's fields. Absent for an argument nobody typed.
+   */
+  argTypes?: Record<string, SchemaFieldType>;
+  /**
    * Arguments (⊆ `args`) a call MUST supply — the `triggerConfigRequired`
    * shape, one door over: a call missing one is MOV_THROUGH_ARG_MISSING.
    *

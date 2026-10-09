@@ -523,11 +523,15 @@ function buildRecords(
         landingShape: landingShapeOf(child),
       };
     }
+    // An extracted record is one this run built, so it updates in place
+    // (`write r { … }`) as a record on one of the run's own edges does — the
+    // extraction's node is the edge it landed on.
     const record: NodePosition = {
       kind: 'nodePosition',
       fields,
       fieldOrder: (stage?.fields ?? []).map((f) => f.name),
       fieldProvenance,
+      landedOn: spec.name,
       edges,
     };
     if (isBlankFields(record, spec)) tallies.empty[spec.name] = (tallies.empty[spec.name] ?? 0) + 1;

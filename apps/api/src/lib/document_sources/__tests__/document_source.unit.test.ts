@@ -1,6 +1,35 @@
 import { DocumentSourceService } from '..';
-import { GoogleDocsService } from '../google_docs';
+import { GoogleDocsService, parsePageBoxLabel } from '../google_docs';
 import { NOTION_REGEX } from '#shared/constants/document_sources';
+
+describe('parsePageBoxLabel', () => {
+  [
+    {
+      title: 'first page of a multi-page deck',
+      label: 'Page 1 of 14',
+      expected: { page: 1, total: 14 },
+    },
+    {
+      title: 'a later page',
+      label: 'Page 3 of 14',
+      expected: { page: 3, total: 14 },
+    },
+    {
+      title: 'the zoom control label is not a page label',
+      label: 'Page zoom control',
+      expected: undefined,
+    },
+    {
+      title: 'a thumbnail alt is not a page box label',
+      label: 'A thumbnail image for page 3',
+      expected: undefined,
+    },
+  ].forEach(({ title, label, expected }) => {
+    it(title, () => {
+      expect(parsePageBoxLabel(label)).toEqual(expected);
+    });
+  });
+});
 
 describe('getGoogleFileId', () => {
   [

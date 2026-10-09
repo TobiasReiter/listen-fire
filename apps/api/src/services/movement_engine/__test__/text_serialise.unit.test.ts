@@ -285,6 +285,42 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
     ]);
   });
 
+  it("a created system record: its edges were never walked, so none appears (absent, never `[]`)", async () => {
+    await expect(
+      run([
+        '  c = write crm-[:companies]-> { name: "Acme" }',
+        '  write crm-[:companies]-> { name: TEXT.SERIALISE(c, "JSON") }',
+      ]),
+    ).resolves.toEqual(['Acme', json({ name: 'Acme' })]);
+  });
+
+  it("a run-built entry with no founder: the run holds its edge, so it prints as `[]`", async () => {
+    await expect(
+      run([
+        '  deduped = node { entries: <Entry> }',
+        '  h = write deduped-[:entries]-> { name: "Acme" }',
+        '  write crm-[:companies]-> { name: TEXT.SERIALISE(h, "JSON") }',
+      ]),
+    ).resolves.toEqual([json({ founder: [], hot: null, name: 'Acme', raised: null, stage: null })]);
+  });
+
+  it('a run-built entry whose founder edge a block walked prints its members', async () => {
+    await expect(
+      run([
+        ...COLLECTED,
+        '  deduped-[e:entries]-> {',
+        '    e-[f:founder]-> {',
+        '      write crm-[:companies]-> { name: f.first }',
+        '    }',
+        '    write crm-[:companies]-> { name: TEXT.SERIALISE(e, "JSON") }',
+        '  }',
+      ]),
+    ).resolves.toEqual([
+      'Jane',
+      json({ founder: [{ first: 'Jane' }], hot: false, name: 'Acme', raised: 5, stage: null }),
+    ]);
+  });
+
   it('scalars', async () => {
     await expect(
       run([

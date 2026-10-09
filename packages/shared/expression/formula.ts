@@ -174,7 +174,7 @@ export function needsQuote(name: string): boolean {
 }
 
 export function quoteName(name: string): string {
-  return needsQuote(name) ? '`' + name.replace(/`/g, '\\`') + '`' : name;
+  return needsQuote(name) ? '`' + name.replace(/[\\`]/g, '\\$&') + '`' : name;
 }
 
 function quoteString(value: string): string {

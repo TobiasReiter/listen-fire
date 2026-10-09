@@ -350,3 +350,39 @@ describe('a required graph field is never silently empty (version 3)', () => {
     await expect(built).rejects.toThrow(/the value built for 'graph<Note>' doesn't fit it: it has no `label`/);
   });
 });
+
+describe('write … { ...e } drops children; graph<Shape> { ...e } keeps them', () => {
+  const ENTRY = ['node Entry {', '  name: <text>', '  node child {', '    first: <text>', '  }', '}'];
+
+  it("a write spread carries only e's fields; a graph-literal spread carries its children too", async () => {
+    const { result } = await run(
+      [
+        ...ENTRY,
+        '  sink = node { entries: <Entry> order by arrival }',
+        '  copies = node { entries: <Entry> order by arrival }',
+        '  marks = node { entries: <Entry> order by arrival }',
+        '  e = write sink-[:entries]-> { name: "Acme" }',
+        '  write e-[:child]-> { first: "Ann" }',
+        '  write e-[:child]-> { first: "Bob" }',
+        '  write copies-[:entries]-> { ...e }',
+        '  g = graph<Entry> { ...e }',
+        '  g-[c:child]-> {',
+        '    write marks-[:entries]-> { name: "FOUND-${c.first}" }',
+        '  }',
+      ],
+      [],
+    );
+
+    const written = result.writes.map((w) => w.writtenValues);
+    // e's own two children, from seeding it — not from any spread.
+    expect(written.filter((w) => w.first !== undefined)).toEqual([{ first: 'Ann' }, { first: 'Bob' }]);
+    // the write spread's copy: Acme's name, and nothing for its children —
+    // copies holds exactly one record, with no child writes trailing it.
+    expect(written.filter((w) => w.name === 'Acme')).toHaveLength(2); // the original + the copy
+    // the graph-literal spread: g's children are there to walk.
+    expect(written.filter((w) => typeof w.name === 'string' && w.name.startsWith('FOUND-'))).toEqual([
+      { name: 'FOUND-Ann' },
+      { name: 'FOUND-Bob' },
+    ]);
+  });
+});

@@ -270,17 +270,10 @@ describe('§B writes, handles, identity', () => {
     expectParseError('write (a-[:rel]->) { text: "x" }', /two or more parent paths/);
   });
 
-  it('rejects the retired flat `instance.type` write target, naming the edge form', () => {
-    expectParseError(
-      'company = write crm.company { name: "x" }',
-      /name the edge, not the type[\s\S]*write crm-\[:company\]->/,
-    );
-  });
-
   it('parses a bare-alias position write target (`write a { … }`)', () => {
     const program = parseProgram('write a { status: "Open" }');
     const t = target(as(program.statements[0], 'write').write, 'position');
-    expect(t.alias).toBe('a');
+    expect(t.root).toEqual({ kind: 'name', name: 'a' });
     expect(as(program.statements[0], 'write').write.fields.map((f) => f.name)).toEqual(['status']);
   });
 
@@ -1959,7 +1952,7 @@ describe('backtick-quoted names — the general rule', () => {
     const assignWrite = rv(as(program.statements[0], 'assign').value, 'write').write;
     expect(target(assignWrite, 'linked').path.root).toEqual({ kind: 'name', name: 'crm' });
     const positionWrite = as(program.statements[1], 'write').write;
-    expect(target(positionWrite, 'position').alias).toBe('my deal');
+    expect(target(positionWrite, 'position').root).toEqual({ kind: 'name', name: 'my deal' });
     expect(as(program.statements[2], 'refresh').name).toBe('my deal');
     expect(as(program.statements[3], 'delete').name).toBe('my deal');
     const inlineBlock = rv(as(program.statements[4], 'assign').value, 'inlineBlock').inlineBlock;
@@ -2090,5 +2083,46 @@ describe('`<T | null>` — an extraction field that may be missing', () => {
     expectParseError('movement m(x: <text | null>) {\n}', where);
     expectParseError('d = extract from [x] {\n  node e: <Entry | null>\n}', where);
     expectParseError('t = MEMBERS(<Thesis | null>)', where);
+  });
+});
+
+// A statement's expression slot ends where the expression grammar would end it:
+// both find a bracket's close with the same scan, so a literal or comment hides
+// a bracket from both or from neither.
+describe('a slot steps over literals and comments at every depth', () => {
+  const callArgs = (source: string): string[] => {
+    const call = rv(as(parseProgram(source).statements[0], 'assign').value, 'call').call;
+    return call.args.map((arg) => (arg.kind === 'expr' ? arg.expr.raw : arg.kind));
+  };
+
+  it.each([
+    ["a ' inside a \" string", '"it\'s } here"'],
+    ["a \" inside a ' string", "'say \"hi\" }'"],
+    ['a brace in a string inside an interpolation', '"a ${ "}" } b"'],
+    ['a backtick name with an escaped backtick', '`a\\`}`'],
+  ])('%s', (_label, literal) => {
+    expect(callArgs(`y = CONCAT(${literal}, z)`)).toEqual([literal, 'z']);
+  });
+
+  it('a comment inside a closure body is prose wherever the closure is written', () => {
+    const closure = ['MAP(xs, (x) => {', '  # the "website } isn\'t `here', '  return x', '})'].join('\n');
+    expect(callArgs(`y = ${closure}`)).toEqual(['xs', 'closure']);
+    // Inside a list the closure is one bracketed slot, found by the scan alone.
+    const listed = rv(as(parseProgram(`y = [${closure}]`).statements[0], 'assign').value, 'expr');
+    expect(listed.expr.raw).toBe(`[${closure}]`);
+  });
+
+  it('a `#` hop head inside a closure body is the hop, and a comment after it is a comment', () => {
+    const source = ['y = MAP(xs, (x) => {', "  return FIRST(x-[#linked]->) # isn't }", '})'].join('\n');
+    const call = rv(as(parseProgram(source).statements[0], 'assign').value, 'call').call;
+    const closure = call.args[1];
+    if (closure.kind !== 'closure') throw new Error('expected a closure argument');
+    const ret = as(closure.closure.body[0], 'return');
+    expect(rv(ret.value, 'call').call.args).toMatchObject([{ kind: 'expr', expr: { raw: 'x-[#linked]->' } }]);
+  });
+
+  it('a `#` inside a hop is a head at statement level too', () => {
+    const program = parseProgram(['x-[#linked]-> {', '  z = 1 # a comment }', '}'].join('\n'));
+    expect(as(program.statements[0], 'block').block.head.hopsRaw).toBe('-[#linked]->');
   });
 });

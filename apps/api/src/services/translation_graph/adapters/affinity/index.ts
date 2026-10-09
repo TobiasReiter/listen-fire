@@ -131,6 +131,7 @@ import {
   type ReferenceHolderResolver,
   type AffinityCustomFieldValue,
   type WebUrlSource,
+  organisationMatchContext,
 } from './shared';
 import {
   createOrganization,
@@ -300,7 +301,6 @@ export class AffinityAdapter extends BaseAdapter {
     if (!catalogType) return null;
     const fields = await cachedFields({
       client: await this.getApiClient(),
-      teamId: this.teamId,
       type: catalogType,
     });
     return fields.find((f) => f.id === fieldId)?.list_id ?? null;
@@ -639,7 +639,27 @@ export class AffinityAdapter extends BaseAdapter {
       operations,
       decoded: forResolve,
       resolve: { ...input, record, constraints },
+      ...(forResolve?.entity === 'organization'
+        ? { organisationContext: await this.organisationMatchContext(naturalTypeName, input.record) }
+        : {}),
     });
+  }
+
+  /** The judge's context for an organization match, read off the write's
+   *  NATURAL field names (the labels the author wrote) — built-ins excluded
+   *  by their internal ids. */
+  private async organisationMatchContext(
+    naturalTypeName: string,
+    fields: Record<string, unknown>,
+  ): Promise<string | undefined> {
+    const resolver = await this.resolver({ types: [naturalTypeName] });
+    return organisationMatchContext(
+      Object.entries(fields).map(([label, value]) => ({
+        label,
+        value,
+        fieldId: resolver.tryFieldId(naturalName(naturalTypeName), naturalName(label)) ?? label,
+      })),
+    );
   }
 
   /** The list-pinned identity behind a membership write: the collection type
@@ -1361,7 +1381,13 @@ export class AffinityAdapter extends BaseAdapter {
 
     switch (decoded.entity) {
       case 'organization':
-        return createOrganization({ operations, web, write: input, holderFor: this.holderFor });
+        return createOrganization({
+          operations,
+          web,
+          write: input,
+          holderFor: this.holderFor,
+          matchContext: await this.organisationMatchContext(rawInput.recordType, rawInput.fields),
+        });
       case 'person':
         return createPerson({ operations, web, write: input, holderFor: this.holderFor });
       case 'list-entry':
@@ -1630,8 +1656,7 @@ export class AffinityAdapter extends BaseAdapter {
     // The built-in association: a person and an organization, either way
     // round, along the edge the catalog publishes it under. NAMED rather than
     // inferred by exclusion — "anything that is not a custom reference field"
-    // would swallow an enrichment-sourced reference the workspace simply will
-    // not let anyone write, and turn a refusal into a silent employer link.
+    // would turn a misspelt or unknown edge into a silent employer link.
     const fromDecoded = await this.structuredIdFor(input.from.recordType);
     const fromId = Number(input.from.externalId);
     if (Number.isInteger(fromId) && isEmployerEdge(edgeName)) {
@@ -1714,7 +1739,6 @@ export class AffinityAdapter extends BaseAdapter {
     return readCustomFieldValues(operations, scope, {
       catalog: await cachedFields({
         client: await this.getApiClient(),
-        teamId: this.teamId,
         type:
           catalogType ??
           (scope.kind === 'entity' && scope.entityType === 'organization'
@@ -1814,7 +1838,7 @@ export class AffinityAdapter extends BaseAdapter {
     const client = await this.getApiClient();
     const [values, catalog] = await Promise.all([
       client.getFieldValues({ list_entry_id: listEntryId }),
-      cachedFields({ client, teamId: this.teamId, type: catalogType }),
+      cachedFields({ client, type: catalogType }),
     ]);
     const list = await this.listOfEntry(decoded, values, catalog);
     const grouped = await readCustomFieldValues(

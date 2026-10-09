@@ -300,6 +300,19 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       expect(out).toEqual(binding);
     });
 
+    it('a landing keeps the edge it landed on — what makes it a record to update after a resume', async () => {
+      const landing: Binding = {
+        kind: 'nodePosition',
+        landedOn: 'entries',
+        fields: { name: 'Acme' },
+        fieldOrder: ['name'],
+        fieldProvenance: {},
+        edges: {},
+      };
+      const out = await roundTrip(landing);
+      expect(out).toEqual(landing);
+    });
+
     it("a landed edge keeps its landings' ORDER — what `order by arrival` promises", async () => {
       const binding: Binding = {
         kind: 'nodePosition',

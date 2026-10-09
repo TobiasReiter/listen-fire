@@ -253,17 +253,10 @@ describe('§B writes, handles, identity', () => {
     expectParseError('write (a-[:rel]->) { text: "x" }', /two or more parent paths/);
   });
 
-  it('rejects the retired flat `instance.type` write target, naming the edge form', () => {
-    expectParseError(
-      'company = write crm.company { name: "x" }',
-      /name the edge, not the type[\s\S]*write crm-\[:company\]->/,
-    );
-  });
-
   it('parses a bare-alias position write target (`write a { … }`)', () => {
     const program = parseProgram('write a { status: "Open" }');
     const t = target(as(program.statements[0], 'write').write, 'position');
-    expect(t.alias).toBe('a');
+    expect(t.root).toEqual({ kind: 'name', name: 'a' });
     expect(as(program.statements[0], 'write').write.fields.map((f) => f.name)).toEqual(['status']);
   });
 
@@ -1828,7 +1821,7 @@ describe('backtick-quoted names — the general rule', () => {
     const assignWrite = rv(as(program.statements[0], 'assign').value, 'write').write;
     expect(target(assignWrite, 'linked').path.root).toEqual({ kind: 'name', name: 'crm' });
     const positionWrite = as(program.statements[1], 'write').write;
-    expect(target(positionWrite, 'position').alias).toBe('my deal');
+    expect(target(positionWrite, 'position').root).toEqual({ kind: 'name', name: 'my deal' });
     expect(as(program.statements[2], 'refresh').name).toBe('my deal');
     expect(as(program.statements[3], 'delete').name).toBe('my deal');
     const inlineBlock = rv(as(program.statements[4], 'assign').value, 'inlineBlock').inlineBlock;

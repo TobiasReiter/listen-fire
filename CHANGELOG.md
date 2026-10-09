@@ -63,6 +63,84 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 <!-- add merged PRs here -->
 
+## [v0.10.9] - 2026-10-07
+
+### Changed
+
+- An Affinity company written without a website can now be matched by name to one of Affinity's own shared records, when the name is distinctive and nearly the same ("Fyvie" finds "Fyvie AI") and nothing else the automation writes about the company contradicts it. A common name such as "Atlas" needs a matching website before one of Affinity's records is used. A record already in your workspace is always preferred, and an exact name alone still only matches a workspace record. Before, such a company was matched only against the workspace, so a second, empty copy was created beside Affinity's record.
+
+## [v0.10.8] - 2026-10-07
+
+### Fixed
+
+- Affinity fields that Affinity fills in itself, such as a person's LinkedIn URL, can be written like any other field. Before, saving refused a write to them as an unknown field, and a linked write along such a reference was refused. A value Affinity refuses fails the run with an error naming the field, the record and Affinity's reason; the record's other fields are still written.
+
+## [v0.10.7] - 2026-10-07
+
+### Added
+
+- A write can start from a member path: `write m.k { … }` updates the record a map's key holds, and `write m.k-[:edge]-> { … }` hangs a new record off it, as `x = m.k` then `write x …` would. The same rules apply: a path that holds a value is refused with `MOV_WRITE_POSITION_NOT_RECORD`, a system without update-by-id with `MOV_WRITE_POSITION_NO_UPDATE`, and an unknown field by name. Nested keys work too (`m.k.inner`), for writes and for reads. Before, saving refused these, and `write m.k { … }` was read as the old `instance.type` target. A call or literal as the start is still refused: bind it to a name first. This applies to every language version; under version 1, where any key of a map may be missing, `write m.k { … }` is refused as a record that may be empty.
+
+### Fixed
+
+- A record read from a system, handed to a function whose body serialises it, spreads it or passes it on to one that does, is refused on save with `MOV_CALL_ARG_OPAQUE_RECORD`, naming the parameter and the line that needs every field. The same holds for a body that walks to the record's children and serialises one, and for a closure bound to a name, as in `f = (e: <Entry>) => { … }`. A body that walks to a child and serialises it also refuses the result of a write to a system, whose own fields are in hand but whose children are the system's. A function handed to `MAP`, `FILTER`, `REDUCE`, `GROUPBY` or `KEYBY` with an annotated record parameter, as in `MAP(src-[:companies]->, (e: <Entry>) => TEXT.SERIALISE(e, "JSON"))`, is held to the same check against the members it is handed. A record read from a system, handed straight to a plugin argument that takes structured data, is refused with `MOV_CALL_ARG_TYPE`, naming the plugin. A call written in place as a plugin argument now runs and passes its value, as `relay(data: UPPER(x.name))` or `fetch_url(url: fetch_url(url: …))`, exactly as binding it to a name first and passing the name would; a `node { … }` handed to an argument that takes structured data, or to one that declares no type, passes its fields, as the same literal bound to a name does. A write written in place as any plugin argument, a `node { … }` handed to one that takes text or another plain value, a function or a type is refused with `MOV_CALL_ARG_TYPE`. Before, each of these saved and the run failed with `MOVENG_UNSUPPORTED`. Before, each saved and the run failed with `MOVENG_UNSUPPORTED`. Copy the fields into a record the automation builds and pass that. A function that only reads fields one at a time still takes a system's record. This applies to every language version.
+- A backslash in a backtick-quoted name escapes the next character everywhere a name is read: `` `a\`b` `` is the name a`b and `` `a\\b` `` is a\b. Before, a name at the start of a statement or in a block head kept the backslash while the same name inside an expression dropped it, so a name with a backslash never had one meaning; no saved automation in the test corpora uses one. This applies to every language version.
+- A `#` comment inside a bracketed value saves, as in `ids = [1, # the first` with `2]` on the next line, or the same inside a `{ … }` map or after a function's `=>`. Before, saving refused the `#`. A `#` directly inside a hop's brackets (`-[#linked]->`) is still a head, not a comment. This applies to every language version.
+- The editor treats the same text as a comment as the parser does: a `#` inside a `'…'` string or directly inside a hop's brackets is not a comment, and a `#` after `[` in a list is. Before, completions disappeared inside such strings and hops and appeared inside such comments.
+- A block head's hop alias may be backtick-quoted (`` xs-[`the company`:companies]-> { … } ``) and is bound like a bare one. Before, saving refused reads through it. This applies to every language version.
+
+## [v0.10.6] - 2026-10-06
+
+### Added
+
+- `MAP`, `FILTER`, `REDUCE`, `GROUPBY` and `KEYBY` take the records a block returned (`xs = src-[e:companies]-> { return e }`), as `COUNT`, `FIRST` and `AT` already did. Before, saving refused them with "reads a collection, and this is … one thing, not several". This applies to every language version.
+- A record that `extract(…)` or `extractOne(…)` handed back updates in place with `write r { … }`, as an entry on a `node { … }` collection does: the named fields are merged and the rest are left as they were. This works through any name holding it, including a `FIRST`/`ONLY`/`AT` pick from the answer. Before, saving refused the write. This applies to every language version.
+
+### Changed
+
+- A plugin's arguments are checked against the types the plugin declares. A record passed where a plugin takes text, such as `fetch_url(url: r)`, is refused on save with `MOV_CALL_ARG_TYPE`; pass one of its fields instead (`url: r.website`). Before, it saved and the plugin was handed the engine's internal form of the record. This applies to every language version.
+- `...x` in a write body takes any record whose fields the automation spells out, however the name holds it: a `MAP`/`FILTER`/`REDUCE` function's parameter, a `FIRST`/`ONLY`/`AT` pick, an extracted record, or a record the automation wrote into a system (its fields, not its id). Before, saving refused all but a few of these with `MOV_WRITE_SPREAD_SOURCE`. A spread of a record read from a system, or of a block's whole returned records, is still refused. This applies to every language version.
+
+### Fixed
+
+- A record picked with `FIRST`, `ONLY` or `AT` is the same record as the alias it came from, wherever the list came from (a walk, a list literal, a `FILTER` answer, a map's key, an extraction's answer). `write x { … }`, `write x-[:edge]-> { … }` and passing `x` to a function's record parameter now run. Before, they saved and then failed with "'x' is a value binding". This applies to every language version.
+- A record held under a map's key (`m = { k: e }`) reads (`m.k.name`), spreads (`write … { ...m.k }`, `graph<Shape> { ...m.k }`) and passes (`use(e: m.k)`) like any record. Before, saving refused the read and the spreads, and the call failed when it ran. Writing through it (`write m.k { … }`) is still refused: bind it to a name first. This applies to every language version.
+- `EXISTS(d-[:entries]->)` over a `node { … }` value, or over a nested node of a `graph<Shape> { … }`, now runs. Before, it saved and then failed with "this read shape on a synthesised node is not supported". This applies to every language version.
+- `graph<Shape> { ...h }`, where `h` is a record written into a system, copies the fields the write handed back. Before, it saved and then failed with "hopping past a 'child' landing that is a write handle". This applies to every language version.
+- `TEXT.SERIALISE` of a list of records read from a system is refused on save, as it is for one such record. Before, it saved and then failed. This applies to every language version.
+- `write x { … }`, `bind x` and `refresh x` where `x` holds a value rather than a record are refused on save. Before, they saved and then failed when they ran. This applies to every language version.
+
+## [v0.10.5] - 2026-10-06
+
+### Fixed
+
+- A `MAP`/`FILTER`/`REDUCE` written inside an expression (for example `FIRST(MAP([e], (x) => { … }))`) now runs its function the way the validator checked it. Before, a `graph<Shape> { ...x }` inside such a function validated and then failed every member with "'...x' spreads a map into a graph, and 'x' holds no value". A list written around one record, such as `[e]` where `e` is a write's result or an extracted record, now holds that record's type too, so spreading or reading a member of it is checked like `e` itself instead of being refused. This applies to every language version.
+- A `#` comment in a closure body written inside a list or another bracketed expression (for example `[MAP(xs, (x) => { … })]`) no longer breaks saving when its prose holds a quote, a backtick or a brace. A single-quoted string may hold a `"`, a `#` or a brace, and a backtick name may hold an escaped backtick (`` `a\`b` ``), in a statement as well as inside a closure body. Before, these failed to save with errors such as "Unbalanced '}'" or "Unterminated string"; this applied to every language version, and programs that saved before read exactly as they did.
+
+## [v0.10.4] - 2026-10-06
+
+### Added
+
+- `write e { … }` updates a record the run built in place: an entry on a `node { … }` collection, or a record in a `graph<Shape> { … }`'s nested node. It works through the handle a write handed back, the alias of a block head, and a `MAP`/`FILTER`/`REDUCE` function's parameter. The named fields are merged and the rest are left as they were, `?:` fills only what is empty, the entry keeps its place in the collection, and its nested records are untouched. Two `MAP` members updating the same entry take turns. The firing log records the update as a local write, not one committed to a system. Before, validation refused these writes; this applies to every language version. Writing to a whole `graph { … }` or `node { … }` value is still refused, because it is not a record.
+
+## [v0.10.3] - 2026-10-06
+
+### Changed
+
+- Bright Data web searches (`WEB_SEARCH_PROVIDER=brightdata`) are paced at 14 per minute per process, set by `BRIGHT_DATA_SERP_PER_MINUTE`; searches beyond it wait their turn instead of being refused by Bright Data, and LinkedIn activity research spends two or three searches per person instead of up to six.
+
+### Fixed
+
+- On save, `write e { … }` inside a `MAP` or `FILTER` function is now refused when `e` is an entry the run built itself (a landing on a `node { … }` edge), the same as it is for the alias of a block head. Before, the program validated and every member failed at run time with "'e' is a synthesised node — 'write e { … }' needs a record position". This applies to every language version. A function's parameter that holds one record is now checked as that record everywhere a record is checked, so a write to it is also checked field by field against the record it came from.
+- A `#` comment inside a closure body that sits inside an expression (for example `FIRST(MAP(xs, (x) => { … }))`) no longer breaks saving when the comment contains an apostrophe, a quote, a backtick or a brace. Before, the save failed with "Expected '}' to close the closure body"; this applied to every language version.
+
+## [v0.10.2] - 2026-10-06
+
+### Fixed
+
+- The Google Drive viewer fallback (used when the Drive API can't download a view-only file) reads pages again, now that it follows the viewer's current page-box and page-image labels instead of a page-counter control the viewer no longer renders.
+- A map that holds a list of records reads that list back. Examples are `{ piece: p, entries: extract(…) }`, a walk, and the records a block returned. `MAP`, `FILTER`, `REDUCE`, `GROUPBY`, `KEYBY`, `COUNT`, `FIRST`, `AT` and a block head over `x.entries` now work on it. Before, a run failed with "'MAP' reads a collection of values and got object", which applied to every language version. On save, the records a block returned now count as a list wherever they are held (a map key, a list member, a call argument). Before, the checker took them for one record.
+
 ## [v0.10.1] - 2026-10-06
 
 ### Fixed
