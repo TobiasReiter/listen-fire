@@ -216,7 +216,7 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `Intl.DateTimeFormat` (DATE.TODAY, DATETIME.AT) | the zone's wall reading asked of the environment (`tz_convert`); `instantAtZonedWallTime`'s search over those readings written out, `Date.UTC`'s 19xx years included | `stdlib::tests::datetime_at_names_the_instant_on_the_zones_wall_clock`, `oracle::…` (`date.today`, `datetime.at`) |
 | `JSON.stringify` (TEXT.SERIALISE) | its quoting and two-space layout; keys sorted by UTF-16 unit, then laid out in object order (index keys first) as `Object.fromEntries` does | `js::tests::json_stringify_indents_as_javascript_does`, `stdlib::tests::text_members` |
 | object-literal prototypes | `MAGNITUDE_SUFFIXES["constructor"]` is `Object`, so `"5 constructor"` is NaN; `MONTH_NAMES["constructor"]` fails `validParts` like no month | `stdlib::tests::figures_read_as_the_regex_reads_them` |
-| a dict whose `kind` names a binding kind | the TypeScript reads it as a record (`bindingOf`, whose `kind in describeBinding` walks the prototype chain, so `"toString"` and `"constructor"` count): its `==`, spreads and record arguments go back to TypeScript, and the shim sends no such value | `stdlib::tests::record_detection_walks_the_prototype_chain_as_in_does`, `tests::maps_keep_javascript_key_order` |
+| a dict whose `kind` names a binding kind | read as a record, as `bindingOf` reads it (`kind in describeBinding` walks the prototype chain, so `"toString"` and `"constructor"` count); its reads, `==`, spreads and record arguments are the TypeScript's for that kind | `record::tests::*`, `records_oracle::records_held_as_values_read_as_the_typescript_reads_them` |
 
 `tests/extraction_pin.rs` holds crate::extract and the priced-plugin cap to
 tests/oracle/extraction.json: 160 seeded programs (library files, `extends`,
@@ -353,7 +353,7 @@ refused where it stands (`is_test_declared_record`).
 |---|---|---|
 | `name_shadowed` | a body binds a name the movement's parameters or the file bind | the TypeScript's environment rebinding rules (what a later binding does to an earlier one) |
 | `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name | the same rules |
-| `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance, a node, an extraction's record), other than `x = <name>` of a record (a second name for it), `x == null` / `x != null` of any bound name, and an `EXISTS`, `IS` or walk rooted at it | the TypeScript's per-kind consumer behaviour: its errors and conversions when a record binding is read as text, a list, an argument or a spread (the record model held as a value) |
+| `name_not_value` | a plugin call's argument naming bare a name that may hold something other than a value (the event, a handle, an instance, a node, an extraction's record) | what the TypeScript hands a plugin for a binding |
 
 **Statements and right-hand sides** (a reached body):
 
@@ -361,11 +361,11 @@ refused where it stands (`is_test_declared_record`).
 |---|---|---|
 | `statement:call`, `movement_call`, `function_call` | a call statement of anything but a movement or a plugin (a built-in's or a collection op's); a call of a movement whose value is not one kind on every path, or whose kind is left open by a recursion; a bound call of a name the program binds that is not a movement, or of any non-movement callee before version 3 | the remaining call forms (a collection op as a statement, closures as callees) |
 | `call_park` | an `await sleep(…)` inside a movement a call enters | call frames in the park state: a park inside a callee resumes through them (run.ts ~:2834) |
-| `rvalue:closure`, `rvalue:lazy`, `rvalue:inlineBlock`, `rvalue:members`, `expression_closure` | closures and lazy walks as values; a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), run by the TypeScript as a call bound first (from version 3) | closure and lazy-walk binding kinds, with the call frames above |
+| `rvalue:closure`, `rvalue:lazy`, `rvalue:inlineBlock`, `expression_closure` | closures and lazy walks as values; a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), run by the TypeScript as a call bound first (from version 3) | closure and lazy-walk binding kinds, with the call frames above |
 | `statement:combinator`, `rvalue:combinator` | `parallel`, `race` | spawned arms in the executor, the in-run lock gate table (FIFO, shared or exclusive), a write-ordering ledger (write_ledger.ts), arm traces spliced in order, frames and joins in park state, race settlement (losers cancelled) |
 | `await_not_sleep` | an `await` of anything but `sleep(…)` (parallel, race, until, a callback, a landing) | the same, and the await kinds' park states |
 | `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame | fan-out frames that join parked iterations |
-| `statement:collection`, `rvalue:collection` | MAP, FILTER, … as statements or right-hand sides | bounded fan-out (fans.ts `mapConcurrent`) with closures |
+| `statement:collection`, `rvalue:collection` | MAP, FILTER, … whose config asks a concurrency or an initial batch other than 1 (members run one at a time here) | bounded fan-out (fans.ts `mapConcurrent`): members run concurrently, their requests interleaved as the TypeScript's are |
 | `rvalue:callback` | a callback | `park.callbacks.*`, a callback binding kind, and the callback body's entry ("Entries never routed" below) |
 | `statement:refresh` | `refresh` | its semantics (no corpus case runs one) |
 | `rvalue:extractCall` | the version-3 `extract(…)` call form | its prompt blocks, `llm.extractCall.call`, site ids `xc:<shape>#<n>` |
@@ -381,13 +381,12 @@ refused where it stands (`is_test_declared_record`).
 | reason | the construct | needs |
 |---|---|---|
 | `write_bind` | a write with `bind` | `park.bindings.*` |
-| `write_tuple`, `match_tuple`, `match_position` | a tuple write; a match over a tuple of paths, or of a bare alias | a tuple binding kind, per-slot writes |
+| `match_tuple`, `match_position` | a match over a tuple of paths, or of a bare alias | a tuple binding kind, per-slot writes |
 | `write_position_not_record`, `delete_not_record` | `write x { … }` where `x` is not a record (a write's handle, a block's hop alias, a node the run built or what one's edge holds); `delete x` where `x` is not a write's handle or a hop alias | the TypeScript's errors for the rest; a delete of what a node's edge holds |
 | `write_position_member_path` | `write m.k { … }`: a write from the record a map's member holds | a member-path record binding |
-| `write_root_expression`, `match_root_expression`, `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at an expression, or at a name that is not an instance, a handle, the event or a block's hop alias | the TypeScript's root resolution |
+| `write_root_expression`, `match_root_expression`, `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at an expression, or at a shape the file declares (`write Note.parent { … }`) | the TypeScript's root resolution |
 | `write_multi_hop`, `match_multi_hop` | a linked write or match that walks more (or less) than one edge | the TypeScript's error, or its multi-hop semantics |
-| `link_endpoint_not_handle` | a `link` or `unlink` endpoint that is not a write's (or a match's) handle | endpoints that are landed records or nodes |
-| `write_spread_source`, `write_spread_path`, `node_spread`, `node_spread_path`, `node_spread_source` | a write spread of a name that is not a value, a handle, a node or the event; `...m.k` in a write or a graph literal; a spread in a `node { … }` literal; a graph spread of a name that is not a value, a handle or a node | spreads of records and of map members |
+| `write_spread_path`, `node_spread`, `node_spread_path`, `node_spread_source` | `...m.k` in a write or a graph literal; a spread in a `node { … }` literal; a graph spread of a name that is not a value, a handle or a node | spreads of records and of map members |
 | `unique_by_without_key`, `unique_by_reads_beyond_candidate` | a `unique by` clause with no key (no bare field, parent or `field == value`); a conjunct that is not a pure predicate over the candidate | the TypeScript's post-filter for impure conjuncts |
 
 **Nodes and graphs** (a reached body):
@@ -404,9 +403,9 @@ refused where it stands (`is_test_declared_record`).
 | `block_head_rootless`, `block_head_expression_root`, `block_head_value_root`, `block_head_root` | a block head with no root; rooted at an expression (`AT(rows, 0)-[c:company]->`), a value (a list of records) or a kept walk (`files-[f:x]->` continues the walk past its head), or anything but an instance, a write's handle, the event, an enclosing block's hop alias, what an extraction yielded, a node the run built or what one's edge holds | heads rooted at every binding kind |
 | `block_multi_hop`, `block_head_step`, `block_head_does_not_lower` | a head of more than one hop, a hop that is not an edge, a head the probe cannot read | multi-hop walks |
 | `block_head_extract_hop` | a head over what an extraction yielded whose hop carries a WHERE (the TypeScript refuses it), an ORDER BY, a LIMIT or an incoming direction (which it does not read) | the TypeScript's refusal and readings there |
-| `block_head_resources`, `walk_records` | a `_resources` head (off the event or an extraction); a bare walk read as a value (a list of records) | resource descriptors (FileRef) crossing as the descriptor; a list of records as a value |
+| `block_head_resources` | a `_resources` head (off the event or an extraction) | resource descriptors (FileRef) crossing as the descriptor |
 | `traversal_meta_edge` | a hop over a `#`-prefixed edge: the engine's own meta references, which the TypeScript read wrapper hands the adapter unrestamped | the meta-edge walks over run-built accumulants (run.ts `metaEdgeBindings`), the adapter pass-through without restamping (kg.ts) |
-| `select_multi_hop`, `traversal_root`, `traversal_step`, `traversal_steps`, `traversal_terminal`, `walk_extract_hop`, `exists_step`, `exists_extract_hop`, `exists_over_value` | `x = FIRST(…)` of a walk of more than one hop; a field read or walk rooted at a name not held as its root; a hop that is not an edge; a field read off a held name that also walks hops; a walk ending in anything but a field; a hop down an extraction with a WHERE (or, in `EXISTS`, an ORDER BY or a LIMIT); `EXISTS(v-[…]->)` or `EXISTS(v WHERE …)` of a value | the full walk evaluator, with the TypeScript's errors for the forms it refuses |
+| `select_multi_hop`, `traversal_root`, `traversal_step`, `traversal_steps`, `traversal_terminal`, `walk_extract_hop`, `exists_step`, `exists_extract_hop` | `x = FIRST(…)` of a walk of more than one hop; a field read or walk rooted at a name not held as its root; a hop that is not an edge; a field read off a held name that also walks hops; a walk ending in anything but a field; a hop down an extraction with a WHERE (or, in `EXISTS`, an ORDER BY or a LIMIT) | the full walk evaluator, with the TypeScript's errors for the forms it refuses |
 
 **Expressions** (a reached body, or a file-level value):
 
@@ -458,7 +457,7 @@ engine parked must resume here, so each is a port too:
 
 | reason | the input | needs |
 |---|---|---|
-| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or any non-plain prototype, a binding-shaped record outside parked state, a shared open reference, an array hole, an own `__proto__` key, a lone surrogate) | a `Date`, a lone surrogate and a `__proto__` key on the wire (the transition artefacts' surrogate and prototype rows) |
+| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or any non-plain prototype, a shared open reference, an array hole, an own `__proto__` key, a lone surrogate) | a `Date`, a lone surrogate and a `__proto__` key on the wire (the transition artefacts' surrogate and prototype rows) |
 | `resume_answer` | a resume that answers into its leaf (an ask) | the answer's binding rematerialised (`rematerialiseAnswer`) |
 | `resume_defers_race_settlement` | a resume that defers a race's settlement | the race settlement entry |
 
@@ -484,8 +483,13 @@ engine parked must resume here, so each is a port too:
 
 These depend on what a value holds, not on what the program says, and stay
 mid-run failures ("Errors a run can meet mid-run" below): a `__proto__` key
-spread in from a value, a record compared by identity, a binding-shaped
-dict read or spread, a field that is `Object.prototype`'s. Two mid-run
+spread in from a value, a record held in a value handed to the host, a
+binding-shaped dict of a kind whose reading needs what the run does not hold
+for it. A name typed as a value may hold a record at run time (a member of
+a walk read as a list, a dict whose `kind` names a binding kind), so
+admission walks a collection op's function, a closure's body and a
+movement's position parameters under every kind a value can carry there
+(`Kind::Held`), and the run dispatches on the binding it holds. Two mid-run
 MOVENG_UNSUPPORTED errors are the TypeScript engine's own, mirrored, and
 are not refusals: a movement parameter typed against something that is not
 an instance, and a trigger type other than webhook, poll, snapshot and
@@ -730,6 +734,25 @@ entity's fields.
 What stays the TypeScript engine's (refused, "Admission" above): returning a
 record from a bound block, heads of more than one hop, heads off a value, a node, an expression or
 `_resources`, a WHERE, ORDER BY or LIMIT on a head over an extraction, a park in a body.
+
+### Records held as values
+
+A value may hold a record (chunk 7A Task 3): a member of a walk read as a
+list, a closure's parameter, a dict whose `kind` names a binding kind or
+an `Object.prototype` member (`bindingOf`, mirrored in record.rs). Each is
+read, compared, spread, written from, linked and walked as the TypeScript
+reads that binding (`readBareName`, `traverseFrom`, `readBindingField`,
+`compareRecords`, `spreadKeysOf`, `resolveTupleWriteTarget`,
+`referencedRecords`), with V8's TypeError messages where the TypeScript
+throws one. Records compare by identity, else by address. A field an
+object lacks reads `Object.prototype`'s member, and a dict made text runs
+V8's ToPrimitive over its own `toString` and `valueOf`. MAP, FILTER,
+REDUCE, GROUPBY, KEYBY and MEMBERS run one member at a time
+(`interpretCollectionOp`, its `onError` and answer shapes; as calls from
+version 3). A park writes a held record as the TypeScript's `recordValue`
+descriptor and refuses a function (MOVENG_PARK_NONSERIALIZABLE). On the
+eval wire a built-in crosses as `["f", name]` and `Object.prototype` as
+`["p"]`. Pinned by tests/oracle/records.json (below).
 
 ### Expressions that walk, fold, test and name records
 
@@ -1012,15 +1035,16 @@ fails); none produces a different answer.
   `uncarried`): the statement fails with MOVENG_UNSUPPORTED naming the
   members. The TypeScript reads on. (A model reply that does is a
   validation failure instead: "Transition artefacts to mirror" below.)
-- A value held in a binding is shaped like an engine binding (an object
-  whose `kind` names one, the TypeScript's `bindingOf`): reading its field,
-  comparing it by `==`, or spreading it fails with MOVENG_UNSUPPORTED ("this
-  reading (…) is not supported…"). TypeScript reads such a dict as a record.
-- A field read off a held object names one of `Object.prototype`'s members
-  it does not own (`meta.\`constructor\``): MOVENG_UNSUPPORTED. TypeScript's
-  `value[field] ?? null` finds the prototype's member.
-- A record compared by identity (`a == b` where either is binding-shaped):
-  MOVENG_UNSUPPORTED. TypeScript compares two records by identity.
+- A record held in a value reaches a host request's arguments (an adapter
+  call's, a plugin call's a closure built): MOVENG_UNSUPPORTED before the
+  request is made. TypeScript hands the host the binding object itself.
+- A dict whose `kind` names a binding kind the TypeScript would read
+  through state this run does not hold for it (a traversed `instance`, a
+  `handle` with steps, `positions` holding arrays, a `lazyWalk` with a
+  walk): MOVENG_UNSUPPORTED ("a value shaped like …"). The records oracle
+  bounds these to 2% of its cases; it meets none today.
+- A GROUPBY key that is `__proto__`: MOVENG_UNSUPPORTED. TypeScript sets
+  the group object's prototype.
 - A hop's ORDER BY over more than 64 records whose keys mix numbers with
   other kinds, or a `SORT` over more than 64 such members:
   MOVENG_UNSUPPORTED ("Transition artefacts to mirror" below). TypeScript orders them by
@@ -1032,8 +1056,7 @@ fails); none produces a different answer.
   refused, `is_test_declared_graph`).
 
 None of the first five is a built-in's reading, so none can be handed to the
-TypeScript member (`builtins.*`); each needs the record model a later slice
-brings.
+TypeScript member (`builtins.*`).
 
 The record verbs, the target WHERE, nested and bound blocks add none: each
 of their mid-run failures (an adapter without `linkRecords`,
@@ -1196,7 +1219,7 @@ Sizes are estimates (XS, S, M, L).
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
 | 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | floored by the shim | the raw number passed, cut at its truncation, printed with ryu-js number text | XS |
-| 11 | records held in values (binding-shaped dicts: `bindingOf` walks the prototype chain), `Object.prototype` field reads, identity comparison of records | MOVENG_UNSUPPORTED mid-run, or handed back | the TypeScript's readings, with the record model (`name_not_value`) | — |
+| 11 | records held in values (binding-shaped dicts: `bindingOf` walks the prototype chain), `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` and `Binding::Shaped`, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run" | oracle records.json (1,455 whole programs, seed 20261010, tests/records_oracle.rs) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |

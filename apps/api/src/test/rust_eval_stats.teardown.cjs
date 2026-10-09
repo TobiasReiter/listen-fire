@@ -33,11 +33,14 @@ const path = require('node:path');
 // 7A Task 2 (calls to helper movements, the graphs a run builds, lazy walks,
 // shaped graphs, 2026-10-09) runs v1 394, v2 469 whole (the binding x
 // consumer matrix's admitted cells among them: 48 and 50); the floors are
-// those less a margin of 2. A floor
+// those less a margin of 2. Chunk 7A Task 3 (records held as values,
+// collection ops and the writes, links and walks over any record,
+// 2026-10-09) runs v1 1006, v2 1309 whole; the floors are those less a
+// margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 392, v2: 467 };
+const RAN_WHOLE_FLOOR = { v1: 1004, v2: 1307 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
