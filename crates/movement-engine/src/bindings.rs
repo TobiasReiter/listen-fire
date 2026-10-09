@@ -43,6 +43,9 @@ pub enum Binding {
     /// 'extractRoot'`, `root`) or one of its entities a block head landed on
     /// (`kind: 'extractPosition'`).
     Extracted { emission: Rc<crate::extract::emission::Emission>, root: bool },
+    /// A walk kept to run at each read (`kind: 'lazyWalk'`): `x = lazy
+    /// msg-[a:files]->`.
+    LazyWalk(Rc<DeferredWalk>),
     /// A bound block's returned records (`kind: 'positions'`, run.ts
     /// `blockValue`). This engine binds one only when nothing returned: every
     /// `return` it admits returns a value, and values bind as a list.
@@ -81,10 +84,55 @@ pub struct Node {
     pub field_order: Vec<String>,
     pub field_provenance: Vec<(String, crate::env::Trail)>,
     /// The edge of a graph this run built that the node landed on, the first
-    /// one only (run.ts `setGraphEdge`). Carried across a park; this engine
-    /// updates no landing in place (admission refuses that write).
+    /// one only (run.ts `setGraphEdge`): what makes it a record of the run's
+    /// own graph, updatable in place.
     pub landed_on: Option<String>,
-    pub edges: Vec<(String, Vec<Binding>)>,
+    pub edges: Vec<(String, Edge)>,
+}
+
+impl Node {
+    /// The landings of the edge `name`, none when the node has no such edge
+    /// (`nodeEdgeLandings`).
+    pub fn landings(&self, name: &str) -> Vec<Binding> {
+        self.edges.iter().find(|(n, _)| n == name).map(|(_, e)| e.landings.clone()).unwrap_or_default()
+    }
+}
+
+/// `{kind: 'landed', landings, landingShape?}`: what the edge holds, in the
+/// order it came to hold it (a write appends, a `link` appends), and, for a
+/// declared edge, what a landing a write creates on it carries.
+#[derive(Debug, Default, Clone)]
+pub struct Edge {
+    pub landings: Vec<Binding>,
+    pub shape: Option<LandingShape>,
+    /// A `lazy` entry's edge (`{kind: 'deferred', walk}`): it holds no
+    /// landings, and every read of it runs the walk again.
+    pub deferred: Option<Rc<DeferredWalk>>,
+}
+
+impl Edge {
+    pub fn landed(landings: Vec<Binding>) -> Edge {
+        Edge { landings, shape: None, deferred: None }
+    }
+}
+
+/// `DeferredWalk`: a traversal as written, the scope it was written in
+/// captured flat (`captureScope`: later bindings never reach it), and the
+/// per-item tail its landings are synthesised through, if any.
+#[derive(Debug)]
+pub struct DeferredWalk {
+    pub head: movement_parser::ast::PathHead,
+    pub captured: Rc<Scope>,
+    /// The tail literal, and its AST path.
+    pub mapping: Option<(movement_parser::ast::NodeLiteral, String)>,
+}
+
+/// `LocalLandingShape`: a declared node's field names in declaration order
+/// and its nested nodes, each a shape of its own.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct LandingShape {
+    pub fields: Vec<String>,
+    pub edges: Vec<(String, LandingShape)>,
 }
 
 /// `{kind: 'handle', handle: WriteRecord, targetType, graph: {kind: 'instance', instance}}`.
@@ -146,9 +194,33 @@ impl Scope {
         self.parent.as_ref().and_then(|p| p.resolve(name))
     }
 
+    /// `resolveFunction`: the declared name of a function in scope (a
+    /// movement, a plugin, an import) written `name` in another letter case.
+    pub fn resolve_function(&self, name: &str) -> Option<String> {
+        let folded = name.to_lowercase();
+        let own = self.bindings.borrow().iter().find_map(|(bound, binding)| {
+            let callable = matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque);
+            (callable && bound.to_lowercase() == folded).then(|| bound.clone())
+        });
+        own.or_else(|| self.parent.as_ref().and_then(|p| p.resolve_function(name)))
+    }
+
     /// This scope's own bindings, in declaration order.
     pub fn own_bindings(&self) -> Vec<(String, Binding)> {
         self.bindings.borrow().clone()
+    }
+
+    /// `captureScope`: every binding the chain holds, flat, in a scope of
+    /// its own — an inner binding over an outer one of its name, in the
+    /// outer's place.
+    pub fn capture(self: &Rc<Self>) -> Rc<Scope> {
+        let captured = Scope::root();
+        for scope in self.chain_from_root() {
+            for (name, binding) in scope.own_bindings() {
+                captured.declare(name, binding);
+            }
+        }
+        captured
     }
 
     /// The lexical chain, root first, this scope last (`chainFromRoot`).
@@ -182,7 +254,7 @@ impl Names for Scope {
     fn is_record(&self, name: &str) -> bool {
         matches!(
             self.resolve(name),
-            Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_) | Binding::Positions(_) | Binding::Extracted { .. })
+            Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_) | Binding::Positions(_) | Binding::Extracted { .. } | Binding::LazyWalk(_))
         )
     }
 

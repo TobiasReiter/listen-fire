@@ -223,7 +223,7 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('write e { … } on a record the run built (ea1cc6ce92): refused, updated in place by the TypeScript engine', async () => {
+  it('write e { … } on a record the run built (ea1cc6ce92): updated in place, run whole in Rust (chunk 7A Task 2)', async () => {
     await onBoth(
       shaped(
         '  kept = node { entries: <Co> order by arrival }',
@@ -237,9 +237,7 @@ describe("main's language changes on both engines", () => {
         '    write crm-[:companies]-> { name: e.name }',
         '  }',
       ),
-      // A run-built collection's edge is declared, in a declared shape (the
-      // declaration itself is admitted from Task 2).
-      { refused: 'node_declared_entry' },
+      { runsWhole: true },
       [
         ['create', { name: 'Acme Inc!' }],
         ['create', { name: 'Beta!' }],
@@ -306,10 +304,10 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('EXISTS over a local graph (e03887cc3b): refused by name', async () => {
+  it('EXISTS over a local graph (e03887cc3b): run whole in Rust (chunk 7A Task 2)', async () => {
     await onBoth(
       movement('  g = graph { name: "root", notes: { body: "Brief" } }', '  if EXISTS(g-[:notes]->) {', '    write crm-[:companies]-> { name: "has notes" }', '  }'),
-      { refused: 'exists_node' },
+      { runsWhole: true },
       [['create', { name: 'has notes' }]],
     );
   });

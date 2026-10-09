@@ -74,13 +74,46 @@ fn nullish_to_null(value: Js) -> Js {
     if value.is_nullish() { Js::Null } else { value }
 }
 
-/// A target adapter the host resolved: its handle, its `adapterType`, and
-/// whether writes through it are rehearsed (captured, not committed).
+/// A target adapter: its `adapterType`, whether writes through it are
+/// rehearsed (captured, not committed), and what answers its calls.
 #[derive(Debug)]
 pub struct TargetAdapter {
-    pub instance: Instance,
     pub adapter_type: String,
     pub dry: bool,
+    pub through: Through,
+}
+
+/// Who answers a target adapter's calls: the host, for the instance it
+/// resolved; or this engine, for an edge of a node the run built.
+#[derive(Debug)]
+pub enum Through {
+    Host(Instance),
+    Local(Rc<crate::local::LocalEdge>),
+}
+
+impl TargetAdapter {
+    /// The store over a run-built node's edge (`localEdgeAdapter`).
+    pub fn local(edge: crate::local::LocalEdge) -> TargetAdapter {
+        TargetAdapter { adapter_type: crate::local::LOCAL_ADAPTER_TYPE.into(), dry: false, through: Through::Local(Rc::new(edge)) }
+    }
+
+    /// Whether the adapter implements `method`.
+    pub fn has(&self, method: &str) -> bool {
+        match &self.through {
+            Through::Host(instance) => instance.has(method),
+            Through::Local(_) => matches!(
+                method,
+                "listEntryPoints" | "describe" | "resolveEntity" | "createRecord" | "updateRecord" | "readRecord" | "deleteRecord" | "getFieldValue" | "getRelated"
+            ),
+        }
+    }
+
+    pub fn local_edge(&self) -> Option<&Rc<crate::local::LocalEdge>> {
+        match &self.through {
+            Through::Local(edge) => Some(edge),
+            Through::Host(_) => None,
+        }
+    }
 }
 
 /// One parent a linked write hangs off (`ResolvedWriteTarget.parents[n]`).
@@ -96,7 +129,9 @@ pub(crate) struct Parent {
 pub(crate) struct Target {
     pub(crate) adapter: Rc<TargetAdapter>,
     pub(crate) record_type: String,
-    pub(crate) graph: Rc<InstanceBinding>,
+    /// The system the record lives in; none for an edge of a node the run
+    /// built, which has no system behind it (`WriteDestination`).
+    pub(crate) graph: Option<Rc<InstanceBinding>>,
     pub(crate) parents: Vec<Parent>,
     pub(crate) handle_type: Option<String>,
     /// The target edge's WHERE, when it carries one.
@@ -105,8 +140,14 @@ pub(crate) struct Target {
 
 impl Target {
     /// A target with no parents and no WHERE: what a criteria link searches.
+    /// An edge of a node the run built: its store, the edge's name as the
+    /// written type, no system, no parents (`WriteDestination`).
+    pub(crate) fn local(adapter: Rc<TargetAdapter>, edge: &str) -> Target {
+        Target { adapter, record_type: edge.to_string(), graph: None, parents: Vec::new(), handle_type: None, where_: Vec::new() }
+    }
+
     pub(crate) fn bare(adapter: Rc<TargetAdapter>, record_type: String, graph: Rc<InstanceBinding>) -> Target {
-        Target { adapter, record_type, graph, parents: Vec::new(), handle_type: None, where_: Vec::new() }
+        Target { adapter, record_type, graph: Some(graph), parents: Vec::new(), handle_type: None, where_: Vec::new() }
     }
 }
 
@@ -121,7 +162,7 @@ pub(crate) enum Verb {
 /// What `evaluateWriteFields` hands back.
 pub(crate) struct Fields {
     pub(crate) fields: Js,
-    provenance: Vec<(String, Option<Trail>)>,
+    pub(crate) provenance: Vec<(String, Option<Trail>)>,
     semantics: Vec<(String, FieldWriteMode)>,
     pub(crate) descriptor: Js,
     /// Per field, the citation an untransformed extracted value earns
@@ -165,13 +206,25 @@ impl Line {
 impl Run<'_> {
     /// `executeWrite`. `path` is the write expression's AST path, where the
     /// checker's spread stamps are keyed.
-    pub(crate) async fn write(&self, write: &WriteExpression, binding_name: Option<&str>, scope: &Rc<Scope>, path: &str) -> Result<(), Stop> {
+    /// What it hands back is what a write argument passes on: the handle, or
+    /// the landing a write into a run-built node's edge made or merged into.
+    pub(crate) async fn write(&self, write: &WriteExpression, binding_name: Option<&str>, scope: &Rc<Scope>, path: &str) -> Result<Binding, Stop> {
         let lines = self.write_lines(write, path)?;
+        // Into an edge of a node this run built: the engine is the adapter.
+        if let WriteTarget::Linked { path, .. } = &write.target
+            && let Some(PathRoot::Name { name }) = &path.root
+            && let Some(Binding::Node(node)) = scope.resolve(name)
+        {
+            return self.local_write(write, &lines, path, node, binding_name, scope).await;
+        }
         if write.bind.is_some() {
             return Err(thrown(Failure::unsupported("a bound write", "the Rust engine runs identity writes")));
         }
         match &write.target {
             WriteTarget::Position { root: PathRoot::Name { name }, .. } => {
+                if let Some(Binding::Node(landing)) = scope.resolve(name) {
+                    return self.local_position_write(name, &lines, landing, binding_name, scope).await;
+                }
                 return self.position_write(name, &lines, binding_name, scope).await;
             }
             // Admission refuses it (`write_position_member_path`).
@@ -182,7 +235,7 @@ impl Run<'_> {
         }
         let resolved = self.write_target(&write.target, scope, Verb::Write).await?;
         let evaluated = self.write_fields(&lines, &resolved.adapter, &resolved.record_type, scope).await?;
-        let handle_type = discriminated_handle_type(resolved.graph.schema.as_ref(), &resolved.record_type, &evaluated.fields);
+        let handle_type = discriminated_handle_type(resolved.graph.as_ref().and_then(|g| g.schema.as_ref()), &resolved.record_type, &evaluated.fields);
         let target = Target { handle_type, ..resolved };
         let identity = self.unique_by_identity(&write.unique_by, &target)?;
         let native = unique::get(&evaluated.descriptor, "uniquenessConstraints");
@@ -200,8 +253,7 @@ impl Run<'_> {
         let record = self
             .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links, scope))
             .await?;
-        self.record_write(record, binding_name, scope, &target, &evaluated.provenance);
-        Ok(())
+        Ok(Binding::Handle(self.record_write(record, binding_name, scope, &target, &evaluated.provenance)))
     }
 
     /// The write's field lines, its spreads written out (`expandWriteSpreads`)
@@ -273,7 +325,7 @@ impl Run<'_> {
                 .or_else(|| instance.schema.as_ref().and_then(|s| s.collections.0.get(&edge)).map(|c| c.target.clone()))
                 .unwrap_or(edge);
             let adapter = self.target_adapter(instance).await?;
-            return Ok(Target { adapter, record_type, graph: instance.clone(), parents: Vec::new(), handle_type: None, where_: where_.into_iter().collect() });
+            return Ok(Target { adapter, record_type, graph: Some(instance.clone()), parents: Vec::new(), handle_type: None, where_: where_.into_iter().collect() });
         }
         let name = root_name.unwrap_or_default();
         let describe = |b: &Option<Binding>| b.as_ref().map_or("not in scope".to_string(), |b| describe_binding(b).to_string());
@@ -331,7 +383,7 @@ impl Run<'_> {
         Ok(Target {
             adapter,
             record_type,
-            graph,
+            graph: Some(graph),
             parents: vec![Parent { handle_name: name, edge_name: edge.clone(), record_type: parent_type, external_id: parent_id, data }],
             handle_type: None,
             where_: where_.into_iter().collect(),
@@ -353,7 +405,7 @@ impl Run<'_> {
     }
 
     /// `singleWriteEdge`: the one edge step a linked path walks, and its WHERE.
-    fn single_edge(&self, path: &ast::PathHead, detail: &str) -> Result<(String, Option<TargetWhere>), Stop> {
+    pub(crate) fn single_edge(&self, path: &ast::PathHead, detail: &str) -> Result<(String, Option<TargetWhere>), Stop> {
         match edge_shape(path) {
             EdgeShape::One { edge, where_ } => Ok((edge, where_)),
             EdgeShape::MultiHop => Err(thrown(Failure::unsupported("multi-hop linked writes", detail))),
@@ -402,14 +454,14 @@ impl Run<'_> {
         let handle = host::instance_of(&resolved)
             .ok_or_else(|| thrown(Failure::engine("MOVENG_RUNTIME", format!("adapters.resolve answered {resolved}"))))?;
         let adapter_type = resolved.get("adapterType").and_then(Json::as_str).unwrap_or(&instance.adapter_slug).to_string();
-        let target = Rc::new(TargetAdapter { instance: handle, adapter_type, dry });
+        let target = Rc::new(TargetAdapter { adapter_type, dry, through: Through::Host(handle) });
         self.targets.borrow_mut().push((key, target.clone()));
         Ok(target)
     }
 
     /// `evaluateWriteFields`: `describe`, then each line in order.
     pub(crate) async fn write_fields(&self, lines: &[Line], adapter: &TargetAdapter, record_type: &str, scope: &Rc<Scope>) -> Result<Fields, Stop> {
-        let descriptor = self.call_adapter(&adapter.instance, "describe", env::object_of(vec![("typeId", Js::str(record_type))])).await.map_err(thrown)?;
+        let descriptor = self.store_call(&adapter, "describe", env::object_of(vec![("typeId", Js::str(record_type))])).await.map_err(thrown)?;
         let described: Vec<Js> = match unique::get(&descriptor, "fields") {
             Js::Array(list) => list.items.clone(),
             _ => Vec::new(),
@@ -583,7 +635,7 @@ impl Run<'_> {
         search.set("recordType".into(), Js::str(target.record_type.clone()));
         search.set("candidates".into(), Js::array(vec![]));
         search.set("constraints".into(), constraints.clone());
-        let found = self.call_adapter(&target.adapter.instance, "resolveEntity", Js::object(search)).await.map_err(thrown)?;
+        let found = self.store_call(&target.adapter, "resolveEntity", Js::object(search)).await.map_err(thrown)?;
         Ok(match unique::get(&found, "candidates") {
             Js::Array(list) => list.items.clone(),
             _ => Vec::new(),
@@ -604,11 +656,11 @@ impl Run<'_> {
                 _ => JsObject::new(),
             };
             let lacks = fields.iter().any(|f| data.get(f).is_none() && !crate::stdlib::is_object_prototype_name(f));
-            if lacks && target.adapter.instance.has("readRecord") {
+            if lacks && target.adapter.has("readRecord") {
                 let mut read = JsObject::new();
                 read.set("recordType".into(), Js::str(target.record_type.clone()));
                 read.set("externalId".into(), unique::get(&candidate, "externalId"));
-                if let Js::Object(current) = self.call_adapter(&target.adapter.instance, "readRecord", Js::object(read)).await.map_err(thrown)? {
+                if let Js::Object(current) = self.store_call(&target.adapter, "readRecord", Js::object(read)).await.map_err(thrown)? {
                     for (k, v) in current.entries() {
                         data.set(k.clone(), v.clone());
                     }
@@ -705,10 +757,10 @@ impl Run<'_> {
         let request = host::llm::arbitrate_entities(
             self.segment(),
             host::llm::Arbitration {
-                asserted: env::encode_plain(asserted),
-                candidates: env::encode_plain(&Js::array(candidates.to_vec())),
+                asserted: self.wire.encode(asserted),
+                candidates: self.wire.encode(&Js::array(candidates.to_vec())),
                 record_type,
-                constraints: env::encode_plain(constraints),
+                constraints: self.wire.encode(constraints),
                 language_version: self.version(),
             },
             self.ledger.budget(),
@@ -742,17 +794,18 @@ impl Run<'_> {
         if candidates.is_empty() {
             return Ok(candidates);
         }
-        let read = self.instance_read(&target.graph).await.map_err(thrown)?;
+        let graph = target.graph.as_ref().expect("a target WHERE is a system's: a local edge refuses one");
+        let read = self.instance_read(graph).await.map_err(thrown)?;
         let adapter = &target.adapter;
         let record_type = target.handle_type.clone().unwrap_or_else(|| target.record_type.clone());
         let mut kept = Vec::new();
         for candidate in candidates {
             let external_id = unique::get(&candidate, "externalId");
-            let current = if adapter.instance.has("readRecord") {
+            let current = if adapter.has("readRecord") {
                 let mut read = JsObject::new();
                 read.set("recordType".into(), Js::str(target.record_type.clone()));
                 read.set("externalId".into(), external_id.clone());
-                self.call_adapter(&adapter.instance, "readRecord", Js::object(read)).await.map_err(thrown)?
+                self.store_call(&adapter, "readRecord", Js::object(read)).await.map_err(thrown)?
             } else {
                 Js::Null
             };
@@ -791,7 +844,7 @@ impl Run<'_> {
     /// `findThenWrite`: the search, the rules and the judge, then an update
     /// of what was found or a create.
     #[allow(clippy::too_many_arguments)]
-    async fn find_then_write(
+    pub(crate) async fn find_then_write(
         &self,
         target: &Target,
         fields: &Fields,
@@ -804,7 +857,11 @@ impl Run<'_> {
         let (chosen, judge_unavailable) = self.resolve_identity(target, &fields.fields, resolve_record, constraints, narrowings, scope).await?;
         let matched = chosen.map(|c| unique::get(&c, "externalId"));
         if let Some(external_id) = matched.filter(|id| !matches!(id, Js::Undefined)) {
-            if let Some(updated) = self.apply_update(target, &external_id, fields, parent_links).await? {
+            let locks = match target.adapter.local_edge() {
+                None => vec![unique::record_lock_name(&target.adapter.adapter_type, &external_id)],
+                Some(edge) => self.local_update_locks(edge, &external_id, constraints, resolve_record, &fields.fields).await.map_err(thrown)?,
+            };
+            if let Some(updated) = self.apply_update(target, &external_id, fields, parent_links, locks).await? {
                 return Ok(updated);
             }
         }
@@ -817,9 +874,8 @@ impl Run<'_> {
 
     /// `applyUpdate`: the record held while its current values are read and
     /// merged into. `None` when the adapter reports it gone.
-    async fn apply_update(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js]) -> Result<Option<Js>, Stop> {
-        let name = unique::record_lock_name(&target.adapter.adapter_type, external_id);
-        self.with_locks(vec![name], self.merge_into_record(target, external_id, fields, parent_links)).await
+    pub(crate) async fn apply_update(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js], locks: Vec<String>) -> Result<Option<Js>, Stop> {
+        self.with_locks(locks, self.merge_into_record(target, external_id, fields, parent_links)).await
     }
 
     async fn merge_into_record(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js]) -> Result<Option<Js>, Stop> {
@@ -828,12 +884,12 @@ impl Run<'_> {
             Js::Object(object) => object.entries().iter().map(|(k, _)| Js::str(k.clone())).collect(),
             _ => Vec::new(),
         };
-        let current = if adapter.instance.has("readRecord") {
+        let current = if adapter.has("readRecord") {
             let mut read = JsObject::new();
             read.set("recordType".into(), Js::str(target.record_type.clone()));
             read.set("externalId".into(), external_id.clone());
             read.set("fieldIds".into(), Js::array(keys));
-            self.call_adapter(&adapter.instance, "readRecord", Js::object(read)).await.map_err(thrown)?
+            self.store_call(&adapter, "readRecord", Js::object(read)).await.map_err(thrown)?
         } else {
             Js::Null
         };
@@ -899,7 +955,7 @@ impl Run<'_> {
         }
         update.set("mutationContext".into(), self.mutation_context.borrow().clone());
         update.set("parentLinks".into(), Js::array(parent_links.to_vec()));
-        let updated = self.call_adapter(&adapter.instance, "updateRecord", Js::object(update)).await.map_err(thrown)?;
+        let updated = self.store_call(&adapter, "updateRecord", Js::object(update)).await.map_err(thrown)?;
         if let Js::Object(object) = &updated
             && object.get("notFound").is_some()
         {
@@ -980,7 +1036,7 @@ impl Run<'_> {
         create.set("mutationContext".into(), self.mutation_context.borrow().clone());
         create.set("parentLinks".into(), Js::array(parent_links.to_vec()));
         create.set("bridgeToExternal".into(), Js::Undefined);
-        let created = self.call_adapter(&adapter.instance, "createRecord", Js::object(create)).await.map_err(thrown)?;
+        let created = self.store_call(&adapter, "createRecord", Js::object(create)).await.map_err(thrown)?;
         let mut record = record_head(adapter, &target.record_type, true, !adapter.dry, unique::get(&created, "externalId"));
         record.set("writtenValues".into(), fields.fields.clone());
         record.set("resultData".into(), write_result_data(&created));
@@ -994,10 +1050,11 @@ impl Run<'_> {
 
     /// `executePositionWrite`: an update by the id of the record the alias
     /// stands on — a write's handle, or a traversed record.
-    async fn position_write(&self, alias: &str, lines: &[Line], binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<(), Stop> {
+    async fn position_write(&self, alias: &str, lines: &[Line], binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Binding, Stop> {
         let (target, external_id) = self.position_target(alias, scope, "update").await?;
         let fields = self.write_fields(lines, &target.adapter, &target.record_type, scope).await?;
-        let Some(record) = self.apply_update(&target, &external_id, &fields, &[]).await? else {
+        let lock = unique::record_lock_name(&target.adapter.adapter_type, &external_id);
+        let Some(record) = self.apply_update(&target, &external_id, &fields, &[], vec![lock]).await? else {
             return Err(thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!(
@@ -1007,8 +1064,7 @@ impl Run<'_> {
                 ),
             )));
         };
-        self.record_write(record, binding_name, scope, &target, &fields.provenance);
-        Ok(())
+        Ok(Binding::Handle(self.record_write(record, binding_name, scope, &target, &fields.provenance)))
     }
 
     /// `resolvePositionWriteTarget`: the record an alias stands on, as an
@@ -1016,6 +1072,12 @@ impl Run<'_> {
     /// is written through its graph's target adapter, under the type its
     /// position names; a handle under the type it stands on.
     pub(crate) async fn position_target(&self, alias: &str, scope: &Rc<Scope>, action: &str) -> Result<(Target, Js), Stop> {
+        self.position_target_of(alias, scope.resolve(alias), scope, action).await
+    }
+
+    /// `resolvePositionWriteTarget` of a binding in hand, `alias` naming it
+    /// in the messages.
+    pub(crate) async fn position_target_of(&self, alias: &str, binding: Option<Binding>, scope: &Rc<Scope>, action: &str) -> Result<(Target, Js), Stop> {
         let unstable = || {
             thrown(Failure::engine(
                 "MOVENG_RUNTIME",
@@ -1024,8 +1086,8 @@ impl Run<'_> {
                 ),
             ))
         };
-        let target = |adapter, record_type, graph| Target { adapter, record_type, graph, parents: Vec::new(), handle_type: None, where_: Vec::new() };
-        match scope.resolve(alias) {
+        let target = |adapter, record_type, graph| Target { adapter, record_type, graph: Some(graph), parents: Vec::new(), handle_type: None, where_: Vec::new() };
+        match binding {
             None => Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("'{alias}' is not in scope — the checker should have caught this")))),
             Some(Binding::Landed(landed)) => {
                 let position = &landed.position;
@@ -1080,17 +1142,7 @@ impl Run<'_> {
         let write_index = self.writes.borrow().len();
         let Js::Object(object) = &record else { unreachable!("a write record is an object") };
         let mut object = JsObject::clone_of(object);
-        let mut summarised = JsObject::new();
-        if let Js::Object(written) = object.get("writtenValues").cloned().unwrap_or(Js::Undefined) {
-            for (field, _) in written.entries() {
-                let trail = provenance.iter().find(|(n, _)| n == field).and_then(|(_, t)| t.clone()).unwrap_or_default();
-                summarised.set(field.clone(), Js::array(trail.origins.iter().map(|&id| self.summarised_origin(id)).collect()));
-            }
-        }
-        object.set("provenance".into(), Js::object(summarised));
-        if let Some(name) = binding_name {
-            object.set("bindingName".into(), Js::str(name));
-        }
+        self.summarise_written(&mut object, provenance, binding_name);
         let external_id = object.get("externalId").cloned().unwrap_or(Js::Undefined);
         let mut origin = vec![("kind", Js::str("write")), ("writeIndex", Js::Number(write_index as f64))];
         if !matches!(external_id, Js::Undefined) {
@@ -1102,7 +1154,7 @@ impl Run<'_> {
         let handle = Handle {
             record,
             target_type: target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
-            graph: target.graph.clone(),
+            graph: target.graph.clone().expect("a write bound as a handle is in a system"),
         };
         let handle = Rc::new(handle);
         if let Some(name) = binding_name {
@@ -1111,17 +1163,43 @@ impl Run<'_> {
         handle
     }
 
+    /// The firing record's `provenance` for each field it wrote, and the
+    /// name it was bound to.
+    pub(crate) fn summarise_written(&self, object: &mut JsObject, provenance: &[(String, Option<Trail>)], binding_name: Option<&str>) {
+        let mut summarised = JsObject::new();
+        if let Js::Object(written) = object.get("writtenValues").cloned().unwrap_or(Js::Undefined) {
+            for (field, _) in written.entries() {
+                let trail = provenance.iter().find(|(n, _)| n == field).and_then(|(_, t)| t.clone()).unwrap_or_default();
+                summarised.set(field.clone(), Js::array(trail.origins.iter().map(|&id| self.summarised_origin(id)).collect()));
+            }
+        }
+        object.set("provenance".into(), Js::object(summarised));
+        if let Some(name) = binding_name {
+            object.set("bindingName".into(), Js::str(name));
+        }
+    }
+
     /// A field read off a record the run holds (`readBindingField`): a
     /// node's field with its own trail, or a handle's with the read's origin
     /// (`fromOrigin({...handle.origin, field})`).
     pub(crate) fn record_field(&self, root: &str, field: &str, scope: &Scope) -> Result<Evaluated, EvalError> {
-        let handle = match scope.resolve(root) {
-            Some(Binding::Handle(handle)) => handle,
-            Some(Binding::Node(node)) => return crate::node::node_field(&node.borrow(), field),
+        match scope.resolve(root) {
+            Some(binding @ (Binding::Handle(_) | Binding::Node(_) | Binding::Extracted { .. })) => self.binding_field(&binding, field),
             // A field of no returned records is nothing (`collapse([])`).
-            Some(Binding::Positions(landings)) if landings.is_empty() => return Ok(Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) }),
-            Some(Binding::Extracted { emission, .. }) => return emission_field(&emission, field),
-            _ => return Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not a record in scope"))),
+            Some(Binding::Positions(landings)) if landings.is_empty() => Ok(Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) }),
+            _ => Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not a record in scope"))),
+        }
+    }
+
+    /// `readBindingField` for a record the run holds in hand: a node's field
+    /// with its own trail, an extraction's, or a handle's with the read's
+    /// origin.
+    pub(crate) fn binding_field(&self, binding: &Binding, field: &str) -> Result<Evaluated, EvalError> {
+        let handle = match binding {
+            Binding::Handle(handle) => handle,
+            Binding::Node(node) => return crate::node::node_field(&node.borrow(), field),
+            Binding::Extracted { emission, .. } => return emission_field(emission, field),
+            other => return Err(EvalError::engine("MOVENG_RUNTIME", format!("{} is not a record in hand", describe_binding(other)))),
         };
         let value = handle.record.field(field)?;
         let trail = match handle.record.get("origin") {
@@ -1136,12 +1214,21 @@ impl Run<'_> {
         Ok(Evaluated { value, prov: Prov::Built(trail) })
     }
 
+    /// A target adapter's method: the host's for an instance it resolved,
+    /// this engine's own for a run-built node's edge.
+    pub(crate) async fn store_call(&self, adapter: &TargetAdapter, method: &str, args: Js) -> Result<Js, Failure> {
+        match &adapter.through {
+            Through::Host(instance) => self.call_adapter(instance, method, args).await,
+            Through::Local(edge) => self.local_call(edge, method, args).await,
+        }
+    }
+
     /// An adapter method with its one argument object, on the eval wire both
     /// ways. The host's error as data fails the statement as the
     /// TypeScript's stand-in raises it (host_adapter.ts `hostCallFailure`):
     /// the shim holds that very error, under the `ref` the error carries.
     pub(crate) async fn call_adapter(&self, instance: &Instance, method: &str, args: Js) -> Result<Js, Failure> {
-        let answer = self.ask(host::adapters::call(self.segment(), instance, method, env::encode_plain(&args))).await?;
+        let answer = self.ask(host::adapters::call(self.segment(), instance, method, self.wire.encode(&args))).await?;
         self.adapter_answer(answer)
     }
 
@@ -1149,7 +1236,7 @@ impl Run<'_> {
     /// host's error as the stand-in raises it.
     pub(crate) fn adapter_answer(&self, answer: Option<Json>) -> Result<Js, Failure> {
         match host::call_answer(answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))? {
-            host::CallAnswer::Result(Some(wire)) => env::decode(&wire).map_err(|e| Failure::engine("MOVENG_RUNTIME", e)),
+            host::CallAnswer::Result(Some(wire)) => self.wire.decode(&wire).map_err(|e| Failure::engine("MOVENG_RUNTIME", e)),
             host::CallAnswer::Result(None) => Ok(Js::Undefined),
             host::CallAnswer::Error(error) => Err(Failure::Host(HostError { detail: error })),
         }
@@ -1197,6 +1284,15 @@ pub(crate) struct Identity {
 
 pub(crate) fn thrown(failure: Failure) -> Stop {
     Stop::Thrown(failure)
+}
+
+/// The failure a statement's step stopped with, where the step can only
+/// throw (a target's resolution).
+pub(crate) fn failure_of(stop: Stop) -> Failure {
+    match stop {
+        Stop::Thrown(failure) => failure,
+        _ => unreachable!("resolving a target only throws"),
+    }
 }
 
 /// The first keys of a write record, in the TypeScript's order.
@@ -1408,6 +1504,7 @@ pub fn describe_binding(binding: &Binding) -> &'static str {
         Binding::Node(_) => "a synthesised node",
         Binding::Landed(_) => "a traversed source record",
         Binding::Positions(_) => "a block's returned records",
+        Binding::LazyWalk(_) => "a deferred traversal",
         Binding::Extracted { root: true, .. } => "an extract result",
         Binding::Extracted { root: false, .. } => "an extracted entity",
     }

@@ -60,6 +60,10 @@ export interface RouteContext {
    *  `positionRef`): each crossed once, and is handed to the host's adapter
    *  as that one object on every call that names it. */
   positions: Map<number, unknown>;
+  /** The segment's wire: everything the engine was sent (its event, every
+   *  answer) by the id the wire gave it, so a request naming one hands the
+   *  host that very object, as the TypeScript engine does. */
+  wire: WireOut;
 }
 
 type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
@@ -134,12 +138,12 @@ const ROUTES: Record<string, Route> = {
    *  error the TypeScript's stand-in raises for it (host_adapter.ts), under
    *  the `ref` its answer carries, so a run that fails with it fails with an
    *  equal error. */
-  async 'adapters.call'(request, { host, hostErrors, positions }) {
+  async 'adapters.call'(request, { host, hostErrors, positions, wire }) {
     const method = adapterMethod(request.method);
     if (request.wire !== true) throw new RustShimError('adapters.call carries its args on the eval wire');
-    const rest = new WireOut().read(request.args);
+    const rest = wire.read(request.args);
     if (!isCallArgs(rest)) throw new RustShimError(`adapters.call ${method}: args are one object`);
-    const args = withPosition(request, rest, positions);
+    const args = withPosition(request, rest, positions, wire);
     const answer = await host.adapters.call({
       segmentId: segmentOf(request),
       instance: string(request.instance, 'adapters.call instance'),
@@ -150,18 +154,18 @@ const ROUTES: Record<string, Route> = {
       hostErrors.push(hostCallFailure(answer.error));
       return new Plain(plainJson({ error: { ...answer.error, ref: hostErrors.length - 1 } }, `adapters.call ${method} error`));
     }
-    const result = new WireOut().value(answer.result);
+    const result = wire.value(answer.result);
     if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
     return new Plain({ result });
   },
   /** The identity judge over a write's candidates, a priced call: the
    *  engine's budget goes in, the answer (its cost, or a budget refusal)
    *  comes back as data for the engine's ledger. */
-  async 'llm.arbitrateEntities'(request, { host, context }) {
-    const asserted = wiredRecord(request.asserted, 'llm.arbitrateEntities asserted');
-    const candidates = new WireOut().read(request.candidates);
+  async 'llm.arbitrateEntities'(request, { host, context, wire }) {
+    const asserted = wiredRecord(wire, request.asserted, 'llm.arbitrateEntities asserted');
+    const candidates = wire.read(request.candidates);
     if (!Array.isArray(candidates)) throw new RustShimError('llm.arbitrateEntities candidates is a list');
-    const constraints = new WireOut().read(request.constraints);
+    const constraints = wire.read(request.constraints);
     if (!isUniquenessConstraints(constraints)) throw new RustShimError('llm.arbitrateEntities constraints are {any: [{all}]}');
     const languageVersion = request.languageVersion;
     if (typeof languageVersion !== 'number') throw new RustShimError('llm.arbitrateEntities languageVersion is a number');
@@ -189,7 +193,7 @@ const ROUTES: Record<string, Route> = {
    *  on the eval wire, so the engine reads `parsedJson` exactly as
    *  `JSON.parse` left it (key order, the numbers past what JSON can write);
    *  its cost is charged to the run's account as it passes, as the judge's. */
-  async 'llm.client.call'(request, { host, context }) {
+  async 'llm.client.call'(request, { host, context, wire }) {
     if (request.wire !== true) throw new RustShimError('llm.client.call takes its answer on the eval wire');
     const effort = optionalString(request.effort, 'llm.client.call effort');
     if (effort !== undefined && !isEffort(effort)) throw new RustShimError(`llm.client.call effort ${JSON.stringify(effort)} is not an effort`);
@@ -208,31 +212,31 @@ const ROUTES: Record<string, Route> = {
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(answer, 'llm.client.call', ['parsedJson', 'rawText']));
+    return new Plain(wired(wire, answer, 'llm.client.call', ['parsedJson', 'rawText']));
   },
   /** A plugin's invocation (`through` or a plain call), a priced call: its
    *  arguments and the entity's fields so far arrive on the eval wire, and
    *  what it brought back goes back on it. */
-  async 'llm.transforms.invoke'(request, { host, context }) {
+  async 'llm.transforms.invoke'(request, { host, context, wire }) {
     if (request.wire !== true) throw new RustShimError('llm.transforms.invoke carries its values on the eval wire');
     const answer = await host.llm.transforms.invoke({
       segmentId: segmentOf(request),
       plugin: string(request.plugin, 'llm.transforms.invoke plugin'),
-      config: wiredRecord(request.config, 'llm.transforms.invoke config'),
-      extractedContext: wiredRecord(request.extractedContext, 'llm.transforms.invoke extractedContext'),
+      config: wiredRecord(wire, request.config, 'llm.transforms.invoke config'),
+      extractedContext: wiredRecord(wire, request.extractedContext, 'llm.transforms.invoke extractedContext'),
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(answer, 'llm.transforms.invoke', ['text', 'data', 'records', 'outcome']));
+    return new Plain(wired(wire, answer, 'llm.transforms.invoke', ['text', 'data', 'records', 'outcome']));
   },
   /** A source file's text, a priced call: the descriptor on the eval wire. */
-  async 'files.resolveFileText'(request, { host, context }) {
+  async 'files.resolveFileText'(request, { host, context, wire }) {
     if (request.wire !== true) throw new RustShimError('files.resolveFileText carries its file on the eval wire');
-    const file = new WireOut().read(request.file);
+    const file = wire.read(request.file);
     if (!isFileRef(file)) throw new RustShimError('files.resolveFileText file is a FileRef');
     const answer = await host.files.resolveFileText({ segmentId: segmentOf(request), file, budget: budgetOf(request.budget) });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(answer, 'files.resolveFileText', ['text', 'rawTextId', 'detail']));
+    return new Plain(wired(wire, answer, 'files.resolveFileText', ['text', 'rawTextId', 'detail']));
   },
   /** Fresh ids, for the resources an extraction carries. */
   async 'ids.mint'(request, { host }) {
@@ -250,7 +254,7 @@ const ROUTES: Record<string, Route> = {
   },
   /** A timer park, its wake the host clock's answer plus the sleep (the
    *  engine asked `clock.now`). Asked only of a host that serves it. */
-  async 'park.sink.commitTimerPark'(request, { host }) {
+  async 'park.sink.commitTimerPark'(request, { host, wire }) {
     const sink = host.park.sink;
     if (sink?.commitTimerPark === undefined) throw notServed('park.sink.commitTimerPark');
     if (request.wire !== true) throw new RustShimError('park.sink.commitTimerPark carries its state on the eval wire');
@@ -258,21 +262,21 @@ const ROUTES: Record<string, Route> = {
       segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitTimerPark address'),
       // On the eval wire: the state's objects in the order the engine wrote them.
-      state: new WireOut().read(request.state),
+      state: wire.read(request.state),
       wakeAt: instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt'),
     });
     return undefined;
   },
   /** An engine-initiated suspension (run.ts `suspendFlow`), asked only of a
    *  sink that can suspend (run.ts `canSuspend`). */
-  async 'park.sink.commitSuspension'(request, { host }) {
+  async 'park.sink.commitSuspension'(request, { host, wire }) {
     const sink = host.park.sink;
     if (sink?.commitSuspension === undefined) throw notServed('park.sink.commitSuspension');
     if (request.wire !== true) throw new RustShimError('park.sink.commitSuspension carries its state on the eval wire');
     await sink.commitSuspension({
       segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitSuspension address'),
-      state: new WireOut().read(request.state),
+      state: wire.read(request.state),
     });
     return undefined;
   },
@@ -348,25 +352,25 @@ const ROUTES: Record<string, Route> = {
   },
   /** A built-in the Rust engine hands back for these arguments, answered by
    *  the TypeScript member: its value, or what it throws. */
-  async 'builtins.function'(request) {
+  async 'builtins.function'(request, { wire }) {
     const id = string(request.id, 'builtins.function id');
     if (!Array.isArray(request.args)) throw new RustShimError('builtins.function args must be an array');
-    const values = request.args.map((arg) => new WireOut().read(arg));
+    const values = request.args.map((arg) => wire.read(arg));
     const now = new Date(string(request.now, 'builtins.function now'));
     const spec = stdlibFunctionById(id);
-    return builtinAnswer(() => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
+    return builtinAnswer(wire, () => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
   },
   /** The shared comparator, likewise. A `WITHIN` measures from `now`, the
    *  host clock's answer the engine asked for it. */
-  async 'builtins.compare'(request) {
+  async 'builtins.compare'(request, { wire }) {
     const op = filterOperator(request.op);
-    const left = new WireOut().read(request.left);
-    const right = new WireOut().read(request.right);
+    const left = wire.read(request.left);
+    const right = wire.read(request.right);
     if ((op === 'within') !== (request.now !== undefined)) {
       throw new RustShimError('builtins.compare carries `now` for a WITHIN, and only for one');
     }
     const now = op === 'within' ? new Date(instant(request.now, 'builtins.compare now')).getTime() : undefined;
-    return builtinAnswer(() => compareValues(left, op, right, now !== undefined ? { now } : {}));
+    return builtinAnswer(wire, () => compareValues(left, op, right, now !== undefined ? { now } : {}));
   },
 };
 
@@ -399,13 +403,13 @@ function isCallArgs(value: unknown): value is AdapterCall['args'] {
  * before the call awaits anything, so a registration and a call naming it
  * that are in flight together are served in the order the engine made them.
  */
-function withPosition(request: Record<string, unknown>, rest: AdapterCall['args'], positions: Map<number, unknown>): AdapterCall['args'] {
+function withPosition(request: Record<string, unknown>, rest: AdapterCall['args'], positions: Map<number, unknown>, wire: WireOut): AdapterCall['args'] {
   const reference = request.positionRef;
   if (reference === undefined) return rest;
   if (typeof reference !== 'number' || !Number.isInteger(reference)) throw new RustShimError('adapters.call positionRef is an integer');
   if (request.position !== undefined) {
     if (positions.has(reference)) throw new RustShimError(`adapters.call registered position ${reference} twice`);
-    positions.set(reference, new WireOut().read(request.position));
+    positions.set(reference, wire.read(request.position));
   }
   if (!positions.has(reference)) throw new RustShimError(`adapters.call named position ${reference}, which was never registered`);
   const position = positions.get(reference);
@@ -452,18 +456,20 @@ function instant(value: unknown, what: string): string {
  * call was made and charged, so the engine decides what an unreadable answer
  * means for the run, never the shim. The cost and every other member cross.
  */
-function wired(answer: object, method: string, members: readonly string[]): unknown {
-  const whole = new WireOut({ asData: true }).value(answer);
-  if (whole !== REFUSED) return whole;
+function wired(wire: WireOut, answer: object, method: string, members: readonly string[]): unknown {
+  // Tried apart first: what goes out on the segment's wire is what the
+  // engine reads, every id it names included.
+  const carries = (value: unknown) => new WireOut({ asData: true }).value(value) !== REFUSED;
+  if (carries(answer)) return wire.valueAsData(answer);
   const kept: Record<string, unknown> = {};
   const uncarried: string[] = [];
   for (const [key, value] of Object.entries(answer)) {
-    if (members.includes(key) && new WireOut({ asData: true }).value(value) === REFUSED) uncarried.push(key);
+    if (members.includes(key) && !carries(value)) uncarried.push(key);
     else kept[key] = value;
   }
-  const wire = new WireOut({ asData: true }).value({ ...kept, uncarried });
-  if (wire === REFUSED) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
-  return wire;
+  const value = { ...kept, uncarried };
+  if (!carries(value)) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
+  return wire.valueAsData(value);
 }
 
 function isEffort(value: string): value is Effort {
@@ -484,8 +490,8 @@ function extractionModel(value: unknown): 'opus' | 'opus5' | 'sonnet' | 'haiku' 
   }
 }
 
-function wiredRecord(value: unknown, what: string): Record<string, unknown> {
-  const read = new WireOut().read(value);
+function wiredRecord(wire: WireOut, value: unknown, what: string): Record<string, unknown> {
+  const read = wire.read(value);
   if (typeof read !== 'object' || read === null || Array.isArray(read)) throw new RustShimError(`${what} is an object`);
   return Object.fromEntries(Object.entries(read));
 }
@@ -538,7 +544,7 @@ class Plain {
 }
 
 /** `{value: wire}` or `{threw: {class, code?, message}}`. */
-function builtinAnswer(run: () => unknown): unknown {
+function builtinAnswer(segment: WireOut, run: () => unknown): unknown {
   let value: unknown;
   try {
     value = run();
@@ -548,9 +554,8 @@ function builtinAnswer(run: () => unknown): unknown {
     if (error instanceof Error && error.constructor === Error) return { threw: { class: 'Error', message: error.message } };
     throw new RustShimError(`a built-in threw what the Rust engine cannot rethrow: ${String(error)}`);
   }
-  const wire = new WireOut().value(value);
-  if (wire === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
-  return { value: wire };
+  if (new WireOut().value(value) === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
+  return { value: segment.value(value) };
 }
 
 /** A MovementEngineError's message without the `CODE: ` its constructor adds. */

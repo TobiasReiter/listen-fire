@@ -96,11 +96,18 @@ struct LinkPlan {
 impl Run<'_> {
     /// `executeMatch`: the record found, bound as a handle (and returned:
     /// a link body links it).
-    pub(crate) async fn match_record(&self, m: &MatchExpression, binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Rc<Handle>, Stop> {
+    pub(crate) async fn match_record(&self, m: &MatchExpression, binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+        // Among the landings of a node this run built.
+        if let WriteTarget::Linked { path, .. } = &m.target
+            && let Some(movement_parser::ast::PathRoot::Name { name }) = &path.root
+            && let Some(Binding::Node(node)) = scope.resolve(name)
+        {
+            return self.local_match(m, path, node, binding_name, scope).await;
+        }
         let resolved = self.write_target(&m.target, scope, Verb::Match).await?;
         let lines: Vec<Line> = m.fields.iter().map(Line::of).collect();
         let evaluated = self.write_fields(&lines, &resolved.adapter, &resolved.record_type, scope).await?;
-        let handle_type = crate::write::discriminated_handle_type(resolved.graph.schema.as_ref(), &resolved.record_type, &evaluated.fields);
+        let handle_type = crate::write::discriminated_handle_type(resolved.graph.as_ref().and_then(|g| g.schema.as_ref()), &resolved.record_type, &evaluated.fields);
         let target = Target { handle_type, ..resolved };
         let identity = self.unique_by_identity(&m.unique_by, &target)?;
         let native = unique::get(&evaluated.descriptor, "uniquenessConstraints");
@@ -113,7 +120,7 @@ impl Run<'_> {
         let adapter = &target.adapter;
         let external_id = unique::get(&matched, "externalId");
         let mut data = candidate_data(&matched);
-        if adapter.instance.has("readRecord") {
+        if adapter.has("readRecord") {
             let current = self.read_record(adapter, &target.record_type, &external_id).await?;
             if current.truthy() {
                 merge_into(&mut data, &current);
@@ -131,17 +138,26 @@ impl Run<'_> {
         record.set("writtenValues".into(), Js::object(JsObject::new()));
         record.set("resultData".into(), Js::object(data));
         record.set("provenance".into(), Js::object(JsObject::new()));
-        Ok(self.record_write(Js::object(record), binding_name, scope, &target, &[]))
+        Ok(Binding::Handle(self.record_write(Js::object(record), binding_name, scope, &target, &[])))
     }
 
     /// `readRecord {recordType, externalId}`.
     async fn read_record(&self, adapter: &crate::write::TargetAdapter, record_type: &str, external_id: &Js) -> Result<Js, Stop> {
         let read = env::object_of(vec![("recordType", Js::str(record_type)), ("externalId", external_id.clone())]);
-        self.call_adapter(&adapter.instance, "readRecord", read).await.map_err(thrown)
+        self.store_call(&adapter, "readRecord", read).await.map_err(thrown)
     }
 
     /// `executeLink`.
     pub(crate) async fn link(&self, link: &LinkExpression, binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<(), Stop> {
+        if let Some(Binding::Node(node)) = scope.resolve(&link.from) {
+            return match &link.to {
+                LinkTarget::Match { .. } => Err(thrown(Failure::unsupported(
+                    &format!("link {} -[:{}]-> {{ … }} on a node this run built", link.from, link.edge),
+                    "the body would find among what the edge already holds — the checker should have caught this",
+                ))),
+                LinkTarget::Handle { name } => self.append_landing(&link.from, &link.edge, name, &node, scope),
+            };
+        }
         // Version 1's body form was its own statement: criteria find the
         // record and the link lands as one row. A body with an authored
         // `unique by` never parsed under version 1, and runs as the match it is.
@@ -154,13 +170,13 @@ impl Run<'_> {
         let (to_name, to) = match &link.to {
             LinkTarget::Match { r#match, .. } => {
                 let found = self.match_record(r#match, binding_name, scope).await?;
-                (binding_name.unwrap_or("{ … }").to_string(), Some(Binding::Handle(found)))
+                (binding_name.unwrap_or("{ … }").to_string(), Some(found))
             }
             LinkTarget::Handle { name } => (name.clone(), scope.resolve(name)),
         };
         let at = format!("link {} -[:{}]-> {to_name}", link.from, link.edge);
         let plan = self.link_plan(&link.from, &link.edge, &to_name, to, scope, &at).await?;
-        if !plan.edge.adapter.instance.has("linkRecords") {
+        if !plan.edge.adapter.has("linkRecords") {
             return Err(thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!(
@@ -178,7 +194,7 @@ impl Run<'_> {
     pub(crate) async fn unlink(&self, statement: &UnlinkStatement, scope: &Rc<Scope>) -> Result<(), Stop> {
         let at = format!("unlink {} -[:{}]-> {}", statement.from, statement.edge, statement.to);
         let plan = self.link_plan(&statement.from, &statement.edge, &statement.to, scope.resolve(&statement.to), scope, &at).await?;
-        if !plan.edge.adapter.instance.has("unlinkRecords") {
+        if !plan.edge.adapter.has("unlinkRecords") {
             return Err(thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!(
@@ -202,7 +218,7 @@ impl Run<'_> {
             ("to", endpoint(&edge.to_type, &edge.to_id)),
             ("mutationContext", self.mutation_context.borrow().clone()),
         ]);
-        self.with_locks(vec![lock], async { self.call_adapter(&edge.adapter.instance, method, args).await.map_err(thrown) }).await
+        self.with_locks(vec![lock], async { self.store_call(&edge.adapter, method, args).await.map_err(thrown) }).await
     }
 
     /// `recordLinkStatement`.
@@ -300,13 +316,13 @@ impl Run<'_> {
         }
         let keys: Vec<(String, bool)> = criteria.entries().iter().map(|(k, _)| (k.clone(), false)).collect();
         let criteria = Js::object(criteria);
-        let descriptor = self.call_adapter(&adapter.instance, "describe", env::object_of(vec![("typeId", Js::str(record_type.clone()))])).await.map_err(thrown)?;
+        let descriptor = self.store_call(&adapter, "describe", env::object_of(vec![("typeId", Js::str(record_type.clone()))])).await.map_err(thrown)?;
         let authored = if keys.is_empty() { Vec::new() } else { vec![unique::branch(keys)] };
         let constraints = unique::merge(&unique::get(&descriptor, "uniquenessConstraints"), authored);
         let target = crate::write::Target::bare(adapter.clone(), record_type.clone(), graph.clone());
         let (matched, _) = self.resolve_identity(&target, &criteria, &criteria, &constraints, &[], scope).await?;
         let Some(matched) = matched else { return Err(Stop::EndedQuietly) };
-        if !adapter.instance.has("linkRecords") {
+        if !adapter.has("linkRecords") {
             return Err(thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!("{at}: the '{}' adapter cannot link two existing records (no linkRecords capability)", adapter.adapter_type),
@@ -323,7 +339,7 @@ impl Run<'_> {
         };
         let linked = self.edge_call(&edge, "linkRecords").await?;
         let mut data = candidate_data(&matched);
-        if adapter.instance.has("readRecord") {
+        if adapter.has("readRecord") {
             let current = self.read_record(&adapter, &record_type, &to_id).await?;
             if current.truthy() {
                 merge_into(&mut data, &current);
@@ -374,7 +390,7 @@ impl Run<'_> {
         let binding = scope.resolve(name);
         let (target, external_id) = self.position_target(name, scope, "delete").await?;
         let adapter = &target.adapter;
-        if !adapter.instance.has("deleteRecord") {
+        if !adapter.has("deleteRecord") {
             return Err(thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!("{at}: the '{}' adapter cannot delete records (no deleteRecord capability)", adapter.adapter_type),
@@ -386,7 +402,7 @@ impl Run<'_> {
             ("mutationContext", self.mutation_context.borrow().clone()),
         ]);
         let lock = unique::record_lock_name(&adapter.adapter_type, &external_id);
-        self.with_locks(vec![lock], async { self.call_adapter(&adapter.instance, "deleteRecord", args).await.map_err(thrown) }).await?;
+        self.with_locks(vec![lock], async { self.store_call(&adapter, "deleteRecord", args).await.map_err(thrown) }).await?;
         let mut record = JsObject::new();
         record.set("kind".into(), Js::str("delete"));
         record.set("adapterType".into(), Js::str(adapter.adapter_type.clone()));

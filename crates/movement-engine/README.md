@@ -32,14 +32,17 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors; the folds; what a walk, an `EXISTS` over a record, or a count needs asked of the run |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
 | `run` | the `segment` entry: `runMovement` / `resumeMovement` for the programs the shim admits (below) |
+| `call` | calls of the movements a program declares: the call's step, the callee's scope, its arguments bound, its value, the depth |
 | `write` | the `write` statement: targets (a WHERE on one included), fields, identity, update or create, the firing record |
 | `verbs` | `match`, `link`, `unlink`, `delete`: the identity half of a write on its own, edges between two handles, a record removed |
 | `traverse` | traversal blocks over adapter edges: the head's graph, the hop's fetch, the member gate, the WHERE per landed record, ORDER BY / LIMIT, the body per landing; the walks an expression reads, `EXISTS` and a pick |
 | `is_test` | a condition's `IS <type>`: the event, a handle, a landing, a node declaration's structure |
 | `order_limit` | packages/shared/expression/order_limit.ts: a hop's pushdown (closed over its scope) and its ORDER BY / LIMIT over what came back, sorted as V8 sorts |
-| `address` | address.ts's lexical addresses: `s`, `b` and fan-out `i` steps |
+| `address` | address.ts's lexical addresses: `s`, `b`, fan-out `i` and call `c` steps |
 | `unique` | `unique by`: the clauses split into keys and narrowings, the search record, the rules that decide without a judge, the identity lock |
-| `node` | node and graph literals: value entries, nested nodes, reference entries and record copies (the checker's stamps) |
+| `node` | node and graph literals: value entries, nested nodes, declared edges with their landing shapes, traversal entries, reference entries and record copies (the checker's stamps) |
+| `local` | the engine as a run-built node's adapter (local_edge_adapter.ts): the store over an edge's landings, its candidate block, the writes, matches, position writes and links into it |
+| `letter_number` | `/[\p{L}\p{N}]/u`'s code points, as Node reads them (generated) |
 | `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`, `extraction`, `plugin`), and the per-flow buffer they wait in until their statement ends |
@@ -48,7 +51,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `plugin` | a plugin called plainly (`page = fetch_url(url: …)`): its arguments, the invocation timed and priced, what it binds by its declared output |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers and Unicode normalisation, from the JavaScript runtime (WASM) or natively (below); never a clock |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
-| `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
+| `env` | value bindings in scopes with a parent chain; the wire values and trails cross on, and a segment's one wire with its host |
 | `js`, `js_date`, `js_regex` | the JavaScript semantics the TypeScript leans on, written out (below) |
 
 ## Two artifacts
@@ -121,6 +124,16 @@ Step = {"pending": [{id, family, method, args}]} | {"done": result}
   nothing (it could never finish).
 - One instance runs one segment. `engine_finish` drops it and every future it
   held; the loader then discards the instance.
+- **One wire per segment** (`env::Wire`, rust_engine.ts's segment `WireOut`).
+  The event and every value answer on the eval wire (an adapter's result, a
+  priced call's, a built-in's) go out on the shim's one wire for the
+  segment, each object and list under an id unique in the segment; an answer
+  may name one sent before (`["r", id]`). A request hands an object the host
+  sent back as itself (`["i", id]`), when it is that very object, unchanged:
+  the shim gives the host the original. So a value an adapter answered (a
+  `FileRef` read off a landing, carried in a node into a callee's write)
+  reaches the next host call as the object it was, as in the TypeScript
+  engine; anything the engine built is written out.
 
 Entries (`input.entry`):
 
@@ -268,6 +281,20 @@ Either way the shim runs the program on the TypeScript engine.
 - **No entry picked** (none named and more than one movement, or a name the
   file lacks): every movement is walked. The run throws MOVENG_NOT_FOUND
   after the check on either engine anyway.
+- **A call reaches its callee, which is walked** (`admit::walks`), once per
+  signature: what each argument binds its parameter to at the call (a value
+  for a value parameter — `<text>`, `<number[]>`, a declared `type` — else
+  the record the argument names: the event, a handle, a node, a walked or
+  extracted record, what a node's edge holds), worked out from the call
+  site's own bindings, transitively. A call's value is the one kind the
+  callee's returns share under that signature (`Callees::returns`); a
+  value of more than one kind, or one a recursion leaves open, refuses the
+  call (`movement_call`). A position parameter handed a value fails the call
+  before the callee runs, on either engine, so that call adds no walk. The
+  entry, and any movement no call reaches, takes its parameters as the
+  event. So admitting calls admits no unwalked callee: every body a call can
+  enter is walked under every binding a call gives its parameters, and a
+  combinator's arm or a closure still refuses where it stands.
 
 The walk does not stop at a reason. Each statement is walked whatever the
 one before it needed, an `if`'s arms past its condition, a block's body past
@@ -295,12 +322,16 @@ constructs this engine already runs are "The run" below.
 
 | reason | the construct | needs |
 |---|---|---|
-| `source_does_not_parse` | the source does not parse here (the TypeScript engine throws the parse error) | to go on to `check.program`, so the checker throws its own MOVENG_PARSE text |
 | `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` | the file scope from the check's `link` (imported movements and shapes, `libraryShape`/`shapeChain`), calls into library movements |
 | `file_assignment` | a file-level binding that is neither an instance construction nor a value (a file-level `extract`, node, graph) | file-level evaluation of those right-hand sides |
 | `file_call` | a file-level construction or call spelled with a movement's or a plugin's name | `fileLevelCall`'s semantics (a call with no event) |
 | `file_statement:<kind>` | any other file-level statement, by the AST's `kind` (`write`, `call`, `match`, …) | statements at file scope |
 | `movement_value_param` | a reached movement taking a value (`n: <number[]>`) | a parameter binding kind that is a value, with the checker's coercion rules for it |
+
+A source this engine's parser refuses goes on to `check.program`, whose
+own MOVENG_PARSE ends the run, as the TypeScript engine's parse ends it (the
+binding × consumer matrix's 24 `graph<Entry> { ?...e }` cells under version
+3: both parsers refuse a fill spread in a graph literal).
 
 A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
 (`rules = "…"`) are admitted: each binds a name and runs nothing, as
@@ -308,9 +339,9 @@ A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
 expression is, reading only the file-level values before it; a body reads
 it as a value. A declared shape's words are walked in the file's scope (an
 extraction reads them there). An extraction reads a shape and a type, and a
-plugin call a plugin, and an `IS` test a node declaration; what else reads
-one is refused where it stands (`graph_shape`, `node_declared_entry`,
-`is_test_declared_record`).
+plugin call a plugin, an `IS` test a node declaration, and a declared edge
+(`kids: <Kid>`) the landing shape its writes mint; what else reads one is
+refused where it stands (`graph_shape`, `is_test_declared_record`).
 
 **Names** (a reached body):
 
@@ -324,7 +355,8 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 
 | reason | the construct | needs |
 |---|---|---|
-| `statement:call`, `movement_call`, `function_call` | a call statement; a construction in a body spelled with a movement's name; a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 | call frames (call depth, `c` address steps, called scopes) and a call journal for replay |
+| `statement:call`, `movement_call`, `function_call` | a call statement of anything but a movement or a plugin (a built-in's or a collection op's); a call of a movement whose value is not one kind on every path, or whose kind is left open by a recursion; a bound call of a name the program binds that is not a movement, or of any non-movement callee before version 3 | the remaining call forms (a collection op as a statement, closures as callees) |
+| `call_park` | an `await sleep(…)` inside a movement a call enters | call frames in the park state: a park inside a callee resumes through them (run.ts ~:2834) |
 | `rvalue:closure`, `rvalue:lazy`, `rvalue:inlineBlock`, `rvalue:members`, `expression_closure` | closures and lazy walks as values; a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), run by the TypeScript as a call bound first (from version 3) | closure and lazy-walk binding kinds, with the call frames above |
 | `statement:combinator`, `rvalue:combinator` | `parallel`, `race` | spawned arms in the executor, the in-run lock gate table (FIFO, shared or exclusive), a write-ordering ledger (write_ledger.ts), arm traces spliced in order, frames and joins in park state, race settlement (losers cancelled) |
 | `await_not_sleep` | an `await` of anything but `sleep(…)` (parallel, race, until, a callback, a landing) | the same, and the await kinds' park states |
@@ -333,7 +365,7 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 | `rvalue:callback` | a callback | `park.callbacks.*`, a callback binding kind, and the callback body's entry ("Entries never routed" below) |
 | `statement:refresh` | `refresh` | its semantics (no corpus case runs one) |
 | `rvalue:extractCall` | the version-3 `extract(…)` call form | its prompt blocks, `llm.extractCall.call`, site ids `xc:<shape>#<n>` |
-| `rvalue:<kind>` | any other right-hand side, by its AST `kind`; for `return`, also `extract`, `node`, `write`, `match` and `link` | a returned record binding (a return value that is a record) |
+| `rvalue:<kind>` | any other right-hand side, by its AST `kind`; for `return`, also `extract`, `write`, `match` and `link`, and in a block's iteration `node` and a record | a returned record binding (a return value that is a record, as a call's value already is) |
 | `extract_tier` | `extract "careful" from […]` | the deployment's tier table (ai_tiers.ts `EXTRACTION_TIERS`) as input |
 | `plugin_call` | a plugin's call this engine does not make: inside an expression (`{ page: p(…) }`), spelled in another letter case than imported, or of a plugin the input's snapshot does not describe; a `through` stage naming no imported plugin | a call bound inside an expression (checker `nested_calls`), any-case resolution |
 | `plugin_call:records` | a call of a plugin whose declared output is `records` | a records-output binding kind |
@@ -346,10 +378,9 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 |---|---|---|
 | `write_bind` | a write with `bind` | `park.bindings.*` |
 | `write_tuple`, `match_tuple`, `match_position` | a tuple write; a match over a tuple of paths, or of a bare alias | a tuple binding kind, per-slot writes |
-| `write_position_not_record`, `delete_not_record` | `write x { … }` or `delete x` where `x` is not a write's handle or a block's hop alias (a node or graph entry the run built among them) | node-entry update in place |
+| `write_position_not_record`, `delete_not_record` | `write x { … }` where `x` is not a record (a write's handle, a block's hop alias, a node the run built or what one's edge holds); `delete x` where `x` is not a write's handle or a hop alias | the TypeScript's errors for the rest; a delete of what a node's edge holds |
 | `write_position_member_path` | `write m.k { … }`: a write from the record a map's member holds | a member-path record binding |
 | `write_root_expression`, `match_root_expression`, `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at an expression, or at a name that is not an instance, a handle, the event or a block's hop alias | the TypeScript's root resolution |
-| `write_node_root`, `match_node_root`, `link_node` | a write, a match or a link into an edge of a node this run built | the in-process stand-in adapter (local_edge_adapter.ts), appended landings |
 | `write_multi_hop`, `match_multi_hop` | a linked write or match that walks more (or less) than one edge | the TypeScript's error, or its multi-hop semantics |
 | `link_endpoint_not_handle` | a `link` or `unlink` endpoint that is not a write's (or a match's) handle | endpoints that are landed records or nodes |
 | `write_spread_source`, `write_spread_path`, `node_spread`, `node_spread_path`, `node_spread_source` | a write spread of a name that is not a value, a handle, a node or the event; `...m.k` in a write or a graph literal; a spread in a `node { … }` literal; a graph spread of a name that is not a value, a handle or a node | spreads of records and of map members |
@@ -359,14 +390,14 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 
 | reason | the construct | needs |
 |---|---|---|
-| `node_declared_entry`, `node_traversal_entry`, `node_event_entry`, `graph_shape`, `rvalue:node`, `exists_node` | a declared edge entry (`kids: <T>`), a traversal entry, an entry holding the event, `graph<Shape> { … }`, a returned node, `EXISTS(n-[…]->)` of a node this run built | node-literal entries of every kind, the `reference` stamp, copy plans that walk edges (behind the `graph_copy_walks_edges` guard) |
+| `node_declared_entry`, `node_event_entry`, `rvalue:node`, `exists_node` | a declared edge entry inside a graph literal (the parser refuses one); an entry holding the event; a node a block's iteration returns (its block's value would be the records returned); `EXISTS` off a node this run built, or what one's edge holds, of more than one hop or with an ORDER BY or a LIMIT | an entry holding the event; returned records as a block's value; EXISTS's per-origin ORDER BY / LIMIT and its walk past the node plane |
 | `is_test_declared_record`, `is_test_declared_graph` | `x IS <Decl>` (a node declaration) where `x` is the event, a handle, a landed record, or a `graph { … }` literal | a checker stamp carrying the assignability verdict (the checker stays TypeScript, behind `check.program`) |
 
 **Traversal blocks and heads** (a reached body):
 
 | reason | the construct | needs |
 |---|---|---|
-| `block_head_rootless`, `block_head_expression_root`, `block_head_value_root`, `block_head_node_root`, `block_head_root` | a block head with no root; rooted at an expression (`AT(rows, 0)-[c:company]->`), a value (a list of records), a node or graph the run built, or anything but an instance, a write's handle, the event, an enclosing block's hop alias or what an extraction yielded | heads rooted at every binding kind |
+| `block_head_rootless`, `block_head_expression_root`, `block_head_value_root`, `block_head_root` | a block head with no root; rooted at an expression (`AT(rows, 0)-[c:company]->`), a value (a list of records) or a kept walk (`files-[f:x]->` continues the walk past its head), or anything but an instance, a write's handle, the event, an enclosing block's hop alias, what an extraction yielded, a node the run built or what one's edge holds | heads rooted at every binding kind |
 | `block_multi_hop`, `block_head_step`, `block_head_does_not_lower` | a head of more than one hop, a hop that is not an edge, a head the probe cannot read | multi-hop walks |
 | `block_head_extract_hop` | a head over what an extraction yielded whose hop carries a WHERE (the TypeScript refuses it), an ORDER BY, a LIMIT or an incoming direction (which it does not read) | the TypeScript's refusal and readings there |
 | `block_head_resources`, `walk_records` | a `_resources` head (off the event or an extraction); a bare walk read as a value (a list of records) | resource descriptors (FileRef) crossing as the descriptor; a list of records as a value |
@@ -397,6 +428,8 @@ movements, before anything is asked):
 | reason | what the input would make the run do | needs |
 |---|---|---|
 | `cost_cap_inside_block` | a capped run with a priced step in a block's body (a write, a match or a link that matches, an extraction, a plugin's call): the cap can be met at any of them | suspension inside fan-out iterations, joined by the fan-out's frame |
+| `cost_cap_inside_call` | a capped run with a priced step inside a callee, or a call with a write or a call among its arguments: the cap met inside a callee suspends through a call frame, and met past one of its statement's calls, with that call in the statement's journal | call frames in the park state, and the statement's call journal |
+| `lazy_park` | a run that may park (an `await sleep(…)` outside a rehearsal, a cost cap, a `suspendAt`, a paused run) holding a kept walk (`x = lazy …`, a `lazy` node entry) | a kept walk in the park state (`serializeDeferredWalk`: its head, tail and captured scope) |
 | `suspend_at_inside_block` | a `suspendAt` address with an `i` step | the same |
 | `suspend_at_call` | a `suspendAt` address with a `c` step (before a statement's k-th call) | a call journal to run a statement again by |
 
@@ -415,7 +448,7 @@ engine parked must resume here, so each is a port too:
 | `resume_state_returned_records` | a bound block's returned records | positions with landings |
 | `resume_state_extraction_origin` | an extraction among a binding's origins | extraction provenance on resume |
 | `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) | the record model held as a value |
-| `resume_state_deferred_edge` | a node's edge that is not landed, or names a landing | deferred edges and landings |
+| `resume_state_deferred_edge` | a node's edge that is deferred (a `lazy` entry's) | a kept walk rehydrated (`rehydrateDeferredWalk`) |
 
 **The shim's input checks** (`notAdmitted`, one reason each):
 
@@ -430,8 +463,8 @@ engine parked must resume here, so each is a port too:
 | reason | what the stamps say | needs |
 |---|---|---|
 | `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` | a `Date` value on the wire (or a ruling that adapters never answer one) |
-| `graph_copy_walks_edges` | a graph's record spread whose copy plan walks the record's edges (stamped only on a shaped graph, which admission refuses: a guard) | the copy plan's edge walk, with `graph_shape` |
 | `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read | to become errors: shim faults in all but name |
+| `source_does_not_parse` | a source this engine's parser refuses and the checker passes | the grammar this engine lacks (none is known) |
 
 **Not refusals, still TypeScript.** Zero refusals is not zero TypeScript:
 
@@ -509,6 +542,29 @@ sees one. Every id a host or a result sees comes from `ids.mint`.
 cancel gate, or a park the lease fence refuses, throws `RunLeaseLost`; that
 host error fails the run with the very object, and the run host's settle
 recognises it. The engine never asks whether the lease is lost.
+
+### Calls
+
+`call.rs` is run.ts's `executeCall` → `runCall` for a movement the program
+declares (exactly, or from version 3 in any letter case): a statement
+(`persist(n: d)`), a bound call (`x = label(t: msg.\`subject\`)`, and the
+construction spelling `x = persist(n: d)`), a returned one, a call among
+another's arguments. The call is its statement's next step (`… .c k`); the
+callee's scope forks from the file's; its arguments evaluate in the caller's
+source order (a value parameter's as a value, with its trail; an inline
+write as what it writes; a node literal as the node; a nested call as its
+value; a position parameter's as the record its argument names, anything
+else failing as `passing … as a movement argument`); its parameters bind in
+declaration order; its statements are the run's own (the cancel gate, the
+trace handed over a statement at a time); a match that finds nothing ends
+the callee's scope, and the caller goes on. Its value is what it returned:
+a `return` binds any right-hand side (`return n`, `return node { … }`,
+`return f(x)`), as `declareAssign` does. Before version 3 a movement already
+running is not called again (`recursive movement calls (…)`); from it the
+depth is bounded by the deployment's `MOVEMENT_MAX_CALL_DEPTH`, which the
+shim reads into the input (`maxCallDepth`), failing as `CallDepthExceeded`.
+The stamp the check declines on (`event_field_dated`) is read in every
+called movement too, an event parameter by the names a call gives it.
 
 ### Writes
 
@@ -815,7 +871,46 @@ value entries, nested literals, and in a graph a reference entry — the
 checker's `reference` stamp — as an edge landing the record itself, a record
 spread copied by the checker's `copy` plan (fields; a plan that walks edges
 is refused), and a map spread. A node's field reads carry the trail it was
-written with.
+written with. In a node literal, a declared edge (`companies: <Company>`,
+`posted: <crm-[:companies]->>`) starts empty, carrying the declared node's
+landing shape (its fields, and each nested node as an edge of its own, the
+`extends` chain folded in as `inheritDeclaration` folds it); a traversal
+entry (`files: msg-[a:files]->`, or with a per-item `node { … }` tail) is
+walked where the literal stands, as a block head walks; a `lazy` entry
+(and `x = lazy …`) keeps the walk, its scope captured flat
+(`captureScope`), and runs it at every read: a block head over the edge,
+`files.\`name\`` (each landing's field, collapsed), `EXISTS(files)`.
+A graph of a declared shape (`graph<Company> { … }`, its `extends` folded
+in) makes each child edge the shape declares, empty where the literal wrote
+none, carrying the child's landing shape; orders its fields as declared;
+reads a spread map's keys as children where the shape says so; and checks
+the value built against the shape where a spread brought keys nobody could
+type, and from version 3 always for presence (`graphValueMisfit`). A
+record spread copies by the checker's plan, its planned edges walked one
+hop on the node plane (a node's landings, a walked record's through its own
+graph) and each landing copied by the edge's plan (`snapshotRecord`). An
+expression reads a node's edge one hop deep (`walkMetaSteps`): a field
+across its landings, `COUNT`, `EXISTS` with a WHERE scoped at each landing.
+
+**The graph a run builds** (`local.rs`, local_edge_adapter.ts): a write, a
+match or a position write into an edge of a node the run built runs the
+ordinary write path (crate::write) over a store whose landings are the
+edge's own — the same identity search, rules, judge, fill modes and
+outcomes, the identity lock named for `local` and the edge (the host sees
+it), the landing's own lock the run's alone (the host sees none). A landing
+is its index on the edge; a create appends one of the edge's landing shape
+(`landedOn` the edge), a merge updates it in place. The candidate block is
+the store's: an exact component on normalised equality, a FUZZY one on a
+shared distinctive word (`/[^\p{L}\p{N}]+/u` split, from src/letter_number.rs,
+which tests/oracle/letter_number.ts writes from Node; kind words and a
+domain's TLD dropped), at most 20 landings (`candidatesCapped`). A landing
+that is a reference (a `link`ed handle, a walked record) is read live and,
+matched, updated through its own system under its record and identity
+locks, logged as that system's write. The firing log gets a `local` row,
+uncommitted, with no external id; the statement binds the landing. `link
+n -[:e]-> x` appends `x`. A block head over a node's edge fans out over its
+landings, the hop's WHERE scoped at each (`hopFilterKeeps`; its ORDER BY and
+LIMIT are not read, as `walkNodePlane` does not read them).
 
 ### Parks
 

@@ -200,12 +200,12 @@ pub(crate) fn head_step(head: &PathHead) -> Result<EdgeStep, String> {
     }
 }
 
-/// What an extraction yielded, when a head is rooted at it.
-fn extracted_root(head: &PathHead, scope: &Scope) -> Option<Rc<crate::extract::emission::Emission>> {
-    let Some(PathRoot::Name { name }) = &head.root else { return None };
-    match scope.resolve(name) {
-        Some(Binding::Extracted { emission, .. }) => Some(emission),
-        _ => None,
+/// `scopeOf`: what a position-scoped evaluation over a landing reads.
+fn scoped_at(landing: &Binding) -> Scoped {
+    match landing {
+        Binding::Landed(landed) => Scoped::Landed(landed.clone()),
+        Binding::Extracted { emission, .. } => Scoped::Emission(emission.clone()),
+        other => Scoped::Binding(other.clone()),
     }
 }
 
@@ -275,25 +275,17 @@ impl Run<'_> {
     /// `interpretBlock` for a block whose head walks one hop; bound
     /// (`x = … { return … }`), the iterations' returned values are `x`.
     pub(crate) async fn block(&self, block: &TraversalBlock, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
-        let step = head_step(&block.head)
-            .map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"))))?;
-        let span = env::js_of_serialized(&block.head.span);
-        let landings: Vec<Binding> = match extracted_root(&block.head, scope) {
-            // `deals-[c:company]-> { … }`: the extract's own entities under
-            // that edge, in hand; no host is asked.
-            Some(emission) => emission.children_of(&step.edge_type_id).iter().map(|child| Binding::Extracted { emission: child.clone(), root: false }).collect(),
-            None => self.head_landings(&block.head, &step, scope, &span).await.map_err(Stop::Thrown)?.into_iter().map(Binding::Landed).collect(),
-        };
-        self.trace(TraceEntry::Block { root: spell_path_head(&block.head), positions: landings.len() });
+        let iterations = self.head_iterations(&block.head, scope).await?;
+        self.trace(TraceEntry::Block { root: spell_path_head(&block.head), positions: iterations.len() });
         let body = format!("{path}/block/body");
         let mut returned: Vec<Binding> = Vec::new();
-        for (index, landed) in landings.into_iter().enumerate() {
+        for (index, (aliases, _)) in iterations.into_iter().enumerate() {
             // Per-landing isolation: an iteration's bindings never reach the
             // next, and the only way a value leaves one is its `return`,
             // which an unbound block has nowhere to put.
             let iteration = scope.child();
-            if let Some(alias) = &step.alias {
-                iteration.declare(alias.clone(), landed);
+            for (alias, landed) in aliases {
+                iteration.declare(alias, landed);
             }
             let flow = match self.body(&block.body, &iteration, &at.iter(index), &body, 0).await {
                 // A match inside found nothing: this iteration skips, the
@@ -312,6 +304,136 @@ impl Run<'_> {
             scope.declare(name, block_value(returned));
         }
         Ok(Flow::FellThrough)
+    }
+
+    /// `resolveHeadIterations` for a head of one hop: each iteration's
+    /// aliases and the record it landed on — an extraction's entities under
+    /// the edge, a node's landings on it, or the records an adapter walk
+    /// lands on.
+    pub(crate) async fn head_iterations(&self, head: &PathHead, scope: &Rc<Scope>) -> Result<Vec<(Vec<(String, Binding)>, Binding)>, Stop> {
+        let step = head_step(head)
+            .map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"))))?;
+        let span = env::js_of_serialized(&head.span);
+        let root = match &head.root {
+            Some(PathRoot::Name { name }) => scope.resolve(name),
+            _ => None,
+        };
+        let landings: Vec<Binding> = match root {
+            // `deals-[c:company]-> { … }`: the extract's own entities under
+            // that edge, in hand; no host is asked.
+            Some(Binding::Extracted { emission, .. }) => {
+                emission.children_of(&step.edge_type_id).iter().map(|child| Binding::Extracted { emission: child.clone(), root: false }).collect()
+            }
+            // `d-[c:company]-> { … }`: the node's edge, fanned out; a lazy
+            // entry's edge runs its walk, whose own aliases ride along.
+            Some(Binding::Node(node)) => {
+                let deferred = node.borrow().edges.iter().find(|(n, _)| *n == step.edge_type_id).and_then(|(_, e)| e.deferred.clone());
+                if let Some(walk) = deferred {
+                    if step.expression_filter.is_some() {
+                        return Err(Stop::Thrown(Failure::unsupported(
+                            "WHERE filters on a lazy entry's hop",
+                            "narrow the entry's own traversal instead — the WHERE belongs on the hop the node's edge is built from",
+                        )));
+                    }
+                    let mut iterations = self.run_deferred(&walk).await?;
+                    if let Some(alias) = &step.alias {
+                        for (aliases, landing) in &mut iterations {
+                            aliases.push((alias.clone(), landing.clone()));
+                        }
+                    }
+                    return Ok(iterations);
+                }
+                self.node_landings(&node, &step, scope, &span).await.map_err(Stop::Thrown)?
+            }
+            _ => self.head_landings(head, &step, scope, &span).await.map_err(Stop::Thrown)?.into_iter().map(Binding::Landed).collect(),
+        };
+        Ok(landings
+            .into_iter()
+            .map(|landing| {
+                let aliases = step.alias.iter().map(|alias| (alias.clone(), landing.clone())).collect();
+                (aliases, landing)
+            })
+            .collect())
+    }
+
+    /// `walkNodePlane` for one hop: the landings the node's edge holds, each
+    /// kept when the hop's WHERE holds of it (`hopFilterKeeps`). A landed
+    /// edge's ORDER BY and LIMIT are not read: its order is the order it
+    /// came to hold them in.
+    async fn node_landings(&self, node: &Rc<std::cell::RefCell<crate::bindings::Node>>, step: &EdgeStep, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
+        let landings = node.borrow().landings(&step.edge_type_id);
+        let Some(filter) = step.expression_filter.as_deref() else { return Ok(landings) };
+        let mut kept = Vec::new();
+        for landing in landings {
+            let at = match &step.alias {
+                Some(alias) => {
+                    let child = scope.child();
+                    child.declare(alias.clone(), landing.clone());
+                    child
+                }
+                None => scope.clone(),
+            };
+            if self.decides(filter, &at, scoped_at(&landing), span).await? {
+                kept.push(landing);
+            }
+        }
+        Ok(kept)
+    }
+
+    /// One hop off a node the run built, as an expression walks it: a
+    /// landed edge's landings the hop's WHERE keeps, or a lazy entry's walk
+    /// run now (a WHERE on its hop fails a read, and filters an `EXISTS`).
+    async fn node_reached(&self, node: &Rc<std::cell::RefCell<crate::bindings::Node>>, step: &EdgeStep, name: &str, exists: bool, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
+        let deferred = node.borrow().edges.iter().find(|(n, _)| *n == step.edge_type_id).and_then(|(_, e)| e.deferred.clone());
+        let Some(walk) = deferred else { return self.node_landings(node, step, scope, span).await };
+        if step.expression_filter.is_some() && !exists {
+            return Err(Failure::unsupported(
+                &format!("WHERE filters on a synthesised node's edges ('{name}')"),
+                "narrow the entry's own traversal instead — the WHERE belongs on the hop the node's edge is built from",
+            ));
+        }
+        let landings: Vec<Binding> = self.run_deferred(&walk).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, landing)| landing).collect();
+        let Some(filter) = step.expression_filter.as_deref() else { return Ok(landings) };
+        let mut kept = Vec::new();
+        for landing in landings {
+            let at = match &step.alias {
+                Some(alias) => {
+                    let child = scope.child();
+                    child.declare(alias.clone(), landing.clone());
+                    child
+                }
+                None => scope.clone(),
+            };
+            if self.decides(filter, &at, scoped_at(&landing), span).await? {
+                kept.push(landing);
+            }
+        }
+        Ok(kept)
+    }
+
+    /// `bindingEntityOrigins`: the origins a record a walk reached cites.
+    fn entity_origins(&self, landing: &Binding) -> Vec<u32> {
+        match landing {
+            Binding::Handle(handle) => match handle.record.get("origin") {
+                Js::Undefined => Vec::new(),
+                origin => vec![self.intern_origin(origin)],
+            },
+            Binding::Extracted { emission, .. } => emission.origin.into_iter().collect(),
+            Binding::Node(node) => {
+                let mut origins: Vec<u32> = Vec::new();
+                for (_, trail) in &node.borrow().field_provenance {
+                    for origin in &trail.origins {
+                        if !origins.contains(origin) {
+                            origins.push(*origin);
+                        }
+                    }
+                }
+                origins
+            }
+            Binding::Value(value) => value.trail.as_ref().map_or_else(Vec::new, |t| t.origins.clone()),
+            Binding::Positions(landings) => landings.iter().flat_map(|l| self.entity_origins(l)).collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// The head's landings (`headIterationsFrom` for a root that is an
@@ -403,7 +525,7 @@ impl Run<'_> {
     }
 
     /// `walkSourceHeadPaths` for one hop from `start`.
-    async fn walk(&self, start: &Js, step: &EdgeStep, read: Rc<Read>, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Rc<Landed>>, Failure> {
+    pub(crate) async fn walk(&self, start: &Js, step: &EdgeStep, read: Rc<Read>, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Rc<Landed>>, Failure> {
         if step.direction == EdgeDirection::Incoming && !read.incoming {
             return Err(Failure::unsupported(
                 &format!("incoming block-head hops ('{}')", step.edge_type_id),
@@ -672,6 +794,46 @@ impl Run<'_> {
             }
             // A bound block that returned nothing: no records to walk.
             Some(Binding::Positions(landings)) if landings.is_empty() => (Vec::new(), "a block's returned records".into()),
+            // A walk off a node the run built (`walkMetaSteps`): one hop down
+            // its edge, read for a field or for an `EXISTS`.
+            Some(Binding::Node(node)) => {
+                if let Some((hops, where_)) = exists {
+                    let [TraversalStep::Edge(step)] = hops else {
+                        return Err(Failure::engine("MOVENG_UNSUPPORTED", format!("this read shape on a synthesised node ('{name}') is not supported by the movement engine yet")));
+                    };
+                    let reached = self.node_reached(&node, step, name, true, scope, span).await?;
+                    let Some(where_) = where_ else {
+                        return Ok(Ok(Evaluated { value: Js::Bool(!reached.is_empty()), prov: Prov::Built(Trail::default()) }));
+                    };
+                    for landing in reached {
+                        if self.decides(where_, scope, scoped_at(&landing), span).await? {
+                            return Ok(Ok(Evaluated { value: Js::Bool(true), prov: Prov::Built(Trail::default()) }));
+                        }
+                    }
+                    return Ok(Ok(Evaluated { value: Js::Bool(false), prov: Prov::Built(Trail::default()) }));
+                }
+                let [TraversalStep::Edge(step)] = steps.as_slice() else {
+                    return Err(Failure::engine("MOVENG_UNSUPPORTED", format!("this read shape on a synthesised node ('{name}') is not supported by the movement engine yet")));
+                };
+                let Some(field) = field.filter(|f| *f != movement_parser::lowering::POSITION_SENTINEL) else {
+                    return Err(Failure::engine("MOVENG_UNSUPPORTED", format!("this read shape on a synthesised node ('{name}') is not supported by the movement engine yet")));
+                };
+                let reached = self.node_reached(&node, step, name, false, scope, span).await?;
+                let mut read = Vec::with_capacity(reached.len());
+                for landing in &reached {
+                    read.push(self.landing_field(landing, field, name).await?);
+                }
+                return Ok(Ok(self.collapse(read)));
+            }
+            // `EXISTS(files)` of a kept walk: the walk run, and whether it
+            // landed anywhere (admission lets no hop or WHERE onto it).
+            Some(Binding::LazyWalk(walk)) => {
+                let Some(([], None)) = exists else {
+                    return Err(Failure::engine("MOVENG_UNSUPPORTED", format!("this read shape on a deferred traversal ('{name}') is not supported by the movement engine yet")));
+                };
+                let landings = self.run_deferred(&walk).await.map_err(crate::write::failure_of)?;
+                return Ok(Ok(Evaluated { value: Js::Bool(!landings.is_empty()), prov: Prov::Built(Trail::default()) }));
+            }
             Some(binding) => {
                 let (start, read, what) = self.walk_start(name, &binding).await?;
                 (self.walk_adapter(&start, &read, steps, name, scope, span).await?.into_iter().map(Cursor::Landed).collect(), what)
@@ -713,6 +875,23 @@ impl Run<'_> {
                 Ok((reached.len(), Trail { origins, direct: None }))
             }
             Some(Binding::Positions(landings)) if landings.is_empty() => Ok((0, Trail::default())),
+            // The landings a node's edge holds, and their entities' origins
+            // (`bindingEntityOrigins`).
+            Some(Binding::Node(node)) => {
+                let [TraversalStep::Edge(step)] = steps.as_slice() else {
+                    return Err(Failure::engine("MOVENG_UNSUPPORTED", format!("this read shape on a synthesised node ('{name}') is not supported by the movement engine yet")));
+                };
+                let reached = self.node_reached(&node, step, name, false, scope, span).await?;
+                let mut origins: Vec<u32> = Vec::new();
+                for landing in &reached {
+                    for origin in self.entity_origins(landing) {
+                        if !origins.contains(&origin) {
+                            origins.push(origin);
+                        }
+                    }
+                }
+                Ok((reached.len(), Trail { origins, direct: None }))
+            }
             Some(binding) => {
                 let (start, read, _) = self.walk_start(name, &binding).await?;
                 Ok((self.walk_adapter(&start, &read, steps, name, scope, span).await?.len(), Trail::default()))
@@ -842,7 +1021,7 @@ impl Run<'_> {
 
     /// `collapse`: nothing read is null, one read is itself, several are
     /// their values, their trails unioned.
-    fn collapse(&self, mut results: Vec<Evaluated>) -> Evaluated {
+    pub(crate) fn collapse(&self, mut results: Vec<Evaluated>) -> Evaluated {
         match results.len() {
             0 => Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) },
             1 => results.remove(0),
@@ -901,7 +1080,7 @@ impl Run<'_> {
         let answer = self.ask(request).await.map_err(Failure::into_eval)?.unwrap_or(Json::Null);
         let value = answer
             .get("value")
-            .and_then(|v| env::decode(v).ok())
+            .and_then(|v| self.wire.decode(v).ok())
             .ok_or_else(|| EvalError::engine("MOVENG_RUNTIME", format!("the comparator answered {answer}")))?;
         Ok(value.truthy())
     }
@@ -965,9 +1144,9 @@ impl Run<'_> {
             return self.call_adapter(instance, method, env::object_of(args)).await;
         };
         let (reference, first) = self.positions.borrow_mut().register(object);
-        let value = first.then(|| env::encode_plain(position));
+        let value = first.then(|| self.wire.encode(position));
         let arg = host::adapters::PositionArg { reference, value };
-        let request = host::adapters::call_at(self.segment(), instance, method, arg, env::encode_plain(&env::object_of(rest)));
+        let request = host::adapters::call_at(self.segment(), instance, method, arg, self.wire.encode(&env::object_of(rest)));
         self.adapter_answer(self.ask(request).await?)
     }
 }

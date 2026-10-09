@@ -14,6 +14,7 @@
 //! carry (`0..origins`), and any id from `origins` up is a literal origin
 //! the evaluation minted, one per literal evaluated.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -180,21 +181,69 @@ pub fn encode(value: &Js) -> Json {
     encoder.value(value)
 }
 
-/// A value for a host call: written out whole, the caller's own objects
-/// included (a run's host has no table of objects it sent; their order and
-/// identity within the value still cross).
+/// A value written out whole, the caller's own objects included (their
+/// order and identity within the value still cross).
 pub fn encode_plain(value: &Js) -> Json {
     let mut encoder = Encoder { plain: true, ..Encoder::default() };
     encoder.value(value)
 }
 
+/// A segment's wire with its host (rust_wire.ts's one `WireOut` per
+/// segment): every object or list the host sent — in the input's event and
+/// in its answers — by the id the wire gave it. An answer may name one sent
+/// before (`["r", id]`), and a request hands one back as itself (`["i",
+/// id]`), so an object an adapter answered reaches the next host call as
+/// that very object, as it does in the TypeScript engine; anything this
+/// engine built is written out.
 #[derive(Default)]
-struct Encoder {
-    written: HashMap<usize, u64>,
-    plain: bool,
+pub struct Wire {
+    sent: RefCell<HashMap<u64, Js>>,
 }
 
-impl Encoder {
+impl Wire {
+    /// A value the host sent.
+    pub fn decode(&self, json: &Json) -> Result<Js, String> {
+        let mut sent = self.sent.borrow_mut();
+        let mut decoder = Decoder { seen: std::mem::take(&mut *sent) };
+        let value = decoder.value(json);
+        *sent = decoder.seen;
+        value
+    }
+
+    /// A value for a host request.
+    pub fn encode(&self, value: &Js) -> Json {
+        let sent = self.sent.borrow();
+        let mut encoder = Encoder { plain: true, sent: Some(&sent), ..Encoder::default() };
+        encoder.value(value)
+    }
+}
+
+#[derive(Default)]
+struct Encoder<'w> {
+    written: HashMap<usize, u64>,
+    plain: bool,
+    /// What the host sent this segment: one of those, unchanged, crosses
+    /// back as itself.
+    sent: Option<&'w HashMap<u64, Js>>,
+}
+
+impl Encoder<'_> {
+    /// The id the host gave `value`, when it is that very object or list.
+    fn sent_as(&self, value: &Js) -> Option<u32> {
+        let sent = self.sent?;
+        let origin = match value {
+            Js::Object(object) => object.origin?,
+            Js::Array(array) => array.origin?,
+            _ => return None,
+        };
+        let same = match (sent.get(&u64::from(origin))?, value) {
+            (Js::Object(held), Js::Object(object)) => Rc::ptr_eq(held, object),
+            (Js::Array(held), Js::Array(array)) => Rc::ptr_eq(held, array),
+            _ => false,
+        };
+        same.then_some(origin)
+    }
+
     fn value(&mut self, value: &Js) -> Json {
         match value {
             Js::Undefined => json!(["u"]),
@@ -205,6 +254,7 @@ impl Encoder {
             Js::Number(n) if *n == 0.0 && n.is_sign_negative() => json!(["n", "-0"]),
             Js::Number(n) => json!(n),
             Js::String(s) => json!(s),
+            Js::Array(_) | Js::Object(_) if self.sent_as(value).is_some() => json!(["i", self.sent_as(value)]),
             Js::Array(array) => match array.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
                 None => self.shared(Rc::as_ptr(array) as usize, |this| {

@@ -1,0 +1,252 @@
+//! Calls of the movements a program declares: run.ts's `executeCall` →
+//! `runCall`, for `persist(n: node { … })`, `x = summarise(d)` and the
+//! construction spelling `x = persist(n: d)` of the same.
+//!
+//! A call is one of its statement's steps (`… .c k`, address.ts): what runs
+//! inside the k-th call a statement makes is addressed under that step. The
+//! callee runs in a scope of its own whose parent is the file's (lexical
+//! scoping: the caller's locals are invisible), its parameters bound in
+//! declaration order from arguments evaluated in the caller's source order —
+//! a value parameter takes what its argument evaluates to, a position
+//! parameter the record its argument is bound to (the event, a write's
+//! handle, a node, a walked or extracted record). Its statements are the
+//! run's own: the cancel gate, the trace handed over a statement at a time,
+//! the writes on the one firing record. Its value is what it returned.
+//!
+//! Before version 3 a call to a movement already running fails; from it
+//! recursion is bounded by the call depth (`call_depth.ts`), the limit the
+//! shim reads from the deployment. Admission refuses a park or a suspension
+//! inside a callee (`call_park`, `cost_cap_inside_call`), so a call never
+//! has to be resumed into: no call frame is ever written.
+
+use std::rc::Rc;
+
+use movement_parser::ast::{CallArg, CallStatement, MovementDeclaration, ParamTypeRef, Statement};
+
+use crate::bindings::{Binding, Scope};
+use crate::env::ValueBinding;
+use crate::run::{Address, Failure, Flow, Run, Stop};
+
+type Called<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<Binding>, Stop>> + 's>>;
+type Bound<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Binding, Stop>> + 's>>;
+
+impl Run<'_> {
+    /// `calleeName`: the name a callee was declared with — from version 3 a
+    /// function's call may spell it in another letter case.
+    pub(crate) fn callee_name(&self, written: &str, scope: &Scope) -> String {
+        if scope.resolve(written).is_some() || self.version() < 3 {
+            return written.to_string();
+        }
+        scope.resolve_function(written).unwrap_or_else(|| written.to_string())
+    }
+
+    /// Whether `written` resolves to a movement the program declares.
+    pub(crate) fn calls_movement(&self, written: &str, scope: &Scope) -> bool {
+        matches!(scope.resolve(&self.callee_name(written, scope)), Some(Binding::Movement(_)))
+    }
+
+    /// `executeCall`: the statement's next call opened, then the callee run.
+    /// `path` is the call's AST path (its arguments' stamps are under it).
+    pub(crate) fn call<'s>(&'s self, call: &'s CallStatement, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str) -> Called<'s> {
+        Box::pin(async move {
+            let index = self.begin_call();
+            let name = self.callee_name(&call.callee, scope);
+            let declaration = match scope.resolve(&name) {
+                Some(Binding::Movement(declared)) => self.declaration(&declared),
+                Some(Binding::Opaque) => {
+                    return Err(Stop::Thrown(Failure::unsupported(
+                        &format!("calling the import '{}'", call.callee),
+                        "this run has no file resolver — its catalog snapshot carries no files (or declare the movement in this file)",
+                    )));
+                }
+                other => {
+                    let what = other.as_ref().map_or("not in scope", crate::write::describe_binding);
+                    return Err(Stop::Thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("'{}' is {what}, not a callable movement — the checker should have caught this", call.callee),
+                    )));
+                }
+            };
+            let (declaration, declared_at) = declaration;
+            self.enter_call(&declaration.name)?;
+            if call.args.len() != declaration.params.len() {
+                return Err(Stop::Thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!(
+                        "'{}' takes {} argument(s), got {} — the checker should have caught this",
+                        declaration.name,
+                        declaration.params.len(),
+                        call.args.len()
+                    ),
+                )));
+            }
+            let file = self.file_scope.borrow().clone().ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", "no file scope for a movement call".into())))?;
+            let callee = file.child();
+            // `argumentBindings`: a named argument the parameter it names, a
+            // positional one the parameter declared at its index; evaluated
+            // in the caller's source order, a later one for the same
+            // parameter replacing an earlier.
+            let mut evaluated: Vec<(String, Binding)> = Vec::new();
+            for (position, arg) in call.args.iter().enumerate() {
+                let param = arg.name().map(String::from).or_else(|| declaration.params.get(position).map(|p| p.name.clone()));
+                let Some(declared) = param.as_deref().and_then(|p| declaration.params.iter().find(|d| d.name == p)) else {
+                    let which = arg.name().map_or_else(|| "for this argument".to_string(), |n| format!("'{n}'"));
+                    return Err(Stop::Thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("'{}' has no parameter {which} — the checker should have caught this", declaration.name),
+                    )));
+                };
+                let takes_value = self.takes_value(declared.type_.as_ref());
+                let bound = self.call_arg(arg, scope, at, &format!("{path}/args/{position}"), takes_value).await?;
+                match evaluated.iter_mut().find(|(p, _)| *p == declared.name) {
+                    Some(slot) => slot.1 = bound,
+                    None => evaluated.push((declared.name.clone(), bound)),
+                }
+            }
+            for param in &declaration.params {
+                let Some((_, binding)) = evaluated.iter().find(|(p, _)| *p == param.name) else {
+                    return Err(Stop::Thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("'{}' call supplies no argument '{}' — the checker should have caught this", declaration.name, param.name),
+                    )));
+                };
+                callee.declare(param.name.clone(), binding.clone());
+            }
+            self.call_stack.borrow_mut().push(declaration.name.clone());
+            let body_path = format!("/statements/{declared_at}/body");
+            let ran = self.body(&declaration.body, &callee, &at.call(index), &body_path, 0).await;
+            self.call_stack.borrow_mut().pop();
+            match ran {
+                Ok(Flow::Returned) => Ok(callee.resolve_own(crate::run::RETURN_SLOT)),
+                // Find-on-missing inside a callee ends the callee's scope;
+                // the caller goes on after the call.
+                Ok(Flow::FellThrough) | Err(Stop::EndedQuietly) => Ok(None),
+                Err(other) => Err(other),
+            }
+        })
+    }
+
+    /// `readCall` in an argument: from version 3 a callee the program does
+    /// not bind is a built-in, read as the expression the call is.
+    pub(crate) fn builtin_reading<'c>(&self, call: &'c CallStatement, scope: &Scope) -> Option<&'c movement_parser::ast::ExprSlot> {
+        let name = self.callee_name(&call.callee, scope);
+        (self.version() >= 3 && scope.resolve(&name).is_none()).then_some(call.expression.as_ref()).flatten()
+    }
+
+    /// `requireCallValue`: a call whose value is bound or passed on.
+    pub(crate) fn call_value(&self, callee: &str, value: Option<Binding>) -> Result<Binding, Stop> {
+        value.ok_or_else(|| {
+            Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("'{callee}' returned nothing, so there is no value to bind — the checker should have caught this"),
+            ))
+        })
+    }
+
+    /// `beginCall`: the running statement's next call's index.
+    fn begin_call(&self) -> usize {
+        let mut sites = self.call_sites.borrow_mut();
+        match sites.last_mut() {
+            Some(next) => {
+                let index = *next;
+                *next += 1;
+                index
+            }
+            None => 0,
+        }
+    }
+
+    /// Before version 3 a movement already running is not called again;
+    /// from it, the depth is bounded (`assertCallDepth`: the run's own
+    /// movement is not a call).
+    fn enter_call(&self, callee: &str) -> Result<(), Stop> {
+        let stack = self.call_stack.borrow();
+        let chain = || stack.iter().cloned().chain(std::iter::once(callee.to_string())).collect::<Vec<_>>();
+        if self.version() < 3 {
+            if stack.iter().any(|running| running == callee) {
+                return Err(Stop::Thrown(Failure::unsupported(&format!("recursive movement calls ('{}')", chain().join(" → ")), "")));
+            }
+            return Ok(());
+        }
+        let limit = self.input.max_call_depth;
+        if stack.len().saturating_sub(1) < limit {
+            return Ok(());
+        }
+        Err(Stop::Thrown(Failure::CallDepth { limit, chain: chain() }))
+    }
+
+    /// The declaration a movement binding names, and its index among the
+    /// program's statements (its body's AST path).
+    fn declaration(&self, name: &str) -> (MovementDeclaration, usize) {
+        self.checked
+            .root
+            .program
+            .statements
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| match s {
+                Statement::Movement(m) if m.name == name => Some((m.clone(), i)),
+                _ => None,
+            })
+            .expect("a movement binding names a movement the program declares")
+    }
+
+    /// `isValueParam`: a parameter typed by a value (`<number[]>`), a field
+    /// type (`<text>`) or a `type` the file declares takes what its argument
+    /// evaluates to; any other takes a position.
+    fn takes_value(&self, type_: Option<&ParamTypeRef>) -> bool {
+        match type_ {
+            None => false,
+            Some(ParamTypeRef::Value(_)) => true,
+            Some(ParamTypeRef::Name(type_)) if type_.hops_raw.is_some() => false,
+            Some(ParamTypeRef::Name(type_)) => {
+                movement_parser::catalog::helpers::parse_field_type_name(Some(&type_.graph)).is_some()
+                    || self.checked.declarations.root.types.contains_key(&type_.graph)
+            }
+        }
+    }
+
+    /// `evaluateCallArg`.
+    fn call_arg<'s>(&'s self, arg: &'s CallArg, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str, takes_value: bool) -> Bound<'s> {
+        Box::pin(async move {
+            match arg {
+                CallArg::Expr { expr, .. } if takes_value => {
+                    let evaluated = self.evaluate_slot(expr, scope).await?;
+                    let trail = self.trail_or_none(&evaluated.prov, scope);
+                    Ok(Binding::Value(ValueBinding { value: evaluated.value, trail: Some(trail), many: false }))
+                }
+                CallArg::Write { write, .. } => self.write(write, None, scope, &format!("{path}/write")).await,
+                CallArg::Node { node, .. } => Ok(Binding::Node(self.synthesise_node(node, scope, &format!("{path}/node")).await?)),
+                // A built-in called here is the value it computes; any other
+                // call runs, and its value is what this argument passes on.
+                CallArg::Call { call, name } => match self.builtin_reading(call, scope) {
+                    Some(expr) => {
+                        let as_value = CallArg::Expr { name: name.clone(), expr: expr.clone() };
+                        self.call_arg(&as_value, scope, at, path, takes_value).await
+                    }
+                    None => {
+                        let value = self.call(call, scope, at, &format!("{path}/call")).await?;
+                        self.call_value(&call.callee, value)
+                    }
+                },
+                CallArg::Closure { .. } => Err(Stop::Thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    "a function handed to a function's parameter — the checker should have caught this".into(),
+                ))),
+                CallArg::Type { .. } => Err(Stop::Thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    "a type handed to a function's parameter — the checker should have caught this".into(),
+                ))),
+                // A position parameter takes the record its argument is bound to.
+                CallArg::Expr { expr, .. } => match self.bind_slot_binding(expr, scope).await? {
+                    binding @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::LazyWalk(_)) => Ok(binding),
+                    other => Err(Stop::Thrown(Failure::unsupported(
+                        &format!("passing {} ('{}') as a movement argument", crate::write::describe_binding(&other), crate::js::trim(&expr.raw)),
+                        "arguments are positions — pass the event, a write handle, or adapt with an inline shape-write",
+                    ))),
+                },
+            }
+        })
+    }
+}
+

@@ -4,10 +4,11 @@
 //!
 //! - `s i`: the i-th statement of the current sequence;
 //! - `i j`: a fan-out body's iteration j (a traversal block's j-th landing);
-//! - `b k`: an `if` arm (or, later, a parallel branch) k.
+//! - `b k`: an `if` arm (or, later, a parallel branch) k;
+//! - `c k`: what runs inside a statement's k-th call (a callee's body).
 //!
-//! The `c k` step (a call) is address.ts's too; this engine addresses no
-//! call (a `suspendAt` naming one is refused at admission).
+//! A `suspendAt` naming a `c` step is refused at admission: a statement is
+//! re-run by a journal of its finished calls, which this engine keeps none of.
 
 /// A lexical address: `s1.b0.s2`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -28,6 +29,11 @@ impl Address {
     /// yielded the landings.
     pub fn iter(&self, index: usize) -> Address {
         self.child('i', index)
+    }
+
+    /// `childCall`: what runs inside a statement's k-th call.
+    pub fn call(&self, index: usize) -> Address {
+        self.child('c', index)
     }
 
     fn child(&self, kind: char, index: usize) -> Address {

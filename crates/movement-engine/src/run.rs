@@ -10,9 +10,9 @@
 //!    resolved (`adapters.resolve`), the event seeded (`seedEventPosition`);
 //! 3. `interpretBody` over the movement's statements, the cancel gate asked
 //!    at each (`control.cancelled`): `x = <expr>`, `if`/`else`, `return`,
-//!    writes (crate::write), node and graph literals (crate::node), body
-//!    constructions, `sleep` (a park: crate::park) — or, resuming, the parked
-//!    leaf's continuation;
+//!    writes (crate::write), node and graph literals (crate::node), calls of
+//!    the program's movements (crate::call), body constructions, `sleep` (a
+//!    park: crate::park) — or, resuming, the parked leaf's continuation;
 //! 4. the last cancel check (`control.cancelledNow`) and the result: the
 //!    writes, and where the run parked.
 //!
@@ -127,6 +127,17 @@ pub struct SegmentInput {
     /// the shim reads it, so the engine reads no environment.
     #[serde(default = "default_file_chars")]
     pub extraction_file_chars: usize,
+    /// How many named calls deep one run may nest from version 3
+    /// (call_depth.ts `maxCallDepth`, a deployment's
+    /// `MOVEMENT_MAX_CALL_DEPTH`): the shim reads it, so the engine reads no
+    /// environment.
+    #[serde(default = "default_call_depth")]
+    pub max_call_depth: usize,
+}
+
+/// call_depth.ts `DEFAULT_MAX_CALL_DEPTH`.
+fn default_call_depth() -> usize {
+    32
 }
 
 fn default_file_chars() -> usize {
@@ -193,6 +204,9 @@ pub(crate) enum Failure {
     /// The run met its cost cap (`RunCostCapExceeded`): the statement
     /// suspends where it can, and fails the run where it cannot.
     CapExceeded(crate::ledger::CapExceeded),
+    /// A call would nest deeper than the limit (`CallDepthExceeded`): the
+    /// run's movement, each call it is inside, then the refused one.
+    CallDepth { limit: usize, chain: Vec<String> },
 }
 
 impl Failure {
@@ -200,8 +214,10 @@ impl Failure {
         Failure::Engine { class: ErrorClass::Engine(code), message }
     }
 
+    /// `unsupported(construct, detail?)`: an empty detail is none.
     pub(crate) fn unsupported(construct: &str, detail: &str) -> Failure {
-        Failure::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet ({detail})"))
+        let detail = if detail.is_empty() { String::new() } else { format!(" ({detail})") };
+        Failure::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet{detail}"))
     }
 
     /// The failure as an evaluation carries it out of a read it awaited.
@@ -210,6 +226,8 @@ impl Failure {
             Failure::Engine { class, message } => EvalError::Thrown { class, message },
             Failure::Host(error) => EvalError::Host(error),
             Failure::CapExceeded(cap) => EvalError::CapExceeded(cap),
+            // No evaluation makes a call: a call's statement does.
+            Failure::CallDepth { .. } => unreachable!("an expression makes no movement call"),
         }
     }
 
@@ -233,6 +251,7 @@ impl Failure {
             Failure::Engine { class: ErrorClass::RangeError, message } => json!({ "class": "RangeError", "message": message }),
             Failure::Host(error) => json!({ "hostError": error.detail.get("ref").cloned().unwrap_or(Json::Null) }),
             Failure::CapExceeded(cap) => cap.to_json(),
+            Failure::CallDepth { limit, chain } => json!({ "class": "CallDepthExceeded", "limit": limit, "chain": chain }),
         }
     }
 }
@@ -313,26 +332,54 @@ pub(crate) struct Run<'a> {
     pub(crate) unfetched_files: RefCell<Vec<String>>,
     /// Log lines not yet handed to the shim.
     pub(crate) log_lines: RefCell<Vec<Json>>,
+    /// The file's scope, which a callee's scope forks from.
+    pub(crate) file_scope: RefCell<Option<Rc<Scope>>>,
+    /// Per statement running, at every depth, the calls it has made
+    /// (`StatementSite.calls.next`): the next call's index.
+    pub(crate) call_sites: RefCell<Vec<usize>>,
+    /// The movements running, the dispatched one first (`callStack`).
+    pub(crate) call_stack: RefCell<Vec<String>>,
+    /// The movements the dispatched one calls, each with the parameters a
+    /// call may bind to the event (crate::admit `event_params`).
+    pub(crate) called: Vec<(String, Vec<String>)>,
+    /// The segment's wire with its host: what the host sent, by id.
+    pub(crate) wire: env::Wire,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
     let version = input.language_version;
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
-    let root = program::parse(&input.source, version).map_err(|_| Stop::Refused(vec!["source_does_not_parse".into()]))?;
+    let root = match program::parse(&input.source, version) {
+        Ok(root) => root,
+        Err(_) => return Err(unparsed(host, input).await),
+    };
     // What a plugin call binds is the snapshot's to say, read off the input.
     let plugins = serde_json::from_str::<CatalogPlugins>(input.catalog.get()).ok();
     let movements = crate::admit::reachable(&root.program, input.movement_name.as_deref(), version);
-    let mut reasons = crate::admit::refusals(&root.program, &movements, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
-    reasons.extend(crate::admit::input_refusal(&root.program, &movements, input.spend.cap_microdollars.is_some(), &input.suspend_at));
+    let declared: Vec<&MovementDeclaration> =
+        root.program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
+    let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
+    let mut reasons = crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
+    let admitted_input = crate::admit::Input {
+        capped: input.spend.cap_microdollars.is_some(),
+        suspend_at: &input.suspend_at,
+        limit_paused: input.limit_paused,
+        dry_run: input.dry_run,
+    };
+    reasons.extend(crate::admit::input_refusal(&root.program, &movements, entry, &admitted_input));
     if let Some(resume) = &input.resume {
         reasons.extend(crate::park::resume_refusal(&resume.state));
     }
     if !reasons.is_empty() {
         return Err(Stop::Refused(reasons));
     }
+    let called = crate::admit::event_params(&root.program, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
     let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
-    let event = env::decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
+    // The event crosses on the segment's wire: its objects are what the
+    // host sent first.
+    let wire = env::Wire::default();
+    let event = wire.decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
     let now_ms = match js_date::parse(&input.now) {
         js_date::Parsed::Valid(ms) => ms,
         _ => return Err(Stop::Declined("instant_does_not_read".into())),
@@ -369,6 +416,11 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         reply_digests: std::cell::Cell::new(0),
         unfetched_files: RefCell::default(),
         log_lines: RefCell::default(),
+        file_scope: RefCell::default(),
+        call_sites: RefCell::default(),
+        call_stack: RefCell::default(),
+        called,
+        wire,
     };
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
@@ -389,6 +441,17 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // the shim logs it.
     let _ = run.hand_over_trace(true).await;
     outcome
+}
+
+/// A source this engine's parser refuses: the check's to fail, as the
+/// TypeScript engine's parse fails it (the shim ends the segment with the
+/// check's own MOVENG_PARSE). A check that passes where the parser did not
+/// is a grammar this engine lacks: declined, before anything the host sees.
+async fn unparsed(host: &Host, input: &SegmentInput) -> Stop {
+    match host.request(host::check::program(&input.source, input.language_version, None)).await {
+        Ok(_) => Stop::Declined("source_does_not_parse".into()),
+        Err(error) => Stop::Thrown(Failure::Host(error)),
+    }
 }
 
 impl Run<'_> {
@@ -429,7 +492,7 @@ impl Run<'_> {
     /// The comparator's request, a `WITHIN`'s instant given.
     pub(crate) fn compare_request_at(&self, op: FilterOperator, left: &Js, right: &Js, now: Option<&str>) -> host::Request {
         let op = serde_json::to_value(op).expect("an operator is JSON");
-        host::builtins::compare(op.as_str().unwrap_or_default(), env::encode_plain(left), env::encode_plain(right), now)
+        host::builtins::compare(op.as_str().unwrap_or_default(), self.wire.encode(left), self.wire.encode(right), now)
     }
 
     /// The credential id the run was handed for `name`, if any.
@@ -441,7 +504,7 @@ impl Run<'_> {
     /// the TypeScript builds.
     fn result(&self, cancelled: bool, parked: Option<&str>) -> Json {
         let writes: Vec<Js> = self.writes.borrow().iter().map(|w| w.object.clone()).collect();
-        let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": env::encode_plain(&Js::array(writes)) });
+        let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": self.wire.encode(&Js::array(writes)) });
         // Each extraction site the writes cite, once (`ProvenanceSummariser.sites`).
         let sites = self.extraction_sites.borrow();
         if !sites.is_empty() {
@@ -449,7 +512,7 @@ impl Run<'_> {
             for (id, summary) in sites.iter() {
                 table.set(id.clone(), summary.clone());
             }
-            result["extractionSites"] = env::encode_plain(&Js::object(table));
+            result["extractionSites"] = self.wire.encode(&Js::object(table));
         }
         drop(sites);
         if let Some(address) = parked {
@@ -564,16 +627,16 @@ impl Run<'_> {
             *self.mutation_context.borrow_mut() = context;
         }
         *self.source_instance.borrow_mut() = Some(source_instance.clone());
+        *self.file_scope.borrow_mut() = Some(file.clone());
+        self.call_stack.borrow_mut().push(movement.name.clone());
         let movement_scope = file.child();
         movement_scope.declare(param.name.clone(), Binding::Event);
         Ok((movement, index, movement_scope))
     }
 
-    /// What the checker's stamps on the dispatched movement say this engine
-    /// does not run, found with no effect:
+    /// What the checker's stamps on the dispatched movement, and on each
+    /// movement it calls, say this engine does not run, found with no effect:
     ///
-    /// - `graph_copy_walks_edges`: a graph's record spread whose copy plan
-    ///   walks the record's edges (node.rs copies fields);
     /// - `event_field_dated`: a field the program reads off the event — by
     ///   name, or as a `...msg` spread's stamp names it — that the source's
     ///   schema types as a date. The adapter may answer it as a `Date`, which
@@ -590,14 +653,16 @@ impl Run<'_> {
             })
             .collect();
         let movement: &MovementDeclaration = self.select_movement(&movements).ok()?;
-        let index = statements.iter().position(|s| matches!(s, Statement::Movement(m) if std::ptr::eq(m, movement)))?;
-        let prefix = format!("/statements/{index}/");
-        let walks_edges = self.checked.root.stamps.iter().any(|(path, stamp)| {
-            path.starts_with(&prefix)
-                && matches!(stamp, Stamp::Copy(plan) if plan.get("edges").and_then(Json::as_object).is_some_and(|edges| !edges.is_empty()))
-        });
-        if walks_edges {
-            return Some("graph_copy_walks_edges");
+        let index_of = |m: &MovementDeclaration| statements.iter().position(|s| matches!(s, Statement::Movement(d) if std::ptr::eq(d, m)));
+        // The dispatched movement, and each it calls with the parameters a
+        // call may bind to the event: what each body reads of the event, by
+        // its own names for it.
+        let mut bodies: Vec<(String, &MovementDeclaration, Vec<String>)> = Vec::new();
+        let dispatched = movement.params.first().map(|p| vec![p.name.clone()]).unwrap_or_default();
+        bodies.push((format!("/statements/{}/", index_of(movement)?), movement, dispatched));
+        for (name, params) in &self.called {
+            let Some(callee) = movements.iter().find(|m| m.name == *name) else { continue };
+            bodies.push((format!("/statements/{}/", index_of(callee)?), callee, params.clone()));
         }
         let [param] = movement.params.as_slice() else { return None };
         let Some(ParamTypeRef::Name(type_ref)) = &param.type_ else { return None };
@@ -615,19 +680,22 @@ impl Run<'_> {
             })
         };
         let mut read = Vec::new();
-        let text = serde_json::to_string(&movement.body).unwrap_or_default();
-        // The event under its own name and every second name for it (`m2 = msg`).
-        let names = event_names(&movement.body, &param.name);
-        for name in &names {
-            event_fields_read(&text, name, &mut |field| read.push(field.to_string()));
-        }
-        // `...msg` in a write: the lines the checker's stamp says it writes.
-        for (path, stamp) in &self.checked.root.stamps {
-            if let Stamp::SpreadFields(fields) = stamp
-                && path.starts_with(&prefix)
-                && self.checked.root.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str).is_some_and(|source| names.iter().any(|n| n == source))
-            {
-                read.extend(fields.iter().cloned());
+        for (prefix, body, params) in &bodies {
+            let text = serde_json::to_string(&body.body).unwrap_or_default();
+            // The event under each name a body has for it, and every second
+            // name for it (`m2 = msg`).
+            let names: Vec<String> = params.iter().flat_map(|p| event_names(&body.body, p)).collect();
+            for name in &names {
+                event_fields_read(&text, name, &mut |field| read.push(field.to_string()));
+            }
+            // `...msg` in a write: the lines the checker's stamp says it writes.
+            for (path, stamp) in &self.checked.root.stamps {
+                if let Stamp::SpreadFields(fields) = stamp
+                    && path.starts_with(prefix.as_str())
+                    && self.checked.root.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str).is_some_and(|source| names.iter().any(|n| n == source))
+                {
+                    read.extend(fields.iter().cloned());
+                }
             }
         }
         read.iter().any(|field| dated(field)).then_some("event_field_dated")
@@ -805,7 +873,11 @@ impl Run<'_> {
                 // stops each flow between statements; so does a `suspendAt`
                 // address.
                 self.suspend_before(&at, scope).await?;
-                let flow = match self.statement(statement, scope, &at, &format!("{path}/{index}")).await {
+                // The statement is the site of the calls it makes.
+                self.call_sites.borrow_mut().push(0);
+                let ran = self.statement(statement, scope, &at, &format!("{path}/{index}")).await;
+                self.call_sites.borrow_mut().pop();
+                let flow = match ran {
                     // The host refuses a priced call once the run has spent
                     // its cap: this statement was about to spend, so the run
                     // suspends just before it.
@@ -824,58 +896,7 @@ impl Run<'_> {
     async fn statement(&self, statement: &Statement, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
         match statement {
             Statement::Assign(assign) => {
-                match &assign.value {
-                    RValue::Write { write } => {
-                        self.write(write, Some(&assign.name), scope, &format!("{path}/value/write")).await?;
-                    }
-                    RValue::Match { r#match } => {
-                        self.match_record(r#match, Some(&assign.name), scope).await?;
-                    }
-                    RValue::Link { link } => self.link(link, Some(&assign.name), scope).await?,
-                    RValue::Block { block } => {
-                        self.block(block, Some(&assign.name), scope, at, &format!("{path}/value")).await?;
-                    }
-                    RValue::Node { node } => {
-                        let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
-                        scope.declare(assign.name.clone(), Binding::Node(built));
-                    }
-                    RValue::Extract { extract } => {
-                        let emission = self.extraction(extract, scope).await?;
-                        scope.declare(assign.name.clone(), Binding::Extracted { emission, root: true });
-                    }
-                    // A plugin's name in a construction's spelling is its call
-                    // (`constructionAsCall`).
-                    RValue::Construct { construct } if matches!(scope.resolve(&construct.callee), Some(Binding::Plugin(_))) => {
-                        let args: Vec<(String, ExprSlot)> = construct.args.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
-                        let bound = self.plugin_call(&construct.callee, &args, scope).await?;
-                        scope.declare(assign.name.clone(), bound);
-                    }
-                    RValue::Call { call } if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
-                        let bound = self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
-                        scope.declare(assign.name.clone(), bound);
-                    }
-                    // An instance constructed in a body, as at file scope; a
-                    // movement's name in that spelling is a call.
-                    RValue::Construct { construct } => {
-                        if matches!(scope.resolve(&construct.callee), Some(Binding::Movement(_))) {
-                            return Err(Stop::Thrown(Failure::unsupported("a call", "the Rust engine runs no calls yet")));
-                        }
-                        let instance = self.instance_binding(&assign.name, construct);
-                        scope.declare(assign.name.clone(), Binding::Instance(Rc::new(instance)));
-                    }
-                    RValue::Await { r#await } => match &r#await.source {
-                        AwaitSource::Sleep { duration, .. } => {
-                            self.sleep(duration, at, scope, Some(&assign.name)).await?;
-                            scope.declare(assign.name.clone(), Binding::Value(env::ValueBinding { value: Js::Bool(true), trail: Some(Trail::default()), many: false }));
-                        }
-                        _ => return Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
-                    },
-                    _ => {
-                        let slot = self.value_slot(&assign.value, scope)?;
-                        let bound = self.bind_slot_binding(slot, scope).await?;
-                        scope.declare(assign.name.clone(), bound);
-                    }
-                }
+                self.assign(&assign.name, &assign.value, scope, at, path).await?;
                 Ok(Flow::FellThrough)
             }
             Statement::Write(statement) => {
@@ -908,9 +929,7 @@ impl Run<'_> {
             // `return <value>`: the same right-hand side, bound into a slot
             // the grammar cannot spell, and the body ends.
             Statement::Return(ret) => {
-                let expr = self.value_slot(&ret.value, scope)?;
-                let bound = self.bind_slot(expr, scope).await?;
-                scope.declare(RETURN_SLOT, Binding::Value(bound));
+                self.assign(RETURN_SLOT, &ret.value, scope, at, path).await?;
                 Ok(Flow::Returned)
             }
             Statement::Block(statement) => self.block(&statement.block, None, scope, at, path).await,
@@ -931,6 +950,10 @@ impl Run<'_> {
                 self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
                 Ok(Flow::FellThrough)
             }
+            Statement::Call(call) => {
+                self.call(call, scope, at, path).await?;
+                Ok(Flow::FellThrough)
+            }
             Statement::If(statement) => {
                 for (index, arm) in statement.arms.iter().enumerate() {
                     let taken = self.condition(&arm.condition, scope).await?;
@@ -949,6 +972,80 @@ impl Run<'_> {
                 "the Rust engine runs bindings, writes, matches, links, unlinks, deletes, blocks, `if`, `sleep` and `return`",
             ))),
         }
+    }
+
+    /// `declareAssign`: `name = <right-hand side>`, `return` binding into
+    /// the slot the grammar cannot spell. `path` is the statement's.
+    async fn assign(&self, name: &str, value: &RValue, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<(), Stop> {
+        match value {
+            RValue::Write { write } => {
+                self.write(write, Some(name), scope, &format!("{path}/value/write")).await?;
+            }
+            RValue::Match { r#match } => {
+                self.match_record(r#match, Some(name), scope).await?;
+            }
+            RValue::Link { link } => self.link(link, Some(name), scope).await?,
+            RValue::Block { block } => {
+                self.block(block, Some(name), scope, at, &format!("{path}/value")).await?;
+            }
+            RValue::Node { node } => {
+                let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
+                scope.declare(name, Binding::Node(built));
+            }
+            RValue::Extract { extract } => {
+                let emission = self.extraction(extract, scope).await?;
+                scope.declare(name, Binding::Extracted { emission, root: true });
+            }
+            // A plugin's name in a construction's spelling is its call
+            // (`constructionAsCall`).
+            RValue::Construct { construct } if matches!(scope.resolve(&construct.callee), Some(Binding::Plugin(_))) => {
+                let args: Vec<(String, ExprSlot)> = construct.args.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
+                let bound = self.plugin_call(&construct.callee, &args, scope).await?;
+                scope.declare(name, bound);
+            }
+            RValue::Call { call } if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
+                let bound = self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
+                scope.declare(name, bound);
+            }
+            // A movement's name in a construction's spelling is a call too.
+            RValue::Construct { construct } if self.calls_movement(&construct.callee, scope) => {
+                let call = ast::CallStatement {
+                    callee: construct.callee.clone(),
+                    args: construct.args.iter().map(|a| ast::CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect(),
+                    expression: None,
+                    span: construct.span,
+                };
+                let value = self.call(&call, scope, at, &format!("{path}/value/construct")).await?;
+                scope.declare(name, self.call_value(&call.callee, value)?);
+            }
+            RValue::Call { call } if self.calls_movement(&call.callee, scope) => {
+                let value = self.call(call, scope, at, &format!("{path}/value/call")).await?;
+                scope.declare(name, self.call_value(&call.callee, value)?);
+            }
+            // An instance constructed in a body, as at file scope.
+            RValue::Construct { construct } => {
+                let instance = self.instance_binding(name, construct);
+                scope.declare(name, Binding::Instance(Rc::new(instance)));
+            }
+            // Nothing runs here: every read of the name runs the walk.
+            RValue::Lazy { lazy } => {
+                let walk = self.defer_walk(&lazy.head, lazy.mapping.as_ref(), scope, &format!("{path}/value/lazy/mapping"));
+                scope.declare(name, Binding::LazyWalk(walk));
+            }
+            RValue::Await { r#await } => match &r#await.source {
+                AwaitSource::Sleep { duration, .. } => {
+                    self.sleep(duration, at, scope, Some(name)).await?;
+                    scope.declare(name, Binding::Value(env::ValueBinding { value: Js::Bool(true), trail: Some(Trail::default()), many: false }));
+                }
+                _ => return Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
+            },
+            _ => {
+                let slot = self.value_slot(value, scope)?;
+                let bound = self.bind_slot_binding(slot, scope).await?;
+                scope.declare(name, bound);
+            }
+        }
+        Ok(())
     }
 
     /// An `if` arm, in a scope of its own; a `return` in it returns from the
@@ -983,11 +1080,11 @@ impl Run<'_> {
     /// (`aliasedNodeBinding`); `FIRST`/`LAST`/`ONLY` of a bare walk is the
     /// record it picks (`selectedPositionBinding`); anything else, the value
     /// it evaluates to.
-    async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+    pub(crate) async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
-            && let Some(record @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::Positions(_))) =
+            && let Some(record @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::Positions(_) | Binding::LazyWalk(_))) =
                 scope.resolve(name)
         {
             return Ok(record);
@@ -1119,6 +1216,15 @@ impl Run<'_> {
             Ask::EventField { field } => self.event_field(&field).await.map(Ok),
             Ask::RecordField { root, field } => match scope.resolve(&root) {
                 Some(Binding::Landed(record)) => self.landed_field(&record, &field).await.map(Ok),
+                // The read is the walk: each landing's field, collapsed.
+                Some(Binding::LazyWalk(walk)) => {
+                    let landings = self.run_deferred(&walk).await.map_err(crate::write::failure_of)?;
+                    let mut read = Vec::with_capacity(landings.len());
+                    for (_, landing) in &landings {
+                        read.push(self.landing_field(landing, &field, &root).await?);
+                    }
+                    Ok(Ok(self.collapse(read)))
+                }
                 _ => Ok(self.record_field(&root, &field, scope)),
             },
             Ask::ScopedField { field, edge } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
@@ -1128,6 +1234,11 @@ impl Run<'_> {
                     "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
                 ))),
                 Scoped::Emission(emission) => Ok(crate::write::emission_field(emission, &field)),
+                Scoped::Binding(_) if edge => Ok(Err(EvalError::engine(
+                    "MOVENG_UNSUPPORTED",
+                    "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
+                ))),
+                Scoped::Binding(binding) => Ok(self.binding_field(binding, &field)),
             },
             Ask::Traverse { expr } => {
                 let span = span.cloned().unwrap_or(Js::Undefined);
@@ -1138,7 +1249,7 @@ impl Run<'_> {
                 self.walk_count(&expr, scope, &span).await.map(|(n, trail)| Ok(Evaluated { value: Js::Number(n as f64), prov: Prov::Built(trail) }))
             }
             Ask::Function { id, args } => {
-                let args = args.iter().map(env::encode_plain).collect();
+                let args = args.iter().map(|arg| self.wire.encode(arg)).collect();
                 let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
                 self.builtin(request).await
             }
@@ -1165,7 +1276,7 @@ impl Run<'_> {
             return Ok(Err(EvalError::Thrown { class, message }));
         }
         let value = answer.get("value").ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("a built-in answered {answer}")))?;
-        let value = env::decode(value).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
+        let value = self.wire.decode(value).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
         Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
     }
 
@@ -1203,6 +1314,20 @@ impl Run<'_> {
         let mut origins = self.origins.borrow_mut();
         origins.push(origin);
         origins.len() as u32 - 1
+    }
+
+    /// The id of an origin the run holds as this very object, minted the
+    /// first time: one origin reached twice is one origin, as the
+    /// TypeScript's are.
+    pub(crate) fn intern_origin(&self, origin: Js) -> u32 {
+        let known = self.origins.borrow().iter().position(|o| match (o, &origin) {
+            (Js::Object(a), Js::Object(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        });
+        match known {
+            Some(id) => id as u32,
+            None => self.mint_origin(origin),
+        }
     }
 
     /// The origin `id` names, as the TypeScript's object.
@@ -1277,7 +1402,7 @@ impl Run<'_> {
             })
         })?;
         let wake_at = js_date::to_iso_string(now + ms);
-        let request = host::park::commit_timer_park(self.segment(), &address, env::encode_plain(&state), &wake_at);
+        let request = host::park::commit_timer_park(self.segment(), &address, self.wire.encode(&state), &wake_at);
         self.ask(request).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Gate { outcome: false });
         Err(Stop::Parked(address))
@@ -1397,6 +1522,9 @@ struct Reading<'r, 'h> {
 pub(crate) enum Scoped {
     Landed(Rc<crate::bindings::Landed>),
     Emission(Rc<crate::extract::emission::Emission>),
+    /// Any other record a run-built node's edge holds (`{kind: 'binding'}`):
+    /// a node, a handle.
+    Binding(Binding),
 }
 
 impl Reader for Reading<'_, '_> {
@@ -1858,8 +1986,8 @@ mod tests {
         assert!(seen.iter().filter(|r| r.family != "check").all(|r| r.args["segmentId"] == json!("g1")));
         // The source adapter reads the payload under the parameter's
         // declared position.
-        let Js::Object(position) = env::decode(&seen[3].args["position"]).unwrap() else { panic!("a position") };
-        assert!(matches!(position.get("recordType"), Some(Js::String(t)) if t == "message"));
+        // (Its data is the event's own object, named by the id it was sent with.)
+        assert!(seen[3].args["position"].to_string().contains(r#"["recordType","message"]"#), "{}", seen[3].args["position"]);
     }
 
     /// The event's position crosses once, registered by handle on its first
@@ -1904,8 +2032,7 @@ mod tests {
         assert!(reads[0].args.get("position").is_some());
         assert!(reads[1].args.get("position").is_none(), "the landing's stamp is registered once");
         // Stamped with the parameter's declared type, its inline data kept.
-        let Js::Object(position) = env::decode(&reads[0].args["position"]).unwrap() else { panic!("a position") };
-        assert!(matches!(position.get("recordType"), Some(Js::String(t)) if t == "message"));
+        assert!(reads[0].args["position"].to_string().contains(r#"["recordType","message"]"#), "{}", reads[0].args["position"]);
     }
 
     #[test]
@@ -1946,7 +2073,7 @@ mod tests {
         let refused = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = AI(\"why\")\n  helper(e: msg)\n}}\n{helper}");
         match first_step(&refused) {
             Step::Done(done) => {
-                assert_eq!(done, json!({ "refused": "expression:llm", "reasons": ["expression:llm", "statement:call", "plugin_call"] }))
+                assert_eq!(done, json!({ "refused": "expression:llm", "reasons": ["expression:llm", "plugin_call"] }))
             }
             Step::Pending(pending) => panic!("asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
         }
@@ -2365,15 +2492,16 @@ mod tests {
         assert_eq!(seen[1], "adapters.resolve");
     }
 
+    /// A graph's record spread whose copy plan walks edges runs on (chunk
+    /// 7A Task 2): its walk is the node plane's.
     #[test]
-    fn a_graph_copy_that_walks_edges_declines_after_the_check() {
+    fn a_graph_copy_that_walks_edges_runs_past_the_check() {
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> { name: msg.`subject` }\n  g = graph { ...co }\n}";
         let copy = |edges: Json| json!({ "diagnostics": [], "stamps": [{ "path": "/statements/3/body/1/value/node/spreads/0", "copy": { "fields": ["name"], "edges": edges } }] });
-        let (done, seen) = dated_run(source, copy(json!({ "notes": { "fields": [], "edges": {} } })));
-        assert_eq!(done, json!({ "declined": "graph_copy_walks_edges" }));
-        assert_eq!(seen, ["check.program"]);
-        let (_, seen) = dated_run(source, copy(json!({})));
-        assert_eq!(seen[1], "adapters.resolve");
+        for edges in [json!({ "notes": { "fields": [], "edges": {} } }), json!({})] {
+            let (_, seen) = dated_run(source, copy(edges));
+            assert_eq!(seen[1], "adapters.resolve");
+        }
     }
 
     #[test]

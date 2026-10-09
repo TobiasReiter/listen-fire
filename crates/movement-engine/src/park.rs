@@ -11,8 +11,9 @@
 //!   origins) and `handle` (the write record itself, its type and graph).
 //! - **Suspension** (run.ts `suspendFlow`): the flow stops just before a
 //!   statement, its state `suspended`, with a `journal` of the calls the
-//!   statement had finished — always empty here, as this engine runs no
-//!   calls. A flow suspends when the run meets its cost cap (the statement
+//!   statement had finished — always empty here: admission refuses a capped
+//!   run where a statement could meet the cap past one of its calls
+//!   (`cost_cap_inside_call`), and a `suspendAt` before a call. A flow suspends when the run meets its cost cap (the statement
 //!   about to spend: `suspendAtLimit`, which first marks the run paused,
 //!   `commitLimitPause`, and says so on the trace), at each statement of a
 //!   run already paused (`limitPaused`), and at a `suspendAt` address. A
@@ -40,9 +41,9 @@ use movement_parser::catalog::snapshot::Args;
 use serde::Deserialize;
 use serde_json::Value as Json;
 
-use crate::bindings::{Binding, Handle, InstanceBinding, Node, Scope};
+use crate::bindings::{Binding, Edge, Handle, InstanceBinding, LandingShape, Node, Scope};
 use crate::env::{Trail, ValueBinding};
-use crate::env::{encode_plain, json_round_trip, object_of};
+use crate::env::{json_round_trip, object_of};
 use crate::host;
 use crate::ledger::CapExceeded;
 use crate::trace::TraceEntry;
@@ -122,9 +123,14 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             park.push(address);
             let node = node.borrow();
             let mut edges = JsObject::new();
-            for (edge, landings) in &node.edges {
-                let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
-                edges.set(edge.clone(), object_of(vec![kind("landed"), ("landings", Js::array(landings))]));
+            for (name, edge) in &node.edges {
+                assert!(edge.deferred.is_none(), "admission refuses a park holding a lazy entry's edge");
+                let landings: Vec<Js> = edge.landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
+                let mut descriptor = vec![kind("landed"), ("landings", Js::array(landings))];
+                if let Some(shape) = &edge.shape {
+                    descriptor.push(("landing", landing_shape_js(shape)));
+                }
+                edges.set(name.clone(), object_of(descriptor));
             }
             let mut provenance = JsObject::new();
             for (field, trail) in &node.field_provenance {
@@ -143,6 +149,8 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             members.push(("edges", Js::object(edges)));
             object_of(members)
         }
+        // Admission refuses a park where a run holds a kept walk (`lazy_park`).
+        Binding::LazyWalk(_) => unreachable!("admission refuses a park holding a lazy walk"),
         Binding::Event => object_of(vec![kind("event")]),
         Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
         Binding::Opaque => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
@@ -192,6 +200,34 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             ("emission", emission.descriptor(&|id| run.origin(id))),
         ]),
     })
+}
+
+/// A `LocalLandingShape` as the object a park stores.
+fn landing_shape_js(shape: &LandingShape) -> Js {
+    let mut edges = JsObject::new();
+    for (name, nested) in &shape.edges {
+        edges.set(name.clone(), landing_shape_js(nested));
+    }
+    object_of(vec![("fields", Js::array(shape.fields.iter().map(|f| Js::str(f.clone())).collect())), ("edges", Js::object(edges))])
+}
+
+/// `landingShapeOf`: a stored `landing`, or a legacy `landingShape` (the
+/// nested names alone, no fields).
+fn landing_shape_of(edge: &Js) -> Option<LandingShape> {
+    fn read(shape: &Js) -> LandingShape {
+        LandingShape {
+            fields: items(at(shape, "fields")).iter().filter_map(|f| text(Some(f)).map(String::from)).collect(),
+            edges: pairs(at(shape, "edges")).iter().map(|(name, nested)| (name.clone(), read(nested))).collect(),
+        }
+    }
+    fn legacy(shape: &Js) -> LandingShape {
+        LandingShape { fields: Vec::new(), edges: pairs(Some(shape)).iter().map(|(name, nested)| (name.clone(), legacy(nested))).collect() }
+    }
+    match (at(edge, "landing"), at(edge, "landingShape")) {
+        (Some(shape), _) => Some(read(shape)),
+        (None, Some(shape)) => Some(legacy(shape)),
+        (None, None) => None,
+    }
 }
 
 /// `serializeInstanceIdentity`.
@@ -288,7 +324,7 @@ fn descriptor_refusal(descriptor: &Js) -> Option<String> {
                 return Some("resume_state_extraction_origin".into());
             }
             for (_, edge) in pairs(at(descriptor, "edges")) {
-                if text(at(edge, "kind")) != Some("landed") || at(edge, "landing").is_some() || at(edge, "landingShape").is_some() {
+                if text(at(edge, "kind")) != Some("landed") {
                     return Some("resume_state_deferred_edge".into());
                 }
                 if let Some(reason) = items(at(edge, "landings")).iter().find_map(descriptor_refusal) {
@@ -361,7 +397,7 @@ impl Run<'_> {
     async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
         let address = at.encode();
         let state = suspended_state(self, &address, scope).map_err(Stop::Thrown)?;
-        let request = host::park::commit_suspension(self.segment(), &address, encode_plain(&state));
+        let request = host::park::commit_suspension(self.segment(), &address, self.wire.encode(&state));
         self.ask(request).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Gate { outcome: false });
         Ok(Stop::Parked(address))
@@ -545,7 +581,7 @@ impl Run<'_> {
                     for landing in items(at(landed, "landings")) {
                         landings.push(self.rehydrate(landing, park)?);
                     }
-                    edges.push((edge.clone(), landings));
+                    edges.push((edge.clone(), Edge { landings, shape: landing_shape_of(landed), deferred: None }));
                 }
                 let landed_on = text(at(descriptor, "landedOn")).map(String::from);
                 *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, landed_on, edges };
@@ -788,6 +824,11 @@ mod tests {
             reply_digests: std::cell::Cell::new(0),
             unfetched_files: RefCell::default(),
             log_lines: RefCell::default(),
+            file_scope: RefCell::default(),
+            call_sites: RefCell::default(),
+            call_stack: RefCell::default(),
+            called: Vec::new(),
+            wire: crate::env::Wire::default(),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },

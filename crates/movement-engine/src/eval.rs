@@ -678,6 +678,12 @@ impl<'a> Evaluator<'a> {
     /// `isManyValued`: a name bound to a walk read for a field.
     fn is_many_valued(&self, expr: &Expression) -> bool {
         match expr {
+            // `isWalkProjection`: a walk of at least one hop read for a field.
+            Expression::Traverse { steps, expression, .. } if !steps.is_empty() => match expression.as_ref() {
+                Expression::Property { property_type_id } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
+                Expression::EdgeProperty { .. } => true,
+                _ => false,
+            },
             Expression::AliasRef { name } | Expression::Property { property_type_id: name } => {
                 self.env.value(name).is_some_and(|b| b.many)
             }

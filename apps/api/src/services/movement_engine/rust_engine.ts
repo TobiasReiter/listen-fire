@@ -24,6 +24,7 @@ import { callEvalExpression, openEngineSegment } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
 import { RunCostCapExceeded } from '../../lib/run_cost';
+import { CallDepthExceeded, maxCallDepth } from './call_depth';
 import { logger } from '../logger';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import { servedHostMethods } from './host';
@@ -120,7 +121,10 @@ async function segmentInRust(
   // Read before the instance opens. An event, source or state that cannot
   // cross the eval wire as itself (a `Date` in a payload, a lone surrogate)
   // is refused here, before the engine has asked the host for anything.
-  const start = segmentInput(input, context, resume);
+  // The segment's one wire: what it sends the engine (the event, then every
+  // answer) keeps the ids the engine names it back by.
+  const wire = new WireOut();
+  const start = segmentInput(input, context, resume, wire);
   if (start === undefined) return notAdmitted(input, EVENT_DOES_NOT_CROSS);
   rustRunStats.routed += 1;
   const hostErrors: unknown[] = [];
@@ -131,8 +135,9 @@ async function segmentInRust(
       context,
       catalog: input.catalog,
       hostErrors,
+      wire,
     });
-    outcome = readRunResult(done, { context, hostErrors });
+    outcome = readRunResult(done, { context, hostErrors, wire });
   } catch (error) {
     // Anything but a refusal ends in a `done` past admission.
     rustRunStats.admitted += 1;
@@ -237,12 +242,14 @@ export function rustResumeRefusal(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Omit<RouteContext, 'hostErrors' | 'positions'> & {
+  input: Omit<RouteContext, 'hostErrors' | 'positions' | 'wire'> & {
     /** The errors host calls failed with, by the `ref` their answers carry. */
     hostErrors?: unknown[];
+    /** The segment's wire, when its input went out on it. */
+    wire?: WireOut;
   },
 ): Promise<unknown> {
-  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [], positions: new Map() };
+  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [], positions: new Map(), wire: input.wire ?? new WireOut() };
   // A settle queue: each request in flight, as it settles, joins the queue
   // and wakes the one waiter. An answer costs O(1) however many requests are
   // in flight (a race over every one of them per answer was O(n) each).
@@ -317,8 +324,8 @@ class SettleQueue {
  *  resumed state, on the eval wire, so their objects keep their key order
  *  (a stored state's is the order it was stored in). Undefined for an input
  *  that cannot cross as itself. */
-function segmentInput(input: RunMovementInput, context: RunContext, resume?: { state: unknown; reenter?: true }): unknown {
-  const event = new WireOut().value(input.event);
+function segmentInput(input: RunMovementInput, context: RunContext, resume: { state: unknown; reenter?: true } | undefined, wire: WireOut): unknown {
+  const event = wire.value(input.event);
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
   const state = resume !== undefined ? new WireOut({ asData: true }).value(resume.state) : undefined;
   if (state === REFUSED) return undefined;
@@ -356,6 +363,9 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
       // deployment's, read here so the engine reads no environment; whole
       // characters, as the engine counts them.
       extractionFileChars: Math.floor(maxFileChars()),
+      // How many named calls deep the run may nest (version 3): the
+      // deployment's, read here for the same reason.
+      maxCallDepth: maxCallDepth(),
     },
     'the segment input',
   );
@@ -374,7 +384,7 @@ type RunOutcome = { ran: MovementRunResult } | { refused: string; reasons: strin
  */
 export function readRunResult(
   done: unknown,
-  run: { context: Pick<RunContext, 'trace' | 'ledger'>; hostErrors: unknown[] },
+  run: { context: Pick<RunContext, 'trace' | 'ledger'>; hostErrors: unknown[]; wire?: WireOut },
 ): RunOutcome {
   const outcome = record(done, 'the Rust engine result');
   if ('refused' in outcome) return refusalOf(outcome);
@@ -393,9 +403,9 @@ export function readRunResult(
   if ('thrown' in outcome) throw failureOf(outcome.thrown, run.hostErrors);
   if ('failed' in outcome) {
     const failed = record(outcome.failed, 'the Rust engine failure');
-    throw new MovementRunFailed(failureOf(failed.error, run.hostErrors), resultOf(failed.result, trace));
+    throw new MovementRunFailed(failureOf(failed.error, run.hostErrors), resultOf(failed.result, trace, run.wire ?? new WireOut()));
   }
-  if ('result' in outcome) return { ran: resultOf(outcome.result, trace) };
+  if ('result' in outcome) return { ran: resultOf(outcome.result, trace, run.wire ?? new WireOut()) };
   throw new RustShimError(`the Rust engine finished with ${Object.keys(outcome).join(', ') || 'nothing'}, which this shim does not decode`);
 }
 
@@ -412,7 +422,7 @@ function refusalOf(outcome: Record<string, unknown>): { refused: string; reasons
 
 const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'extractionSites', 'parked', 'parkedAddress', 'cancelled']);
 
-function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRunResult {
+function resultOf(value: unknown, trace: MovementRunResult['trace'], wire: WireOut): MovementRunResult {
   const result = record(value, 'the Rust engine result');
   const unread = Object.keys(result).filter((key) => !RESULT_KEYS.has(key));
   if (unread.length > 0) {
@@ -420,9 +430,10 @@ function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRu
   }
   if (result.cancelled !== undefined && result.cancelled !== true) throw new RustShimError('a cancelled result says true');
   if (result.parked !== undefined && result.parked !== true) throw new RustShimError('a parked result says true');
-  const writes = new WireOut().read(result.writes ?? ['l', 0, []]);
+  // A value an adapter answered is in the writes as that very object.
+  const writes = wire.read(result.writes ?? ['l', 0, []]);
   if (!Array.isArray(writes) || !writes.every(isWriteRecord)) throw new RustShimError('the Rust engine result writes are write records');
-  const extractionSites = result.extractionSites === undefined ? {} : new WireOut().read(result.extractionSites);
+  const extractionSites = result.extractionSites === undefined ? {} : wire.read(result.extractionSites);
   if (!isSiteTable(extractionSites)) throw new RustShimError('the Rust engine result extractionSites are site summaries');
   // The spend fields are the run host's to add, read off the run's account
   // once the segment closes (run.ts `inRunContext`).
@@ -704,6 +715,15 @@ function thrownBy(error: Record<string, unknown>): Error {
       throw new RustShimError('a RunCostCapExceeded carries its cap and spend as numbers');
     }
     return new RunCostCapExceeded(capMicrodollars, spentMicrodollars);
+  }
+  // A call past the depth limit: rebuilt from its limit and chain, message
+  // and all, as call_depth.ts builds it.
+  if (error.class === 'CallDepthExceeded') {
+    const { limit, chain } = error;
+    if (typeof limit !== 'number' || !Array.isArray(chain) || !chain.every((name): name is string => typeof name === 'string')) {
+      throw new RustShimError('a CallDepthExceeded carries its limit and its chain of names');
+    }
+    return new CallDepthExceeded(limit, chain);
   }
   const message = string(error.message, 'the Rust evaluator error message');
   switch (error.class) {

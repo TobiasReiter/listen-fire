@@ -175,6 +175,10 @@ interface Case {
   capBaselineMicrodollars?: number;
   limitPaused?: boolean;
   suspendAt?: string[];
+  /** The pin the run is under: the current version by default. */
+  languageVersion?: 1 | 2 | 3;
+  /** The movement fired, when the program holds more than one. */
+  movementName?: string;
   /** Which of the sink's suspension methods it has: both by default. */
   suspends?: 'both' | 'suspension_only' | 'neither';
 }
@@ -246,6 +250,8 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     ...(c.capBaselineMicrodollars !== undefined ? { capBaselineMicrodollars: c.capBaselineMicrodollars } : {}),
     ...(c.limitPaused === true ? { limitPaused: true } : {}),
     ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
+    ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
+    ...(c.movementName !== undefined ? { movementName: c.movementName } : {}),
     host: makeTestHost({
         locks: recordingWriteLocks(locks),
       ...(c.dryRun === true ? { writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
@@ -557,6 +563,316 @@ describe('writes in the Rust engine', () => {
   });
 });
 
+describe('calls of the movements a program declares, in the Rust engine', () => {
+  const NOTE = ['node Note {', '  title: <text>', '  body: <text>', '}'].join('\n');
+  const intake = (...lines: string[]) => ['movement intake(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
+  const event = webhook({ subject: 'Acme', text: 'hello' });
+
+  it('runs a callee in its own scope: a node argument, a relay, named and positional arguments in either order', async () => {
+    const source = [
+      NOTE,
+      'team_tag = "sourced"',
+      'movement persist(n: <Note>, tag: <text>) {',
+      '  write crm-[:companies]-> { unique by (`name`) name: n.`title`, stage: "${n.`body`}/${tag}/${team_tag}" }',
+      '}',
+      'movement relay(n: <Note>) {',
+      '  persist(n: n, tag: "relayed")',
+      '}',
+      intake(
+        '  persist(n: node { title: msg.`subject`, body: msg.`text` }, tag: "direct")',
+        '  d = node { title: "Beta", body: msg.`text` }',
+        '  relay(n: d)',
+        '  persist(tag: "named", n: d)',
+        '  persist(d, "positional")',
+        '  PERSIST(d, "any case")',
+      ),
+    ].join('\n');
+    const { rust } = await agree({ source, event, movementName: 'intake' });
+    expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['create', 'create', 'create', 'create', 'create']);
+  });
+
+  it('binds a call’s value: a value, a node, a record named again, and a value parameter typed by a field type', async () => {
+    const source = [
+      NOTE,
+      'movement label(t: <text>) {',
+      '  if t == "" {',
+      '    return "none"',
+      '  }',
+      '  return UPPER(t)',
+      '}',
+      'movement make(t: <text>) {',
+      '  return node { title: t, body: "made" }',
+      '}',
+      'movement same(n: <Note>) {',
+      '  return n',
+      '}',
+      intake(
+        '  l = label(t: msg.`subject`)',
+        '  n = make(t: l)',
+        '  again = same(n: n)',
+        '  write crm-[:companies]-> { name: "${l}/${again.`title`}/${n.`body`}" }',
+      ),
+    ].join('\n');
+    await agree({ source, event, movementName: 'intake' });
+  });
+
+  it('passes the event, a handle an inline write made, and a walked record; reads them in the callee as the caller would', async () => {
+    const source = [
+      'movement note_on(co: <crm-[:company]->>, m: <inbox-[:message]->>) {',
+      '  write co-[:notes]-> { body: "${co.`name`}: ${m.`subject`}" }',
+      '}',
+      intake(
+        '  note_on(co: write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }, m: msg)',
+        '  crm-[c:companies]-> {',
+        '    note_on(co: c, m: msg)',
+        '  }',
+      ),
+    ].join('\n');
+    await agree({ source, event, movementName: 'intake', attio: { landings: { 'co-1': { name: 'Acme' } } } });
+  });
+
+  it('ends a callee’s scope quietly on a match that finds nothing, and the caller goes on', async () => {
+    const source = [
+      'movement find(name: <text>) {',
+      '  co = match crm-[:companies]-> { unique by (`name`), name: name }',
+      '  write co-[:notes]-> { body: "found" }',
+      '}',
+      intake('  find(name: msg.`subject`)', '  write crm-[:companies]-> { name: "after" }'),
+    ].join('\n');
+    await agree({ source, event, movementName: 'intake' });
+    await agree({ source, event, movementName: 'intake', attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }] } });
+  });
+
+  it('fails as the TypeScript engine fails: recursion before version 3, the depth limit from it, a value passed to a position', async () => {
+    const recursive = intake('  write crm-[:companies]-> { name: msg.`subject` }', '  intake(msg: msg)');
+    await agree({ source: recursive, event, languageVersion: 2 });
+    const previous = process.env.MOVEMENT_MAX_CALL_DEPTH;
+    process.env.MOVEMENT_MAX_CALL_DEPTH = '3';
+    try {
+      const { rust } = await agree({ source: recursive, event });
+      expect(rust.result?.writes ?? []).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.MOVEMENT_MAX_CALL_DEPTH;
+      else process.env.MOVEMENT_MAX_CALL_DEPTH = previous;
+    }
+    const position = ['movement persist(c: <crm-[:company]->>) {', '  write c-[:notes]-> { body: "x" }', '}', intake('  v = msg.`subject`', '  persist(c: v)')].join('\n');
+    await agree({ source: position, event, movementName: 'intake' });
+  });
+});
+
+describe('the graphs a run builds, in the Rust engine', () => {
+  const COMPANY = ['node Company {', '  name: <text>', '  stage: <text>', '  node founder {', '    first: <text>', '  }', '}'].join('\n');
+  const program = (lines: string[]) => [COMPANY, 'movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
+
+  it('dedupes writes into a declared edge, fills with ?:, and walks the landings into a system', async () => {
+    const source = program([
+      '  deduped = node { companies: <Company> order by arrival }',
+      '  write deduped-[:companies]-> { unique by (`name`) name: msg.`subject` }',
+      '  write deduped-[:companies]-> { unique by (`name`) name: "Beta" }',
+      '  write deduped-[:companies]-> { unique by (`name`) name: msg.`subject`, stage ?: "filled" }',
+      '  write deduped-[:companies]-> { unique by (`name`) name: "  ACME ", stage ?: "ignored" }',
+      '  deduped-[c:companies WHERE c.`name` != "Beta"]-> {',
+      '    write crm-[:companies]-> { name: c.`name`, stage: c.`stage` }',
+      '  }',
+    ]);
+    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    expect(rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null])).toEqual([
+      ['local', 'create', 'companies'],
+      ['local', 'create', 'companies'],
+      ['local', 'update', 'companies'],
+      ['local', 'update', 'companies'],
+      ['attio', 'create', null],
+    ]);
+    expect(rust.locks).toEqual([['identity "local" "companies"'], ['identity "local" "companies"'], ['identity "local" "companies"'], ['identity "local" "companies"']]);
+  });
+
+  it('blocks a FUZZY component on its distinctive word, and asks the judge among the blocked landings', async () => {
+    const source = program([
+      '  deduped = node { companies: <Company> }',
+      '  write deduped-[:companies]-> { unique by (FUZZY `name`) name: "Faction AI" }',
+      '  write deduped-[:companies]-> { unique by (FUZZY `name`) name: "Actions AI" }',
+      '  write deduped-[:companies]-> { unique by (FUZZY `name`) name: "Faction", stage: msg.`subject` }',
+      '  deduped-[c:companies]-> {',
+      '    write crm-[:companies]-> { name: c.`name`, stage: c.`stage` }',
+      '  }',
+    ]);
+    for (const index of [0, null]) {
+      const { rust } = await agree({
+        source,
+        event: webhook({ subject: 'Seed' }),
+        // As the question crossed: the landing it names is merged into after.
+        judge: (asked) => async (question) => {
+          asked.push(JSON.parse(JSON.stringify(question)));
+          return { index };
+        },
+      });
+      expect(rust.asked).toHaveLength(1);
+      expect(rust.result?.writes.map((w) => w.outcome)).toEqual(index === 0 ? ['create', 'create', 'update', 'create', 'create'] : ['create', 'create', 'create', 'create', 'create', 'create']);
+    }
+  });
+
+  it('mints a landing of the declared shape: its nested edge takes writes and links, and a position write merges in place', async () => {
+    const source = program([
+      '  deduped = node { companies: <Company> }',
+      '  a = write deduped-[:companies]-> { unique by (`name`) name: msg.`subject` }',
+      '  write a-[:founder]-> { unique by (`first`) first: "Ann" }',
+      '  write a-[:founder]-> { unique by (`first`) first: "ann" }',
+      '  write a { stage ?: "seed" }',
+      '  again = write deduped-[:companies]-> { unique by (`name`) name: msg.`subject`, stage: "series a" }',
+      '  bob = node { first: "Bob" }',
+      '  link again -[:founder]-> bob',
+      '  deduped-[c:companies]-> {',
+      '    c-[f:founder]-> {',
+      '      write crm-[:companies]-> { name: "${c.`name`}/${c.`stage`}/${f.`first`}" }',
+      '    }',
+      '  }',
+    ]);
+    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    expect(rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null])).toEqual([
+      ['local', 'create', 'companies'],
+      ['local', 'create', 'founder'],
+      ['local', 'update', 'founder'],
+      ['local', 'update', 'companies'],
+      ['local', 'update', 'companies'],
+      ['attio', 'create', null],
+      ['attio', 'create', null],
+    ]);
+  });
+
+  it('finds among the landings with match, and a miss ends the scope quietly', async () => {
+    for (const wanted of ['Acme', 'Nobody']) {
+      const source = program([
+        '  deduped = node { companies: <Company> }',
+        '  write deduped-[:companies]-> { unique by (`name`) name: "Acme", stage: "seed" }',
+        `  found = match deduped-[:companies]-> { unique by (\`name\`), name: "${wanted}" }`,
+        '  write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }',
+      ]);
+      await agree({ source, event: webhook({ subject: 'Acme' }) });
+    }
+  });
+
+  it('appends a linked handle, walks it as the record it is, and updates it through its own system on a match', async () => {
+    const source = program([
+      '  sent = node { posted: <crm-[:companies]->> }',
+      '  one = write crm-[:companies]-> { name: msg.`subject` }',
+      '  link sent -[:posted]-> one',
+      '  write sent-[:posted]-> { unique by (`name`) name: msg.`subject`, stage: "won" }',
+      '  write sent-[:posted]-> { unique by (`name`) name: "Other" }',
+      '  sent-[c:posted]-> {',
+      '    write crm-[:notes]-> { body: "${c.`name`}" }',
+      '  }',
+    ]);
+    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }), attio: { current: {} } });
+    expect(rust.result?.writes.map((w) => [w.adapterType, w.outcome])).toEqual([
+      ['attio', 'create'],
+      ['attio', 'update'],
+      ['local', 'create'],
+      ['attio', 'create'],
+      ['attio', 'create'],
+    ]);
+  });
+
+  it('walks a traversal entry where the literal stands, mapped through its tail', async () => {
+    const source = program([
+      '  held = node { title: msg.`subject`, cos: crm-[c:companies]->, names: crm-[c:companies]-> node { label: c.`name` } }',
+      '  held-[c:cos]-> {',
+      '    write crm-[:notes]-> { body: c.`name` }',
+      '  }',
+      '  held-[n:names]-> {',
+      '    write crm-[:notes]-> { body: n.`label` }',
+      '  }',
+    ]);
+    await agree({ source, event: webhook({ subject: 'Acme' }), attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } } });
+  });
+
+  it('reads a node\u2019s edge in an expression: COUNT, a field across its landings, EXISTS with a WHERE, a linked handle among them', async () => {
+    const source = program([
+      '  deduped = node { companies: <Company> order by arrival, posted: <crm-[:companies]->> }',
+      '  write deduped-[:companies]-> { unique by (`name`) name: msg.`subject`, stage: "seed" }',
+      '  write deduped-[:companies]-> { unique by (`name`) name: "Beta" }',
+      '  one = write crm-[:companies]-> { name: "Linked" }',
+      '  link deduped -[:posted]-> one',
+      '  n = COUNT(deduped-[:companies]->)',
+      '  names = JOIN(deduped-[c:companies WHERE c.`name` != "Nobody"]->.`name`, ", ")',
+      '  if EXISTS(deduped-[c:companies]-> WHERE `stage` == "seed") AND EXISTS(deduped-[:posted]->) {',
+      '    write crm-[:companies]-> { name: "${n}: ${names} / ${COUNT(deduped-[:posted]->)}" }',
+      '  }',
+      '  write crm-[:notes]-> { body: COUNT(deduped-[:companies]->) }',
+    ]);
+    await agree({ source, event: webhook({ subject: 'Acme' }) });
+  });
+
+  it('builds a graph of a declared shape: its children made, a write into one minting its landing, a record spread copying edges by its plan', async () => {
+    const source = program([
+      '  deduped = node { companies: <Company> }',
+      '  a = write deduped-[:companies]-> { unique by (`name`) name: msg.`subject`, stage: "seed" }',
+      '  write a-[:founder]-> { first: "Ann" }',
+      '  g = graph<Company> { name: "G", stage: msg.`text` }',
+      '  write g-[:founder]-> { first: "Bob" }',
+      '  copied = graph<Company> { ...a }',
+      '  nested = graph<Company> { name: "N", stage: "x", founder: { first: "Cy" } }',
+      '  copied-[f:founder]-> {',
+      '    write crm-[:notes]-> { body: "${copied.`name`}/${f.`first`}" }',
+      '  }',
+      '  write crm-[:companies]-> { name: "${COUNT(g-[:founder]->)} ${COUNT(nested-[:founder]->)}" }',
+    ]);
+    await agree({ source, event: webhook({ subject: 'Acme', text: 'hello' }), attio: { landings: { 'co-1': { name: 'Acme' } } } });
+  });
+
+  it('keeps a lazy walk and runs it at every read: an entry walked by a block, a binding read for a field and for EXISTS', async () => {
+    const source = program([
+      '  held = node { cos: lazy crm-[c:companies]->, names: lazy crm-[c:companies]-> node { label: c.`name` } }',
+      '  held-[c:cos]-> {',
+      '    write crm-[:notes]-> { body: c.`name` }',
+      '  }',
+      '  held-[n:names]-> {',
+      '    write crm-[:notes]-> { body: n.`label` }',
+      '  }',
+      '  cos = lazy crm-[c:companies]->',
+      '  if EXISTS(cos) {',
+      '    write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }',
+      '  }',
+    ]);
+    await agree({ source, event: webhook({ subject: 'Acme' }), attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } } });
+  });
+
+  it('fails where the TypeScript engine fails: a target WHERE, an edge the node lacks, a bare name in a hop WHERE over landings', async () => {
+    for (const lines of [
+      ['  d = node { companies: <Company> }', '  write d-[c:companies WHERE c.`name` == "x"]-> { name: "a" }'],
+      ['  d = node { companies: <Company> }', '  write d-[:nope]-> { name: "a" }'],
+      ['  d = node { companies: <Company> }', '  x = match d-[:nope]-> { unique by (`name`), name: "a" }'],
+      ['  n = node { a: 1 }', '  link n -[:kids]-> n'],
+      ['  d = node { companies: <Company> }', '  write d-[:companies]-> { name: "a" }', '  d-[c:companies WHERE `name` == "a"]-> {', '    write crm-[:notes]-> { body: c.`name` }', '  }'],
+    ]) {
+      const { rust } = await agree({ source: program(lines), event: webhook({ subject: 'Acme' }) });
+      expect([lines, rust.failed]).toEqual([lines, true]);
+    }
+  });
+
+  it('parks a node with a declared edge as the TypeScript engine does, and resumes it on either engine', async () => {
+    const source = program([
+      '  deduped = node { companies: <Company> }',
+      '  a = write deduped-[:companies]-> { unique by (`name`) name: msg.`subject` }',
+      '  await sleep(30s)',
+      '  write a-[:founder]-> { first: "Ann" }',
+      '  write deduped-[:companies]-> { unique by (`name`) name: msg.`subject`, stage: "won" }',
+      '  deduped-[c:companies]-> {',
+      '    c-[f:founder]-> {',
+      '      write crm-[:companies]-> { name: "${c.`name`}/${c.`stage`}/${f.`first`}" }',
+      '    }',
+      '  }',
+    ]);
+    const event = webhook({ subject: 'Acme' });
+    const { ts, rust } = await agree({ source, event });
+    const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
+    expect(text(rust)).toBe(text(ts));
+    expect(text(rust)).toContain('"landing":{"fields":["name","stage"],"edges":{"founder":{"fields":["first"],"edges":{}}}}');
+    for (const parked of [ts, rust]) {
+      await agree({ source, event, resume: JSON.parse(text(parked)) as ParkedScopeState });
+    }
+  });
+});
+
 describe('parks in the Rust engine', () => {
   const PARKS = [
     'movement m(msg: <inbox-[:message]->>) {',
@@ -833,6 +1149,19 @@ describe('the cost cap in the Rust engine', () => {
       { kind: 'gate', outcome: false },
     ]);
     expect(rustRunStats.hostCalls).toMatchObject({ 'park.sink.commitLimitPause': 1, 'park.sink.commitSuspension': 1 });
+  });
+
+  it('leaves to the TypeScript engine, before it asks its host anything, a capped run that could suspend inside a call or holding a kept walk', async () => {
+    const callee = ['movement save(t: <text>) {', '  write crm-[:companies]-> { unique by (`name`) name: t }', '}'].join('\n');
+    for (const [c, reason] of [
+      [{ source: `${callee}\n${['movement m(msg: <inbox-[:message]->>) {', '  save(t: msg.`subject`)', '}'].join('\n')}`, movementName: 'm', costCapMicrodollars: 1_000 }, 'cost_cap_inside_call'],
+      [{ source: ['movement m(msg: <inbox-[:message]->>) {', '  cos = lazy crm-[c:companies]->', '  write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }', '}'].join('\n'), costCapMicrodollars: 1_000 }, 'lazy_park'],
+    ] as const) {
+      resetRustRunStats();
+      await runOn('rust', { ...c, event: webhook({ subject: 'Acme' }) });
+      expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
+      expect(rustRunStats.hostCalls).toEqual({});
+    }
   });
 
   it('meets a cap the run has spent exactly, and not one it has not', async () => {

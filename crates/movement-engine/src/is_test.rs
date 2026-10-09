@@ -188,7 +188,7 @@ impl Surface {
     /// The edge's first landing, when the subject has the edge at all.
     fn edge(&self, name: &str) -> Option<Option<Binding>> {
         match self {
-            Surface::Node(node) => node.borrow().edges.iter().find(|(n, _)| n == name).map(|(_, landings)| landings.first().cloned()),
+            Surface::Node(node) => node.borrow().edges.iter().find(|(n, _)| n == name).map(|(_, edge)| edge.landings.first().cloned()),
             Surface::Emission(emission) => emission
                 .children
                 .iter()

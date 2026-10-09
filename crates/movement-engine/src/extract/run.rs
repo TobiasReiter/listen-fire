@@ -348,7 +348,7 @@ impl Run<'_> {
     /// figures say so (run_context.ts `charged`).
     pub(crate) async fn priced(&self, request: host::Request) -> Result<Js, Failure> {
         let answer = self.ask(request).await?.unwrap_or(Json::Null);
-        let answer = env::decode(&answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
+        let answer = self.wire.decode(&answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
         let member = |key: &str| crate::unique::get(&answer, key);
         let cost = member("cost");
         let cost = (!matches!(cost, Js::Undefined)).then(|| env::json_of_js(&cost));
@@ -397,8 +397,8 @@ impl Run<'_> {
         let request = host::llm::transforms_invoke(
             self.segment(),
             registered,
-            env::encode_plain(&Js::object(JsObject::clone_of(config))),
-            env::encode_plain(&Js::object(JsObject::clone_of(extracted_context))),
+            self.wire.encode(&Js::object(JsObject::clone_of(config))),
+            self.wire.encode(&Js::object(JsObject::clone_of(extracted_context))),
             self.ledger.budget(),
         );
         let answer = self.priced(request).await?;
