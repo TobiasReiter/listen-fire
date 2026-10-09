@@ -381,7 +381,7 @@ model ParkedRun {
   status     String     @default("parked")
   state      Json?
   result     Json?
-  parkReason String     @default("ask") @map("park_reason")
+  parkReason String     @map("park_reason")
   wakeAt     DateTime?  @map("wake_at") @db.Timestamptz(6)
   createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
