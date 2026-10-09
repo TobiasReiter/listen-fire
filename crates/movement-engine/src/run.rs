@@ -133,6 +133,17 @@ fn default_file_chars() -> usize {
     50_000
 }
 
+/// The snapshot's plugins alone, read before the rest of it loads.
+#[derive(Deserialize)]
+struct CatalogPlugins {
+    #[serde(default = "no_plugins")]
+    plugins: movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec>,
+}
+
+fn no_plugins() -> movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec> {
+    movement_parser::catalog::types::JsMap(Default::default())
+}
+
 /// The segment entry: the run, and its `done`.
 pub async fn segment(host: Host, input: SegmentInput) -> Json {
     let ledger = crate::ledger::Ledger::new(&input.spend);
@@ -303,7 +314,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
     let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
-    if let Some(reason) = crate::admit::refusal(&root.program, version) {
+    // What a plugin call binds is the snapshot's to say, read off the input.
+    let plugins = serde_json::from_str::<CatalogPlugins>(input.catalog.get()).ok();
+    if let Some(reason) = crate::admit::refusal(&root.program, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins))) {
         return Err(Stop::Refused(reason));
     }
     if let Some(reason) = crate::admit::input_refusal(&root.program, input.spend.cap_microdollars.is_some(), &input.suspend_at) {
@@ -1791,6 +1804,49 @@ mod tests {
         assert_eq!(state["scopeChain"][1]["bindings"]["label"]["value"], json!("ROUTE! route"));
         // Its own park resumes here: the file scope's shape is the program's.
         assert_eq!(crate::park::resume_refusal(&park.args["state"]), None);
+    }
+
+    /// An extraction asks what the TypeScript asks, in its order: the
+    /// `from` slot's read, one `ids.mint` for its text resource, then per
+    /// region the cancel gate, the clock either side of the priced model
+    /// call; a head over what it yielded asks nothing.
+    #[test]
+    fn an_extraction_asks_its_host_what_the_typescript_asks_in_its_order() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n    node co: \"each company\" {\n      name: \"its name\"\n    }\n  }\n  deals-[c:co]-> {\n    n = c.`name`\n  }\n}";
+        let payload = json!({ "text": "Acme raised." });
+        let host = plain_host(payload.clone());
+        let reply = env::encode_plain(&env::js_of_json(&json!({ "parsedJson": { "x:extract_result#1": [{
+            "digest": { "evidence": "q", "value": "a raise" },
+            "co": [{ "name": { "evidence": "Acme", "value": "Acme" } }, { "name": { "evidence": null, "value": " " } }],
+        }] } })));
+        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
+            ("ids", "mint") => json!({ "value": ["id-1"] }),
+            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
+            ("llm.client", "call") => json!({ "value": reply.clone() }),
+            _ => host(request),
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let calls: Vec<String> = seen.iter().map(|r| format!("{}.{}", r.family, r.method)).collect();
+        assert_eq!(
+            calls,
+            [
+                "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.call", "ids.mint", "control.cancel.cancelled",
+                "clock.now", "llm.client.call", "clock.now", "trace.append", "control.cancel.cancelled", "control.cancel.cancelled",
+                "trace.append", "control.cancel.cancelledNow",
+            ]
+        );
+        let call = &seen[7].args;
+        assert_eq!((call["label"].clone(), call["model"].clone(), call["effort"].clone()), (json!("movement_extraction"), json!("sonnet"), json!("low")));
+        assert!(call["system"].as_str().unwrap().contains("**x:co#2** (an array under the key `co` inside each **x:extract_result#1** entity)"));
+        assert_eq!(call["userMessage"], json!("## TEXT\nAcme raised."));
+        assert_eq!(call["budget"], json!({ "remainingMicrodollars": null }));
+        // The blank entity is counted empty and dropped; the trace names
+        // what was extracted.
+        let entry = &seen[9].args["entries"][0];
+        assert_eq!(entry["emissions"], json!({ "extract result": 1 }));
+        assert_eq!((entry["empty"].clone(), entry["dropped"].clone()), (json!({ "co": 1 }), json!({ "co": 1 })));
+        assert_eq!(entry["entities"], json!({ "extract result": [{ "fields": { "digest": "a raise" } }], "co": [{ "fields": { "name": "Acme" } }] }));
+        assert_eq!(seen[12].args["entries"], json!([{ "kind": "block", "root": "deals-[c:co]->", "positions": 1 }]));
     }
 
     /// A plain JSON value on the eval wire.

@@ -16,12 +16,14 @@
 //! mid-run"). What needs the checker's stamps is refused after the check
 //! and before any effect (`run::Run::stamp_decline`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use movement_parser::ast::{
     self, AwaitSource, CallArg, CallStatement, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue,
     Statement, TraversalBlock, WriteExpression, WriteTarget,
 };
+use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
+use movement_parser::lowering::expression::EdgeDirection;
 use movement_parser::lowering::condition::MovementCondition;
 use movement_parser::lowering::expression::{Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
@@ -36,19 +38,56 @@ const FUNCTIONS: [&str; 32] = [
     "text.serialise", "url.host", "number.format",
 ];
 
+/// What a plain call of a plugin binds, by the output the run's catalog
+/// snapshot declares for it under the movement's pin (`pluginOutputUnder`):
+/// read off the input, not asked of the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluginBinds {
+    Value,
+    Record,
+    Records,
+    /// The plugin declares no output: the call fails, as the TypeScript's does.
+    Nothing,
+    /// The snapshot does not say (it did not read, or lacks the plugin).
+    Unknown,
+}
+
+/// The plugins a run's catalog snapshot describes, when it reads: what
+/// admission knows of a plugin call's output.
+pub struct Plugins<'a>(pub Option<&'a JsMap<PluginSpec>>);
+
+impl Plugins<'_> {
+    fn binds(&self, registered: &str, language_version: u32) -> PluginBinds {
+        let Some(specs) = self.0 else { return PluginBinds::Unknown };
+        let Some(spec) = specs.get(&registered.replace('-', "_")) else { return PluginBinds::Unknown };
+        match crate::plugin::output_under(spec, language_version) {
+            Some(PluginOutput::Value { .. }) => PluginBinds::Value,
+            Some(PluginOutput::Record { .. }) => PluginBinds::Record,
+            Some(PluginOutput::Records { .. }) => PluginBinds::Records,
+            None => PluginBinds::Nothing,
+        }
+    }
+}
+
 /// Why this engine does not run `program`, or `None` when it does. Every
 /// movement in the file is walked, not only the one an event dispatches.
 /// A cost cap refuses nothing: a run that meets it suspends (crate::park).
-pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> {
+pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<'_>) -> Option<String> {
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
     let mut movements: Vec<&ast::MovementDeclaration> = Vec::new();
     let mut plugins = BTreeSet::new();
+    // What a plain call of each imported plugin binds, by its local name.
+    let mut plugin_binds: BTreeMap<String, PluginBinds> = BTreeMap::new();
     for statement in &program.statements {
         match statement {
             Statement::Movement(movement) => movements.push(movement),
             Statement::Import(import) if matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins") => {
-                plugins.extend(import.names.iter().map(|name| name.alias.clone().unwrap_or_else(|| name.name.clone())));
+                for name in &import.names {
+                    let local = name.alias.clone().unwrap_or_else(|| name.name.clone());
+                    plugin_binds.insert(local.clone(), catalog.binds(&name.name, language_version));
+                    plugins.insert(local);
+                }
             }
             _ => {}
         }
@@ -128,6 +167,8 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
             file_names: &file_names,
             movements: &movement_names,
             plugins: &plugins,
+            plugin_binds: &plugin_binds,
+            extracts: &none,
             language_version,
         };
         if let Err(reason) = names.rvalue(value) {
@@ -136,9 +177,33 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
         values.insert(name.to_string());
     }
     let file_values = values;
+    // A declared shape's words are read in the file's scope once an
+    // extraction asks for them.
+    let file_scope = Names {
+        events: &none,
+        values: &file_values,
+        handles: &none,
+        nodes: &none,
+        landings: &none,
+        instances: BTreeSet::new(),
+        body_instances: &none,
+        file_names: &file_names,
+        movements: &movement_names,
+        plugins: &plugins,
+        plugin_binds: &plugin_binds,
+        extracts: &none,
+        language_version,
+    };
+    for statement in &program.statements {
+        if let Statement::Shape(shape) = statement
+            && let Err(reason) = file_scope.shape_words(&shape.root)
+        {
+            return Some(reason);
+        }
+    }
     for movement in &movements {
         let events: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
-        let mut bound = Bound::default();
+        let mut bound = Bound { plugin_binds: plugin_binds.clone(), ..Bound::default() };
         bound.collect(&movement.body, &[]);
         if bound.sites.iter().any(|(n, _, _)| events.contains(n) || file_names.contains(n)) {
             return Some("name_shadowed".into());
@@ -158,6 +223,8 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
             file_names: &file_names,
             movements: &movement_names,
             plugins: &plugins,
+            plugin_binds: &plugin_binds,
+            extracts: &bound.extracts,
             language_version,
         };
         if let Err(reason) = names.body(&movement.body, Within::Body) {
@@ -177,33 +244,50 @@ pub fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]
     if suspend_at.iter().any(|address| address.split('.').any(|step| step.starts_with('i'))) {
         return Some("suspend_at_inside_block".into());
     }
-    if capped && program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if writes_in_block(&m.body, false))) {
+    // Before a statement's k-th call: the call's step this engine does not
+    // address (it keeps no call journal).
+    if suspend_at.iter().any(|address| address.split('.').any(|step| step.starts_with('c'))) {
+        return Some("suspend_at_call".into());
+    }
+    let plugins: BTreeSet<String> = program
+        .statements
+        .iter()
+        .filter_map(|s| match s {
+            Statement::Import(import) if matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins") => Some(import),
+            _ => None,
+        })
+        .flat_map(|import| import.names.iter().map(|name| name.alias.clone().unwrap_or_else(|| name.name.clone())))
+        .collect();
+    if capped && program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if priced_in_block(&m.body, false, &plugins))) {
         return Some("cost_cap_inside_block".into());
     }
     None
 }
 
-/// Whether a write, or a match that may ask the judge, sits in a traversal
-/// block's body, at any depth.
-fn writes_in_block(statements: &[Statement], in_block: bool) -> bool {
+/// Whether a priced step sits in a traversal block's body, at any depth: a
+/// write, a match that may ask the judge, an extraction, a plugin's call.
+fn priced_in_block(statements: &[Statement], in_block: bool, plugins: &BTreeSet<String>) -> bool {
     let judged_link = |link: &ast::LinkExpression| matches!(link.to, ast::LinkTarget::Match { .. });
     statements.iter().any(|statement| match statement {
         Statement::Write(_) | Statement::Match(_) => in_block,
         Statement::Link(statement) => in_block && judged_link(&statement.link),
+        Statement::Call(call) => in_block && plugins.contains(&call.callee),
         Statement::Assign(assign) => {
             in_block
                 && match &assign.value {
-                    RValue::Write { .. } | RValue::Match { .. } => true,
+                    RValue::Write { .. } | RValue::Match { .. } | RValue::Extract { .. } => true,
                     RValue::Link { link } => judged_link(link),
+                    RValue::Call { call } => plugins.contains(&call.callee),
+                    RValue::Construct { construct } => plugins.contains(&construct.callee),
                     _ => false,
                 }
-                || matches!(&assign.value, RValue::Block { block } if writes_in_block(&block.body, true))
+                || matches!(&assign.value, RValue::Block { block } if priced_in_block(&block.body, true, plugins))
         }
         Statement::If(statement) => {
-            statement.arms.iter().any(|arm| writes_in_block(&arm.body, in_block))
-                || statement.else_arm.as_ref().is_some_and(|arm| writes_in_block(&arm.body, in_block))
+            statement.arms.iter().any(|arm| priced_in_block(&arm.body, in_block, plugins))
+                || statement.else_arm.as_ref().is_some_and(|arm| priced_in_block(&arm.body, in_block, plugins))
         }
-        Statement::Block(statement) => writes_in_block(&statement.block.body, true),
+        Statement::Block(statement) => priced_in_block(&statement.block.body, true, plugins),
         _ => false,
     })
 }
@@ -264,11 +348,15 @@ fn rvalue_kind(value: &RValue) -> &'static str {
 /// body (its iteration, where the hop alias lives) are scopes of their own.
 #[derive(Default)]
 struct Bound {
+    /// What a plain call of each plugin binds (`refusal`'s table).
+    plugin_binds: BTreeMap<String, PluginBinds>,
     values: BTreeSet<String>,
     handles: BTreeSet<String>,
     instances: BTreeSet<String>,
     nodes: BTreeSet<String>,
     landings: BTreeSet<String>,
+    /// An extraction's root, or an entity a head over one landed on.
+    extracts: BTreeSet<String>,
     /// (name, kind, scope path from the body's root scope).
     sites: Vec<(String, Kind, Vec<usize>)>,
     scopes: usize,
@@ -281,17 +369,30 @@ enum Kind {
     Instance,
     Node,
     Landing,
+    Extracted,
 }
 
 impl Bound {
+    /// What a plain plugin call binds, by its output (anything but a record
+    /// is read as a value, and what it does not bind is refused where the
+    /// call stands).
+    fn plugin_kind(&self, callee: &str) -> Option<Kind> {
+        match self.plugin_binds.get(callee)? {
+            PluginBinds::Record => Some(Kind::Node),
+            _ => Some(Kind::Value),
+        }
+    }
+
     fn collect(&mut self, statements: &[Statement], scope: &[usize]) {
         for statement in statements {
             match statement {
                 Statement::Assign(assign) => {
                     let kind = match &assign.value {
                         RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
-                        RValue::Construct { .. } => Kind::Instance,
+                        RValue::Construct { construct } => self.plugin_kind(&construct.callee).unwrap_or(Kind::Instance),
+                        RValue::Call { call } => self.plugin_kind(&call.callee).unwrap_or(Kind::Value),
                         RValue::Node { .. } => Kind::Node,
+                        RValue::Extract { .. } => Kind::Extracted,
                         _ => Kind::Value,
                     };
                     self.bind(&assign.name, kind, scope);
@@ -324,10 +425,12 @@ impl Bound {
     /// iteration's).
     fn block(&mut self, block: &TraversalBlock, scope: &[usize]) {
         let inner = self.enter(scope);
+        // A head over what an extraction yielded lands on its entities.
+        let over_extract = matches!(&block.head.root, Some(PathRoot::Name { name }) if self.extracts.contains(name));
         if let Ok(step) = crate::traverse::head_step(&block.head)
             && let Some(alias) = step.alias
         {
-            self.bind(&alias, Kind::Landing, &inner);
+            self.bind(&alias, if over_extract { Kind::Extracted } else { Kind::Landing }, &inner);
         }
         self.collect(&block.body, &inner);
     }
@@ -357,6 +460,7 @@ impl Bound {
             Kind::Instance => &mut self.instances,
             Kind::Node => &mut self.nodes,
             Kind::Landing => &mut self.landings,
+            Kind::Extracted => &mut self.extracts,
         };
         into.insert(name.to_string());
         self.sites.push((name.to_string(), kind, scope.to_vec()));
@@ -408,6 +512,10 @@ struct Names<'n> {
     movements: &'n BTreeSet<String>,
     /// The plugins the file imports, by local name.
     plugins: &'n BTreeSet<String>,
+    /// What a plain call of each binds.
+    plugin_binds: &'n BTreeMap<String, PluginBinds>,
+    /// What extractions yielded: a root, or an entity a head landed on.
+    extracts: &'n BTreeSet<String>,
     language_version: u32,
 }
 
@@ -430,12 +538,19 @@ impl Names<'_> {
                 RValue::Block { block } => self.block(block),
                 RValue::Await { r#await } => sleep(&r#await.source),
                 RValue::Construct { construct } if self.movements.contains(&construct.callee) => refuse("movement_call"),
-                RValue::Construct { construct } if self.plugin(&construct.callee) => refuse("plugin_call"),
+                RValue::Construct { construct } if self.plugin(&construct.callee) => {
+                    self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
+                }
+                RValue::Extract { extract } => self.extract(extract),
                 RValue::Construct { .. } => Ok(()),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
                 other => self.rvalue(other),
             },
-            Statement::Return(ret) => self.rvalue(&ret.value),
+            // A returned call's value is the TypeScript's to hand back.
+            Statement::Return(ret) => match &ret.value {
+                RValue::Call { call } if self.plugin(&call.callee) => refuse("plugin_call"),
+                other => self.rvalue(other),
+            },
             Statement::Write(statement) => self.write(&statement.write),
             Statement::Match(statement) => self.match_(&statement.r#match),
             Statement::Link(statement) => self.link(&statement.link),
@@ -457,7 +572,7 @@ impl Names<'_> {
                 }
             }
             Statement::Block(statement) => self.block(&statement.block),
-            Statement::Call(call) if self.plugin(&call.callee) => refuse("plugin_call"),
+            Statement::Call(call) if self.plugin(&call.callee) => self.plugin_call(call),
             other => refuse(format!("statement:{}", statement_kind(other))),
         }
     }
@@ -480,6 +595,9 @@ impl Names<'_> {
         };
         if self.values.contains(root) {
             return refuse("block_head_value_root");
+        }
+        if self.extracts.contains(root) {
+            return self.extract_head(root, head);
         }
         if self.nodes.contains(root) {
             return refuse("block_head_node_root");
@@ -507,10 +625,33 @@ impl Names<'_> {
         Ok(())
     }
 
+    /// A head over what an extraction yielded: one hop down one of its
+    /// edges, as the TypeScript walks it (no WHERE, which it refuses, and no
+    /// ORDER BY, LIMIT or direction, which it does not read).
+    fn extract_head(&self, root: &str, head: &PathHead) -> Admitted {
+        let probe = format!("{}{}.`__movement_engine_probe__`", crate::write::spell_name(root), head.hops_raw);
+        let Ok(tree) = movement_parser::expr::parse_expression(&probe) else { return refuse("block_head_does_not_lower") };
+        let Ok(walk) = movement_parser::lowering::lower_expression(&tree, &probe) else { return refuse("block_head_does_not_lower") };
+        let steps = match &walk {
+            Expression::Traverse { steps, .. } => steps,
+            // A file read off one carries forward into a write as the very
+            // descriptor, which crosses this engine's wire as a copy.
+            Expression::ResourceTraverse { .. } => return refuse("block_head_resources"),
+            _ => return refuse("block_head_does_not_lower"),
+        };
+        let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
+        let TraversalStep::Edge(step) = step else { return refuse("block_head_step") };
+        if step.expression_filter.is_some() || step.cardinality.is_some() || step.direction != EdgeDirection::Outgoing {
+            return refuse("block_head_extract_hop");
+        }
+        Ok(())
+    }
+
     /// `name = <expression>`, or a built-in's call read as the expression it is.
     fn rvalue(&self, value: &RValue) -> Admitted {
         match value {
             RValue::Expr { expr } => self.slot(expr),
+            RValue::Call { call } if self.plugin(&call.callee) => self.plugin_call(call),
             RValue::Call { call } => self.slot(self.builtin_value(call)?),
             other => refuse(format!("rvalue:{}", rvalue_kind(other))),
         }
@@ -550,9 +691,111 @@ impl Names<'_> {
         names_plugin(self.plugins, callee, self.language_version)
     }
 
+    /// A plugin's plain call (crate::plugin): spelled as imported (a callee
+    /// in another letter case is the TypeScript's), named value arguments,
+    /// an output the slice binds.
+    fn plugin_call(&self, call: &CallStatement) -> Admitted {
+        let args = call.args.iter().map(|arg| match arg {
+            CallArg::Expr { name: Some(_), expr } => Some(expr),
+            _ => None,
+        });
+        self.plugin_invocation(&call.callee, args)
+    }
+
+    fn plugin_invocation<'a>(&self, callee: &str, args: impl Iterator<Item = Option<&'a ExprSlot>>) -> Admitted {
+        match self.plugin_binds.get(callee) {
+            None | Some(PluginBinds::Unknown) => return refuse("plugin_call"),
+            Some(PluginBinds::Records) => return refuse("plugin_call:records"),
+            Some(PluginBinds::Value | PluginBinds::Record | PluginBinds::Nothing) => {}
+        }
+        for arg in args {
+            let Some(slot) = arg else { return refuse("plugin_call_form") };
+            self.slot(slot)?;
+        }
+        Ok(())
+    }
+
+    /// `x = extract from […] { tree }` (crate::extract): no tier (what a
+    /// tier buys is the deployment's), the `from` slots and every word the
+    /// tree writes walked as expressions, each `through` plugin's arguments
+    /// too — a bare name there reads the entity's field of that name first,
+    /// else a value the body binds.
+    fn extract(&self, extract: &ast::ExtractExpression) -> Admitted {
+        if extract.tier.is_some() {
+            return refuse("extract_tier");
+        }
+        extract.from.iter().try_for_each(|slot| self.slot(slot))?;
+        self.extract_stages(&extract.stages)
+    }
+
+    fn extract_stages(&self, stages: &[ast::ExtractStage]) -> Admitted {
+        for stage in stages {
+            for plugin in stage.through.iter().flatten() {
+                if !self.plugins.contains(&plugin.plugin) {
+                    return refuse("plugin_call");
+                }
+                for arg in &plugin.args {
+                    let bare = crate::js::trim(&arg.value.raw);
+                    if is_identifier(bare) {
+                        if self.holds_other_than_value(bare) {
+                            return refuse("name_not_value");
+                        }
+                        continue;
+                    }
+                    self.slot(&arg.value)?;
+                }
+            }
+            for field in &stage.fields {
+                self.slot(&field.description)?;
+            }
+            for child in &stage.children {
+                match child {
+                    ast::ExtractNode::Inline(child) => {
+                        self.slot(&child.description)?;
+                        self.extract_stages(&child.stages)?;
+                    }
+                    ast::ExtractNode::Declared(child) => {
+                        if let Some(words) = &child.description {
+                            self.slot(words)?;
+                        }
+                        self.extract_stages(&child.stages)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A declared shape's words, at every depth.
+    fn shape_words(&self, shape: &ast::ShapeNode) -> Admitted {
+        if let Some(words) = &shape.description {
+            self.slot(words)?;
+        }
+        for field in &shape.fields {
+            if let Some(words) = &field.description {
+                self.slot(words)?;
+            }
+        }
+        shape.children.iter().try_for_each(|child| self.shape_words(child))
+    }
+
+    /// A name bound to anything but a value: read bare, the TypeScript
+    /// refuses it with an error of its own.
+    fn holds_other_than_value(&self, name: &str) -> bool {
+        !self.values.contains(name)
+            && (self.events.contains(name)
+                || self.handles.contains(name)
+                || self.nodes.contains(name)
+                || self.landings.contains(name)
+                || self.extracts.contains(name)
+                || self.instances.contains(name)
+                || self.file_names.contains(name))
+    }
+
     /// `CallScope.binds`: a name the file or the body binds, anywhere.
     fn binds(&self, name: &str) -> bool {
         self.events.contains(name)
+            || self.extracts.contains(name)
             || self.values.contains(name)
             || self.handles.contains(name)
             || self.nodes.contains(name)
@@ -732,6 +975,7 @@ impl Names<'_> {
             Expression::Traverse { alias_root, steps, expression } => {
                 let held = alias_root.as_ref().is_some_and(|root| {
                     self.events.contains(root)
+                        || self.extracts.contains(root)
                         || self.values.contains(root)
                         || self.handles.contains(root)
                         || self.nodes.contains(root)
@@ -792,6 +1036,12 @@ impl Names<'_> {
     }
 }
 
+/// `/^[A-Za-z_][A-Za-z0-9_]*$/`.
+fn is_identifier(raw: &str) -> bool {
+    let mut chars = raw.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Whether `callee` resolves to an imported plugin (`resolveCallee`): as
 /// written, or from version 3 in any letter case, as a function does.
 fn names_plugin(plugins: &BTreeSet<String>, callee: &str, language_version: u32) -> bool {
@@ -846,12 +1096,12 @@ mod tests {
     fn refused(body: &str) -> Option<String> {
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
-        refusal(&program, 3)
+        refusal(&program, 3, &Plugins(None))
     }
 
     fn file(source: &str) -> Option<String> {
         let program = movement_parser::stmt::parse_program(source, 3, false).expect("the test's program parses");
-        refusal(&program, 3)
+        refusal(&program, 3, &Plugins(None))
     }
 
     #[test]
@@ -1052,7 +1302,12 @@ mod tests {
             "import {{ fetch_url as fetch }} from plugins\n{PRELUDE}type Stage = <\"a\" | \"b\">\nrules = \"route infra\"\ntag = \"${{UPPER(rules)}}!\"\nnode Lead: \"a lead\" {{\n  name: <text> \"its name ${{rules}}\"\n  stage: <Stage>\n}}\n"
         );
         let with = |body: &str| file(&format!("{declared}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
-        for body in ["  x = 1", "  write crm-[:companies]-> { name: tag, stage: \"${rules} ${msg.`subject`}\" }", "  await sleep(1h)\n  y = tag"] {
+        for body in [
+            "  x = 1",
+            "  write crm-[:companies]-> { name: tag, stage: \"${rules} ${msg.`subject`}\" }",
+            "  await sleep(1h)\n  y = tag",
+            "  found = extract from [msg.`text`] {\n    node lead: <Lead>\n  }",
+        ] {
             assert_eq!(with(body), None, "{body}");
         }
         for (body, reason) in [
@@ -1062,7 +1317,6 @@ mod tests {
             ("  page = FETCH()", "plugin_call"),
             ("  fetch(url: msg.`text`)", "plugin_call"),
             ("  x = { page: fetch(msg.`text`) }", "plugin_call"),
-            ("  found = extract from [msg.`text`] {\n    node lead: <Lead>\n  }", "rvalue:extract"),
             ("  g = graph<Lead> { name: \"a\" }", "graph_shape"),
             ("  if msg.`subject` IS <Stage> {\n    x = 1\n  }", "is_test"),
             ("  x = Lead", "name_not_value"),
@@ -1083,5 +1337,111 @@ mod tests {
         for value in ["page = fetch_url(url: \"x\")", "page = FETCH_URL(url: \"x\")", "r = m(msg: 1)", "r = M(1)"] {
             assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}{value}\n{movement}")).as_deref(), Some("file_call"), "{value}");
         }
+    }
+
+    /// The extraction keyword runs whole (chunk 6A Task 3b): its words, its
+    /// `from` slots and its stages' plugin arguments are walked as
+    /// expressions, a head over what it yielded walks one of its edges, and
+    /// a field of an extracted entity reads as a record's.
+    #[test]
+    fn admits_extraction_and_refuses_by_name_what_it_does_not_run() {
+        let plugins = format!("import {{ fetch_url }} from plugins\n{PRELUDE}");
+        let with = |body: &str| file(&format!("{plugins}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
+        let tree = "  deals = extract from [msg.`text`, \"also ${msg.`subject`}\"] through [fetch_url(url: msg.`text`)] {\n    digest: \"a summary\"\n    node co: \"each company\" {\n      name: <text> \"its name\"\n      website: \"its site\"\n    } through [fetch_url(url: website)] {\n      summary: \"what it does\"\n    }\n  }";
+        for after in [
+            "",
+            "\n  write crm-[:notes]-> { body: deals.`digest` }",
+            "\n  deals-[c:co]-> {\n    write crm-[:companies]-> { unique by (`name`) name: c.`name`, summary: c.summary }\n    c-[p:people]-> {\n      x = p.`name`\n    }\n  }",
+            "\n  if deals.`digest` != \"\" {\n    y = deals.digest\n  }",
+        ] {
+            assert_eq!(with(&format!("{tree}{after}")), None, "{after}");
+        }
+        for (after, reason) in [
+            ("\n  x = deals", "name_not_value"),
+            ("\n  x = deals-[:co]->.`name`", "traversal_steps"),
+            ("\n  deals-[c:co WHERE `name` == \"x\"]-> {\n    x = 1\n  }", "block_head_extract_hop"),
+            ("\n  deals-[c:co LIMIT 1]-> {\n    x = 1\n  }", "block_head_extract_hop"),
+            ("\n  deals-[c:co]->-[p:people]-> {\n    x = 1\n  }", "block_multi_hop"),
+            ("\n  msg-[f:_resources]-> {\n    x = 1\n  }", "block_head_resources"),
+            ("\n  deals-[f:_resources WHERE type == \"FILE\"]-> {\n    x = 1\n  }", "block_head_resources"),
+            ("\n  write crm-[:companies]-> { ...deals }", "write_spread_source"),
+            ("\n  write deals { a: 1 }", "write_position_not_record"),
+            ("\n  write deals-[:notes]-> { a: 1 }", "write_root_not_held"),
+            ("\n  delete deals", "delete_not_record"),
+            ("\n  deals-[c:co]-> {\n    write c { a: 1 }\n  }", "write_position_not_record"),
+        ] {
+            assert_eq!(with(&format!("{tree}{after}")).as_deref(), Some(reason), "{after}");
+        }
+        for (body, reason) in [
+            ("  d = extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }", "extract_tier"),
+            ("  d = extract from [msg.`text`] {\n    a: \"${AI(\"why\")}\"\n  }", "expression:llm"),
+            ("  d = extract from [FIRST(msg.`text`)] {\n    a: \"a\"\n  }", "expression:aggregate"),
+            ("  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }", "name_not_value"),
+            ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
+            ("  return extract from [msg.`text`] {\n    a: \"a\"\n  }", "rvalue:extract"),
+        ] {
+            assert_eq!(with(body).as_deref(), Some(reason), "{body}");
+        }
+        // A declared shape's words are walked in the file's scope.
+        let shaped = |words: &str| file(&format!("{PRELUDE}node Lead {{\n  name: <text> \"{words}\"\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}"));
+        assert_eq!(shaped("its name"), None);
+        assert_eq!(shaped("its ${crm.`name`} name").as_deref(), Some("traversal_root"));
+    }
+
+    /// A plugin's plain call binds what the catalog snapshot declares it
+    /// hands back, read off the input.
+    #[test]
+    fn admits_a_plugin_call_by_its_declared_output() {
+        let specs: JsMap<PluginSpec> = serde_json::from_value(serde_json::json!({
+            "fetch_url": { "args": ["url"], "priced": true, "output": { "kind": "value", "type": "text" } },
+            "research": { "args": ["name"], "priced": true, "output": { "kind": "record", "fields": { "summary": "text" } } },
+            "find_files": { "args": ["q"], "priced": false, "output": { "kind": "records", "fields": { "url": "text" } } },
+        }))
+        .unwrap();
+        let with = |body: &str| {
+            let source = format!("import {{ fetch_url, research, find_files }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
+            refusal(&program, 3, &Plugins(Some(&specs)))
+        };
+        for body in [
+            "  page = fetch_url(url: msg.`text`)\n  write crm-[:notes]-> { body: COALESCE(page, \"none\") }",
+            "  more = research(name: msg.`subject`)\n  write crm-[:notes]-> { body: more.`summary` }",
+            "  fetch_url(url: msg.`text`)",
+            "  page = fetch_url()",
+        ] {
+            assert_eq!(with(body), None, "{body}");
+        }
+        for (body, reason) in [
+            ("  found = find_files(q: msg.`text`)", "plugin_call:records"),
+            ("  page = fetch_url(msg.`text`)", "plugin_call_form"),
+            ("  page = fetch_url(url: TRIM(msg.`text`))", "plugin_call_form"),
+            ("  page = FETCH_URL(url: msg.`text`)", "plugin_call"),
+            ("  more = research(name: msg.`subject`)\n  x = more", "name_not_value"),
+            ("  page = fetch_url(url: msg)", "name_not_value"),
+            ("  return fetch_url(url: msg.`text`)", "rvalue:construct"),
+        ] {
+            assert_eq!(with(body).as_deref(), Some(reason), "{body}");
+        }
+        // A snapshot that does not say what the plugin hands back refuses
+        // its call.
+        let unknown = movement_parser::stmt::parse_program(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  page = fetch_url(url: \"x\")\n}}"), 3, false).unwrap();
+        assert_eq!(refusal(&unknown, 3, &Plugins(None)).as_deref(), Some("plugin_call"));
+    }
+
+    #[test]
+    fn refuses_a_suspension_at_a_call_and_a_capped_priced_step_in_a_block() {
+        let program = |body: &str| {
+            let source = format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses")
+        };
+        let extract = program("  crm-[c:companies]-> {\n    d = extract from [c.`name`] {\n      a: \"a\"\n    }\n  }");
+        let call = program("  crm-[c:companies]-> {\n    fetch_url(url: c.`name`)\n  }");
+        for in_block in [&extract, &call] {
+            assert_eq!(input_refusal(in_block, true, &[]).as_deref(), Some("cost_cap_inside_block"));
+            assert_eq!(input_refusal(in_block, false, &[]), None);
+        }
+        let outside = program("  page = fetch_url(url: msg.`text`)");
+        assert_eq!(input_refusal(&outside, true, &[]), None);
+        assert_eq!(input_refusal(&outside, false, &["s0.c0".into()]).as_deref(), Some("suspend_at_call"));
     }
 }

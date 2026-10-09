@@ -14,8 +14,9 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
   below): bindings, `if`
   and `return` over reads of the event and of values (slice 2a), writes with
   identity (`unique by`) and the nodes a run builds (slice 2b), `sleep`,
-  parked and resumed in the TypeScript engine's own state (slice 2b), and
-  traversal blocks over adapter edges (chunk 5B) — "The run" below. apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
+  parked and resumed in the TypeScript engine's own state (slice 2b),
+  traversal blocks over adapter edges (chunk 5B), and the extraction keyword
+  and plugin calls (chunk 6A) — "The run" below. apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
   hold these runs to the TypeScript engine; the conformance corpora route
   their admitted cases whole.
 
@@ -23,8 +24,8 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 
 | module | what |
 |---|---|
-| `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight |
-| `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `park.sink`, `control.cancel`, `locks`, `trace`), plus the engine's own (`check`, `builtins`); every host request names the segment |
+| `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight; `map_concurrent` runs a fan at most so many at a time (fans.ts `mapConcurrent`) |
+| `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `llm.client`, `llm.transforms`, `park.sink`, `control.cancel`, `locks`, `trace`, `clock`, `files`, `ids`), plus the engine's own (`check`, `builtins`, `log`); every host request names the segment |
 | `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the cap met (`exceeded`) once a budget refusal is charged, a priced plugin refused before the host is asked once the cap is spent (`plugin_refusal`), the charges handed back with `done` |
 | `admit` | admission: the allow-list walk over this engine's own parse, before the check; a refusal's stable reason (below) |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
@@ -40,9 +41,10 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `node` | node and graph literals: value entries, nested nodes, reference entries and record copies (the checker's stamps) |
 | `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
-| `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`), and the per-flow buffer they wait in until their statement ends |
+| `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`, `extraction`, `plugin`), and the per-flow buffer they wait in until their statement ends |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path; the declarations (`Declarations`: the root's and each library's shapes and `type`s, each shape with the file that wrote it, and the plugin imports, by local name) |
-| `extract` | the extraction keyword without its model loop: the spec resolved per firing and the calls planned over it (`spec`), each call's system, user and retry messages (`prompt`), a reply read as zod reads it (`validate`) |
+| `extract` | the extraction keyword (`x = extract from […] { tree }`): the spec resolved per firing and the calls planned over it (`spec`), each call's system, user and retry messages (`prompt`), a reply read as zod reads it (`validate`), the content read and fetched as resources (`resources`), what it yields (`emission`), and the walk — the model loop, `through` stages, fences, the trace (`run`) |
+| `plugin` | a plugin called plainly (`page = fetch_url(url: …)`): its arguments, the invocation timed and priced, what it binds by its declared output |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers and Unicode normalisation, from the JavaScript runtime (WASM) or natively (below); never a clock |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
@@ -86,6 +88,8 @@ Measured 2026-10-07 (gzip -9):
 | limit pause (the cap, suspensions, `limitPaused`, `suspendAt`) | 2,038,536 | 573,184 |
 | a half-answering sink fails on its cap | 2,038,402 | 573,114 |
 | traversal blocks over adapter edges (heads, hops, filters, order and limit; positions by handle) | 2,096,297 | 593,352 |
+| extraction specs, prompts and the validator (chunk 6A, not yet run) | 2,185,406 | 623,115 |
+| the extraction keyword and plugin calls run whole (chunk 6A) | 2,423,062 | 694,914 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -225,9 +229,11 @@ this order, and the program is parsed once, here:
    the eval wire; `rustResumeRefusal` for a resume), on what the run is
    handed, before a segment opens.
 2. **This engine's admission** (`admit.rs`, and `park::resume_refusal` for a
-   resume), on its own parse, before the catalog loads, before
-   `check.program`, before any request: a refused run costs one parse and
-   one walk, and no host call (`rustRunStats.hostCalls` stays `{}`).
+   resume), on its own parse and the input (a plugin call's declared output
+   is read off the input's catalog snapshot, its `plugins` alone), before
+   the catalog loads, before `check.program`, before any request: a refused
+   run costs one parse and one walk, and no host call
+   (`rustRunStats.hostCalls` stays `{}`).
 3. **The stamp declines** (`Run::stamp_decline`), after the check and
    before anything the host can see (the version warning's trace entry
    included): what only the checker's stamps say.
@@ -263,9 +269,10 @@ A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
 (`rules = "…"`) are admitted: each binds a name and runs nothing, as
 `interpretFileStatement` does. A file-level value is walked as a body's
 expression is, reading only the file-level values before it; a body reads
-it as a value. What reads a shape, a type or a plugin is refused where it
-stands (`rvalue:extract`, `graph_shape`, `node_declared_entry`, `is_test`,
-`plugin_call`).
+it as a value. A declared shape's words are walked in the file's scope (an
+extraction reads them there). An extraction reads a shape and a type, and a
+plugin call a plugin; what else reads one is refused where it stands
+(`graph_shape`, `node_declared_entry`, `is_test`).
 
 **Admission: a body** (`notAdmitted`; every movement in the file is walked):
 
@@ -275,14 +282,18 @@ stands (`rvalue:extract`, `graph_shape`, `node_declared_entry`, `is_test`,
 | `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name |
 | `statement:<kind>` | a statement other than a binding, `write`, `match`, `link`, `unlink`, `delete`, `if`, a traversal block, `await sleep(…)` and `return` (`call`, `combinator`, `collection`, `error`, `refresh`) |
 | `block_head_rootless`, `block_head_expression_root` | a block head with no root, or rooted at an expression (`AT(rows, 0)-[c:company]->`) |
-| `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle, the event or an enclosing block's hop alias |
+| `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle, the event, an enclosing block's hop alias or what an extraction yielded |
+| `block_head_extract_hop` | a head over what an extraction yielded whose hop carries a WHERE (the TypeScript refuses it), an ORDER BY, a LIMIT or an incoming direction (which the TypeScript does not read) |
 | `block_multi_hop` | a head that walks more than one hop (`crm-[c:companies]->-[d:deals]->`) |
-| `block_head_resources`, `block_head_step`, `block_head_does_not_lower` | a `_resources` head, a hop that is not an edge, a head the probe cannot read |
+| `block_head_resources`, `block_head_step`, `block_head_does_not_lower` | a `_resources` head (off the event or off what an extraction yielded), a hop that is not an edge, a head the probe cannot read |
 | `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame, which this engine does not keep |
-| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a match, a link, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `callback`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node`, `write`, `match` and `link` |
+| `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a match, a link, a node or graph literal, a construction, an extraction, a plugin's call and `await sleep(…)` (`extractCall`, `callback`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `extract`, `node`, `write`, `match` and `link` |
+| `extract_tier` | `extract "careful" from […]`: what a tier buys is the deployment's (`EXTRACTION_TIERS`), which this engine does not read |
 | `await_not_sleep` | an `await` of anything but `sleep(…)` |
 | `movement_call` | a construction in a body spelled with a movement's name |
-| `plugin_call` | a plugin's invocation: `x = p(…)`, `x = p()`, `p(…)` as a statement, `p(…)` inside an expression; the `llm.transforms.invoke` call is not this engine's yet (a plugin's declared output, which decides what the name binds, is the catalog's, and admission reads no catalog) |
+| `plugin_call` | a plugin's call this engine does not make: inside an expression (`{ page: p(…) }`), spelled in another letter case than imported, or of a plugin the input's snapshot does not describe; a `through` stage naming no imported plugin |
+| `plugin_call:records` | a call of a plugin whose declared output is `records` (one record per thing fetched), which this engine does not bind |
+| `plugin_call_form` | a plugin's call with a positional argument, or an argument that is not a value (a call, a node, a write) |
 | `function_call` | a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 |
 | `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read |
 | `write_bind` | a write with `bind` |
@@ -331,8 +342,9 @@ parse, before anything is asked):
 
 | reason | what the input would make the run do |
 |---|---|
-| `cost_cap_inside_block` | a capped run with a write, a match or a link that matches in a block's body: the cap can be met at any judged write or match, and a flow suspended in an iteration is joined by the fan-out's frame, which this engine does not keep |
+| `cost_cap_inside_block` | a capped run with a priced step in a block's body — a write, a match or a link that matches, an extraction, a plugin's call: the cap can be met at any of them, and a flow suspended in an iteration is joined by the fan-out's frame, which this engine does not keep |
 | `suspend_at_inside_block` | a `suspendAt` address with an `i` step: likewise |
+| `suspend_at_call` | a `suspendAt` address with a `c` step (before a statement's k-th call): this engine keeps no call journal to run a statement again by |
 
 **Admission: a parked state** (`notAdmitted`; `park::resume_refusal`):
 
@@ -344,7 +356,7 @@ parse, before anything is asked):
 | `resume_state_journal` | a journal with a call in it (a suspension's journal is empty when this engine wrote it) |
 | `resume_state_suspended` | a `suspended` other than `true` |
 | `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) |
-| `resume_state_kind:<kind>` | a binding of a kind this engine does not bind (`extraction`, `localShape`, a `shape` outside the file scope, …); the file scope is rebuilt from the program, so a declared shape there is not the state's |
+| `resume_state_kind:<kind>` | a binding of a kind this engine does not rebuild (`extractRoot`, `extractPosition`, `localShape`, a `shape` outside the file scope, …); the file scope is rebuilt from the program, so a declared shape there is not the state's. This engine writes an extraction's emission into a park as the TypeScript does, and the TypeScript engine resumes it |
 | `resume_state_returned_records` | a bound block's returned records (this engine binds none but the empty set) |
 | `resume_state_extraction_origin` | an extraction among a binding's origins |
 | `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) |
@@ -409,11 +421,14 @@ TypeScript takes through its host is a host request here:
 | `park.sink.commitLimitPause` | the first time the run meets its cost cap (a budget refusal, charged, that the ledger says is the cap), on a host that serves it and can suspend | `host.park.sink.commitLimitPause` |
 | `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address; on a host that serves it | `host.park.sink.commitSuspension` |
 | `control.cancel.cancelledNow` | the last check (not after a park) | `host.control.cancel.cancelledNow` |
+| `llm.client.call` | each region of an extraction, once, and once more when its reply does not read ("Extraction" below); `{segmentId, system, userMessage, label, model, effort, maxTokens?, budget}` | `host.llm.client.call`, answered on the eval wire (`parsedJson` as `JSON.parse` left it); its cost charged |
+| `llm.transforms.invoke` | each `through` plugin per entity, and a plugin's plain call ("Plugin calls" below); `{segmentId, plugin, config, extractedContext, budget}`, the plugin by its registered name | `host.llm.transforms.invoke`, on the eval wire both ways; its cost charged |
+| `files.resolveFileText` | each source file an extraction's `from […]` names, once per file | `host.files.resolveFileText`, on the eval wire both ways; its cost charged |
+| `ids.mint` | an extraction's resources without ids, once per batch: the `from` text, each source file, the bundle pipeline's files, then every record's fetched files in the tree's order | `host.ids.mint`: `count` distinct texts, or the run fails |
+| `log.info`, `log.warn` | where the TypeScript engine writes a log line (an extraction's skipped stage, a plugin's empty argument, a continued answer, a truncated file, a refinement kept) | the platform's logger, the run's id added; never the run's failure |
 
-**`ids.mint` is never asked**: this engine mints no id a host or a result
-sees (an origin id is an index in the run's own table, below), and what it
-does not run that mints one (an extraction's resources, a callback) it
-refuses at admission.
+An origin id is an index in the run's own table (below): no host or result
+sees one. Every id a host or a result sees comes from `ids.mint`.
 
 **A lost run lease** is the run host's (docs/contracts/host-families.md "Failure"): the
 cancel gate, or a park the lease fence refuses, throws `RunLeaseLost`; that
@@ -572,10 +587,80 @@ field of it is null, and a park writes it as the TypeScript does. Every
 `return` admission lets into a bound block returns a value (a record is
 `name_not_value`), so returned records are never more than that.
 
+A head over what an extraction yielded (`deals-[c:company]-> { … }`) lands
+on the extract's own entities under that edge, in hand: no host is asked,
+the `block` entry is traced as for any head, and the alias reads each
+entity's fields.
+
 What stays the TypeScript engine's (refused, "Admission" above): returning a
 record from a bound block, heads of more than one hop, heads off a value, a node, an expression or
-`_resources`, extraction heads (an extract is refused), a park in a body,
+`_resources`, a WHERE, ORDER BY or LIMIT on a head over an extraction, a park in a body,
 EXISTS and any traversal inside an expression.
+
+### Extraction
+
+`extract/run.rs` is extraction.ts's `Materializer` with run.ts's
+`runExtraction` around it, for `x = extract from […] { tree }` (no tier):
+
+1. the spec built for this firing (crate::extract::spec): its words
+   evaluated where they were written — the extraction's in the body, a
+   declaration's in the file — each stage's fields' words together and
+   then its children's, as `settledAll` starts them, so a description that
+   asks the host asks it where the TypeScript does;
+2. the `from […]` slots evaluated, their origins the data sources; each
+   datum a prompt segment and a TEXT resource, a source file
+   (`files.resolveFileText`, once per file) a FILE resource and, when it
+   yields text, a segment of its own, bounded for the prompt at the
+   input's `extractionFileChars`; the resources without ids stamped in one
+   `ids.mint`;
+3. the `from […] through […]` pipeline, its plugins side by side, their
+   text and data segments of the bundle;
+4. one model call per through-free region (the root, then per entity each
+   later stage behind its `through` fence and each fenced child): the
+   cancel gate, `clock.now`, `llm.client.call`, `clock.now`; the reply read
+   as zod reads it (crate::extract::validate) and, when it does not read,
+   asked once more with the issues named; a per-entity call never answered
+   keeps its entity, the root's fails the run with the TypeScript's
+   message; each record projected (blank is absent), the empty ones
+   counted and dropped;
+5. per entity: a stage whose pipeline brought nothing is skipped (traced,
+   no call); its children go side by side;
+6. every record's fetched files given ids in one `ids.mint`, in the tree's
+   order; the tree exported (an unfound text `""` from version 2) and bound
+   (`extractRoot`); the entities hung off the extract's last call on the
+   trace (`recordExtractedEntities`).
+
+What runs side by side runs as `mapConcurrent` runs it, at most
+`STAGE_FAN_OUT` (4) at a time: a pipeline's plugins, a node's fenced
+children, an entity's children. Each branch writes the trace into a slice
+of its own, spliced back in the order written. A call site is numbered
+(`x:<node>#<n>`) when its region is planned, as the TypeScript numbers it:
+in the order the walk reaches the regions, which is the tree's order
+wherever the host answers in the order asked (every frozen case and every
+recording; "Spec the tail" below).
+
+A field of an extracted entity reads as `readEmissionField` reads it: its
+value (null when absent), cited by the field's origin (`{kind:
+'extraction', site, field, description, quote?}`, the site its call's
+`ExtractSiteRef` with the call's data sources). A write whose field reads
+one cites it as `evidence` (`{quote, type: 'extraction'}`, an
+untransformed value with a quote) and carries the source content of every
+extracted record its fields name (`resources`, once each by id); the
+result's `extractionSites` lists each site the writes cite, once.
+
+### Plugin calls
+
+`plugin.rs` is run.ts `executePluginCall`, for `x = p(…)`, `x = p()` and
+`p(…)` as a statement, of a plugin the program imports: its named
+arguments evaluated in the order written, `clock.now` either side of
+`llm.transforms.invoke` (the plugin by its registered name, the
+movement's pin choosing its declared output), the `plugin` entry traced
+(`returned: value | absent`), and the name bound as that output — a
+`value` output its text, a `record` output a node of the fields it
+attached and its text under `text`. A priced plugin is refused before the
+host is asked once the run has spent its cap (`Ledger::plugin_refusal`,
+by the registered name, so an aliased import is priced too); a `through`
+stage's plugin is refused the same way.
 
 **tests/order_limit_pin.rs** holds `order_limit` to the TypeScript's own
 answers (tests/oracle/order_limit.json, 601 seeded brackets: the pushdown's
@@ -613,8 +698,9 @@ TypeScript engine resumes it.
 
 A suspension (run.ts `suspendFlow`) writes `{version: 1, address,
 bindingName: null, suspended: true, journal: [], scopeChain}` for the flow at
-a statement's boundary; its journal is empty because this engine runs no
-calls. The flow suspends:
+a statement's boundary; its journal is empty: a statement this engine runs
+makes at most one call (a plugin's), and a suspension at its cap is taken
+before that call answers. The flow suspends:
 
 - **at its cost cap.** The engine never refuses a priced call itself. The
   host refuses one once its budget is spent (the meter refuses when the run
@@ -631,8 +717,8 @@ calls. The flow suspends:
   flow woken while its run's pause holds). A sink that cannot suspend lets
   the flow run on.
 - **at a `suspendAt` address**, once each. A sink that cannot suspend fails
-  the run (`MOVENG_RUNTIME`). An address before a call (`… .c k`) is never
-  reached: this engine runs no calls.
+  the run (`MOVENG_RUNTIME`). An address before a call (`… .c k`) is
+  refused at admission (`suspend_at_call`).
 
 Whether the sink can suspend, or park a timer, is read off the input's
 `serves` (the methods the host serves, as the recorder lists them), as
@@ -672,7 +758,10 @@ TypeScript engine would carry on. Each comes back as an error (the run
 fails); none produces a different answer.
 
 - An adapter answers a value the eval wire cannot carry as itself (a
-  `Date`, a class instance, a function): `RustShimError` from the shim. The
+  `Date`, a class instance, a function): `RustShimError` from the shim. So
+  does a model reply or a plugin's answer holding a `__proto__` key or a
+  lone surrogate (both `JSON.parse` can make), which the TypeScript reads
+  on. The
   likely case — an event field the source's schema types as a date or a
   datetime (read by an expression, or written by a `...msg` spread as the
   checker's stamp names its fields) — is declined before the version warning
@@ -719,7 +808,7 @@ writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, catalog, dryRun?,
-resume?, limitPaused?, suspendAt?, serves}`. `segmentId` is the segment the run host opened (`segment.open`),
+resume?, limitPaused?, suspendAt?, serves, extractionFileChars?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
@@ -732,7 +821,10 @@ is the `TriggerEvent` on the eval wire; `now` is the run's pinned instant as
 a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
 `CatalogSnapshot`; `serves` lists every host method the run's host serves,
 by path (`park.sink.commitTimerPark`): the engine asks an optional one only
-when it is listed. Other members are ignored.
+when it is listed; `extractionFileChars` is how much of one source file's
+text an extraction prompt takes (extraction.ts `maxFileChars`, the
+deployment's `EXTRACTION_FILE_CHARS`, 50,000 when absent). Other members
+are ignored.
 
 **Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or
 `{error: {message, name?, ref?}}`; `ref` numbers the very error object the
@@ -754,7 +846,12 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 | `park.sink.commitLimitPause {segmentId, limit: "cost", capMicrodollars, spentMicrodollars}` | `undefined`; asked only of a host that serves it and `commitSuspension` |
 | `clock.now {segmentId}` | `{nowIso}`, an ISO 8601 instant; any other answer fails the run |
 | `control.cancel.cancelled {segmentId}` / `control.cancel.cancelledNow {segmentId}` | a boolean: the cancel gate, debounced / not |
-| `trace.append {segmentId, entries, closing?: true}` (one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}`, `{kind: "field_miss", binding, field, available: [key…]}` or `{kind: "block", root, positions}` |
+| `trace.append {segmentId, entries, closing?: true}` (one per statement that traced; the last, as the segment ends, is marked `closing` and may fail without failing the run, the shim logging it) | `undefined`; an entry is `{kind: "warning", code, message}`, `{kind: "gate", outcome}`, `{kind: "field_miss", binding, field, available: [key…]}`, `{kind: "block", root, positions}`, an `extraction` entry or a `plugin` entry as expression.ts's `MovementTraceEntry` writes them |
+| `llm.client.call {segmentId, system, userMessage, label, model, effort?, maxTokens?, budget, wire: true}` | on the eval wire: `{parsedJson, rawText?, effortSteppedDown?, continuations?, cost?}`, or a budget refusal `{error: {kind: "budget", message}, cost?}` |
+| `llm.transforms.invoke {segmentId, plugin, config, extractedContext, budget, wire: true}` (`config` and `extractedContext` on the eval wire) | on the eval wire: `{text?, data?, records?, outcome?, cost?}`, or a budget refusal |
+| `files.resolveFileText {segmentId, file, budget, wire: true}` (`file` on the eval wire) | on the eval wire: `{text, rawTextId?}` or `{unreadable, detail?}`, and `cost?`, or a budget refusal |
+| `ids.mint {segmentId, count}` | `count` distinct texts |
+| `log.info {message, fields}` / `log.warn {message, fields}` | `undefined`: the line on the platform's log, the run's id added (the engine's own, like `check` and `builtins`) |
 | `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
 | `builtins.compare {op, left, right, now?}` | the same two shapes, for `compareValues(left, op, right, {now})`; `op` a `FilterOperator`; `now` (the `clock.now` answer the engine asked) on a `within` and only there |
 
@@ -792,8 +889,9 @@ conjuncts' fields in order, a false one ending the reads.)
 
 **`done`**:
 
-- `{result: {movementName, writes, parked?: true, parkedAddress?, cancelled?: true}}`,
-  `writes` the firing records on the eval wire;
+- `{result: {movementName, writes, extractionSites?, parked?: true, parkedAddress?, cancelled?: true}}`,
+  `writes` the firing records on the eval wire, `extractionSites` (when the
+  writes cite any) each cited extraction site's summary by site id;
 - `{failed: {error, result}}`: the body failed, and `result` is what the run
   had when it did (the shim throws `MovementRunFailed`);
 - `{thrown: error}`: it failed before the body ran;
@@ -869,18 +967,39 @@ The rule for what this engine reproduces of JavaScript:
     dropped (the retry and the failure's detail worked out from what is
     left), the `__proto__` record kept as a key, and a reply with nothing
     left read clean.
+    zod also never validates a field a declaration DECLARES as `__proto__`:
+    building the entity's object schema assigns `shape.__proto__`, which
+    sets the schema's prototype instead of a key, so whatever the reply
+    writes there passes unchecked, and the field is missing from the keys
+    the "answered under keys none of which it declares" check counts as
+    declared (and from that check's message). crate::extract::validate
+    validates it, and counts it, as an ordinary field. The oracle holds this
+    engine only to replies whose `__proto__` value is valid; the difference
+    is in what an invalid one, or one answered under `__proto__` alone,
+    does.
   - a reply number above the double range (past ±1.8e308): `JSON.parse`
     reads it as `Infinity`, which zod's number check refuses (`expected
-    number, received number`); across the host boundary it arrives as
-    `null`, which reads clean. The oracle cannot express it (its replies
-    are JSON text, which `JSON.stringify` never writes so), so it is not
-    marked there; Task 3b pins the boundary behaviour (a number above the
-    double range arrives as null).
+    number, received number`). The reply crosses to this engine on the eval
+    wire, which carries `Infinity` as itself, and this engine refuses it as
+    zod does (pinned by `validate::tests::
+    a_number_past_the_double_range_is_refused_as_zod_refuses_it` and by
+    apps/api's `rust_extract.unit.test.ts` on both engines). Over a JSON
+    host (the HTTP double, a remote embedder) the number is already
+    `null`, which reads clean on both engines. The oracle cannot express it
+    (its replies are JSON text), so it is not marked there.
   - extraction call-site numbering: the number in an extraction's prompt
     (`x:<node>#<n>`) follows the order concurrent siblings reach the site,
     so a host answering at another speed sees another prompt; numbered by
     the site's place in the fan instead (the recorded runs allow-list the
-    cases that depend on it until then).
+    cases that depend on it until then). This engine numbers a site when
+    its region is planned, as the TypeScript does: what it runs side by
+    side it runs at once, so the order it reaches the sites is the order
+    the host answers, which is the tree's order wherever the host answers
+    in the order asked — every frozen case and every recording (chunk 6A
+    Task 3a's measurement). A numbering by the tree alone would hold back
+    a later sibling's call until every earlier sibling had numbered its
+    calls, which is a sequential fan: it would change the order the host is
+    asked in, which the recorded runs hold.
 
 ## The check
 
@@ -993,6 +1112,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 117, v2 139). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 221, v2 266). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

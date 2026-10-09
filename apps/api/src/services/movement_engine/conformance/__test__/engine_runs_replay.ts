@@ -24,10 +24,12 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  at 5B Task 6, the Rust engine on 5A's contracts (2026-10-08): 109 and 126
  *  on Rust, less a margin. Raised at chunk 6A Task 2, file-level declarations
  *  and plugin imports admitted (2026-10-09): 111 and 128 on Rust, less a
- *  margin of 2. Raise them deliberately; never lower one to pass. */
+ *  margin of 2. Raised at chunk 6A Task 3b, the extraction keyword and plugin
+ *  calls in Rust (2026-10-09): 195 and 234 on Rust, less a margin of 2.
+ *  Raise them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 109 },
-  v2: { recordings: 542, rust: 126 },
+  v1: { recordings: 443, rust: 193 },
+  v2: { recordings: 542, rust: 232 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);

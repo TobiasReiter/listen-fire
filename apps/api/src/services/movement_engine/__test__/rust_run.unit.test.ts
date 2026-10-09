@@ -470,8 +470,13 @@ describe('a whole run in the Rust engine', () => {
       [`import { fetch_url } from plugins\n${movement('  x = { page: fetch_url(msg.`text`) }')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\npage = fetch_url()\n${movement('  x = 1')}`, 'file_call'],
       [`import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`, 'file_call'],
-      // What reads a declaration is refused where it stands.
-      [`node Deal { name: <text> }\n${movement('  found = extract from [msg.`text`] {\n    node deal: <Deal>\n  }')}`, 'rvalue:extract'],
+      // An extraction this engine does not run (chunk 6A Task 3b runs the rest).
+      [movement('  found = extract "careful" from [msg.`text`] {\n    name: "a"\n  }'), 'extract_tier'],
+      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }'), 'block_head_extract_hop'],
+      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
+      [movement('  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  write crm-[:companies]-> { ...found }'), 'write_spread_source'],
+      [movement('  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  x = found'), 'name_not_value'],
+      [movement('  return extract from [msg.`text`] {\n    name: "a"\n  }'), 'rvalue:extract'],
       [`node Deal { name: <text> }\n${movement('  g = graph<Deal> { name: "a" }')}`, 'graph_shape'],
     ] as const) {
       resetRustRunStats();
