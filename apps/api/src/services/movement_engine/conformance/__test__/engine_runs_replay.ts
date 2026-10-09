@@ -22,10 +22,12 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  the Rust engine replays whole. Measured at chunk 5A, Task 3b fix round 1
  *  (2026-10-08): v1 443 recordings, 62 on Rust; v2 542, 68 on Rust. Raised
  *  at 5B Task 6, the Rust engine on 5A's contracts (2026-10-08): 109 and 126
- *  on Rust, less a margin. Raise them deliberately; never lower one to pass. */
+ *  on Rust, less a margin. Raised at chunk 6A Task 2, file-level declarations
+ *  and plugin imports admitted (2026-10-09): 111 and 128 on Rust, less a
+ *  margin of 2. Raise them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 105 },
-  v2: { recordings: 542, rust: 120 },
+  v1: { recordings: 443, rust: 109 },
+  v2: { recordings: 542, rust: 126 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);

@@ -41,7 +41,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`), and the per-flow buffer they wait in until their statement ends |
-| `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path |
+| `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path; the file's declarations (`Declarations`: shapes, `type`s, plugin imports, by local name) |
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers and Unicode normalisation, from the JavaScript runtime (WASM) or natively (below); never a clock |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on |
@@ -244,11 +244,19 @@ Each is a stable snake_case string: the one log line per run names it, and
 | reason | the construct |
 |---|---|
 | `source_does_not_parse` | the source does not parse here (the TypeScript engine throws the parse error) |
-| `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters` and `credentials` (`import_from_plugins`) |
-| `file_assignment` | a file-level binding that is not an instance construction |
-| `file_call` | a file-level construction spelled with a movement's name (a call) |
-| `file_statement:<kind>` | any other file-level statement, by the AST's `kind` (`shape` for `node <Name> { … }`, `type`, `write`, …) |
+| `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` |
+| `file_assignment` | a file-level binding that is neither an instance construction nor a value (a file-level `extract`, …) |
+| `file_call` | a file-level construction spelled with a movement's or a plugin's name (a call) |
+| `file_statement:<kind>` | any other file-level statement, by the AST's `kind` (`write`, `call`, …) |
 | `movement_value_param` | a movement taking a value (`n: <number[]>`) |
+
+A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
+(`rules = "…"`) are admitted: each binds a name and runs nothing, as
+`interpretFileStatement` does. A file-level value is walked as a body's
+expression is, reading only the file-level values before it; a body reads
+it as a value. What reads a shape, a type or a plugin is refused where it
+stands (`rvalue:extract`, `graph_shape`, `node_declared_entry`, `is_test`,
+`plugin_call`).
 
 **Admission: a body** (`notAdmitted`; every movement in the file is walked):
 
@@ -265,6 +273,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 | `rvalue:<kind>` | a right-hand side other than an expression, a built-in's call, a write, a match, a link, a node or graph literal, a construction and `await sleep(…)` (`extract`, `extractCall`, `callback`, `lazy`, `closure`, `collection`, `members`, `inlineBlock`, `combinator`); for `return`, also `node`, `write`, `match` and `link` |
 | `await_not_sleep` | an `await` of anything but `sleep(…)` |
 | `movement_call` | a construction in a body spelled with a movement's name |
+| `plugin_call` | a plugin's invocation: `x = p(…)`, `x = p()`, `p(…)` as a statement, `p(…)` inside an expression; the `llm.transforms.invoke` call is not this engine's yet (a plugin's declared output, which decides what the name binds, is the catalog's, and admission reads no catalog) |
 | `function_call` | a call whose callee the program declares (a movement, any letter case from version 3), or any call before version 3 |
 | `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read |
 | `write_bind` | a write with `bind` |
@@ -326,7 +335,7 @@ parse, before anything is asked):
 | `resume_state_journal` | a journal with a call in it (a suspension's journal is empty when this engine wrote it) |
 | `resume_state_suspended` | a `suspended` other than `true` |
 | `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) |
-| `resume_state_kind:<kind>` | a binding of a kind this engine does not bind (`extraction`, `shape`, …) |
+| `resume_state_kind:<kind>` | a binding of a kind this engine does not bind (`extraction`, `localShape`, a `shape` outside the file scope, …); the file scope is rebuilt from the program, so a declared shape there is not the state's |
 | `resume_state_returned_records` | a bound block's returned records (this engine binds none but the empty set) |
 | `resume_state_extraction_origin` | an extraction among a binding's origins |
 | `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) |

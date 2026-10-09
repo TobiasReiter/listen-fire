@@ -15,6 +15,7 @@ import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import type { MovementTraceEntry } from '../expression';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
@@ -63,12 +64,14 @@ const attioSchema: InstanceSchema = {
   supportsInPlaceUpdate: true,
 };
 
+const fetchUrl = staticCatalogFromManifests({ credentials: {} }).plugin('fetch_url');
 const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
   },
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
+  plugins: fetchUrl !== undefined ? { fetch_url: fetchUrl } : {},
 });
 
 const PRELUDE = [
@@ -571,6 +574,44 @@ describe('parks in the Rust engine', () => {
     expect(rust.parks[0]?.address).toBe('s2.b0.s0');
     // Key for key, in order: the string, not `toEqual`, which ignores order.
     expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
+  });
+
+  it('parks a program with file-level declarations as the TypeScript engine does, and resumes it on either engine', async () => {
+    // Task 2: a plugin import, a type, a shape and two file-level values,
+    // the shape's description reading one of them. Each binds at file scope
+    // and runs nothing; the body reads the values.
+    const source = [
+      'import { fetch_url as fetch } from plugins',
+      'type Stage = <"lead" | "won">',
+      'rules = "route infra"',
+      'node Lead: "a lead" {',
+      '  name: <text> "its name. ${rules}"',
+      '  stage: <Stage>',
+      '}',
+      'tag = "${UPPER(rules)}!"',
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  label = "${msg.`subject`} ${tag}"',
+      '  await sleep(30s)',
+      '  write crm-[:companies]-> { name: label, stage: rules }',
+      '}',
+    ].join('\n');
+    const event = webhook({ subject: 'Acme' });
+    const { ts, rust } = await agree({ source, event });
+    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's1' });
+    expect(fetchUrl).toBeDefined();
+    // Key for key, in order: the file scope's plugin, shape and values included.
+    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
+    const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
+    expect(state.scopeChain[0]?.bindings).toMatchObject({
+      fetch: { kind: 'opaque', what: 'a plugin', name: 'fetch' },
+      Lead: { kind: 'shape', name: 'Lead' },
+      tag: { kind: 'value', value: 'ROUTE INFRA!' },
+    });
+    for (const parked of [ts, rust]) {
+      const resume = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
+      const resumed = await agree({ source, event, resume });
+      expect(resumed.rust.result?.writes.map((w) => w.writtenValues)).toEqual([{ name: 'Acme ROUTE INFRA!', stage: 'route infra' }]);
+    }
   });
 
   it('a rehearsal fast-forwards past a sleep', async () => {

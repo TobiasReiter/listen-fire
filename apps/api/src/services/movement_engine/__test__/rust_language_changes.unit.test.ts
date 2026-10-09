@@ -237,8 +237,9 @@ describe("main's language changes on both engines", () => {
         '    write crm-[:companies]-> { name: e.name }',
         '  }',
       ),
-      // A run-built collection's edge is declared, in a declared shape.
-      { refused: 'file_statement:shape' },
+      // A run-built collection's edge is declared, in a declared shape (the
+      // declaration itself is admitted from Task 2).
+      { refused: 'node_declared_entry' },
       [
         ['create', { name: 'Acme Inc!' }],
         ['create', { name: 'Beta!' }],
@@ -281,7 +282,7 @@ describe("main's language changes on both engines", () => {
         '    write crm-[:companies]-> { name: c.name }',
         '  })',
       ),
-      { refused: 'file_statement:shape' },
+      { refused: 'rvalue:extractCall' },
       [
         ['create', { name: 'Acme!' }],
         ['create', { name: 'Beta!' }],
@@ -292,7 +293,7 @@ describe("main's language changes on both engines", () => {
   it('a call in place as a plugin argument (f623a80f70): refused, the inner call run by the TypeScript engine', async () => {
     await onBoth(
       ['import { fetch_url } from plugins', movement('  page = fetch_url(url: fetch_url(url: msg.`text`))', '  write crm-[:companies]-> { name: COALESCE(page, "none") }')].join('\n'),
-      { refused: 'import_from_plugins' },
+      { refused: 'plugin_call' },
       [['create', { name: 'page of page of acme.dev' }]],
     );
   });

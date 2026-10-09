@@ -434,9 +434,8 @@ describe('a whole run in the Rust engine', () => {
     // One program per construct admission refuses: each costs a parse and
     // the walk, never a check, an adapter or a trace entry.
     for (const [source, reason] of [
-      [`type Stage = <"a" | "b">\n${movement('  x = 1')}`, 'file_statement:type'],
-      [`node Deal { name: <text> }\n${movement('  x = 1')}`, 'file_statement:shape'],
-      [`y = 1\n${movement('  x = 1')}`, 'file_assignment'],
+      [`r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`, 'file_assignment'],
+      [`y = crm.\`name\`\n${movement('  x = 1')}`, 'traversal_root'],
       [`movement v(n: <number[]>) {\n  x = 1\n}\n${movement('  x = 1')}`, 'movement_value_param'],
       [movement('  inbox = 1'), 'name_shadowed'],
       [movement('  x = 1\n  x = write crm-[:companies]-> { name: "a" }'), 'name_rebound'],
@@ -464,7 +463,15 @@ describe('a whole run in the Rust engine', () => {
       [movement('  n = node { name: "a" }\n  write n { name: "b" }'), 'write_position_not_record'],
       [movement('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }'), 'expression_closure'],
       [movement('  held = { k: { inner: 1 } }\n  x = held.k.inner'), 'traversal_terminal'],
-      [`import { fetch_url } from plugins\n${movement('  x = 1')}`, 'import_from_plugins'],
+      // A plugin's invocation, in each of its spellings (Task 2: the import itself is admitted).
+      [`import { fetch_url } from plugins\n${movement('  x = fetch_url(url: msg.`text`)')}`, 'plugin_call'],
+      [`import { fetch_url } from plugins\n${movement('  x = fetch_url()')}`, 'plugin_call'],
+      [`import { fetch_url } from plugins\n${movement('  fetch_url(url: msg.`text`)')}`, 'plugin_call'],
+      [`import { fetch_url } from plugins\n${movement('  x = { page: fetch_url(msg.`text`) }')}`, 'plugin_call'],
+      [`import { fetch_url } from plugins\npage = fetch_url()\n${movement('  x = 1')}`, 'file_call'],
+      // What reads a declaration is refused where it stands.
+      [`node Deal { name: <text> }\n${movement('  found = extract from [msg.`text`] {\n    node deal: <Deal>\n  }')}`, 'rvalue:extract'],
+      [`node Deal { name: <text> }\n${movement('  g = graph<Deal> { name: "a" }')}`, 'graph_shape'],
     ] as const) {
       resetRustRunStats();
       const { outcome, resolved } = await segmentOf(source);

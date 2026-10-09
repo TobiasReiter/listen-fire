@@ -43,17 +43,25 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
     let mut movements: Vec<&ast::MovementDeclaration> = Vec::new();
+    let mut plugins = BTreeSet::new();
     for statement in &program.statements {
-        if let Statement::Movement(movement) = statement {
-            movements.push(movement);
+        match statement {
+            Statement::Movement(movement) => movements.push(movement),
+            Statement::Import(import) if matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins") => {
+                plugins.extend(import.names.iter().map(|name| name.alias.clone().unwrap_or_else(|| name.name.clone())));
+            }
+            _ => {}
         }
     }
     let movement_names: BTreeSet<String> = movements.iter().map(|m| m.name.clone()).collect();
+    let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
+    // File-level values, in source order: each may read the ones before it.
+    let mut file_values: Vec<(&str, &RValue)> = Vec::new();
     for statement in &program.statements {
         match statement {
             Statement::Import(import) => {
                 match &import.source {
-                    ImportSource::Builtin { namespace } if namespace == "adapters" || namespace == "credentials" => {}
+                    ImportSource::Builtin { namespace } if namespace == "adapters" || namespace == "credentials" || namespace == "plugins" => {}
                     ImportSource::Builtin { namespace } => return Some(format!("import_from_{namespace}")),
                     ImportSource::File { .. } => return Some("import_from_file".into()),
                 }
@@ -62,13 +70,29 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
                 }
             }
             Statement::Assign(assign) => match &assign.value {
-                RValue::Construct { construct } if movement_names.contains(&construct.callee) => return Some("file_call".into()),
+                RValue::Construct { construct } if movement_names.contains(&construct.callee) || plugin_named(&construct.callee) => {
+                    return Some("file_call".into());
+                }
                 RValue::Construct { .. } => {
                     file_names.insert(assign.name.clone());
                     instances.insert(assign.name.clone());
                 }
+                RValue::Expr { .. } | RValue::Call { .. } => {
+                    file_names.insert(assign.name.clone());
+                    file_values.push((&assign.name, &assign.value));
+                }
                 _ => return Some("file_assignment".into()),
             },
+            // A declared shape binds its name at file scope (run.ts
+            // `interpretFileStatement`); a `type` is the checker's alone. What
+            // either declares is read by the constructs naming it, which are
+            // walked (and refused) where they stand.
+            Statement::Shape(shape) => {
+                file_names.insert(shape.name.clone());
+            }
+            Statement::Type(declaration) => {
+                file_names.insert(declaration.name.clone());
+            }
             Statement::Listen(_) => {}
             Statement::Movement(movement) => {
                 if movement.params.iter().any(|p| matches!(p.type_, Some(ParamTypeRef::Value(_)))) {
@@ -79,6 +103,28 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
             other => return Some(format!("file_statement:{}", statement_kind(other))),
         }
     }
+    let none = BTreeSet::new();
+    let mut values = BTreeSet::new();
+    for (name, value) in &file_values {
+        let names = Names {
+            events: &none,
+            values: &values,
+            handles: &none,
+            nodes: &none,
+            landings: &none,
+            instances: BTreeSet::new(),
+            body_instances: &none,
+            file_names: &file_names,
+            movements: &movement_names,
+            plugins: &plugins,
+            language_version,
+        };
+        if let Err(reason) = names.rvalue(value) {
+            return Some(reason);
+        }
+        values.insert(name.to_string());
+    }
+    let file_values = values;
     for movement in &movements {
         let events: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
         let mut bound = Bound::default();
@@ -89,9 +135,10 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
         if bound.rebound() {
             return Some("name_rebound".into());
         }
+        let values = bound.values.union(&file_values).cloned().collect();
         let names = Names {
             events: &events,
-            values: &bound.values,
+            values: &values,
             handles: &bound.handles,
             nodes: &bound.nodes,
             landings: &bound.landings,
@@ -99,6 +146,7 @@ pub fn refusal(program: &ast::Program, language_version: u32) -> Option<String> 
             body_instances: &bound.instances,
             file_names: &file_names,
             movements: &movement_names,
+            plugins: &plugins,
             language_version,
         };
         if let Err(reason) = names.body(&movement.body, Within::Body) {
@@ -347,6 +395,8 @@ struct Names<'n> {
     /// Every name the file binds: imports, instances, movements.
     file_names: &'n BTreeSet<String>,
     movements: &'n BTreeSet<String>,
+    /// The plugins the file imports, by local name.
+    plugins: &'n BTreeSet<String>,
     language_version: u32,
 }
 
@@ -369,6 +419,7 @@ impl Names<'_> {
                 RValue::Block { block } => self.block(block),
                 RValue::Await { r#await } => sleep(&r#await.source),
                 RValue::Construct { construct } if self.movements.contains(&construct.callee) => refuse("movement_call"),
+                RValue::Construct { construct } if self.plugin(&construct.callee) => refuse("plugin_call"),
                 RValue::Construct { .. } => Ok(()),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
                 other => self.rvalue(other),
@@ -395,6 +446,7 @@ impl Names<'_> {
                 }
             }
             Statement::Block(statement) => self.block(&statement.block),
+            Statement::Call(call) if self.plugin(&call.callee) => refuse("plugin_call"),
             other => refuse(format!("statement:{}", statement_kind(other))),
         }
     }
@@ -459,6 +511,11 @@ impl Names<'_> {
     /// are all positional values. Which built-in it is the expression's own
     /// walk decides (`FUNCTIONS`).
     fn builtin_value<'c>(&self, call: &'c CallStatement) -> Result<&'c ExprSlot, String> {
+        // A plugin's invocation (`llm.transforms.invoke`), which this engine
+        // does not make yet.
+        if self.plugin(&call.callee) {
+            return Err("plugin_call".into());
+        }
         let declared = self.binds(&call.callee)
             || self.language_version < 3
             || self.movements.iter().any(|m| m.to_lowercase() == call.callee.to_lowercase());
@@ -476,6 +533,10 @@ impl Names<'_> {
             Some(expr) if positional_values(&call.args) => Ok(expr),
             _ => Err("builtin_call_form".into()),
         }
+    }
+
+    fn plugin(&self, callee: &str) -> bool {
+        names_plugin(self.plugins, callee, self.language_version)
     }
 
     /// `CallScope.binds`: a name the file or the body binds, anywhere.
@@ -706,6 +767,9 @@ impl Names<'_> {
             }
             Expression::Logical { operands, .. } => each(operands),
             Expression::Not { expression } | Expression::Negate { expression } => self.walk(expression, scoped),
+            // A plugin called in place, bound first from version 3
+            // (checker/nested_calls.ts): its invocation.
+            Expression::Function { fn_, .. } if names_plugin(self.plugins, fn_, 3) => refuse("plugin_call"),
             Expression::Function { fn_, args } => {
                 if !FUNCTIONS.contains(&fn_.as_str()) {
                     return refuse(format!("function:{fn_}"));
@@ -715,6 +779,12 @@ impl Names<'_> {
             other => refuse(format!("expression:{}", crate::eval::kind_of(other))),
         }
     }
+}
+
+/// Whether `callee` resolves to an imported plugin (`resolveCallee`): as
+/// written, or from version 3 in any letter case, as a function does.
+fn names_plugin(plugins: &BTreeSet<String>, callee: &str, language_version: u32) -> bool {
+    plugins.contains(callee) || (language_version >= 3 && plugins.iter().any(|p| p.to_lowercase() == callee.to_lowercase()))
 }
 
 /// An expression slot, lowered.
@@ -845,7 +915,10 @@ mod tests {
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
-        assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}")).as_deref(), Some("import_from_plugins"));
+        assert_eq!(
+            file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  x = fetch_url(url: fetch_url(url: msg.`text`))\n}}")).as_deref(),
+            Some("plugin_call")
+        );
         for body in [
             "  `a\\`b` = msg.`subject`\n  `c\\\\d` = \"${`a\\`b`}!\"\n  write crm-[:companies]-> { name: `c\\\\d` }",
             "  write crm-[:companies]-> { name: UPPER( # a \"quoted\" {aside}\n    msg.`subject`) }",
@@ -953,10 +1026,47 @@ mod tests {
     #[test]
     fn refuses_what_the_file_says_it_does_not_run() {
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
-        assert_eq!(file(&format!("{PRELUDE}type Stage = <\"a\" | \"b\">\n{movement}")).as_deref(), Some("file_statement:type"));
         assert_eq!(file(&format!("import {{ x }} from \"./lib.mov\"\n{movement}")).as_deref(), Some("import_from_file"));
-        assert_eq!(file(&format!("{PRELUDE}y = 1\n{movement}")).as_deref(), Some("file_assignment"));
+        assert_eq!(file(&format!("{PRELUDE}r = extract from [\"a\"] {{\n  node n: \"n\" {{ a: \"a\" }}\n}}\n{movement}")).as_deref(), Some("file_assignment"));
         assert_eq!(file(&format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\n{movement}")).as_deref(), Some("movement_value_param"));
         assert_eq!(file(&format!("{PRELUDE}{movement}")), None);
+    }
+
+    /// File-level declarations bind names and run nothing: a shape, a type,
+    /// a plugin import and a value are admitted, and what reads them is
+    /// walked where it stands.
+    #[test]
+    fn admits_file_level_declarations_and_refuses_by_name_what_reads_them() {
+        let declared = format!(
+            "import {{ fetch_url as fetch }} from plugins\n{PRELUDE}type Stage = <\"a\" | \"b\">\nrules = \"route infra\"\ntag = \"${{UPPER(rules)}}!\"\nnode Lead: \"a lead\" {{\n  name: <text> \"its name ${{rules}}\"\n  stage: <Stage>\n}}\n"
+        );
+        let with = |body: &str| file(&format!("{declared}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
+        for body in ["  x = 1", "  write crm-[:companies]-> { name: tag, stage: \"${rules} ${msg.`subject`}\" }", "  await sleep(1h)\n  y = tag"] {
+            assert_eq!(with(body), None, "{body}");
+        }
+        for (body, reason) in [
+            ("  page = fetch(url: msg.`text`)", "plugin_call"),
+            ("  page = fetch()", "plugin_call"),
+            // From version 3 a callee resolves in any letter case.
+            ("  page = FETCH()", "plugin_call"),
+            ("  fetch(url: msg.`text`)", "plugin_call"),
+            ("  x = { page: fetch(msg.`text`) }", "plugin_call"),
+            ("  found = extract from [msg.`text`] {\n    node lead: <Lead>\n  }", "rvalue:extract"),
+            ("  g = graph<Lead> { name: \"a\" }", "graph_shape"),
+            ("  if msg.`subject` IS <Stage> {\n    x = 1\n  }", "is_test"),
+            ("  x = Lead", "name_not_value"),
+            ("  Lead = 1", "name_shadowed"),
+            ("  Stage = 1", "name_shadowed"),
+            ("  tag = 1", "name_shadowed"),
+            ("  fetch = 1", "name_shadowed"),
+        ] {
+            assert_eq!(with(body).as_deref(), Some(reason), "{body}");
+        }
+        let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
+        // A file-level value reads only the file-level values before it.
+        for (value, reason) in [("y = crm.`name`", "traversal_root"), ("y = later\nlater = 1", "name_not_value"), ("y = AI(\"why\")", "expression:llm")] {
+            assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some(reason), "{value}");
+        }
+        assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}page = fetch_url()\n{movement}")).as_deref(), Some("file_call"));
     }
 }

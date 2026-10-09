@@ -147,6 +147,9 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
         Binding::Opaque => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
         Binding::Movement(movement) => object_of(vec![kind("movement"), ("name", Js::str(movement.clone()))]),
+        Binding::Shape(shape) => object_of(vec![kind("shape"), ("name", Js::str(shape.clone()))]),
+        // A plugin travels as the import it is, re-resolved by its slot name.
+        Binding::Plugin(_) => object_of(vec![kind("opaque"), ("what", Js::str("a plugin")), ("name", Js::str(name))]),
         Binding::Handle(handle) => object_of(vec![
             kind("handle"),
             ("handle", handle.record.object.clone()),
@@ -234,10 +237,16 @@ pub fn resume_refusal(state: &Json) -> Option<String> {
     if !text(at(&state, "address")).is_some_and(steps_only_into_if_arms) {
         return Some("resume_state_address".into());
     }
-    items(at(&state, "scopeChain"))
+    let scopes = items(at(&state, "scopeChain"));
+    // The file scope is rebuilt from the program on resume (`prepare`), as
+    // the TypeScript re-derives its declarations by name: a declared shape
+    // there is the program's, not the state's.
+    let file_shape = |i: usize, descriptor: &Js| i == 0 && text(at(descriptor, "kind")) == Some("shape");
+    scopes
         .iter()
-        .flat_map(|scope| pairs(at(scope, "bindings")))
-        .find_map(|(_, descriptor)| descriptor_refusal(descriptor))
+        .enumerate()
+        .flat_map(|(i, scope)| pairs(at(scope, "bindings")).into_iter().map(move |(_, d)| (i, d)))
+        .find_map(|(i, descriptor)| if file_shape(i, descriptor) { None } else { descriptor_refusal(descriptor) })
 }
 
 /// `/^s\d+(\.b\d+\.s\d+)*$/`.

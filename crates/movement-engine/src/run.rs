@@ -461,8 +461,16 @@ impl Run<'_> {
             .position(|s| matches!(s, Statement::Movement(m) if m.name == movement.name && m.span == movement.span))
             .expect("the movement picked is one of the program's");
         *self.movement_name.borrow_mut() = movement.name.clone();
+        // In source order, so a file-level value reads the ones before it.
         for statement in deferred {
-            self.file_statement(statement, &file);
+            match statement {
+                Statement::Assign(assign) if !matches!(assign.value, RValue::Construct { .. }) => {
+                    let expr = self.value_slot(&assign.value, &file)?;
+                    let bound = self.bind_slot(expr, &file).await?;
+                    file.declare(assign.name.clone(), Binding::Value(bound));
+                }
+                other => self.file_statement(other, &file),
+            }
         }
         if movement.params.len() != 1 {
             return Err(Stop::Thrown(Failure::engine(
@@ -600,17 +608,21 @@ impl Run<'_> {
     }
 
     /// `interpretFileStatement`, for what this engine runs at file scope
-    /// (admission refused the rest).
+    /// with no effect (admission refused the rest; `prepare` evaluates the
+    /// file-level values).
     fn file_statement(&self, statement: &Statement, file: &Scope) {
         match statement {
             Statement::Import(import) => {
+                let plugins = matches!(&import.source, ast::ImportSource::Builtin { namespace } if namespace == "plugins");
                 for name in &import.names {
                     if let Some(alias) = &name.alias {
                         self.import_originals.borrow_mut().push((alias.clone(), name.name.clone()));
                     }
-                    file.declare(name.alias.clone().unwrap_or_else(|| name.name.clone()), Binding::Opaque);
+                    let binding = if plugins { Binding::Plugin(name.name.clone()) } else { Binding::Opaque };
+                    file.declare(name.alias.clone().unwrap_or_else(|| name.name.clone()), binding);
                 }
             }
+            Statement::Shape(shape) => file.declare(shape.name.clone(), Binding::Shape(shape.name.clone())),
             Statement::Assign(assign) => {
                 if let RValue::Construct { construct } = &assign.value {
                     let instance = self.instance_binding(&assign.name, construct);
@@ -1625,11 +1637,48 @@ mod tests {
 
     #[test]
     fn what_it_does_not_run_is_declined_before_anything_happens() {
-        let source = "import { email } from adapters\ninbox = email()\ntype T = <\"a\">\nmovement m(msg: <inbox-[:message]->>) {\n  s = 1\n}";
+        let source = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}";
         let (done, seen) = drive(source, json!(["o", 1, []]), plain_host(json!({})));
         // Refused on this engine's own parse: not even the check is asked.
-        assert_eq!(done, json!({ "refused": "file_statement:type" }));
+        assert_eq!(done, json!({ "refused": "plugin_call" }));
         assert!(seen.is_empty());
+    }
+
+    /// The file scope as `prepareMovement` builds it: an import of a plugin
+    /// binds the plugin, a declared shape its name, a `type` nothing, and a
+    /// value what it evaluates to, in source order, a body reading it; a park
+    /// writes each as the TypeScript engine does.
+    #[test]
+    fn file_level_declarations_bind_and_park_as_the_typescript_engine_writes_them() {
+        let source = "import { email } from adapters\nimport { fetch_url as fetch } from plugins\ninbox = email()\ntype Stage = <\"a\" | \"b\">\nrules = \"route\"\nnode Lead {\n  name: <text> \"its name ${rules}\"\n}\ntag = \"${UPPER(rules)}!\"\nmovement m(msg: <inbox-[:message]->>) {\n  label = \"${tag} ${rules}\"\n  await sleep(1h)\n}";
+        let host = plain_host(json!({}));
+        let (done, seen) = drive_serving(source, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+            match (request.family, request.method.as_str()) {
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                ("park.sink", "commitTimerPark") => json!({}),
+                _ => host(request),
+            }
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let park = seen.iter().find(|r| r.method == "commitTimerPark").expect("the sleep parked");
+        let decoded = env::decode(&park.args["state"]).unwrap();
+        let state = env::json_of_js(&decoded);
+        let file = &state["scopeChain"][0]["bindings"];
+        // In the order declared (the JSON above sorts its keys).
+        let Some(Js::Array(chain)) = (match &decoded { Js::Object(o) => o.get("scopeChain"), _ => None }) else { panic!("a chain") };
+        let Some(Js::Object(bindings)) = (match &chain.items[0] { Js::Object(o) => o.get("bindings"), _ => None }) else { panic!("bindings") };
+        let kinds: Vec<(&str, String)> = bindings.entries().iter().map(|(name, b)| (name.as_str(), env::json_of_js(b)["kind"].as_str().unwrap_or_default().to_string())).collect();
+        let kinds: Vec<(&str, &str)> = kinds.iter().map(|(n, k)| (*n, k.as_str())).collect();
+        assert_eq!(
+            kinds,
+            [("m", "movement"), ("email", "opaque"), ("fetch", "opaque"), ("inbox", "instance"), ("rules", "value"), ("Lead", "shape"), ("tag", "value")]
+        );
+        assert_eq!(file["fetch"], json!({ "kind": "opaque", "what": "a plugin", "name": "fetch" }));
+        assert_eq!(file["Lead"], json!({ "kind": "shape", "name": "Lead" }));
+        assert_eq!(file["tag"]["value"], json!("ROUTE!"));
+        assert_eq!(state["scopeChain"][1]["bindings"]["label"]["value"], json!("ROUTE! route"));
+        // Its own park resumes here: the file scope's shape is the program's.
+        assert_eq!(crate::park::resume_refusal(&park.args["state"]), None);
     }
 
     /// A plain JSON value on the eval wire.

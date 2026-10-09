@@ -23,6 +23,12 @@ pub enum Binding {
     Opaque,
     /// A movement declared in the file (`kind: 'movement'`).
     Movement(String),
+    /// A shape the file declares, by its name (`kind: 'shape'`): its
+    /// declaration is the program's (crate::program `Declarations`).
+    Shape(String),
+    /// A plugin the file imports, by its name as registered (`kind:
+    /// 'plugin'`).
+    Plugin(String),
     /// A write's result (`kind: 'handle'`): the record the write produced,
     /// the type it stands on, and the graph it lives in.
     Handle(Rc<Handle>),

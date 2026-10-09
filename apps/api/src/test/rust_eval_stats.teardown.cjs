@@ -17,7 +17,12 @@ const path = require('node:path');
 // v1 93, v2 101 with nested blocks and heads off a hop alias (chunk 5B task
 // 5: hop_narrowing's six), then to v1 114, v2 136 with the record verbs in
 // and out of blocks (match, link, unlink, delete, a target's WHERE, writes
-// off a traversed record), then to v1 117, v2 139 with bound blocks. A floor
+// off a traversed record), then to v1 117, v2 139 with bound blocks. Chunk
+// 6A Task 2 (file-level declarations, plugin imports and file-level values
+// admitted, 2026-10-09) runs v1 119, v2 141 whole; the floors are those less
+// a margin of 2, so they stay v1 117, v2 139: the declarations unmasked the
+// body constructs behind them (the extraction keyword, declared entries,
+// plugin calls) more than they admitted whole runs. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
