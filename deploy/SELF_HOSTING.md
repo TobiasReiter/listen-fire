@@ -315,7 +315,7 @@ Each API instance drains on its own one-second timer (`AUTOMATIONS_DRAIN_MODE` u
 
 ### 2. Push-tick
 
-The API runs with `AUTOMATIONS_DRAIN_MODE=external`: no timer, and every drain pass is a `POST /api/v1/system/automations/drain` with a key holding the `system` scope. Two things call it:
+The API runs with `AUTOMATIONS_DRAIN_MODE=external`: no timer, and every drain pass is a `POST /api/v1/system/automations/drain` from a caller the system endpoints accept: by default a key holding the `system` scope, or an identity token (see "Who may call the system endpoints" below). Two things call it:
 
 - **A schedule**, which is what makes timers, cron, polls and the periodic sweeps happen. One tick drains everything due, periodic rows included, so the schedule needs one line, not one per kind. Every minute is enough; the shortest periodic interval is 30 s, so every 30 s keeps the sweeps on time, and a `sleep` wakes at most one tick late.
 
@@ -331,9 +331,35 @@ On GCP:
 
 | piece | GCP |
 |---|---|
-| a door's notify | `AUTOMATIONS_TICK_URLS` set to the Cloud Run service's drain endpoint, which any instance answers. A Pub/Sub push subscription delivering to that endpoint is the managed fan-in, with one catch: a push carries a Google OIDC token, not a `system` key, and the drain endpoint accepts only the key, so a push needs a forwarder in front that swaps one for the other. |
-| the schedule | Cloud Scheduler, an HTTP job POSTing the drain endpoint every minute with the `system` key in its `Authorization` header |
+| a door's notify | `AUTOMATIONS_TICK_URLS` set to the Cloud Run service's drain endpoint, which any instance answers, with `api_key` among `SYSTEM_AUTH_MODES` (the notifier sends the key). A Pub/Sub push subscription delivering straight to that endpoint is the managed fan-in: give it an OIDC token whose audience is the drain URL and whose service account is on `SYSTEM_AUTH_OIDC_ALLOWED_SUBJECTS`, with `oidc` among the modes |
+| the schedule | Cloud Scheduler, an HTTP job POSTing the drain endpoint every minute with an OIDC token the same way (audience the drain URL, its service account allow-listed), or with the `system` key in its `Authorization` header |
 | a pure-schedule deployment | a Cloud Run job running `node build/scripts/drain_once.js`, triggered by Cloud Scheduler, with no notify set |
+
+### Who may call the system endpoints
+
+The system endpoints (`/api/v1/system/*`, the drain tick among them) accept whoever one of the configured verifiers accepts. `SYSTEM_AUTH_MODES` names them, comma-separated, asked in that order:
+
+- **`api_key`** (the default): an API key holding the `system` scope, as `Authorization: Bearer lf_…`.
+- **`oidc`**: an OpenID Connect identity token as the bearer. It is accepted when it is signed by one of the issuer's published keys, has not expired, names `SYSTEM_AUTH_OIDC_ISSUER` as its issuer and `SYSTEM_AUTH_OIDC_AUDIENCE` as its audience, and its `sub` (or verified `email`) is on `SYSTEM_AUTH_OIDC_ALLOWED_SUBJECTS`. For Google the issuer is `https://accounts.google.com`, the audience is the drain URL, and the subject is the push subscription's or the scheduler job's service account email. An oidc caller may drain; the run listings and the system agent act in a tenant and still need the key.
+
+Naming `oidc` without all three of its settings, or an issuer that is not `https` in production, fails boot naming what is missing. So does `oidc` without `api_key` while `AUTOMATIONS_TICK_URLS` is set, since the notifier sends the key. A refused call answers `403` with each verifier's reason, and each reason is logged at most once a minute per caller address; tokens are never logged.
+
+**Bring your own verifier.** An embedder composing its own process can decide differently, for instance mutual TLS behind its own proxy, or its own token service. It implements the interface in [docs/contracts/system-caller.md](../docs/contracts/system-caller.md) and registers it before the server serves:
+
+```ts
+import { registerSystemCallerVerifier } from './services/system_auth';
+
+registerSystemCallerVerifier({
+  name: 'mtls',
+  async verify({ headers }) {
+    return headers['x-client-verified'] === 'SUCCESS'
+      ? { ok: true, principal: { id: String(headers['x-client-dn']) }, actions: ['drain'] }
+      : { ok: false, reason: 'no verified client certificate' };
+  },
+});
+```
+
+Verifiers are asked in registration order; the configured modes register theirs at server start (`installSystemCallerVerifiers`).
 
 What push-tick does not change: **every other unit's loops still need an always-on process**, because each holds its unit's advisory lock and polls on a timer. With every product mounted those are knowledge's mutation outbox drainer (`knowledge.mutation_outbox`) and property arbitration (`knowledge.property_arbitration`), valuations' change outbox (`valuations.change_outbox`) and outbound delivery (`valuations.outbound_delivery`), and asks' settle-notification delivery (`asks.ask_webhook_delivery`, which runs only under webhook delivery). Core's first-boot provisioning also runs under its lock at boot. Where knowledge and automations share a process under `local` delivery, a knowledge mutation reaches automations' listeners through that process's outbox drainer. So a deployment that scales the API to zero must mount only `automations` (and `core`, which has no loop) there, and run the other products in a process that stays up. Live run updates ride a WebSocket, which needs an instance up while someone is watching.
 
@@ -680,6 +706,8 @@ Everything here is set by you, in `deploy/.env`. Nothing in this table is genera
 | `MOVEMENT_WRITE_LOCK_TIMEOUT_MS` | no | 60000 — how many milliseconds a write waits for another run's lock on the same record (or record type, for `unique by`) before its step fails with `write lock timeout: <name>`; see "Automations". Boot refuses anything that is not a positive whole number |
 | `AUTOMATIONS_DRAIN_MODE` | no | `loop` — each instance drains automations' work on its own timer. `external` turns the timer off, and every pass is a call to the drain endpoint; see "Deployment shapes". Boot refuses any other value |
 | `AUTOMATIONS_TICK_URLS` / `AUTOMATIONS_TICK_KEY` | no | in `external` mode, a door's work waits for the next scheduled tick. Set both (comma-separated drain endpoint URLs, and a `system` scope key) to have each enqueue POST a tick to every URL; half the pair fails boot naming both. Ignored in `loop` mode |
+| `SYSTEM_AUTH_MODES` | no | `api_key` — the system endpoints accept a `system` scope key. A comma-separated list of `api_key` and `oidc`; see "Who may call the system endpoints". Boot refuses any other mode |
+| `SYSTEM_AUTH_OIDC_ISSUER` / `SYSTEM_AUTH_OIDC_AUDIENCE` / `SYSTEM_AUTH_OIDC_ALLOWED_SUBJECTS` | with `oidc` | the issuer whose keys sign the tokens (`https://accounts.google.com`), the audience they must name (the drain URL), and the comma-separated subjects or verified emails allowed. Boot refuses `oidc` without all three |
 | `GOOGLE_MODEL_REGION` | no | `global` — where models are addressed on Google Cloud, for both the `vertex` (Claude) and `gemini` providers. `GOOGLE_PROJECT_LOCATION` is separate and stays the location OCR uses |
 | `GEMINI_BASE_URL` | no | unset — every call the map sends to `gemini` (chat, transcription, embeddings, images) goes to Google Cloud, signed with the service account. Set it only to point those calls at a stand-in such as the dev loop's fake Gemini (`http://localhost:<fake channels port>/gemini`); a redirected client sends a placeholder key instead of a Google token |
 | `GOOGLE_PRIVATE_KEY` / `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PROJECT_ID` | when the map names `vertex` or `gemini`, or for OCR | the deployment's one Google service account. `GOOGLE_PROJECT_LOCATION` (default `europe-west1`) joins these for OCR |

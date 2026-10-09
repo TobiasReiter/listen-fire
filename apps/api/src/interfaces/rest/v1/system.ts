@@ -16,9 +16,11 @@ import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/
 import { mounts } from '../../../products';
 import { engineChoice } from '../../../services/movement_engine/rust_engine';
 import { rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
-import { requireScope } from './require_scope';
-
-const SYSTEM_SCOPE = 'system';
+import {
+  requireSystemAction,
+  requireSystemCaller,
+  requireTenantCaller,
+} from '../../../services/system_auth';
 
 function internalError(res: Parameters<RequestHandler>[1], err: unknown) {
   const traceId = randomUUID();
@@ -272,15 +274,22 @@ const engineStatsHandler: RequestHandler = (_req, res) => {
 
 const systemRouter: ReturnType<typeof Router> = Router();
 
-systemRouter.use(requireScope(SYSTEM_SCOPE));
+// Who may call these routes is the system caller verifiers' question
+// (services/system_auth): the `system` API key by default.
+systemRouter.use(requireSystemCaller());
 
-systemRouter.get('/tg-runs', route(listTgRunsHandler));
-systemRouter.get('/tg-runs/:id', route(getTgRunHandler));
+// The run listings and the system agent act in the tenant of the key's owner.
+const tenant = requireTenantCaller();
+
+systemRouter.get('/tg-runs', tenant, route(listTgRunsHandler));
+systemRouter.get('/tg-runs/:id', tenant, route(getTgRunHandler));
 systemRouter.get('/engine-stats', route(engineStatsHandler));
-systemRouter.post('/conversations', route(startConversationHandler));
-systemRouter.post('/conversations/:id/messages', route(sendMessageHandler));
+systemRouter.post('/conversations', tenant, route(startConversationHandler));
+systemRouter.post('/conversations/:id/messages', tenant, route(sendMessageHandler));
 // `system` is mounted on every installation, so the route gates itself the way
 // index.ts gates the automations routers: absent, not refused, without the unit.
-if (mounts('automations')) systemRouter.post('/automations/drain', route(drainAutomationsHandler));
+if (mounts('automations')) {
+  systemRouter.post('/automations/drain', requireSystemAction('drain'), route(drainAutomationsHandler));
+}
 
 export { systemRouter };

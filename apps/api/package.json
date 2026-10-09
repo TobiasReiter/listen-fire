@@ -47,6 +47,7 @@
     "dev:link": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/link.ts",
     "dev:movement": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/movement.ts",
     "dev:remote-verify": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/remote_verify.ts",
+    "dev:fake-issuer": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r tsconfig-paths/register src/scripts/dev/fake_issuer.ts",
     "dev:fake-crm": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/fake_crm_server.ts",
     "dev:mvt-eval": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/mvt_eval.ts",
     "dev:automation-eval": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/automation_eval/main.ts",

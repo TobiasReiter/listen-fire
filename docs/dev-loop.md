@@ -1026,6 +1026,12 @@ Automations' background work (cron, polls, timer resumes, inbound dispatch, awai
 
 To watch a timer wait for a tick, run a movement that sleeps with `pnpm dev:movement run <name>`, not `dev:inject` (a harness door drains its own team's rows in either mode). `pnpm dev:inspect work` lists every work row, soonest due first, beside the database clock: the `resume_timer:<runId>` row sits unleased at its wake time while the scheduler's ticks report `claimed: 0` for it, and the first tick after the wake time claims it and the run completes. The 30 s periodic rows show up as `claimed: 5` (or so) every sixth tick.
 
+#### Ticking with an identity token instead of the key
+
+`DEV_LOOP_SHAPE=push-tick SYSTEM_AUTH_MODES=oidc pnpm dev:loop:agent` (or `api_key,oidc` for both) runs the system endpoints as a deployment that accepts OpenID Connect tokens. The loop starts a fake issuer (`pnpm dev:fake-issuer` on the profile's harness slot + 3, 6058 for `agent`; log `.dev-loop/fake-issuer.log`) and points `SYSTEM_AUTH_OIDC_ISSUER` at it, with the drain URL as the audience and `dev-loop-scheduler@fake-issuer` as the one allowed subject. The scheduler then mints a token per tick from the issuer's `/mint` and logs `authenticating with oidc`. With `oidc` alone the API refuses API keys on the system endpoints, so the door notifier (which sends the key) is turned off and the loop says so.
+
+To mint a token by hand: `curl -s --get --data-urlencode sub=dev-loop-scheduler@fake-issuer --data-urlencode aud=http://localhost:3500/api/v1/system/automations/drain http://127.0.0.1:6058/mint`. A refused call answers `403` with each verifier's reason, and the API logs `[system-auth] a system caller verifier refused the request` once a minute per reason.
+
 ### Two instances on the agent stack
 
 Automations takes no lock: any number of instances may drain one database, in either mode, because each entry into a run holds that run's lease (`trigger_run.lease_owner` / `lease_until` / `lease_token`). To run two on the agent stack, boot it as usual (`pnpm dev:loop:agent`; its API is instance one, draining in loop mode on 3500), then start a second API process on its own port against the same database, with the agent profile's environment:

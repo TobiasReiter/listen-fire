@@ -26,6 +26,7 @@ import {
   type StopDrainLoop,
   type WorkNotifier,
 } from '../services/work/drain';
+import { MODES_VAR as SYSTEM_AUTH_MODES_VAR, systemAuthConfig } from '../services/system_auth';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
@@ -81,6 +82,14 @@ function workNotifierFor(mode: DrainMode, env: Env): WorkNotifier {
         throw new Error(
           `${TICK_URLS_VAR} and ${TICK_KEY_VAR} go together: set both for a door's notify to tick the drain, ` +
             `or neither to leave every pass to the scheduled tick.`,
+        );
+      }
+      // The notifier authenticates with the key alone, so a deployment whose
+      // system surface no longer accepts keys would have every notify refused.
+      if (!systemAuthConfig(env).modes.some(({ mode }) => mode === 'api_key')) {
+        throw new Error(
+          `${TICK_URLS_VAR} ticks with ${TICK_KEY_VAR}, an API key, but ${SYSTEM_AUTH_MODES_VAR} leaves api_key out, ` +
+            `so every notify would be refused: add api_key to it, or unset both tick settings.`,
         );
       }
       return new HttpTickNotifier({ urls, apiKey });

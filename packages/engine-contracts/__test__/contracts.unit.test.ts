@@ -17,6 +17,7 @@ import {
   MANIFEST_PROTOCOL_VERSION,
   PARK_STATE_VERSION,
   PROTOCOL_VERSION,
+  SYSTEM_CALLER_VERSION,
   hostMethodPaths,
   isCorePark,
   refuseUnsupportedHostFamiliesVersion,
@@ -68,6 +69,7 @@ describe('the contract versions are the ones docs/contracts/ states', () => {
     expect(versionLine('adapter-protocol.md')).toBe(MANIFEST_PROTOCOL_VERSION);
     expect(String(versionLine('adapter-protocol.md'))).toBe(PROTOCOL_VERSION);
     expect(versionLine('language-versions.md')).toBe(CURRENT_LANGUAGE_VERSION);
+    expect(versionLine('system-caller.md')).toBe(SYSTEM_CALLER_VERSION);
   });
 
   it('the index is the CONTRACTS table, contract by contract', () => {
