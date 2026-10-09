@@ -65,7 +65,8 @@ function withoutUnnamedHelpers(source: string, body: string[]): string {
       continue;
     }
     // A movement's body is indented; its closing brace is not.
-    while (lines[i] !== '}') i += 1;
+    while (i < lines.length && lines[i] !== '}') i += 1;
+    if (i === lines.length) throw new Error(`helper ${helper} has no closing brace at column 0`);
   }
   return kept.join('\n');
 }

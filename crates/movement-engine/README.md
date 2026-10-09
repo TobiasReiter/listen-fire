@@ -248,9 +248,10 @@ Either way the shim runs the program on the TypeScript engine.
   `prepareMovement` binds every one, on either engine, whichever movement
   fires.
 - **The movements the entry reaches** (`admit::reachable`). The entry is the
-  movement the segment fires (`movementName`, picked as `selectMovement`
-  picks it: exactly, or from version 3 in any letter case; else the file's
-  only movement). Then every movement a reached movement's text names,
+  movement the segment fires (`movementName`, picked by a copy of
+  TypeScript's `selectMovement`, shared by Rust admission and execution:
+  exactly, or from version 3 in any letter case; else the file's only
+  movement). Then every movement a reached movement's text names,
   transitively, in source order.
 - **Nothing else.** A movement no reached movement names cannot run, so
   what it holds refuses nothing.
@@ -275,6 +276,9 @@ once (`{refused: <first>, reasons: [<first>, …]}`). The input's and the
 parked state's reasons follow the program's. The first is the one a walk
 that stopped there would give; `rustRunStats.notAdmitted` counts each run
 under it, and `rustRunStats.allReasons` under each reason the run holds.
+One exception: `movement_value_param` is noted with its own movement, after
+the file-level reasons, so for a program holding both its first reason can
+differ from the walk before chunk 7A's.
 
 ### The port list
 

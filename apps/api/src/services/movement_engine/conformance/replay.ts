@@ -103,11 +103,13 @@ export const rustTarget: ReplayTarget = {
     if (rustRunStats.ranWhole > before.ranWhole) return verdict;
     const grew = (now: Record<string, number>, then: Record<string, number>) =>
       Object.entries(now).filter(([reason, count]) => count > (then[reason] ?? 0)).map(([reason]) => reason);
-    const refused = grew(rustRunStats.notAdmitted, before.notAdmitted);
-    if (refused.length > 0) return { kind: 'skipped', reason: `the Rust engine refused it: ${refused.join('; ')}` };
+    // The shim's own input checks (`event_does_not_cross`) count in `notAdmitted`
+    // too, before a segment opens: only a routed run was refused by the engine.
     if (rustRunStats.routed === before.routed) {
       return { kind: 'skipped', reason: 'the shim does not route this program to the Rust engine' };
     }
+    const refused = grew(rustRunStats.notAdmitted, before.notAdmitted);
+    if (refused.length > 0) return { kind: 'skipped', reason: `the Rust engine refused it: ${refused.join('; ')}` };
     const declined = grew(rustRunStats.declined, before.declined);
     return { kind: 'skipped', reason: `the Rust engine declined it: ${declined.join('; ') || 'no reason counted'}` };
   },
