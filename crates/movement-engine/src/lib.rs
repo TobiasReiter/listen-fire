@@ -20,6 +20,7 @@ pub mod env_services;
 pub mod eval;
 pub mod executor;
 pub mod extract;
+pub mod is_test;
 pub mod filter;
 pub mod host;
 pub mod js;

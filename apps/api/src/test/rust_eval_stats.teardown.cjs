@@ -24,11 +24,13 @@ const path = require('node:path');
 // body constructs behind them (the extraction keyword, declared entries,
 // plugin calls) more than they admitted whole runs. Chunk 6A Task 3b (the
 // extraction keyword and plugin calls run in Rust, 2026-10-09) runs v1 223,
-// v2 268 whole; the floors are those less a margin of 2. A floor
+// v2 268 whole; the floors are those less a margin of 2. Chunk 6A Task 4
+// (folds, EXISTS, IS tests and a record named twice, 2026-10-09) runs v1 289,
+// v2 352 whole; the floors are those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 221, v2: 266 };
+const RAN_WHOLE_FLOOR = { v1: 287, v2: 350 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

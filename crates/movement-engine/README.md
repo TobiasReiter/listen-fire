@@ -29,12 +29,13 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the cap met (`exceeded`) once a budget refusal is charged, a priced plugin refused before the host is asked once the cap is spent (`plugin_refusal`), the charges handed back with `done` |
 | `admit` | admission: the allow-list walk over this engine's own parse, before the check; a refusal's stable reason (below) |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
-| `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors |
+| `eval` | `evalMovementExpr` over the host-free kinds, with its provenance rules and errors; the folds; what a walk, an `EXISTS` over a record, or a count needs asked of the run |
 | `stdlib` | the 17 flat built-ins and all 15 namespaced members |
 | `run` | the `segment` entry: `runMovement` / `resumeMovement` for the programs the shim admits (below) |
 | `write` | the `write` statement: targets (a WHERE on one included), fields, identity, update or create, the firing record |
 | `verbs` | `match`, `link`, `unlink`, `delete`: the identity half of a write on its own, edges between two handles, a record removed |
-| `traverse` | traversal blocks over adapter edges: the head's graph, the hop's fetch, the member gate, the WHERE per landed record, ORDER BY / LIMIT, the body per landing |
+| `traverse` | traversal blocks over adapter edges: the head's graph, the hop's fetch, the member gate, the WHERE per landed record, ORDER BY / LIMIT, the body per landing; the walks an expression reads, `EXISTS` and a pick |
+| `is_test` | a condition's `IS <type>`: the event, a handle, a landing, a node declaration's structure |
 | `order_limit` | packages/shared/expression/order_limit.ts: a hop's pushdown (closed over its scope) and its ORDER BY / LIMIT over what came back, sorted as V8 sorts |
 | `address` | address.ts's lexical addresses: `s`, `b` and fan-out `i` steps |
 | `unique` | `unique by`: the clauses split into keys and narrowings, the search record, the rules that decide without a judge, the identity lock |
@@ -90,6 +91,7 @@ Measured 2026-10-07 (gzip -9):
 | traversal blocks over adapter edges (heads, hops, filters, order and limit; positions by handle) | 2,096,297 | 593,352 |
 | extraction specs, prompts and the validator (chunk 6A, not yet run) | 2,185,406 | 623,115 |
 | the extraction keyword and plugin calls run whole (chunk 6A) | 2,423,062 | 694,914 |
+| folds, EXISTS, IS and a record named twice (chunk 6A Task 4) | 2,458,390 | 710,890 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -271,8 +273,9 @@ A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
 expression is, reading only the file-level values before it; a body reads
 it as a value. A declared shape's words are walked in the file's scope (an
 extraction reads them there). An extraction reads a shape and a type, and a
-plugin call a plugin; what else reads one is refused where it stands
-(`graph_shape`, `node_declared_entry`, `is_test`).
+plugin call a plugin, and an `IS` test a node declaration; what else reads
+one is refused where it stands (`graph_shape`, `node_declared_entry`,
+`is_test_declared_record`).
 
 **Admission: a body** (`notAdmitted`; every movement in the file is walked):
 
@@ -280,7 +283,7 @@ plugin call a plugin; what else reads one is refused where it stands
 |---|---|
 | `name_shadowed` | a body binds a name the movement's parameters or the file bind |
 | `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name |
-| `statement:<kind>` | a statement other than a binding, `write`, `match`, `link`, `unlink`, `delete`, `if`, a traversal block, `await sleep(…)` and `return` (`call`, `combinator`, `collection`, `error`, `refresh`) |
+| `statement:<kind>` | a statement other than a binding, `write`, `match`, `link`, `unlink`, `delete`, `if`, a traversal block, `await sleep(…)`, `ERROR(…)` and `return` (`call`, `combinator`, `collection`, `refresh`) |
 | `block_head_rootless`, `block_head_expression_root` | a block head with no root, or rooted at an expression (`AT(rows, 0)-[c:company]->`) |
 | `block_head_value_root`, `block_head_node_root`, `block_head_root` | a head rooted at a value (a list of records), at a node or graph the run built (its own graph's plane), or at anything but an instance, a write's handle, the event, an enclosing block's hop alias or what an extraction yielded |
 | `block_head_extract_hop` | a head over what an extraction yielded whose hop carries a WHERE (the TypeScript refuses it), an ORDER BY, a LIMIT or an incoming direction (which the TypeScript does not read) |
@@ -318,18 +321,28 @@ plugin call a plugin; what else reads one is refused where it stands
 | `node_event_entry` | a node entry holding the event itself |
 | `node_declared_entry` | a declared edge entry (`kids: <T>`) |
 | `node_traversal_entry` | a traversal entry |
-| `is_test` | an `IS` condition |
+| `is_test_declared_record` | `x IS <Decl>` (a node declaration) where `x` is the event, a handle or a landed record: its structure is its system's types, compared by the checker's assignability, which this engine does not carry |
+| `is_test_declared_graph` | `x IS <Decl>` where `x` is a `graph { … }` literal, which may hold a system's records |
 | `condition_does_not_lower`, `expression_does_not_lower` | a slot that does not lower (the checker's miss) |
 | `expression_closure` | a closure inside an expression: a collection op written in place (`{ all: MAP(xs, (x) => …) }`), which the TypeScript engine runs as a call bound first (from version 3) |
-| `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance) |
-| `traversal_root` | a field read rooted at a name that is not the event, a value, a handle, a node or a block's hop alias |
-| `traversal_steps` | a field read that walks an edge (`msg-[:replies]->.x`), in a body, a hop's WHERE or its ORDER BY key: traversal inside an expression |
+| `name_not_value` | a name read that is not a value the body binds (the event, a handle, an instance), other than `x = <name>` of a record (a second name for it), `x == null` / `x != null` of any bound name, and an `EXISTS`, `IS` or walk rooted at it |
+| `traversal_root` | a field read rooted at a name that is not the event, a value, a handle, a node or a block's hop alias; a walk (or an `EXISTS` over hops, or a pick) rooted at a name that is not the event, an instance, a handle, a hop alias or what an extraction yielded |
+| `traversal_step`, `exists_step` | a walk's hop, or an `EXISTS`'s, that is not an edge |
+| `walk_extract_hop`, `exists_extract_hop` | a hop down what an extraction yielded with a WHERE (the TypeScript refuses it), or, inside `EXISTS`, with an ORDER BY or a LIMIT |
+| `exists_over_value` | `EXISTS(v-[…]->)` or `EXISTS(v WHERE …)` of a value (the TypeScript refuses it) |
+| `exists_node` | `EXISTS(n-[…]->)` of a node this run built |
+| `walk_records` | a bare walk (`crm-[c:companies]->`) read as a value: a list of records, which a value cannot hold here |
+| `aggregate_records` | `FIRST`/`LAST`/`ONLY`/`SUM`/… of a bare walk anywhere but as a binding's whole right-hand side (`x = FIRST(…)`); `COUNT` of one is admitted |
+| `select_multi_hop` | `x = FIRST(…)` of a walk of more than one hop |
+| `aggregate:only` | `ONLY(e)` of anything but a name (its failure spells `e` back, as the formula serializer does) |
+| `aggregate:sort_key` | `SORT(xs, key)` whose key is not a field name |
+| `aggregate:llm` | the `llm` fold |
 | `traversal_terminal` | a walk ending in anything but a field |
 | `static_number` | a numeric literal JSON cannot carry (`Infinity`, `-0`) |
 | `proto_key` | a `__proto__` key written in an object literal |
 | `within_compare` | `WITHIN` |
 | `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, …) |
-| `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `aggregate`, `meta`, `exists`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); `EXISTS(…)` anywhere, a hop's WHERE included, is `expression:exists` |
+| `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `meta`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); a rootless `EXISTS(-[…]->)` is `expression:exists` |
 
 A hop's WHERE and ORDER BY key, and a write's or a match's target WHERE, are
 walked as expressions scoped at the landed record (the candidate, for a
@@ -594,8 +607,72 @@ entity's fields.
 
 What stays the TypeScript engine's (refused, "Admission" above): returning a
 record from a bound block, heads of more than one hop, heads off a value, a node, an expression or
-`_resources`, a WHERE, ORDER BY or LIMIT on a head over an extraction, a park in a body,
-EXISTS and any traversal inside an expression.
+`_resources`, a WHERE, ORDER BY or LIMIT on a head over an extraction, a park in a body.
+
+### Expressions that walk, fold, test and name records
+
+The tail of `evalMovementExpr` this engine runs (chunk 6A Task 4), each as
+expression.ts and run.ts run it:
+
+- **A walk read in an expression** (`traverseFrom` → `readAdapterTraverse`,
+  `walkAdapterPositions`): hops off the event, an instance, a handle (its
+  record), a hop alias or a pick, each hop's pushdown closed over the scope
+  once (`closedHopPushdown`), then one `getRelated` per origin record —
+  never a page stream, even for an instance that streams, as the
+  TypeScript's expression walk asks — each origin's records gated, filtered,
+  ordered and bounded on their own. Read for a field it is each landing's
+  `getFieldValue`, `collapse`d (nothing is null, one its value and trail,
+  several a list of them, the trails unioned), and bound it is many-valued
+  (`bindsManyValues`). Off what an extraction yielded, the hops walk its
+  entities in hand (`walkExtractSteps`; a WHERE there is refused). A hop's
+  alias names its record in its WHERE and its ORDER BY key, and a key may be
+  a walk of its own (`ORDER BY c-[:owner]->.\`joined\``).
+- **`EXISTS`** (`evaluateExists`): the hops walked from every subject, each
+  origin's `getRelated` with its own pushdown (`stepExistsCursor` closes it
+  over the scope per cursor), then, with a WHERE, each reached record tested
+  in turn, scoped at it (`evalScopedFilter`: a pure one a conjunct at a
+  time) until one holds it. Over a value it asks whether the value holds one
+  (`EXISTS(x)`: not null, not an empty list); over an extraction its
+  entities, the WHERE reading their fields. The TypeScript fetches every hop
+  of every subject before the WHERE is read; so does this engine. A hop or a
+  target WHERE may hold one (`crm-[c:companies WHERE EXISTS(c-[:deals]->)]->`).
+- **Folds** (`case 'aggregate'`, `applyAggregation`): `FIRST`, `LAST`,
+  `ONLY` (more than one present fails, its expression spelled back — a name,
+  the one form admitted), `COUNT` (what is present), `SUM`/`AVG`
+  (`Number(v) || 0`), `MIN`/`MAX` (`Math.min`/`Math.max`: NaN if any is),
+  `JOIN` (`String(v)`, nothing left out, `", "` by default), `COLLECT` and
+  `SORT` (`sortByOrderKey`, keyless over plain values, by a field name over
+  maps; past 64 members of mixed key kinds it fails, as a hop's ORDER BY
+  does), over a value, a walk read for a field, or (`COUNT` only) the
+  records a walk lands on, counted.
+- **A pick** (`x = FIRST|LAST|ONLY(<one hop>)`, `selectedPositionBinding`):
+  walked as a block head walks (a stream page by page), the record picked
+  bound as a landing (its graph kept, its edge's properties not), or null
+  when there is none; `ONLY` over two fails with the TypeScript's message.
+- **A record named twice** (`x = co`, `aliasedNodeBinding`): the event, a
+  handle, a landing, a node, an extraction's record or a bound block's
+  records, bound again under the new name, the very binding. `x == null` of
+  any name bound to anything but a value is false (`presenceCompare`).
+- **`IS`** (`evaluateIsTest`, crate::is_test): decided from what the run
+  holds, never a host call. The event: the graph its source instance is,
+  and its seeded record type, or, for an address (`<crm-[:\`Webhook Event\`
+  WHERE \`action\` == "record.created"]->>`, `eventAddressOfHops`), every pin
+  agreeing with the seed's canonical address; an axis the seed does not pin,
+  an undiscriminated event or a landing its system returned unstamped fail
+  the run with the TypeScript's "can't tell what kind of record" message. A
+  handle: its graph and type. A landing: the graph it was walked in and its
+  stamp. A node declaration (`d IS <Note>`): structurally, as
+  `surfaceMisfit` compares a synthesised subject — a node the run built or
+  an extracted entity — every declared field present (its declaration's
+  `extends` folded in), each declared node compared at the subject's first
+  landing under it. A record whose structure is its system's types is
+  refused (`is_test_declared_record`).
+- **`ERROR(message)`**: the message evaluated and the run failed with
+  MOVENG_ERROR, its text `String(value ?? '')`.
+- **`@current_date`, `@current_timestamp`**: the run's pinned instant
+  (`pinnedNow`), its ISO text or its date, a `{kind: 'meta', key}` origin;
+  the acting user's and the actor's keys are looked up, and stay refused
+  (`meta:<key>`).
 
 ### Extraction
 
@@ -685,7 +762,9 @@ sleep(…)`, its `presenceBind`): the scope chain root first, each scope's own
 bindings in declaration order, as `serializeBinding` writes the kinds this
 engine binds (`event`, `instance`, `opaque`, `movement`, `value` as its JSON
 round trip with its origins, `handle` as its record, `nodePosition` /
-`nodeRef` numbered as one park's table numbers them). States cross on the eval wire both ways
+`nodeRef` numbered as one park's table numbers them, and a picked record as
+`sourcePosition`: its position, and `read: {instanceName}` unless it was read
+off the event's source). States cross on the eval wire both ways
 (the park's `state`, the resume's `input.resume.state`), so every object keeps
 its key order: a resumed value is the one stored, key for key, as the
 TypeScript's is. A resume
@@ -780,8 +859,14 @@ fails); none produces a different answer.
 - A record compared by identity (`a == b` where either is binding-shaped):
   MOVENG_UNSUPPORTED. TypeScript compares two records by identity.
 - A hop's ORDER BY over more than 64 records whose keys mix numbers with
-  other kinds: MOVENG_UNSUPPORTED ("Spec the tail" below). TypeScript orders
-  them by V8's merge.
+  other kinds, or a `SORT` over more than 64 such members:
+  MOVENG_UNSUPPORTED ("Spec the tail" below). TypeScript orders them by
+  V8's merge.
+- `x IS <Decl>` of a node whose landing under a declared edge is a system's
+  record (a handle, a landed record): MOVENG_UNSUPPORTED, as that landing's
+  structure is its system's types. Admission lets no such node reach an
+  `IS` (a `node { … }` literal nests nodes only; a `graph { … }` literal is
+  refused, `is_test_declared_graph`).
 
 None of the first four is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`); each needs the record model a later slice
@@ -954,9 +1039,9 @@ The rule for what this engine reproduces of JavaScript:
   - date parsing (what a date text may be, and no local time);
   - Unicode case mapping: which Unicode version the language's case tables
     follow, so neither engine's runtime decides it.
-  - a hop's ORDER BY over keys of mixed types: one total order over every
-    key kind (say: nulls, then numbers, then text), so no sort algorithm's
-    merge decides where a record lands.
+  - a hop's ORDER BY, and a `SORT`, over keys of mixed types: one total
+    order over every key kind (say: nulls, then numbers, then text), so no
+    sort algorithm's merge decides where a record lands.
   - a reply field named after an `Object.prototype` member
     (`constructor`, `toString`, `hasOwnProperty`, `__proto__`, …): zod
     reads a declared key through the record's prototype, so a reply that
@@ -1135,6 +1220,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 221, v2 266). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 287, v2 350). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

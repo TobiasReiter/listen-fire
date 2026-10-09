@@ -195,7 +195,7 @@ pub struct MixedKeys {
 
 /// Whether the keys that are not empty mix numbers with other kinds (two
 /// numbers compare as numbers, anything else as text).
-fn mixed_kinds(keys: &[Js]) -> bool {
+pub(crate) fn mixed_kinds(keys: &[Js]) -> bool {
     let present = || keys.iter().filter(|k| !k.is_nullish());
     present().any(|k| matches!(k, Js::Number(_))) && present().any(|k| !matches!(k, Js::Number(_)))
 }

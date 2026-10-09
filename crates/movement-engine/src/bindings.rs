@@ -185,6 +185,14 @@ impl Names for Scope {
             Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_) | Binding::Positions(_) | Binding::Extracted { .. })
         )
     }
+
+    fn is_walk_root(&self, name: &str) -> bool {
+        matches!(self.resolve(name), Some(Binding::Event | Binding::Instance(_))) || self.is_record(name)
+    }
+
+    fn binds_non_value(&self, name: &str) -> bool {
+        self.resolve(name).is_some_and(|binding| !matches!(binding, Binding::Value(_)))
+    }
 }
 
 /// translation_graph/types.ts's `Position`: `{adapterType, recordType,

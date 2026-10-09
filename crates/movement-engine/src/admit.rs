@@ -25,7 +25,7 @@ use movement_parser::ast::{
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 use movement_parser::lowering::expression::EdgeDirection;
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
+use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
@@ -154,6 +154,11 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
         }
     }
     let none = BTreeSet::new();
+    let shapes: BTreeSet<String> = program
+        .statements
+        .iter()
+        .filter_map(|s| if let Statement::Shape(shape) = s { Some(shape.name.clone()) } else { None })
+        .collect();
     let mut values = BTreeSet::new();
     for (name, value) in &file_values {
         let names = Names {
@@ -169,6 +174,8 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
             plugins: &plugins,
             plugin_binds: &plugin_binds,
             extracts: &none,
+            graphs: &none,
+            shapes: &shapes,
             language_version,
         };
         if let Err(reason) = names.rvalue(value) {
@@ -192,6 +199,8 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
         plugins: &plugins,
         plugin_binds: &plugin_binds,
         extracts: &none,
+        graphs: &none,
+        shapes: &shapes,
         language_version,
     };
     for statement in &program.statements {
@@ -202,10 +211,11 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
         }
     }
     for movement in &movements {
-        let events: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
-        let mut bound = Bound { plugin_binds: plugin_binds.clone(), ..Bound::default() };
+        let params: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
+        let mut bound = Bound { plugin_binds: plugin_binds.clone(), events: params.clone(), ..Bound::default() };
         bound.collect(&movement.body, &[]);
-        if bound.sites.iter().any(|(n, _, _)| events.contains(n) || file_names.contains(n)) {
+        let events: BTreeSet<String> = params.union(&bound.event_aliases).cloned().collect();
+        if bound.sites.iter().any(|(n, _, _)| params.contains(n) || file_names.contains(n)) {
             return Some("name_shadowed".into());
         }
         if bound.rebound() {
@@ -225,6 +235,8 @@ pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<
             plugins: &plugins,
             plugin_binds: &plugin_binds,
             extracts: &bound.extracts,
+            graphs: &bound.graphs,
+            shapes: &shapes,
             language_version,
         };
         if let Err(reason) = names.body(&movement.body, Within::Body) {
@@ -357,6 +369,13 @@ struct Bound {
     landings: BTreeSet<String>,
     /// An extraction's root, or an entity a head over one landed on.
     extracts: BTreeSet<String>,
+    /// The nodes a `graph { … }` literal built (a subset of `nodes`), which
+    /// may hold records of a system.
+    graphs: BTreeSet<String>,
+    /// The movement's parameters, which a bare-name alias may name.
+    events: BTreeSet<String>,
+    /// Second names for the event.
+    event_aliases: BTreeSet<String>,
     /// (name, kind, scope path from the body's root scope).
     sites: Vec<(String, Kind, Vec<usize>)>,
     scopes: usize,
@@ -370,6 +389,8 @@ enum Kind {
     Node,
     Landing,
     Extracted,
+    /// A second name for the event.
+    Event,
 }
 
 impl Bound {
@@ -390,9 +411,27 @@ impl Bound {
                     let kind = match &assign.value {
                         RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
                         RValue::Construct { construct } => self.plugin_kind(&construct.callee).unwrap_or(Kind::Instance),
-                        RValue::Call { call } => self.plugin_kind(&call.callee).unwrap_or(Kind::Value),
-                        RValue::Node { .. } => Kind::Node,
+                        RValue::Call { call } => match (self.plugin_kind(&call.callee), &call.expression) {
+                            (Some(kind), _) => kind,
+                            // A built-in's call is the expression it reads as.
+                            (None, Some(expr)) => self.expression_kind(&expr.raw),
+                            (None, None) => Kind::Value,
+                        },
+                        RValue::Node { node } => {
+                            if node.graph.is_some() {
+                                self.graphs.insert(assign.name.clone());
+                            }
+                            Kind::Node
+                        }
                         RValue::Extract { .. } => Kind::Extracted,
+                        RValue::Expr { expr } => {
+                            if let Ok(Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = lowered(&expr.raw)
+                                && self.graphs.contains(&name)
+                            {
+                                self.graphs.insert(assign.name.clone());
+                            }
+                            self.expression_kind(&expr.raw)
+                        }
                         _ => Kind::Value,
                     };
                     self.bind(&assign.name, kind, scope);
@@ -446,6 +485,29 @@ impl Bound {
         }
     }
 
+    /// What `x = <expression>` binds: a second name for a record
+    /// (`aliasedNodeBinding`), the record a fold picks
+    /// (`selectedPositionBinding`), or a value.
+    fn expression_kind(&self, raw: &str) -> Kind {
+        match lowered(raw) {
+            Ok(Expression::Property { property_type_id: name } | Expression::AliasRef { name }) => self.kind_of(&name),
+            Ok(expr) if selection(&expr).is_some() => Kind::Landing,
+            _ => Kind::Value,
+        }
+    }
+
+    /// What `name` was bound as before here: a record a bare-name alias
+    /// names again, or else a value (the TypeScript's own reading).
+    fn kind_of(&self, name: &str) -> Kind {
+        if self.events.contains(name) {
+            return Kind::Event;
+        }
+        match self.sites.iter().rev().find(|(n, _, _)| n == name).map(|(_, kind, _)| *kind) {
+            Some(kind @ (Kind::Handle | Kind::Node | Kind::Landing | Kind::Extracted)) => kind,
+            _ => Kind::Value,
+        }
+    }
+
     fn enter(&mut self, scope: &[usize]) -> Vec<usize> {
         self.scopes += 1;
         let mut inner = scope.to_vec();
@@ -461,6 +523,7 @@ impl Bound {
             Kind::Node => &mut self.nodes,
             Kind::Landing => &mut self.landings,
             Kind::Extracted => &mut self.extracts,
+            Kind::Event => &mut self.event_aliases,
         };
         into.insert(name.to_string());
         self.sites.push((name.to_string(), kind, scope.to_vec()));
@@ -516,6 +579,10 @@ struct Names<'n> {
     plugin_binds: &'n BTreeMap<String, PluginBinds>,
     /// What extractions yielded: a root, or an entity a head landed on.
     extracts: &'n BTreeSet<String>,
+    /// The nodes a `graph { … }` literal built.
+    graphs: &'n BTreeSet<String>,
+    /// The node declarations the file makes.
+    shapes: &'n BTreeSet<String>,
     language_version: u32,
 }
 
@@ -544,6 +611,8 @@ impl Names<'_> {
                 RValue::Extract { extract } => self.extract(extract),
                 RValue::Construct { .. } => Ok(()),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
+                RValue::Expr { expr } => self.assigned(expr),
+                RValue::Call { call } if !self.plugin(&call.callee) => self.assigned(self.builtin_value(call)?),
                 other => self.rvalue(other),
             },
             // A returned call's value is the TypeScript's to hand back.
@@ -572,6 +641,7 @@ impl Names<'_> {
                 }
             }
             Statement::Block(statement) => self.block(&statement.block),
+            Statement::Error(statement) => self.slot(&statement.message),
             Statement::Call(call) if self.plugin(&call.callee) => self.plugin_call(call),
             other => refuse(format!("statement:{}", statement_kind(other))),
         }
@@ -645,6 +715,102 @@ impl Names<'_> {
             return refuse("block_head_extract_hop");
         }
         Ok(())
+    }
+
+    /// `x = <expression>`: a bare name of a record is a second name for it
+    /// (`aliasedNodeBinding`), and `FIRST`/`LAST`/`ONLY` of a bare walk the
+    /// record it picks (`selectedPositionBinding`), of one hop off a root a
+    /// block head walks from.
+    fn assigned(&self, slot: &ExprSlot) -> Admitted {
+        let expr = lowered(&slot.raw)?;
+        if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
+            && self.is_record(name)
+        {
+            return Ok(());
+        }
+        if let Some((root, steps)) = selection(&expr) {
+            if !self.walks_from(root) {
+                return refuse("traversal_root");
+            }
+            let [TraversalStep::Edge(step)] = steps else { return refuse("select_multi_hop") };
+            return self.hop(step);
+        }
+        self.expression(&expr)
+    }
+
+    /// The event, a handle, a landing, a node or an extraction's record.
+    fn is_record(&self, name: &str) -> bool {
+        self.events.contains(name) || self.handles.contains(name) || self.landings.contains(name) || self.nodes.contains(name) || self.extracts.contains(name)
+    }
+
+    /// A root an adapter walk starts from (crate::traverse `walk_start`).
+    fn walks_from(&self, root: &str) -> bool {
+        self.events.contains(root) || self.handles.contains(root) || self.landings.contains(root) || self.instances.contains(root)
+    }
+
+    /// One hop of a walk: an edge, its WHERE and ORDER BY key scoped at the
+    /// landed record.
+    fn hop(&self, step: &movement_parser::lowering::expression::EdgeStep) -> Admitted {
+        // The hop's alias names the record it landed on, there.
+        let mut landings = self.landings.clone();
+        landings.extend(step.alias.iter().cloned());
+        let at = Names { landings: &landings, instances: self.instances.clone(), ..*self };
+        if let Some(filter) = &step.expression_filter {
+            at.scoped(filter)?;
+        }
+        if let Some(key) = step.cardinality.as_ref().and_then(|c| c.order_by.as_deref()) {
+            at.scoped(key)?;
+        }
+        Ok(())
+    }
+
+    /// A walk's hops off `root` (crate::traverse `walk_read`): off an
+    /// extraction, plain hops down its result; off anything an adapter walk
+    /// starts from, edges.
+    fn walk_hops(&self, root: &str, steps: &[TraversalStep]) -> Admitted {
+        if self.extracts.contains(root) {
+            return steps.iter().try_for_each(|step| match step {
+                TraversalStep::Edge(step) if step.expression_filter.is_none() => Ok(()),
+                _ => refuse("walk_extract_hop"),
+            });
+        }
+        if !self.walks_from(root) {
+            return refuse("traversal_root");
+        }
+        steps.iter().try_for_each(|step| match step {
+            TraversalStep::Edge(step) => self.hop(step),
+            _ => refuse("traversal_step"),
+        })
+    }
+
+    /// `EXISTS(root…)`: over a value, whether it holds one; over an
+    /// extraction, plain hops down it; over anything an adapter walk starts
+    /// from, edges; the WHERE scoped at each record reached.
+    fn exists(&self, root: &str, steps: &[TraversalStep], where_: Option<&Expression>) -> Admitted {
+        if self.values.contains(root) {
+            return if steps.is_empty() && where_.is_none() { Ok(()) } else { refuse("exists_over_value") };
+        }
+        if self.extracts.contains(root) {
+            for step in steps {
+                match step {
+                    TraversalStep::Edge(step) if step.expression_filter.is_none() && step.cardinality.is_none() => {}
+                    _ => return refuse("exists_extract_hop"),
+                }
+            }
+        } else if self.walks_from(root) {
+            for step in steps {
+                let TraversalStep::Edge(step) = step else { return refuse("exists_step") };
+                self.hop(step)?;
+            }
+        } else if self.nodes.contains(root) {
+            return refuse("exists_node");
+        } else {
+            return refuse("traversal_root");
+        }
+        match where_ {
+            Some(where_) => self.scoped(where_),
+            None => Ok(()),
+        }
     }
 
     /// `name = <expression>`, or a built-in's call read as the expression it is.
@@ -946,7 +1112,20 @@ impl Names<'_> {
         match condition {
             MovementCondition::And { conjuncts } => conjuncts.iter().try_for_each(|c| self.conjunct(c)),
             MovementCondition::Expr { expr } => self.expression(expr),
-            MovementCondition::IsTest { .. } => refuse("is_test"),
+            MovementCondition::IsTest { subject_raw, type_ } => {
+                let subject = crate::js::trim(subject_raw);
+                let declared = self.shapes.contains(&type_.graph) && type_.hops_raw.is_none();
+                let typed_record = self.events.contains(subject) || self.handles.contains(subject) || self.landings.contains(subject);
+                // A record a system describes is compared by its types,
+                // which the checker's assignability decides.
+                if declared && typed_record {
+                    return refuse("is_test_declared_record");
+                }
+                if declared && self.graphs.contains(subject) {
+                    return refuse("is_test_declared_graph");
+                }
+                Ok(())
+            }
         }
     }
 
@@ -971,7 +1150,33 @@ impl Names<'_> {
                 if self.values.contains(name) { Ok(()) } else { refuse("name_not_value") }
             }
             // `EXISTS(x-[:e]->)` lowers as a walk ending in the quantifier.
+            Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && matches!(expression.as_ref(), Expression::Exists { .. }) => {
+                let Expression::Exists { steps, where_ } = expression.as_ref() else { unreachable!("matched above") };
+                self.exists(root, steps, where_.as_deref())
+            }
             Expression::Traverse { expression, .. } if matches!(expression.as_ref(), Expression::Exists { .. }) => refuse("expression:exists"),
+            // A walk read for a field, many-valued.
+            Expression::Traverse { alias_root: Some(root), steps, expression } if !steps.is_empty() => match expression.as_ref() {
+                Expression::Property { property_type_id } if property_type_id == movement_parser::lowering::POSITION_SENTINEL => {
+                    refuse("walk_records")
+                }
+                Expression::Property { .. } | Expression::EdgeProperty { .. } => self.walk_hops(root, steps),
+                _ => refuse("traversal_terminal"),
+            },
+            Expression::Aggregate { fn_, expression, order_by, .. } => self.aggregate(*fn_, expression, order_by.as_deref(), scoped),
+            // The run's pinned instant; the acting user and the actor are
+            // looked up, and the dispatch's bag is not the input's.
+            Expression::Meta { key } if key == "current_date" || key == "current_timestamp" => Ok(()),
+            Expression::Meta { key } => refuse(format!("meta:{key}")),
+            // `x == null` of a name bound to anything but a value: answered by
+            // the binding (`presenceCompare`).
+            Expression::Compare { left, right, .. }
+                if !scoped
+                    && ((crate::filter::is_null_literal(right) && self.bound_non_value(left))
+                        || (crate::filter::is_null_literal(left) && self.bound_non_value(right))) =>
+            {
+                Ok(())
+            }
             Expression::Traverse { alias_root, steps, expression } => {
                 let held = alias_root.as_ref().is_some_and(|root| {
                     self.events.contains(root)
@@ -1034,6 +1239,51 @@ impl Names<'_> {
             other => refuse(format!("expression:{}", crate::eval::kind_of(other))),
         }
     }
+}
+
+impl Names<'_> {
+    /// A bare name bound to something that is not a value.
+    fn bound_non_value(&self, expr: &Expression) -> bool {
+        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = expr else { return false };
+        !self.values.contains(name) && (self.is_record(name) || self.instances.contains(name))
+    }
+
+    /// `case 'aggregate'`: the folds over a value, a walk read for a field,
+    /// or (`COUNT`) the records a walk lands on.
+    fn aggregate(&self, fn_: AggregationFunction, inner: &Expression, order_by: Option<&Expression>, scoped: bool) -> Admitted {
+        let records = crate::eval::is_records_walk(inner);
+        match fn_ {
+            AggregationFunction::Llm => refuse("aggregate:llm"),
+            AggregationFunction::Count if records => {
+                let Expression::Traverse { alias_root: Some(root), steps, .. } = inner else { unreachable!("a records walk is rooted") };
+                self.walk_hops(root, steps)
+            }
+            // A record picked in place is a value only a binding can hold.
+            _ if records => refuse("aggregate_records"),
+            // ONLY's failure spells its expression back; a name is what it spells.
+            AggregationFunction::Only if crate::eval::spelled_name(inner).is_none() => refuse("aggregate:only"),
+            AggregationFunction::Sort => {
+                if order_by.is_some_and(|key| !matches!(key, Expression::Property { .. } | Expression::AliasRef { .. })) {
+                    return refuse("aggregate:sort_key");
+                }
+                self.walk(inner, scoped)
+            }
+            _ => self.walk(inner, scoped),
+        }
+    }
+}
+
+/// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` of a bare walk, its root and
+/// hops.
+fn selection(expr: &Expression) -> Option<(&str, &[TraversalStep])> {
+    let Expression::Aggregate { fn_: AggregationFunction::First | AggregationFunction::Last | AggregationFunction::Only, expression, .. } = expr else {
+        return None;
+    };
+    if !crate::eval::is_records_walk(expression) {
+        return None;
+    }
+    let Expression::Traverse { alias_root: Some(root), steps, .. } = expression.as_ref() else { return None };
+    Some((root, steps))
 }
 
 /// Whether `callee` resolves to an imported plugin (`resolveCallee`): as
@@ -1115,14 +1365,14 @@ mod tests {
     #[test]
     fn refuses_each_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: \"y\" }", "expression:exists"),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = co", "name_not_value"),
-            ("  x = msg", "name_not_value"),
+            ("  v = 1\n  if EXISTS(v-[:deals]->) {\n    x = 1\n  }", "exists_over_value"),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = [co]", "name_not_value"),
+            ("  x = \"${msg}\"", "name_not_value"),
             ("  x = AI(\"why?\")", "expression:llm"),
-            ("  if msg IS <inbox-[:message]->> {\n    x = 1\n  }", "is_test"),
+            ("  x = FIRST(crm-[:companies]->-[:deals]->)", "select_multi_hop"),
             ("  x = crm.`name`", "traversal_root"),
-            ("  x = msg-[:replies]->.`subject`", "traversal_steps"),
-            ("  x = FIRST(msg.`subject`)", "expression:aggregate"),
+            ("  n = node { a: 1 }\n  x = n-[:replies]->.`subject`", "traversal_root"),
+            ("  x = \"${FIRST(crm-[c:companies]->)}\"", "aggregate_records"),
             ("  x = TEXT.CHUNKS(msg.`subject`)", "expression_does_not_lower"),
             ("  x = msg.`subject` WITHIN \"7d\"", "within_compare"),
             ("  x = { __proto__: 1 }", "proto_key"),
@@ -1159,7 +1409,7 @@ mod tests {
             ("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }", "node_spread_path"),
             ("  n = node { name: \"a\" }\n  write n { name: \"b\" }", "write_position_not_record"),
             ("  g = graph { name: \"a\", entries: { name: \"x\" } }\n  g-[e:entries]-> {\n    write e { name: \"b\" }\n  }", "block_head_node_root"),
-            ("  g = graph { name: \"a\", entries: { name: \"x\" } }\n  if EXISTS(g-[:entries]->) {\n    x = 1\n  }", "expression:exists"),
+            ("  g = graph { name: \"a\", entries: { name: \"x\" } }\n  if EXISTS(g-[:entries]->) {\n    x = 1\n  }", "exists_node"),
             ("  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }", "expression_closure"),
             ("  if COUNT(FILTER([msg.`subject`], (s) => s != \"\")) > 0 {\n    x = 1\n  }", "expression_closure"),
             ("  write crm-[c:companies]-> { unique by (`name` == AT(MAP([1], (v) => v), 0)) name: \"a\" }", "expression_closure"),
@@ -1180,6 +1430,29 @@ mod tests {
         ] {
             assert_eq!(refused(body), None, "{body}");
         }
+    }
+
+    /// Chunk 6A Task 4: aggregates, EXISTS, IS tests and whole-value reads
+    /// of a record.
+    #[test]
+    fn admits_the_expression_tail() {
+        for body in [
+            "  x = JOIN(crm-[c:companies WHERE `stage` == \"Seed\" ORDER BY `name`]->.`name`, \", \")",
+            "  n = COUNT(crm-[:companies]->)\n  total = SUM([1, 2]) + MAX([3]) + AVG([4])\n  s = SORT([2, 1], DESC)",
+            "  top = FIRST(crm-[c:companies WHERE `name` == \"Acme\"]->)\n  if top == null { ERROR(\"none\") }\n  write top-[:notes]-> { body: top.`name` }",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  if EXISTS(co-[n:notes WHERE `text` == \"b\"]->) {\n    x = 1\n  }",
+            "  if EXISTS(msg-[:files]-> WHERE `name` CONTAINS \"pdf\") {\n    x = 1\n  }",
+            "  if EXISTS(crm-[o:organization]->-[le:list_entries WHERE `listName` == \"P\"]->) {\n    x = 1\n  }",
+            "  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: \"y\" }",
+            "  v = msg.`subject`\n  if EXISTS(v) {\n    x = 1\n  }",
+            "  m2 = msg\n  write crm-[:companies]-> { name: m2.`subject` }",
+            "  if msg IS <inbox-[:message]->> {\n    x = 1\n  }",
+            "  crm-[c:companies]-> {\n    doc = c\n    if doc IS <crm-[:company]->> {\n      x = COUNT(doc-[:deals]->)\n    }\n  }",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
+        }
+        let declared = format!("{PRELUDE}node Note {{\n  title: <text>\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  d = node {{ title: \"t\" }}\n  if d IS <Note> {{\n    x = 1\n  }}\n}}");
+        assert_eq!(file(&declared), None);
     }
 
     #[test]
@@ -1204,12 +1477,12 @@ mod tests {
             ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
             ("  v = 1\n  v-[c:companies]-> {\n    x = 1\n  }", "block_head_value_root"),
             ("  n = node { a: 1 }\n  n-[c:kids]-> {\n    x = 1\n  }", "block_head_node_root"),
-            ("  crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> {\n    x = 1\n  }", "expression:exists"),
-            ("  crm-[c:companies ORDER BY c-[:owner]->.`joined`]-> {\n    x = 1\n  }", "traversal_steps"),
-            ("  crm-[c:companies WHERE `name` == @current_date]-> {\n    x = 1\n  }", "expression:meta"),
-            ("  crm-[c:companies]-> {\n    x = c\n  }", "name_not_value"),
+            ("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }", "aggregate:only"),
+            ("  crm-[c:companies ORDER BY c-[:owner]->]-> {\n    x = 1\n  }", "walk_records"),
+            ("  crm-[c:companies WHERE `name` == @user_email]-> {\n    x = 1\n  }", "meta:user_email"),
+            ("  crm-[c:companies]-> {\n    x = [c]\n  }", "name_not_value"),
             ("  x = crm-[c:companies]-> {\n    return c\n  }", "name_not_value"),
-            ("  crm-[c:companies]-> {\n    x = COUNT(c-[:deals]->)\n  }", "expression:aggregate"),
+            ("  crm-[c:companies]-> {\n    x = c-[:deals]->\n  }", "walk_records"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
@@ -1312,7 +1585,7 @@ mod tests {
             ("  fetch(url: msg.`text`)", "plugin_call"),
             ("  x = { page: fetch(msg.`text`) }", "plugin_call"),
             ("  g = graph<Lead> { name: \"a\" }", "graph_shape"),
-            ("  if msg.`subject` IS <Stage> {\n    x = 1\n  }", "is_test"),
+            ("  if msg IS <Lead> {\n    x = 1\n  }", "is_test_declared_record"),
             ("  x = Lead", "name_not_value"),
             ("  Lead = 1", "name_shadowed"),
             ("  Stage = 1", "name_shadowed"),
@@ -1351,8 +1624,8 @@ mod tests {
             assert_eq!(with(&format!("{tree}{after}")), None, "{after}");
         }
         for (after, reason) in [
-            ("\n  x = deals", "name_not_value"),
-            ("\n  x = deals-[:co]->.`name`", "traversal_steps"),
+            ("\n  x = [deals]", "name_not_value"),
+            ("\n  x = deals-[c:co WHERE c.`name` == \"a\"]->.`name`", "walk_extract_hop"),
             ("\n  deals-[c:co WHERE `name` == \"x\"]-> {\n    x = 1\n  }", "block_head_extract_hop"),
             ("\n  deals-[c:co LIMIT 1]-> {\n    x = 1\n  }", "block_head_extract_hop"),
             ("\n  deals-[c:co]->-[p:people]-> {\n    x = 1\n  }", "block_multi_hop"),
@@ -1369,7 +1642,7 @@ mod tests {
         for (body, reason) in [
             ("  d = extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }", "extract_tier"),
             ("  d = extract from [msg.`text`] {\n    a: \"${AI(\"why\")}\"\n  }", "expression:llm"),
-            ("  d = extract from [FIRST(msg.`text`)] {\n    a: \"a\"\n  }", "expression:aggregate"),
+            ("  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }", "aggregate:sort_key"),
             ("  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }", "name_not_value"),
             ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
             ("  return extract from [msg.`text`] {\n    a: \"a\"\n  }", "rvalue:extract"),
@@ -1410,7 +1683,7 @@ mod tests {
             ("  page = fetch_url(msg.`text`)", "plugin_call_form"),
             ("  page = fetch_url(url: TRIM(msg.`text`))", "plugin_call_form"),
             ("  page = FETCH_URL(url: msg.`text`)", "plugin_call"),
-            ("  more = research(name: msg.`subject`)\n  x = more", "name_not_value"),
+            ("  more = research(name: msg.`subject`)\n  x = [more]", "name_not_value"),
             ("  page = fetch_url(url: msg)", "name_not_value"),
             ("  return fetch_url(url: msg.`text`)", "rvalue:construct"),
         ] {

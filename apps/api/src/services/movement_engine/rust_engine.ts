@@ -717,6 +717,7 @@ function engineErrorCode(code: unknown): MovementEngineErrorCode {
     case 'MOVENG_RUNTIME':
     case 'MOVENG_UNSUPPORTED':
     case 'MOVENG_NOT_FOUND':
+    case 'MOVENG_ERROR':
       return code;
     default:
       throw new RustShimError(`the Rust evaluator threw an unknown code ${String(code)}`);

@@ -54,7 +54,7 @@ use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{Expression, FilterOperator};
+use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, TraversalStep};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Value as Json, json};
@@ -256,6 +256,9 @@ pub(crate) struct Source {
     pub(crate) surface: Js,
     /// The source as a graph a block head walks (crate::traverse).
     pub(crate) read: Rc<crate::traverse::Read>,
+    /// The typed event's canonical address (`sourceEventAddress`), which an
+    /// `IS` test of the event compares (crate::is_test).
+    pub(crate) address: Option<EventAddress>,
 }
 
 pub use crate::address::Address;
@@ -614,12 +617,16 @@ impl Run<'_> {
         };
         let mut read = Vec::new();
         let text = serde_json::to_string(&movement.body).unwrap_or_default();
-        event_fields_read(&text, &param.name, &mut |field| read.push(field.to_string()));
+        // The event under its own name and every second name for it (`m2 = msg`).
+        let names = event_names(&movement.body, &param.name);
+        for name in &names {
+            event_fields_read(&text, name, &mut |field| read.push(field.to_string()));
+        }
         // `...msg` in a write: the lines the checker's stamp says it writes.
         for (path, stamp) in &self.checked.root.stamps {
             if let Stamp::SpreadFields(fields) = stamp
                 && path.starts_with(&prefix)
-                && self.checked.root.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str) == Some(param.name.as_str())
+                && self.checked.root.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str).is_some_and(|source| names.iter().any(|n| n == source))
             {
                 read.extend(fields.iter().cloned());
             }
@@ -759,6 +766,7 @@ impl Run<'_> {
             position,
             surface,
             read,
+            address,
         }));
         Ok(())
     }
@@ -875,9 +883,9 @@ impl Run<'_> {
                         _ => return Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
                     },
                     _ => {
-                        let expr = self.value_slot(&assign.value, scope)?;
-                        let bound = self.bind_slot(expr, scope).await?;
-                        scope.declare(assign.name.clone(), Binding::Value(bound));
+                        let slot = self.value_slot(&assign.value, scope)?;
+                        let bound = self.bind_slot_binding(slot, scope).await?;
+                        scope.declare(assign.name.clone(), bound);
                     }
                 }
                 Ok(Flow::FellThrough)
@@ -918,6 +926,18 @@ impl Run<'_> {
                 Ok(Flow::Returned)
             }
             Statement::Block(statement) => self.block(&statement.block, None, scope, at, path).await,
+            // `ERROR(message)`: the run fails with the author's words.
+            Statement::Error(statement) => {
+                let expr = lowered(&statement.message, |tree| movement_parser::lowering::lower_expression(tree, &statement.message.raw), "expression")
+                    .map_err(Stop::Thrown)?;
+                let message = self.evaluate(&expr, scope, &statement.message).await?.value;
+                let message = match message {
+                    Js::String(text) => text,
+                    other if other.is_nullish() => String::new(),
+                    other => other.to_js_string(),
+                };
+                Err(Stop::Thrown(Failure::engine("MOVENG_ERROR", message)))
+            }
             // A plugin called for what it does: its value goes nowhere.
             Statement::Call(call) if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
                 self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
@@ -970,18 +990,72 @@ impl Run<'_> {
         }
     }
 
+    /// `bindSlotValue`: a bare name of a record (the event, a handle, a
+    /// landing, a node, an extraction's) is a second name for it
+    /// (`aliasedNodeBinding`); `FIRST`/`LAST`/`ONLY` of a bare walk is the
+    /// record it picks (`selectedPositionBinding`); anything else, the value
+    /// it evaluates to.
+    async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+        let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
+            .map_err(Stop::Thrown)?;
+        if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
+            && let Some(record @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::Positions(_))) =
+                scope.resolve(name)
+        {
+            return Ok(record);
+        }
+        if let Some(selected) = self.selected_record(&expr, slot, scope).await.map_err(Stop::Thrown)? {
+            return Ok(selected);
+        }
+        Ok(Binding::Value(self.bind_evaluated(&expr, slot, scope).await?))
+    }
+
     /// `bindSlotValue` for what this engine binds: the value the slot
     /// evaluates to, with its trail.
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
-        let evaluated = self.evaluate(&expr, scope, slot).await?;
+        self.bind_evaluated(&expr, slot, scope).await
+    }
+
+    async fn bind_evaluated(&self, expr: &Expression, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
+        let evaluated = self.evaluate(expr, scope, slot).await?;
         // `binding.provenance ?? NO_PROVENANCE`: a bound value always has a trail.
         let trail = match evaluated.prov {
             Prov::Binding(name) => Some(scope.value_of(&name).and_then(|b| b.trail).unwrap_or_default()),
             Prov::Built(trail) => Some(trail),
         };
-        Ok(ValueBinding { value: evaluated.value, trail, many: false })
+        Ok(ValueBinding { value: evaluated.value, trail, many: binds_many_values(expr, scope) })
+    }
+
+    /// `selectedPositionBinding`: `FIRST`/`LAST`/`ONLY` of a bare walk of one
+    /// hop, walked as a block head walks it; the record picked, or a null
+    /// value when there is none.
+    async fn selected_record(&self, expr: &Expression, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Option<Binding>, Failure> {
+        let Expression::Aggregate { fn_: pick @ (AggregationFunction::First | AggregationFunction::Last | AggregationFunction::Only), expression, .. } = expr else {
+            return Ok(None);
+        };
+        if !crate::eval::is_records_walk(expression) {
+            return Ok(None);
+        }
+        let Expression::Traverse { alias_root: Some(root), steps, .. } = expression.as_ref() else { return Ok(None) };
+        let [TraversalStep::Edge(step)] = steps.as_slice() else {
+            unreachable!("admission picks only from a walk of one hop")
+        };
+        let landings = self.selection_landings(root, step, scope, slot).await?;
+        if *pick == AggregationFunction::Only && landings.len() > 1 {
+            return Err(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("ONLY({}) says there is exactly one, and there are {}. Narrow it until there is.", js::trim(&slot.raw), landings.len()),
+            ));
+        }
+        let picked = if *pick == AggregationFunction::Last { landings.last() } else { landings.first() };
+        Ok(Some(match picked {
+            // What a selection binds carries the record and its graph, not
+            // the walked edge's properties.
+            Some(landed) => Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position.clone(), None, landed.read.clone()))),
+            None => Binding::Value(ValueBinding { value: Js::Null, trail: Some(Trail::default()), many: false }),
+        }))
     }
 
     /// `evaluateCondition`: the condition's conjuncts, each an expression's
@@ -1009,7 +1083,7 @@ impl Run<'_> {
                     Ok(true)
                 }
                 MovementCondition::Expr { expr } => Ok(self.evaluate(expr, scope, slot).await?.value.truthy()),
-                MovementCondition::IsTest { .. } => Err(Stop::Thrown(Failure::unsupported("an IS test", "the Rust engine runs expression conditions"))),
+                MovementCondition::IsTest { subject_raw, type_ } => self.is_test(subject_raw, type_, scope).map_err(Stop::Thrown),
             }
         })
     }
@@ -1032,9 +1106,15 @@ impl Run<'_> {
         span: Option<Js>,
         landed: Option<Rc<crate::bindings::Landed>>,
     ) -> Result<Evaluated, Stop> {
+        self.evaluate_scoped(expr, scope, span, landed.map(Scoped::Landed)).await
+    }
+
+    /// One walk, scoped at `subject` when given: a landed record, or an
+    /// extracted entity (an `EXISTS` WHERE over an extraction's).
+    pub(crate) async fn evaluate_scoped(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, subject: Option<Scoped>) -> Result<Evaluated, Stop> {
         let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
-        let scoped = landed.is_some();
-        let reader = Reading { run: self, scope, span, landed };
+        let scoped = subject.is_some();
+        let reader = Reading { run: self, scope, span: span.clone(), subject };
         let evaluator = if scoped {
             Evaluator::scoped_in_run(scope.as_ref(), self.version(), around, &reader)
         } else {
@@ -1046,16 +1126,28 @@ impl Run<'_> {
     }
 
     /// What an evaluation asked, answered by the host.
-    async fn answer(&self, ask: Ask, scope: &Scope, landed: Option<&crate::bindings::Landed>) -> Result<Result<Evaluated, EvalError>, Failure> {
+    async fn answer(&self, ask: Ask, scope: &Rc<Scope>, subject: Option<&Scoped>, span: Option<&Js>) -> Result<Result<Evaluated, EvalError>, Failure> {
         match ask {
             Ask::EventField { field } => self.event_field(&field).await.map(Ok),
             Ask::RecordField { root, field } => match scope.resolve(&root) {
                 Some(Binding::Landed(record)) => self.landed_field(&record, &field).await.map(Ok),
                 _ => Ok(self.record_field(&root, &field, scope)),
             },
-            Ask::ScopedField { field, edge } => {
-                let landed = landed.expect("a scoped read is asked only of a scoped evaluation");
-                self.scoped_field(landed, &field, edge, scope).await.map(Ok)
+            Ask::ScopedField { field, edge } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
+                Scoped::Landed(landed) => self.scoped_field(landed, &field, edge, scope).await.map(Ok),
+                Scoped::Emission(_) if edge => Ok(Err(EvalError::engine(
+                    "MOVENG_UNSUPPORTED",
+                    "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
+                ))),
+                Scoped::Emission(emission) => Ok(crate::write::emission_field(emission, &field)),
+            },
+            Ask::Traverse { expr } => {
+                let span = span.cloned().unwrap_or(Js::Undefined);
+                self.walk_read(&expr, scope, &span).await
+            }
+            Ask::Count { expr } => {
+                let span = span.cloned().unwrap_or(Js::Undefined);
+                self.walk_count(&expr, scope, &span).await.map(|(n, trail)| Ok(Evaluated { value: Js::Number(n as f64), prov: Prov::Built(trail) }))
             }
             Ask::Function { id, args } => {
                 let args = args.iter().map(env::encode_plain).collect();
@@ -1267,6 +1359,19 @@ impl Run<'_> {
     }
 }
 
+/// `bindsManyValues`: a walk read for a field, or a second name for one.
+fn binds_many_values(expr: &Expression, scope: &Scope) -> bool {
+    match expr {
+        Expression::Traverse { steps, expression, .. } if !steps.is_empty() => match expression.as_ref() {
+            Expression::Property { property_type_id } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
+            Expression::EdgeProperty { .. } => true,
+            _ => false,
+        },
+        Expression::Property { property_type_id: name } | Expression::AliasRef { name } => scope.value_of(name).is_some_and(|b| b.many),
+        _ => false,
+    }
+}
+
 /// A plugin call's named arguments; admission lets by no other kind.
 fn plugin_args(call: &ast::CallStatement) -> Result<Vec<(String, ExprSlot)>, Stop> {
     call.args
@@ -1292,16 +1397,23 @@ const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
 /// One evaluation's reads, answered by its run in the scope it reads.
 struct Reading<'r, 'h> {
     run: &'r Run<'h>,
-    scope: &'r Scope,
+    scope: &'r Rc<Scope>,
     /// Where the evaluation's literals are written (`literalSpan`).
     span: Option<Js>,
-    /// The landed record a position-scoped evaluation reads.
-    landed: Option<Rc<crate::bindings::Landed>>,
+    /// What a position-scoped evaluation reads.
+    subject: Option<Scoped>,
+}
+
+/// What a position-scoped evaluation's bare names read (`PositionScope`).
+#[derive(Clone)]
+pub(crate) enum Scoped {
+    Landed(Rc<crate::bindings::Landed>),
+    Emission(Rc<crate::extract::emission::Emission>),
 }
 
 impl Reader for Reading<'_, '_> {
     fn ask(&self, ask: Ask) -> Evaluating<'_> {
-        Box::pin(async move { self.run.answer(ask, self.scope, self.landed.as_deref()).await.map_err(Failure::into_eval)? })
+        Box::pin(async move { self.run.answer(ask, self.scope, self.subject.as_ref(), self.span.as_ref()).await.map_err(Failure::into_eval)? })
     }
 
     fn literal(&self) -> u32 {
@@ -1310,6 +1422,10 @@ impl Reader for Reading<'_, '_> {
             origin.push(("span", span.clone()));
         }
         self.run.mint_origin(env::object_of(origin))
+    }
+
+    fn meta(&self, key: &str) -> u32 {
+        self.run.mint_origin(env::object_of(vec![("kind", Js::str("meta")), ("key", Js::str(key))]))
     }
 }
 
@@ -1331,6 +1447,44 @@ pub(crate) fn lowered<T, E: std::fmt::Debug>(
     };
     let tree = movement_parser::expr::parse_expression(&slot.raw).map_err(|e| invalid(format!("{e:?}")))?;
     lower(&tree).map_err(|e| invalid(format!("{e:?}")))
+}
+
+/// `param` and every name a body binds to it again (`x = param`, `y = x`),
+/// at any depth.
+fn event_names(body: &[Statement], param: &str) -> Vec<String> {
+    fn collect(statements: &[Statement], names: &mut Vec<String>) -> bool {
+        let mut grew = false;
+        for statement in statements {
+            match statement {
+                Statement::Assign(assign) => {
+                    if let RValue::Expr { expr } = &assign.value
+                        && names.iter().any(|n| n == js::trim(&expr.raw))
+                        && !names.contains(&assign.name)
+                    {
+                        names.push(assign.name.clone());
+                        grew = true;
+                    }
+                    if let RValue::Block { block } = &assign.value {
+                        grew |= collect(&block.body, names);
+                    }
+                }
+                Statement::If(statement) => {
+                    for arm in &statement.arms {
+                        grew |= collect(&arm.body, names);
+                    }
+                    if let Some(arm) = &statement.else_arm {
+                        grew |= collect(&arm.body, names);
+                    }
+                }
+                Statement::Block(statement) => grew |= collect(&statement.block.body, names),
+                _ => {}
+            }
+        }
+        grew
+    }
+    let mut names = vec![param.to_string()];
+    while collect(body, &mut names) {}
+    names
 }
 
 /// Every field `param.field` an expression in `body_json` (a body's AST as

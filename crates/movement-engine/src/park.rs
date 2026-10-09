@@ -167,15 +167,20 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             }
             object_of(descriptor)
         }
-        // A landing is bound only in a block iteration's own scope, and
-        // admission refuses every park and suspension inside a block, so no
-        // state this engine writes holds one. A guard that missed fails the
-        // run loudly, before anything is committed.
-        Binding::Landed(_) => {
-            return Err(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("a park inside a block reached the parker (the hop alias '{name}' is in scope); admission should have refused it"),
-            ));
+        // A record a pick bound (`top = FIRST(…)`): admission refuses every
+        // park inside a block, so no hop alias reaches here. Its read is
+        // named only when it is not the event's source (the TypeScript binds
+        // none there), and a pick keeps no edge properties.
+        Binding::Landed(landed) => {
+            let mut descriptor = vec![kind("sourcePosition"), ("position", json_round_trip(&landed.position))];
+            if let Some(properties) = &landed.edge_properties {
+                descriptor.push(("edgeProperties", json_round_trip(properties)));
+            }
+            let from_source = run.source.borrow().as_ref().is_some_and(|source| Rc::ptr_eq(&source.read, &landed.read));
+            if !from_source {
+                descriptor.push(("read", object_of(vec![("instanceName", Js::str(landed.read.instance_name.clone()))])));
+            }
+            object_of(descriptor)
         }
         Binding::Positions(landings) => {
             let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
@@ -743,10 +748,10 @@ mod tests {
         assert_eq!(duration_ms("30"), None);
     }
 
-    /// A landing in a scope a park writes is a guard that missed: the run
-    /// fails loudly, naming it, rather than trapping.
+    /// A record a pick bound parks as serialize.ts writes a source
+    /// position: the position, and the graph it was read from by name.
     #[test]
-    fn a_park_that_reaches_a_landing_fails_the_run_loudly() {
+    fn a_picked_record_parks_as_the_typescript_writes_it() {
         let input: crate::run::SegmentInput = serde_json::from_value(serde_json::json!({
             "source": "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}", "languageVersion": 3, "event": null,
             "segmentId": "g1", "serves": [], "now": "2026-03-12T12:00:00.000Z",
@@ -797,9 +802,10 @@ mod tests {
         let scope = Scope::root();
         scope.declare("c", Binding::Landed(Rc::new(crate::bindings::Landed::new(Js::Undefined, None, read))));
         for state in [parked_state(&run, "s0", None, &scope), suspended_state(&run, "s0", &scope)] {
-            let Err(Failure::Engine { message, .. }) = state else { panic!("a landing was written into a park") };
-            assert!(message.contains("a park inside a block reached the parker"), "{message}");
-            assert!(message.contains("'c'"), "{message}");
+            let state = crate::env::encode_plain(&state.expect("a picked record parks"));
+            let text = state.to_string();
+            assert!(text.contains(r#"[["kind","sourcePosition"],["position",["u"]],["read",["o","#), "{text}");
+            assert!(text.contains(r#"[["instanceName","kg"]]"#), "{text}");
         }
     }
 

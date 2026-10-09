@@ -1120,20 +1120,7 @@ impl Run<'_> {
             Some(Binding::Node(node)) => return crate::node::node_field(&node.borrow(), field),
             // A field of no returned records is nothing (`collapse([])`).
             Some(Binding::Positions(landings)) if landings.is_empty() => return Ok(Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) }),
-            // `readEmissionField`: the field as extracted, cited by its own
-            // origin, which every read shares.
-            Some(Binding::Extracted { emission, .. }) => {
-                let value = match emission.fields.get(field) {
-                    Some(value) if !value.is_nullish() => value.clone(),
-                    Some(_) => Js::Null,
-                    None if crate::stdlib::is_object_prototype_name(field) => {
-                        return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
-                    }
-                    None => Js::Null,
-                };
-                let trail = emission.origin_of(field).map_or_else(Trail::default, |id| Trail { origins: vec![id], direct: Some(id) });
-                return Ok(Evaluated { value, prov: Prov::Built(trail) });
-            }
+            Some(Binding::Extracted { emission, .. }) => return emission_field(&emission, field),
             _ => return Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not a record in scope"))),
         };
         let value = handle.record.field(field)?;
@@ -1513,6 +1500,21 @@ pub(crate) fn edge_shape(path: &ast::PathHead) -> EdgeShape {
         },
         _ => EdgeShape::MultiHop,
     }
+}
+
+/// `readEmissionField`: the field as extracted, cited by its own origin,
+/// which every read shares.
+pub(crate) fn emission_field(emission: &crate::extract::emission::Emission, field: &str) -> Result<Evaluated, EvalError> {
+    let value = match emission.fields.get(field) {
+        Some(value) if !value.is_nullish() => value.clone(),
+        Some(_) => Js::Null,
+        None if crate::stdlib::is_object_prototype_name(field) => {
+            return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
+        }
+        None => Js::Null,
+    };
+    let trail = emission.origin_of(field).map_or_else(Trail::default, |id| Trail { origins: vec![id], direct: Some(id) });
+    Ok(Evaluated { value, prov: Prov::Built(trail) })
 }
 
 /// `spellName`: bare when an ASCII identifier, backticked otherwise.

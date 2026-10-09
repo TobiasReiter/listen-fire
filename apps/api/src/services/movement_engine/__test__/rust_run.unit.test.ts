@@ -224,11 +224,12 @@ describe('a whole run in the Rust engine', () => {
     expect(await admission(BINDINGS_AND_IF)).toBe('admitted');
     expect(await admission(program('  write crm-[:companies]-> { name: msg.`subject` }'))).toBe('admitted');
     expect(await admission(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'))).toBe('admitted');
-    expect(await admission(program('  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: "y" }'))).toBe('expression:exists');
-    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'))).toBe('name_not_value');
-    expect(await admission(program('  x = msg'))).toBe('name_not_value');
+    expect(await admission(program('  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: "y" }'))).toBe('admitted');
+    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'))).toBe('admitted');
+    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = [co]'))).toBe('name_not_value');
+    expect(await admission(program('  x = msg'))).toBe('admitted');
     expect(await admission(program('  x = AI("why?")'))).toBe('expression:llm');
-    expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('is_test');
+    expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('admitted');
     expect(await admission(program('  x = crm.`name`'))).toBe('traversal_root');
   });
 
@@ -446,16 +447,26 @@ describe('a whole run in the Rust engine', () => {
       [movement('  r = m(msg: msg)'), 'movement_call'],
       [movement('  r = M(msg)'), 'function_call'],
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
-      [movement('  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: "y" }'), 'expression:exists'],
+      // The expression tail this engine does not run (chunk 6A Task 4 runs the rest).
+      [movement('  v = 1\n  if EXISTS(v-[:deals]->) {\n    x = 1\n  }'), 'exists_over_value'],
+      [movement('  g = graph { name: "a", notes: { body: "b" } }\n  if EXISTS(g-[:notes]->) {\n    x = 1\n  }'), 'exists_node'],
+      [movement('  rows = crm-[c:companies]->'), 'walk_records'],
+      [movement('  x = "${FIRST(crm-[c:companies]->)}"'), 'aggregate_records'],
+      [movement('  x = FIRST(crm-[:companies]->-[:deals]->)'), 'select_multi_hop'],
+      [movement('  x = ONLY(crm-[c:companies]->.`name`)'), 'aggregate:only'],
+      [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
+      [movement('  x = @user_email'), 'meta:user_email'],
+      [`node Lead { name: <text> }\n${movement('  if msg IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_record'],
+      [`node Lead { name: <text> }\n${movement('  g = graph { name: "a" }\n  if g IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_graph'],
+      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  x = found-[c:co WHERE c.`name` == "x"]->.`name`'), 'walk_extract_hop'],
+      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  if EXISTS(found-[c:co ORDER BY `name`]->) {\n    x = 1\n  }'), 'exists_extract_hop'],
       [movement('  n = node { a: 1 }\n  link n -[:kids]-> n'), 'link_node'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
       [movement('  write crm-[:companies]-> { ...crm }'), 'write_spread_source'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],
-      [movement('  x = msg-[:replies]->.`subject`'), 'traversal_steps'],
+      [movement('  n = node { a: 1 }\n  x = n-[:replies]->.`subject`'), 'traversal_root'],
       [movement('  x = { __proto__: 1 }'), 'proto_key'],
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
-      [movement('  x = FIRST(msg.`subject`)'), 'expression:aggregate'],
-      [movement('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'), 'is_test'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
       [movement('  held = { k: 1 }\n  write held.k { a: 1 }'), 'write_position_member_path'],
       [movement('  held = { k: { name: "a" } }\n  write crm-[:companies]-> { ...held.k }'), 'write_spread_path'],
@@ -475,7 +486,7 @@ describe('a whole run in the Rust engine', () => {
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }'), 'block_head_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
       [movement('  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  write crm-[:companies]-> { ...found }'), 'write_spread_source'],
-      [movement('  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  x = found'), 'name_not_value'],
+      [movement('  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  x = [found]'), 'name_not_value'],
       [movement('  return extract from [msg.`text`] {\n    name: "a"\n  }'), 'rvalue:extract'],
       [`node Deal { name: <text> }\n${movement('  g = graph<Deal> { name: "a" }')}`, 'graph_shape'],
     ] as const) {

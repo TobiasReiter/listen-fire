@@ -309,7 +309,7 @@ describe("main's language changes on both engines", () => {
   it('EXISTS over a local graph (e03887cc3b): refused by name', async () => {
     await onBoth(
       movement('  g = graph { name: "root", notes: { body: "Brief" } }', '  if EXISTS(g-[:notes]->) {', '    write crm-[:companies]-> { name: "has notes" }', '  }'),
-      { refused: 'expression:exists' },
+      { refused: 'exists_node' },
       [['create', { name: 'has notes' }]],
     );
   });

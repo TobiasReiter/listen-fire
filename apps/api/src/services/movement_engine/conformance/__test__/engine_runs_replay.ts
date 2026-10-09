@@ -26,10 +26,12 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  and plugin imports admitted (2026-10-09): 111 and 128 on Rust, less a
  *  margin of 2. Raised at chunk 6A Task 3b, the extraction keyword and plugin
  *  calls in Rust (2026-10-09): 195 and 234 on Rust, less a margin of 2.
+ *  Raised at chunk 6A Task 4, folds, EXISTS, IS tests and a record named
+ *  twice (2026-10-09): 256 and 313 on Rust, less a margin of 2.
  *  Raise them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 193 },
-  v2: { recordings: 542, rust: 232 },
+  v1: { recordings: 443, rust: 254 },
+  v2: { recordings: 542, rust: 311 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);
