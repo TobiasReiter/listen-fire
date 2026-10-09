@@ -79,6 +79,7 @@ fn the_standard_library_answers_as_typescript_does() {
                 ErrorClass::Error => json!({ "name": "Error", "message": message }),
                 ErrorClass::RangeError => json!({ "name": "RangeError", "message": message }),
                 ErrorClass::TypeError => json!({ "name": "TypeError", "message": message }),
+                ErrorClass::Unreproduced => json!({ "name": "MovementEngineError", "message": format!("MOVENG_UNSUPPORTED: {message}") }),
             } }),
             Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("no reader, so no host"),
             Err(EvalError::Fallback(_)) => {

@@ -208,10 +208,14 @@ pub fn encode_plain(value: &Js) -> Json {
 #[derive(Default)]
 pub struct Wire {
     sent: RefCell<HashMap<u64, Js>>,
-    /// The kind of a record a value written for a request held, which no
-    /// request may carry (the run fails before asking with it).
-    held_record: RefCell<Option<String>>,
 }
+
+/// A value bound for a request held a record (of this kind), which the
+/// TypeScript engine would hand its host as the binding object itself and
+/// this wire carries as no value the host could use: the request is never
+/// made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldRecord(pub String);
 
 impl Wire {
     /// A value the host sent.
@@ -222,20 +226,23 @@ impl Wire {
         Ok(value)
     }
 
-    /// A value for a host request.
-    pub fn encode(&self, value: &Js) -> Json {
+    /// A value for a host request, or the record it holds.
+    pub fn encode(&self, value: &Js) -> Result<Json, HeldRecord> {
         let sent = self.sent.borrow();
         let mut encoder = Encoder { plain: true, sent: Some(&sent), ..Encoder::default() };
         let json = encoder.value(value);
-        if let Some(kind) = encoder.record {
-            self.held_record.borrow_mut().get_or_insert(kind);
+        match encoder.record {
+            Some(kind) => Err(HeldRecord(kind)),
+            None => Ok(json),
         }
-        json
     }
 
-    /// The kind of a record a request about to be sent was written with.
-    pub fn take_held_record(&self) -> Option<String> {
-        self.held_record.borrow_mut().take()
+    /// A value for the run's result, which holds no record (the writes, the
+    /// extraction sites); one that did would cross as `["x", kind]`, which
+    /// the shim refuses.
+    pub fn encode_result(&self, value: &Js) -> Json {
+        let sent = self.sent.borrow();
+        Encoder { plain: true, sent: Some(&sent), ..Encoder::default() }.value(value)
     }
 }
 
@@ -281,9 +288,15 @@ impl Encoder<'_> {
             // `Object.prototype[name]`).
             Js::Function(function) => json!(["f", function.0]),
             Js::Object(object) if crate::js::is_object_prototype(object) => json!(["p"]),
-            // A record never crosses: the run fails before asking with one
-            // (`record::crossing`); this tag is the shim's refusal of one that
-            // got past.
+            // A record never crosses: a request holding one is never made
+            // (`HeldRecord`), and the shim refuses this tag in a result.
+            // The event's binding object is plain data, `{kind: 'event'}`: it
+            // crosses as that.
+            Js::Record(record) if matches!(record.as_ref(), crate::bindings::Binding::Event) => {
+                let mut object = JsObject::new();
+                object.set("kind".into(), Js::str("event"));
+                self.value(&Js::object(object))
+            }
             Js::Record(record) => {
                 let kind = crate::record::kind_of(record);
                 self.record.get_or_insert(kind.clone());
@@ -461,6 +474,17 @@ mod tests {
     use crate::js::strict_equals;
 
     #[test]
+    fn a_record_fails_only_the_request_it_is_written_for() {
+        let wire = Wire::default();
+        let record = crate::record::held(crate::bindings::Binding::Positions(Vec::new()));
+        // The run's result written with one (never asked) and a request
+        // holding one refused: neither touches the next request.
+        let _ = wire.encode_result(&Js::array(vec![record.clone()]));
+        assert_eq!(wire.encode(&Js::array(vec![Js::String("a".into()), record])), Err(HeldRecord("positions".into())));
+        assert_eq!(wire.encode(&Js::String("a".into())), Ok(json!("a")));
+    }
+
+    #[test]
     fn values_cross_as_their_json_round_trip() {
         let mut object = JsObject::new();
         object.set("a".into(), Js::Undefined);
@@ -519,8 +543,8 @@ mod tests {
         };
         assert!(matches!(n(&later), Some(Js::Number(2.0))));
         assert!(matches!(n(&earlier), Some(Js::Number(1.0))));
-        assert_eq!(wire.encode(&later), json!(["i", 1]));
-        assert_eq!(wire.encode(&earlier), json!(["i", 0]));
+        assert_eq!(wire.encode(&later), Ok(json!(["i", 1])));
+        assert_eq!(wire.encode(&earlier), Ok(json!(["i", 0])));
         assert!(wire.decode(&json!(["r", 0])).is_err());
     }
 }

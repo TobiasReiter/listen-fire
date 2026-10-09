@@ -42,6 +42,9 @@ const fetchUrl: PluginSpec = registered;
 /** A plugin that hands back one record per thing it found. */
 const findFiles: PluginSpec = { args: ['q'], priced: false, output: { kind: 'records', fields: { url: 'text' } } };
 
+/** A plugin whose argument is untyped: the checker lets anything through. */
+const echo: PluginSpec = { args: ['q'], priced: false, effects: { ai: true }, output: { kind: 'value', type: 'text' } };
+
 const attioSchema: InstanceSchema = {
   positions: { company: { properties: { name: 'text' }, edges: {} } },
   collections: { companies: { target: 'company' } },
@@ -54,7 +57,7 @@ const catalog = mockCatalogSnapshot({
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
   },
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
-  plugins: { fetch_url: fetchUrl, find_files: findFiles },
+  plugins: { fetch_url: fetchUrl, find_files: findFiles, echo },
 });
 
 const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } from credentials', 'inbox = email(credentials: dealflow_inbox)', ''].join(
@@ -254,6 +257,49 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect([reason, rustRunStats.notAdmitted]).toEqual([reason, { [reason]: 1 }]);
       expect(rustRunStats.hostCalls).toEqual({});
     }
+  });
+
+  describe('records held as values reaching a request', () => {
+    const companies = { 'x:extract_result#1': [{ company: [{ name: wrap('Acme') }, { name: wrap('Globex') }] }] };
+    const found = ['  found = extract from [msg.`text`] {', '    node company: "each company named" {', '      name: "the company\'s name"', '    }', '  }'];
+
+    it("fails a head's WHERE over a held extraction as the TypeScript does, before the body", async () => {
+      const source = [
+        'movement m(msg: <inbox-[:message]->>) {',
+        ...found,
+        '  held = [found]',
+        '  held-[c:company WHERE `name` == "Acme"]-> {',
+        '    x = c.`name`',
+        '  }',
+        '}',
+      ].join('\n');
+      const ts = await agree({ source, replies: [companies] }, { runsWhole: true });
+      expect('error' in ts && String(runFailureCause(ts.error))).toContain('WHERE filters on extract-result block heads is not supported');
+    });
+
+    it("writes the event into the prompt as the JSON of its binding object, and refuses any other record there by name", async () => {
+      const source = ['movement m(msg: <inbox-[:message]->>) {', '  held = [msg]', '  found = extract from [held, msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
+      const ts = await agree({ source, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { runsWhole: true });
+      expect(JSON.stringify(ts.asked)).toContain('## FRAGMENT\\n{\\"kind\\":\\"event\\"}');
+      const again = ['movement m(msg: <inbox-[:message]->>) {', ...found, '  more = extract from [found] {', '    name: "the company"', '  }', '}'].join('\n');
+      await agree({ source: again, replies: [companies, { 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { refused: 'extract_from_record' });
+    });
+
+    it("hands a plugin the event's binding object as the data it is, and refuses any other record inside a list by name", async () => {
+      const program = (body: string) => ['import { echo } from plugins', 'movement m(msg: <inbox-[:message]->>) {', body, '}'].join('\n');
+      for (const [arg, q] of [
+        ['[msg]', [{ kind: 'event' }]],
+        ['{ k: msg }', { k: { kind: 'event' } }],
+      ] as const) {
+        const ts = await agree({ source: program(`  x = echo(q: ${arg})`) }, { runsWhole: true });
+        expect(ts.invoked).toEqual([{ plugin: 'echo', config: { q } }]);
+      }
+      // The event alone is no value: both engines fail reading it.
+      await agree({ source: program('  x = echo(q: msg)') }, { runsWhole: true });
+      const refused = await agree({ source: program([...found, '  x = echo(q: [found])'].join('\n')), replies: [companies] }, { refused: 'plugin_arg_record' });
+      // The TypeScript hands the plugin the extraction's binding object itself.
+      expect(refused.invoked).toHaveLength(1);
+    });
   });
 
   describe('a model reply this engine cannot read (a named divergence: the TypeScript reads on)', () => {

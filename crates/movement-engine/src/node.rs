@@ -377,7 +377,7 @@ impl Run<'_> {
                 Ok(vec![Binding::Landed(Rc::new(crate::bindings::Landed::new(source.position.to_js(), None, source.read.clone())))])
             }
             binding @ (Binding::Landed(_) | Binding::Handle(_) | Binding::Node(_) | Binding::Extracted { .. }) => Ok(vec![binding]),
-            Binding::Shaped(_) => Err(Stop::Thrown(Failure::unsupported(&format!("holding '{name}', a value shaped like a record, on an edge"), "a dict whose `kind` names a binding's is a record to the TypeScript engine"))),
+            Binding::Shaped(_) => Err(Stop::Thrown(Failure::unreproduced(&format!("holding '{name}', a value shaped like a record, on an edge"), "a dict whose `kind` names a binding's is a record to the TypeScript engine"))),
             other => Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!("'{name}' holds a record, and the value is {} — the program was not checked", crate::record::describe(&other)),

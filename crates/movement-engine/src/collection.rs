@@ -199,7 +199,7 @@ impl Run<'_> {
             Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{spelling}' was given settings it cannot run with — the checker should have caught this: {problem}")))
         })?;
         if concurrency != 1.0 || initial != 1.0 {
-            return Err(Stop::Thrown(Failure::unsupported(&format!("'{spelling}' running more than one member at a time"), "the Rust engine runs a collection op's members one at a time")));
+            return Err(Stop::Thrown(Failure::unreproduced(&format!("'{spelling}' running more than one member at a time"), "the Rust engine runs a collection op's members one at a time")));
         }
         let function = self.collection_function(&expr.r#fn, spelling, scope, fn_path)?;
         // Each member's answer, by member index: kept, or left out.
@@ -325,7 +325,7 @@ impl Run<'_> {
                     };
                     // `filed['__proto__'] = …` sets the answer's prototype.
                     if key == "__proto__" {
-                        return Err(Stop::Thrown(Failure::unsupported(&format!("'{spelling}' filing a member under the key '__proto__'"), "it sets the answer's prototype")));
+                        return Err(Stop::Thrown(Failure::unreproduced(&format!("'{spelling}' filing a member under the key '__proto__'"), "it sets the answer's prototype")));
                     }
                     if op == CollectionOp::Keyby {
                         if filed.get(key).is_some() {
@@ -402,9 +402,12 @@ fn carried(answers: &[Option<Js>], init: &Js) -> Js {
 
 /// `isMemberFailure`: the member's own failure, which `onError` may forgive;
 /// the run's (its cost cap, the call depth, the call ceiling, a lost lease)
-/// passes through.
+/// passes through, and so does this engine's own refusal of a reading the
+/// TypeScript's member would have made (forgiving it would drop a member the
+/// TypeScript keeps).
 fn is_member_failure(failure: &Failure) -> bool {
     match failure {
+        Failure::Engine { class: crate::eval::ErrorClass::Unreproduced, .. } => false,
         Failure::Engine { .. } => true,
         Failure::Host(error) => !matches!(error.detail.get("name").and_then(serde_json::Value::as_str), Some("AdapterCallCeilingExceeded" | "RunLeaseLost" | "RunCancelledSignal")),
         Failure::CapExceeded(_) | Failure::CallDepth { .. } => false,
@@ -415,6 +418,7 @@ fn is_member_failure(failure: &Failure) -> bool {
 fn error_message(failure: &Failure) -> String {
     match failure {
         Failure::Engine { class: crate::eval::ErrorClass::Engine(code), message } => format!("{code}: {message}"),
+        Failure::Engine { class: crate::eval::ErrorClass::Unreproduced, .. } => unreachable!("never forgiven"),
         Failure::Engine { message, .. } => message.clone(),
         Failure::Host(error) => error.message().to_string(),
         Failure::CapExceeded(_) | Failure::CallDepth { .. } => unreachable!("never forgiven"),

@@ -81,6 +81,9 @@ impl Binding {
     /// `a === b` of the two binding objects: a clone of a binding is the same
     /// object, as a name read twice is in the TypeScript engine.
     pub fn is(&self, other: &Binding) -> bool {
+        if std::ptr::eq(self, other) {
+            return true;
+        }
         match (self, other) {
             (Binding::Event, Binding::Event) => true,
             (Binding::Instance(a), Binding::Instance(b)) => Rc::ptr_eq(a, b),
@@ -89,6 +92,10 @@ impl Binding {
             (Binding::Landed(a), Binding::Landed(b)) => Rc::ptr_eq(a, b),
             (Binding::Extracted { id: a, .. }, Binding::Extracted { id: b, .. }) => a == b,
             (Binding::LazyWalk(a), Binding::LazyWalk(b)) => Rc::ptr_eq(a, b),
+            // A block's returned records are one object only as the record
+            // holding them is (the same allocation, above): two lists of the
+            // same landings are two objects, as two `positions` bindings are.
+            (Binding::Positions(_), Binding::Positions(_)) => false,
             _ => false,
         }
     }

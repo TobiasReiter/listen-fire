@@ -355,7 +355,11 @@ impl Run<'_> {
                     Ok(iterations)
                 }
                 // `deals-[c:company]-> { … }`: the extract's own entities under
-                // that edge, in hand; no host is asked.
+                // that edge, in hand; no host is asked. Its ORDER BY and LIMIT
+                // are not read, as the TypeScript does not read them.
+                Binding::Extracted { .. } if step.expression_filter.is_some() => {
+                    Err(Stop::Thrown(Failure::unsupported("WHERE filters on extract-result block heads", "")))
+                }
                 Binding::Extracted { emission, .. } => Ok(aliased(
                     emission
                         .children_of(&step.edge_type_id)
@@ -417,7 +421,7 @@ impl Run<'_> {
                             let binding = Binding::Value(crate::env::ValueBinding { value, trail: None, many: false });
                             self.head_iterations_from(binding, root, step, scope, span).await
                         }
-                        kind if crate::record::BINDING_KINDS.contains(&kind) => Err(Stop::Thrown(Failure::unsupported(
+                        kind if crate::record::BINDING_KINDS.contains(&kind) => Err(Stop::Thrown(Failure::unreproduced(
                             &format!("a block head rooted at '{root}', a value shaped like {}", crate::record::describe_kind(kind)),
                             "a dict whose `kind` names a binding's is a record to the TypeScript engine",
                         ))),
@@ -659,7 +663,7 @@ impl Run<'_> {
             None => None,
         };
         let plan = order_limit::apply_hop_order_limit(kept.len(), cardinality, keys.as_deref()).map_err(|mixed| {
-            Failure::unsupported(
+            Failure::unreproduced(
                 &format!("ORDER BY over {} records whose keys mix numbers with text or other kinds", mixed.count),
                 "past 64 records the order of mixed keys is the JavaScript sort's own; give the key one kind, or run this movement on the TypeScript engine",
             )
@@ -812,7 +816,7 @@ impl Run<'_> {
             }
             // A pick that found nothing (`top = FIRST(…)`, null).
             Binding::Value(_) => Err(Failure::unsupported(&format!("traversing from a value binding ('{name}')"), "source/handle traversal is E2 scope")),
-            _ => Err(Failure::unsupported(&format!("reading '{name}' in an expression"), "the Rust engine walks from the event, an instance, a handle or a landed record")),
+            _ => Err(Failure::unreproduced(&format!("reading '{name}' in an expression"), "the Rust engine walks from the event, an instance, a handle or a landed record")),
         }
     }
 
@@ -905,7 +909,7 @@ impl Run<'_> {
             let asked = self.clock_now().await.map_err(Failure::into_eval)?;
             *now.borrow_mut() = Some(js_date::to_iso_string(asked));
         }
-        let request = self.compare_request_at(op, &left, &right, if within { now.borrow().clone() } else { None }.as_deref());
+        let request = self.compare_request_at(op, &left, &right, if within { now.borrow().clone() } else { None }.as_deref()).map_err(Failure::into_eval)?;
         let answer = self.ask(request).await.map_err(Failure::into_eval)?.unwrap_or(Json::Null);
         let value = answer
             .get("value")
@@ -973,9 +977,9 @@ impl Run<'_> {
             return self.call_adapter(instance, method, env::object_of(args)).await;
         };
         let (reference, first) = self.positions.borrow_mut().register(object);
-        let value = first.then(|| self.wire.encode(position));
+        let value = if first { Some(self.encode(position)?) } else { None };
         let arg = host::adapters::PositionArg { reference, value };
-        let request = host::adapters::call_at(self.segment(), instance, method, arg, self.wire.encode(&env::object_of(rest)));
+        let request = host::adapters::call_at(self.segment(), instance, method, arg, self.encode(&env::object_of(rest))?);
         self.adapter_answer(self.ask(request).await?)
     }
 }

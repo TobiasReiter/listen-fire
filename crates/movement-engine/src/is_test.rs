@@ -97,7 +97,7 @@ impl Run<'_> {
             Binding::Node(node) => Surface::Node(node.clone()),
             Binding::Extracted { emission, .. } => Surface::Emission(emission.clone()),
             Binding::Event | Binding::Landed(_) | Binding::Handle(_) => {
-                return Err(Failure::unsupported(
+                return Err(Failure::unreproduced(
                     &format!("comparing '{name}' with a declared node"),
                     "its structure is its system's types, which the Rust engine does not compare",
                 ));
@@ -211,7 +211,7 @@ fn misfits(supplied: &Surface, required: &Required) -> Result<bool, Failure> {
             Some(Binding::Node(node)) => Surface::Node(node),
             Some(Binding::Extracted { emission, .. }) => Surface::Emission(emission),
             Some(Binding::Event | Binding::Landed(_) | Binding::Handle(_)) => {
-                return Err(Failure::unsupported(
+                return Err(Failure::unreproduced(
                     &format!("comparing the record under '{name}' with a declared node"),
                     "its structure is its system's types, which the Rust engine does not compare",
                 ));

@@ -129,8 +129,10 @@ pub fn bind_value(value: Js, trail: Option<crate::env::Trail>, many: bool) -> Bi
     }
 }
 
-/// `holdsRecords`: a record anywhere inside the value, through its lists and
-/// maps.
+/// `holdsRecords` (serialize.ts): whether a record — one held as a value,
+/// or a dict `bindingOf` takes for one — is anywhere inside the value,
+/// through its lists and maps; a park writes a value holding one as the
+/// recursive `recordValue` descriptor, and everything else as data.
 pub fn holds_records(value: &Js) -> bool {
     binding_of(value).is_some()
         || match value {

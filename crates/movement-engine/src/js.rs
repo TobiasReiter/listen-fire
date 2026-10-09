@@ -589,9 +589,15 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String) {
     };
     match value {
         Js::Undefined | Js::Null | Js::Function(_) => out.push_str("null"),
-        // Every caller reads a record down to its fields first (TEXT.SERIALISE's
-        // `plainValueOf`, an extraction's context): one never reaches here.
-        Js::Record(_) => out.push_str("{}"),
+        // `JSON.stringify` of the binding object: the event's is
+        // `{kind: 'event'}`. Admission keeps every other record from the one
+        // writer that meets a record as itself (a `from` datum,
+        // `extract_from_record`); the rest read one down to its fields first
+        // (TEXT.SERIALISE's `plainValueOf`, an extraction's context).
+        Js::Record(record) => match record.as_ref() {
+            crate::bindings::Binding::Event => out.push_str(r#"{"kind":"event"}"#),
+            other => unreachable!("admission keeps a record of kind {} from the JSON a prompt writes", crate::record::kind_of(other)),
+        },
         Js::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Js::Number(n) => out.push_str(&if n.is_finite() { number_to_string(*n) } else { "null".into() }),
         Js::String(s) => out.push_str(&json_quote(s)),

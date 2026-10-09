@@ -226,7 +226,7 @@ impl Run<'_> {
     /// reading, priced, and a file that was there but whose bytes could not
     /// be fetched warned of on the run, once per file.
     pub(crate) async fn resolve_file_text(&self, file: &Js) -> Result<Js, Failure> {
-        let request = host::files::resolve_file_text(self.segment(), self.wire.encode(file), self.ledger.budget());
+        let request = host::files::resolve_file_text(self.segment(), self.encode(file)?, self.ledger.budget());
         let answer = self.priced(request).await?;
         super::run::refuse_uncarried(&answer, "a file's text")?;
         if matches!(member(&answer, "unreadable"), Js::String(why) if why == "bytes_unavailable") {

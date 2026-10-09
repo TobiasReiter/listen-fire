@@ -225,7 +225,7 @@ impl Run<'_> {
             return self.local_write(write, &lines, path, node, binding_name, scope).await;
         }
         if write.bind.is_some() {
-            return Err(thrown(Failure::unsupported("a bound write", "the Rust engine runs identity writes")));
+            return Err(thrown(Failure::unreproduced("a bound write", "the Rust engine runs identity writes")));
         }
         match &write.target {
             WriteTarget::Position { root: PathRoot::Name { name }, .. } => {
@@ -236,7 +236,7 @@ impl Run<'_> {
             }
             // Admission refuses it (`write_position_member_path`).
             WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => {
-                return Err(thrown(Failure::unsupported("a write from a member path", "the Rust engine runs writes from a name")));
+                return Err(thrown(Failure::unreproduced("a write from a member path", "the Rust engine runs writes from a name")));
             }
             WriteTarget::Linked { .. } | WriteTarget::Tuple { .. } => {}
         }
@@ -847,10 +847,10 @@ impl Run<'_> {
         let request = host::llm::arbitrate_entities(
             self.segment(),
             host::llm::Arbitration {
-                asserted: self.wire.encode(asserted),
-                candidates: self.wire.encode(&Js::array(candidates.to_vec())),
+                asserted: self.encode(asserted).map_err(Stop::Thrown)?,
+                candidates: self.encode(&Js::array(candidates.to_vec())).map_err(Stop::Thrown)?,
                 record_type,
-                constraints: self.wire.encode(constraints),
+                constraints: self.encode(constraints).map_err(Stop::Thrown)?,
                 language_version: self.version(),
             },
             self.ledger.budget(),
@@ -1306,7 +1306,7 @@ impl Run<'_> {
     /// TypeScript's stand-in raises it (host_adapter.ts `hostCallFailure`):
     /// the shim holds that very error, under the `ref` the error carries.
     pub(crate) async fn call_adapter(&self, instance: &Instance, method: &str, args: Js) -> Result<Js, Failure> {
-        let answer = self.ask(host::adapters::call(self.segment(), instance, method, self.wire.encode(&args))).await?;
+        let answer = self.ask(host::adapters::call(self.segment(), instance, method, self.encode(&args)?)).await?;
         self.adapter_answer(answer)
     }
 

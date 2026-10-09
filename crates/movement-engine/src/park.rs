@@ -217,7 +217,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
                     format!("unhandled binding kind in scope serialisation: {}", crate::js::json_stringify(&Js::Object(dict.clone()), 0)),
                 ));
             }
-            return Err(Failure::unsupported(&format!("parking a value shaped like a record (its kind is '{kind}')"), "a dict whose `kind` names a binding's is a record to the TypeScript engine"));
+            return Err(Failure::unreproduced(&format!("parking a value shaped like a record (its kind is '{kind}')"), "a dict whose `kind` names a binding's is a record to the TypeScript engine"));
         }
         // The extraction ran: its output is data, never run again.
         Binding::Extracted { emission, root, .. } => object_of(vec![
@@ -466,7 +466,7 @@ impl Run<'_> {
     async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
         let address = at.encode();
         let state = suspended_state(self, &address, scope).map_err(Stop::Thrown)?;
-        let request = host::park::commit_suspension(self.segment(), &address, self.wire.encode(&state));
+        let request = host::park::commit_suspension(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?);
         self.ask(request).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Gate { outcome: false });
         Ok(Stop::Parked(address))

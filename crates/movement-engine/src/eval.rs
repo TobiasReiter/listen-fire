@@ -41,6 +41,11 @@ pub enum ErrorClass {
     RangeError,
     /// What JavaScript throws reading a property off nothing.
     TypeError,
+    /// This engine's own refusal of a reading it does not reproduce, raised
+    /// where the TypeScript engine would read on: reported as
+    /// `MOVENG_UNSUPPORTED`, and never forgiven by a collection op's
+    /// `onError`, which forgives only what the TypeScript's member threw.
+    Unreproduced,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +81,11 @@ impl EvalError {
     }
 
     /// `unsupported(construct)`, with no detail.
+    /// This engine's own refusal (`ErrorClass::Unreproduced`).
+    fn unreproduced(construct: &str, detail: &str) -> EvalError {
+        EvalError::Thrown { class: ErrorClass::Unreproduced, message: format!("{construct} is not supported by the movement engine yet ({detail})") }
+    }
+
     fn unsupported_bare(construct: &str) -> EvalError {
         EvalError::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet"))
     }
@@ -646,7 +656,7 @@ impl<'a> Evaluator<'a> {
             keys.push(self.member_key(member, key)?);
         }
         if keys.len() > 64 && crate::order_limit::mixed_kinds(&keys) {
-            return Err(EvalError::unsupported(
+            return Err(EvalError::unreproduced(
                 &format!("SORT over {} members whose keys mix numbers with text or other kinds", keys.len()),
                 "past 64 members the order of mixed keys is the JavaScript sort's own; give the key one kind, or run this movement on the TypeScript engine",
             ));

@@ -66,7 +66,7 @@ pub(crate) fn refuse_uncarried(answer: &Js, what: &str) -> Result<(), Failure> {
     if uncarried.is_empty() {
         return Ok(());
     }
-    Err(Failure::unsupported(
+    Err(Failure::unreproduced(
         &format!("{what} holding a `__proto__` key or a lone surrogate (in {})", uncarried.join(", ")),
         "the Rust engine reads only what its wire carries",
     ))
@@ -240,7 +240,7 @@ impl Firing for FiringScope<'_, '_> {
             // A library's words read the library's own scope, which this
             // engine builds no copy of: admission refuses file imports.
             WordsScope::File(DeclaringFile::Library(path)) => {
-                return Err(thrown(Failure::unsupported(
+                return Err(thrown(Failure::unreproduced(
                     &format!("a description written in the library '{path}'"),
                     "the Rust engine builds no library scope",
                 )));
@@ -397,8 +397,8 @@ impl Run<'_> {
         let request = host::llm::transforms_invoke(
             self.segment(),
             registered,
-            self.wire.encode(&Js::object(JsObject::clone_of(config))),
-            self.wire.encode(&Js::object(JsObject::clone_of(extracted_context))),
+            self.encode(&Js::object(JsObject::clone_of(config)))?,
+            self.encode(&Js::object(JsObject::clone_of(extracted_context)))?,
             self.ledger.budget(),
         );
         let answer = self.priced(request).await?;

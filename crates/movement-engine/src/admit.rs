@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use movement_parser::ast::{
-    self, ArmExpression, AwaitSource, CallArg, CallStatement, CollectionOpExpression, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef,
+    self, ArmExpression, CollectionOp, AwaitSource, CallArg, CallStatement, CollectionOpExpression, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef,
     PathHead, PathRoot, RValue, Statement, TraversalBlock, WriteExpression, WriteTarget,
 };
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
@@ -293,6 +293,8 @@ pub fn refusals(
                 unknown_calls: &[],
                 in_callee: false,
                 language_version,
+                value_holders: &callees.file_holders,
+                record_nodes: &none,
             };
             reasons.noted(names.rvalue(value));
         }
@@ -323,6 +325,8 @@ pub fn refusals(
         unknown_calls: &[],
         in_callee: false,
         language_version,
+        value_holders: &callees.file_holders,
+        record_nodes: &none,
     };
     for statement in &program.statements {
         if let Statement::Shape(shape) = statement {
@@ -361,6 +365,7 @@ pub fn refusals(
             reasons.note("name_rebound");
         }
         let values = bound.values.union(&file_values).cloned().collect();
+        let value_holders = bound.value_holders();
         let names = Names {
             reasons: &reasons,
             events: &events,
@@ -383,6 +388,8 @@ pub fn refusals(
             unknown_calls: &bound.unknown_calls,
             in_callee: walk.called,
             language_version,
+            value_holders: &value_holders,
+            record_nodes: &bound.record_nodes,
         };
         names.body(&movement.body, Within::Body);
     }
@@ -691,6 +698,25 @@ fn rvalue_kind(value: &RValue) -> &'static str {
 /// The program's movements as callees: which one a call names, which of its
 /// parameters take a value, and what it hands back under what a call passes
 /// (each worked out once).
+/// What each file-level binding holds: an instance is a system's, a value
+/// is free of records when what it reads is (the file's values before it).
+fn file_holders(program: &ast::Program) -> BTreeMap<String, Holder> {
+    let mut holders: BTreeMap<String, Holder> = BTreeMap::new();
+    for statement in &program.statements {
+        let Statement::Assign(assign) = statement else { continue };
+        let holder = match &assign.value {
+            RValue::Construct { .. } => Holder::Record,
+            RValue::Expr { expr } => match lowered(&expr.raw) {
+                Ok(expr) if !may_hold_record(&expr, &|name| holders.get(name).copied().unwrap_or(Holder::Other)) => Holder::Free,
+                _ => Holder::Other,
+            },
+            _ => Holder::Other,
+        };
+        holders.insert(assign.name.clone(), holder);
+    }
+    holders
+}
+
 struct Callees<'p> {
     movements: Vec<&'p ast::MovementDeclaration>,
     plugin_binds: &'p BTreeMap<String, PluginBinds>,
@@ -705,6 +731,8 @@ struct Callees<'p> {
     /// The record kinds a value may hold at run time: a kept walk only where
     /// the program keeps one.
     held_kinds: Vec<Kind>,
+    /// What each file-level binding holds, as far as a record goes.
+    file_holders: BTreeMap<String, Holder>,
 }
 
 impl<'p> Callees<'p> {
@@ -733,7 +761,8 @@ impl<'p> Callees<'p> {
         }
         let keeps_walks = movements.iter().any(|m| holds_lazy(m));
         let held_kinds = HELD_KINDS.iter().copied().filter(|k| *k != Kind::Lazy || keeps_walks).collect();
-        Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default(), held_kinds }
+        let file_holders = file_holders(program);
+        Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default(), held_kinds, file_holders }
     }
 
     /// The movement declared as `name`, exactly.
@@ -764,22 +793,46 @@ impl<'p> Callees<'p> {
         }
     }
 
+    /// Whether a parameter that takes a value takes one the checker holds to
+    /// a type that is never a record: a scalar but `json`, a literal union,
+    /// a `type` the file declares.
+    fn takes_plain_value(&self, param: &ast::MovementParam) -> bool {
+        match &param.type_ {
+            Some(ParamTypeRef::Value(_)) => true,
+            Some(ParamTypeRef::Name(type_)) if type_.hops_raw.is_none() => match movement_parser::catalog::helpers::parse_field_type_name(Some(&type_.graph)) {
+                Some(movement_parser::catalog::types::FieldType::Scalar(movement_parser::catalog::types::Scalar::Json)) => false,
+                Some(_) => true,
+                None => self.types.contains(&type_.graph),
+            },
+            _ => false,
+        }
+    }
+
     /// The names a movement binds, its parameters bound as `signature` says.
     fn bound(&'p self, movement: &ast::MovementDeclaration, signature: &[Kind], stack: Vec<(String, Signature)>) -> Bound<'p> {
-        let mut bound = Bound { plugin_binds: self.plugin_binds.clone(), callees: Some(self), stack, ..Bound::default() };
-        for (param, kind) in movement.params.iter().zip(signature) {
-            match kind {
-                Kind::Event => {
-                    bound.events.insert(param.name.clone());
-                }
-                kind => {
-                    bound.hold(&param.name, *kind);
-                    bound.params.push((param.name.clone(), *kind));
+        let walk = |record_nodes: BTreeSet<String>| {
+            let mut bound = Bound { plugin_binds: self.plugin_binds.clone(), callees: Some(self), stack: stack.clone(), record_nodes, ..Bound::default() };
+            for (param, kind) in movement.params.iter().zip(signature) {
+                match kind {
+                    Kind::Event => {
+                        bound.events.insert(param.name.clone());
+                    }
+                    kind => {
+                        bound.hold(&param.name, *kind);
+                        bound.params.push((param.name.clone(), *kind));
+                        if *kind == Kind::Value && self.takes_plain_value(param) {
+                            bound.plain_params.insert(param.name.clone());
+                        }
+                    }
                 }
             }
-        }
-        bound.collect(&movement.body, &[]);
-        bound
+            bound.collect(&movement.body, &[]);
+            bound
+        };
+        // A node a later write fills with a record holds one from the start,
+        // as far as what reads it may hold: walked again knowing which.
+        let first = walk(BTreeSet::new());
+        if first.record_nodes.is_empty() { first } else { walk(first.record_nodes) }
     }
 
     /// What a movement hands back under `signature`: the one kind its
@@ -869,6 +922,15 @@ struct Bound<'c> {
     /// scope: a member, of whatever kind it is (`Names::collection_op`).
     member_params: Vec<(String, Vec<usize>)>,
     scopes: usize,
+    /// What each value the body binds holds, as far as a record goes: the
+    /// widest of its bindings.
+    value_holders: BTreeMap<String, Holder>,
+    /// What each collection op's parameter holds: a member of its source.
+    param_holders: BTreeMap<String, Holder>,
+    /// The parameters that take a value the checker types as never a record.
+    plain_params: BTreeSet<String>,
+    /// Nodes whose literal holds a record in a field (or may).
+    record_nodes: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -957,8 +1019,12 @@ impl<'c> Bound<'c> {
         match &op.r#fn {
             ArmExpression::Closure { closure, .. } => {
                 let inner = self.enter(scope);
-                for param in &closure.params {
+                let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
+                for (index, param) in closure.params.iter().enumerate() {
                     self.member_params.push((param.name.clone(), inner.clone()));
+                    let held = param_holder(op.op, index, member);
+                    let joined = self.param_holders.get(&param.name).map_or(held, |h| h.join(held));
+                    self.param_holders.insert(param.name.clone(), joined);
                 }
                 self.blocks += 1;
                 self.collect(&closure.body, &inner);
@@ -1013,6 +1079,9 @@ impl<'c> Bound<'c> {
                             if node.graph.is_some() {
                                 self.graphs.insert(assign.name.clone());
                             }
+                            if !self.literal_free(node) {
+                                self.record_nodes.insert(assign.name.clone());
+                            }
                             Kind::Node
                         }
                         RValue::Extract { .. } => Kind::Extracted,
@@ -1027,15 +1096,46 @@ impl<'c> Bound<'c> {
                         }
                         _ => Kind::Value,
                     };
+                    if kind == Kind::Value {
+                        let op = self.rvalue_collection(&assign.value);
+                        let holder = match &assign.value {
+                            _ if let Some(op) = &op => self.collection_holder(op),
+                            // Read once the block's own names are bound, below.
+                            RValue::Block { .. } => Holder::Free,
+                            RValue::Expr { expr } => self.holds(&expr.raw),
+                            RValue::Call { call } if self.plugin_kind(&call.callee).is_none() => call.expression.as_ref().map_or(Holder::Other, |e| self.holds(&e.raw)),
+                            // A plugin's value output is its text; a type's members
+                            // are its words.
+                            RValue::Call { .. } | RValue::Construct { .. } | RValue::Members { .. } => Holder::Free,
+                            _ => Holder::Other,
+                        };
+                        let joined = self.value_holders.get(&assign.name).map_or(holder, |h| h.join(holder));
+                        self.value_holders.insert(assign.name.clone(), joined);
+                    }
                     self.bind(&assign.name, kind, scope);
+                    if let RValue::Write { write } = &assign.value
+                        && self.local_write_holds_record(write)
+                    {
+                        self.record_nodes.insert(assign.name.clone());
+                    }
                     match &assign.value {
                         RValue::Write { write } => self.target_alias(&write.target, scope),
                         RValue::Match { r#match } => self.target_alias(&r#match.target, scope),
-                        RValue::Block { block } => self.block(block, scope),
+                        RValue::Block { block } => {
+                            self.block(block, scope);
+                            if kind == Kind::Value {
+                                let held = self.returned_holder(&block.body);
+                                let joined = self.value_holders.get(&assign.name).map_or(held, |h| h.join(held));
+                                self.value_holders.insert(assign.name.clone(), joined);
+                            }
+                        }
                         _ => {}
                     }
                 }
-                Statement::Write(statement) => self.target_alias(&statement.write.target, scope),
+                Statement::Write(statement) => {
+                    self.local_write_holds_record(&statement.write);
+                    self.target_alias(&statement.write.target, scope)
+                }
                 Statement::Match(statement) => self.target_alias(&statement.r#match.target, scope),
                 Statement::Call(call) if self.callee(&call.callee).is_some() => {
                     self.call_kind(call);
@@ -1221,6 +1321,28 @@ impl<'c> Bound<'c> {
 
     /// A write's or a match's target rooted at a node the run built, or at
     /// what one's edge holds: it binds the landing, not a handle.
+    /// Whether a write into a node this run built holds a record in a
+    /// field: the node it lands in then holds one (its root marked so).
+    fn local_write_holds_record(&mut self, write: &WriteExpression) -> bool {
+        if !self.into_node(&write.target) {
+            return false;
+        }
+        let spreads = write.spreads.iter().flatten().any(|spread| spread.path.is_some() || self.holder(&spread.source) == Holder::Other);
+        if !spreads && write.fields.iter().all(|field| self.reads_free(&field.value.raw)) {
+            return false;
+        }
+        let root = match &write.target {
+            WriteTarget::Linked { path, .. } => match &path.root {
+                Some(PathRoot::Name { name }) => name.clone(),
+                _ => return true,
+            },
+            WriteTarget::Position { root: PathRoot::Name { name }, .. } => name.clone(),
+            _ => return true,
+        };
+        self.record_nodes.insert(root);
+        true
+    }
+
     fn into_node(&self, target: &WriteTarget) -> bool {
         let root = match target {
             WriteTarget::Linked { path, .. } => match &path.root {
@@ -1231,6 +1353,164 @@ impl<'c> Bound<'c> {
             _ => return false,
         };
         self.nodes.contains(root) || self.members.contains(root)
+    }
+
+    /// What `name` holds here, as far as a record goes.
+    fn holder(&self, name: &str) -> Holder {
+        if self.member_params.iter().any(|(n, _)| n == name) {
+            return self.param_holders.get(name).copied().unwrap_or(Holder::Other);
+        }
+        if self.values.contains(name) {
+            if self.plain_params.contains(name) {
+                return Holder::Free;
+            }
+            let param = self.params.iter().any(|(n, _)| n == name);
+            return if param { Holder::Other } else { self.value_holders.get(name).copied().unwrap_or(Holder::Other) };
+        }
+        if self.record_nodes.contains(name) {
+            return Holder::Other;
+        }
+        // The event's binding object is plain data (`{kind: 'event'}`),
+        // carried as itself.
+        if self.events.contains(name) || self.event_aliases.contains(name) {
+            return Holder::Free;
+        }
+        let records = [&self.handles, &self.landings, &self.instances, &self.nodes, &self.members, &self.extracts, &self.graphs, &self.lazies];
+        if records.iter().any(|set| set.contains(name)) {
+            return Holder::Record;
+        }
+        if self.binds_here(name) {
+            return Holder::Other;
+        }
+        // A name nothing binds reads as nothing: the read fails on both
+        // engines before any request is made.
+        match self.callees {
+            Some(callees) if callees.file_scope.contains(name) => callees.file_holders.get(name).copied().unwrap_or(Holder::Other),
+            _ => Holder::Free,
+        }
+    }
+
+    /// Whether the body binds `name` (as anything).
+    fn binds_here(&self, name: &str) -> bool {
+        self.sites.iter().any(|(n, _, _)| n == name) || self.member_params.iter().any(|(n, _)| n == name) || self.params.iter().any(|(n, _)| n == name)
+    }
+
+    /// What a bound block hands back: the list of what its iterations
+    /// return.
+    fn returned_holder(&self, body: &[Statement]) -> Holder {
+        match self.returns_holder(body) {
+            Holder::Free => Holder::Free,
+            Holder::Record => Holder::List,
+            _ => Holder::Other,
+        }
+    }
+
+    /// What each `return` of a body hands back, widened: free of records,
+    /// one record whose fields are, or anything.
+    fn returns_holder(&self, body: &[Statement]) -> Holder {
+        let mut returned = Holder::Free;
+        let mut returns = Vec::new();
+        returns_of(body, &mut returns);
+        for value in returns {
+            let one = match value {
+                RValue::Expr { expr } => lowered(&expr.raw).map_or(Holder::Other, |e| match &e {
+                    Expression::AliasRef { name } | Expression::Property { property_type_id: name } if self.holder(name) == Holder::Record => Holder::Record,
+                    other if !may_hold_record(other, &|name| self.holder(name)) => Holder::Free,
+                    _ => Holder::Other,
+                }),
+                RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Holder::Record,
+                _ => Holder::Other,
+            };
+            returned = match (returned, one) {
+                (Holder::Free, Holder::Free) => Holder::Free,
+                (Holder::Free | Holder::Record, Holder::Free | Holder::Record) => Holder::Record,
+                _ => Holder::Other,
+            };
+        }
+        returned
+    }
+
+    /// What a collection op hands back, as far as a record goes: a MAP the
+    /// list of what its function returns, a FILTER its source's members.
+    fn collection_holder(&self, op: &CollectionOpExpression) -> Holder {
+        let source = lowered(&op.source.raw).map_or(Holder::Other, |s| member_holder(&s, &|name| self.holder(name)));
+        let ArmExpression::Closure { closure, .. } = &op.r#fn else { return Holder::Other };
+        let returned = self.returns_holder(&closure.body);
+        let list = |member: Holder| match member {
+            Holder::Free => Holder::Free,
+            Holder::Record => Holder::List,
+            _ => Holder::Other,
+        };
+        let init = op.init.as_ref().map_or(Holder::Free, |init| self.holds(&init.raw));
+        match op.op {
+            CollectionOp::Map => list(returned),
+            CollectionOp::Filter => list(source),
+            // What the last member's call returned, or the initial value.
+            CollectionOp::Reduce if init == Holder::Free && returned == Holder::Free => Holder::Free,
+            // Each member under the key its function returned.
+            CollectionOp::Keyby => match source {
+                Holder::Free => Holder::Free,
+                Holder::Record => Holder::Map { depth: 1, lists: false },
+                _ => Holder::Other,
+            },
+            _ if source == Holder::Free && returned == Holder::Free => Holder::Free,
+            _ => Holder::Other,
+        }
+    }
+
+    /// Whether a node literal's fields, at any depth, hold no record.
+    fn literal_free(&self, node: &NodeLiteral) -> bool {
+        self.literal_free_with(node, &BTreeSet::new())
+    }
+
+    /// `literal_free`, with `aliases` (a traversal entry's hop aliases) each
+    /// one record landed on.
+    fn literal_free_with(&self, node: &NodeLiteral, aliases: &BTreeSet<String>) -> bool {
+        let holder = |name: &str| if aliases.contains(name) { Holder::Record } else { self.holder(name) };
+        let free = |raw: &str| lowered(raw).is_ok_and(|expr| value_holder(&expr, &holder) == Holder::Free);
+        let spreads = node.spreads.iter().flatten().all(|spread| spread.path.is_none() && holder(&spread.source) != Holder::Other);
+        spreads
+            && node.entries.iter().all(|entry| match entry {
+                // A graph names a record by reference: it lands on the edge
+                // (`referencedRecords`), not in a field.
+                NodeEntry::Value { value, .. } if node.graph.is_some() && holder(crate::js::trim(&value.raw)) == Holder::Record => true,
+                NodeEntry::Value { value, .. } => free(&value.raw),
+                NodeEntry::Nodes { nodes, .. } => nodes.iter().all(|n| self.literal_free_with(n, aliases)),
+                NodeEntry::Traversal { head, mapping, .. } => mapping.as_ref().is_none_or(|m| {
+                    let mut inner = aliases.clone();
+                    inner.extend(crate::traverse::head_step(head).ok().and_then(|step| step.alias));
+                    self.literal_free_with(m, &inner)
+                }),
+                NodeEntry::Declared { .. } => true,
+            })
+    }
+
+    /// Whether an expression slot's value holds no record.
+    fn reads_free(&self, raw: &str) -> bool {
+        self.holds(raw) == Holder::Free
+    }
+
+    /// What a value bound to an expression slot holds.
+    fn holds(&self, raw: &str) -> Holder {
+        lowered(raw).map_or(Holder::Other, |expr| value_holder(&expr, &|name| self.holder(name)))
+    }
+
+    /// What each value holds, for the walk of the body: the file's values
+    /// the body does not rebind, and the body's own but its parameters.
+    fn value_holders(&self) -> BTreeMap<String, Holder> {
+        let mut holders: BTreeMap<String, Holder> = self.value_holders.clone();
+        for name in self.params.iter().map(|(n, _)| n).chain(self.member_params.iter().map(|(n, _)| n)) {
+            holders.remove(name);
+        }
+        holders.extend(self.plain_params.iter().map(|n| (n.clone(), Holder::Free)));
+        if let Some(callees) = self.callees {
+            for (name, holder) in &callees.file_holders {
+                if !self.binds_here(name) {
+                    holders.insert(name.clone(), *holder);
+                }
+            }
+        }
+        holders
     }
 
     fn enter(&mut self, scope: &[usize]) -> Vec<usize> {
@@ -1345,6 +1625,11 @@ struct Names<'n> {
     /// The body runs as a callee: a park inside it would need a call frame.
     in_callee: bool,
     language_version: u32,
+    /// What each value (of `values`) holds, as far as a record goes; one
+    /// not here may hold anything.
+    value_holders: &'n BTreeMap<String, Holder>,
+    /// The nodes whose literal holds a record in a field (or may).
+    record_nodes: &'n BTreeSet<String>,
 }
 
 impl Names<'_> {
@@ -1732,7 +2017,16 @@ impl Names<'_> {
                     without(self.extracts),
                     without(self.graphs),
                 );
+                // A member of a source free of records is free of them; a
+                // REDUCE's accumulator is what the function returned.
+                let mut value_holders = self.value_holders.clone();
+                for param in &params {
+                    value_holders.remove(param);
+                }
+                let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
+                value_holders.extend(closure.params.iter().enumerate().map(|(index, p)| (p.name.clone(), param_holder(op.op, index, member))));
                 let member = Names {
+                    value_holders: &value_holders,
                     values: &values,
                     events: &events,
                     handles: &handles,
@@ -1817,6 +2111,7 @@ impl Names<'_> {
         for arg in args {
             let Some(slot) = arg else { return refuse("plugin_call_form") };
             self.slot(slot)?;
+            self.plugin_arg(slot)?;
         }
         Ok(())
     }
@@ -1831,6 +2126,12 @@ impl Names<'_> {
             return refuse("extract_tier");
         }
         extract.from.iter().try_for_each(|slot| self.slot(slot))?;
+        // A `from` datum is written into the prompt as `JSON.stringify` writes
+        // it: the event's binding object is `{"kind":"event"}`, and every
+        // other record's holds what only the TypeScript engine has.
+        if extract.from.iter().any(|slot| self.may_hold_record_slot(slot)) {
+            return refuse("extract_from_record");
+        }
         self.extract_stages(&extract.stages)
     }
 
@@ -1849,6 +2150,7 @@ impl Names<'_> {
                         continue;
                     }
                     self.slot(&arg.value)?;
+                    self.plugin_arg(&arg.value)?;
                 }
             }
             for field in &stage.fields {
@@ -1952,7 +2254,38 @@ impl Names<'_> {
         }
         // A spread is its field lines, `f: e.f` per field the checker stamped
         // (`expandWriteSpreads`): reads of whatever `e` (or `m.k`) holds.
-        write.fields.iter().try_for_each(|field| self.slot(&field.value))
+        write.fields.iter().try_for_each(|field| self.slot(&field.value))?;
+        if !self.writes_into_node(&write.target) {
+            self.system_fields(&write.fields, write.spreads.as_deref().unwrap_or_default())?;
+        }
+        Ok(())
+    }
+
+    /// Whether a write lands in a node this run built (no system is asked).
+    fn writes_into_node(&self, target: &WriteTarget) -> bool {
+        let root = match target {
+            WriteTarget::Linked { path, .. } => match &path.root {
+                Some(PathRoot::Name { name }) => name,
+                _ => return false,
+            },
+            WriteTarget::Position { root: PathRoot::Name { name }, .. } => name,
+            _ => return false,
+        };
+        self.nodes.contains(root) || self.members.contains(root)
+    }
+
+    /// The fields a write or a match hands a system's adapter: the
+    /// TypeScript hands it a record as the binding object itself, which no
+    /// request of this engine's carries.
+    fn system_fields(&self, fields: &[ast::FieldEntry], spreads: &[ast::WriteSpread]) -> Admitted {
+        if fields.iter().any(|field| self.may_hold_record_slot(&field.value)) {
+            return refuse("write_field_record");
+        }
+        // A spread of a value reads that value's members' fields.
+        if spreads.iter().any(|spread| spread.path.is_none() && self.holder(&spread.source) == Holder::Other && self.values.contains(&spread.source)) {
+            return refuse("write_field_record");
+        }
+        Ok(())
     }
 
     /// A write's or a match's linked target: one edge off an instance, a
@@ -1986,7 +2319,8 @@ impl Names<'_> {
         for clause in &m.unique_by {
             unique_clause(&clause.predicate.raw)?;
         }
-        m.fields.iter().try_for_each(|field| self.slot(&field.value))
+        m.fields.iter().try_for_each(|field| self.slot(&field.value))?;
+        self.system_fields(&m.fields, &[])
     }
 
     /// `link a -[:e]-> b` or `link a -[:e]-> { match body }`: the endpoints
@@ -2224,6 +2558,10 @@ impl Names<'_> {
                 if !FUNCTIONS.contains(&fn_.as_str()) {
                     return refuse(format!("function:{fn_}"));
                 }
+                // A reading handed back carries its arguments to the host.
+                if HANDED_BACK.contains(&fn_.as_str()) && args.iter().any(|arg| holds_record(arg, &|name| self.holder(name), scoped)) {
+                    return refuse("builtin_arg_record");
+                }
                 each(args)
             }
             other => refuse(format!("expression:{}", crate::eval::kind_of(other))),
@@ -2232,6 +2570,47 @@ impl Names<'_> {
 }
 
 impl Names<'_> {
+    /// What `name` holds here, as far as a record goes.
+    fn holder(&self, name: &str) -> Holder {
+        if self.values.contains(name) {
+            return self.value_holders.get(name).copied().unwrap_or(Holder::Other);
+        }
+        if self.record_nodes.contains(name) {
+            return Holder::Other;
+        }
+        // The event's binding object is plain data (`{kind: 'event'}`),
+        // carried as itself.
+        if self.events.contains(name) {
+            return Holder::Free;
+        }
+        let records = [self.handles, self.landings, self.nodes, self.members, self.extracts, self.graphs, self.lazies];
+        if records.iter().any(|set| set.contains(name)) || self.instances.contains(name) {
+            return Holder::Record;
+        }
+        // A name nothing binds reads as nothing: the read fails on both
+        // engines before any request is made.
+        if self.file_names.contains(name) { Holder::Other } else { Holder::Free }
+    }
+
+    /// Whether a slot's value may hold a record (one it does not lower to
+    /// is refused where it is walked).
+    fn may_hold_record_slot(&self, slot: &ExprSlot) -> bool {
+        lowered(&slot.raw).map_or(true, |expr| may_hold_record(&expr, &|name| self.holder(name)))
+    }
+
+    /// A plugin's argument: one record reads as its fields
+    /// (`recordFields`); a record anywhere inside a list or a map is handed
+    /// to the plugin as the binding object itself, which this engine's
+    /// wire does not carry.
+    fn plugin_arg(&self, slot: &ExprSlot) -> Admitted {
+        let Ok(expr) = lowered(&slot.raw) else { return Ok(()) };
+        let one_record = match &expr {
+            Expression::AliasRef { name } | Expression::Property { property_type_id: name } if !self.values.contains(name) => !self.lazies.contains(name),
+            other => selection(other).is_some() || value_holder(other, &|name| self.holder(name)) == Holder::Record,
+        };
+        if !one_record && may_hold_record(&expr, &|name| self.holder(name)) { refuse("plugin_arg_record") } else { Ok(()) }
+    }
+
     /// A bare name bound to something that is not a value.
     fn bound_non_value(&self, expr: &Expression) -> bool {
         let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = expr else { return false };
@@ -2255,6 +2634,246 @@ impl Names<'_> {
         }
     }
 }
+
+/// What a name holds, as far as a value it reaches may hold a record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Holder {
+    /// A value known never to hold a record: what it was bound to holds
+    /// none (literals, a system record's fields, the built-ins over those,
+    /// the event's binding object, which is plain data).
+    Free,
+    /// One record whose fields hold no record: a system's (a handle, a
+    /// landed record, an instance; its fields are the host's data), an
+    /// extraction's entity, a plugin's record, a node whose literal and
+    /// local writes hold no record.
+    Record,
+    /// A map holding records of the kind above (or lists of them, `lists`)
+    /// no deeper than `depth` keys (`held = { k: co }` is 1): a read that
+    /// many keys deep may be a record, a read deeper is a field of one.
+    Map { depth: u8, lists: bool },
+    /// A list whose members are each free of records or one record of that
+    /// kind (a walk read as its records, `[co]`, what a MAP returning `c`
+    /// hands back): a member may be a record, a field of one is not.
+    List,
+    /// Anything else: a value that may hold records in ways not followed
+    /// here, or a node whose literal (or a local write) holds one.
+    Other,
+}
+
+impl Holder {
+    /// What a name bound more than once holds: the widest of its bindings.
+    fn join(self, other: Holder) -> Holder {
+        match (self, other) {
+            (a, b) if a == b => a,
+            (Holder::Map { depth: a, lists: x }, Holder::Map { depth: b, lists: y }) => Holder::Map { depth: a.max(b), lists: x || y || a != b },
+            (Holder::Free, wide @ (Holder::Map { .. } | Holder::List)) | (wide @ (Holder::Map { .. } | Holder::List), Holder::Free) => wide,
+            _ => Holder::Other,
+        }
+    }
+}
+
+/// What each member of the list `expr` holds (a collection op's
+/// parameter): free of records, one record whose fields are, or anything.
+fn member_holder(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> Holder {
+    if !may_hold_record(expr, holder) {
+        return Holder::Free;
+    }
+    let one = |e: &Expression| match e {
+        Expression::AliasRef { name } | Expression::Property { property_type_id: name } => holder(name) == Holder::Record,
+        other => !may_hold_record(other, holder),
+    };
+    match expr {
+        Expression::AliasRef { name } | Expression::Property { property_type_id: name } if matches!(holder(name), Holder::List | Holder::Map { depth: 1, .. }) => Holder::Record,
+        // A read as deep as a map holds its records: one, or a list of them.
+        Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && field_read(expression) => match holder(root) {
+            Holder::Map { depth, .. } if read_depth(expression) == usize::from(depth) => Holder::Record,
+            _ => Holder::Other,
+        },
+        Expression::Traverse { .. } if records_walk_off_record(expr, holder) => Holder::Record,
+        Expression::List { elements } if elements.iter().all(|e| matches!(e, ListElement::Expression(e) if one(e))) => Holder::Record,
+        Expression::Aggregate { fn_: AggregationFunction::Sort | AggregationFunction::Collect, expression, .. } => member_holder(expression, holder),
+        _ => Holder::Other,
+    }
+}
+
+/// A walk read as the records it lands on, off a record (or a value):
+/// each landing is a system's record, or a node's edge's.
+fn records_walk_off_record(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> bool {
+    match expr {
+        Expression::Traverse { alias_root: Some(root), steps, expression } => {
+            !steps.is_empty() && !field_read(expression) && !matches!(expression.as_ref(), Expression::Exists { .. }) && matches!(holder(root), Holder::Record | Holder::Free)
+        }
+        _ => false,
+    }
+}
+
+/// What a collection op's function's parameter at `index` holds: the
+/// member (a REDUCE's second), else what is not followed here (a REDUCE's
+/// accumulator).
+fn param_holder(op: CollectionOp, index: usize, member: Holder) -> Holder {
+    match (op, index) {
+        (CollectionOp::Reduce, 1) => member,
+        (CollectionOp::Reduce, _) => Holder::Other,
+        _ => member,
+    }
+}
+
+/// The values a body's `return`s hand back, its `if` arms' included (not a
+/// nested block's iterations').
+fn returns_of<'s>(body: &'s [Statement], out: &mut Vec<&'s RValue>) {
+    for statement in body {
+        match statement {
+            Statement::Return(ret) => out.push(&ret.value),
+            Statement::If(statement) => {
+                for arm in &statement.arms {
+                    returns_of(&arm.body, out);
+                }
+                if let Some(arm) = &statement.else_arm {
+                    returns_of(&arm.body, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// What a value bound to `expr` holds, given what the names it reads hold.
+fn value_holder(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> Holder {
+    if !may_hold_record(expr, holder) {
+        return Holder::Free;
+    }
+    // One member picked off such a list (or such a map) is one such record.
+    if let Expression::Aggregate { fn_: AggregationFunction::First | AggregationFunction::Last | AggregationFunction::Only, expression, .. } | Expression::At { expression, .. } = expr
+        && member_holder(expression, holder) == Holder::Record
+    {
+        return Holder::Record;
+    }
+    if let Expression::AliasRef { name } | Expression::Property { property_type_id: name } = expr {
+        return match holder(name) {
+            wide @ (Holder::Map { .. } | Holder::List | Holder::Record) => wide,
+            _ => Holder::Other,
+        };
+    }
+    if let Expression::Traverse { alias_root: Some(root), steps, expression } = expr
+        && steps.is_empty()
+        && field_read(expression)
+        && let Holder::Map { depth, lists } = holder(root)
+    {
+        let read = read_depth(expression);
+        return match read.cmp(&usize::from(depth)) {
+            std::cmp::Ordering::Less => Holder::Map { depth: depth - read as u8, lists },
+            // A record, or a list of them: read alike but as one record.
+            std::cmp::Ordering::Equal if lists => Holder::List,
+            std::cmp::Ordering::Equal => Holder::Record,
+            std::cmp::Ordering::Greater => Holder::Free,
+        };
+    }
+    if member_holder(expr, holder) == Holder::Record {
+        return Holder::List;
+    }
+    map_depth(expr, holder).map_or(Holder::Other, |(depth, lists)| Holder::Map { depth, lists })
+}
+
+/// How many keys deep a map literal holds a record (`{ k: co }` is 1), when
+/// each member is free of records, one record, or such a map.
+fn map_depth(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> Option<(u8, bool)> {
+    let Expression::Object { entries } = expr else { return None };
+    let mut depths: Vec<u8> = Vec::new();
+    let mut lists = false;
+    for entry in entries {
+        let ObjectMember::Entry { value, .. } = entry else { return None };
+        let member = match value_holder(value, holder) {
+            Holder::Free => continue,
+            Holder::Record => 1,
+            Holder::List => {
+                lists = true;
+                1
+            }
+            Holder::Map { depth, lists: inner } => {
+                lists |= inner;
+                depth.checked_add(1)?
+            }
+            Holder::Other => return None,
+        };
+        depths.push(member);
+    }
+    let depth = *depths.iter().max()?;
+    // Records at two depths: a read at the shallower is a map holding them.
+    Some((depth, lists || depths.iter().any(|d| *d != depth)))
+}
+
+/// How many keys a field read reads (`m.k` 1, `m.k.f` 2).
+fn read_depth(terminal: &Expression) -> usize {
+    match terminal {
+        Expression::Traverse { alias_root: Some(_), steps, expression } if steps.is_empty() => 1 + read_depth(expression),
+        _ => 1,
+    }
+}
+
+/// Whether `expr`'s value may hold a record (`Js::Record`) — itself, or
+/// inside its lists and maps. A request carries no record the TypeScript
+/// engine would hand its host as the binding object, so admission refuses
+/// one where a request would take it.
+fn may_hold_record(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> bool {
+    holds_record(expr, holder, false)
+}
+
+/// The built-ins that hand back one of their arguments (or a list of them).
+const PASSING: [&str; 2] = ["coalesce", "multi"];
+
+/// `may_hold_record`, `scoped` at a landed record: there a bare name reads
+/// the record's field (a hop's WHERE, its ORDER BY key).
+fn holds_record(expr: &Expression, holder: &dyn Fn(&str) -> Holder, scoped: bool) -> bool {
+    let at = |e: &Expression| holds_record(e, holder, scoped);
+    match expr {
+        Expression::Property { .. } | Expression::EdgeProperty { .. } if scoped => false,
+        Expression::AliasRef { name } | Expression::Property { property_type_id: name } => holder(name) != Holder::Free,
+        Expression::Traverse { expression, .. } if matches!(expression.as_ref(), Expression::Exists { .. }) => false,
+        // A field read, or a walk read for a field: the root's fields; a
+        // map's member, or a field read off one.
+        Expression::Traverse { alias_root: Some(root), steps, expression } if field_read(expression) => match holder(root) {
+            Holder::Free | Holder::Record => false,
+            Holder::Map { depth, .. } => !steps.is_empty() || read_depth(expression) <= usize::from(depth),
+            Holder::List => !steps.is_empty(),
+            Holder::Other => true,
+        },
+        // A walk read as the records it lands on.
+        Expression::Traverse { .. } => true,
+        Expression::Aggregate { fn_: AggregationFunction::Count | AggregationFunction::Sum | AggregationFunction::Avg | AggregationFunction::Join, .. } => false,
+        Expression::Aggregate { expression, .. } => at(expression),
+        Expression::Static { .. } | Expression::Meta { .. } => false,
+        Expression::Compare { .. } | Expression::Logical { .. } | Expression::Not { .. } | Expression::Negate { .. } | Expression::Arithmetic { .. } | Expression::Concat { .. } => false,
+        Expression::At { expression, .. } => at(expression),
+        Expression::Conditional { then, else_, .. } => at(then) || at(else_),
+        Expression::List { elements } => elements.iter().any(|element| match element {
+            ListElement::Expression(e) => at(e),
+            ListElement::Spread(spread) => at(&spread.expression),
+        }),
+        Expression::Object { entries } => entries.iter().any(|member| match member {
+            ObjectMember::Entry { value, .. } => at(value),
+            ObjectMember::Spread(spread) => at(&spread.expression),
+        }),
+        // The rest answer text, a number, a flag or a list of texts.
+        Expression::Function { fn_, args } => PASSING.contains(&fn_.as_str()) && args.iter().any(at),
+        _ => true,
+    }
+}
+
+/// A walk or a field read ending in a field (at any depth of `m.k.f`); a
+/// walk read as its records ends in the position sentinel instead.
+fn field_read(terminal: &Expression) -> bool {
+    match terminal {
+        Expression::Property { property_type_id } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
+        Expression::EdgeProperty { .. } => true,
+        Expression::Traverse { alias_root: Some(_), expression, .. } => field_read(expression),
+        _ => false,
+    }
+}
+
+/// The built-ins whose reading this engine may hand back to the TypeScript
+/// member (`builtins.function`) on what their arguments hold: a date V8
+/// reads its own way, a regex feature, astral text.
+const HANDED_BACK: [&str; 7] = ["split", "date", "datetime", "date.add_days", "date.format", "date.format_iso", "text.regex_extract"];
 
 /// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` of a bare walk, its root and
 /// hops.
@@ -2876,6 +3495,46 @@ mod tests {
         // its call.
         let unknown = movement_parser::stmt::parse_program(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  page = fetch_url(url: \"x\")\n}}"), 3, false).unwrap();
         assert_eq!(refusal(&unknown, 3, &Plugins(None)).as_deref(), Some("plugin_call"));
+    }
+
+    /// A request carries no record: where the TypeScript would hand its host
+    /// the binding object (a plugin's argument, a reading handed back, a
+    /// system write's field, a `from` datum written into the prompt), the
+    /// program is refused by name, before anything runs.
+    #[test]
+    fn refuses_a_record_bound_for_a_request_by_name() {
+        let specs: JsMap<PluginSpec> = serde_json::from_value(serde_json::json!({
+            "echo": { "args": ["q"], "priced": false, "output": { "kind": "value", "type": "text" } },
+        }))
+        .unwrap();
+        let with = |body: &str| {
+            let source = format!("import {{ echo }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
+            refusal(&program, 3, &Plugins(Some(&specs)))
+        };
+        for body in [
+            // One record reads as its fields; a record's field is data; the
+            // event's binding object is data too.
+            "  x = echo(q: msg)\n  y = echo(q: [msg])\n  z = echo(q: { k: msg })",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  x = echo(q: co)\n  y = echo(q: co.`name`)",
+            "  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = echo(q: top)\n  names = MAP(rows, (r) => {\n    return r.`name`\n  })\n  y = echo(q: names)",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }\n  write crm-[:notes]-> { body: held.k.`name` }",
+            "  x = DATE.FORMAT(msg.`sent`, \"YYYY\")\n  found = extract from [msg, msg.`text`] {\n    name: \"the company\"\n  }",
+        ] {
+            assert_eq!(with(body), None, "{body}");
+        }
+        for (body, reason) in [
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = echo(q: [co])", "plugin_arg_record"),
+            ("  rows = crm-[c:companies]->\n  x = echo(q: rows)", "plugin_arg_record"),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = echo(q: { k: co })", "plugin_arg_record"),
+            ("  rows = crm-[c:companies]->\n  x = DATE.FORMAT(FIRST(rows), \"YYYY\")", "builtin_arg_record"),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  write crm-[:notes]-> { body: co }", "write_field_record"),
+            ("  rows = crm-[c:companies]->\n  write crm-[:notes]-> { body: rows }", "write_field_record"),
+            ("  rows = crm-[c:companies]->\n  found = extract from [rows] {\n    name: \"the company\"\n  }", "extract_from_record"),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  found = extract from [co] {\n    name: \"the company\"\n  }", "extract_from_record"),
+        ] {
+            assert_eq!(with(body).as_deref(), Some(reason), "{body}");
+        }
     }
 
     #[test]

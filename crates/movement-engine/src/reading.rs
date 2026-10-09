@@ -92,7 +92,7 @@ impl Run<'_> {
         if let Binding::Shaped(_) = &binding
             && matches!(record::kind_of(&binding).as_str(), "positions" | "tuple")
         {
-            return Err(Failure::unsupported(&format!("reading '{name}', a value shaped like {}", record::describe(&binding)), "a dict whose `kind` names a binding's is a record to the TypeScript engine"));
+            return Err(Failure::unreproduced(&format!("reading '{name}', a value shaped like {}", record::describe(&binding)), "a dict whose `kind` names a binding's is a record to the TypeScript engine"));
         }
         Err(unsupported(&format!("reading '{name}' ({}) as a bare value", record::describe(&binding))))
     }
@@ -594,7 +594,7 @@ impl Run<'_> {
             None => None,
         };
         let plan = crate::order_limit::apply_hop_order_limit(kept.len(), cardinality, keys.as_deref()).map_err(|mixed| {
-            Failure::unsupported(
+            Failure::unreproduced(
                 &format!("ORDER BY over {} records whose keys mix numbers with text or other kinds", mixed.count),
                 "past 64 records the order of mixed keys is the JavaScript sort's own; give the key one kind, or run this movement on the TypeScript engine",
             )
@@ -648,7 +648,7 @@ impl Run<'_> {
                     record::get(&record::get(&position, "identity").map_err(eval)?, "kind").map_err(eval)?;
                     let well_formed = matches!(&position, Js::Object(p) if matches!(p.get("identity"), Some(Js::Object(_))));
                     if !read.is_nullish() || !well_formed {
-                        return Err(Failure::unsupported(&format!("reading '{name}', a value shaped like a traversed record"), "its position or its read is not one this engine holds"));
+                        return Err(Failure::unreproduced(&format!("reading '{name}', a value shaped like a traversed record"), "its position or its read is not one this engine holds"));
                     }
                     let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
                     self.read_adapter(expr, name, "a traversed source record", Rc::new(Landed::new(position, None, source.read.clone())), scope, span).await
@@ -710,7 +710,7 @@ impl Run<'_> {
                     Err(Failure::of_eval(record::type_error("landed is not iterable"), ""))
                 }
                 "handle" | "extractRoot" | "extractPosition" | "resource" | "shapePosition" | "nodePosition" | "instance" | "lazyWalk" | "positions" => {
-                    Err(Failure::unsupported(&format!("reading '{name}', a value shaped like {}", record::describe(&binding)), "a dict whose `kind` names a binding's is a record to the TypeScript engine"))
+                    Err(Failure::unreproduced(&format!("reading '{name}', a value shaped like {}", record::describe(&binding)), "a dict whose `kind` names a binding's is a record to the TypeScript engine"))
                 }
                 _ => Err(unsupported(&format!("reading '{name}' ({}) in an expression", record::describe(&binding)))),
             }
@@ -733,7 +733,7 @@ impl Run<'_> {
             "shapePosition" | "nodePosition" => self.shaped_planar_field(&this, field).map_err(eval),
             "callback" => Ok(Evaluated { value: shaped_callback_field(&this, field).map_err(eval)?, prov: none() }),
             "blockMeta" => Err(Failure::of_eval(edges_get(&this, "binding"), "")),
-            "positions" => Err(Failure::unsupported(&format!("reading '{field}' off a value shaped like {} reached through '{name}'", record::describe(binding)), "a dict whose `kind` names a binding's is a record to the TypeScript engine")),
+            "positions" => Err(Failure::unreproduced(&format!("reading '{field}' off a value shaped like {} reached through '{name}'", record::describe(binding)), "a dict whose `kind` names a binding's is a record to the TypeScript engine")),
             _ => Err(unsupported(&format!("reading '{field}' off {} reached through '{name}'", record::describe(binding)))),
         }
     }

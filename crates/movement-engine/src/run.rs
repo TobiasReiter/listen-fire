@@ -216,8 +216,13 @@ impl Failure {
 
     /// `unsupported(construct, detail?)`: an empty detail is none.
     pub(crate) fn unsupported(construct: &str, detail: &str) -> Failure {
-        let detail = if detail.is_empty() { String::new() } else { format!(" ({detail})") };
-        Failure::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet{detail}"))
+        Failure::engine("MOVENG_UNSUPPORTED", unsupported_message(construct, detail))
+    }
+
+    /// This engine's refusal, mid-run, of what the TypeScript engine reads
+    /// on through (`ErrorClass::Unreproduced`): `unsupported`'s message.
+    pub(crate) fn unreproduced(construct: &str, detail: &str) -> Failure {
+        Failure::Engine { class: ErrorClass::Unreproduced, message: unsupported_message(construct, detail) }
     }
 
     /// The failure as an evaluation carries it out of a read it awaited.
@@ -238,7 +243,7 @@ impl Failure {
             EvalError::Thrown { class, message } => Failure::Engine { class, message },
             EvalError::Host(error) => Failure::Host(error),
             EvalError::CapExceeded(cap) => Failure::CapExceeded(cap),
-            EvalError::Fallback(reason) => Failure::unsupported(&format!("this reading ({reason})"), unreproduced),
+            EvalError::Fallback(reason) => Failure::unreproduced(&format!("this reading ({reason})"), unreproduced),
         }
     }
 
@@ -246,6 +251,9 @@ impl Failure {
         match self {
             Failure::Engine { class: ErrorClass::Engine(code), message } => {
                 json!({ "class": "MovementEngineError", "code": code, "message": message })
+            }
+            Failure::Engine { class: ErrorClass::Unreproduced, message } => {
+                json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": message })
             }
             Failure::Engine { class: ErrorClass::Error, message } => json!({ "class": "Error", "message": message }),
             Failure::Engine { class: ErrorClass::RangeError, message } => json!({ "class": "RangeError", "message": message }),
@@ -255,6 +263,12 @@ impl Failure {
             Failure::CallDepth { limit, chain } => json!({ "class": "CallDepthExceeded", "limit": limit, "chain": chain }),
         }
     }
+}
+
+/// `unsupported`'s message (expression.ts): an empty detail is none.
+fn unsupported_message(construct: &str, detail: &str) -> String {
+    let detail = if detail.is_empty() { String::new() } else { format!(" ({detail})") };
+    format!("{construct} is not supported by the movement engine yet{detail}")
 }
 
 /// A body's outcome (`BodyOutcome`): it ran to its end, or a `return` ended it.
@@ -487,13 +501,13 @@ impl Run<'_> {
             FilterOperator::Within => Some(js_date::to_iso_string(self.clock_now().await?)),
             _ => None,
         };
-        Ok(self.compare_request_at(op, left, right, now.as_deref()))
+        self.compare_request_at(op, left, right, now.as_deref())
     }
 
     /// The comparator's request, a `WITHIN`'s instant given.
-    pub(crate) fn compare_request_at(&self, op: FilterOperator, left: &Js, right: &Js, now: Option<&str>) -> host::Request {
+    pub(crate) fn compare_request_at(&self, op: FilterOperator, left: &Js, right: &Js, now: Option<&str>) -> Result<host::Request, Failure> {
         let op = serde_json::to_value(op).expect("an operator is JSON");
-        host::builtins::compare(op.as_str().unwrap_or_default(), self.wire.encode(left), self.wire.encode(right), now)
+        Ok(host::builtins::compare(op.as_str().unwrap_or_default(), self.encode(left)?, self.encode(right)?, now))
     }
 
     /// The credential id the run was handed for `name`, if any.
@@ -505,7 +519,7 @@ impl Run<'_> {
     /// the TypeScript builds.
     fn result(&self, cancelled: bool, parked: Option<&str>) -> Json {
         let writes: Vec<Js> = self.writes.borrow().iter().map(|w| w.object.clone()).collect();
-        let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": self.wire.encode(&Js::array(writes)) });
+        let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": self.wire.encode_result(&Js::array(writes)) });
         // Each extraction site the writes cite, once (`ProvenanceSummariser.sites`).
         let sites = self.extraction_sites.borrow();
         if !sites.is_empty() {
@@ -513,7 +527,7 @@ impl Run<'_> {
             for (id, summary) in sites.iter() {
                 table.set(id.clone(), summary.clone());
             }
-            result["extractionSites"] = self.wire.encode(&Js::object(table));
+            result["extractionSites"] = self.wire.encode_result(&Js::object(table));
         }
         drop(sites);
         if let Some(address) = parked {
@@ -925,7 +939,7 @@ impl Run<'_> {
                     self.sleep(duration, at, scope, None).await?;
                     Ok(Flow::FellThrough)
                 }
-                _ => Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
+                _ => Err(Stop::Thrown(Failure::unreproduced("this await", "the Rust engine runs `await sleep(…)`"))),
             },
             // `return <value>`: the same right-hand side, bound into a slot
             // the grammar cannot spell, and the body ends.
@@ -988,7 +1002,7 @@ impl Run<'_> {
                     None => Ok(Flow::FellThrough),
                 }
             }
-            _ => Err(Stop::Thrown(Failure::unsupported(
+            _ => Err(Stop::Thrown(Failure::unreproduced(
                 "this statement",
                 "the Rust engine runs bindings, writes, matches, links, unlinks, deletes, blocks, `if`, `sleep` and `return`",
             ))),
@@ -1069,7 +1083,7 @@ impl Run<'_> {
                     self.sleep(duration, at, scope, Some(name)).await?;
                     scope.declare(name, Binding::Value(env::ValueBinding { value: Js::Bool(true), trail: Some(Trail::default()), many: false }));
                 }
-                _ => return Err(Stop::Thrown(Failure::unsupported("this await", "the Rust engine runs `await sleep(…)`"))),
+                _ => return Err(Stop::Thrown(Failure::unreproduced("this await", "the Rust engine runs `await sleep(…)`"))),
             },
             _ => {
                 let slot = self.value_slot(value, scope)?;
@@ -1110,8 +1124,8 @@ impl Run<'_> {
             RValue::Call { call } if self.version() >= 3 && scope.resolve(&call.callee).is_none() => call
                 .expression
                 .as_ref()
-                .ok_or_else(|| Stop::Thrown(Failure::unsupported(&format!("the call '{}'", call.callee), "a built-in's call reads as its expression"))),
-            _ => Err(Stop::Thrown(Failure::unsupported("this right-hand side", "the Rust engine runs `name = <expression>`"))),
+                .ok_or_else(|| Stop::Thrown(Failure::unreproduced(&format!("the call '{}'", call.callee), "a built-in's call reads as its expression"))),
+            _ => Err(Stop::Thrown(Failure::unreproduced("this right-hand side", "the Rust engine runs `name = <expression>`"))),
         }
     }
 
@@ -1315,7 +1329,7 @@ impl Run<'_> {
             }
             Ask::ScopedAt { expr, subject } => self.scoped_at_record(&expr, &subject, scope, span.cloned()).await.map(Ok),
             Ask::Function { id, args } => {
-                let args = args.iter().map(|arg| self.wire.encode(arg)).collect();
+                let args = args.iter().map(|arg| self.encode(arg)).collect::<Result<_, _>>()?;
                 let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
                 self.builtin(request).await
             }
@@ -1469,7 +1483,7 @@ impl Run<'_> {
             })
         })?;
         let wake_at = js_date::to_iso_string(now + ms);
-        let request = host::park::commit_timer_park(self.segment(), &address, self.wire.encode(&state), &wake_at);
+        let request = host::park::commit_timer_park(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?, &wake_at);
         self.ask(request).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Gate { outcome: false });
         Err(Stop::Parked(address))
@@ -1531,15 +1545,18 @@ impl Run<'_> {
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
-        // The TypeScript engine hands its host the binding object itself; a
-        // record crosses this engine's wire as no value the host could use.
-        if let Some(kind) = self.wire.take_held_record() {
-            return Err(Failure::unsupported(
+        self.host.request(request).await.map_err(Failure::Host)
+    }
+
+    /// `value` for a host request. Admission keeps a record from every
+    /// request's values; one that got past fails the run before the request.
+    pub(crate) fn encode(&self, value: &Js) -> Result<Json, Failure> {
+        self.wire.encode(value).map_err(|crate::env::HeldRecord(kind)| {
+            Failure::unreproduced(
                 &format!("handing a record held as a value ({}) to the host", crate::record::describe_kind(&kind)),
                 "a record reaches a host call only read down to its fields",
-            ));
-        }
-        self.host.request(request).await.map_err(Failure::Host)
+            )
+        })
     }
 
     async fn ask_bool(&self, request: host::Request) -> Result<bool, Failure> {
@@ -1994,6 +2011,23 @@ mod tests {
     }
 
     const SLEEPS: &str = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
+
+    /// A member's failure that is this engine's own refusal — a reading the
+    /// TypeScript's member would have made — is never forgiven by
+    /// `onError`: dropping the member would answer what the TypeScript does
+    /// not. The run fails, naming it.
+    #[test]
+    fn on_error_never_forgives_this_engines_own_refusal() {
+        let mixed: Vec<String> = (0..65).map(|i| if i % 2 == 0 { i.to_string() } else { format!("\"{i}\"") }).collect();
+        let source = format!(
+            "import {{ email }} from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n  ys = MAP([1, 2], {{ onError: \"ignore\" }}, (x) => {{\n    return SORT([{}])\n  }})\n  return ys\n}}",
+            mixed.join(", ")
+        );
+        let (done, _) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
+        let error = done.get("thrown").or_else(|| done.get("failed").map(|f| &f["error"])).unwrap_or_else(|| panic!("the run fails: {done}"));
+        assert_eq!(error["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
+        assert!(error["message"].as_str().is_some_and(|m| m.starts_with("SORT over 65 members")), "{done}");
+    }
 
     /// The engine reads no clock: a sleep asks the host's `clock.now` and
     /// wakes at its answer plus the sleep.

@@ -159,6 +159,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
             ErrorClass::Error => json!({ "class": "Error", "message": message }),
             ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
             ErrorClass::TypeError => json!({ "class": "TypeError", "message": message }),
+            ErrorClass::Unreproduced => json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": message }),
         } }),
         Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
         Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("an evaluation with no reader asks no host"),

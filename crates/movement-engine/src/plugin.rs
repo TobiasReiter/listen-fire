@@ -49,7 +49,7 @@ impl Run<'_> {
             )));
         };
         if let PluginOutput::Records { .. } = declared {
-            return Err(Stop::Thrown(Failure::unsupported(
+            return Err(Stop::Thrown(Failure::unreproduced(
                 &format!("binding what '{written}' fetched as records"),
                 "the Rust engine binds a plugin's value or record output",
             )));
