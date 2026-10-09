@@ -643,38 +643,6 @@ fn text_slug(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
     Ok(Js::String(slug))
 }
 
-/// The binding kinds `bindingOf` recognises: a dict with one of these as
-/// its `kind` is a RECORD to the TypeScript engine, read through its fields.
-pub const BINDING_KINDS: [&str; 20] = [
-    "event", "instance", "handle", "extractRoot", "extractPosition", "sourcePosition", "resource", "blockMeta",
-    "positions", "tuple", "closure", "value", "shape", "movement", "shapePosition", "nodePosition", "lazyWalk", "callback",
-    "plugin", "opaque",
-];
-
-/// `Object.prototype`'s own names: `kind in describeBinding` walks the
-/// prototype chain, so to the TypeScript `{kind: "toString"}` is a record too.
-const OBJECT_PROTOTYPE_NAMES: [&str; 12] = [
-    "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty", "__lookupGetter__", "__lookupSetter__",
-    "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "__proto__", "toLocaleString",
-];
-
-/// One of `Object.prototype`'s own names: a read of it off a plain object
-/// finds the prototype's member, not nothing.
-pub fn is_object_prototype_name(name: &str) -> bool {
-    OBJECT_PROTOTYPE_NAMES.contains(&name)
-}
-
-/// `bindingOf(value) !== undefined`.
-pub fn is_binding_shaped(value: &Js) -> bool {
-    match value {
-        Js::Object(object) => matches!(
-            object.get("kind"),
-            Some(Js::String(kind)) if BINDING_KINDS.contains(&kind.as_str()) || OBJECT_PROTOTYPE_NAMES.contains(&kind.as_str())
-        ),
-        _ => false,
-    }
-}
-
 fn text_pairs(record: &Js, separator: &Js) -> Js {
     let Js::Object(record) = record else { return Js::Null };
     let separator = match separator {
@@ -696,7 +664,9 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
 /// and absence as null, a `FileRef` as its descriptor.
 fn to_stable_json(value: &Js) -> Js {
     match value {
-        Js::Undefined | Js::Null => Js::Null,
+        Js::Undefined | Js::Null | Js::Function(_) => Js::Null,
+        // Read down to its fields first (`plainValueOf`).
+        Js::Record(_) => Js::object(JsObject::new()),
         Js::Bool(_) | Js::String(_) => value.clone(),
         Js::Number(n) => if n.is_finite() { Js::Number(*n + 0.0) } else { Js::Null },
         Js::Array(list) => Js::array(list.items.iter().map(to_stable_json).collect()),
@@ -1071,22 +1041,6 @@ mod tests {
     fn case_mapping_follows_rusts_unicode_tables() {
         assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "αςʕ");
         assert_eq!(text(call("lower", vec![s("ΑΣ ʕ")])), "ας ʕ");
-    }
-
-    #[test]
-    fn record_detection_walks_the_prototype_chain_as_in_does() {
-        let with_kind = |kind: &str| {
-            let mut o = JsObject::new();
-            o.set("kind".into(), s(kind));
-            Js::object(o)
-        };
-        for kind in ["event", "handle", "toString", "constructor", "valueOf", "__proto__", "hasOwnProperty"] {
-            assert!(is_binding_shaped(&with_kind(kind)), "{kind}");
-        }
-        for kind in ["nope", "tostring", "prototype", ""] {
-            assert!(!is_binding_shaped(&with_kind(kind)), "{kind}");
-        }
-        assert!(!is_binding_shaped(&s("event")));
     }
 
     #[test]

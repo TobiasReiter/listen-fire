@@ -22,16 +22,10 @@ use crate::run::{Failure, Run, Stop};
 type Built<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Rc<RefCell<Node>>, Stop>> + 's>>;
 type Iterations<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<(Vec<(String, Binding)>, Binding)>, Stop>> + 's>>;
 
-/// `readNodePositionField`: the field, its own trail.
+/// `readNodePositionField`: the field (`fields[field] ?? null`, through
+/// the plain object's prototype), its own trail.
 pub fn node_field(node: &Node, field: &str) -> Result<Evaluated, EvalError> {
-    let value = match node.fields.get(field) {
-        Some(value) if !value.is_nullish() => value.clone(),
-        Some(_) => Js::Null,
-        None if crate::stdlib::is_object_prototype_name(field) => {
-            return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
-        }
-        None => Js::Null,
-    };
+    let value = crate::record::project_object(&node.fields, field);
     let trail = node.field_provenance.iter().find(|(f, _)| f == field).map(|(_, t)| t.clone()).unwrap_or_default();
     Ok(Evaluated { value, prov: Prov::Built(trail) })
 }
@@ -349,33 +343,58 @@ impl Run<'_> {
         Ok(resolved)
     }
 
-    /// `referencedRecords`: the records a reference entry holds, themselves.
+    /// `referencedRecords`: the records a reference entry holds, themselves —
+    /// a value's each as itself, a block's returned records, the event as its
+    /// position.
     fn referenced_records(&self, name: &str, raw: &str, scope: &Scope) -> Result<Vec<Binding>, Stop> {
         let bare = crate::js::trim(raw);
-        match scope.resolve(bare) {
-            Some(binding @ (Binding::Handle(_) | Binding::Node(_))) => Ok(vec![binding]),
-            Some(Binding::Value(value)) => {
+        let bound = scope.resolve(bare).ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{bare}' is not in scope — the checker should have caught this"))))?;
+        self.referenced(name, bound)
+    }
+
+    fn referenced(&self, name: &str, bound: Binding) -> Result<Vec<Binding>, Stop> {
+        match bound {
+            Binding::Value(value) => {
                 let held = match &value.value {
                     Js::Array(list) => list.items.clone(),
                     other => vec![other.clone()],
                 };
-                match held.iter().find(|member| !member.is_nullish()) {
-                    None => Ok(Vec::new()),
-                    Some(member) => Err(Stop::Thrown(Failure::engine(
-                        "MOVENG_RUNTIME",
-                        format!("'{name}' holds records, and one of them is a {} — the program was not checked", member.type_of()),
-                    ))),
+                let mut records = Vec::new();
+                for member in held.iter().filter(|member| !member.is_nullish()) {
+                    let Some(record) = crate::record::binding_of(member) else {
+                        return Err(Stop::Thrown(Failure::engine(
+                            "MOVENG_RUNTIME",
+                            format!("'{name}' holds records, and one of them is a {} — the program was not checked", member.type_of()),
+                        )));
+                    };
+                    records.extend(self.referenced(name, record)?);
                 }
+                Ok(records)
             }
-            _ => Err(Stop::Thrown(Failure::unsupported("this reference entry", "the Rust engine holds the run's own records"))),
+            Binding::Positions(landings) => Ok(landings),
+            Binding::Event => {
+                let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
+                Ok(vec![Binding::Landed(Rc::new(crate::bindings::Landed::new(source.position.to_js(), None, source.read.clone())))])
+            }
+            binding @ (Binding::Landed(_) | Binding::Handle(_) | Binding::Node(_) | Binding::Extracted { .. }) => Ok(vec![binding]),
+            Binding::Shaped(_) => Err(Stop::Thrown(Failure::unsupported(&format!("holding '{name}', a value shaped like a record, on an edge"), "a dict whose `kind` names a binding's is a record to the TypeScript engine"))),
+            other => Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("'{name}' holds a record, and the value is {} — the program was not checked", crate::record::describe(&other)),
+            ))),
         }
     }
 
     /// `spreadRecordIntoGraph`: the record copied by the checker's plan, its
     /// fields and planned edges laid over what the node holds so far.
     async fn spread_record(&self, node: &Rc<RefCell<Node>>, spread: &MapSpread, plan: &Json, scope: &Scope, shape: Option<&ShapeNode>) -> Result<(), Stop> {
-        let record = match scope.resolve(&spread.source) {
+        // `spreadRecord`: the record held as a value or bound as one.
+        let bound = match scope.resolve(&spread.source) {
             Some(Binding::Value(value)) if value.value.is_nullish() => return Ok(()),
+            Some(Binding::Value(value)) => crate::record::binding_of(&value.value),
+            other => other,
+        };
+        let record = match bound {
             Some(Binding::Positions(landings)) if landings.len() > 1 => {
                 return Err(Stop::Thrown(Failure::engine(
                     "MOVENG_RUNTIME",
@@ -484,7 +503,7 @@ impl Run<'_> {
             return Ok(None);
         }
         match &value {
-            Js::Object(object) if !crate::stdlib::is_binding_shaped(&value) => Ok(Some(JsObject::clone_of(object))),
+            Js::Object(object) => Ok(Some(JsObject::clone_of(object))),
             _ => Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!(
@@ -648,7 +667,8 @@ fn spread_into_graph(node: &mut Node, map: &JsObject, shape: Option<&ShapeNode>)
 /// `asMapList`: one map, or a list of nothing but maps.
 fn as_map_list(value: &Js) -> Option<Vec<JsObject>> {
     let dict = |v: &Js| match v {
-        Js::Object(o) if !crate::stdlib::is_binding_shaped(v) => Some(JsObject::clone_of(o)),
+        // `isDictValue`: a dict shaped like a binding is a dict too.
+        Js::Object(o) => Some(JsObject::clone_of(o)),
         _ => None,
     };
     match value {

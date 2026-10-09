@@ -24,7 +24,6 @@ use std::rc::Rc;
 use movement_parser::ast::{CallArg, CallStatement, MovementDeclaration, ParamTypeRef, Statement};
 
 use crate::bindings::{Binding, Scope};
-use crate::env::ValueBinding;
 use crate::run::{Address, Failure, Flow, Run, Stop};
 
 type Called<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<Binding>, Stop>> + 's>>;
@@ -60,7 +59,7 @@ impl Run<'_> {
                     )));
                 }
                 other => {
-                    let what = other.as_ref().map_or("not in scope", crate::write::describe_binding);
+                    let what = other.as_ref().map_or_else(|| "not in scope".to_string(), crate::write::describe_binding);
                     return Err(Stop::Thrown(Failure::engine(
                         "MOVENG_RUNTIME",
                         format!("'{}' is {what}, not a callable movement — the checker should have caught this", call.callee),
@@ -144,7 +143,7 @@ impl Run<'_> {
     }
 
     /// `beginCall`: the running statement's next call's index.
-    fn begin_call(&self) -> usize {
+    pub(crate) fn begin_call(&self) -> usize {
         let mut sites = self.call_sites.borrow_mut();
         match sites.last_mut() {
             Some(next) => {
@@ -177,7 +176,7 @@ impl Run<'_> {
 
     /// The declaration a movement binding names, and its index among the
     /// program's statements (its body's AST path).
-    fn declaration(&self, name: &str) -> Result<(MovementDeclaration, usize), Stop> {
+    pub(crate) fn declaration(&self, name: &str) -> Result<(MovementDeclaration, usize), Stop> {
         self.checked
             .root
             .program
@@ -211,10 +210,12 @@ impl Run<'_> {
     fn call_arg<'s>(&'s self, arg: &'s CallArg, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str, takes_value: bool) -> Bound<'s> {
         Box::pin(async move {
             match arg {
+                // `bindValue`: a record a value parameter is handed binds as
+                // the record it is.
                 CallArg::Expr { expr, .. } if takes_value => {
                     let evaluated = self.evaluate_slot(expr, scope).await?;
                     let trail = self.trail_or_none(&evaluated.prov, scope);
-                    Ok(Binding::Value(ValueBinding { value: evaluated.value, trail: Some(trail), many: false }))
+                    Ok(crate::record::bind_value(evaluated.value, Some(trail), false))
                 }
                 CallArg::Write { write, .. } => self.write(write, None, scope, &format!("{path}/write")).await,
                 CallArg::Node { node, .. } => Ok(Binding::Node(self.synthesise_node(node, scope, &format!("{path}/node")).await?)),
@@ -241,6 +242,14 @@ impl Run<'_> {
                 // A position parameter takes the record its argument is bound to.
                 CallArg::Expr { expr, .. } => match self.bind_slot_binding(expr, scope).await? {
                     binding @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::LazyWalk(_)) => Ok(binding),
+                    binding @ Binding::Shaped(_)
+                        if matches!(
+                            crate::record::kind_of(&binding).as_str(),
+                            "event" | "handle" | "shapePosition" | "extractRoot" | "extractPosition" | "sourcePosition" | "resource" | "nodePosition" | "lazyWalk"
+                        ) =>
+                    {
+                        Ok(binding)
+                    }
                     other => Err(Stop::Thrown(Failure::unsupported(
                         &format!("passing {} ('{}') as a movement argument", crate::write::describe_binding(&other), crate::js::trim(&expr.raw)),
                         "arguments are positions — pass the event, a write handle, or adapt with an inline shape-write",

@@ -323,11 +323,7 @@ impl Run<'_> {
     pub(crate) async fn landing_field(&self, landing: &Binding, field: &str, name: &str) -> Result<Evaluated, Failure> {
         match landing {
             Binding::Landed(landed) => self.landed_field(landed, field).await,
-            Binding::Handle(_) | Binding::Node(_) | Binding::Extracted { .. } => self.binding_field(landing, field).map_err(|e| Failure::of_eval(e, "the Rust engine does not reproduce it")),
-            other => Err(Failure::unsupported(
-                &format!("reading '{field}' off {} reached through '{name}'", crate::write::describe_binding(other)),
-                "",
-            )),
+            other => self.read_binding_field(other, field, name),
         }
     }
 

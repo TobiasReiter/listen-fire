@@ -59,7 +59,13 @@ impl Run<'_> {
         for (name, slot) in args {
             let evaluated = self.evaluate_slot(slot, scope).await?;
             let trail = self.trail_of(&evaluated.prov, scope).unwrap_or_default();
-            config.set(name.clone(), evaluated.value);
+            // A record reaches only an argument that takes structured data:
+            // what that takes is the record's fields (`recordFields`).
+            let value = match crate::record::binding_of(&evaluated.value) {
+                Some(record) => Js::object(crate::record::fields_of(&record).map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?),
+                None => evaluated.value,
+            };
+            config.set(name.clone(), value);
             for origin in trail.origins {
                 if !origins.contains(&origin) {
                     origins.push(origin);

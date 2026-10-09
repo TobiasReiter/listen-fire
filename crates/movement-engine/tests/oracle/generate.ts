@@ -13,7 +13,9 @@
 //     (./order_limit_oracle.ts; not ./order_limit, which Node resolves to
 //     the .json beside it);
 //   - extraction.json: the extraction keyword's specs, regions, prompts and
-//     reply verdicts, and the priced-plugin cap (./extraction_oracle.ts).
+//     reply verdicts, and the priced-plugin cap (./extraction_oracle.ts);
+//   - records.json: records held as values, whole programs run on the
+//     TypeScript engine (./records_oracle.ts).
 // Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
 // read local time (an offset-less date-time is local to `new Date`), so the
 // process runs in UTC wherever it is started.
@@ -24,6 +26,14 @@
 
 // Before anything reads the clock: Node re-reads TZ when it is assigned.
 process.env.TZ = 'UTC';
+// The engine's modules read these as they load (records_oracle.ts runs whole
+// programs in process); nothing the oracle runs reaches a database.
+process.env.NODE_ENV ??= 'test';
+process.env.DATABASE_URL_TEST ??= 'postgresql://oracle:oracle@localhost:5432/oracle-unused';
+process.env.DATABASE_URL_TEST_READONLY ??= 'postgresql://oracle:oracle@localhost:5432/oracle-unused';
+process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
+process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
+process.env.SCRAPER_API_KEY ??= 'oracle-unused';
 
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -39,6 +49,7 @@ import { applyMovementFunction } from '../../../../apps/api/src/services/movemen
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import { writeExtractionOracle } from './extraction_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
+import { writeRecordsOracle } from './records_oracle';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
 function wire(value: unknown): unknown {
@@ -284,6 +295,7 @@ console.log(`regex.json: ${regexCases.length} cases`);
 (async () => {
   await writeOrderLimitOracle(mulberry32(5));
   await writeExtractionOracle(mulberry32(20261009));
+  await writeRecordsOracle(mulberry32(20261010), wire, (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;

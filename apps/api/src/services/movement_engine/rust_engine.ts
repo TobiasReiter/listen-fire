@@ -325,7 +325,10 @@ class SettleQueue {
  *  (a stored state's is the order it was stored in). Undefined for an input
  *  that cannot cross as itself. */
 function segmentInput(input: RunMovementInput, context: RunContext, resume: { state: unknown; reenter?: true } | undefined, wire: WireOut): unknown {
-  const event = wire.value(input.event);
+  // A dict in the event shaped like a binding crosses as the dict it is:
+  // the engine reads it as `bindingOf` does (crates/movement-engine's
+  // record module, pinned by tests/oracle/records.json).
+  const event = wire.valueAsData(input.event);
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
   const state = resume !== undefined ? new WireOut({ asData: true }).value(resume.state) : undefined;
   if (state === REFUSED) return undefined;
@@ -733,6 +736,8 @@ function thrownBy(error: Record<string, unknown>): Error {
       return new Error(message);
     case 'RangeError':
       return new RangeError(message);
+    case 'TypeError':
+      return new TypeError(message);
     default:
       throw new RustShimError(`the Rust evaluator threw an unknown class ${String(error.class)}`);
   }
@@ -745,6 +750,7 @@ function engineErrorCode(code: unknown): MovementEngineErrorCode {
     case 'MOVENG_UNSUPPORTED':
     case 'MOVENG_NOT_FOUND':
     case 'MOVENG_ERROR':
+    case 'MOVENG_PARK_NONSERIALIZABLE':
       return code;
     default:
       throw new RustShimError(`the Rust evaluator threw an unknown code ${String(code)}`);

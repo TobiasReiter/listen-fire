@@ -41,15 +41,57 @@ pub enum Binding {
     Landed(Rc<Landed>),
     /// What an extraction yielded (crate::extract): its root (`kind:
     /// 'extractRoot'`, `root`) or one of its entities a block head landed on
-    /// (`kind: 'extractPosition'`).
-    Extracted { emission: Rc<crate::extract::emission::Emission>, root: bool },
+    /// (`kind: 'extractPosition'`). `id` is the binding object's own
+    /// identity: a walk wraps the same entity in a new one each time.
+    Extracted { emission: Rc<crate::extract::emission::Emission>, root: bool, id: Identity },
     /// A walk kept to run at each read (`kind: 'lazyWalk'`): `x = lazy
     /// msg-[a:files]->`.
     LazyWalk(Rc<DeferredWalk>),
     /// A bound block's returned records (`kind: 'positions'`, run.ts
-    /// `blockValue`). This engine binds one only when nothing returned: every
-    /// `return` it admits returns a value, and values bind as a list.
+    /// `blockValue`), or a list of records a value holds read as the records
+    /// it holds (`heldBinding`).
     Positions(Vec<Binding>),
+    /// A plain dict whose `kind` the TypeScript engine reads as a binding's
+    /// (`bindingOf`: `kind in describeBinding`, which walks the prototype
+    /// chain, so `toString` counts): to it the dict IS a binding of that
+    /// kind, its other keys the binding's own (crate::record, the shaped
+    /// reads).
+    Shaped(Rc<JsObject>),
+}
+
+/// The identity of a binding object the TypeScript engine makes where this
+/// engine makes no `Rc` of its own: a clone is the same object, a new one is
+/// not.
+#[derive(Debug, Clone, Default)]
+pub struct Identity(Rc<()>);
+
+impl Identity {
+    pub fn new() -> Identity {
+        Identity::default()
+    }
+}
+
+impl PartialEq for Identity {
+    fn eq(&self, other: &Identity) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Binding {
+    /// `a === b` of the two binding objects: a clone of a binding is the same
+    /// object, as a name read twice is in the TypeScript engine.
+    pub fn is(&self, other: &Binding) -> bool {
+        match (self, other) {
+            (Binding::Event, Binding::Event) => true,
+            (Binding::Instance(a), Binding::Instance(b)) => Rc::ptr_eq(a, b),
+            (Binding::Handle(a), Binding::Handle(b)) => Rc::ptr_eq(a, b),
+            (Binding::Node(a), Binding::Node(b)) => Rc::ptr_eq(a, b),
+            (Binding::Landed(a), Binding::Landed(b)) => Rc::ptr_eq(a, b),
+            (Binding::Extracted { id: a, .. }, Binding::Extracted { id: b, .. }) => a == b,
+            (Binding::LazyWalk(a), Binding::LazyWalk(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 /// `{kind: 'sourcePosition', position, edgeProperties?, read?}`.
@@ -238,32 +280,26 @@ impl Names for Scope {
     fn value(&self, name: &str) -> Option<ValueBinding> {
         match self.resolve(name)? {
             Binding::Value(value) => Some(value),
-            // Read bare, a block's returned records are the list of them
-            // (empty: the only one this engine binds), with no origins.
-            Binding::Positions(landings) if landings.is_empty() => {
-                Some(ValueBinding { value: Js::array(Vec::new()), trail: Some(crate::env::Trail::default()), many: false })
-            }
             _ => None,
         }
+    }
+
+    fn binding(&self, name: &str) -> Option<Binding> {
+        self.resolve(name)
     }
 
     fn is_event(&self, name: &str) -> bool {
         matches!(self.resolve(name), Some(Binding::Event))
     }
 
-    fn is_record(&self, name: &str) -> bool {
-        matches!(
-            self.resolve(name),
-            Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_) | Binding::Positions(_) | Binding::Extracted { .. } | Binding::LazyWalk(_))
-        )
-    }
-
-    fn is_walk_root(&self, name: &str) -> bool {
-        matches!(self.resolve(name), Some(Binding::Event | Binding::Instance(_))) || self.is_record(name)
-    }
-
+    /// `binding.kind !== 'value'`: a dict the TypeScript takes for a value
+    /// binding is one.
     fn binds_non_value(&self, name: &str) -> bool {
-        self.resolve(name).is_some_and(|binding| !matches!(binding, Binding::Value(_)))
+        self.resolve(name).is_some_and(|binding| match &binding {
+            Binding::Value(_) => false,
+            Binding::Shaped(_) => crate::record::kind_of(&binding) != "value",
+            _ => true,
+        })
     }
 }
 

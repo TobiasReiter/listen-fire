@@ -100,6 +100,29 @@ export const REFUSED: unique symbol = Symbol('refused');
 export const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 /**
+ * The built-ins a read of an `Object.prototype` name off a plain object finds
+ * (`{}.toString`, `{}.constructor`): the engine holds each by the name it
+ * prints, and the wire carries that name (`["f", name]`).
+ */
+const OBJECT_PROTOTYPE_BUILTINS: ReadonlyMap<string, unknown> = new Map<string, unknown>([
+  ['Object', Object],
+  ...Object.getOwnPropertyNames(Object.prototype)
+    .filter((name) => name !== 'constructor' && name !== '__proto__')
+    .map((name): [string, unknown] => [name, Reflect.get(Object.prototype, name)]),
+]);
+
+function builtinName(value: unknown): ['f', string] | undefined {
+  for (const [name, builtin] of OBJECT_PROTOTYPE_BUILTINS) if (builtin === value) return ['f', name];
+  return undefined;
+}
+
+function builtinNamed(name: unknown): unknown {
+  const builtin = typeof name === 'string' ? OBJECT_PROTOTYPE_BUILTINS.get(name) : undefined;
+  if (builtin === undefined) throw new RustShimError(`the wire names no built-in ${String(name)}`);
+  return builtin;
+}
+
+/**
  * The wire to the Rust evaluator and back (crates/movement-engine/src/env.rs
  * says the format): values with their identity, and the origins of the trails
  * they carry, numbered.
@@ -169,8 +192,9 @@ export class WireOut {
         if (value === -Infinity) return ['n', '-Infinity'];
         return Object.is(value, -0) ? ['n', '-0'] : value;
       case 'object':
-        return this.composite(value);
+        return value === Object.prototype ? ['p'] : this.composite(value);
       case 'function':
+        return builtinName(value) ?? REFUSED;
       case 'bigint':
       case 'symbol':
         return REFUSED;
@@ -244,6 +268,10 @@ export class WireOut {
         return undefined;
       case 'n':
         return a === 'NaN' ? NaN : a === 'Infinity' ? Infinity : a === '-Infinity' ? -Infinity : -0;
+      case 'f':
+        return builtinNamed(a);
+      case 'p':
+        return Object.prototype;
       case 'i':
         if (typeof a !== 'number' || this.sent[a] === undefined) throw new RustShimError(`the wire names no sent value ${String(a)}`);
         return this.sent[a];

@@ -55,13 +55,11 @@ impl WriteRecord {
             "committed" => return Ok(self.get("committed")),
             _ => {}
         }
+        // `field in writtenValues` finds its prototype's names too.
         if let Js::Object(written) = self.get("writtenValues")
-            && let Some(value) = written.get(field)
+            && (written.get(field).is_some() || crate::js::is_object_prototype_name(field))
         {
-            return Ok(nullish_to_null(value.clone()));
-        }
-        if crate::stdlib::is_object_prototype_name(field) {
-            return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
+            return Ok(nullish_to_null(crate::js::object_property(&written, field)));
         }
         Ok(match self.get("resultData") {
             Js::Object(data) => data.get(field).cloned().map_or(Js::Null, nullish_to_null),
@@ -123,6 +121,15 @@ pub(crate) struct Parent {
     record_type: String,
     external_id: Js,
     data: Option<Js>,
+}
+
+/// One path's parent (`resolveLinkedParent`'s answer).
+struct LinkedParent {
+    graph: Rc<InstanceBinding>,
+    record_type: String,
+    root_name: String,
+    parent: Parent,
+    where_: Option<TargetWhere>,
 }
 
 /// `ResolvedWriteTarget`.
@@ -287,10 +294,12 @@ impl Run<'_> {
                     continue;
                 }
                 written.push(name.clone());
+                // `spreadSourceText`: a member path as written, a name spelled.
+                let source = if spread.path.is_some() { spread.source.clone() } else { spell_name(&spread.source) };
                 these.push(Line {
                     name: name.clone(),
                     slot: ast::ExprSlot {
-                        raw: format!("{}.{}", spell_name(&spread.source), spell_name(name)),
+                        raw: format!("{source}.{}", spell_name(name)),
                         span: spread.span,
                         eager: false,
                     },
@@ -310,7 +319,7 @@ impl Run<'_> {
     pub(crate) async fn write_target(&self, target: &WriteTarget, scope: &Rc<Scope>, verb: Verb) -> Result<Target, Stop> {
         let (path, explicit_type) = match target {
             WriteTarget::Linked { path, explicit_type, .. } => (path, explicit_type),
-            WriteTarget::Tuple { .. } => return Err(thrown(Failure::unsupported("a tuple write", "the Rust engine runs linked writes"))),
+            WriteTarget::Tuple { paths, explicit_type, .. } => return self.tuple_target(paths, explicit_type.as_deref(), scope, verb).await,
             WriteTarget::Position { .. } => unreachable!("position writes are dispatched first"),
         };
         let root_name = match &path.root {
@@ -327,25 +336,104 @@ impl Run<'_> {
             let adapter = self.target_adapter(instance).await?;
             return Ok(Target { adapter, record_type, graph: Some(instance.clone()), parents: Vec::new(), handle_type: None, where_: where_.into_iter().collect() });
         }
-        let name = root_name.unwrap_or_default();
-        let describe = |b: &Option<Binding>| b.as_ref().map_or("not in scope".to_string(), |b| describe_binding(b).to_string());
-        // `linkedPathGraph`, then `resolveLinkedParent`.
-        let graph = match &root {
-            Some(Binding::Handle(handle)) => handle.graph.clone(),
-            Some(Binding::Event) => self.source_instance.borrow().clone().ok_or_else(|| thrown(self.unnamed_graph(&name)))?,
-            // The graph the record was read from: its constructed instance by
-            // name, or, read off the event's source, the source's instance.
-            Some(Binding::Landed(landed)) => self.landed_graph(landed, scope).ok_or_else(|| thrown(self.unnamed_graph(&name)))?,
-            other => {
+        let parent = self.linked_parent(path, explicit_type.as_deref(), root_name.as_deref(), root, scope, verb, false).await?;
+        let adapter = self.target_adapter(&parent.graph).await?;
+        Ok(Target {
+            adapter,
+            record_type: parent.record_type,
+            graph: Some(parent.graph),
+            parents: vec![parent.parent],
+            handle_type: None,
+            where_: parent.where_.into_iter().collect(),
+        })
+    }
+
+    /// `resolveTupleWriteTarget`: one record at the convergence of every
+    /// path, each resolved as a linked write's parent; all in one graph, all
+    /// inferring one type, every path's WHERE a condition on the record.
+    async fn tuple_target(&self, paths: &[ast::PathHead], explicit_type: Option<&str>, scope: &Rc<Scope>, verb: Verb) -> Result<Target, Stop> {
+        let mut resolved = Vec::with_capacity(paths.len());
+        for path in paths {
+            let root_name = match &path.root {
+                Some(PathRoot::Name { name }) => Some(name.clone()),
+                _ => None,
+            };
+            let root = root_name.as_deref().and_then(|name| scope.resolve(name));
+            resolved.push(self.linked_parent(path, explicit_type, root_name.as_deref(), root, scope, verb, true).await?);
+        }
+        let Some((first, rest)) = resolved.split_first() else {
+            return Err(thrown(Failure::engine("MOVENG_RUNTIME", "a tuple write with no paths — the checker should have caught this".into())));
+        };
+        for other in rest {
+            if !Rc::ptr_eq(&other.graph, &first.graph) {
                 return Err(thrown(Failure::engine(
                     "MOVENG_RUNTIME",
                     format!(
-                        "a linked write's path must start at a bound write handle or a traversed record — '{name}' is {}",
-                        describe(other)
+                        "a tuple write's paths must land in the same graph — '{}' is in '{}' and '{}' is in '{}'",
+                        first.root_name, first.graph.name, other.root_name, other.graph.name
                     ),
                 )));
             }
+            if other.record_type != first.record_type {
+                return Err(thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!(
+                        "the tuple's paths must converge on ONE written type — '{}-[:{}]->' infers '{}' but '{}-[:{}]->' infers '{}'",
+                        first.root_name, first.parent.edge_name, first.record_type, other.root_name, other.parent.edge_name, other.record_type
+                    ),
+                )));
+            }
+        }
+        let graph = first.graph.clone();
+        let record_type = first.record_type.clone();
+        let adapter = self.target_adapter(&graph).await?;
+        let mut parents = Vec::new();
+        let mut where_ = Vec::new();
+        for parent in resolved {
+            parents.push(parent.parent);
+            where_.extend(parent.where_);
+        }
+        Ok(Target { adapter, record_type, graph: Some(graph), parents, handle_type: None, where_ })
+    }
+
+    /// `resolveLinkedParent` (with, for a linked write, `linkedPathGraph`
+    /// first): the record the path's root names parents the write, one
+    /// declared edge down, in the graph it lives in.
+    #[allow(clippy::too_many_arguments)]
+    async fn linked_parent(
+        &self,
+        path: &ast::PathHead,
+        explicit_type: Option<&str>,
+        root_name: Option<&str>,
+        root: Option<Binding>,
+        scope: &Scope,
+        verb: Verb,
+        tuple: bool,
+    ) -> Result<LinkedParent, Stop> {
+        let name = root_name.unwrap_or_default().to_string();
+        let describe = |b: &Option<Binding>| b.as_ref().map_or("not in scope".to_string(), |b| describe_binding(b).to_string());
+        // `linkedPathGraph`: a linked write's graph is resolved first; a
+        // tuple's after each path's own checks.
+        let graph_of = |root: &Option<Binding>| -> Result<Rc<InstanceBinding>, Stop> {
+            match root {
+                Some(Binding::Handle(handle)) => Ok(handle.graph.clone()),
+                Some(Binding::Event) => self.source_instance.borrow().clone().ok_or_else(|| thrown(self.unnamed_graph(&name))),
+                // The graph the record was read from: its constructed instance by
+                // name, or, read off the event's source, the source's instance.
+                Some(Binding::Landed(landed)) => self.landed_graph(landed, scope).ok_or_else(|| thrown(self.unnamed_graph(&name))),
+                other => Err(thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("a linked write's path must start at a bound write handle or a traversed record — '{name}' is {}", describe(other)),
+                ))),
+            }
         };
+        let early = if tuple { None } else { Some(graph_of(&root)?) };
+        if tuple && (root_name.is_none() || !matches!(root, Some(Binding::Handle(_) | Binding::Landed(_) | Binding::Event))) {
+            return Err(thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("a linked write's path must start at a bound write handle, a traversed record, or the event — '{name}' is {}", describe(&root)),
+            )));
+        }
         let (parent_type, parent_id, parent_data) = match &root {
             Some(Binding::Handle(handle)) => (handle.target_type.clone(), handle.record.get("externalId"), Some(handle.record.get("resultData"))),
             Some(Binding::Landed(landed)) => {
@@ -377,16 +465,18 @@ impl Run<'_> {
             }
         };
         let (edge, where_) = self.single_edge(path, "a linked write walks exactly one declared edge from its parent handle")?;
-        let record_type = infer_linked_type(graph.schema.as_ref(), &parent_type, &edge, explicit_type.as_deref(), &name, verb)?;
+        let graph = match early {
+            Some(graph) => graph,
+            None => graph_of(&root)?,
+        };
+        let record_type = infer_linked_type(graph.schema.as_ref(), &parent_type, &edge, explicit_type, &name, verb)?;
         let data = parent_data.filter(|d| matches!(d, Js::Object(_) | Js::Array(_)));
-        let adapter = self.target_adapter(&graph).await?;
-        Ok(Target {
-            adapter,
+        Ok(LinkedParent {
+            graph,
             record_type,
-            graph: Some(graph),
-            parents: vec![Parent { handle_name: name, edge_name: edge.clone(), record_type: parent_type, external_id: parent_id, data }],
-            handle_type: None,
-            where_: where_.into_iter().collect(),
+            root_name: name.clone(),
+            parent: Parent { handle_name: name, edge_name: edge, record_type: parent_type, external_id: parent_id, data },
+            where_,
         })
     }
 
@@ -655,7 +745,7 @@ impl Run<'_> {
                 Js::Object(object) => JsObject::clone_of(&object),
                 _ => JsObject::new(),
             };
-            let lacks = fields.iter().any(|f| data.get(f).is_none() && !crate::stdlib::is_object_prototype_name(f));
+            let lacks = fields.iter().any(|f| data.get(f).is_none() && !crate::js::is_object_prototype_name(f));
             if lacks && target.adapter.has("readRecord") {
                 let mut read = JsObject::new();
                 read.set("recordType".into(), Js::str(target.record_type.clone()));
@@ -1179,18 +1269,6 @@ impl Run<'_> {
         }
     }
 
-    /// A field read off a record the run holds (`readBindingField`): a
-    /// node's field with its own trail, or a handle's with the read's origin
-    /// (`fromOrigin({...handle.origin, field})`).
-    pub(crate) fn record_field(&self, root: &str, field: &str, scope: &Scope) -> Result<Evaluated, EvalError> {
-        match scope.resolve(root) {
-            Some(binding @ (Binding::Handle(_) | Binding::Node(_) | Binding::Extracted { .. })) => self.binding_field(&binding, field),
-            // A field of no returned records is nothing (`collapse([])`).
-            Some(Binding::Positions(landings)) if landings.is_empty() => Ok(Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) }),
-            _ => Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not a record in scope"))),
-        }
-    }
-
     /// `readBindingField` for a record the run holds in hand: a node's field
     /// with its own trail, an extraction's, or a handle's with the read's
     /// origin.
@@ -1491,8 +1569,9 @@ pub(crate) fn infer_linked_type(
 }
 
 /// `describeBinding`, for the kinds this engine binds.
-pub fn describe_binding(binding: &Binding) -> &'static str {
-    match binding {
+pub fn describe_binding(binding: &Binding) -> String {
+    let described = match binding {
+        Binding::Shaped(_) => return crate::record::describe(binding),
         Binding::Value(_) => "a value binding",
         Binding::Event => "the movement parameter (the event position)",
         Binding::Instance(_) => "a constructed adapter instance",
@@ -1507,7 +1586,8 @@ pub fn describe_binding(binding: &Binding) -> &'static str {
         Binding::LazyWalk(_) => "a deferred traversal",
         Binding::Extracted { root: true, .. } => "an extract result",
         Binding::Extracted { root: false, .. } => "an extracted entity",
-    }
+    };
+    described.to_string()
 }
 
 /// `referencedIdentifiers`: the names a field's text reads — backticked
@@ -1602,14 +1682,7 @@ pub(crate) fn edge_shape(path: &ast::PathHead) -> EdgeShape {
 /// `readEmissionField`: the field as extracted, cited by its own origin,
 /// which every read shares.
 pub(crate) fn emission_field(emission: &crate::extract::emission::Emission, field: &str) -> Result<Evaluated, EvalError> {
-    let value = match emission.fields.get(field) {
-        Some(value) if !value.is_nullish() => value.clone(),
-        Some(_) => Js::Null,
-        None if crate::stdlib::is_object_prototype_name(field) => {
-            return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
-        }
-        None => Js::Null,
-    };
+    let value = crate::record::project_object(&emission.fields, field);
     let trail = emission.origin_of(field).map_or_else(Trail::default, |id| Trail { origins: vec![id], direct: Some(id) });
     Ok(Evaluated { value, prov: Prov::Built(trail) })
 }

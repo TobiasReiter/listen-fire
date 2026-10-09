@@ -585,6 +585,16 @@ describe('the segment input', () => {
     expect(rustRunStats).toMatchObject({ routed: 0, ranWhole: 0, notAdmitted: { [EVENT_DOES_NOT_CROSS]: 2 }, declined: {}, hostCalls: {} });
     expect(asked).toEqual([]);
   });
+
+  it('carries a dict in the event shaped like a binding as the dict it is', async () => {
+    const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
+    const input = { source: '', event: { payload: { meta: { kind: 'event' }, list: [{ kind: 'toString' }] } }, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host } as unknown as RunMovementInput;
+    const { engine, started } = scriptedEngine(() => ({ done: { result: {} } }));
+    resetRustRunStats();
+    await runSegmentInRust({ input, context: served.context }, engine).catch(() => undefined);
+    expect(rustRunStats.notAdmitted).toEqual({});
+    expect(JSON.stringify(started)).toContain('"kind","toString"');
+  });
 });
 
 describe('choosing the engine', () => {

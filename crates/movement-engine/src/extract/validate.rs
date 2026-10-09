@@ -224,7 +224,9 @@ fn received(value: &Js) -> &'static str {
         Js::Number(_) => "number",
         Js::String(_) => "string",
         Js::Array(_) => "array",
-        Js::Object(_) => "object",
+        // A reply is JSON: it holds neither.
+        Js::Object(_) | Js::Record(_) => "object",
+        Js::Function(_) => "function",
     }
 }
 

@@ -22,6 +22,91 @@ pub enum Js {
     String(String),
     Array(Rc<JsArray>),
     Object(Rc<JsObject>),
+    /// A record held as a value: the binding object the TypeScript engine
+    /// puts on the value plane (a walk's landings, a list of records, a
+    /// collection op's answer), which `bindingOf` reads back as the record.
+    /// To every other JavaScript operation it is a plain object.
+    Record(Rc<crate::bindings::Binding>),
+    /// A function `Object.prototype` holds, or `Object` itself: what reading
+    /// one of `OBJECT_PROTOTYPE_NAMES` off a plain object finds.
+    Function(NativeFunction),
+}
+
+/// `Object.prototype`'s own names: a plain object reads each through its
+/// prototype (`{}.toString` is a function), and `kind in describeBinding`
+/// finds each on any object (so `{kind: "toString"}` is a record to the
+/// TypeScript engine). The one table: the binding test, every field read
+/// and the extraction validator read it.
+pub const OBJECT_PROTOTYPE_NAMES: [&str; 12] = [
+    "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty", "__lookupGetter__", "__lookupSetter__",
+    "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "__proto__", "toLocaleString",
+];
+
+/// One of `Object.prototype`'s own names.
+pub fn is_object_prototype_name(name: &str) -> bool {
+    OBJECT_PROTOTYPE_NAMES.contains(&name)
+}
+
+/// A built-in function, by the name its `String()` prints: `Object`, or one
+/// of `Object.prototype`'s methods. One per realm, so `===` is by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeFunction(pub &'static str);
+
+impl NativeFunction {
+    /// `Function.prototype.toString` of a built-in.
+    pub fn source_text(self) -> String {
+        format!("function {}() {{ [native code] }}", self.0)
+    }
+}
+
+thread_local! {
+    /// `Object.prototype` itself (what `__proto__` reads off a plain object):
+    /// one object, with no own enumerable key.
+    static OBJECT_PROTOTYPE: Rc<JsObject> = Rc::new(JsObject::new());
+}
+
+/// `Object.prototype`.
+pub fn object_prototype() -> Js {
+    Js::Object(OBJECT_PROTOTYPE.with(Rc::clone))
+}
+
+pub fn is_object_prototype(object: &Rc<JsObject>) -> bool {
+    OBJECT_PROTOTYPE.with(|prototype| Rc::ptr_eq(prototype, object))
+}
+
+/// `Object.prototype[name]`, for one of its own names. `__proto__` read off
+/// `Object.prototype` itself is `null`; off any other plain object it is
+/// `Object.prototype`.
+pub fn prototype_member(name: &str, of: &Rc<JsObject>) -> Js {
+    match name {
+        "constructor" => Js::Function(NativeFunction("Object")),
+        "__proto__" if is_object_prototype(of) => Js::Null,
+        "__proto__" => object_prototype(),
+        other => match OBJECT_PROTOTYPE_NAMES.iter().find(|n| **n == other) {
+            Some(name) => Js::Function(NativeFunction(name)),
+            None => Js::Undefined,
+        },
+    }
+}
+
+/// `object[key]` on a plain object: its own entry, else what its prototype
+/// holds under that name, else `undefined`.
+pub fn object_property(object: &Rc<JsObject>, key: &str) -> Js {
+    match object.get(key) {
+        Some(value) => value.clone(),
+        None if is_object_prototype_name(key) => prototype_member(key, object),
+        None => Js::Undefined,
+    }
+}
+
+/// `object[key]` on a plain object that is not `Object.prototype` itself.
+pub fn plain_property(object: &JsObject, key: &str) -> Js {
+    match object.get(key) {
+        Some(value) => value.clone(),
+        None if key == "__proto__" => object_prototype(),
+        None if is_object_prototype_name(key) => prototype_member(key, &OBJECT_PROTOTYPE.with(Rc::clone)),
+        None => Js::Undefined,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -121,7 +206,7 @@ impl Js {
             Js::Bool(b) => *b,
             Js::Number(n) => !(n.is_nan() || *n == 0.0),
             Js::String(s) => !s.is_empty(),
-            Js::Array(_) | Js::Object(_) => true,
+            Js::Array(_) | Js::Object(_) | Js::Record(_) | Js::Function(_) => true,
         }
     }
 
@@ -129,7 +214,8 @@ impl Js {
     pub fn type_of(&self) -> &'static str {
         match self {
             Js::Undefined => "undefined",
-            Js::Null | Js::Array(_) | Js::Object(_) => "object",
+            Js::Null | Js::Array(_) | Js::Object(_) | Js::Record(_) => "object",
+            Js::Function(_) => "function",
             Js::Bool(_) => "boolean",
             Js::Number(_) => "number",
             Js::String(_) => "string",
@@ -151,7 +237,26 @@ impl Js {
                 .map(|item| if item.is_nullish() { String::new() } else { item.to_js_string() })
                 .collect::<Vec<_>>()
                 .join(","),
-            Js::Object(_) => "[object Object]".into(),
+            Js::Object(_) | Js::Record(_) => "[object Object]".into(),
+            Js::Function(function) => function.source_text(),
+        }
+    }
+
+    /// `String(value)` with ToPrimitive's reading of a plain object: its
+    /// `toString`, then its `valueOf` — its own keys of those names, or its
+    /// prototype's — called until one answers with a primitive. A dict whose
+    /// own `toString` is no function cannot be made text (`TypeError`).
+    pub fn to_text(&self) -> Result<String, Thrown> {
+        match self {
+            Js::Array(array) => {
+                let mut parts = Vec::with_capacity(array.items.len());
+                for item in &array.items {
+                    parts.push(if item.is_nullish() { String::new() } else { item.to_text()? });
+                }
+                Ok(parts.join(","))
+            }
+            Js::Object(object) => object_to_primitive(object, 0)?.to_text(),
+            other => Ok(other.to_js_string()),
         }
     }
 
@@ -164,9 +269,61 @@ impl Js {
             Js::Number(n) => *n,
             Js::String(s) => string_to_number(s),
             Js::Array(_) => string_to_number(&self.to_js_string()),
-            Js::Object(_) => f64::NAN,
+            Js::Object(_) | Js::Record(_) | Js::Function(_) => f64::NAN,
         }
     }
+}
+
+/// What a built-in throws: its class (`TypeError`, `RangeError`) and words.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Thrown {
+    pub class: &'static str,
+    pub message: String,
+}
+
+impl Thrown {
+    fn type_error(message: &str) -> Thrown {
+        Thrown { class: "TypeError", message: message.to_string() }
+    }
+}
+
+/// `OrdinaryToPrimitive(object, "string")`. `depth` counts the calls
+/// `toLocaleString` makes of `this.toString()`: one that calls itself runs
+/// out of stack, as V8's does.
+fn object_to_primitive(object: &Rc<JsObject>, depth: usize) -> Result<Js, Thrown> {
+    for name in ["toString", "valueOf"] {
+        let Js::Function(method) = object_property(object, name) else { continue };
+        if let Some(primitive) = call_on(method, object, depth)? {
+            return Ok(primitive);
+        }
+    }
+    Err(Thrown::type_error("Cannot convert object to primitive value"))
+}
+
+/// A built-in called with `this` the object and no argument: the primitive
+/// it answers, or `None` for an object.
+fn call_on(method: NativeFunction, object: &Rc<JsObject>, depth: usize) -> Result<Option<Js>, Thrown> {
+    Ok(match method.0 {
+        "toString" => Some(Js::str("[object Object]")),
+        // `valueOf` hands the object back; `Object()` makes a new one.
+        "valueOf" | "Object" => None,
+        // Each reads its argument, `undefined`, as the key "undefined".
+        "hasOwnProperty" | "propertyIsEnumerable" => Some(Js::Bool(object.get("undefined").is_some())),
+        "isPrototypeOf" => Some(Js::Bool(false)),
+        "__lookupGetter__" | "__lookupSetter__" => Some(Js::Undefined),
+        "__defineGetter__" | "__defineSetter__" => return Err(Thrown::type_error(&format!("Object.prototype.{}: Expecting function", method.0))),
+        // `this.toString()`.
+        "toLocaleString" => {
+            if depth > 64 {
+                return Err(Thrown { class: "RangeError", message: "Maximum call stack size exceeded".into() });
+            }
+            match object_property(object, "toString") {
+                Js::Function(inner) => call_on(inner, object, depth + 1)?,
+                _ => return Err(Thrown::type_error("Cannot convert object to primitive value")),
+            }
+        }
+        _ => None,
+    })
 }
 
 /// `a === b`: numbers by value (`NaN` is not itself, `-0` is `0`), objects
@@ -179,6 +336,8 @@ pub fn strict_equals(a: &Js, b: &Js) -> bool {
         (Js::String(x), Js::String(y)) => x == y,
         (Js::Array(x), Js::Array(y)) => Rc::ptr_eq(x, y),
         (Js::Object(x), Js::Object(y)) => Rc::ptr_eq(x, y),
+        (Js::Record(x), Js::Record(y)) => x.is(y),
+        (Js::Function(x), Js::Function(y)) => x == y,
         _ => false,
     }
 }
@@ -429,7 +588,10 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String) {
         }
     };
     match value {
-        Js::Undefined | Js::Null => out.push_str("null"),
+        Js::Undefined | Js::Null | Js::Function(_) => out.push_str("null"),
+        // Every caller reads a record down to its fields first (TEXT.SERIALISE's
+        // `plainValueOf`, an extraction's context): one never reaches here.
+        Js::Record(_) => out.push_str("{}"),
         Js::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Js::Number(n) => out.push_str(&if n.is_finite() { number_to_string(*n) } else { "null".into() }),
         Js::String(s) => out.push_str(&json_quote(s)),
@@ -450,7 +612,7 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String) {
             out.push(']');
         }
         Js::Object(object) => {
-            let entries: Vec<_> = object.entries().iter().filter(|(_, v)| !matches!(v, Js::Undefined)).collect();
+            let entries: Vec<_> = object.entries().iter().filter(|(_, v)| !matches!(v, Js::Undefined | Js::Function(_))).collect();
             if entries.is_empty() {
                 out.push_str("{}");
                 return;

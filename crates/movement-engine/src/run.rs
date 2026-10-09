@@ -67,7 +67,7 @@ use crate::executor::{Host, HostError};
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
 use crate::program::{self, Checked, Stamp};
-use crate::stdlib::{self, Surroundings};
+use crate::stdlib::Surroundings;
 use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
 
@@ -249,6 +249,7 @@ impl Failure {
             }
             Failure::Engine { class: ErrorClass::Error, message } => json!({ "class": "Error", "message": message }),
             Failure::Engine { class: ErrorClass::RangeError, message } => json!({ "class": "RangeError", "message": message }),
+            Failure::Engine { class: ErrorClass::TypeError, message } => json!({ "class": "TypeError", "message": message }),
             Failure::Host(error) => json!({ "hostError": error.detail.get("ref").cloned().unwrap_or(Json::Null) }),
             Failure::CapExceeded(cap) => cap.to_json(),
             Failure::CallDepth { limit, chain } => json!({ "class": "CallDepthExceeded", "limit": limit, "chain": chain }),
@@ -945,6 +946,26 @@ impl Run<'_> {
                 };
                 Err(Stop::Thrown(Failure::engine("MOVENG_ERROR", message)))
             }
+            // A collection op run for its function's effects.
+            Statement::Collection(statement) => {
+                self.collection(&statement.collection, None, scope, at, &format!("{path}/collection/fn")).await?;
+                Ok(Flow::FellThrough)
+            }
+            Statement::Call(call) if let Some(reading) = self.call_reading(call, scope)? => {
+                match reading {
+                    crate::collection::Reading::Collection(op) => {
+                        let index = call.args.len() - 1;
+                        self.collection(&op, None, scope, at, &format!("{path}/args/{index}")).await?;
+                    }
+                    crate::collection::Reading::Members(_) => {
+                        return Err(Stop::Thrown(Failure::engine(
+                            "MOVENG_RUNTIME",
+                            format!("'{}(…)' reads a type's values and does nothing else — the checker should have caught this", call.callee),
+                        )));
+                    }
+                }
+                Ok(Flow::FellThrough)
+            }
             // A plugin called for what it does: its value goes nowhere.
             Statement::Call(call) if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
                 self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
@@ -994,8 +1015,19 @@ impl Run<'_> {
             }
             RValue::Extract { extract } => {
                 let emission = self.extraction(extract, scope).await?;
-                scope.declare(name, Binding::Extracted { emission, root: true });
+                scope.declare(name, Binding::Extracted { emission, root: true, id: crate::bindings::Identity::new() });
             }
+            RValue::Collection { collection } => {
+                self.collection(collection, Some(name), scope, at, &format!("{path}/value/collection/fn")).await?;
+            }
+            RValue::Members { members } => self.members(members, Some(name), scope)?,
+            RValue::Call { call } if let Some(reading) = self.call_reading(call, scope)? => match reading {
+                crate::collection::Reading::Collection(op) => {
+                    let index = call.args.len() - 1;
+                    self.collection(&op, Some(name), scope, at, &format!("{path}/value/call/args/{index}")).await?;
+                }
+                crate::collection::Reading::Members(members) => self.members(&members, Some(name), scope)?,
+            },
             // A plugin's name in a construction's spelling is its call
             // (`constructionAsCall`).
             RValue::Construct { construct } if matches!(scope.resolve(&construct.callee), Some(Binding::Plugin(_))) => {
@@ -1048,6 +1080,14 @@ impl Run<'_> {
         Ok(())
     }
 
+    /// `readCallIn`'s reading of a call of a collection op or `MEMBERS` (a
+    /// built-in from version 3, when the program binds no such name).
+    fn call_reading(&self, call: &ast::CallStatement, scope: &Scope) -> Result<Option<crate::collection::Reading>, Stop> {
+        let binds = scope.resolve(&call.callee).is_some() || scope.resolve_function(&call.callee).is_some();
+        crate::collection::reading(call, binds, self.version())
+            .map_err(|refusal| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("{refusal} — the checker should have caught this"))))
+    }
+
     /// An `if` arm, in a scope of its own; a `return` in it returns from the
     /// body the `if` is in, its value landing in that body's scope too.
     async fn arm(&self, body: &[Statement], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
@@ -1084,15 +1124,34 @@ impl Run<'_> {
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
-            && let Some(record @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::Positions(_) | Binding::LazyWalk(_))) =
-                scope.resolve(name)
+            && let Some(binding) = scope.resolve(name)
+            && self.aliases(&binding)
         {
-            return Ok(record);
+            return Ok(binding);
         }
         if let Some(selected) = self.selected_record(&expr, slot, scope).await.map_err(Stop::Thrown)? {
             return Ok(selected);
         }
-        Ok(Binding::Value(self.bind_evaluated(&expr, slot, scope).await?))
+        let bound = self.bind_evaluated(&expr, slot, scope).await?;
+        Ok(crate::record::bind_value(bound.value, bound.trail, bound.many))
+    }
+
+    /// `aliasedNodeBinding`'s kinds: a bare name of one is a second name for
+    /// the binding itself (a shape's from version 3); of any other, the
+    /// value it reads as.
+    fn aliases(&self, binding: &Binding) -> bool {
+        match binding {
+            Binding::Event | Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Node(_) | Binding::LazyWalk(_) | Binding::Positions(_) => true,
+            Binding::Shape(_) => self.version() >= 3,
+            Binding::Value(_) | Binding::Instance(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque => false,
+            // The switch's cases by kind; a kind it has none for falls out of
+            // it, aliasing nothing.
+            Binding::Shaped(_) => matches!(
+                crate::record::kind_of(binding).as_str(),
+                "event" | "handle" | "extractRoot" | "extractPosition" | "sourcePosition" | "resource" | "blockMeta" | "shapePosition" | "nodePosition"
+                    | "lazyWalk" | "callback" | "positions" | "closure" | "tuple"
+            ) || (crate::record::kind_of(binding) == "shape" && self.version() >= 3),
+        }
     }
 
     /// `bindSlotValue` for what this engine binds: the value the slot
@@ -1124,6 +1183,17 @@ impl Run<'_> {
             return Ok(None);
         }
         let Expression::Traverse { alias_root: Some(root), steps, .. } = expression.as_ref() else { return Ok(None) };
+        // A root `graphReadFor` resolves no graph for (a node the run built,
+        // a value): the fold of the walk, evaluated.
+        let graph = match scope.resolve(root) {
+            Some(Binding::Event | Binding::Landed(_) | Binding::Instance(_)) => true,
+            // A handle that bound no record has no graph to read.
+            Some(Binding::Handle(handle)) => !matches!(handle.record.get("externalId"), Js::Undefined),
+            _ => false,
+        };
+        if !graph {
+            return Ok(None);
+        }
         let [TraversalStep::Edge(step)] = steps.as_slice() else {
             unreachable!("admission picks only from a walk of one hop")
         };
@@ -1214,18 +1284,9 @@ impl Run<'_> {
     async fn answer(&self, ask: Ask, scope: &Rc<Scope>, subject: Option<&Scoped>, span: Option<&Js>) -> Result<Result<Evaluated, EvalError>, Failure> {
         match ask {
             Ask::EventField { field } => self.event_field(&field).await.map(Ok),
-            Ask::RecordField { root, field } => match scope.resolve(&root) {
-                Some(Binding::Landed(record)) => self.landed_field(&record, &field).await.map(Ok),
-                // The read is the walk: each landing's field, collapsed.
-                Some(Binding::LazyWalk(walk)) => {
-                    let landings = self.run_deferred(&walk).await.map_err(crate::write::failure_of)?;
-                    let mut read = Vec::with_capacity(landings.len());
-                    for (_, landing) in &landings {
-                        read.push(self.landing_field(landing, &field, &root).await?);
-                    }
-                    Ok(Ok(self.collapse(read)))
-                }
-                _ => Ok(self.record_field(&root, &field, scope)),
+            Ask::Bare { name, member } => match scope.resolve(&name) {
+                Some(binding) => self.bare(&name, binding, member).map(Ok),
+                None => Err(Failure::engine("MOVENG_RUNTIME", format!("'{name}' is not in scope — the checker should have caught this"))),
             },
             Ask::ScopedField { field, edge } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
                 Scoped::Landed(landed) => self.scoped_field(landed, &field, edge, scope).await.map(Ok),
@@ -1238,16 +1299,21 @@ impl Run<'_> {
                     "MOVENG_UNSUPPORTED",
                     "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
                 ))),
-                Scoped::Binding(binding) => Ok(self.binding_field(binding, &field)),
+                Scoped::Binding(binding) => self.read_binding_field(binding, &field, "the scoped position").map(Ok),
             },
             Ask::Traverse { expr } => {
                 let span = span.cloned().unwrap_or(Js::Undefined);
-                self.walk_read(&expr, scope, &span).await
+                let Expression::Traverse { alias_root: Some(root), .. } = &expr else { unreachable!("the evaluator asks for rooted traversals only") };
+                let binding = scope
+                    .resolve(root)
+                    .ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("'{root}' is not in scope — the checker should have caught this")))?;
+                self.read_from(&expr, root, binding, scope, &span).await.map(Ok)
             }
-            Ask::Count { expr } => {
+            Ask::From { name, held, expr } => {
                 let span = span.cloned().unwrap_or(Js::Undefined);
-                self.walk_count(&expr, scope, &span).await.map(|(n, trail)| Ok(Evaluated { value: Js::Number(n as f64), prov: Prov::Built(trail) }))
+                self.read_from(&expr, &name, held, scope, &span).await.map(Ok)
             }
+            Ask::ScopedAt { expr, subject } => self.scoped_at_record(&expr, &subject, scope, span.cloned()).await.map(Ok),
             Ask::Function { id, args } => {
                 let args = args.iter().map(|arg| self.wire.encode(arg)).collect();
                 let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
@@ -1270,6 +1336,7 @@ impl Run<'_> {
                 (Some("MovementEngineError"), Some("MOVENG_RUNTIME")) => ErrorClass::Engine("MOVENG_RUNTIME"),
                 (Some("MovementEngineError"), Some("MOVENG_UNSUPPORTED")) => ErrorClass::Engine("MOVENG_UNSUPPORTED"),
                 (Some("RangeError"), _) => ErrorClass::RangeError,
+                (Some("TypeError"), _) => ErrorClass::TypeError,
                 (Some("Error"), _) => ErrorClass::Error,
                 _ => return Err(Failure::engine("MOVENG_RUNTIME", format!("a built-in threw what this engine cannot rethrow: {threw}"))),
             };
@@ -1418,7 +1485,7 @@ impl Run<'_> {
         };
         // `field in data`: own keys, and the prototype's.
         let carried = keys.iter().any(|k| k == field)
-            || stdlib::is_object_prototype_name(field)
+            || crate::js::is_object_prototype_name(field)
             || (matches!(data, Js::Array(_)) && (field == "length" || ARRAY_PROTOTYPE_NAMES.contains(&field)));
         let seen = self.misses.borrow().iter().any(|(b, f)| b == instance_name && f == field);
         if carried || seen {
@@ -1464,6 +1531,14 @@ impl Run<'_> {
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
+        // The TypeScript engine hands its host the binding object itself; a
+        // record crosses this engine's wire as no value the host could use.
+        if let Some(kind) = self.wire.take_held_record() {
+            return Err(Failure::unsupported(
+                &format!("handing a record held as a value ({}) to the host", crate::record::describe_kind(&kind)),
+                "a record reaches a host call only read down to its fields",
+            ));
+        }
         self.host.request(request).await.map_err(Failure::Host)
     }
 

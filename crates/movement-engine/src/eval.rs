@@ -25,6 +25,7 @@ use movement_parser::lowering::expression::{
     AggregationFunction, Expression, FilterOperator, ListElement, LogicalOp, ObjectMember, OrderDirection, StaticValue,
 };
 
+use crate::bindings::Binding;
 use crate::env::{Env, Trail, ValueBinding};
 use crate::executor::{HostError, ready};
 use crate::filter::{arithmetic, at_index, compare_to_null, compare_values, is_null_literal};
@@ -38,6 +39,8 @@ pub enum ErrorClass {
     Engine(&'static str),
     Error,
     RangeError,
+    /// What JavaScript throws reading a property off nothing.
+    TypeError,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,17 +108,15 @@ pub fn static_value(value: &StaticValue) -> Js {
 /// event (read through the host).
 pub trait Names {
     fn value(&self, name: &str) -> Option<ValueBinding>;
+    /// Whatever `name` is bound to: a value, the event, or what else the
+    /// run binds.
+    fn binding(&self, name: &str) -> Option<Binding> {
+        if self.is_event(name) {
+            return Some(Binding::Event);
+        }
+        self.value(name).map(Binding::Value)
+    }
     fn is_event(&self, name: &str) -> bool;
-    /// A record the run holds (a write's handle, a node it built), whose
-    /// fields the run reads (`readBindingField`).
-    fn is_record(&self, _name: &str) -> bool {
-        false
-    }
-    /// A name a walk can start from that is no value (the event, an
-    /// instance, a record): its traversals are the run's.
-    fn is_walk_root(&self, _name: &str) -> bool {
-        false
-    }
     /// A name bound to anything but a value, which a presence test reads as
     /// present by the fact of being bound (`presenceCompare`).
     fn binds_non_value(&self, _name: &str) -> bool {
@@ -139,9 +140,10 @@ pub enum Ask {
     /// A field of the event position (`msg.\`subject\``), through the
     /// source adapter.
     EventField { field: String },
-    /// A field of a record the run holds (`co.externalId`, `g.title`):
-    /// answered by the run, which holds the record and its fields' trails.
-    RecordField { root: String, field: String },
+    /// A name bound to anything but a value, read whole (`readBareName`), or
+    /// as a list's or a map's member (`evalValueMember`, which hands a
+    /// record over as itself).
+    Bare { name: String, member: bool },
     /// A built-in this engine does not reproduce for these arguments: the
     /// TypeScript member answers.
     Function { id: String, args: Vec<Js> },
@@ -153,12 +155,16 @@ pub enum Ask {
     /// walked edge's own inline property first, then a value binding of
     /// that name, then the record's field.
     ScopedField { field: String, edge: bool },
-    /// A traversal the run walks (crate::traverse `walk_read`): hops off the
-    /// event, an instance or a record read for a field, or an `EXISTS`
-    /// over hops.
+    /// A traversal the run reads (crate::traverse `read_from`): off the
+    /// event, an instance or a record, read for a field, as the records it
+    /// lands on, or as an `EXISTS`.
     Traverse { expr: Expression },
-    /// `COUNT(<walk>)` over the records a walk lands on: how many.
-    Count { expr: Expression },
+    /// The same read rooted at a record a value holds (`top = FIRST(rows)`,
+    /// `m.k` of a map holding one), named `name` for a message.
+    From { name: String, held: Binding, expr: Expression },
+    /// `expr` scoped at the record `subject` holds (`memberScope`): a SORT
+    /// key over a list of records.
+    ScopedAt { expr: Expression, subject: Js },
 }
 
 /// An evaluation in progress, or a host answer it awaits.
@@ -265,11 +271,11 @@ impl<'a> Evaluator<'a> {
             // hop's WHERE a rootless `property` read is the same read; inside
             // one it is the landed record's field, unless a value binding of
             // that name stands in for it (`scopedBinding`).
-            Expression::AliasRef { name } => self.read_name(name),
+            Expression::AliasRef { name } => self.read_name(name).await,
             Expression::Property { property_type_id: name } if self.scoped && self.env.value(name).is_none() => {
                 self.ask_scoped(name, false).await
             }
-            Expression::Property { property_type_id: name } => self.read_name(name),
+            Expression::Property { property_type_id: name } => self.read_name(name).await,
             Expression::EdgeProperty { property_type_id: name } if self.scoped => self.ask_scoped(name, true).await,
             Expression::EdgeProperty { .. } => Err(EvalError::unsupported(
                 "edge-property reads outside a traversal WHERE",
@@ -279,14 +285,14 @@ impl<'a> Evaluator<'a> {
                 let inner = self.eval(expression).await?;
                 let index = self.eval(index).await?;
                 let prov = self.union(&[&inner.prov, &index.prov]);
-                // A dict is looked up by its key; a key that is not there,
-                // or one that is not text, is null.
-                let value = match &inner.value {
-                    Js::Object(object) => match &index.value {
-                        Js::String(key) => object.get(key).cloned().unwrap_or(Js::Null),
-                        _ => Js::Null,
-                    },
-                    other => at_index(other, index.value.to_number()),
+                // A dict is looked up by its own key; a key that is not there,
+                // or one that is not text, is null. A record held as a value is
+                // a dict to `isDictValue`: its own keys are the binding's.
+                let value = match (&inner.value, &index.value) {
+                    (Js::Object(object), Js::String(key)) => object.get(key).cloned().unwrap_or(Js::Null),
+                    (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key)?,
+                    (Js::Object(_) | Js::Record(_), _) => Js::Null,
+                    (other, _) => at_index(other, index.value.to_number()),
                 };
                 Ok(Evaluated { value, prov })
             }
@@ -296,7 +302,7 @@ impl<'a> Evaluator<'a> {
                 for element in elements {
                     match element {
                         ListElement::Expression(e) => {
-                            let member = self.eval(e).await?;
+                            let member = self.member(e).await?;
                             values.push(member.value);
                             provs.push(member.prov);
                         }
@@ -331,7 +337,7 @@ impl<'a> Evaluator<'a> {
                 for member in entries {
                     match member {
                         ObjectMember::Entry { key, value } => {
-                            let result = self.eval(value).await?;
+                            let result = self.member(value).await?;
                             if key == "__proto__" {
                                 return Err(EvalError::Fallback("a `__proto__` key sets a prototype".into()));
                             }
@@ -339,7 +345,7 @@ impl<'a> Evaluator<'a> {
                             provs.push(result.prov);
                         }
                         ObjectMember::Spread(spread) => {
-                            let result = self.eval(&spread.expression).await?;
+                            let result = self.member(&spread.expression).await?;
                             spread_keys(&result.value, &mut object)?;
                             provs.push(result.prov);
                         }
@@ -353,7 +359,7 @@ impl<'a> Evaluator<'a> {
                 for part in parts {
                     let part = self.eval(part).await?;
                     if !part.value.is_nullish() {
-                        text.push_str(&part.value.to_js_string());
+                        text.push_str(&part.value.to_text().map_err(thrown)?);
                     }
                     provs.push(part.prov);
                 }
@@ -374,9 +380,9 @@ impl<'a> Evaluator<'a> {
                 }
                 let l = self.eval(left).await?;
                 let r = self.eval(right).await?;
-                let records = stdlib::is_binding_shaped(&l.value) || stdlib::is_binding_shaped(&r.value);
-                if records && matches!(op, FilterOperator::Eq | FilterOperator::Neq) {
-                    return Err(EvalError::Fallback("a record compared by its identity".into()));
+                // A record is compared by identity (`compareRecords`), never read.
+                if let Some(same) = crate::record::compare_records(&l.value, *op, &r.value)? {
+                    return Ok(Evaluated { value: Js::Bool(same), prov: self.union(&[&l.prov, &r.prov]) });
                 }
                 let value = self
                     .or_ask(compare_values(&l.value, *op, &r.value).map(Js::Bool), || Ask::Compare {
@@ -426,23 +432,7 @@ impl<'a> Evaluator<'a> {
                 let id = reader.meta(key);
                 Ok(Evaluated { value: Js::String(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
-            Expression::Traverse { alias_root: Some(root), steps, expression }
-                if steps.is_empty() && matches!(expression.as_ref(), Expression::Exists { .. }) =>
-            {
-                self.exists(root, expr, expression).await
-            }
-            Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => {
-                // The bracket grammar reads `t.\`f\`` as an edge property;
-                // either terminal is the root's field (`fieldTerminalId`).
-                let (Expression::Property { property_type_id: field } | Expression::EdgeProperty { property_type_id: field }) =
-                    expression.as_ref()
-                else {
-                    return Err(EvalError::Fallback("a traversal terminal other than a field".into()));
-                };
-                self.traverse(root, field).await
-            }
-            // Hops off a record: the run's walk.
-            Expression::Traverse { alias_root: Some(_), .. } => self.walk(Ask::Traverse { expr: expr.clone() }).await,
+            Expression::Traverse { alias_root: Some(root), .. } => self.traverse_from(expr, root).await,
             Expression::Aggregate { fn_, expression, separator, order_by, order_direction, .. } => {
                 self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction).await
             }
@@ -450,43 +440,79 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// `root.field` with no hops: the event's field through the host, or a
-    /// value binding's field projected (`readBindingField`'s value case).
-    async fn traverse(&self, root: &str, field: &str) -> Eval {
-        if self.env.is_event(root) {
-            return match self.reader() {
-                Some(reader) => reader.ask(Ask::EventField { field: field.to_string() }).await,
-                None => Err(EvalError::Fallback("the event needs the host".into())),
-            };
-        }
-        if self.env.is_record(root) {
-            return match self.reader() {
-                Some(reader) => reader.ask(Ask::RecordField { root: root.to_string(), field: field.to_string() }).await,
-                None => Err(EvalError::Fallback("a record the run holds is the run's".into())),
-            };
-        }
-        let Some(binding) = self.env.value(root) else {
-            return Err(EvalError::Fallback(format!("'{root}' is not a value binding")));
-        };
-        // A record held on the value plane reads as the record it is.
-        if stdlib::is_binding_shaped(&binding.value) {
-            return Err(EvalError::Fallback("a record held in a value binding".into()));
-        }
-        let value = match &binding.value {
-            Js::Object(object) => match object.get(field) {
-                Some(found) if !found.is_nullish() => found.clone(),
-                Some(_) => Js::Null,
-                // `value[field] ?? null` reads Object.prototype's names too.
-                None if stdlib::is_object_prototype_name(field) => {
-                    return Err(EvalError::Fallback(format!("`{field}` is Object.prototype's")));
+    /// `evaluateTraverse` / `traverseFrom`: a walk or a field read rooted at
+    /// a name. A value's own read is the value plane's (and a record a
+    /// value holds is the run's); the event's field is a host read; any
+    /// other root is the run's to read.
+    async fn traverse_from(&self, expr: &Expression, root: &str) -> Eval {
+        let Expression::Traverse { steps, expression, .. } = expr else { unreachable!("a rooted traversal") };
+        match self.env.binding(root) {
+            None => Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not in scope — the checker should have caught this"))),
+            Some(Binding::Value(value)) => {
+                let trail = value.trail.clone().unwrap_or_default();
+                self.from_value(expr, root.to_string(), value, trail).await
+            }
+            Some(Binding::Event) if steps.is_empty() && field_terminal(expression).is_some_and(|f| f != POSITION_SENTINEL) => {
+                let field = field_terminal(expression).expect("checked above");
+                match self.reader() {
+                    Some(reader) => reader.ask(Ask::EventField { field: field.to_string() }).await,
+                    None => Err(EvalError::Fallback("the event needs the host".into())),
                 }
-                None => Js::Null,
-            },
-            _ => Js::Null,
-        };
-        // A field projected out of a value keeps the taint union but drops
-        // `direct`: it is not the whole value's quote.
-        Ok(Evaluated { value, prov: self.union(&[&Prov::Binding(root.to_string())]) })
+            }
+            Some(_) => self.ask_run(Ask::Traverse { expr: expr.clone() }).await,
+        }
+    }
+
+    /// `traverseFrom`'s value case: a record the value holds is read as that
+    /// record (`heldRecords`); `m.k.f` reads on from what the key holds,
+    /// bound as a name bound to it would be; `EXISTS(v)` asks whether it
+    /// holds anything; else the value's own field (`readBindingField`).
+    fn from_value<'s>(&'s self, expr: &'s Expression, name: String, value: ValueBinding, trail: Trail) -> Evaluating<'s> {
+        Box::pin(async move {
+            let Expression::Traverse { steps, expression, .. } = expr else { unreachable!("a rooted traversal") };
+            if let Some(held) = crate::record::held_records(&value.value, expr) {
+                return self.ask_run(Ask::From { name, held, expr: expr.clone() }).await;
+            }
+            // A field projected out of a value keeps its taint but not its
+            // quote (`transformed`).
+            let transformed = Trail { origins: trail.origins.clone(), direct: None };
+            if steps.is_empty()
+                && let Expression::Traverse { alias_root: Some(key), .. } = expression.as_ref()
+            {
+                let member = format!("{name}.{key}");
+                return match crate::record::bind_value(crate::record::project(&value.value, key), Some(transformed.clone()), false) {
+                    Binding::Value(bound) => self.from_value(expression, member, bound, transformed).await,
+                    held => self.ask_run(Ask::From { name: member, held, expr: expression.as_ref().clone() }).await,
+                };
+            }
+            if let Expression::Exists { steps: hops, where_ } = expression.as_ref() {
+                if !steps.is_empty() {
+                    return Err(EvalError::unsupported_bare(&format!("EXISTS() after hops from '{name}'")));
+                }
+                if !hops.is_empty() || where_.is_some() {
+                    return Err(EvalError::unsupported_bare(&format!(
+                        "traversing inside EXISTS() from '{name}', which holds {} rather than a record",
+                        describe_held_value(&value.value)
+                    )));
+                }
+                let present = match &value.value {
+                    Js::Array(list) => !list.items.is_empty(),
+                    other => !other.is_nullish(),
+                };
+                return Ok(Evaluated { value: Js::Bool(present), prov: Prov::Built(transformed) });
+            }
+            // `directFieldRead`.
+            if !steps.is_empty() {
+                return Err(EvalError::unsupported(&format!("traversing from a value binding ('{name}')"), "source/handle traversal is E2 scope"));
+            }
+            let Some(field) = field_terminal(expression) else {
+                return Err(EvalError::unsupported(&format!("this read shape on a value binding ('{name}')"), "only direct field reads run in E1"));
+            };
+            if field == POSITION_SENTINEL {
+                return Err(EvalError::unsupported_bare(&format!("aggregating a value binding ('{name}') as a position")));
+            }
+            Ok(Evaluated { value: crate::record::project(&value.value, field), prov: Prov::Built(transformed) })
+        })
     }
 
     /// `presenceCompare`: `x == null` of a name bound to anything but a
@@ -507,39 +533,28 @@ impl<'a> Evaluator<'a> {
         Ok(Evaluated { value: Js::Bool(compare_to_null(op, &subject.value)), prov: subject.prov })
     }
 
-    /// `EXISTS(root…)`: over a value, whether it holds one (the gate idiom,
-    /// `traverseFrom`'s value case); over the event or a record, the run's
-    /// walk.
-    async fn exists(&self, root: &str, expr: &Expression, terminal: &Expression) -> Eval {
-        if self.env.is_walk_root(root) {
-            return self.walk(Ask::Traverse { expr: expr.clone() }).await;
-        }
-        let Some(binding) = self.env.value(root) else {
-            return Err(EvalError::Fallback(format!("'{root}' is not a value binding")));
-        };
-        if stdlib::is_binding_shaped(&binding.value) {
-            return Err(EvalError::Fallback("a record held in a value binding".into()));
-        }
-        if let Expression::Exists { steps, where_ } = terminal
-            && (!steps.is_empty() || where_.is_some())
-        {
-            return Err(EvalError::unsupported_bare(&format!(
-                "traversing inside EXISTS() from '{root}', which holds {} rather than a record",
-                describe_held_value(&binding.value)
-            )));
-        }
-        let present = match &binding.value {
-            Js::Array(list) => !list.items.is_empty(),
-            other => !other.is_nullish(),
-        };
-        Ok(Evaluated { value: Js::Bool(present), prov: self.union(&[&Prov::Binding(root.to_string())]) })
-    }
-
-    async fn walk(&self, ask: Ask) -> Eval {
+    /// What only the run can answer; with no run, the TypeScript's.
+    async fn ask_run(&self, ask: Ask) -> Eval {
         match self.reader() {
             Some(reader) => reader.ask(ask).await,
-            None => Err(EvalError::Fallback("a traversal needs the host".into())),
+            None => Err(EvalError::Fallback("a record is the run's".into())),
         }
+    }
+
+    /// `evalValueMember`: a list's or a map's member. A bare name bound to a
+    /// record is that record (`memberPosition`), except a block's many
+    /// returned records, which read as their list; anything else is the
+    /// value it evaluates to.
+    async fn member(&self, expr: &Expression) -> Eval {
+        if !self.scoped
+            && let Expression::AliasRef { name } | Expression::Property { property_type_id: name } = expr
+            && let Some(binding) = self.env.binding(name)
+            && crate::record::is_position(&binding)
+            && !matches!(binding, Binding::Positions(_))
+        {
+            return self.ask_run(Ask::Bare { name: name.clone(), member: true }).await;
+        }
+        self.eval(expr).await
     }
 
     /// `case 'aggregate'`: the folds, as the TG engine's `applyAggregation`
@@ -553,10 +568,6 @@ impl<'a> Evaluator<'a> {
         order_by: Option<&Expression>,
         direction: Option<OrderDirection>,
     ) -> Eval {
-        // The records a walk lands on, counted: no record crosses as a value.
-        if fn_ == AggregationFunction::Count && is_records_walk(inner) {
-            return self.walk(Ask::Count { expr: inner.clone() }).await;
-        }
         let evaluated = self.eval(inner).await?;
         let values: Vec<Js> = match &evaluated.value {
             Js::Undefined | Js::Null => Vec::new(),
@@ -596,7 +607,7 @@ impl<'a> Evaluator<'a> {
             AggregationFunction::Max if values.is_empty() => Js::Null,
             AggregationFunction::Max => Js::Number(math_max(values.iter().map(Js::to_number))),
             AggregationFunction::Join => Js::String(
-                values.iter().filter(|v| !v.is_nullish()).map(Js::to_js_string).collect::<Vec<_>>().join(separator.unwrap_or(", ")),
+                values.iter().filter(|v| !v.is_nullish()).map(Js::to_text).collect::<Result<Vec<_>, _>>().map_err(thrown)?.join(separator.unwrap_or(", ")),
             ),
             AggregationFunction::Collect => Js::array(values),
             AggregationFunction::Sort => unreachable!("SORT answered above"),
@@ -611,10 +622,10 @@ impl<'a> Evaluator<'a> {
     async fn sort(&self, members: Vec<Js>, key: Option<&Expression>, direction: Option<OrderDirection>, prov: Prov) -> Eval {
         let mut keys = Vec::with_capacity(members.len());
         for member in &members {
-            if stdlib::is_binding_shaped(member) {
-                return Err(EvalError::Fallback("a record sorted by its key".into()));
-            }
-            let dict = matches!(member, Js::Object(_));
+            // `memberScope`: a record reads its key in its own scope, a map
+            // reads its keys; a plain value has nothing to read one off.
+            let record = crate::record::binding_of(member).is_some();
+            let dict = record || matches!(member, Js::Object(_));
             let Some(key) = key else {
                 if dict {
                     return Err(EvalError::unsupported("sorting records with no key", "say what to rank them by — `SORT(xs, `Added At`, DESC)`"));
@@ -622,6 +633,10 @@ impl<'a> Evaluator<'a> {
                 keys.push(member.clone());
                 continue;
             };
+            if record {
+                keys.push(self.ask_run(Ask::ScopedAt { expr: key.clone(), subject: member.clone() }).await?.value);
+                continue;
+            }
             if !dict {
                 return Err(EvalError::unsupported(
                     "reading SORT's key off this member",
@@ -649,13 +664,7 @@ impl<'a> Evaluator<'a> {
         if let Some(bound) = self.env.value(name) {
             return Ok(bound.value);
         }
-        let Js::Object(object) = member else { unreachable!("a key is read off a map") };
-        match object.get(name) {
-            Some(found) if !found.is_nullish() => Ok(found.clone()),
-            Some(_) => Ok(Js::Null),
-            None if stdlib::is_object_prototype_name(name) => Err(EvalError::Fallback(format!("`{name}` is Object.prototype's"))),
-            None => Ok(Js::Null),
-        }
+        Ok(crate::record::project(member, name))
     }
 
     async fn ask_scoped(&self, field: &str, edge: bool) -> Eval {
@@ -665,14 +674,14 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn read_name(&self, name: &str) -> Eval {
-        let Some(binding) = self.env.value(name) else {
-            return Err(EvalError::engine(
-                "MOVENG_RUNTIME",
-                format!("'{name}' is not in scope — the checker should have caught this"),
-            ));
-        };
-        Ok(Evaluated { value: binding.value.clone(), prov: Prov::Binding(name.to_string()) })
+    /// `readBareName`: a value binding's value and trail; anything else bound
+    /// is the run's to read (a record as itself, the event refused).
+    async fn read_name(&self, name: &str) -> Eval {
+        match self.env.binding(name) {
+            None => Err(EvalError::engine("MOVENG_RUNTIME", format!("'{name}' is not in scope — the checker should have caught this"))),
+            Some(Binding::Value(binding)) => Ok(Evaluated { value: binding.value, prov: Prov::Binding(name.to_string()) }),
+            Some(_) => self.ask_run(Ask::Bare { name: name.to_string(), member: false }).await,
+        }
     }
 
     /// `isManyValued`: a name bound to a walk read for a field.
@@ -696,15 +705,27 @@ impl<'a> Evaluator<'a> {
             let mut values = Vec::new();
             let mut provs = Vec::new();
             for (index, a) in args.iter().enumerate() {
-                let result = self.eval(a).await?;
-                // A record (a dict the TypeScript reads as a binding) is
-                // read down to its fields there.
-                let special = stdlib::record_arg(id) == Some(index) || stdlib::whole_value_arg(id) == Some(index);
-                if special && holds_binding(&result.value, stdlib::whole_value_arg(id) == Some(index)) {
-                    return Err(EvalError::Fallback("a record read down to its fields".into()));
-                }
-                values.push(result.value);
-                provs.push(result.prov);
+                // `evalRecordArgument` / `evalWholeValueArgument`: read as a
+                // member (a bare record name is the record), then a record
+                // read down to its fields, or every record inside the value
+                // read down to plain data.
+                let value = if stdlib::record_arg(id) == Some(index) {
+                    let result = self.member(a).await?;
+                    provs.push(result.prov);
+                    match crate::record::binding_of(&result.value) {
+                        Some(record) => Js::object(crate::record::fields_of(&record)?),
+                        None => result.value,
+                    }
+                } else if stdlib::whole_value_arg(id) == Some(index) {
+                    let result = self.member(a).await?;
+                    provs.push(result.prov);
+                    crate::record::plain_value_of(&result.value)?
+                } else {
+                    let result = self.eval(a).await?;
+                    provs.push(result.prov);
+                    result.value
+                };
+                values.push(value);
             }
             let value = self
                 .or_ask(stdlib::apply_namespaced(id, &values, self.around), || Ask::Function { id: id.to_string(), args: values.clone() })
@@ -766,6 +787,21 @@ impl<'a> Evaluator<'a> {
 pub(crate) fn is_records_walk(expr: &Expression) -> bool {
     matches!(expr, Expression::Traverse { alias_root: Some(_), steps, expression }
         if !steps.is_empty() && matches!(expression.as_ref(), Expression::Property { property_type_id } if property_type_id == POSITION_SENTINEL))
+}
+
+/// What a JavaScript built-in threw, as the evaluator throws it.
+fn thrown(error: crate::js::Thrown) -> EvalError {
+    let class = if error.class == "RangeError" { ErrorClass::RangeError } else { ErrorClass::TypeError };
+    EvalError::Thrown { class, message: error.message }
+}
+
+/// `fieldTerminalId`: the field a traversal's terminal reads (the bracket
+/// grammar reads `t.\`f\`` as an edge property; either is the field).
+pub(crate) fn field_terminal(terminal: &Expression) -> Option<&str> {
+    match terminal {
+        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => Some(property_type_id),
+        _ => None,
+    }
 }
 
 /// `describeHeldValue`.
@@ -832,11 +868,17 @@ fn members_of(value: &Js) -> Js {
     }
 }
 
-/// `Object.assign(object, spreadKeysOf(value))`.
+/// `Object.assign(object, spreadKeysOf(value))`: a map's keys, or a
+/// record's fields (`recordFields`).
 fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
+    if let Some(record) = crate::record::binding_of(value) {
+        for (key, item) in crate::record::fields_of(&record)?.entries() {
+            object.set(key.clone(), item.clone());
+        }
+        return Ok(());
+    }
     match value {
         Js::Undefined | Js::Null => Ok(()),
-        Js::Object(_) if stdlib::is_binding_shaped(value) => Err(EvalError::Fallback("a record's fields spread".into())),
         Js::Object(source) => {
             for (key, item) in source.entries() {
                 if key == "__proto__" {
@@ -856,22 +898,6 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
                 "a spread copies a map's keys or a record's fields — write the value under a key instead (the checker should have caught this)",
             ))
         }
-    }
-}
-
-/// Whether `value` is, or (for a whole-value argument) holds anywhere, a
-/// dict the TypeScript reads as a record.
-pub(crate) fn holds_binding(value: &Js, deep: bool) -> bool {
-    if stdlib::is_binding_shaped(value) {
-        return true;
-    }
-    if !deep {
-        return false;
-    }
-    match value {
-        Js::Array(list) => list.items.iter().any(|item| holds_binding(item, true)),
-        Js::Object(object) => object.entries().iter().any(|(_, item)| holds_binding(item, true)),
-        _ => false,
     }
 }
 

@@ -161,6 +161,15 @@ impl Decoder {
                         value
                     }
                     "r" => self.seen.get(&id()?).cloned().ok_or("a wire reference to nothing seen")?,
+                    "f" => match tagged.get(1).and_then(Json::as_str) {
+                        Some("Object") => Js::Function(crate::js::NativeFunction("Object")),
+                        Some(name) => match crate::js::OBJECT_PROTOTYPE_NAMES.iter().find(|n| **n == name && !matches!(name, "constructor" | "__proto__")) {
+                            Some(name) => Js::Function(crate::js::NativeFunction(name)),
+                            None => return Err(format!("the wire names no built-in: {json}")),
+                        },
+                        None => return Err(format!("a built-in without its name: {json}")),
+                    },
+                    "p" => crate::js::object_prototype(),
                     _ => return Err(format!("an unknown wire tag: {json}")),
                 }
             }
@@ -199,6 +208,9 @@ pub fn encode_plain(value: &Js) -> Json {
 #[derive(Default)]
 pub struct Wire {
     sent: RefCell<HashMap<u64, Js>>,
+    /// The kind of a record a value written for a request held, which no
+    /// request may carry (the run fails before asking with it).
+    held_record: RefCell<Option<String>>,
 }
 
 impl Wire {
@@ -214,7 +226,16 @@ impl Wire {
     pub fn encode(&self, value: &Js) -> Json {
         let sent = self.sent.borrow();
         let mut encoder = Encoder { plain: true, sent: Some(&sent), ..Encoder::default() };
-        encoder.value(value)
+        let json = encoder.value(value);
+        if let Some(kind) = encoder.record {
+            self.held_record.borrow_mut().get_or_insert(kind);
+        }
+        json
+    }
+
+    /// The kind of a record a request about to be sent was written with.
+    pub fn take_held_record(&self) -> Option<String> {
+        self.held_record.borrow_mut().take()
     }
 }
 
@@ -225,6 +246,8 @@ struct Encoder<'w> {
     /// What the host sent this segment: one of those, unchanged, crosses
     /// back as itself.
     sent: Option<&'w HashMap<u64, Js>>,
+    /// A record met while writing, by its kind.
+    record: Option<String>,
 }
 
 impl Encoder<'_> {
@@ -254,6 +277,18 @@ impl Encoder<'_> {
             Js::Number(n) if *n == 0.0 && n.is_sign_negative() => json!(["n", "-0"]),
             Js::Number(n) => json!(n),
             Js::String(s) => json!(s),
+            // The built-in itself, which the host names back (`Object`, or
+            // `Object.prototype[name]`).
+            Js::Function(function) => json!(["f", function.0]),
+            Js::Object(object) if crate::js::is_object_prototype(object) => json!(["p"]),
+            // A record never crosses: the run fails before asking with one
+            // (`record::crossing`); this tag is the shim's refusal of one that
+            // got past.
+            Js::Record(record) => {
+                let kind = crate::record::kind_of(record);
+                self.record.get_or_insert(kind.clone());
+                json!(["x", kind])
+            }
             Js::Array(_) | Js::Object(_) if self.sent_as(value).is_some() => json!(["i", self.sent_as(value)]),
             Js::Array(array) => match array.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
@@ -298,13 +333,16 @@ pub fn json_round_trip(value: &Js) -> Js {
     match value {
         Js::Number(n) if !n.is_finite() => Js::Null,
         Js::Number(n) if *n == 0.0 => Js::Number(0.0),
+        // `JSON.stringify` writes a function nowhere: null in a list, no key
+        // in an object, and `undefined` alone.
+        Js::Function(_) => Js::Undefined,
         Js::Array(list) => Js::array(
-            list.items.iter().map(|item| if matches!(item, Js::Undefined) { Js::Null } else { json_round_trip(item) }).collect(),
+            list.items.iter().map(|item| if matches!(item, Js::Undefined | Js::Function(_)) { Js::Null } else { json_round_trip(item) }).collect(),
         ),
         Js::Object(object) => {
             let mut copy = JsObject::new();
             for (k, v) in object.entries() {
-                if !matches!(v, Js::Undefined) {
+                if !matches!(v, Js::Undefined | Js::Function(_)) {
                     copy.set(k.clone(), json_round_trip(v));
                 }
             }
@@ -318,7 +356,9 @@ pub fn json_round_trip(value: &Js) -> Js {
 /// members dropped (null in a list), non-finite numbers null, `-0` 0.
 pub fn json_of_js(value: &Js) -> Json {
     match value {
-        Js::Undefined | Js::Null => Json::Null,
+        Js::Undefined | Js::Null | Js::Function(_) => Json::Null,
+        // Read down to its fields wherever one is written out.
+        Js::Record(_) => Json::Object(Map::new()),
         Js::Bool(b) => json!(b),
         Js::Number(n) if !n.is_finite() => Json::Null,
         Js::Number(n) if *n == 0.0 => json!(0),
@@ -329,7 +369,7 @@ pub fn json_of_js(value: &Js) -> Json {
         Js::Object(object) => {
             let mut map = Map::new();
             for (k, v) in object.entries() {
-                if !matches!(v, Js::Undefined) {
+                if !matches!(v, Js::Undefined | Js::Function(_)) {
                     map.insert(k.clone(), json_of_js(v));
                 }
             }

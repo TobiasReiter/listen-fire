@@ -193,7 +193,7 @@ impl Surface {
                 .children
                 .iter()
                 .find(|(n, _)| n == name)
-                .map(|(_, children)| children.first().map(|child| Binding::Extracted { emission: child.clone(), root: false })),
+                .map(|(_, children)| children.first().map(|child| Binding::Extracted { emission: child.clone(), root: false, id: crate::bindings::Identity::new() })),
         }
     }
 }

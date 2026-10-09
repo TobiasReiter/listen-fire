@@ -16,6 +16,7 @@ pub mod address;
 pub mod admit;
 pub mod bindings;
 pub mod call;
+pub mod collection;
 pub mod env;
 pub mod env_services;
 pub mod eval;
@@ -35,6 +36,8 @@ pub mod order_limit;
 pub mod park;
 pub mod plugin;
 pub mod program;
+pub mod reading;
+pub mod record;
 pub mod run;
 pub mod stdlib;
 pub mod trace;
@@ -155,6 +158,7 @@ pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
             ErrorClass::Engine(code) => json!({ "class": "MovementEngineError", "code": code, "message": message }),
             ErrorClass::Error => json!({ "class": "Error", "message": message }),
             ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
+            ErrorClass::TypeError => json!({ "class": "TypeError", "message": message }),
         } }),
         Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
         Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("an evaluation with no reader asks no host"),
@@ -260,7 +264,12 @@ mod tests {
         let refused = eval("[...m]", json!({ "m": "x" }));
         assert_eq!(refused["error"]["message"], "'...' splices a list's members into a list, and this value is not a list (string)");
         assert_eq!(value("{ ...m }", json!({ "m": ["o", 1, [["kind", "nope"]]] })), json!(["o", 0, [["kind", "nope"]]]));
-        assert!(eval("{ ...m }", json!({ "m": ["o", 1, [["kind", "event"]]] })).get("fallback").is_some());
+        // A dict whose `kind` names a binding's is that binding to the
+        // TypeScript, the event's fields not in hand.
+        assert_eq!(
+            eval("{ ...m }", json!({ "m": ["o", 1, [["kind", "event"]]] }))["error"]["message"],
+            "reading every field of the movement parameter (the event position) is not supported by the movement engine yet (a system record has no field list in hand — build a dict of the fields you want, `{ name: r.name, … }`)"
+        );
     }
 
     #[test]

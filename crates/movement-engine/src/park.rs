@@ -164,9 +164,21 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             ("targetType", Js::str(handle.target_type.clone())),
             ("graph", object_of(vec![kind("instance"), ("instance", identity(&handle.graph))])),
         ]),
+        // A value that holds a record anywhere is written down to its
+        // records (`serializeValue`).
+        Binding::Value(value) if crate::record::holds_records(&value.value) => {
+            let mut descriptor = vec![kind("recordValue"), ("value", serialize_value(run, &value.value, park)?)];
+            if let Some(trail) = &value.trail {
+                descriptor.push(("provenance", provenance_of(run, trail)));
+            }
+            if value.many {
+                descriptor.push(("many", Js::Bool(true)));
+            }
+            object_of(descriptor)
+        }
         Binding::Value(value) => {
             // `assertJsonSerializable`: the value as it will come back.
-            let mut descriptor = vec![kind("value"), ("value", json_round_trip(&value.value))];
+            let mut descriptor = vec![kind("value"), ("value", json_serializable(&value.value, "value binding")?)];
             if let Some(trail) = &value.trail {
                 descriptor.push(("provenance", provenance_of(run, trail)));
             }
@@ -194,12 +206,69 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
             object_of(vec![kind("positions"), ("landings", Js::array(landings))])
         }
+        // A dict the TypeScript takes for a binding is serialised by its
+        // kind's case, reading the dict's own keys; one whose kind is
+        // `Object.prototype`'s reaches `assertNever`.
+        Binding::Shaped(dict) => {
+            let kind = crate::record::kind_of(binding);
+            if !crate::record::BINDING_KINDS.contains(&kind.as_str()) {
+                return Err(Failure::engine(
+                    "MOVENG_PARK_NONSERIALIZABLE",
+                    format!("unhandled binding kind in scope serialisation: {}", crate::js::json_stringify(&Js::Object(dict.clone()), 0)),
+                ));
+            }
+            return Err(Failure::unsupported(&format!("parking a value shaped like a record (its kind is '{kind}')"), "a dict whose `kind` names a binding's is a record to the TypeScript engine"));
+        }
         // The extraction ran: its output is data, never run again.
-        Binding::Extracted { emission, root } => object_of(vec![
+        Binding::Extracted { emission, root, .. } => object_of(vec![
             kind(if *root { "extractRoot" } else { "extractPosition" }),
             ("emission", emission.descriptor(&|id| run.origin(id))),
         ]),
     })
+}
+
+/// `serializeValue`: a record as its own descriptor, a list or a map walked,
+/// anything else (a file reference included) data.
+fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<Js, Failure> {
+    if let Some(record) = crate::record::binding_of(value) {
+        return Ok(object_of(vec![("kind", Js::str("record")), ("binding", serialize_binding(run, "", &record, park)?)]));
+    }
+    let file = matches!(value, Js::Object(object) if matches!(object.get("__brand"), Some(Js::String(brand)) if brand == "FileRef"));
+    Ok(match value {
+        Js::Array(list) if !file => {
+            let of = list.items.iter().map(|item| serialize_value(run, item, park)).collect::<Result<Vec<_>, _>>()?;
+            object_of(vec![("kind", Js::str("list")), ("of", Js::array(of))])
+        }
+        Js::Object(dict) if !file => {
+            let mut of = JsObject::new();
+            for (key, item) in dict.entries() {
+                of.set(key.clone(), serialize_value(run, item, park)?);
+            }
+            object_of(vec![("kind", Js::str("map")), ("of", Js::object(of))])
+        }
+        other => object_of(vec![("kind", Js::str("data")), ("value", json_serializable(other, "value binding")?)]),
+    })
+}
+
+/// `assertJsonSerializable`: the value as `JSON.parse(JSON.stringify(…))`
+/// hands it back, a function anywhere in it refused by the key it sits
+/// under.
+fn json_serializable(value: &Js, at: &str) -> Result<Js, Failure> {
+    fn function_key(value: &Js, key: &str) -> Option<String> {
+        match value {
+            Js::Function(_) => Some(key.to_string()),
+            Js::Array(list) => list.items.iter().enumerate().find_map(|(i, item)| function_key(item, &i.to_string())),
+            Js::Object(object) => object.entries().iter().find_map(|(k, item)| function_key(item, k)),
+            _ => None,
+        }
+    }
+    if let Some(key) = function_key(value, "") {
+        return Err(Failure::engine(
+            "MOVENG_PARK_NONSERIALIZABLE",
+            format!("{at}: value is not JSON-serialisable ('{key}' is a function) — a parked scope must be durable."),
+        ));
+    }
+    Ok(json_round_trip(value))
 }
 
 /// A `LocalLandingShape` as the object a park stores.
@@ -317,7 +386,7 @@ fn descriptor_refusal(descriptor: &Js) -> Option<String> {
                 return Some("resume_state_extraction_origin".into());
             }
             let value = at(descriptor, "value").unwrap_or(&Js::Undefined);
-            crate::eval::holds_binding(value, true).then(|| "resume_state_value_holds_record".into())
+            crate::record::holds_records(value).then(|| "resume_state_value_holds_record".into())
         }
         Some("nodePosition") => {
             if !pairs(at(descriptor, "fieldProvenance")).iter().all(|(_, p)| plain(Some(p))) {

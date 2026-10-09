@@ -551,6 +551,7 @@ function builtinAnswer(segment: WireOut, run: () => unknown): unknown {
   } catch (error) {
     if (error instanceof MovementEngineError) return { threw: { class: 'MovementEngineError', code: error.code, message: unprefixed(error) } };
     if (error instanceof RangeError) return { threw: { class: 'RangeError', message: error.message } };
+    if (error instanceof TypeError) return { threw: { class: 'TypeError', message: error.message } };
     if (error instanceof Error && error.constructor === Error) return { threw: { class: 'Error', message: error.message } };
     throw new RustShimError(`a built-in threw what the Rust engine cannot rethrow: ${String(error)}`);
   }
