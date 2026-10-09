@@ -12,11 +12,9 @@ const SYSTEM_SCOPE = 'system';
 const apiKeyVerifier: SystemCallerVerifier = {
   name: 'api_key',
   async verify({ hostCredential }) {
-    if (hostCredential === undefined) {
-      return { ok: false, reason: 'the request carries no API key this host verified' };
-    }
     // `'*'` grants everything: the Principal contract's own wording (require_scope.ts).
-    if (!hostCredential.scopes.some((granted) => granted === SYSTEM_SCOPE || granted === '*')) {
+    // No key at all (a session) gets the same answer the scope gate gave it.
+    if (!hostCredential?.scopes.some((granted) => granted === SYSTEM_SCOPE || granted === '*')) {
       return { ok: false, reason: `API key missing required scope: ${SYSTEM_SCOPE}` };
     }
     return {

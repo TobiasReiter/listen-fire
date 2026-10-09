@@ -17,14 +17,16 @@ type SystemAction = 'drain';
 
 const SYSTEM_ACTIONS: readonly SystemAction[] = ['drain'];
 
-/** The API key this host's own authentication already verified for the
- *  request, when it carried one. A verifier never sees the key itself. */
+/** Host-specific: the API key this host's own authentication already verified
+ *  for the request, when it carried one. The api_key verifier reads it; other
+ *  verifiers ignore it. */
 interface HostCredential {
   id?: string;
   scopes: readonly string[];
 }
 
-/** What a verifier sees of a request. Header names are lower case. */
+/** What a verifier sees of a request. Header names are lower case, and the
+ *  headers are the raw ones: every credential the request carries is in them. */
 interface SystemCallerRequest {
   method: string;
   path: string;
@@ -64,6 +66,9 @@ type SystemCallerOutcome = { ok: true; caller: SystemCaller } | { ok: false; ref
 const verifiers: SystemCallerVerifier[] = [];
 
 const REFUSAL_LOG_EVERY_MS = 60_000;
+// A reason is a verifier's own text, so a verifier that quotes its input could
+// carry a caller's; the log keeps a bounded prefix whatever it says.
+const REFUSAL_LOG_REASON_MAX = 200;
 // A refused caller names itself only by its address, which it chooses; the
 // bound keeps a caller that sprays addresses from growing this without limit.
 const REFUSAL_LOG_KEYS_MAX = 1_000;
@@ -89,7 +94,9 @@ function resetSystemCallerVerifiersForTests(): void {
 
 function logRefusalOnce(caller: string, refusal: SystemCallerRefusal): void {
   const now = Date.now();
-  const key = `${caller}\u0000${refusal.verifier}\u0000${refusal.reason}`;
+  // Keyed on who and which verifier, never the reason: varying the reason
+  // (a fresh header per request) must not buy a fresh log line.
+  const key = `${caller}\u0000${refusal.verifier}`;
   const last = lastRefusalLoggedAt.get(key);
   if (last !== undefined && now - last < REFUSAL_LOG_EVERY_MS) return;
   if (lastRefusalLoggedAt.size >= REFUSAL_LOG_KEYS_MAX) {
@@ -102,15 +109,15 @@ function logRefusalOnce(caller: string, refusal: SystemCallerRefusal): void {
   logger.warn('[system-auth] a system caller verifier refused the request', {
     caller,
     verifier: refusal.verifier,
-    reason: refusal.reason,
+    reason: refusal.reason.slice(0, REFUSAL_LOG_REASON_MAX),
   });
 }
 
 /**
  * Asks each verifier in turn; the first acceptance decides. A verifier that
- * throws has refused, with the error as its reason. Refusals are logged only
- * when nobody accepts (an accepted request is no news), and each distinct
- * reason at most once a minute per caller address.
+ * throws has refused; its error goes to the server log, never to the caller.
+ * Refusals are logged only when nobody accepts (an accepted request is no
+ * news), at most once a minute per caller address and verifier.
  */
 async function identifySystemCaller(
   request: SystemCallerRequest,
@@ -122,7 +129,11 @@ async function identifySystemCaller(
     try {
       verdict = await verifier.verify(request);
     } catch (error) {
-      verdict = { ok: false, reason: `the verifier failed: ${error instanceof Error ? error.message : String(error)}` };
+      logger.warn('[system-auth] a system caller verifier threw', {
+        verifier: verifier.name,
+        error: (error instanceof Error ? error.message : String(error)).slice(0, REFUSAL_LOG_REASON_MAX),
+      });
+      verdict = { ok: false, reason: 'the verifier failed' };
     }
     if (verdict.ok) {
       return { ok: true, caller: { verifier: verifier.name, principal: verdict.principal, actions: verdict.actions } };

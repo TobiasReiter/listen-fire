@@ -40,6 +40,7 @@ interface OidcSettings {
   issuer: string;
   audience: string;
   allowedSubjects: string[];
+  requireHttps: boolean;
 }
 
 type SystemAuthModeConfig = { mode: 'api_key' } | { mode: 'oidc'; oidc: OidcSettings };
@@ -76,10 +77,11 @@ function oidcSettings(env: Env): OidcSettings {
   // The keys every token is checked against come from the issuer, so a plain
   // http one is a key anyone on the path can replace. Allowed off production,
   // where the dev loop's fake issuer runs.
-  if (protocol !== 'https:' && !(protocol === 'http:' && env.NODE_ENV !== 'production')) {
+  const requireHttps = env.NODE_ENV === 'production';
+  if (protocol !== 'https:' && !(protocol === 'http:' && !requireHttps)) {
     throw new Error(`${OIDC_ISSUER_VAR} must be an https URL (got "${issuer}").`);
   }
-  return { issuer, audience, allowedSubjects };
+  return { issuer, audience, allowedSubjects, requireHttps };
 }
 
 /** The deployment's system caller settings; throws, naming the variable, on
@@ -193,12 +195,13 @@ function requireSystemAction(action: SystemAction): RequestHandler {
   };
 }
 
-/** A route that acts in a tenant: only a caller whose credential the host
- *  verified has one (its key's owner), so another verifier's caller is refused
- *  here rather than failing on the missing tenant inside the route. */
+/** A route that acts in a tenant: only the api_key verifier's caller has one
+ *  (its key's owner, with the system scope), so any other verifier's caller is
+ *  refused here, even one whose request also carried some lower key the host
+ *  verified, rather than acting as that key's owner. */
 function requireTenantCaller(): RequestHandler {
-  return (_req, res, next) => {
-    if (hostCredentialOf(res) === undefined) {
+  return (req, res, next) => {
+    if (systemCallerOf(req)?.verifier !== apiKeyVerifier.name) {
       res.status(403).json({ error: 'this route acts in a tenant: call it with an API key holding the system scope' });
       return;
     }

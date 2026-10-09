@@ -14,9 +14,11 @@ import {
   registerSystemCallerVerifier,
   requireSystemAction,
   requireSystemCaller,
+  requireTenantCaller,
   systemCallerOf,
 } from '../index';
 import { registeredSystemCallerVerifiers, resetSystemCallerVerifiersForTests } from '../verifier';
+import { logger } from '../../logger';
 import { startFakeIssuer, type FakeIssuer } from './fake_issuer';
 
 
@@ -30,9 +32,12 @@ let baseUrl: string;
 beforeAll(async () => {
   issuer = await startFakeIssuer();
   const app = express();
-  // Stands in for the host's authentication: an `lf_` bearer is a verified key.
+  // Stands in for the host's authentication: an `lf_` bearer is a verified key,
+  // and so is an `x-api-key` when the bearer is not one (as the core provider reads them).
   app.use((req, res, next) => {
-    const bearer = req.headers.authorization?.replace(/^Bearer /, '');
+    const authorization = req.headers.authorization?.replace(/^Bearer /, '');
+    const xApiKey = req.headers['x-api-key'];
+    const bearer = authorization?.startsWith('lf_') ? authorization : typeof xApiKey === 'string' ? xApiKey : undefined;
     if (bearer?.startsWith('lf_')) {
       res.locals.apiKeyId = 'key-1';
       res.locals.apiKeyScopes = bearer === 'lf_system' ? ['system'] : ['automation'];
@@ -41,6 +46,9 @@ beforeAll(async () => {
   });
   app.post('/drain', requireSystemCaller(), requireSystemAction('drain'), (req, res) => {
     res.status(200).json({ caller: systemCallerOf(req) });
+  });
+  app.get('/tenant', requireSystemCaller(), requireTenantCaller(), (_req, res) => {
+    res.status(200).json({ ok: true });
   });
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -108,9 +116,39 @@ describe('the system caller gate', () => {
     expect(await tick(issuer.mint({ sub: 'stranger', aud: AUDIENCE }))).toEqual({
       status: 403,
       body: {
-        error: "api_key: the request carries no API key this host verified; oidc: the token's subject is not on the allow-list",
+        error: "api_key: API key missing required scope: system; oidc: the token's subject is not on the allow-list",
       },
     });
+  });
+
+  it('under the default mode, a request with no key (a session) gets the scope gate\'s own answer', async () => {
+    installSystemCallerVerifiers({});
+    const res = await fetch(`${baseUrl}/drain`, { method: 'POST' });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'API key missing required scope: system' });
+  });
+
+  it('a tenant route refuses an oidc caller whose request also carries a low-scope key the host verified', async () => {
+    installSystemCallerVerifiers(oidcEnv('api_key,oidc'));
+    const attack = await fetch(`${baseUrl}/tenant`, {
+      headers: { authorization: `Bearer ${token()}`, 'x-api-key': 'lf_automation' },
+    });
+    expect(attack.status).toBe(403);
+    expect(await attack.json()).toEqual({
+      error: 'this route acts in a tenant: call it with an API key holding the system scope',
+    });
+    const operator = await fetch(`${baseUrl}/tenant`, { headers: { authorization: 'Bearer lf_system' } });
+    expect(operator.status).toBe(200);
+  });
+
+  it('logs a refusal once a minute per caller and verifier, however its reason varies', async () => {
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+    installSystemCallerVerifiers(oidcEnv('oidc'));
+    await tick(issuer.mint({ sub: 'stranger', aud: AUDIENCE }));
+    await tick(issuer.mint({ sub: SUBJECT, aud: 'elsewhere' }));
+    await tick('not-a-jwt');
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('refused the request'))).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it("an embedder's own verifier is asked in registration order, and may decline an action", async () => {

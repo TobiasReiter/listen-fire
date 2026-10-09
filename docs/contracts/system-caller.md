@@ -2,14 +2,14 @@
 
 Version: 1
 
-The system endpoints (`/api/v1/system/*`, the automations drain tick first) are called by an installation's own infrastructure: a scheduler, a push subscription, an operator's script. Who may call them is decided by **system caller verifiers**, asked in turn for each request. The first that accepts decides the caller; when none does, the request is refused `403`, its body naming each verifier's reason, and each reason is logged at most once a minute per caller address.
+The system endpoints (`/api/v1/system/*`, the automations drain tick first) are called by an installation's own infrastructure: a scheduler, a push subscription, an operator's script. Who may call them is decided by **system caller verifiers**, asked in turn for each request. The first that accepts decides the caller; when none does, the request is refused `403`, its body naming each verifier's reason, and the refusal is logged at most once a minute per caller address and verifier.
 
 Two verifiers ship (`apps/api/src/services/system_auth/`), chosen by `SYSTEM_AUTH_MODES` (`deploy/SELF_HOSTING.md`):
 
 - **`api_key`** (the default): an API key holding the `system` scope, or `*`. The host's own authentication verifies the key, and the verifier reads that verdict (`hostCredential`). The caller is the key, and the routes that act in a tenant act as its owner.
-- **`oidc`**: an OpenID Connect identity token as the bearer, verified against the issuer's published keys: signature, expiry, issuer, audience, and a subject (`sub`, or a verified `email`) on the allow-list.
+- **`oidc`**: an OpenID Connect identity token as the bearer, verified against the issuer's published keys: signature (asymmetric algorithms only), a required expiry and any `nbf` (a minute's clock tolerance), issuer, audience, and a subject (`sub`, or a verified `email`) on the allow-list. When the configured issuer is Google's (`https://accounts.google.com`), `iss` may be either spelling Google uses, `https://accounts.google.com` or `accounts.google.com`.
 
-An embedder adds its own with `registerSystemCallerVerifier` before the server serves. This document is the interface it implements: an in-process one, so there is nothing on the wire to carry a version; the version is what an embedder's verifier states it was written against.
+An embedder adds its own with `registerSystemCallerVerifier` before the server serves. Registering any verifier other than `api_key`, an embedder's included, turns on the deferral described under the shape below. This document is the interface it implements: an in-process one, so there is nothing on the wire to carry a version; the version is what an embedder's verifier states it was written against.
 
 ## Versions
 
@@ -29,8 +29,8 @@ interface SystemCallerVerifier {
 interface SystemCallerRequest {
   method: string;                    // `POST`
   path: string;                      // the full path, `/api/v1/system/automations/drain`
-  headers: Record<string, string | string[] | undefined>;  // names lower case, as Node reads them
-  hostCredential?: HostCredential;   // the API key the host's own authentication verified, when there was one
+  headers: Record<string, string | string[] | undefined>;  // the raw headers, names lower case: every credential the request carries is here
+  hostCredential?: HostCredential;   // host-specific, other verifiers ignore it: the API key the host's own authentication verified
 }
 
 interface HostCredential {
@@ -40,7 +40,7 @@ interface HostCredential {
 
 type SystemCallerVerdict =
   | { ok: true; principal: SystemCallerPrincipal; actions: SystemAction[] }
-  | { ok: false; reason: string };   // shown to the caller and logged: never a token or a secret
+  | { ok: false; reason: string };   // shown to the caller and logged: fixed words, never a token, a secret or anything the request said
 
 interface SystemCallerPrincipal {
   id: string;                        // who called: the token's subject, the key's id
@@ -50,9 +50,9 @@ interface SystemCallerPrincipal {
 type SystemAction = 'drain';         // run a drain pass: POST /api/v1/system/automations/drain
 ```
 
-- **A verifier refuses what it does not recognise** with a reason, and does not throw. One that throws has refused, with the error as its reason.
-- **Actions are what the caller may do.** A route that performs an action refuses a caller that does not hold it. The routes that act in a tenant (the run listings and the system agent) need the tenant of a key the host verified, so they are the `api_key` verifier's alone, whatever another verifier grants.
-- **A refused request is never half-authenticated.** When a verifier other than `api_key` is registered, a request to the system surface that the host's own authentication refused goes on to the verifiers with no principal; with `api_key` alone, the host's refusal stands as it always has.
+- **A verifier refuses what it does not recognise** with a reason, and does not throw. One that throws has refused (`the verifier failed`); its error goes to the server log only.
+- **Actions are what the caller may do.** A route that performs an action refuses a caller that does not hold it. The routes that act in a tenant (the run listings and the system agent) act as the owner of a `system` key, so they accept only a caller the `api_key` verifier accepted, whatever another verifier grants and whatever other key the request also carried.
+- **The deferral.** When any verifier other than `api_key` is registered (`oidc`, or an embedder's own), a request to the system surface that the host's own authentication refused goes on to the verifiers with no principal; with `api_key` alone, the host's refusal stands as it always has. A deferred request is never half-authenticated: it reaches a route only through a verifier's acceptance.
 
 ## Changes
 

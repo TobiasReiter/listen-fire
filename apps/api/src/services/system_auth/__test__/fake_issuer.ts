@@ -22,8 +22,12 @@ interface MintClaims {
   email?: string;
   /** Overrides the issuer's own `iss`. */
   iss?: string;
-  /** Seconds from now; negative mints an expired token. Default 300. */
-  expiresIn?: number;
+  /** Seconds from now; negative mints an expired token, null none. Default 300. */
+  expiresIn?: number | null;
+  /** Seconds from now the token becomes valid (`nbf`); absent, no `nbf`. */
+  notBefore?: number;
+  /** Whether the issuer vouches for `email`. Default true. */
+  emailVerified?: boolean;
 }
 
 interface MintOptions {
@@ -40,6 +44,8 @@ interface FakeIssuer {
   rotate(): void;
   /** How many times the JWKS has been fetched. */
   jwksFetches(): number;
+  /** `down` answers 503 everywhere; `redirect` sends the JWKS elsewhere. */
+  setMode(mode: 'up' | 'down' | 'redirect'): void;
   close(): Promise<void>;
 }
 
@@ -54,16 +60,19 @@ async function startFakeIssuer(options: { port?: number; host?: string } = {}): 
   const foreign = newKey();
   let fetches = 0;
   let url = '';
+  let mode: 'up' | 'down' | 'redirect' = 'up';
 
   function mint(claims: MintClaims, mintOptions: MintOptions = {}): string {
     const nowSeconds = Math.floor(Date.now() / 1000);
+    const expiresIn = claims.expiresIn === undefined ? 300 : claims.expiresIn;
     const payload = {
       iss: claims.iss ?? url,
       iat: nowSeconds,
-      exp: nowSeconds + (claims.expiresIn ?? 300),
+      ...(expiresIn !== null ? { exp: nowSeconds + expiresIn } : {}),
+      ...(claims.notBefore !== undefined ? { nbf: nowSeconds + claims.notBefore } : {}),
       ...(claims.sub !== undefined ? { sub: claims.sub } : {}),
       ...(claims.aud !== undefined ? { aud: claims.aud } : {}),
-      ...(claims.email !== undefined ? { email: claims.email, email_verified: true } : {}),
+      ...(claims.email !== undefined ? { email: claims.email, email_verified: claims.emailVerified ?? true } : {}),
     };
     const key = mintOptions.foreignKey === true ? foreign.privateKey : current.privateKey;
     return jwt.sign(payload, key, { algorithm: 'RS256', keyid: mintOptions.kid ?? current.kid });
@@ -75,6 +84,14 @@ async function startFakeIssuer(options: { port?: number; host?: string } = {}): 
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
     };
+    if (mode === 'down') {
+      res.writeHead(503).end();
+      return;
+    }
+    if (mode === 'redirect' && requested.pathname === '/jwks') {
+      res.writeHead(302, { location: 'http://keys.elsewhere.test/jwks' }).end();
+      return;
+    }
     switch (requested.pathname) {
       case '/.well-known/openid-configuration':
         json({ issuer: url, jwks_uri: `${url}/jwks` });
@@ -113,6 +130,9 @@ async function startFakeIssuer(options: { port?: number; host?: string } = {}): 
       current = newKey();
     },
     jwksFetches: () => fetches,
+    setMode: (next) => {
+      mode = next;
+    },
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());

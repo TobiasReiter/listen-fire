@@ -3,22 +3,27 @@
 // issuer's published keys.
 //
 // A token is accepted when its signature verifies against the issuer's JWKS,
-// it has not expired, its `iss` is the configured issuer, its `aud` the
+// it carries an expiry and is inside its validity window (`exp`, `nbf`, with a
+// minute's clock tolerance), its `iss` is the configured issuer, its `aud` the
 // configured audience (the drain URL, for Google), and its subject (`sub`, or a
 // verified `email`) is on the allow-list. Each refusal names the check that
-// failed, never the token or the configured values.
+// failed in fixed words: never the token, nothing the token says, and none of
+// the configured values.
 
 import { createPublicKey, type KeyObject } from 'node:crypto';
 
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
+import { logger } from '../logger';
 import { SYSTEM_ACTIONS, type SystemCallerVerdict, type SystemCallerVerifier } from './verifier';
 
 interface OidcVerifierOptions {
   issuer: string;
   audience: string;
   allowedSubjects: readonly string[];
+  /** The key URL the issuer names must be https too (production). */
+  requireHttps?: boolean;
   /** Injection point for tests; the global fetch otherwise. */
   fetch?: typeof fetch;
   now?: () => number;
@@ -28,11 +33,21 @@ interface OidcVerifierOptions {
 // `none` signs nothing.
 const ALGORITHMS: readonly jwt.Algorithm[] = ['RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512', 'ES256', 'ES384', 'ES512'];
 
+const CLOCK_TOLERANCE_S = 60;
+
+// Google's ID tokens carry either spelling of its issuer (its OIDC docs).
+const GOOGLE_ISSUER = 'https://accounts.google.com';
+const GOOGLE_ISSUER_SPELLINGS: readonly string[] = [GOOGLE_ISSUER, 'accounts.google.com'];
+
 // An unknown `kid` refetches the keys, but at most this often: otherwise every
 // request carrying an invented `kid` would cost the issuer a fetch.
 const KID_MISS_REFETCH_EVERY_MS = 30_000;
 // Keys an issuer has withdrawn stop verifying within this long.
 const KEYS_MAX_AGE_MS = 60 * 60_000;
+// A failed fetch is retried after this, doubling to the cap, while the keys
+// already held go on verifying.
+const FETCH_FAILURE_BACKOFF_MS = 30_000;
+const FETCH_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
 const FETCH_TIMEOUT_MS = 10_000;
 
 const discoverySchema = z.object({ issuer: z.string(), jwks_uri: z.string().url() });
@@ -59,34 +74,57 @@ function isAlgorithm(alg: string): alg is jwt.Algorithm {
   return ALGORITHMS.some((allowed) => allowed === alg);
 }
 
+type KeyLookup = { found: KeyObject } | { unknown: true } | { unavailable: true };
+
 /** The issuer's signing keys by `kid`, fetched through its discovery document. */
 class IssuerKeys {
   private keys = new Map<string, KeyObject>();
   private fetchedAt: number | undefined;
   private lastMissRefetchAt: number | undefined;
+  private retryAt = 0;
+  private backoffMs = FETCH_FAILURE_BACKOFF_MS;
   private inFlight: Promise<void> | undefined;
 
   constructor(
-    private readonly options: { issuer: string; fetch: typeof fetch; now: () => number },
+    private readonly options: { issuer: string; requireHttps: boolean; fetch: typeof fetch; now: () => number },
   ) {}
 
-  async forKid(kid: string): Promise<KeyObject | undefined> {
+  async forKid(kid: string): Promise<KeyLookup> {
     const now = this.options.now();
     if (this.fetchedAt === undefined || now - this.fetchedAt >= KEYS_MAX_AGE_MS) await this.refetch();
     const known = this.keys.get(kid);
-    if (known !== undefined) return known;
+    if (known !== undefined) return { found: known };
+    if (this.fetchedAt === undefined) return { unavailable: true };
     if (this.lastMissRefetchAt !== undefined && now - this.lastMissRefetchAt < KID_MISS_REFETCH_EVERY_MS) {
-      return undefined;
+      return { unknown: true };
     }
     this.lastMissRefetchAt = now;
     await this.refetch();
-    return this.keys.get(kid);
+    const fetched = this.keys.get(kid);
+    return fetched === undefined ? { unknown: true } : { found: fetched };
   }
 
+  /** Never throws: a failure keeps the keys already held and backs off. */
   private refetch(): Promise<void> {
-    this.inFlight ??= this.load().finally(() => {
-      this.inFlight = undefined;
-    });
+    if (this.options.now() < this.retryAt) return Promise.resolve();
+    this.inFlight ??= this.load()
+      .then(
+        () => {
+          this.backoffMs = FETCH_FAILURE_BACKOFF_MS;
+        },
+        (error: unknown) => {
+          this.retryAt = this.options.now() + this.backoffMs;
+          logger.warn("[system-auth] the oidc issuer's keys could not be fetched; keeping the keys already held", {
+            issuer: this.options.issuer,
+            error: error instanceof Error ? error.message : String(error),
+            retryInMs: this.backoffMs,
+          });
+          this.backoffMs = Math.min(this.backoffMs * 2, FETCH_FAILURE_BACKOFF_MAX_MS);
+        },
+      )
+      .finally(() => {
+        this.inFlight = undefined;
+      });
     return this.inFlight;
   }
 
@@ -96,6 +134,9 @@ class IssuerKeys {
     );
     if (discovery.issuer !== this.options.issuer) {
       throw new Error("the issuer's discovery document names a different issuer");
+    }
+    if (this.options.requireHttps && new URL(discovery.jwks_uri).protocol !== 'https:') {
+      throw new Error(`the issuer's jwks_uri is not https: ${discovery.jwks_uri}`);
     }
     const jwks = jwksSchema.parse(await this.getJson(discovery.jwks_uri));
     const keys = new Map<string, KeyObject>();
@@ -112,7 +153,8 @@ class IssuerKeys {
   }
 
   private async getJson(url: string): Promise<unknown> {
-    const response = await this.options.fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    // No redirects: where the keys come from is the issuer's say, not a hop's.
+    const response = await this.options.fetch(url, { redirect: 'error', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
     return response.json();
   }
@@ -120,30 +162,33 @@ class IssuerKeys {
 
 function createOidcVerifier(options: OidcVerifierOptions): SystemCallerVerifier {
   const now = options.now ?? Date.now;
-  const keys = new IssuerKeys({ issuer: options.issuer, fetch: options.fetch ?? fetch, now });
+  const keys = new IssuerKeys({
+    issuer: options.issuer,
+    requireHttps: options.requireHttps ?? false,
+    fetch: options.fetch ?? fetch,
+    now,
+  });
   const allowed = new Set(options.allowedSubjects);
+  const issuers = options.issuer === GOOGLE_ISSUER ? GOOGLE_ISSUER_SPELLINGS : [options.issuer];
 
   async function verify(token: string): Promise<SystemCallerVerdict> {
     const decoded = jwt.decode(token, { complete: true });
     if (decoded === null) return { ok: false, reason: 'the bearer is not a JWT' };
     const { alg, kid } = decoded.header;
-    if (!isAlgorithm(alg)) return { ok: false, reason: `the token's algorithm (${alg}) is not an asymmetric one` };
+    if (!isAlgorithm(alg)) return { ok: false, reason: "the token's algorithm is not an asymmetric one" };
     if (kid === undefined) return { ok: false, reason: 'the token names no signing key (kid)' };
 
-    let key: KeyObject | undefined;
-    try {
-      key = await keys.forKid(kid);
-    } catch (error) {
-      return {
-        ok: false,
-        reason: `the issuer's keys could not be fetched: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    if (key === undefined) return { ok: false, reason: "the token's signing key is not one the issuer publishes" };
+    const lookup = await keys.forKid(kid);
+    if ('unavailable' in lookup) return { ok: false, reason: "the issuer's keys could not be fetched" };
+    if ('unknown' in lookup) return { ok: false, reason: "the token's signing key is not one the issuer publishes" };
 
     let payload: unknown;
     try {
-      payload = jwt.verify(token, key, { algorithms: [alg], clockTimestamp: Math.floor(now() / 1000) });
+      payload = jwt.verify(token, lookup.found, {
+        algorithms: [alg],
+        clockTimestamp: Math.floor(now() / 1000),
+        clockTolerance: CLOCK_TOLERANCE_S,
+      });
     } catch (error) {
       if (error instanceof jwt.TokenExpiredError) return { ok: false, reason: 'the token has expired' };
       if (error instanceof jwt.NotBeforeError) return { ok: false, reason: 'the token is not valid yet' };
@@ -154,7 +199,9 @@ function createOidcVerifier(options: OidcVerifierOptions): SystemCallerVerifier 
     if (!claims.success) return { ok: false, reason: "the token's claims are malformed" };
     const { iss, aud, exp, sub, email, email_verified } = claims.data;
     if (exp === undefined) return { ok: false, reason: 'the token has no expiry' };
-    if (iss !== options.issuer) return { ok: false, reason: "the token's issuer is not the configured issuer" };
+    if (iss === undefined || !issuers.includes(iss)) {
+      return { ok: false, reason: "the token's issuer is not the configured issuer" };
+    }
     const audiences = aud === undefined ? [] : typeof aud === 'string' ? [aud] : aud;
     if (!audiences.includes(options.audience)) {
       return { ok: false, reason: "the token's audience is not the configured audience" };

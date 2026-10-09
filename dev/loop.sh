@@ -214,6 +214,24 @@ fi
 # holders, never another stack's or another project's (e.g. an unrelated
 # sibling repo's `dev` compose project) containers.
 PORTS_TO_CHECK=("$PORT" "$WEB_PORT" "$FAKE_CHANNELS_PORT" "$FAKE_REMOTE_ADAPTER_PORT" "$ADMIN_PORT" "$FAKE_ISSUER_PORT")
+
+# The loop's own background helpers (fake CRM, fake issuer, scheduler) each run
+# in a process group of their own, recorded here, so a stop takes down the
+# whole group — the subshell AND the node process it started — and a
+# --force-kill can sweep groups a loop that died without its trap left behind.
+HELPERS_FILE="$REPO_ROOT/.dev-loop/profiles/$PROFILE.helpers"
+kill_helper_groups() {
+  [ -f "$HELPERS_FILE" ] || return 0
+  while read -r pgid; do
+    [ -n "$pgid" ] && kill -TERM -- "-$pgid" 2>/dev/null || true
+  done < "$HELPERS_FILE"
+  rm -f "$HELPERS_FILE"
+}
+if [ "$FORCE_KILL" -eq 1 ] && [ -f "$HELPERS_FILE" ]; then
+  echo "[dev:loop] --force-kill: terminating the helper process groups a previous loop recorded: $(tr '\n' ' ' < "$HELPERS_FILE")"
+  kill_helper_groups
+  sleep 1
+fi
 COLLISIONS=()
 for p in "${PORTS_TO_CHECK[@]}"; do
   if lsof -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -418,30 +436,31 @@ pnpm --filter story-view bundle >/dev/null \
 # `pnpm -r --parallel dev` doesn't reach it — the loop starts it itself, and the
 # cleanup trap takes it down with the stack.
 FAKE_CRM_LOG="$LOG_DIR/fake-crm.log"
-( cd apps/api && pnpm run dev:fake-crm ) > "$FAKE_CRM_LOG" 2>&1 &
+mkdir -p "$(dirname "$HELPERS_FILE")"
+: > "$HELPERS_FILE"
+# Job control gives each background job its own process group (pgid = its pid).
+set -m
+( cd apps/api && exec pnpm run dev:fake-crm ) > "$FAKE_CRM_LOG" 2>&1 &
 FAKE_CRM_PID=$!
+set +m
+echo "$FAKE_CRM_PID" >> "$HELPERS_FILE"
 echo "[dev:loop] fake CRM (acme_crm): $FAKE_REMOTE_ADAPTER_URL (pid $FAKE_CRM_PID, log $FAKE_CRM_LOG)"
 
 FAKE_ISSUER_PID=""
 if [ "$WITH_OIDC" -eq 1 ]; then
   FAKE_ISSUER_LOG="$LOG_DIR/fake-issuer.log"
-  ( cd apps/api && pnpm run dev:fake-issuer ) > "$FAKE_ISSUER_LOG" 2>&1 &
+  set -m
+  ( cd apps/api && exec pnpm run dev:fake-issuer ) > "$FAKE_ISSUER_LOG" 2>&1 &
   FAKE_ISSUER_PID=$!
+  set +m
+  echo "$FAKE_ISSUER_PID" >> "$HELPERS_FILE"
   echo "[dev:loop] fake issuer: $FAKE_ISSUER_URL (pid $FAKE_ISSUER_PID, log $FAKE_ISSUER_LOG)"
 fi
 
 SCHEDULER_PID=""
 cleanup() {
   rm -f "$PROFILE_FILE"
-  if [ -n "${FAKE_CRM_PID:-}" ]; then
-    kill "$FAKE_CRM_PID" 2>/dev/null || true
-  fi
-  if [ -n "${FAKE_ISSUER_PID:-}" ]; then
-    kill "$FAKE_ISSUER_PID" 2>/dev/null || true
-  fi
-  if [ -n "${SCHEDULER_PID:-}" ]; then
-    kill "$SCHEDULER_PID" 2>/dev/null || true
-  fi
+  kill_helper_groups
 }
 trap cleanup EXIT INT TERM
 
@@ -473,8 +492,11 @@ if [ "$SHAPE" = "push-tick" ]; then
     unset AUTOMATIONS_TICK_KEY
   fi
   SCHEDULER_LOG="$LOG_DIR/scheduler.log"
+  set -m
   bash dev/scheduler.sh "$$" > "$SCHEDULER_LOG" 2>&1 &
   SCHEDULER_PID=$!
+  set +m
+  echo "$SCHEDULER_PID" >> "$HELPERS_FILE"
   echo "[dev:loop] scheduler: ticks $API_BASE_URL's drain every 5 s (pid $SCHEDULER_PID, log $SCHEDULER_LOG)"
 fi
 
