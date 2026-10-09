@@ -578,6 +578,31 @@ mod tests {
         assert_eq!(crate::env::json_of_js(&read.value), serde_json::json!({ "x:n#1": [{ "name": { "evidence": "e", "value": "Acme" } }] }));
     }
 
+    /// A number past the double range crosses the eval wire as the
+    /// `Infinity` `JSON.parse` made of it, and is refused as zod refuses it
+    /// (README, "Spec the tail"); over a JSON host it is already `null`,
+    /// which reads clean on both engines.
+    #[test]
+    fn a_number_past_the_double_range_is_refused_as_zod_refuses_it() {
+        let spec = NodeSpec {
+            name: "n".into(),
+            description: String::new(),
+            stages: vec![StageSpec {
+                through: Vec::new(),
+                fields: vec![FieldSpec { name: "amount".into(), description: String::new(), type_: Some(FieldType::Scalar(Scalar::Number)), nullable: false }],
+                children: Vec::new(),
+            }],
+            exported: Vec::new(),
+        };
+        let region = Region::plan(&spec, 0, true, &mut || 1);
+        let wired = |value: serde_json::Value| {
+            crate::env::decode(&serde_json::json!(["o", 0, [["x:n#1", ["l", 1, [["o", 2, [["amount", ["o", 3, [["evidence", "e"], ["value", value]]]]]]]]]]])).unwrap()
+        };
+        let Err(issues) = read_reply(&region, &wired(serde_json::json!(["n", "Infinity"]))) else { panic!("Infinity is not a number zod reads") };
+        assert_eq!(issue_lines(&issues), ["  - x:n#1.0.amount.value: Invalid input: expected number, received number"]);
+        assert!(read_reply(&region, &wired(serde_json::Value::Null)).is_ok(), "null reads clean");
+    }
+
     #[test]
     fn the_retry_shows_the_envelope_only_for_a_packaging_complaint() {
         let spec = node(&["name"]);

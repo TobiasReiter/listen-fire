@@ -39,6 +39,10 @@ pub enum Binding {
     /// A record a traversal landed on (`kind: 'sourcePosition'`): a block
     /// head's hop alias, one landing per iteration (crate::traverse).
     Landed(Rc<Landed>),
+    /// What an extraction yielded (crate::extract): its root (`kind:
+    /// 'extractRoot'`, `root`) or one of its entities a block head landed on
+    /// (`kind: 'extractPosition'`).
+    Extracted { emission: Rc<crate::extract::emission::Emission>, root: bool },
     /// A bound block's returned records (`kind: 'positions'`, run.ts
     /// `blockValue`). This engine binds one only when nothing returned: every
     /// `return` it admits returns a value, and values bind as a list.
@@ -176,7 +180,10 @@ impl Names for Scope {
     }
 
     fn is_record(&self, name: &str) -> bool {
-        matches!(self.resolve(name), Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_) | Binding::Positions(_)))
+        matches!(
+            self.resolve(name),
+            Some(Binding::Handle(_) | Binding::Node(_) | Binding::Landed(_) | Binding::Positions(_) | Binding::Extracted { .. })
+        )
     }
 }
 

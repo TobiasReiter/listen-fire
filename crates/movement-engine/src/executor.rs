@@ -294,6 +294,38 @@ pub async fn join_all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
     JoinAll { futures: futures.into_iter().map(|f| Joined::Running(Box::pin(f))).collect(), wakers, ready, started: false }.await
 }
 
+/// `job` over `items`, at most `width` at a time, each worker taking the next
+/// item as it finishes one (fans.ts `mapConcurrent`): answered in the order
+/// the items were written however they landed. The first failure stops the
+/// fan starting anything further; once the items in flight have finished,
+/// the earliest failing item's error is the fan's.
+pub async fn map_concurrent<T, R, E, F, Fut>(items: Vec<T>, width: usize, job: F) -> Result<Vec<R>, E>
+where
+    F: Fn(T, usize) -> Fut,
+    Fut: Future<Output = Result<R, E>>,
+{
+    let count = items.len();
+    let queue = RefCell::new(items.into_iter().enumerate().collect::<std::collections::VecDeque<_>>());
+    let results: RefCell<Vec<Option<R>>> = RefCell::new((0..count).map(|_| None).collect());
+    let failures: RefCell<Vec<(usize, E)>> = RefCell::new(Vec::new());
+    let worker = || async {
+        while failures.borrow().is_empty() {
+            let Some((index, item)) = queue.borrow_mut().pop_front() else { return };
+            match job(item, index).await {
+                Ok(result) => results.borrow_mut()[index] = Some(result),
+                Err(error) => failures.borrow_mut().push((index, error)),
+            }
+        }
+    };
+    join_all((0..width.min(count)).map(|_| worker()).collect()).await;
+    let mut failures = failures.into_inner();
+    if !failures.is_empty() {
+        failures.sort_by_key(|(index, _)| *index);
+        return Err(failures.remove(0).1);
+    }
+    Ok(results.into_inner().into_iter().map(|r| r.expect("every item ran when none failed")).collect())
+}
+
 enum Joined<F: Future> {
     Running(Pin<Box<F>>),
     Done(Option<F::Output>),
@@ -409,6 +441,41 @@ mod tests {
         // The later request first: nothing new is issued, the first is still awaited.
         assert_eq!(segment.answer(2, Ok(Some(json!("B")))).unwrap(), Step::Pending(vec![]));
         assert_eq!(segment.answer(1, Ok(None)).unwrap(), Step::Done(json!([null, "B"])));
+    }
+
+    /// At most `width` items in flight, the next started as one finishes,
+    /// the answers in the items' order; the earliest failing item's error is
+    /// the fan's, once what was in flight has finished, and nothing further
+    /// starts after a failure.
+    #[test]
+    fn a_bounded_fan_keeps_its_width_and_answers_in_order() {
+        let mut segment = Segment::new(|host| async move {
+            let fanned = map_concurrent(vec!["a", "b", "c"], 2, |item, _| {
+                let host = host.clone();
+                async move { echo(&host, item).await.map(|answer| answer.unwrap_or(Json::Null)).map_err(|e| e.message().to_string()) }
+            })
+            .await;
+            json!(fanned)
+        });
+        let sent = pending(segment.start().unwrap());
+        assert_eq!(sent.iter().map(|r| r.method.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        let next = pending(segment.answer(2, Ok(Some(json!("B")))).unwrap());
+        assert_eq!(next.iter().map(|r| r.method.as_str()).collect::<Vec<_>>(), ["c"]);
+        assert_eq!(segment.answer(3, Ok(Some(json!("C")))).unwrap(), Step::Pending(vec![]));
+        assert_eq!(segment.answer(1, Ok(Some(json!("A")))).unwrap(), Step::Done(json!({ "Ok": ["A", "B", "C"] })));
+
+        let mut failing = Segment::new(|host| async move {
+            let fanned = map_concurrent(vec!["a", "b", "c"], 2, |item, _| {
+                let host = host.clone();
+                async move { echo(&host, item).await.map(|answer| answer.unwrap_or(Json::Null)).map_err(|e| e.message().to_string()) }
+            })
+            .await;
+            json!(fanned)
+        });
+        pending(failing.start().unwrap());
+        // `b` fails: `c` never starts, and `a`, still in flight, finishes first.
+        assert_eq!(failing.answer(2, Err(HostError { detail: json!({ "message": "b failed" }) })).unwrap(), Step::Pending(vec![]));
+        assert_eq!(failing.answer(1, Err(HostError { detail: json!({ "message": "a failed" }) })).unwrap(), Step::Done(json!({ "Err": "a failed" })));
     }
 
     /// 2,000 reads in flight, answered last first: each read is polled when

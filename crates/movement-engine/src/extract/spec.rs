@@ -18,6 +18,7 @@ use movement_parser::catalog::types::{Composite, FieldType, InstanceSchema, Scal
 use movement_parser::lowering::expression::{Expression, StaticValue};
 use serde_json::{Value as Json, json};
 
+use crate::executor::join_all;
 use crate::program::{DeclaredShape, Declarations, DeclaringFile, FileDeclarations};
 
 /// The root node's name and words (extraction.ts `ROOT_EXTRACT_DESCRIPTION`).
@@ -165,7 +166,10 @@ impl<'a, F: Firing> Builder<'a, F> {
         Reading { words: WordsScope::Firing, types: &self.declarations.root }
     }
 
-    /// `buildNodeSpec`: an inline node, its words already resolved.
+    /// `buildNodeSpec`: an inline node, its words already resolved. Its
+    /// stages are built at once, and in each its fields' words at once,
+    /// then its children's, as `settledAll` starts them: a description that
+    /// asks the host asks it where the TypeScript does.
     fn node(&'a self, name: String, description: String, stages: &'a [ast::ExtractStage]) -> Built<'a, F::Error> {
         Box::pin(async move {
             let reading = self.firing_reading();
@@ -175,30 +179,55 @@ impl<'a, F: Firing> Builder<'a, F> {
                     exported.push(field.name.clone());
                 }
             }
-            let mut built = Vec::with_capacity(stages.len());
-            for stage in stages {
-                let mut fields = Vec::with_capacity(stage.fields.len());
-                for field in &stage.fields {
-                    fields.push(FieldSpec {
-                        name: field.name.clone(),
-                        description: self.describe(&field.description, &reading).await?,
-                        type_: self.field_type(field.type_.as_deref(), &reading),
-                        nullable: field.nullable == Some(true),
-                    });
-                }
-                let mut children = Vec::with_capacity(stage.children.len());
-                for child in &stage.children {
-                    children.push(match child {
-                        ast::ExtractNode::Inline(child) => {
-                            let words = self.describe(&child.description, &reading).await?;
-                            self.node(child.name.clone(), words, &child.stages).await?
-                        }
-                        ast::ExtractNode::Declared(child) => self.declared_node(child).await?,
-                    });
-                }
-                built.push(StageSpec { through: stage.through.clone().unwrap_or_default(), fields, children });
-            }
+            let built = settled(join_all(stages.iter().map(|stage| self.stage(stage, reading.clone())).collect()).await)?;
             Ok(NodeSpec { name, description, stages: built, exported })
+        })
+    }
+
+    /// One inline stage: its fields' words together, then its children
+    /// together.
+    fn stage(&'a self, stage: &'a ast::ExtractStage, reading: Reading<'a>) -> Built<'a, F::Error, StageSpec> {
+        Box::pin(async move {
+            let fields = join_all(
+                stage
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let reading = reading.clone();
+                        async move {
+                            Ok(FieldSpec {
+                                name: field.name.clone(),
+                                type_: self.field_type(field.type_.as_deref(), &reading),
+                                description: self.describe(&field.description, &reading).await?,
+                                nullable: field.nullable == Some(true),
+                            })
+                        }
+                    })
+                    .collect(),
+            )
+            .await;
+            let fields = settled(fields)?;
+            let children = join_all(
+                stage
+                    .children
+                    .iter()
+                    .map(|child| -> Built<'a, F::Error> {
+                        let reading = reading.clone();
+                        Box::pin(async move {
+                            match child {
+                                ast::ExtractNode::Inline(child) => {
+                                    let words = self.describe(&child.description, &reading).await?;
+                                    self.node(child.name.clone(), words, &child.stages).await
+                                }
+                                ast::ExtractNode::Declared(child) => self.declared_node(child).await,
+                            }
+                        })
+                    })
+                    .collect(),
+            )
+            .await;
+            let children = settled(children)?;
+            Ok(StageSpec { through: stage.through.clone().unwrap_or_default(), fields, children })
         })
     }
 
@@ -283,23 +312,32 @@ impl<'a, F: Firing> Builder<'a, F> {
         })
     }
 
-    /// `buildShapeNodeSpec`: one node of a declaration.
+    /// `buildShapeNodeSpec`: one node of a declaration — its own words
+    /// first, then its fields' together, then its children together.
     fn shape_node(&'a self, name: String, shape: &'a ast::ShapeNode, reading: Reading<'a>) -> Built<'a, F::Error, DeclaredNode> {
         Box::pin(async move {
             let description = self.describe_optional(shape.description.as_ref(), &reading).await?;
-            let mut fields = Vec::with_capacity(shape.fields.len());
-            for field in &shape.fields {
-                fields.push(FieldSpec {
-                    name: field.name.clone(),
-                    description: self.describe_optional(field.description.as_ref(), &reading).await?,
-                    type_: self.field_type(Some(&field.type_), &reading),
-                    nullable: field.nullable == Some(true),
-                });
-            }
-            let mut children = Vec::with_capacity(shape.children.len());
-            for child in &shape.children {
-                children.push(self.shape_node(child.name.clone(), child, reading.clone()).await?.into_spec());
-            }
+            let fields = join_all(
+                shape
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let reading = reading.clone();
+                        async move {
+                            Ok(FieldSpec {
+                                name: field.name.clone(),
+                                type_: self.field_type(Some(&field.type_), &reading),
+                                description: self.describe_optional(field.description.as_ref(), &reading).await?,
+                                nullable: field.nullable == Some(true),
+                            })
+                        }
+                    })
+                    .collect(),
+            )
+            .await;
+            let fields = settled(fields)?;
+            let children = join_all(shape.children.iter().map(|child| self.shape_node(child.name.clone(), child, reading.clone())).collect()).await;
+            let children = settled(children)?.into_iter().map(DeclaredNode::into_spec).collect();
             Ok(DeclaredNode {
                 name,
                 description,
@@ -349,6 +387,12 @@ impl<'a, F: Firing> Builder<'a, F> {
         let [instance, root, field] = segments.as_slice() else { return None };
         borrowable_field(self.firing.instance_schema(instance)?, root, field)
     }
+}
+
+/// `settledAll`'s answer once every one has settled: the values in order,
+/// or the earliest one's failure.
+fn settled<T, E>(outcomes: Vec<Result<T, E>>) -> Result<Vec<T>, E> {
+    outcomes.into_iter().collect()
 }
 
 /// `parseFieldTypeName`.

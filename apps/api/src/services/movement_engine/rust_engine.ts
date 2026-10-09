@@ -30,6 +30,7 @@ import { servedHostMethods } from './host';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
 import { pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
+import { maxFileChars } from './extraction';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
 import type { RunContext } from './run_context';
 import { serve, type RouteContext } from './rust_host';
@@ -349,6 +350,9 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume?: { s
       // only of a host that serves it, as the TypeScript engine reads its
       // host object (a park sink's, `canSuspend`).
       serves: servedHostMethods(input.host),
+      // How much of a source file an extraction prompt takes: the
+      // deployment's, read here so the engine reads no environment.
+      extractionFileChars: maxFileChars(),
     },
     'the segment input',
   );
@@ -392,7 +396,7 @@ export function readRunResult(
   throw new RustShimError(`the Rust engine finished with ${Object.keys(outcome).join(', ') || 'nothing'}, which this shim does not decode`);
 }
 
-const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'parked', 'parkedAddress', 'cancelled']);
+const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'extractionSites', 'parked', 'parkedAddress', 'cancelled']);
 
 function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRunResult {
   const result = record(value, 'the Rust engine result');
@@ -404,16 +408,32 @@ function resultOf(value: unknown, trace: MovementRunResult['trace']): MovementRu
   if (result.parked !== undefined && result.parked !== true) throw new RustShimError('a parked result says true');
   const writes = new WireOut().read(result.writes ?? ['l', 0, []]);
   if (!Array.isArray(writes) || !writes.every(isWriteRecord)) throw new RustShimError('the Rust engine result writes are write records');
+  const extractionSites = result.extractionSites === undefined ? {} : new WireOut().read(result.extractionSites);
+  if (!isSiteTable(extractionSites)) throw new RustShimError('the Rust engine result extractionSites are site summaries');
   // The spend fields are the run host's to add, read off the run's account
   // once the segment closes (run.ts `inRunContext`).
   return {
     movementName: string(result.movementName, 'the Rust engine result movementName'),
     writes,
-    extractionSites: {},
+    extractionSites,
     trace,
     ...(result.parked === true ? { parked: true, parkedAddress: string(result.parkedAddress, 'the parked address') } : {}),
     ...(result.cancelled === true ? { cancelled: true } : {}),
   };
+}
+
+/** The extraction sites a result's provenance cites, by site id. */
+function isSiteTable(value: unknown): value is MovementRunResult['extractionSites'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every(
+    (site) =>
+      typeof site === 'object' &&
+      site !== null &&
+      typeof Reflect.get(site, 'node') === 'string' &&
+      typeof Reflect.get(site, 'description') === 'string' &&
+      typeof Reflect.get(site, 'stage') === 'number' &&
+      Array.isArray(Reflect.get(site, 'dataSources')),
+  );
 }
 
 /** A write record off the wire: the fields every one carries. */

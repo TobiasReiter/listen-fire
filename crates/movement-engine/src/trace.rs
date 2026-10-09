@@ -26,6 +26,11 @@ pub enum TraceEntry {
     /// A traversal block's head, as written, and how many landings it
     /// yielded: the body runs once per landing.
     Block { root: String, positions: usize },
+    /// One extraction call, or the call a stage skipped (crate::extract):
+    /// its members as extraction.ts writes them.
+    Extraction(serde_json::Map<String, serde_json::Value>),
+    /// One plugin invocation, a stage's or a plain call's.
+    Plugin(serde_json::Map<String, serde_json::Value>),
 }
 
 /// One flow's trace entries not yet handed to the host, in the order they
@@ -44,5 +49,22 @@ impl FlowTrace {
     /// entries, or a joined flow's for its parent to splice.
     pub fn take(&self) -> Vec<TraceEntry> {
         std::mem::take(&mut *self.pending.borrow_mut())
+    }
+
+    /// How many entries wait: where a statement's own entries will start.
+    pub fn len(&self) -> usize {
+        self.pending.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pending.borrow().is_empty()
+    }
+
+    /// The entries from `from` on, to finish one in place once the statement
+    /// that wrote them knows the rest (an extraction's emitted entities).
+    pub fn amend(&self, from: usize, amend: impl FnOnce(&mut [TraceEntry])) {
+        let mut pending = self.pending.borrow_mut();
+        let from = from.min(pending.len());
+        amend(&mut pending[from..]);
     }
 }

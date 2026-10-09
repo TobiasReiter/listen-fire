@@ -181,6 +181,11 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
             object_of(vec![kind("positions"), ("landings", Js::array(landings))])
         }
+        // The extraction ran: its output is data, never run again.
+        Binding::Extracted { emission, root } => object_of(vec![
+            kind(if *root { "extractRoot" } else { "extractPosition" }),
+            ("emission", emission.descriptor(&|id| run.origin(id))),
+        ]),
     })
 }
 
@@ -774,6 +779,9 @@ mod tests {
             pending_suspensions: RefCell::default(),
             source_reads: RefCell::default(),
             positions: RefCell::default(),
+            extraction_sites: RefCell::default(),
+            reply_digests: std::cell::Cell::new(0),
+            unfetched_files: RefCell::default(),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },

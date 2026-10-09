@@ -115,13 +115,22 @@ pub struct SegmentInput {
     pub limit_paused: bool,
     /// Where to suspend, by address, once each (`RunMovementInput.suspendAt`):
     /// a statement's address suspends the flow just before it. An address
-    /// before a call (`… .c k`) is never reached: this engine runs no calls.
+    /// before a call (`… .c k`) is refused at admission (`suspend_at_call`).
     #[serde(default)]
     pub suspend_at: Vec<String>,
     /// Every host method the run's host serves, by path
     /// (`park.sink.commitTimerPark`): the optional ones it serves are what
     /// the engine may ask, as the TypeScript engine asks its host object.
     pub serves: Vec<String>,
+    /// How much of one source file's text an extraction prompt takes
+    /// (extraction.ts `maxFileChars`, a deployment's `EXTRACTION_FILE_CHARS`):
+    /// the shim reads it, so the engine reads no environment.
+    #[serde(default = "default_file_chars")]
+    pub extraction_file_chars: usize,
+}
+
+fn default_file_chars() -> usize {
+    50_000
 }
 
 /// The segment entry: the run, and its `done`.
@@ -279,6 +288,14 @@ pub(crate) struct Run<'a> {
     /// The positions registered with the host this segment (crate::host
     /// `call_at`), by handle number.
     pub(crate) positions: RefCell<crate::traverse::PositionTable>,
+    /// The extraction sites the writes' provenance cites, by site id, each
+    /// summarised once (`ProvenanceSummariser.sites`): the result's
+    /// `extractionSites`.
+    pub(crate) extraction_sites: RefCell<Vec<(String, Js)>>,
+    /// The reply digests the run's trace holds (`TraceSink`'s budget).
+    pub(crate) reply_digests: std::cell::Cell<usize>,
+    /// The files whose bytes could not be fetched, warned of once each.
+    pub(crate) unfetched_files: RefCell<Vec<String>>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -331,6 +348,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         pending_suspensions: RefCell::new(input.suspend_at.clone()),
         source_reads: RefCell::default(),
         positions: RefCell::default(),
+        extraction_sites: RefCell::default(),
+        reply_digests: std::cell::Cell::new(0),
+        unfetched_files: RefCell::default(),
     };
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
@@ -404,6 +424,16 @@ impl Run<'_> {
     fn result(&self, cancelled: bool, parked: Option<&str>) -> Json {
         let writes: Vec<Js> = self.writes.borrow().iter().map(|w| w.object.clone()).collect();
         let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": env::encode_plain(&Js::array(writes)) });
+        // Each extraction site the writes cite, once (`ProvenanceSummariser.sites`).
+        let sites = self.extraction_sites.borrow();
+        if !sites.is_empty() {
+            let mut table = JsObject::new();
+            for (id, summary) in sites.iter() {
+                table.set(id.clone(), summary.clone());
+            }
+            result["extractionSites"] = env::encode_plain(&Js::object(table));
+        }
+        drop(sites);
         if let Some(address) = parked {
             result["parked"] = json!(true);
             result["parkedAddress"] = json!(address);
@@ -797,6 +827,10 @@ impl Run<'_> {
                         let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
                         scope.declare(assign.name.clone(), Binding::Node(built));
                     }
+                    RValue::Extract { extract } => {
+                        let emission = self.extraction(extract, scope).await?;
+                        scope.declare(assign.name.clone(), Binding::Extracted { emission, root: true });
+                    }
                     // An instance constructed in a body, as at file scope; a
                     // movement's name in that spelling is a call.
                     RValue::Construct { construct } => {
@@ -1059,10 +1093,52 @@ impl Run<'_> {
         origins.len() as u32 - 1
     }
 
-    /// An origin as the firing record carries it (`ProvenanceSummariser`).
+    /// The origin `id` names, as the TypeScript's object.
+    pub(crate) fn origin(&self, id: u32) -> Js {
+        self.origins.borrow().get(id as usize).cloned().unwrap_or(Js::Null)
+    }
+
+    /// An origin as the firing record carries it (`ProvenanceSummariser`):
+    /// an extraction's site interned into the result's `extractionSites`.
     pub(crate) fn summarised_origin(&self, id: u32) -> Js {
-        let origin = self.origins.borrow().get(id as usize).cloned().unwrap_or(Js::Null);
-        summarise(&origin)
+        self.summarised(&self.origin(id))
+    }
+
+    /// `summariseOrigin`: an extraction's site by its id, its details (and
+    /// its data sources, summarised) kept once in `extractionSites`, the
+    /// first site of an id the one kept.
+    pub(crate) fn summarised(&self, origin: &Js) -> Js {
+        let get = |key: &str| crate::unique::get(origin, key);
+        if !matches!(get("kind"), Js::String(kind) if kind == "extraction") {
+            return summarise(origin);
+        }
+        let site = get("site");
+        let site_id = crate::unique::get(&site, "siteId").to_js_string();
+        let known = self.extraction_sites.borrow().iter().any(|(id, _)| *id == site_id);
+        if !known {
+            // The slot is reserved before the data sources are summarised.
+            self.extraction_sites.borrow_mut().push((site_id.clone(), Js::Null));
+            let sources: Vec<Js> = match crate::unique::get(&site, "dataSources") {
+                Js::Array(list) => list.items.iter().map(|o| self.summarised(o)).collect(),
+                _ => Vec::new(),
+            };
+            let summary = env::object_of(vec![
+                ("node", crate::unique::get(&site, "node")),
+                ("description", crate::unique::get(&site, "description")),
+                ("stage", crate::unique::get(&site, "stage")),
+                ("dataSources", Js::array(sources)),
+            ]);
+            if let Some(slot) = self.extraction_sites.borrow_mut().iter_mut().find(|(id, _)| *id == site_id) {
+                slot.1 = summary;
+            }
+        }
+        let mut entries = vec![("kind", Js::str("extraction")), ("site", Js::str(site_id))];
+        for key in ["field", "description", "quote", "item"] {
+            if !matches!(get(key), Js::Undefined) {
+                entries.push((key, get(key)));
+            }
+        }
+        env::object_of(entries)
     }
 
     /// `interpretSleep`: a rehearsal fast-forwards; a real run parks the flow
@@ -1137,6 +1213,12 @@ impl Run<'_> {
             return Ok(());
         }
         self.ask(host::trace::append(self.segment(), &entries, closing)).await.map(|_| ())
+    }
+
+    /// A line on the platform's log where the TypeScript engine writes one;
+    /// a line the shim could not write is not the run's failure.
+    pub(crate) async fn log(&self, level: &str, message: &str, fields: serde_json::Map<String, Json>) {
+        let _ = self.ask(host::log::line(level, message, Json::Object(fields))).await;
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
@@ -1736,7 +1818,8 @@ mod tests {
             } }],
         });
         assert_eq!(crate::park::resume_refusal(&wire(resumable.clone())), None);
-        // A suspension's state, whose journal is empty: this engine runs no calls.
+        // A suspension's state, whose journal is empty: this engine keeps no
+        // call's answer for a statement run again.
         let mut suspended = resumable;
         suspended["suspended"] = json!(true);
         suspended["journal"] = json!([]);

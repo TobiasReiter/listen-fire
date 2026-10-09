@@ -199,6 +199,15 @@ pub(crate) fn head_step(head: &PathHead) -> Result<EdgeStep, String> {
     }
 }
 
+/// What an extraction yielded, when a head is rooted at it.
+fn extracted_root(head: &PathHead, scope: &Scope) -> Option<Rc<crate::extract::emission::Emission>> {
+    let Some(PathRoot::Name { name }) = &head.root else { return None };
+    match scope.resolve(name) {
+        Some(Binding::Extracted { emission, .. }) => Some(emission),
+        _ => None,
+    }
+}
+
 /// The member a narrowed polymorphic hop is about (`hopSelection`): the
 /// type its records carry, and the hop's declared target.
 struct MemberGate {
@@ -268,7 +277,12 @@ impl Run<'_> {
         let step = head_step(&block.head)
             .map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"))))?;
         let span = env::js_of_serialized(&block.head.span);
-        let landings = self.head_landings(&block.head, &step, scope, &span).await.map_err(Stop::Thrown)?;
+        let landings: Vec<Binding> = match extracted_root(&block.head, scope) {
+            // `deals-[c:company]-> { … }`: the extract's own entities under
+            // that edge, in hand; no host is asked.
+            Some(emission) => emission.children_of(&step.edge_type_id).iter().map(|child| Binding::Extracted { emission: child.clone(), root: false }).collect(),
+            None => self.head_landings(&block.head, &step, scope, &span).await.map_err(Stop::Thrown)?.into_iter().map(Binding::Landed).collect(),
+        };
         self.trace(TraceEntry::Block { root: spell_path_head(&block.head), positions: landings.len() });
         let body = format!("{path}/block/body");
         let mut returned: Vec<Binding> = Vec::new();
@@ -278,7 +292,7 @@ impl Run<'_> {
             // which an unbound block has nowhere to put.
             let iteration = scope.child();
             if let Some(alias) = &step.alias {
-                iteration.declare(alias.clone(), Binding::Landed(landed));
+                iteration.declare(alias.clone(), landed);
             }
             let flow = match self.body(&block.body, &iteration, &at.iter(index), &body, 0).await {
                 // A match inside found nothing: this iteration skips, the

@@ -18,12 +18,14 @@
 // engine hands it in process, and an adapter's result comes back the same way.
 
 import { applyStdlib, languageVersionDiagnostic, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
+import { isFileRef } from 'engine-contracts';
 
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
+import { EFFORTS, type Effort } from './ai_tiers';
 import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
 import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost } from './host';
@@ -67,6 +69,8 @@ export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
   'check.program': 'the TypeScript checker, which the Rust engine asks for until the checker is Rust',
   'builtins.function': 'a TypeScript standard-library member, for a reading the Rust engine hands back',
   'builtins.compare': "the shared comparator, for a reading the Rust engine hands back",
+  'log.info': "the platform's log, for a line the TypeScript engine writes at the same point",
+  'log.warn': "the platform's log, for a warning the TypeScript engine writes at the same point",
 };
 
 /**
@@ -181,6 +185,61 @@ const ROUTES: Record<string, Route> = {
     const { index, ...rest } = answer;
     return { ...rest, index: typeof index === 'number' && Number.isInteger(index) ? index : null };
   },
+  /** An extraction region's model call, a priced call: the reply comes back
+   *  on the eval wire, so the engine reads `parsedJson` exactly as
+   *  `JSON.parse` left it (key order, the numbers past what JSON can write);
+   *  its cost is charged to the run's account as it passes, as the judge's. */
+  async 'llm.client.call'(request, { host, context }) {
+    if (request.wire !== true) throw new RustShimError('llm.client.call takes its answer on the eval wire');
+    const effort = optionalString(request.effort, 'llm.client.call effort');
+    if (effort !== undefined && !isEffort(effort)) throw new RustShimError(`llm.client.call effort ${JSON.stringify(effort)} is not an effort`);
+    const maxTokens = request.maxTokens;
+    if (maxTokens !== undefined && (typeof maxTokens !== 'number' || !Number.isInteger(maxTokens))) {
+      throw new RustShimError('llm.client.call maxTokens is an integer');
+    }
+    const answer = await host.llm.client.call({
+      segmentId: segmentOf(request),
+      system: string(request.system, 'llm.client.call system'),
+      userMessage: string(request.userMessage, 'llm.client.call userMessage'),
+      label: string(request.label, 'llm.client.call label'),
+      model: extractionModel(request.model),
+      ...(effort !== undefined ? { effort } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+      budget: budgetOf(request.budget),
+    });
+    context.ledger.charge(answer.cost);
+    return new Plain(wired(answer, 'llm.client.call'));
+  },
+  /** A plugin's invocation (`through` or a plain call), a priced call: its
+   *  arguments and the entity's fields so far arrive on the eval wire, and
+   *  what it brought back goes back on it. */
+  async 'llm.transforms.invoke'(request, { host, context }) {
+    if (request.wire !== true) throw new RustShimError('llm.transforms.invoke carries its values on the eval wire');
+    const answer = await host.llm.transforms.invoke({
+      segmentId: segmentOf(request),
+      plugin: string(request.plugin, 'llm.transforms.invoke plugin'),
+      config: wiredRecord(request.config, 'llm.transforms.invoke config'),
+      extractedContext: wiredRecord(request.extractedContext, 'llm.transforms.invoke extractedContext'),
+      budget: budgetOf(request.budget),
+    });
+    context.ledger.charge(answer.cost);
+    return new Plain(wired(answer, 'llm.transforms.invoke'));
+  },
+  /** A source file's text, a priced call: the descriptor on the eval wire. */
+  async 'files.resolveFileText'(request, { host, context }) {
+    if (request.wire !== true) throw new RustShimError('files.resolveFileText carries its file on the eval wire');
+    const file = new WireOut().read(request.file);
+    if (!isFileRef(file)) throw new RustShimError('files.resolveFileText file is a FileRef');
+    const answer = await host.files.resolveFileText({ segmentId: segmentOf(request), file, budget: budgetOf(request.budget) });
+    context.ledger.charge(answer.cost);
+    return new Plain(wired(answer, 'files.resolveFileText'));
+  },
+  /** Fresh ids, for the resources an extraction carries. */
+  async 'ids.mint'(request, { host }) {
+    const count = request.count;
+    if (typeof count !== 'number' || !Number.isInteger(count) || count < 1) throw new RustShimError('ids.mint count is a positive integer');
+    return host.ids.mint({ segmentId: segmentOf(request), count });
+  },
   /** The segment's cross-run write locks: a token per acquire. */
   async 'locks.acquire'(request, { host }) {
     return host.locks.acquire({ segmentId: segmentOf(request), names: lockNames(request) });
@@ -268,6 +327,15 @@ const ROUTES: Record<string, Route> = {
       }
       throw error;
     }
+    return undefined;
+  },
+  /** A line on the platform's log, the run it belongs to named. */
+  async 'log.info'(request, { context }) {
+    logger.info(string(request.message, 'log.info message'), { ...record(request.fields, 'log.info fields'), ...runLogFields(context) });
+    return undefined;
+  },
+  async 'log.warn'(request, { context }) {
+    logger.warn(string(request.message, 'log.warn message'), { ...record(request.fields, 'log.warn fields'), ...runLogFields(context) });
     return undefined;
   },
   /** A built-in the Rust engine hands back for these arguments, answered by
@@ -367,6 +435,31 @@ function instant(value: unknown, what: string): string {
   const text = string(value, what);
   if (Number.isNaN(new Date(text).getTime())) throw new RustShimError(`${what} is not an ISO 8601 instant`);
   return text;
+}
+
+/** A host's answer on the eval wire, as the engine reads it. */
+function wired(answer: unknown, method: string): unknown {
+  const wire = new WireOut({ asData: true }).value(answer);
+  if (wire === REFUSED) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
+  return wire;
+}
+
+function isEffort(value: string): value is Effort {
+  return EFFORTS.some((effort) => effort === value);
+}
+
+/** The models an extraction call names: the built-in aliases (no tier
+ *  reaches the Rust engine, so no deployment's assignment does). */
+function extractionModel(value: unknown): 'opus' | 'opus5' | 'sonnet' | 'haiku' {
+  switch (value) {
+    case 'opus':
+    case 'opus5':
+    case 'sonnet':
+    case 'haiku':
+      return value;
+    default:
+      throw new RustShimError(`llm.client.call model ${JSON.stringify(value)} is not an extraction's model`);
+  }
 }
 
 function wiredRecord(value: unknown, what: string): Record<string, unknown> {
@@ -476,6 +569,10 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
       if (typeof positions !== 'number' || !Number.isInteger(positions)) throw new RustShimError('a block trace entry counts its positions');
       return { kind: 'block', root: string(entry.root, 'a block root'), positions };
     }
+    case 'extraction':
+      return extractionTraceEntry(entry);
+    case 'plugin':
+      return pluginTraceEntry(entry);
     case 'field_miss': {
       const available = entry.available;
       if (!Array.isArray(available) || !available.every((key) => typeof key === 'string')) {
@@ -491,6 +588,39 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
     default:
       throw new RustShimError(`the Rust engine appended a trace entry this shim does not know: ${String(entry.kind)}`);
   }
+}
+
+type ExtractionTraceEntry = Extract<MovementRunResult['trace'][number], { kind: 'extraction' }>;
+type PluginTraceEntry = Extract<MovementRunResult['trace'][number], { kind: 'plugin' }>;
+
+/** An extraction's trace entry (crates/movement-engine/src/extract/run.rs):
+ *  its required members read here, the rest carried as the engine wrote
+ *  them. */
+function extractionTraceEntry(entry: Record<string, unknown>): ExtractionTraceEntry {
+  const { inputChars, emissions } = entry;
+  if (typeof inputChars !== 'number') throw new RustShimError('an extraction trace entry counts its input');
+  if (!isCountTable(emissions)) throw new RustShimError('an extraction trace entry counts its emissions');
+  if (!isExtractionTraceEntry(entry)) throw new RustShimError('an extraction trace entry has the shape the engine writes');
+  return entry;
+}
+
+function isExtractionTraceEntry(entry: Record<string, unknown>): entry is ExtractionTraceEntry {
+  return entry.kind === 'extraction' && typeof entry.inputChars === 'number' && isCountTable(entry.emissions);
+}
+
+function isCountTable(value: unknown): value is Record<string, number> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.values(value).every((n) => typeof n === 'number');
+}
+
+function pluginTraceEntry(entry: Record<string, unknown>): PluginTraceEntry {
+  if (typeof entry.durationMs !== 'number') throw new RustShimError('a plugin trace entry times its invocation');
+  string(entry.plugin, 'a plugin trace entry plugin');
+  if (!isPluginTraceEntry(entry)) throw new RustShimError('a plugin trace entry has the shape the engine writes');
+  return entry;
+}
+
+function isPluginTraceEntry(entry: Record<string, unknown>): entry is PluginTraceEntry {
+  return entry.kind === 'plugin' && typeof entry.plugin === 'string' && typeof entry.durationMs === 'number';
 }
 
 function adapterCallName(request: HostRequest): string | undefined {

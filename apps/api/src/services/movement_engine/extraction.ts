@@ -833,7 +833,7 @@ export interface Segment {
  * the extract, so the cost is per call, not per run. Read per call so a
  * deployment can raise it without a deploy.
  */
-function maxFileChars(): number {
+export function maxFileChars(): number {
   const fromEnv = Number(process.env.EXTRACTION_FILE_CHARS);
   return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 50_000;
 }
