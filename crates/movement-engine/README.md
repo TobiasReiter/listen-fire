@@ -337,12 +337,19 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 | `aggregate:only` | `ONLY(e)` of anything but a name (its failure spells `e` back, as the formula serializer does) |
 | `aggregate:sort_key` | `SORT(xs, key)` whose key is not a field name |
 | `aggregate:llm` | the `llm` fold |
+| `traversal_steps` | a field read rooted at a held name (`c.\`name\``) that also walks hops before it |
 | `traversal_terminal` | a walk ending in anything but a field |
 | `static_number` | a numeric literal JSON cannot carry (`Infinity`, `-0`) |
 | `proto_key` | a `__proto__` key written in an object literal |
 | `within_compare` | `WITHIN` |
+| `meta:<key>` | `@user_*` and `@actor_*` (looked up through the host), and any other key the dispatch's `meta.bag` carries: only `@current_date` and `@current_timestamp` are read here |
 | `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, …) |
 | `expression:<type>` | an expression kind that needs the host, by its lowered `type` (`llm`, `meta`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); a rootless `EXISTS(-[…]->)` is `expression:exists` |
+
+`parallel` is not run here: it prints `statement:combinator` or
+`rvalue:combinator` and the TypeScript engine runs the whole program (it
+unlocks four recorded runs, and chunk 6A spent its budget on extraction; the
+next slice's first item).
 
 A hop's WHERE and ORDER BY key, and a write's or a match's target WHERE, are
 walked as expressions scoped at the landed record (the candidate, for a
@@ -1108,6 +1115,18 @@ The rule for what this engine reproduces of JavaScript:
     engine sees it, so the truncation marker prints the whole number
     ("first 2 of …"); the TypeScript's marker prints the fraction ("first
     2.5 of …"). Specified as: the bound is a whole number of characters.
+
+### Known divergences
+
+Where this engine differs from the TypeScript engine on a program that
+checks and that admission lets through. Each is pinned or unreachable as
+said; the deferred language-version changes above are the others.
+
+- **A `#`-prefixed hop over an open or undescribed position** passes the
+  checker (it refuses unknown `#` edges only on a closed, described schema).
+  TypeScript's read wrapper hands it to the adapter without restamping the
+  position; this engine restamps. No checked program over a closed schema
+  reaches it.
 
 ## The check
 
