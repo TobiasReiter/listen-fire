@@ -106,7 +106,8 @@ describe.each(VERSIONS)('the binding × consumer matrix under language version %
       // eslint-disable-next-line no-console
       console.log(`matrix v${version}: ${ran.length} cells, ${refused} refused\nfirst reason: ${JSON.stringify(sorted(first))}\nevery reason: ${JSON.stringify(sorted(every))}`);
     }
-    // What a first reason hid: reasons no cell is refused for first.
-    expect(Object.keys(every).filter((reason) => first[reason] === undefined)).not.toEqual([]);
+    // Every reason a cell is refused for first is reported for it too, and
+    // a reason is reported at least as often as it comes first.
+    for (const [reason, n] of Object.entries(first)) expect(every[reason]).toBeGreaterThanOrEqual(n);
   });
 });

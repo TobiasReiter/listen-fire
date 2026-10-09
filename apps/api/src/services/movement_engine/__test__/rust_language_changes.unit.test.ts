@@ -200,8 +200,9 @@ describe("main's language changes on both engines", () => {
   it('write m.k { … } (39197a6903): refused, the record the member holds updated by the TypeScript engine', async () => {
     await onBoth(
       movement('  crm-[c:companies]-> {', '    held = { k: c }', '    write held.k { stage: "seen" }', '  }'),
-      // The map holding the record is what this engine meets first.
-      { refused: 'name_not_value' },
+      // The map holding the record is held as a value (chunk 7A Task 3); the
+      // write from its member is not this engine's yet.
+      { refused: 'write_position_member_path' },
       [
         ['update', { id: 'c-acme', stage: 'seen' }],
         ['update', { id: 'c-beta', stage: 'seen' }],
@@ -209,11 +210,11 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('...m.k in a write and in a graph literal (286561483a): refused by name', async () => {
+  it('...m.k in a write (286561483a): run whole in Rust; in a graph literal, refused by name', async () => {
     await onBoth(
       movement('  n = node { name: msg.`subject`, stage: "lead" }', '  held = { k: n }', '  write crm-[:companies]-> { ...held.k, stage: "won" }'),
-      // As for `write m.k`: the map holding the record comes first.
-      { refused: 'name_not_value' },
+      // The spread's lines read the record the map holds (chunk 7A Task 3).
+      { runsWhole: true },
       [['create', { name: 'Acme', stage: 'won' }]],
     );
     await onBoth(
@@ -256,15 +257,16 @@ describe("main's language changes on both engines", () => {
   it('one binding for a record, held in a list (405b9c0cf2, 5b7c0011dc): refused, the record read through the list', async () => {
     await onBoth(
       movement('  rows = crm-[c:companies]-> {', '    return c', '  }', '  held = { entries: rows }', '  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }'),
-      { refused: 'name_not_value' },
+      // A field read off a fold's answer does not lower here yet.
+      { refused: 'expression_does_not_lower' },
       [['create', { body: '2 Acme' }]],
     );
   });
 
-  it('m.k.inner (6f95615ae1): refused, the nested key read by the TypeScript engine', async () => {
+  it('m.k.inner (6f95615ae1): the nested key read, run whole in Rust (chunk 7A Task 3)', async () => {
     await onBoth(
       movement('  held = { k: { inner: msg.`subject` } }', '  write crm-[:companies]-> { name: held.k.inner }'),
-      { refused: 'traversal_terminal' },
+      { runsWhole: true },
       [['create', { name: 'Acme' }]],
     );
   });

@@ -20,8 +20,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use movement_parser::ast::{
-    self, AwaitSource, CallArg, CallStatement, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue,
-    Statement, TraversalBlock, WriteExpression, WriteTarget,
+    self, ArmExpression, AwaitSource, CallArg, CallStatement, CollectionOpExpression, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef,
+    PathHead, PathRoot, RValue, Statement, TraversalBlock, WriteExpression, WriteTarget,
 };
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 use movement_parser::lowering::expression::EdgeDirection;
@@ -74,7 +74,7 @@ impl Plugins<'_> {
 /// or from version 3 in any letter case (the fired name is a function's),
 /// else the file's only movement. `None` when none is picked, and the run
 /// throws MOVENG_NOT_FOUND after the check, on either engine.
-pub(crate) fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>, language_version: u32) -> Option<&'m ast::MovementDeclaration> {
+pub fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>, language_version: u32) -> Option<&'m ast::MovementDeclaration> {
     match wanted.filter(|w| !w.is_empty()) {
         Some(wanted) => movements.iter().find(|m| m.name == wanted).or_else(|| {
             (language_version >= 3).then(|| movements.iter().find(|m| m.name.to_lowercase() == wanted.to_lowercase())).flatten()
@@ -353,7 +353,8 @@ pub fn refusals(
         let params: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
         let bound = callees.bound(movement, &walk.signature, Vec::new());
         let events: BTreeSet<String> = bound.events.union(&bound.event_aliases).cloned().collect();
-        if bound.sites.iter().any(|(n, _, _)| params.contains(n) || file_names.contains(n)) {
+        let shadows = |n: &String| params.contains(n) || file_names.contains(n);
+        if bound.sites.iter().any(|(n, _, _)| shadows(n)) || bound.member_params.iter().any(|(n, _)| shadows(n)) {
             reasons.note("name_shadowed");
         }
         if bound.rebound() {
@@ -594,21 +595,40 @@ fn call_spends(statements: &[Statement]) -> bool {
 /// write, a match that may ask the judge, an extraction, a plugin's call.
 fn priced_in_block(statements: &[Statement], in_block: bool, plugins: &BTreeSet<String>) -> bool {
     let judged_link = |link: &ast::LinkExpression| matches!(link.to, ast::LinkTarget::Match { .. });
+    let priced = |value: &RValue| match value {
+        RValue::Write { .. } | RValue::Match { .. } | RValue::Extract { .. } => true,
+        RValue::Link { link } => judged_link(link),
+        RValue::Call { call } => plugins.contains(&call.callee),
+        RValue::Construct { construct } => plugins.contains(&construct.callee),
+        _ => false,
+    };
+    // A collection op's members are iterations too: a cap met in one is met
+    // inside the op.
+    let in_members = |value: Option<&RValue>, call: Option<&CallStatement>| {
+        let closure = match (value, call) {
+            (Some(RValue::Collection { collection }), _) => match &collection.r#fn {
+                ArmExpression::Closure { closure, .. } => Some(closure),
+                ArmExpression::Ref { .. } => None,
+            },
+            (Some(RValue::Call { call }), _) | (_, Some(call)) => call.args.iter().find_map(|arg| match arg {
+                CallArg::Closure { closure, .. } => Some(closure),
+                _ => None,
+            }),
+            _ => None,
+        };
+        closure.is_some_and(|closure| priced_in_block(&closure.body, true, plugins))
+    };
     statements.iter().any(|statement| match statement {
         Statement::Write(_) | Statement::Match(_) => in_block,
         Statement::Link(statement) => in_block && judged_link(&statement.link),
-        Statement::Call(call) => in_block && plugins.contains(&call.callee),
+        Statement::Call(call) => (in_block && plugins.contains(&call.callee)) || in_members(None, Some(call)),
+        Statement::Collection(statement) => in_members(Some(&RValue::Collection { collection: statement.collection.clone() }), None),
         Statement::Assign(assign) => {
-            in_block
-                && match &assign.value {
-                    RValue::Write { .. } | RValue::Match { .. } | RValue::Extract { .. } => true,
-                    RValue::Link { link } => judged_link(link),
-                    RValue::Call { call } => plugins.contains(&call.callee),
-                    RValue::Construct { construct } => plugins.contains(&construct.callee),
-                    _ => false,
-                }
+            (in_block && priced(&assign.value))
                 || matches!(&assign.value, RValue::Block { block } if priced_in_block(&block.body, true, plugins))
+                || in_members(Some(&assign.value), None)
         }
+        Statement::Return(ret) => (in_block && priced(&ret.value)) || in_members(Some(&ret.value), None),
         Statement::If(statement) => {
             statement.arms.iter().any(|arm| priced_in_block(&arm.body, in_block, plugins))
                 || statement.else_arm.as_ref().is_some_and(|arm| priced_in_block(&arm.body, in_block, plugins))
@@ -682,6 +702,9 @@ struct Callees<'p> {
     file_scope: BTreeSet<String>,
     language_version: u32,
     returns: RefCell<Vec<((String, Signature), Option<Kind>)>>,
+    /// The record kinds a value may hold at run time: a kept walk only where
+    /// the program keeps one.
+    held_kinds: Vec<Kind>,
 }
 
 impl<'p> Callees<'p> {
@@ -708,7 +731,9 @@ impl<'p> Callees<'p> {
                 _ => {}
             }
         }
-        Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default() }
+        let keeps_walks = movements.iter().any(|m| holds_lazy(m));
+        let held_kinds = HELD_KINDS.iter().copied().filter(|k| *k != Kind::Lazy || keeps_walks).collect();
+        Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default(), held_kinds }
     }
 
     /// The movement declared as `name`, exactly.
@@ -840,6 +865,9 @@ struct Bound<'c> {
     event_aliases: BTreeSet<String>,
     /// (name, kind, scope path from the body's root scope).
     sites: Vec<(String, Kind, Vec<usize>)>,
+    /// A collection op's closure parameters, each in the closure's own
+    /// scope: a member, of whatever kind it is (`Names::collection_op`).
+    member_params: Vec<(String, Vec<usize>)>,
     scopes: usize,
 }
 
@@ -859,6 +887,29 @@ enum Kind {
     Lazy,
     /// A second name for the event.
     Event,
+    /// A value handed to a position parameter: at run time it is the record
+    /// it holds (`bindSlotValue`), of any kind a position parameter takes,
+    /// or the call fails before the callee runs. A signature holding one is
+    /// walked once per kind (`concrete`).
+    Held,
+}
+
+/// The record kinds a value handed to a position parameter may hold
+/// (`evaluateCallArg`'s position case).
+const HELD_KINDS: [Kind; 6] = [Kind::Event, Kind::Handle, Kind::Landing, Kind::Extracted, Kind::Node, Kind::Lazy];
+
+/// A signature with each `Held` parameter as each kind it may be (of
+/// `held`); `None` past a bound on how many walks one call may cost.
+fn concrete(signature: &[Kind], held: &[Kind]) -> Option<Vec<Signature>> {
+    let mut signatures: Vec<Signature> = vec![Vec::new()];
+    for kind in signature {
+        let options: &[Kind] = if *kind == Kind::Held { held } else { std::slice::from_ref(kind) };
+        signatures = signatures.iter().flat_map(|s| options.iter().map(move |k| [s.as_slice(), &[*k]].concat())).collect();
+        if signatures.len() > HELD_KINDS.len() * HELD_KINDS.len() {
+            return None;
+        }
+    }
+    Some(signatures)
 }
 
 /// What a call binds a movement's parameters to, in declaration order.
@@ -875,8 +926,74 @@ impl<'c> Bound<'c> {
         }
     }
 
+    /// The collection op a right-hand side runs, where it runs one: written
+    /// as one (before version 3), or a call of one of the built-ins.
+    fn rvalue_collection(&self, value: &RValue) -> Option<CollectionOpExpression> {
+        match value {
+            RValue::Collection { collection } => Some(collection.clone()),
+            RValue::Call { call } => self.call_collection(call),
+            _ => None,
+        }
+    }
+
+    fn call_collection(&self, call: &CallStatement) -> Option<CollectionOpExpression> {
+        let binds = self.callee(&call.callee).is_some() || self.binds_in_body(&call.callee) || self.plugin_binds.contains_key(&call.callee);
+        let file_bound = self.callees.is_some_and(|c| c.file_scope.contains(&call.callee));
+        match crate::collection::reading(call, binds || file_bound, self.callees.map_or(3, |c| c.language_version)) {
+            Ok(Some(crate::collection::Reading::Collection(op))) => Some(op),
+            _ => None,
+        }
+    }
+
+    fn binds_in_body(&self, name: &str) -> bool {
+        self.sites.iter().any(|(n, _, _)| n == name) || self.params.iter().any(|(n, _)| n == name) || self.events.contains(name) || self.event_aliases.contains(name)
+    }
+
+    /// An op's function: a closure's parameters and body, in a scope of its
+    /// own (its `return` is no `return` of the movement's); a movement
+    /// handed by name, called once per member with each member as it is —
+    /// a value or a record of any kind — so walked under each.
+    fn collection(&mut self, op: &CollectionOpExpression, scope: &[usize]) {
+        match &op.r#fn {
+            ArmExpression::Closure { closure, .. } => {
+                let inner = self.enter(scope);
+                for param in &closure.params {
+                    self.member_params.push((param.name.clone(), inner.clone()));
+                }
+                self.blocks += 1;
+                self.collect(&closure.body, &inner);
+                self.blocks -= 1;
+            }
+            ArmExpression::Ref { name, .. } => {
+                let Some(callees) = self.callees else { return };
+                let Some(movement) = callees.movement(name) else { return };
+                let any: Vec<Kind> = std::iter::once(Kind::Value).chain(callees.held_kinds.iter().copied()).collect();
+                let mut signatures: Vec<Signature> = vec![Vec::new()];
+                for _ in &movement.params {
+                    signatures = signatures.iter().flat_map(|s| any.iter().map(move |k| [s.as_slice(), &[*k]].concat())).collect();
+                    if signatures.len() > any.len() * any.len() {
+                        self.unknown_calls.push(op.span);
+                        return;
+                    }
+                }
+                for signature in signatures {
+                    self.calls.push((movement.name.clone(), signature));
+                }
+            }
+        }
+    }
+
     fn collect(&mut self, statements: &[Statement], scope: &[usize]) {
         for statement in statements {
+            if let Some(op) = match statement {
+                Statement::Collection(statement) => Some(statement.collection.clone()),
+                Statement::Call(call) => self.call_collection(call),
+                Statement::Assign(assign) => self.rvalue_collection(&assign.value),
+                Statement::Return(ret) => self.rvalue_collection(&ret.value),
+                _ => None,
+            } {
+                self.collection(&op, scope);
+            }
             match statement {
                 Statement::Assign(assign) => {
                     let kind = match &assign.value {
@@ -1049,26 +1166,37 @@ impl<'c> Bound<'c> {
         let callees = self.callees?;
         let declaration = self.callee(&call.callee)?;
         let mut signature: Vec<Option<Kind>> = vec![Some(Kind::Value); declaration.params.len()];
-        let mut enters = true;
         for (position, arg) in call.args.iter().enumerate() {
             let param = arg.name().map(String::from).or_else(|| declaration.params.get(position).map(|p| p.name.clone()));
             // A name the callee does not take fails the call, mirrored.
             let Some(index) = param.and_then(|p| declaration.params.iter().position(|d| d.name == p)) else { continue };
             let takes_value = callees.takes_value(&declaration.params[index]);
-            signature[index] = self.arg_kind(arg, takes_value);
-            // A position parameter handed no record fails the call before
-            // the callee runs, mirrored.
-            enters &= takes_value || signature[index] != Some(Kind::Value);
+            signature[index] = match self.arg_kind(arg, takes_value) {
+                // A value handed to a position parameter is the record it
+                // holds, or the call fails before the callee runs.
+                Some(Kind::Value) if !takes_value => Some(Kind::Held),
+                other => other,
+            };
         }
         let Some(signature) = signature.into_iter().collect::<Option<Signature>>() else {
             self.unknown_calls.push(call.span);
             return None;
         };
-        if !enters {
-            return Some(Kind::Value);
+        let Some(signatures) = concrete(&signature, &callees.held_kinds) else {
+            self.unknown_calls.push(call.span);
+            return None;
+        };
+        let mut returned: Option<Option<Kind>> = None;
+        for signature in signatures {
+            self.calls.push((declaration.name.clone(), signature.clone()));
+            let kind = callees.returns(declaration, &signature, &self.stack);
+            returned = Some(match returned {
+                None => kind,
+                Some(seen) if seen == kind => seen,
+                Some(_) => None,
+            });
         }
-        self.calls.push((declaration.name.clone(), signature.clone()));
-        let returned = callees.returns(declaration, &signature, &self.stack);
+        let returned = returned.flatten();
         if returned.is_none() {
             self.unknown_calls.push(call.span);
         }
@@ -1133,6 +1261,9 @@ impl<'c> Bound<'c> {
             Kind::Member => &mut self.members,
             Kind::Lazy => &mut self.lazies,
             Kind::Event => &mut self.event_aliases,
+            // A callee is walked under concrete kinds only (`concrete`); a
+            // value's reads are what a held record's are.
+            Kind::Held => &mut self.values,
         };
         into.insert(name.to_string());
     }
@@ -1143,11 +1274,17 @@ impl<'c> Bound<'c> {
     /// name is bound once in any one scope chain. The same name in two sibling
     /// scopes (two blocks' hop aliases, two arms' bindings) is two names.
     fn rebound(&self) -> bool {
-        self.sites.iter().enumerate().any(|(i, (name, kind, scope))| {
-            self.sites[i + 1..].iter().any(|(other, other_kind, other_scope)| {
-                name == other && (kind != other_kind || scope.starts_with(other_scope) || other_scope.starts_with(scope))
-            })
-        })
+        let nested = |a: &[usize], b: &[usize]| a.starts_with(b) || b.starts_with(a);
+        let sites = self.sites.iter().enumerate().any(|(i, (name, kind, scope))| {
+            self.sites[i + 1..].iter().any(|(other, other_kind, other_scope)| name == other && (kind != other_kind || nested(scope, other_scope)))
+        });
+        // A closure's parameter is a name of its own scope: only a binding it
+        // can see, or one that sees it, is the same name twice.
+        let params = self.member_params.iter().enumerate().any(|(i, (name, scope))| {
+            self.sites.iter().any(|(other, _, other_scope)| name == other && nested(scope, other_scope))
+                || self.member_params[i + 1..].iter().any(|(other, other_scope)| name == other && nested(scope, other_scope))
+        });
+        sites || params
     }
 }
 
@@ -1158,6 +1295,10 @@ impl<'c> Bound<'c> {
 enum Within {
     Body,
     Block,
+    /// A collection op's function: its `return` is the member's answer (any
+    /// right-hand side, as a body's), and a park in it would leave the
+    /// op's other members to a join this engine does not keep.
+    Member,
 }
 
 type Admitted = Result<(), String>;
@@ -1217,7 +1358,7 @@ impl Names<'_> {
     fn statement(&self, statement: &Statement, within: Within) -> Admitted {
         let sleep = |source: &AwaitSource| {
             sleep_only(source)?;
-            if within == Within::Block {
+            if within != Within::Body {
                 return refuse("block_park");
             }
             // A park inside a callee resumes through a call frame, which
@@ -1243,16 +1384,25 @@ impl Names<'_> {
                 // Walked as a block head walks, at every read.
                 RValue::Lazy { lazy } => self.traversal_entry(&lazy.head, lazy.mapping.as_ref(), false),
                 RValue::Expr { expr } => self.assigned(expr),
+                RValue::Collection { collection } => self.collection_op(collection, "rvalue:collection"),
+                RValue::Members { .. } => Ok(()),
+                RValue::Call { call } if let Some(reading) = self.reading(call)? => self.reading_admitted(&reading, "rvalue:collection"),
                 RValue::Call { call } if !self.plugin(&call.callee) => self.assigned(self.builtin_value(call)?),
                 other => self.rvalue(other),
             },
             // A returned call's value is the TypeScript's to hand back.
             Statement::Return(ret) => match &ret.value {
                 RValue::Call { call } if self.plugin(&call.callee) => refuse("plugin_call"),
-                // What an iteration returns is the block's value, a list of
-                // values; what a body returns is its call's value, any
-                // binding a right-hand side makes.
-                other if within == Within::Block => self.rvalue(other),
+                RValue::Collection { collection } => self.collection_op(collection, "rvalue:collection"),
+                RValue::Members { .. } => Ok(()),
+                RValue::Call { call } if let Some(reading) = self.reading(call)? => self.reading_admitted(&reading, "rvalue:collection"),
+                // What a body returns is its call's value, an iteration's
+                // its block's (`blockValue`: the values, or the records), a
+                // member's its op's: any binding a right-hand side makes.
+                RValue::Write { write } => self.write(write),
+                RValue::Match { r#match } => self.match_(r#match),
+                RValue::Link { link } => self.link(link),
+                RValue::Extract { extract } => self.extract(extract),
                 RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
                 RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
@@ -1263,9 +1413,9 @@ impl Names<'_> {
             Statement::Write(statement) => self.write(&statement.write),
             Statement::Match(statement) => self.match_(&statement.r#match),
             Statement::Link(statement) => self.link(&statement.link),
-            Statement::Unlink(statement) => {
-                if self.handles.contains(&statement.from) && self.handles.contains(&statement.to) { Ok(()) } else { refuse("link_endpoint_not_handle") }
-            }
+            // Its endpoints are the records the names hold, which must be
+            // written handles, as the TypeScript's `resolveEdgeEndpoint` says.
+            Statement::Unlink(_) => Ok(()),
             Statement::Delete(statement) => {
                 if self.handles.contains(&statement.name) || self.landings.contains(&statement.name) { Ok(()) } else { refuse("delete_not_record") }
             }
@@ -1284,6 +1434,12 @@ impl Names<'_> {
             Statement::Error(statement) => self.slot(&statement.message),
             Statement::Call(call) if self.plugin(&call.callee) => self.plugin_call(call),
             Statement::Call(call) if self.callee(&call.callee).is_some() => self.call(call),
+            Statement::Collection(statement) => self.collection_op(&statement.collection, "statement:collection"),
+            Statement::Call(call) if let Some(reading) = self.reading(call)? => match reading {
+                crate::collection::Reading::Collection(op) => self.collection_op(&op, "statement:collection"),
+                // A type's values read and dropped: the checker refuses it.
+                crate::collection::Reading::Members(_) => refuse("statement:call"),
+            },
             other => refuse(format!("statement:{}", statement_kind(other))),
         }
     }
@@ -1330,11 +1486,15 @@ impl Names<'_> {
     fn head(&self, head: &PathHead) -> Admitted {
         let root = match &head.root {
             None => return refuse("block_head_rootless"),
-            Some(PathRoot::Expression { .. }) => return refuse("block_head_expression_root"),
+            // `AT(rows, 0)-[c:company]->`: the root bound as `x = <it>` binds.
+            Some(PathRoot::Expression { expr }) => {
+                self.assigned(expr)?;
+                return self.value_head(head);
+            }
             Some(PathRoot::Name { name }) => name,
         };
         // A hop off a kept walk continues the walk itself, past its head.
-        if self.values.contains(root) || self.lazies.contains(root) {
+        if self.lazies.contains(root) {
             return refuse("block_head_value_root");
         }
         if self.extracts.contains(root) {
@@ -1345,13 +1505,15 @@ impl Names<'_> {
         }
         // What a node's edge holds may be a node or a system's record: the
         // head is walked as either walks it, so it is held to both.
-        let held = self.instances.contains(root)
+        let adapter_root = self.instances.contains(root)
             || self.handles.contains(root)
             || self.events.contains(root)
             || self.landings.contains(root)
             || self.members.contains(root);
-        if !held {
-            return refuse("block_head_root");
+        if !adapter_root {
+            // A value (the records it holds, each walked as its kind walks),
+            // or a name the run refuses to walk from, as the TypeScript does.
+            return self.value_head(head);
         }
         let probe = format!("{}{}.`__movement_engine_probe__`", crate::write::spell_name(root), head.hops_raw);
         let Ok(tree) = movement_parser::expr::parse_expression(&probe) else { return refuse("block_head_does_not_lower") };
@@ -1371,6 +1533,15 @@ impl Names<'_> {
             self.scoped(key)?;
         }
         Ok(())
+    }
+
+    /// A head rooted at a value (or an expression): one edge hop off each
+    /// record it holds — any kind of record, so its WHERE and ORDER BY are
+    /// held to what every kind reads.
+    fn value_head(&self, head: &PathHead) -> Admitted {
+        let step = crate::traverse::head_step(head).map_err(|_| "block_multi_hop".to_string())?;
+        refuse_meta_edge(&step.edge_type_id)?;
+        self.hop(&step)
     }
 
     /// A head over a node the run built (`walkNodePlane`): one hop down one
@@ -1426,10 +1597,12 @@ impl Names<'_> {
         {
             return Ok(());
         }
-        if let Some((root, steps)) = selection(&expr) {
-            if !self.walks_from(root) {
-                return refuse("traversal_root");
-            }
+        // A pick from a walk off a graph is walked as a block head walks
+        // (`selectedPositionBinding`); off anything else it is the fold of
+        // the walk's records, evaluated.
+        if let Some((root, steps)) = selection(&expr)
+            && self.walks_from(root)
+        {
             let [TraversalStep::Edge(step)] = steps else { return refuse("select_multi_hop") };
             return self.hop(step);
         }
@@ -1469,15 +1642,14 @@ impl Names<'_> {
         Ok(())
     }
 
-    /// A walk's hops off `root` (crate::traverse `walk_read`): off an
-    /// extraction, plain hops down its result; off anything an adapter walk
-    /// starts from, edges.
+    /// A walk's hops off `root` (crate::reading `read_from`): edges, each
+    /// one's WHERE and ORDER BY scoped at the record it lands on; off an
+    /// extraction, plain hops down its result. Off a value, the walk is off
+    /// the records it holds; off a kept walk, the walk runs on past its
+    /// head, which this engine does not do.
     fn walk_hops(&self, root: &str, steps: &[TraversalStep]) -> Admitted {
-        // Off a node the run built (`walkMetaSteps`), or what one's edge
-        // holds: one hop.
-        if self.nodes.contains(root) || self.members.contains(root) {
-            let [TraversalStep::Edge(step)] = steps else { return refuse("traversal_root") };
-            return self.hop(step);
+        if self.lazies.contains(root) {
+            return refuse("traversal_root");
         }
         if self.extracts.contains(root) {
             return steps.iter().try_for_each(|step| match step {
@@ -1485,26 +1657,17 @@ impl Names<'_> {
                 _ => refuse("walk_extract_hop"),
             });
         }
-        if !self.walks_from(root) {
-            return refuse("traversal_root");
-        }
         steps.iter().try_for_each(|step| match step {
             TraversalStep::Edge(step) => self.hop(step),
             _ => refuse("traversal_step"),
         })
     }
 
-    /// `EXISTS(root…)`: over a value, whether it holds one; over an
-    /// extraction, plain hops down it; over anything an adapter walk starts
-    /// from, edges; the WHERE scoped at each record reached.
+    /// `EXISTS(root…)`: over a value, whether it holds one (or, with hops,
+    /// a walk off the records it holds); over an extraction, plain hops
+    /// down it; over anything else, edges; each hop's WHERE and ORDER BY,
+    /// and the final WHERE, scoped at the record reached.
     fn exists(&self, root: &str, steps: &[TraversalStep], where_: Option<&Expression>) -> Admitted {
-        // A kept walk run: whether it lands anywhere.
-        if self.lazies.contains(root) {
-            return if steps.is_empty() && where_.is_none() { Ok(()) } else { refuse("exists_step") };
-        }
-        if self.values.contains(root) {
-            return if steps.is_empty() && where_.is_none() { Ok(()) } else { refuse("exists_over_value") };
-        }
         if self.extracts.contains(root) {
             for step in steps {
                 match step {
@@ -1512,24 +1675,81 @@ impl Names<'_> {
                     _ => return refuse("exists_extract_hop"),
                 }
             }
-        } else if self.walks_from(root) {
+        } else {
             for step in steps {
                 let TraversalStep::Edge(step) = step else { return refuse("exists_step") };
                 self.hop(step)?;
             }
-        } else if self.nodes.contains(root) || self.members.contains(root) {
-            // One hop down a node's edge, in hand: no ORDER BY or LIMIT.
-            let [TraversalStep::Edge(step)] = steps else { return refuse("exists_node") };
-            if step.cardinality.is_some() {
-                return refuse("exists_node");
-            }
-            self.hop(step)?;
-        } else {
-            return refuse("traversal_root");
         }
         match where_ {
             Some(where_) => self.scoped(where_),
             None => Ok(()),
+        }
+    }
+
+    /// `readCall`'s reading of a call of a collection op or `MEMBERS`, from
+    /// version 3; a reading that refuses is the checker's to refuse.
+    fn reading(&self, call: &CallStatement) -> Result<Option<crate::collection::Reading>, String> {
+        let binds = self.binds(&call.callee) || self.callee(&call.callee).is_some() || self.plugin(&call.callee);
+        crate::collection::reading(call, binds, self.language_version).map_err(|_| "builtin_call_form".to_string())
+    }
+
+    fn reading_admitted(&self, reading: &crate::collection::Reading, reason: &str) -> Admitted {
+        match reading {
+            crate::collection::Reading::Collection(op) => self.collection_op(op, reason),
+            crate::collection::Reading::Members(_) => Ok(()),
+        }
+    }
+
+    /// A collection op (crate::collection): one member at a time (a setting
+    /// that runs more at once is refused by the op's own reason); its
+    /// collection, start and closure body walked, the body as a member's —
+    /// its parameters values, which may hold records. A movement handed by
+    /// name is walked under every kind a member may be (`Bound::collection`).
+    fn collection_op(&self, op: &CollectionOpExpression, reason: &str) -> Admitted {
+        match crate::collection::settings(op.config.as_ref()) {
+            Ok((_, concurrency, initial)) if concurrency == 1.0 && initial == 1.0 => {}
+            _ => return refuse(reason),
+        }
+        self.slot(&op.source)?;
+        if let Some(init) = &op.init {
+            self.slot(init)?;
+        }
+        match &op.r#fn {
+            // Its parameters are values in its body, over whatever else
+            // their names are bound to outside it.
+            ArmExpression::Closure { closure, .. } => {
+                let params: BTreeSet<String> = closure.params.iter().map(|p| p.name.clone()).collect();
+                let without = |set: &BTreeSet<String>| -> BTreeSet<String> { set.difference(&params).cloned().collect() };
+                let values: BTreeSet<String> = self.values.union(&params).cloned().collect();
+                let (events, handles, nodes, landings, members, lazies, extracts, graphs) = (
+                    without(self.events),
+                    without(self.handles),
+                    without(self.nodes),
+                    without(self.landings),
+                    without(self.members),
+                    without(self.lazies),
+                    without(self.extracts),
+                    without(self.graphs),
+                );
+                let member = Names {
+                    values: &values,
+                    events: &events,
+                    handles: &handles,
+                    nodes: &nodes,
+                    landings: &landings,
+                    members: &members,
+                    lazies: &lazies,
+                    extracts: &extracts,
+                    graphs: &graphs,
+                    instances: without(&self.instances),
+                    ..*self
+                };
+                member.body(&closure.body, Within::Member);
+                Ok(())
+            }
+            ArmExpression::Ref { .. } if self.unknown_calls.contains(&op.span) => refuse("movement_call"),
+            ArmExpression::Ref { .. } => Ok(()),
         }
     }
 
@@ -1685,6 +1905,19 @@ impl Names<'_> {
         self.callees.callee(written, self.binds(written))
     }
 
+    /// A name the body itself binds (a parameter, a value, a record).
+    fn binds_in_body(&self, name: &str) -> bool {
+        self.events.contains(name)
+            || self.extracts.contains(name)
+            || self.values.contains(name)
+            || self.handles.contains(name)
+            || self.nodes.contains(name)
+            || self.members.contains(name)
+            || self.lazies.contains(name)
+            || self.landings.contains(name)
+            || self.body_instances.contains(name)
+    }
+
     /// `CallScope.binds`: a name the file or the body binds, anywhere.
     fn binds(&self, name: &str) -> bool {
         self.events.contains(name)
@@ -1703,33 +1936,22 @@ impl Names<'_> {
             return refuse("write_bind");
         }
         match &write.target {
-            WriteTarget::Tuple { .. } => return refuse("write_tuple"),
+            // One record at the convergence of its paths, each a linked
+            // write's (`resolveTupleWriteTarget`).
+            WriteTarget::Tuple { paths, .. } => paths.iter().try_for_each(|path| self.target_path(path, "write"))?,
             // `write m.k { … }`: the record a map holds, bound for the write
             // alone (run.ts `bindSlotValue`), which this engine does not.
             WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => return refuse("write_position_member_path"),
-            WriteTarget::Position { root: PathRoot::Name { name }, .. } => {
-                let record = self.handles.contains(name) || self.landings.contains(name) || self.nodes.contains(name) || self.members.contains(name);
-                if !record {
-                    return refuse("write_position_not_record");
-                }
-            }
+            // The record the name holds, updated in place; anything else
+            // fails as the TypeScript's `executePositionWrite` fails it.
+            WriteTarget::Position { root: PathRoot::Name { .. }, .. } => {}
             WriteTarget::Linked { path, .. } => self.target_path(path, "write")?,
         }
         for clause in &write.unique_by {
             unique_clause(&clause.predicate.raw)?;
         }
-        for spread in write.spreads.iter().flatten() {
-            if spread.path.is_some() {
-                return refuse("write_spread_path");
-            }
-            let held = self.values.contains(&spread.source)
-                || self.handles.contains(&spread.source)
-                || self.nodes.contains(&spread.source)
-                || self.events.contains(&spread.source);
-            if !held {
-                return refuse("write_spread_source");
-            }
-        }
+        // A spread is its field lines, `f: e.f` per field the checker stamped
+        // (`expandWriteSpreads`): reads of whatever `e` (or `m.k`) holds.
         write.fields.iter().try_for_each(|field| self.slot(&field.value))
     }
 
@@ -1737,15 +1959,12 @@ impl Names<'_> {
     /// handle, the event or a hop alias, its WHERE scoped at the candidate.
     fn target_path(&self, path: &PathHead, verb: &str) -> Admitted {
         let Some(PathRoot::Name { name: root }) = &path.root else { return refuse(format!("{verb}_root_expression")) };
-        // Into an edge of a node the run built, or of what one holds: the
-        // engine is the adapter for the one, the system for the other.
-        let held = self.instances.contains(root)
-            || self.handles.contains(root)
-            || self.events.contains(root)
-            || self.landings.contains(root)
-            || self.nodes.contains(root)
-            || self.members.contains(root);
-        if !held {
+        // Rooted at any name: the record it holds parents the write (or the
+        // engine is the adapter, into a node the run built), and anything
+        // else fails as the TypeScript's `linkedPathGraph` fails it — but a
+        // declared shape's name is a shape write (an in-memory position),
+        // which this engine does not make.
+        if self.shapes.contains(root) && !self.binds_in_body(root) {
             return refuse(format!("{verb}_root_not_held"));
         }
         match edge_shape(path) {
@@ -1784,12 +2003,11 @@ impl Names<'_> {
                 ast::LinkTarget::Match { r#match, .. } => self.match_(r#match),
             };
         }
-        if !self.handles.contains(&link.from) {
-            return refuse("link_endpoint_not_handle");
-        }
+        // Any other endpoint is the record its name holds, which must be a
+        // written handle (`resolveEdgeEndpoint`), whatever the name was bound
+        // from: a value may hold one.
         match &link.to {
-            ast::LinkTarget::Handle { name } if self.handles.contains(name) => Ok(()),
-            ast::LinkTarget::Handle { .. } => refuse("link_endpoint_not_handle"),
+            ast::LinkTarget::Handle { .. } => Ok(()),
             ast::LinkTarget::Match { r#match, .. } => self.match_(r#match),
         }
     }
@@ -1920,9 +2138,9 @@ impl Names<'_> {
         let each = |items: &[Expression]| items.iter().try_for_each(|e| self.walk(e, scoped));
         match expr {
             Expression::Property { .. } | Expression::EdgeProperty { .. } if scoped => Ok(()),
-            Expression::AliasRef { name } | Expression::Property { property_type_id: name } => {
-                if self.values.contains(name) { Ok(()) } else { refuse("name_not_value") }
-            }
+            // Any name: a value as itself, a record as itself (`readBareName`),
+            // anything else refused as the TypeScript refuses it.
+            Expression::AliasRef { .. } | Expression::Property { .. } => Ok(()),
             // `EXISTS(x-[:e]->)` lowers as a walk ending in the quantifier.
             Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && matches!(expression.as_ref(), Expression::Exists { .. }) => {
                 let Expression::Exists { steps, where_ } = expression.as_ref() else { unreachable!("matched above") };
@@ -1930,10 +2148,8 @@ impl Names<'_> {
             }
             Expression::Traverse { expression, .. } if matches!(expression.as_ref(), Expression::Exists { .. }) => refuse("expression:exists"),
             // A walk read for a field, many-valued.
+            // A walk read for a field, or as the records it lands on.
             Expression::Traverse { alias_root: Some(root), steps, expression } if !steps.is_empty() => match expression.as_ref() {
-                Expression::Property { property_type_id } if property_type_id == movement_parser::lowering::POSITION_SENTINEL => {
-                    refuse("walk_records")
-                }
                 Expression::Property { .. } | Expression::EdgeProperty { .. } => self.walk_hops(root, steps),
                 _ => refuse("traversal_terminal"),
             },
@@ -1951,28 +2167,26 @@ impl Names<'_> {
             {
                 Ok(())
             }
-            Expression::Traverse { alias_root, steps, expression } => {
-                let held = alias_root.as_ref().is_some_and(|root| {
-                    self.events.contains(root)
-                        || self.extracts.contains(root)
-                        || self.values.contains(root)
-                        || self.handles.contains(root)
-                        || self.nodes.contains(root)
-                        || self.landings.contains(root)
-                        || self.members.contains(root)
-                        || self.lazies.contains(root)
-                });
-                if !held {
-                    return refuse("traversal_root");
+            // A field read with no hops off any name (`directFieldRead`, or a
+            // value's own field), or on through a map's key (`m.k.f`).
+            Expression::Traverse { alias_root: Some(_), expression, .. } => match expression.as_ref() {
+                Expression::Property { .. } | Expression::EdgeProperty { .. } => Ok(()),
+                Expression::Traverse { alias_root: Some(_), steps, .. } if steps.is_empty() => {
+                    let mut terminal = expression.as_ref();
+                    while let Expression::Traverse { steps, expression, .. } = terminal {
+                        if !steps.is_empty() {
+                            return refuse("traversal_steps");
+                        }
+                        terminal = expression;
+                    }
+                    match terminal {
+                        Expression::Property { .. } | Expression::EdgeProperty { .. } => Ok(()),
+                        _ => refuse("traversal_terminal"),
+                    }
                 }
-                if !steps.is_empty() {
-                    return refuse("traversal_steps");
-                }
-                match expression.as_ref() {
-                    Expression::Property { .. } | Expression::EdgeProperty { .. } => Ok(()),
-                    _ => refuse("traversal_terminal"),
-                }
-            }
+                _ => refuse("traversal_terminal"),
+            },
+            Expression::Traverse { alias_root: None, .. } => refuse("traversal_root"),
             Expression::Static { value: StaticValue::Number(n) } => {
                 if n.0.is_finite() && !(n.0 == 0.0 && n.0.is_sign_negative()) { Ok(()) } else { refuse("static_number") }
             }
@@ -2027,15 +2241,8 @@ impl Names<'_> {
     /// `case 'aggregate'`: the folds over a value, a walk read for a field,
     /// or (`COUNT`) the records a walk lands on.
     fn aggregate(&self, fn_: AggregationFunction, inner: &Expression, order_by: Option<&Expression>, scoped: bool) -> Admitted {
-        let records = crate::eval::is_records_walk(inner);
         match fn_ {
             AggregationFunction::Llm => refuse("aggregate:llm"),
-            AggregationFunction::Count if records => {
-                let Expression::Traverse { alias_root: Some(root), steps, .. } = inner else { unreachable!("a records walk is rooted") };
-                self.walk_hops(root, steps)
-            }
-            // A record picked in place is a value only a binding can hold.
-            _ if records => refuse("aggregate_records"),
             // ONLY's failure spells its expression back; a name is what it spells.
             AggregationFunction::Only if crate::eval::spelled_name(inner).is_none() => refuse("aggregate:only"),
             AggregationFunction::Sort => {
@@ -2174,8 +2381,11 @@ mod tests {
             ("  r = helper(e: msg)", "expression:llm"),
             ("  r = HELPER(msg)", "expression:llm"),
             ("  r = await parallel([helper])", "await_not_sleep"),
-            ("  r = MAP([msg], helper)", "function:map"),
-            ("  x = \"${`helper`}\"", "name_not_value"),
+            // A movement handed to a collection op by name is called once per
+            // member; a name read whole (here refused at run time, as the
+            // TypeScript refuses it) reaches it too.
+            ("  r = MAP([msg], helper)", "expression:llm"),
+            ("  x = \"${`helper`}\"", "expression:llm"),
         ] {
             let reasons = reasons_of(&entry(body), "m", 3);
             assert_eq!(reasons.first().map(String::as_str), Some(first), "{body}: {reasons:?}");
@@ -2213,7 +2423,7 @@ mod tests {
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         assert_eq!(
             reasons_of(&source, "m", 3),
-            ["expression:llm", "within_compare", "write_position_not_record", "block_head_value_root", "expression_does_not_lower", "block_park", "statement:call"]
+            ["expression:llm", "within_compare", "expression_does_not_lower", "block_park", "statement:call"]
         );
         assert_eq!(refused(body).as_deref(), Some("expression:llm"));
         // The file's reasons come first, then each movement's, in source order.
@@ -2238,17 +2448,11 @@ mod tests {
     #[test]
     fn refuses_each_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  v = 1\n  if EXISTS(v-[:deals]->) {\n    x = 1\n  }", "exists_over_value"),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = [co]", "name_not_value"),
-            ("  x = \"${msg}\"", "name_not_value"),
             ("  x = AI(\"why?\")", "expression:llm"),
             ("  x = FIRST(crm-[:companies]->-[:deals]->)", "select_multi_hop"),
-            ("  x = crm.`name`", "traversal_root"),
             ("  x = FIRST(crm-[:#foo]->)", "traversal_meta_edge"),
             ("  crm-[:#foo]-> {\n    y = 1\n  }", "traversal_meta_edge"),
             ("  write crm-[:#foo]-> { name: \"a\" }", "traversal_meta_edge"),
-            ("  n = node { a: 1 }\n  x = n-[:replies]->-[:to]->.`subject`", "traversal_root"),
-            ("  x = \"${FIRST(crm-[c:companies]->)}\"", "aggregate_records"),
             ("  x = TEXT.CHUNKS(msg.`subject`)", "expression_does_not_lower"),
             ("  x = msg.`subject` WITHIN \"7d\"", "within_compare"),
             ("  x = { __proto__: 1 }", "proto_key"),
@@ -2259,14 +2463,13 @@ mod tests {
             ("  write crm-[:companies]-> bind co { name: \"a\" }", "write_bind"),
             ("  write crm-[:companies]-> { unique by (`name` == \"a\" AND msg-[:replies]->.`y` == 1) name: \"a\" }", "unique_by_reads_beyond_candidate"),
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
-            ("  write crm-[:companies]-> { ...crm }", "write_spread_source"),
             ("  g = graph { owner: msg }", "node_event_entry"),
             ("  g = graph { ...msg }", "node_spread_source"),
             ("  held = { k: 1 }\n  write held.k { a: 1 }", "write_position_member_path"),
-            ("  held = { k: 1 }\n  write crm-[:companies]-> { ...held.k }", "write_spread_path"),
             ("  held = { k: 1 }\n  g = graph { ...held.k }", "node_spread_path"),
             ("  held = { k: 1 }\n  write held.k-[:e]-> { a: 1 }", "write_root_expression"),
-            ("  x = MAP([1], (v) => v)", "builtin_call_form"),
+            ("  x = MAP([1], { concurrency: 4 }, (v) => { return v })", "rvalue:collection"),
+            ("  MAP([1], { concurrency: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
@@ -2280,16 +2483,11 @@ mod tests {
     fn refuses_mains_new_constructs_by_name_and_admits_its_scan_rules() {
         for (body, reason) in [
             ("  held = { k: 1 }\n  write held.k { a: 1 }", "write_position_member_path"),
-            ("  held = { k: { name: \"a\" } }\n  write crm-[:companies]-> { ...held.k }", "write_spread_path"),
             ("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }", "node_spread_path"),
-            ("  g = graph { name: \"a\", entries: { name: \"x\" } }\n  if EXISTS(g-[:entries ORDER BY `name`]->) {\n    x = 1\n  }", "exists_node"),
             ("  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }", "expression_closure"),
             ("  if COUNT(FILTER([msg.`subject`], (s) => s != \"\")) > 0 {\n    x = 1\n  }", "expression_closure"),
             ("  write crm-[c:companies]-> { unique by (`name` == AT(MAP([1], (v) => v), 0)) name: \"a\" }", "expression_closure"),
             ("  x = [MAP([1], f)]", "function:map"),
-            ("  held = { k: { inner: msg.`subject` } }\n  x = held.k.inner", "traversal_terminal"),
-            ("  rows = crm-[c:companies]-> {\n    return c\n  }", "name_not_value"),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }", "name_not_value"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
@@ -2351,16 +2549,41 @@ mod tests {
         for (body, reason) in [
             ("  crm-[c:companies]-> {\n    await sleep(1h)\n  }", "block_park"),
             ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
-            ("  v = 1\n  v-[c:companies]-> {\n    x = 1\n  }", "block_head_value_root"),
             ("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }", "aggregate:only"),
-            ("  crm-[c:companies ORDER BY c-[:owner]->]-> {\n    x = 1\n  }", "walk_records"),
             ("  crm-[c:companies WHERE `name` == @user_email]-> {\n    x = 1\n  }", "meta:user_email"),
-            ("  crm-[c:companies]-> {\n    x = [c]\n  }", "name_not_value"),
-            ("  x = crm-[c:companies]-> {\n    return c\n  }", "name_not_value"),
-            ("  crm-[c:companies]-> {\n    x = c-[:deals]->\n  }", "walk_records"),
+            ("  MAP([1], (v) => {\n    await sleep(1h)\n  })", "block_park"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
+    }
+
+    /// Chunk 7A Task 3: records held as values — a name of any kind read
+    /// whole (as the record, or refused at run time as the TypeScript
+    /// refuses it), lists and maps of records, walks read as their records,
+    /// heads and walks off a value's records, picks, `==`, spreads, the
+    /// collection ops one member at a time, `MEMBERS`, tuple writes, a write
+    /// returned, link endpoints and write roots of any name.
+    #[test]
+    fn admits_records_held_as_values() {
+        for body in [
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  x = [co]\n  held = { k: co }\n  write crm-[:notes]-> { body: held.k.`name` }",
+            "  x = \"${msg}\"\n  y = crm.`name`",
+            "  v = 1\n  if EXISTS(v-[:deals]->) {\n    x = 1\n  }\n  v-[c:companies]-> {\n    x = 1\n  }",
+            "  n = node { a: 1 }\n  x = n-[:replies]->-[:to]->.`subject`\n  y = \"${FIRST(crm-[c:companies]->)}\"",
+            "  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  if COUNT(rows-[:notes]->) == 2 AND EXISTS(top-[n:notes WHERE `text` == \"b\"]->) {\n    write top-[:notes]-> { body: top.`name` }\n  }",
+            "  all = crm-[c:companies]-> {\n    return c\n  }\n  all-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }\n  same = AT(all, 0) == FIRST(all)",
+            "  write crm-[:companies]-> { ...crm }\n  held = { k: { name: \"a\" } }\n  write crm-[:companies]-> { ...held.k }",
+            "  names = MAP(crm-[c:companies]->, (c) => {\n    return c.`name`\n  })\n  kept = FILTER(names, (n) => {\n    return n != \"\"\n  })\n  total = REDUCE([1, 2], 0, (a, n) => {\n    return a + n\n  })\n  by = GROUPBY(names, (n) => {\n    return n\n  })\n  MAP(kept, { onError: \"warn\" }, (n) => {\n    write crm-[:notes]-> { body: n }\n  })",
+            "  co = write crm-[:companies]-> { name: \"b\" }\n  link co -[:x]-> msg\n  unlink co -[:x]-> msg\n  write msg { a: 1 }\n  x = match nowhere-[:kids]-> { unique by (`a`), a: 1 }",
+            "  a = write crm-[:companies]-> { name: \"a\" }\n  b = write crm-[:people]-> { name: \"b\" }\n  write (a-[:notes]->, b-[:notes]->) { body: \"x\" }",
+            "  crm-[c:companies]-> {\n    return write crm-[:notes]-> { body: c.`name` }\n  }",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
+        }
+        let typed = format!("{PRELUDE}type Stage = <\"a\" | \"b\">\nnode Lead {{\n  name: <text>\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  stages = MEMBERS(<Stage>)\n  x = Lead\n}}");
+        assert_eq!(file(&typed), None);
+        let before = movement_parser::stmt::parse_program(&format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  names = MAP(crm-[c:companies]->, (c) => {{\n    return c.`name`\n  }})\n  MAP(names, (n) => {{\n    write crm-[:notes]-> {{ body: n }}\n  }})\n}}"), 2, false).unwrap();
+        assert_eq!(refusal(&before, 2, &Plugins(None)), None, "the ops written as ops, before version 3");
     }
 
     #[test]
@@ -2380,11 +2603,7 @@ mod tests {
     #[test]
     fn refuses_each_record_verb_form_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  co = write crm-[:companies]-> { name: \"b\" }\n  link co -[:x]-> msg", "link_endpoint_not_handle"),
-            ("  co = write crm-[:companies]-> { name: \"b\" }\n  unlink co -[:x]-> msg", "link_endpoint_not_handle"),
             ("  delete msg", "delete_not_record"),
-            ("  write msg { a: 1 }", "write_position_not_record"),
-            ("  x = match nowhere-[:kids]-> { unique by (`a`), a: 1 }", "match_root_not_held"),
             ("  x = match crm-[:companies]-> { unique by (`name` CONTAINS \"a\"), name: \"a\" }", "unique_by_without_key"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
@@ -2402,14 +2621,17 @@ mod tests {
         // A node argument: the callee reads it, heads off it, writes into it.
         let persist = "movement persist(n: <Note>) {\n  write crm-[:companies]-> { name: n.`title` }\n  n-[k:kids]-> {\n    write crm-[:notes]-> { body: k.`first` }\n  }\n  write n-[:kids]-> { first: \"x\" }\n  one = write crm-[:companies]-> { name: \"o\" }\n  link n -[:kids]-> one\n}\n";
         assert_eq!(reasons(persist, "  persist(n: node { title: msg.`subject`, kids: <Note> })"), Vec::<String>::new());
-        // The event as the argument: the same body walked as the event's.
-        assert_eq!(reasons(persist, "  persist(n: msg)"), ["link_endpoint_not_handle"]);
+        // The event as the argument: the same body walked as the event's
+        // (a link from it fails as the TypeScript's does, at run time).
+        assert_eq!(reasons(persist, "  persist(n: msg)"), Vec::<String>::new());
         // Two calls, two signatures: each walked, each reason once.
-        assert_eq!(reasons(persist, "  persist(n: msg)\n  persist(n: node { title: \"t\", kids: <Note> })"), ["link_endpoint_not_handle"]);
-        // A value parameter takes the value; a record read through it is not one.
+        let lazy = "movement lazy(n: <Note>) {\n  n-[k:kids]-> {\n    await sleep(1h)\n  }\n}\n";
+        assert_eq!(reasons(lazy, "  lazy(n: msg)\n  lazy(n: node { title: \"t\", kids: <Note> })"), ["block_park"]);
+        // A value parameter takes the value; the event read whole is refused
+        // at run time, as the TypeScript refuses it.
         let shout = "movement shout(t: <text>) {\n  return UPPER(t)\n}\n";
         assert_eq!(reasons(shout, "  s = shout(t: msg.`subject`)\n  write crm-[:companies]-> { name: s }"), Vec::<String>::new());
-        assert_eq!(reasons(shout, "  shout(t: msg)"), ["name_not_value"]);
+        assert_eq!(reasons(shout, "  shout(t: msg)"), Vec::<String>::new());
         // What a callee returns is the call's value: a node is walked as one.
         let make = "movement make(t: <text>) {\n  return node { title: t, kids: <Note> }\n}\n";
         assert_eq!(reasons(make, "  n = make(t: \"a\")\n  write n-[:kids]-> { first: \"x\" }\n  x = COUNT(n-[:kids]->)"), Vec::<String>::new());
@@ -2418,9 +2640,13 @@ mod tests {
         assert_eq!(reasons(pick, "  r = pick(t: \"a\")"), ["movement_call"]);
         let deep = "movement deep(t: <text>) {\n  return deep(t: t)\n}\n";
         assert_eq!(reasons(deep, "  r = deep(t: \"a\")"), ["movement_call"]);
-        // A position parameter handed a value fails before the callee runs:
-        // no call signature, so it is walked as a reached movement is.
-        assert_eq!(reasons(persist, "  persist(n: msg.`subject`)"), ["link_endpoint_not_handle"]);
+        // A position parameter handed a value takes the record the value
+        // holds, of any kind (or the call fails before the callee runs): the
+        // callee is walked under each.
+        let heads = "movement heads(n: <Note>) {\n  n-[k:kids]-> {\n    x = k.`first`\n  }\n}\n";
+        assert_eq!(reasons(heads, "  one = FIRST([msg])\n  heads(n: one)"), Vec::<String>::new());
+        let keeps = "movement keeps(n: <Note>) {\n  n-[k:kids]-> {\n    x = k.`first`\n  }\n}\nmovement kept(e: <inbox-[:message]->>) {\n  files = lazy e-[a:attachments]->\n}\n";
+        assert_eq!(reasons(keeps, "  one = FIRST([msg])\n  keeps(n: one)\n  kept(e: msg)"), ["block_head_value_root"], "where the program keeps a walk, a value may hold one");
         // A park inside a callee, at any depth.
         let wait = "movement wait(e: <inbox-[:message]->>) {\n  if e.`subject` == \"a\" {\n    await sleep(1h)\n  }\n}\n";
         assert_eq!(reasons(wait, "  wait(e: msg)"), ["call_park"]);
@@ -2476,10 +2702,8 @@ mod tests {
         }
         for (body, reason) in [
             ("  files = lazy msg-[a:attachments]->\n  files-[f:x]-> {\n    y = 1\n  }", "block_head_value_root"),
-            ("  files = lazy msg-[a:attachments]->\n  if EXISTS(files WHERE `name` == \"a\") {\n    y = 1\n  }", "exists_step"),
+            ("  files = lazy msg-[a:attachments]->\n  x = files-[:x]->.`name`", "traversal_root"),
             ("  d = node { companies: <Company> }\n  d-[c:companies]->-[f:founder]-> {\n    x = f.`first`\n  }", "block_multi_hop"),
-            ("  d = node { companies: <Company> }\n  x = COUNT(d-[:companies]->-[:founder]->)", "traversal_root"),
-            ("  d = node { companies: <Company> }\n  a = write d-[:companies]-> { name: \"a\" }\n  x = EXISTS(a-[:founder]->-[:x]->)", "exists_node"),
         ] {
             assert_eq!(file(&declared(body)).as_deref(), Some(reason), "{body}");
         }
@@ -2554,7 +2778,6 @@ mod tests {
             ("  fetch(url: msg.`text`)", "plugin_call"),
             ("  x = { page: fetch(msg.`text`) }", "plugin_call"),
             ("  if msg IS <Lead> {\n    x = 1\n  }", "is_test_declared_record"),
-            ("  x = Lead", "name_not_value"),
             ("  Lead = 1", "name_shadowed"),
             ("  Stage = 1", "name_shadowed"),
             ("  tag = 1", "name_shadowed"),
@@ -2564,7 +2787,7 @@ mod tests {
         }
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
         // A file-level value reads only the file-level values before it.
-        for (value, reason) in [("y = crm.`name`", "traversal_root"), ("y = later\nlater = 1", "name_not_value"), ("y = AI(\"why\")", "expression:llm")] {
+        for (value, reason) in [("y = AI(\"why\")", "expression:llm")] {
             assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some(reason), "{value}");
         }
         assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}page = fetch_url()\n{movement}")).as_deref(), Some("file_call"));
@@ -2592,18 +2815,13 @@ mod tests {
             assert_eq!(with(&format!("{tree}{after}")), None, "{after}");
         }
         for (after, reason) in [
-            ("\n  x = [deals]", "name_not_value"),
             ("\n  x = deals-[c:co WHERE c.`name` == \"a\"]->.`name`", "walk_extract_hop"),
             ("\n  deals-[c:co WHERE `name` == \"x\"]-> {\n    x = 1\n  }", "block_head_extract_hop"),
             ("\n  deals-[c:co LIMIT 1]-> {\n    x = 1\n  }", "block_head_extract_hop"),
             ("\n  deals-[c:co]->-[p:people]-> {\n    x = 1\n  }", "block_multi_hop"),
             ("\n  msg-[f:_resources]-> {\n    x = 1\n  }", "block_head_resources"),
             ("\n  deals-[f:_resources WHERE type == \"FILE\"]-> {\n    x = 1\n  }", "block_head_resources"),
-            ("\n  write crm-[:companies]-> { ...deals }", "write_spread_source"),
-            ("\n  write deals { a: 1 }", "write_position_not_record"),
-            ("\n  write deals-[:notes]-> { a: 1 }", "write_root_not_held"),
             ("\n  delete deals", "delete_not_record"),
-            ("\n  deals-[c:co]-> {\n    write c { a: 1 }\n  }", "write_position_not_record"),
         ] {
             assert_eq!(with(&format!("{tree}{after}")).as_deref(), Some(reason), "{after}");
         }
@@ -2613,14 +2831,13 @@ mod tests {
             ("  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }", "aggregate:sort_key"),
             ("  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }", "name_not_value"),
             ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
-            ("  return extract from [msg.`text`] {\n    a: \"a\"\n  }", "rvalue:extract"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
         }
         // A declared shape's words are walked in the file's scope.
         let shaped = |words: &str| file(&format!("{PRELUDE}node Lead {{\n  name: <text> \"{words}\"\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}"));
         assert_eq!(shaped("its name"), None);
-        assert_eq!(shaped("its ${crm.`name`} name").as_deref(), Some("traversal_root"));
+        assert_eq!(shaped("its ${AI(\"why\")} name").as_deref(), Some("expression:llm"));
     }
 
     /// A plugin's plain call binds what the catalog snapshot declares it
@@ -2651,8 +2868,6 @@ mod tests {
             ("  page = fetch_url(msg.`text`)", "plugin_call_form"),
             ("  page = fetch_url(url: TRIM(msg.`text`))", "plugin_call_form"),
             ("  page = FETCH_URL(url: msg.`text`)", "plugin_call"),
-            ("  more = research(name: msg.`subject`)\n  x = [more]", "name_not_value"),
-            ("  page = fetch_url(url: msg)", "name_not_value"),
             ("  return fetch_url(url: msg.`text`)", "rvalue:construct"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");

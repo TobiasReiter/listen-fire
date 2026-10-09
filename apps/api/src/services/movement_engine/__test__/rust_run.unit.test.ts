@@ -230,11 +230,12 @@ describe('a whole run in the Rust engine', () => {
     expect(await admission(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'))).toBe('admitted');
     expect(await admission(program('  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: "y" }'))).toBe('admitted');
     expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'))).toBe('admitted');
-    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = [co]'))).toBe('name_not_value');
+    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = [co]'))).toBe('admitted');
     expect(await admission(program('  x = msg'))).toBe('admitted');
     expect(await admission(program('  x = AI("why?")'))).toBe('expression:llm');
     expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('admitted');
-    expect(await admission(program('  x = crm.`name`'))).toBe('traversal_root');
+    expect(await admission(program('  x = crm.`name`'))).toBe('admitted');
+    expect(await admission(program('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'))).toBe('rvalue:collection');
   });
 
   it('reads the event, binds, interpolates and branches as the TypeScript engine does', async () => {
@@ -444,13 +445,11 @@ describe('a whole run in the Rust engine', () => {
     // the walk, never a check, an adapter or a trace entry.
     for (const [source, reason] of [
       [`r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`, 'file_assignment'],
-      [`y = crm.\`name\`\n${movement('  x = 1')}`, 'traversal_root'],
       [`movement v(n: <number[]>) {\n  x = 1\n}\n${movement('  x = 1')}`, 'movement_value_param'],
       [movement('  inbox = 1'), 'name_shadowed'],
       [movement('  x = 1\n  x = write crm-[:companies]-> { name: "a" }'), 'name_rebound'],
       [movement('  crm-[c:companies]-> {\n    x = 1\n  }\n  c = 1'), 'name_rebound'],
       [movement('  crm-[c:companies]-> {\n    await sleep(1h)\n  }'), 'block_park'],
-      [movement('  rows = crm-[c:companies]-> {\n    return c\n  }'), 'name_not_value'],
       [movement('  x = await inbox-[:message]->'), 'await_not_sleep'],
       // A call whose value is not one kind on every path; a call of a name that is no function.
       [`movement pick(e: <inbox-[:message]->>) {\n  if e.\`subject\` == "a" {\n    return node { a: 1 }\n  }\n  return 1\n}\n${movement('  r = pick(e: msg)')}`, 'movement_call'],
@@ -458,11 +457,9 @@ describe('a whole run in the Rust engine', () => {
       // A park inside a callee resumes through a call frame.
       [`movement wait(e: <inbox-[:message]->>) {\n  await sleep(1h)\n}\n${movement('  wait(e: msg)')}`, 'call_park'],
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
+      // A collection op that runs members at once (chunk 7A Task 3 runs them one at a time).
+      [movement('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'), 'rvalue:collection'],
       // The expression tail this engine does not run (chunk 6A Task 4 runs the rest).
-      [movement('  v = 1\n  if EXISTS(v-[:deals]->) {\n    x = 1\n  }'), 'exists_over_value'],
-      [movement('  g = graph { name: "a", notes: { body: "b" } }\n  if EXISTS(g-[:notes ORDER BY `body`]->) {\n    x = 1\n  }'), 'exists_node'],
-      [movement('  rows = crm-[c:companies]->'), 'walk_records'],
-      [movement('  x = "${FIRST(crm-[c:companies]->)}"'), 'aggregate_records'],
       [movement('  x = FIRST(crm-[:companies]->-[:deals]->)'), 'select_multi_hop'],
       [movement('  x = ONLY(crm-[c:companies]->.`name`)'), 'aggregate:only'],
       [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
@@ -485,17 +482,13 @@ describe('a whole run in the Rust engine', () => {
       [movement('  files = lazy msg-[a:files]->\n  await sleep(1h)'), 'lazy_park'],
       [`node Co { name: <text>\n  node founder { first: <text> } }\n${movement('  d = node { cos: <Co> }\n  d-[c:cos]->-[f:founder]-> {\n    x = 1\n  }')}`, 'block_multi_hop'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
-      [movement('  write crm-[:companies]-> { ...crm }'), 'write_spread_source'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],
-      [movement('  n = node { a: 1 }\n  x = n-[:replies]->-[:to]->.`subject`'), 'traversal_root'],
       [movement('  x = { __proto__: 1 }'), 'proto_key'],
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
       [movement('  held = { k: 1 }\n  write held.k { a: 1 }'), 'write_position_member_path'],
-      [movement('  held = { k: { name: "a" } }\n  write crm-[:companies]-> { ...held.k }'), 'write_spread_path'],
       [movement('  held = { k: { name: "a" } }\n  g = graph { ...held.k }'), 'node_spread_path'],
       [movement('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }'), 'expression_closure'],
-      [movement('  held = { k: { inner: 1 } }\n  x = held.k.inner'), 'traversal_terminal'],
       // A call of a plugin the snapshot does not describe, in each of its spellings.
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url()')}`, 'plugin_call'],
@@ -507,9 +500,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  found = extract "careful" from [msg.`text`] {\n    name: "a"\n  }'), 'extract_tier'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }'), 'block_head_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
-      [movement('  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  write crm-[:companies]-> { ...found }'), 'write_spread_source'],
-      [movement('  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  x = [found]'), 'name_not_value'],
-      [movement('  return extract from [msg.`text`] {\n    name: "a"\n  }'), 'rvalue:extract'],
     ] as const) {
       resetRustRunStats();
       const { outcome, resolved } = await segmentOf(source);
