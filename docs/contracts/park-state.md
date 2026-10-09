@@ -52,7 +52,7 @@ type SerializedFrame =
 - **Live things are carried as identities.** An adapter instance is its type, credential name and construction config, re-resolved on resume, and its schema is fetched afresh. A stored traversal is its recipe (head, captured scope, mapping), walked again when read: a run that parked for a day sees the source as it is now.
 - **Code is carried as a name, or as its syntax tree.** A shape or movement declared at file scope is its name, found again in the re-parsed program. A closure's body, a body-local declaration, a collection op and a run-time arm travel as their syntax tree, which the version pin keeps identical.
 
-Members added to a descriptor after it was first written are optional in the same way as the five above (`fieldOrder`, a node's `id`, a landed edge's `landing`). Spellings a park written earlier still carries are read too (a file source's `ownerAdapterType`, a landing's `landingShape`, a resource's unbranded `fileRef`).
+Members added to a descriptor after it was first written are optional in the same way as the five above (`fieldOrder`, a node's `id`, a landed edge's `landing`, a node's `landedOn`: the edge of a run-built node it landed on, which lets `write e { … }` update it in place after the resume). Spellings a park written earlier still carries are read too (a file source's `ownerAdapterType`, a landing's `landingShape`, a resource's unbranded `fileRef`).
 
 ## Park reasons
 

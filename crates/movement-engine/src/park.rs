@@ -130,14 +130,18 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             for (field, trail) in &node.field_provenance {
                 provenance.set(field.clone(), provenance_of(run, trail));
             }
-            object_of(vec![
+            let mut members = vec![
                 kind("nodePosition"),
                 ("id", Js::Number(id as f64)),
                 ("fields", Js::object(JsObject::clone_of(&node.fields))),
                 ("fieldOrder", Js::array(node.field_order.iter().map(|f| Js::str(f.clone())).collect())),
                 ("fieldProvenance", Js::object(provenance)),
-                ("edges", Js::object(edges)),
-            ])
+            ];
+            if let Some(edge) = &node.landed_on {
+                members.push(("landedOn", Js::str(edge.clone())));
+            }
+            members.push(("edges", Js::object(edges)));
+            object_of(members)
         }
         Binding::Event => object_of(vec![kind("event")]),
         Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
@@ -524,7 +528,8 @@ impl Run<'_> {
                     }
                     edges.push((edge.clone(), landings));
                 }
-                *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, edges };
+                let landed_on = text(at(descriptor, "landedOn")).map(String::from);
+                *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, landed_on, edges };
                 Ok(Binding::Node(node))
             }
             Some("positions") => {

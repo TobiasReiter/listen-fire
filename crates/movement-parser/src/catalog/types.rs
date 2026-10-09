@@ -576,6 +576,10 @@ pub struct PluginSpec {
     /// Whether invoking it may cost money: the engine refuses to start a
     /// priced plugin once the run has spent its cost cap.
     pub priced: bool,
+    /// What each argument takes, by name: the plugin's declared input types.
+    /// The checker reads them; nothing here does yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arg_types: Option<JsMap<SchemaFieldType>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_args: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

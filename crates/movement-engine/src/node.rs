@@ -64,6 +64,18 @@ impl Node {
     fn set_edge(&mut self, name: &str, landings: Vec<Binding>) {
         self.delete_field(name);
         self.field_order.retain(|f| f != name);
+        // A node the graph builds on its edge has landed there.
+        for landing in &landings {
+            if let Binding::Node(node) = landing {
+                // A landing that is this node itself is borrowed already,
+                // and stays unmarked.
+                if let Ok(mut node) = node.try_borrow_mut() {
+                    if node.landed_on.is_none() {
+                        node.landed_on = Some(name.to_string());
+                    }
+                }
+            }
+        }
         self.put_edge(name, landings);
     }
 

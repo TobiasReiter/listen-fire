@@ -332,6 +332,14 @@ fn query(snapshot: &Value, q: Value) -> Result<Value, Value> {
 }
 
 #[test]
+fn a_plugin_reads_with_its_argument_types() {
+    // `argTypes` (main v0.10.6): optional, each argument's declared input type.
+    let plugin = json!({ "args": ["data", "url"], "priced": true, "argTypes": { "data": "json", "url": "text" } });
+    let snapshot = json!({ "adapters": {}, "credentials": {}, "plugins": { "p": plugin.clone() } });
+    assert_eq!(query(&snapshot, json!({ "op": "plugin", "name": "p" })), Ok(json!({ "value": plugin })));
+}
+
+#[test]
 fn a_query_answers_a_value_or_nothing() {
     let snapshot = json!({
         "adapters": { "email": { "constructionArgs": [], "schemas": { "": schema_with("messages") } } },

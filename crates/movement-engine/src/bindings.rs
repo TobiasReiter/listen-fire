@@ -62,14 +62,18 @@ impl Landed {
     }
 }
 
-/// `{kind: 'nodePosition', fields, fieldOrder, fieldProvenance, edges}`, the
-/// edges all landed (this engine builds no deferred one).
+/// `{kind: 'nodePosition', fields, fieldOrder, fieldProvenance, landedOn?,
+/// edges}`, the edges all landed (this engine builds no deferred one).
 #[derive(Debug, Default)]
 pub struct Node {
     /// As the JavaScript object holds them: in its key order.
     pub fields: crate::js::JsObject,
     pub field_order: Vec<String>,
     pub field_provenance: Vec<(String, crate::env::Trail)>,
+    /// The edge of a graph this run built that the node landed on, the first
+    /// one only (run.ts `setGraphEdge`). Carried across a park; this engine
+    /// updates no landing in place (admission refuses that write).
+    pub landed_on: Option<String>,
     pub edges: Vec<(String, Vec<Binding>)>,
 }
 

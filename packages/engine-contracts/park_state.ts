@@ -157,6 +157,10 @@ export type BindingDescriptor =
        *  map's own keys stand in, in whatever order jsonb returned them. */
       fieldOrder?: string[];
       fieldProvenance: Record<string, Provenance>;
+      /** The edge of a run-built node this node landed on — what lets
+       *  `write e { … }` update it in place after the resume. Absent for a
+       *  node on no edge, and on a park written before landings kept it. */
+      landedOn?: string;
       edges: Record<string, NodeEdgeDescriptor>;
     }
   /**

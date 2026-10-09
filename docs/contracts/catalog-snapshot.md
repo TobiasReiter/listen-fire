@@ -62,6 +62,7 @@ interface ConstructionArg {
 interface PluginSpec {
   args: string[];
   priced: boolean;
+  argTypes?: Record<string, SchemaFieldType>;   // each argument's declared input type, by name; absent for one nobody typed
   requiredArgs?: string[];
   effects?: { reads?: string[]; writes?: string[]; ai?: boolean; now?: boolean; suspend?: boolean };
   fedByExtraction?: boolean;
