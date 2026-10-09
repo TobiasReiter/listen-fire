@@ -206,7 +206,15 @@ describe('the lock an update of a landing holds', () => {
   });
 
   it('makes two updates of one record take turns, and lets two records go together', async () => {
-    const locks = new EffectLocks();
+    // A landing's lock never leaves the run: a cross-run acquire would fail the test.
+    const locks = new EffectLocks({
+      crossRun: {
+        acquire: async (names) => {
+          throw new Error(`test: a landing's lock went across runs: ${names.join(', ')}`);
+        },
+        release: async () => undefined,
+      },
+    });
     const a = node();
     const b = node();
     const log: string[] = [];

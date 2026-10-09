@@ -130,7 +130,13 @@ export function localRecordLock(landing: LocalLanding): LockRequest {
     number = nextLandingNumber++;
     landingNumbers.set(landing, number);
   }
-  return { name: `record ${JSON.stringify(LOCAL_ADAPTER_TYPE)} landing ${number}`, mode: { kind: 'exclusive' } };
+  // In-run only: the landing exists in this run alone, and its number is
+  // this process's, so the name means nothing to another run's lock table.
+  return {
+    name: `record ${JSON.stringify(LOCAL_ADAPTER_TYPE)} landing ${number}`,
+    mode: { kind: 'exclusive' },
+    inRunOnly: true,
+  };
 }
 
 /** Trim, case fold, collapse whitespace. A multi-valued field folds to its
