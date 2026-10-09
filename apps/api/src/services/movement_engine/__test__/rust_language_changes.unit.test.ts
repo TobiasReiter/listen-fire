@@ -170,21 +170,25 @@ function seen(outcome: Outcome) {
   };
 }
 
+/** What the Rust engine does with a program: runs it whole, or refuses it
+ *  on its own parse for a reason. */
+type OnRust = { runsWhole: true } | { refused: string };
+
 /**
- * `body` on both engines: the TypeScript run leaves `writes`; the Rust run is
- * refused for `reason` (or, `admitted`, runs whole) and leaves the same.
+ * `source` on both engines: the TypeScript run leaves `writes`; the Rust run
+ * goes as `onRust` says and leaves the same.
  */
-async function onBoth(source: string, reason: string, writes: Array<[string, unknown]>) {
+async function onBoth(source: string, onRust: OnRust, writes: Array<[string, unknown]>) {
   const ts = await runOn('ts', source);
   expect(ts.error).toBeUndefined();
   expect(ts.writes).toEqual(writes);
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', source);
-  if (reason === 'admitted') {
+  if ('runsWhole' in onRust) {
     expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
   } else {
-    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { [reason]: 1 }, declined: {}, hostCalls: {} });
+    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, declined: {}, hostCalls: {} });
   }
   expect(seen(rust)).toEqual(seen(ts));
 }
@@ -197,7 +201,7 @@ describe("main's language changes on both engines", () => {
     await onBoth(
       movement('  crm-[c:companies]-> {', '    held = { k: c }', '    write held.k { stage: "seen" }', '  }'),
       // The map holding the record is what this engine meets first.
-      'name_not_value',
+      { refused: 'name_not_value' },
       [
         ['update', { id: 'c-acme', stage: 'seen' }],
         ['update', { id: 'c-beta', stage: 'seen' }],
@@ -209,12 +213,12 @@ describe("main's language changes on both engines", () => {
     await onBoth(
       movement('  n = node { name: msg.`subject`, stage: "lead" }', '  held = { k: n }', '  write crm-[:companies]-> { ...held.k, stage: "won" }'),
       // As for `write m.k`: the map holding the record comes first.
-      'name_not_value',
+      { refused: 'name_not_value' },
       [['create', { name: 'Acme', stage: 'won' }]],
     );
     await onBoth(
       movement('  held = { k: { name: msg.`subject` } }', '  g = graph { ...held.k, stage: "new" }', '  write crm-[:companies]-> { name: g.name, stage: g.stage }'),
-      'node_spread_path',
+      { refused: 'node_spread_path' },
       [['create', { name: 'Acme', stage: 'new' }]],
     );
   });
@@ -234,7 +238,7 @@ describe("main's language changes on both engines", () => {
         '  }',
       ),
       // A run-built collection's edge is declared, in a declared shape.
-      'file_statement:shape',
+      { refused: 'file_statement:shape' },
       [
         ['create', { name: 'Acme Inc!' }],
         ['create', { name: 'Beta!' }],
@@ -245,7 +249,7 @@ describe("main's language changes on both engines", () => {
   it('a collection op inside an expression (71527fa792): refused by name', async () => {
     await onBoth(
       movement('  names = { all: MAP([msg.`subject`, "beta"], (s) => UPPER(s)) }', '  write crm-[:companies]-> { name: COALESCE(AT(names.all, 1), "none") }'),
-      'expression_closure',
+      { refused: 'expression_closure' },
       [['create', { name: 'BETA' }]],
     );
   });
@@ -253,7 +257,7 @@ describe("main's language changes on both engines", () => {
   it('one binding for a record, held in a list (405b9c0cf2, 5b7c0011dc): refused, the record read through the list', async () => {
     await onBoth(
       movement('  rows = crm-[c:companies]-> {', '    return c', '  }', '  held = { entries: rows }', '  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }'),
-      'name_not_value',
+      { refused: 'name_not_value' },
       [['create', { body: '2 Acme' }]],
     );
   });
@@ -261,7 +265,7 @@ describe("main's language changes on both engines", () => {
   it('m.k.inner (6f95615ae1): refused, the nested key read by the TypeScript engine', async () => {
     await onBoth(
       movement('  held = { k: { inner: msg.`subject` } }', '  write crm-[:companies]-> { name: held.k.inner }'),
-      'traversal_terminal',
+      { refused: 'traversal_terminal' },
       [['create', { name: 'Acme' }]],
     );
   });
@@ -277,7 +281,7 @@ describe("main's language changes on both engines", () => {
         '    write crm-[:companies]-> { name: c.name }',
         '  })',
       ),
-      'file_statement:shape',
+      { refused: 'file_statement:shape' },
       [
         ['create', { name: 'Acme!' }],
         ['create', { name: 'Beta!' }],
@@ -288,7 +292,7 @@ describe("main's language changes on both engines", () => {
   it('a call in place as a plugin argument (f623a80f70): refused, the inner call run by the TypeScript engine', async () => {
     await onBoth(
       ['import { fetch_url } from plugins', movement('  page = fetch_url(url: fetch_url(url: msg.`text`))', '  write crm-[:companies]-> { name: COALESCE(page, "none") }')].join('\n'),
-      'import_from_plugins',
+      { refused: 'import_from_plugins' },
       [['create', { name: 'page of page of acme.dev' }]],
     );
   });
@@ -296,7 +300,7 @@ describe("main's language changes on both engines", () => {
   it('EXISTS over a local graph (e03887cc3b): refused by name', async () => {
     await onBoth(
       movement('  g = graph { name: "root", notes: { body: "Brief" } }', '  if EXISTS(g-[:notes]->) {', '    write crm-[:companies]-> { name: "has notes" }', '  }'),
-      'expression:exists',
+      { refused: 'expression:exists' },
       [['create', { name: 'has notes' }]],
     );
   });
@@ -304,7 +308,7 @@ describe("main's language changes on both engines", () => {
   it('a backslash escapes the next character in a backtick name (b2d941dcc4): mirrored, run whole in Rust', async () => {
     await onBoth(
       movement('  `a\\`b` = msg.`subject`', '  `c\\\\d` = "${`a\\`b`}!"', '  write crm-[:companies]-> { name: `c\\\\d` }'),
-      'admitted',
+      { runsWhole: true },
       [['create', { name: 'Acme!' }]],
     );
   });
@@ -312,7 +316,7 @@ describe("main's language changes on both engines", () => {
   it('a # comment inside brackets is skipped (2ee8959ba6, 48009be49a, 51bca6a37b): mirrored, run whole in Rust', async () => {
     await onBoth(
       movement('  write crm-[:companies]-> { name: UPPER( # a "quoted" {aside} (', '    msg.`subject`) }'),
-      'admitted',
+      { runsWhole: true },
       [['create', { name: 'ACME' }]],
     );
   });

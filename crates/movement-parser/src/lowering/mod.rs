@@ -484,7 +484,7 @@ impl Lowering {
             MExpr::Closure { .. } => {
                 return Err(LoweringRefusal::with_code(
                     "a closure cannot be written here — bind it to a name first and pass the name",
-                    "MOV_EXPR_CLOSURE_POSITION",
+                    CLOSURE_POSITION_CODE,
                 ));
             }
             MExpr::Type { .. }
@@ -1261,6 +1261,10 @@ fn children(e: &MExpr) -> Vec<&MExpr> {
         MExpr::Lazy { walk, .. } => vec![walk],
     }
 }
+
+/// The refusal code of a closure written where a value goes (the
+/// TypeScript's `MOV_EXPR_CLOSURE_POSITION`).
+pub const CLOSURE_POSITION_CODE: &str = "MOV_EXPR_CLOSURE_POSITION";
 
 #[cfg(test)]
 mod tests;

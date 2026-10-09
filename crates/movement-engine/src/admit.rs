@@ -728,10 +728,7 @@ fn lowered(raw: &str) -> Result<Expression, String> {
 /// closure with it, by binding the call first (checker/nested_calls.ts): a
 /// closure the lowering refuses is that construct, not the checker's miss.
 fn lowering_refused(refusal: &movement_parser::lowering::LoweringRefusal, otherwise: &str) -> String {
-    match refusal.code.as_deref() {
-        Some("MOV_EXPR_CLOSURE_POSITION") => "expression_closure".into(),
-        _ => otherwise.into(),
-    }
+    if refusal.code.as_deref() == Some(movement_parser::lowering::CLOSURE_POSITION_CODE) { "expression_closure".into() } else { otherwise.into() }
 }
 
 /// `await sleep(…)`, the only await this engine parks on.
