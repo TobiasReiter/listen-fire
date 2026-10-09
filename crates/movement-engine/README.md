@@ -91,7 +91,7 @@ Measured 2026-10-07 (gzip -9):
 | traversal blocks over adapter edges (heads, hops, filters, order and limit; positions by handle) | 2,096,297 | 593,352 |
 | extraction specs, prompts and the validator (chunk 6A, not yet run) | 2,185,406 | 623,115 |
 | the extraction keyword and plugin calls run whole (chunk 6A) | 2,423,062 | 694,914 |
-| folds, EXISTS, IS and a record named twice (chunk 6A Task 4) | 2,458,390 | 710,890 |
+| folds, EXISTS, IS and a record named twice (chunk 6A Task 4) | 2,458,709 | 710,999 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`

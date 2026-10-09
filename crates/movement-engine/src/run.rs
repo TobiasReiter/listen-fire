@@ -1449,6 +1449,16 @@ pub(crate) fn lowered<T, E: std::fmt::Debug>(
     lower(&tree).map_err(|e| invalid(format!("{e:?}")))
 }
 
+/// The name a slot reads bare, as the lowering spells it (`bareName`): a
+/// backticked name included.
+fn bare_name(slot: &ExprSlot) -> Option<String> {
+    let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
+    match movement_parser::lowering::lower_expression(&tree, &slot.raw).ok()? {
+        Expression::Property { property_type_id: name } | Expression::AliasRef { name } => Some(name),
+        _ => None,
+    }
+}
+
 /// `param` and every name a body binds to it again (`x = param`, `y = x`),
 /// at any depth.
 fn event_names(body: &[Statement], param: &str) -> Vec<String> {
@@ -1458,7 +1468,7 @@ fn event_names(body: &[Statement], param: &str) -> Vec<String> {
             match statement {
                 Statement::Assign(assign) => {
                     if let RValue::Expr { expr } = &assign.value
-                        && names.iter().any(|n| n == js::trim(&expr.raw))
+                        && bare_name(expr).is_some_and(|name| names.contains(&name))
                         && !names.contains(&assign.name)
                     {
                         names.push(assign.name.clone());

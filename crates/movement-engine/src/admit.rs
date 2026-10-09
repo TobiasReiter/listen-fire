@@ -503,7 +503,7 @@ impl Bound {
             return Kind::Event;
         }
         match self.sites.iter().rev().find(|(n, _, _)| n == name).map(|(_, kind, _)| *kind) {
-            Some(kind @ (Kind::Handle | Kind::Node | Kind::Landing | Kind::Extracted)) => kind,
+            Some(kind @ (Kind::Handle | Kind::Node | Kind::Landing | Kind::Extracted | Kind::Event)) => kind,
             _ => Kind::Value,
         }
     }
@@ -1453,6 +1453,9 @@ mod tests {
         }
         let declared = format!("{PRELUDE}node Note {{\n  title: <text>\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  d = node {{ title: \"t\" }}\n  if d IS <Note> {{\n    x = 1\n  }}\n}}");
         assert_eq!(file(&declared), None);
+        // A second name for a second name of the event is the event.
+        let aliased = format!("{PRELUDE}node Lead {{\n  name: <text>\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  m2 = `msg`\n  m3 = m2\n  if m3 IS <Lead> {{\n    x = 1\n  }}\n}}");
+        assert_eq!(file(&aliased).as_deref(), Some("is_test_declared_record"));
     }
 
     #[test]

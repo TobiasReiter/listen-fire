@@ -17,6 +17,7 @@ import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData, positionRecordId } from '../../translation_graph/types';
+import { MovementEngineError } from '../errors';
 import type { MovementTraceEntry } from '../expression';
 import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from '../run';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
@@ -401,6 +402,7 @@ async function agree(c: Case) {
     expect(rust.failed).toBe(true);
     expect(String(rust.error)).toBe(String(ts.error));
     expect(runFailureCause(rust.error)?.constructor).toBe((runFailureCause(ts.error) as object).constructor);
+    expect(codeOf(runFailureCause(rust.error))).toBe(codeOf(runFailureCause(ts.error)));
     if (ts.error instanceof MovementRunFailed && rust.error instanceof MovementRunFailed) {
       expect(sameIds(rust.error.partial)).toEqual(sameIds(ts.error.partial));
     }
@@ -410,6 +412,9 @@ async function agree(c: Case) {
   }
   return { ts, rust };
 }
+
+/** A failure's MOVENG code, when it carries one. */
+const codeOf = (error: unknown) => (error instanceof MovementEngineError ? error.code : undefined);
 
 const written = (o: Outcome) => o.captured.map((w) => w.fields?.text);
 const calls = (o: Outcome, which: 'graph' | 'email' = 'graph') => JSON.parse(o[which]) as Array<[string, Record<string, unknown>]>;
@@ -852,7 +857,8 @@ describe('the expression tail, on both engines', () => {
     await agree({
       body: [
         '  m2 = msg',
-        '  co = write kg-[:company]-> { name: m2.`subject` }',
+        '  m3 = m2',
+        '  co = write kg-[:company]-> { name: m3.`subject` }',
         '  same = co',
         '  kg-[c:company WHERE `stage` == "Late"]-> {',
         '    doc = c',

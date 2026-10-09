@@ -411,7 +411,7 @@ impl Run<'_> {
             ));
         }
         let pushdown = self.pushdown_args(step, &read, scope, span).await;
-        let kept = self.fetch(start, step, &read, &pushdown, read.streams, scope, span).await?;
+        let kept = self.fetch(start, step, &read, Fetch { pushdown: &pushdown, paged: read.streams }, scope, span).await?;
         self.ordered(kept, step, scope, span).await
     }
 
@@ -427,17 +427,8 @@ impl Run<'_> {
     /// One hop's fetch from `start`, through the read wrapper's `getRelated`
     /// or, `paged`, the instance's stream a page at a time; each record kept
     /// when it is a member the hop is about and its WHERE holds.
-    #[allow(clippy::too_many_arguments)]
-    async fn fetch(
-        &self,
-        start: &Js,
-        step: &EdgeStep,
-        read: &Rc<Read>,
-        pushdown: &[(String, Js)],
-        paged: bool,
-        scope: &Rc<Scope>,
-        span: &Js,
-    ) -> Result<Vec<Rc<Landed>>, Failure> {
+    async fn fetch(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, how: Fetch<'_>, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Rc<Landed>>, Failure> {
+        let Fetch { pushdown, paged } = how;
         let gate = member_gate(step, start, read);
         let mut args = vec![("fieldId", Js::str(step.edge_type_id.clone())), ("direction", Js::str(direction_text(step.direction)))];
         args.extend(pushdown.iter().map(|(k, v)| (k.as_str(), v.clone())));
@@ -776,7 +767,7 @@ impl Run<'_> {
             let pushdown = self.pushdown_args(step, read, scope, span).await;
             let mut next = Vec::new();
             for cursor in &landed {
-                let kept = self.fetch(&cursor.position, step, read, &pushdown, false, scope, span).await?;
+                let kept = self.fetch(&cursor.position, step, read, Fetch { pushdown: &pushdown, paged: false }, scope, span).await?;
                 next.extend(self.ordered(kept, step, scope, span).await?);
             }
             landed = next;
@@ -820,7 +811,7 @@ impl Run<'_> {
                                 ));
                             }
                             let pushdown = self.pushdown_args(step, read, scope, span).await;
-                            let kept = self.fetch(&record.position, step, read, &pushdown, false, scope, span).await?;
+                            let kept = self.fetch(&record.position, step, read, Fetch { pushdown: &pushdown, paged: false }, scope, span).await?;
                             next.extend(self.ordered(kept, step, scope, span).await?.into_iter().map(Cursor::Landed));
                         }
                         // An extraction's children are in hand; admission
@@ -1028,6 +1019,15 @@ fn block_value(returned: Vec<Binding>) -> Binding {
         }
         _ => Binding::Positions(returned),
     }
+}
+
+/// How one hop's fetch asks: what it pushes beyond its edge, and whether it
+/// walks the instance's stream a page at a time (a block head's walk) or
+/// asks `getRelated` once (an expression's).
+#[derive(Clone, Copy)]
+struct Fetch<'a> {
+    pushdown: &'a [(String, Js)],
+    paged: bool,
 }
 
 /// Where an expression's walk stands: a record an adapter answered, or an

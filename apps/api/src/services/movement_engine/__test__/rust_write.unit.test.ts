@@ -540,6 +540,8 @@ describe('writes in the Rust engine', () => {
       // A date-typed event field (read by name here; by a spread's stamp in
       // the crate's own tests).
       ['  write crm-[:companies]-> { name: msg.`when` }', 'event_field_dated'],
+      // Read under a second name for the event, spelled backticked.
+      ['  m2 = `msg`\n  m3 = m2\n  write crm-[:companies]-> { name: m3.`when` }', 'event_field_dated'],
       // A graph copy whose plan walks edges is stamped only on a graph with a
       // shape, which admission refuses: the crate's own tests decline one.
     ] as const) {

@@ -456,6 +456,11 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = ONLY(crm-[c:companies]->.`name`)'), 'aggregate:only'],
       [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
       [movement('  x = @user_email'), 'meta:user_email'],
+      [movement('  x = LLM_AGG(["a"], "sum it")'), 'aggregate:llm'],
+      [movement('  if EXISTS(msg-[:files]->-[#transform]->) {\n    x = 1\n  }'), 'exists_step'],
+      [movement('  x = msg-[:files]->-[#transform]->.`name`'), 'traversal_step'],
+      // A second name for a second name of the event is the event.
+      [`node Lead { name: <text> }\n${movement('  m2 = msg\n  m3 = m2\n  if m3 IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_record'],
       [`node Lead { name: <text> }\n${movement('  if msg IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_record'],
       [`node Lead { name: <text> }\n${movement('  g = graph { name: "a" }\n  if g IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_graph'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  x = found-[c:co WHERE c.`name` == "x"]->.`name`'), 'walk_extract_hop'],
