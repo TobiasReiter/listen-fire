@@ -101,6 +101,7 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
 import { makeTestHost } from '../test_host';
+import { resetRustRunStats, rustRunStats } from '../rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000022');
 
@@ -512,5 +513,46 @@ describe('a match miss inside a MAP member (version 4)', () => {
       crm.adapter,
     );
     expect(notes(crm).sort()).toEqual(['absent', 'old.example']);
+  });
+});
+
+// A write with no `unique by` still finds a record when the adapter matches
+// by its own rule (or the target's native constraints): since version 4 its
+// handle then reads the found record for the fields it did not send. The Rust
+// engine runs versions 1 to 3, and admission cannot see an adapter's rule from
+// the text, so a v4 write whose handle is held goes to the TypeScript engine.
+describe('a handle on a record the adapter matched by its own rule, on both engines', () => {
+  const BODY = ['  org = write crm-[:companies]-> { name: "Acme Inc." }', note('org.`domain`')];
+
+  async function on(engine: 'ts' | 'rust', languageVersion: LanguageVersion) {
+    const previous = process.env.MOVEMENT_ENGINE;
+    process.env.MOVEMENT_ENGINE = engine;
+    resetRustRunStats();
+    try {
+      const crm = makeCrm([ACME], { findsAlways: true });
+      await run(BODY, crm.adapter, { languageVersion });
+      return { notes: notes(crm), stats: JSON.parse(JSON.stringify(rustRunStats)) as typeof rustRunStats };
+    } finally {
+      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+      else process.env.MOVEMENT_ENGINE = previous;
+    }
+  }
+
+  it('under version 4 reads the record as found, and Rust leaves the run to TypeScript', async () => {
+    const ts = await on('ts', 4);
+    const rust = await on('rust', 4);
+    expect(ts.notes).toEqual(['old.example']);
+    expect(rust.notes).toEqual(ts.notes);
+    expect(rust.stats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { v4_handle_read_as_found: 1 } });
+    // The TypeScript engine's admission dry run does not count it as one Rust could start.
+    expect(ts.stats.dryRun).toMatchObject({ admitted: 0, first: { v4_handle_read_as_found: 1 } });
+  });
+
+  it('under version 3 reads only what the write said, and runs whole on Rust', async () => {
+    const ts = await on('ts', 3);
+    const rust = await on('rust', 3);
+    expect(ts.notes).toEqual([null]);
+    expect(rust.notes).toEqual(ts.notes);
+    expect(rust.stats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
   });
 });

@@ -71,9 +71,6 @@ impl Plugins<'_> {
     }
 }
 
-/// Why this engine does not run `program`, or `None` when it does. Every
-/// movement in the file is walked, not only the one an event dispatches.
-/// A cost cap refuses nothing: a run that meets it suspends (crate::park).
 /// A language version this release does not support, refused by that name
 /// before the parse or any construct's refusal reads the program: the
 /// TypeScript engine refuses it with its own message, naming the version and
@@ -86,6 +83,9 @@ pub fn version_refusal(language_version: u32) -> Option<String> {
     }
 }
 
+/// Why this engine does not run `program`, or `None` when it does. Every
+/// movement in the file is walked, not only the one an event dispatches.
+/// A cost cap refuses nothing: a run that meets it suspends (crate::park).
 pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<'_>) -> Option<String> {
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
@@ -612,6 +612,17 @@ impl Names<'_> {
         };
         match statement {
             Statement::Assign(assign) => match &assign.value {
+                // Version 4: a write's handle reads the record as found for
+                // the fields the write did not send (`foundData`) and holds it
+                // as `@old`. Any write may find one — by `unique by`, by its
+                // target's native constraints, or by the adapter's own rule —
+                // and admission cannot see the last two from the text, so a
+                // write whose handle the program holds is refused whatever
+                // its identity.
+                RValue::Write { write } if since(self.language_version, 4) => {
+                    self.write(write)?;
+                    refuse("v4_handle_read_as_found")
+                }
                 RValue::Write { write } => self.write(write),
                 RValue::Match { r#match } => self.match_(r#match),
                 RValue::Link { link } => self.link(link),
@@ -1484,22 +1495,31 @@ mod tests {
             ("  co = match crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_match_absent", None),
             ("  match crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_match_absent", None),
             (
+                // A link's body is a match, but its from side's write is
+                // refused first.
                 "  co = write crm-[:companies]-> { name: \"a\" }\n  fund = link co -[:portfolio]-> { unique by (`name`), name: \"F\" }",
-                "v4_match_absent",
+                "v4_handle_read_as_found",
                 None,
             ),
             ("  co = write crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_handle_read_as_found", None),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  write co { name: \"b\" }", "v4_write_in_place", None),
+            // The handle's own write is refused first, so `write co { … }`
+            // never reaches `v4_write_in_place`.
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  write co { name: \"b\" }", "v4_handle_read_as_found", None),
             ("  crm-[c:companies]-> {\n    write c { name: \"b\" }\n  }", "v4_handle_read_as_found", None),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = co-[:@old]->.`name`", "v4_old_edge", None),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  co-[o:@old]-> {\n    x = 1\n  }", "v4_old_edge", None),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  if EXISTS(co-[:@old]->) {\n    x = 1\n  }", "v4_old_edge", None),
+            ("  crm-[c:companies]-> {\n    x = c-[:@old]->.`name`\n  }", "v4_old_edge", None),
+            ("  crm-[c:companies]-> {\n    c-[o:@old]-> {\n      x = 1\n    }\n  }", "v4_old_edge", None),
+            ("  crm-[c:companies]-> {\n    if EXISTS(c-[:@old]->) {\n      x = 1\n    }\n  }", "v4_old_edge", None),
         ] {
             assert_eq!(under(body, 4).as_deref(), Some(reason), "{body}");
             assert_eq!(under(body, 3).as_deref(), before, "{body} under version 3");
         }
-        // A create with no identity, and a write off a handle, run as before.
+        // A write whose handle the program holds is refused under version 4
+        // even with no `unique by` (the adapter may match by its own rule);
+        // a write whose handle nothing holds runs as before.
         let body = "  co = write crm-[:companies]-> { name: \"a\" }\n  write co-[:notes]-> { title: co.`name` }";
+        assert_eq!(under(body, 4).as_deref(), Some("v4_handle_read_as_found"), "{body}");
+        assert_eq!(under(body, 3), None, "{body} under version 3");
+        let body = "  write crm-[:companies]-> { name: \"a\" }";
         assert_eq!(under(body, 4), None, "{body}");
     }
 

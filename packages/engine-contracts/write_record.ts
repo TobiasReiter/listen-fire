@@ -21,10 +21,10 @@ import type { ProvenanceOrigin, SummarisedOrigin } from './provenance';
  *     history consumes, plus the interned write origin later reads chain
  *     to by index.
  *
- * `resultData` and `origin` are the in-memory handle-read surface; they
- * are NOT part of the firing record's serialized output — `trigger_run`'s
- * `recordMovementStep` projects the persisted shape explicitly from the
- * other fields.
+ * `resultData`, `foundData`, `snapshot` and `origin` are the in-memory
+ * handle-read surface; they are NOT part of the firing record's
+ * serialized output — `trigger_run`'s `recordMovementStep` projects the
+ * persisted shape explicitly from the other fields.
  */
 export interface WriteRecord {
   // ── Record identity ──────────────────────────────────────────────────────

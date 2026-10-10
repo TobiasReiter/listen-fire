@@ -91,6 +91,17 @@ describe('the contract versions are the ones docs/contracts/ states', () => {
     expect(rows.filter((row) => row[3] === 'yes').map((row) => Number(row[1]))).toEqual([...SUPPORTED_LANGUAGE_VERSIONS]);
     expect(rows.filter((row) => row[4] === 'yes').map((row) => Number(row[1]))).toEqual([...DEPRECATED_LANGUAGE_VERSIONS]);
   });
+
+  // The Rust side's table, read from its source as the lowering vocabulary's
+  // pin reads data.rs: the Rust engine refuses a version outside it by name.
+  it('the Rust parser\'s version table is the same', () => {
+    const rust = fs.readFileSync(path.resolve(__dirname, '../../../crates/movement-parser/src/version.rs'), 'utf8');
+    const current = /^pub const CURRENT_LANGUAGE_VERSION: u32 = (\d+);$/m.exec(rust);
+    const supported = /^pub const SUPPORTED_LANGUAGE_VERSIONS: &\[u32\] = &\[([\d, ]*)\];$/m.exec(rust);
+    if (current === null || supported === null) throw new Error('version.rs no longer spells its constants as this test reads them');
+    expect(Number(current[1])).toBe(CURRENT_LANGUAGE_VERSION);
+    expect(supported[1].split(',').map((v) => Number(v.trim()))).toEqual([...SUPPORTED_LANGUAGE_VERSIONS]);
+  });
 });
 
 describe('a host families version is refused at segment.open unless this host serves it', () => {

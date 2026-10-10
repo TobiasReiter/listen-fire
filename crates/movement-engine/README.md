@@ -307,8 +307,8 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 | `write_position_member_path` | `write m.k { … }`: a write from the record a map's member holds |
 | `v4_match_absent` | under language version 4, any `match` (bound, a statement, a link's body): a miss binds absent and the block carries on, where this engine ends the scope |
 | `v4_old_edge` | under language version 4, a hop over an `@` edge (`-[:@old]->`, a block head's, a walk's, an `EXISTS`'s, a write's or a match's target): the record a write handle held before its write |
-| `v4_write_in_place` | under language version 4, `write org { … }` on a write's handle: the handle moves on to the updated record in place, and its `@old` is the handle as it stood |
-| `v4_handle_read_as_found` | under language version 4, a write with `unique by`, or `write c { … }` on a block's hop alias: an update's handle reads the record as found for the fields the write did not send (`foundData`) and holds it as `@old` |
+| `v4_write_in_place` | under language version 4, `write org { … }` on a write's handle: the handle moves on to the updated record in place, and its `@old` is the handle as it stood (a guard: the handle's own write is refused first, as below) |
+| `v4_handle_read_as_found` | under language version 4, a write whose handle the program holds (`x = write …`), whatever its identity — `unique by`, the target's native constraints and an adapter's own matching rule all find a record, and admission cannot see the last two from the text; a write with `unique by`; or `write c { … }` on a block's hop alias: an update's handle reads the record as found for the fields the write did not send (`foundData`) and holds it as `@old` |
 | `write_root_expression`, `match_root_expression` | a linked write or match rooted at an expression |
 | `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at a name that is not an instance, a handle, the event or a block's hop alias |
 | `write_node_root`, `match_node_root` | a write or a match into an edge of a node this run built (the in-process stand-in adapter is the TypeScript engine's) |
