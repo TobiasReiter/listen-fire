@@ -37,10 +37,10 @@ changed = was != null AND was.\`Domains\` != company.\`Domains\`
 |---|---|
 | created the record | empty, so \`FIRST\` is null |
 | matched an existing record | a snapshot: a distinct position holding the values as they stood, with the fields the lookup fetched and every field this write set |
-| matched, every \`?:\` declined | a snapshot whose values equal the handle's |
+| matched, every \`?:\` declined | a snapshot: same values, still its own position |
 
 - A write off a record found earlier (\`x = write c { … }\` on a traversal's landing or a matched record) is a write handle too: \`x-[:@old]->\` carries the fields the walk fetched plus those written.
-- \`write org { … }\` updates the record \`org\` names, and \`org\` reads the new values afterwards. After a second write, \`org-[:@old]->\` is the handle as it stood before that write, with its own \`@old\`: \`prev = FIRST(org-[:@old]->)\`, then \`FIRST(prev-[:@old]->)\`.
+- \`write org { … }\` updates the record \`org\` names, and \`org\` reads the new values afterwards; \`x = write org { … }\` names the same record as \`org\`. After a second write, \`org-[:@old]->\` is the handle as it stood before that write, with its own \`@old\`: \`prev = FIRST(org-[:@old]->)\`, then \`FIRST(prev-[:@old]->)\`, two steps because a hop off a call inside a formula does not parse.
 - So \`EXISTS(org-[:@old]->)\` after a second write is always true. To know whether a write created the record, read the walk right after that write, or walk the chain.
 - Under \`dry_run\` the walk lands on the handle itself (\`FIRST(org-[:@old]->) == org\`), since nothing is written.
 - \`@\` is reserved for engine-made edges. \`created\` and \`committed\` are not fields of a handle; \`committed\` is a fact of the run log.
