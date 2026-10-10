@@ -28,7 +28,7 @@ type ProgramRecord =
   | { source: string; version: number; error: { message: string; loc: { line: number; col: number } } };
 
 const FIXTURE = `${__dirname}/__fixtures__/programs.json`;
-const KNOWN_VERSIONS = [1, 2, 3];
+const KNOWN_VERSIONS = [1, 2, 3, 4];
 
 const { createHash } = require('crypto') as {
   createHash(algorithm: 'sha256'): { update(data: string): { digest(encoding: 'hex'): string } };

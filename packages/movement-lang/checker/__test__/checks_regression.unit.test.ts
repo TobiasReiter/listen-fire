@@ -31,7 +31,7 @@ declare const process: { env: Record<string, string | undefined> };
 declare function require(id: string): unknown;
 declare const console: { warn(...args: unknown[]): void };
 
-const KNOWN_VERSIONS = [1, 2, 3];
+const KNOWN_VERSIONS = [1, 2, 3, 4];
 
 describe('checks regression', () => {
   if (process.env.UPDATE_CHECKS_FIXTURE) {
