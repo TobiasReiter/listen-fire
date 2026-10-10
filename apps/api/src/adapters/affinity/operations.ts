@@ -7,6 +7,7 @@ import {
   normalizeEmail,
   ownsEmail,
   splitNameByLastToken,
+  type AffinityOrganisation,
 } from './common';
 import { anthropicChat, anthropicChatStructured } from '../../lib/anthropic';
 import { parseJson } from '../../lib/utils/parse_json';
@@ -103,6 +104,8 @@ Only return the JSON, nothing else. If you cannot evaluate a field, set its valu
       }));
   }
 
+  /** The organisation Affinity holds for this name/domain, as fetched — a
+   *  caller that found it can read it without asking again. */
   async findMatchingOrganisation({
     name,
     domain,
@@ -111,18 +114,18 @@ Only return the JSON, nothing else. If you cannot evaluate a field, set its valu
     name: string;
     domain?: string | null;
     context?: string;
-  }): Promise<{ id: number } | null> {
-    const match = await findMatchingOrganisationCommon(this.client, { name, domain, context });
-    return match ? { id: match.id } : null;
+  }): Promise<AffinityOrganisation | null> {
+    return findMatchingOrganisationCommon(this.client, { name, domain, context });
   }
 
+  /** The person Affinity holds for this name/email, as fetched. */
   async findMatchingPerson({
     name,
     email,
   }: {
     name: string;
     email?: string | null;
-  }): Promise<{ id: number } | null> {
+  }): Promise<AffinityPersonRecord | null> {
     const wanted = normalizeEmail(email);
     // A whitespace-only address normalizes away to nothing. Skipping the branch
     // matters: `normalizeEmail` returns null for BOTH sides, and a null===null
@@ -130,12 +133,12 @@ Only return the JSON, nothing else. If you cannot evaluate a field, set its valu
     if (wanted) {
       const people = await this.client.findManyPeople({ search: wanted });
       const person = people.find((person) => normalizeEmail(person.primary_email) === wanted);
-      if (person) return { id: person.id };
+      if (person) return person;
 
       const personByOtherEmails = people.find((person) =>
         person.emails?.some((candidate) => normalizeEmail(candidate) === wanted),
       );
-      if (personByOtherEmails) return { id: personByOtherEmails.id };
+      if (personByOtherEmails) return personByOtherEmails;
     }
 
     const nameWithoutAffixes = await anthropicChat({
@@ -172,7 +175,7 @@ Expect the user to provide a name. If for any reason the name cannot be processe
     const person = people.find(
       (person) => `${person.first_name} ${person.last_name}` === nameClean,
     );
-    if (person) return { id: person.id };
+    if (person) return person;
 
     const bestPersonMatch = await anthropicChatStructured({
       system: `You are a helpful assistant that determines the best match for a name.
@@ -200,8 +203,7 @@ If you can't find a match, or if it's unlikely that any of the provided people a
       return null;
     }
 
-    const match = people.find((person) => person.id === bestPersonMatch.id);
-    return match ? { id: match.id } : null;
+    return people.find((person) => person.id === bestPersonMatch.id) ?? null;
   }
 
   /** Resolve the first/last pair Affinity's `POST /persons` demands.
@@ -707,7 +709,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
       }
       return matchingPerson ? matchingPerson.id : null;
     } else if (fieldDef.value_type === valueType.ORGANIZATION) {
-      let matchingOrg = await this.findMatchingOrganisation({ name: value });
+      let matchingOrg: { id: number } | null = await this.findMatchingOrganisation({ name: value });
       if (!matchingOrg) {
         const newOrg = await this.client.createOrganisation({ name: value });
         matchingOrg = newOrg ? { id: newOrg.id } : null;

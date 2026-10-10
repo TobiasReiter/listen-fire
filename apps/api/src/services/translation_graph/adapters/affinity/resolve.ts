@@ -135,7 +135,7 @@ async function resolveOrganization(input: {
   const { name, domain } = readOrgBuiltins(input.resolve.record);
   if (!name && !domain) return { candidates: [] };
 
-  let match: { id: number } | null = null;
+  let match: Awaited<ReturnType<AffinityOperations['findMatchingOrganisation']>> = null;
   try {
     match = await input.operations.findMatchingOrganisation({
       name: name ?? '',
@@ -151,13 +151,19 @@ async function resolveOrganization(input: {
   }
   if (!match) return { candidates: [] };
 
-  const data: Record<string, unknown> = {};
-  if (name) data.Name = name;
-  if (domain) data.Domain = domain;
+  // The candidate is the organisation as Affinity holds it — the record a
+  // write found, which its handle's `@old` and a target WHERE read — keyed by
+  // display name as `readOrganization` keys it. Identity is Affinity's own
+  // decision (no authorable `unique by`), so nothing compares these values to
+  // what the write asserted.
   const candidate: ExternalRecordRef = {
     adapterType: AFFINITY_ADAPTER_TYPE,
     externalId: String(match.id),
-    data,
+    data: {
+      Name: match.name ?? null,
+      Domain: match.domain ?? null,
+      Domains: match.domains ?? null,
+    },
   };
   return { candidates: [candidate] };
 }
@@ -169,7 +175,7 @@ async function resolvePerson(input: {
   const { name, email } = readPersonBuiltins(input.resolve.record);
   if (!name && !email) return { candidates: [] };
 
-  let match: { id: number } | null = null;
+  let match: Awaited<ReturnType<AffinityOperations['findMatchingPerson']>> = null;
   try {
     match = await input.operations.findMatchingPerson({
       name: name ?? '',
@@ -184,9 +190,16 @@ async function resolvePerson(input: {
   }
   if (!match) return { candidates: [] };
 
-  const data: Record<string, unknown> = {};
-  if (name) data.Name = name;
-  if (email) data.Email = email;
+  // As for an organisation: the person as Affinity holds it, keyed as
+  // `readPerson` keys it.
+  const fullName = [match.first_name, match.last_name].filter(Boolean).join(' ') || null;
+  const data: Record<string, unknown> = {
+    'First name': match.first_name ?? null,
+    'Last name': match.last_name ?? null,
+    'Full name': fullName,
+    Email: match.primary_email ?? null,
+    Emails: match.emails ?? null,
+  };
   const candidate: ExternalRecordRef = {
     adapterType: AFFINITY_ADAPTER_TYPE,
     externalId: String(match.id),

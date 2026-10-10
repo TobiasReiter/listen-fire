@@ -294,8 +294,15 @@ const PERSON_FIELDS = [
 ];
 
 function makeAdapter(input?: {
-  orgMatch?: { id: number } | null;
-  personMatch?: { id: number } | null;
+  /** The record Affinity's matcher fetched, as `findMatching…` hands it back. */
+  orgMatch?: { id: number; name?: string | null; domain?: string | null; domains?: string[] | null } | null;
+  personMatch?: {
+    id: number;
+    first_name?: string | null;
+    last_name?: string | null;
+    primary_email?: string | null;
+    emails?: string[] | null;
+  } | null;
   /** Field-value rows the fake `getFieldValues` returns (for reference-link
    *  idempotency / single-vs-multi tests). */
   fieldValues?: Array<{ id: number; field_id: number; list_entry_id: number | null; value?: unknown }>;
@@ -1611,8 +1618,10 @@ describe('AffinityAdapter note replies + scoped note/file writes', () => {
 // ---------------------------------------------------------------------------
 
 describe('AffinityAdapter.resolveEntity', () => {
-  it('matches an organization by domain/name via findMatchingOrganisation', async () => {
-    const { adapter, calls } = makeAdapter({ orgMatch: { id: 42 } });
+  it('matches an organization by domain/name via findMatchingOrganisation; the candidate is the organisation Affinity holds', async () => {
+    const { adapter, calls } = makeAdapter({
+      orgMatch: { id: 42, name: 'Acme Incorporated', domain: 'acme.io', domains: ['acme.io', 'acme.com'] },
+    });
     const input: ResolveEntityInput = {
       // NATURAL currency: type displayName + field displayNames. The adapter
       // resolves them to its internal typeId / field ids on the first line.
@@ -1625,7 +1634,13 @@ describe('AffinityAdapter.resolveEntity', () => {
     expect(calls.findMatchingOrganisation).toEqual([{ name: 'Acme', domain: 'acme.com' }]);
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0].externalId).toBe('42');
-    expect(result.candidates[0].data.Domain).toBe('acme.com');
+    // The system's values, not the asserted ones: this is the record the write
+    // found (its handle's `@old`).
+    expect(result.candidates[0].data).toEqual({
+      Name: 'Acme Incorporated',
+      Domain: 'acme.io',
+      Domains: ['acme.io', 'acme.com'],
+    });
   });
 
   it('returns no candidates when the org has no match (engine then creates)', async () => {
@@ -1639,8 +1654,10 @@ describe('AffinityAdapter.resolveEntity', () => {
     expect(result.candidates).toHaveLength(0);
   });
 
-  it('matches a person by email via findMatchingPerson', async () => {
-    const { adapter, calls } = makeAdapter({ personMatch: { id: 77 } });
+  it('matches a person by email via findMatchingPerson; the candidate is the person Affinity holds', async () => {
+    const { adapter, calls } = makeAdapter({
+      personMatch: { id: 77, first_name: 'Jane', last_name: 'Doe', primary_email: 'JANE@acme.com', emails: ['jane@acme.com'] },
+    });
     const result = await adapter.resolveEntity({
       record: { 'Full name': 'Jane Doe', Email: 'jane@acme.com' },
       recordType: 'Person',
@@ -1649,7 +1666,13 @@ describe('AffinityAdapter.resolveEntity', () => {
     });
     expect(calls.findMatchingPerson).toEqual([{ name: 'Jane Doe', email: 'jane@acme.com' }]);
     expect(result.candidates[0].externalId).toBe('77');
-    expect(result.candidates[0].data.Email).toBe('jane@acme.com');
+    expect(result.candidates[0].data).toEqual({
+      'First name': 'Jane',
+      'Last name': 'Doe',
+      'Full name': 'Jane Doe',
+      Email: 'JANE@acme.com',
+      Emails: ['jane@acme.com'],
+    });
   });
 
   it('prefers a linked_object bridge over a natural-key search', async () => {
