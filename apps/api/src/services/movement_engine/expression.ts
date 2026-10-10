@@ -286,6 +286,12 @@ export interface WriteRecord {
    *  target system computed that the author never wrote. In-memory
    *  handle-read surface only. */
   resultData?: Record<string, unknown>;
+  /** What the record held when the write found it (version 4 on): the values
+   *  the handle reads for fields its write neither sent nor got back. Kept
+   *  apart from `resultData` because a handle that parents a later write
+   *  hands the adapter only what its own write got back (`ParentLink.data`),
+   *  never the record it matched. In-memory handle-read surface only. */
+  foundData?: Record<string, unknown>;
   /**
    * Present for a standalone link assert (`link a -[:e]-> b`, kind
    * 'link') or sever (`unlink a -[:e]-> b`, kind 'unlink'): the edge in
@@ -4160,7 +4166,10 @@ export function recordFields(binding: Binding): Record<string, unknown> {
     case 'handle':
       return {
         ...binding.handle.writtenValues,
-        ...omitKeys(binding.handle.resultData, binding.handle.writtenValues),
+        ...omitKeys(
+          { ...binding.handle.foundData, ...binding.handle.resultData },
+          binding.handle.writtenValues,
+        ),
       };
     case 'resource':
       return { ...((binding.resource.data as Record<string, unknown> | undefined) ?? {}) };
@@ -4310,7 +4319,8 @@ function readHandleField(handle: WriteRecord, field: string): unknown {
   if (field === 'created') return handle.created;
   if (field === 'committed') return handle.committed;
   if (field in handle.writtenValues) return handle.writtenValues[field] ?? null;
-  return handle.resultData?.[field] ?? null;
+  if (handle.resultData !== undefined && field in handle.resultData) return handle.resultData[field] ?? null;
+  return handle.foundData?.[field] ?? null;
 }
 
 // ── Operator semantics (mirrored from engine/expression.ts) ────────────────

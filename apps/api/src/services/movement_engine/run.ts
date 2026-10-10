@@ -2377,7 +2377,7 @@ function isWrittenHandle(binding: Extract<Binding, { kind: 'handle' }>): boolean
  *  handle's values, or the data a traversal fetched with the landing. */
 function knownRecordData(binding: Binding | undefined): Record<string, unknown> {
   if (binding?.kind === 'handle') {
-    return { ...binding.handle.resultData, ...binding.handle.writtenValues };
+    return { ...binding.handle.foundData, ...binding.handle.resultData, ...binding.handle.writtenValues };
   }
   if (binding?.kind === 'sourcePosition') {
     const data = positionData(binding.position);
@@ -6922,7 +6922,7 @@ class Interpreter {
         role: 'source',
       });
       const handle = binding.handle;
-      snapshot = { ...(handle.resultData ?? {}), ...handle.writtenValues };
+      snapshot = { ...handle.foundData, ...handle.resultData, ...handle.writtenValues };
       applyFresh = (fresh) => this.applyRefreshToHandle(handle, fresh);
     } else if (binding.kind === 'sourcePosition') {
       const identity = binding.position.identity;
@@ -11512,7 +11512,7 @@ class Interpreter {
         committed: this.committedThrough(input.adapter),
         externalId: input.externalId,
         writtenValues: {},
-        ...(before.reads !== undefined ? { resultData: before.reads } : {}),
+        ...(before.reads !== undefined ? { foundData: before.reads } : {}),
         outcome: 'noop',
         provenance: {},
         ...this.parentSummaries(input.parentLinks),
@@ -11562,10 +11562,8 @@ class Interpreter {
       committed: this.committedThrough(input.adapter),
       externalId: input.externalId,
       writtenValues: fieldsToWrite,
-      resultData:
-        before.reads !== undefined
-          ? { ...before.reads, ...writeResultData(updated) }
-          : writeResultData(updated),
+      resultData: writeResultData(updated),
+      ...(before.reads !== undefined ? { foundData: before.reads } : {}),
       // 'attach' is the parent-only send: no field of the record's own
       // changed, the adapter was called purely to make the association — and
       // the adapter has just confirmed the association holds.
