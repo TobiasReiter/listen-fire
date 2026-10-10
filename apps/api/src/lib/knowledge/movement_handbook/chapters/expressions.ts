@@ -246,9 +246,10 @@ Name: COALESCE(msg-[:Sender]->.\`Name\`, msg-[:Sender]->.\`Email\`)
 
 A traversal that yields nothing makes the value empty rather than failing, and \`COALESCE\` takes the first non-empty of its arguments. To test rather than fall back: \`EXISTS(…)\` tests whether a relationship, a binding, or a field read off one has anything in it — \`EXISTS(msg-[:Sender]->)\`, \`EXISTS(\`Suggested Action\`)\`, \`EXISTS(channel.\`Topic\`)\` — while \`ISNULL(x)\` is the same test inverted.
 
-A separate and stronger thing is a value typed as *possibly not there at all* — \`T | absent\`. That is a real part of the type, not a caution. Four things produce one:
+A separate and stronger thing is a value typed as *possibly not there at all* — \`T | absent\`. That is a real part of the type, not a caution. Five things produce one:
 
 - **an aggregate that can come up empty.** \`ONLY\`, \`FIRST\`, \`LAST\`, \`MIN\`, \`MAX\`, and \`AT\` all answer null when there's nothing to aggregate over, so \`ONLY(msg-[:Attachments]->.\`Name\`)\` may be absent exactly when there are no attachments. Over a *bare* traversal (no field on the end) they bind the whole record, not one of its fields — \`channel = ONLY(chat-[ch:Channels WHERE …]->)\` — see *looking-up-existing-records* in the writes chapter for that idiom;
+- **a named \`match\`.** \`existing = match crm-[:Companies]-> { … }\` is the record or absent; test \`existing == null\` (the \`else\` arm sees it present) or \`!= null\` before reading a field off it or linking it;
 - **a landing that can resolve empty** — awaiting an answer that was cancelled rather than given yields nothing to read;
 - **a \`race\` slot** — \`AT(r, 0)\` reads what the first arm of a \`race\` returned, and only the arm that settled first has its slot filled, so every slot off a \`race\` may be absent. (\`parallel\` waits for every arm, so its slots are not.)
 - **a field read off a record that may not be there.** \`details = extractOne(…)\` may have found nothing, so \`details.summary\` is \`text | absent\`, as TypeScript types \`details?.summary\`. Test \`details != null\` first, or \`COALESCE\` the field. A graph literal's required field refuses such a value too: declare the field \`<text | null>\`, or fall back.

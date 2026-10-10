@@ -32,7 +32,7 @@ own, without deleting anything).
 
 ### language-versions
 
-Read the two-word name on an automation — "Quiet Heron", "Bright Otter" — as
+Read the two-word name on an automation — "Quiet Heron", "Bright Otter", the current "Luminous Owl" — as
 the version of this language its text is written in. The automation validates,
 saves and runs as that version, and an edit never changes it; a new automation
 is written in the current version. So check an edit to an existing automation

@@ -25,14 +25,25 @@ company = write crm-[:Companies]-> {
 
 ### what-the-write-did
 
-A handle carries what the write actually did, so a later message can say it honestly:
+A handle reaches the record as it stood before the write through the engine-made edge \`-[:@old]->\`, so a later message can say what the write did:
 
 \`\`\`
-Message: IF EXISTS(company-[:@old]->) THEN "Updated \${company.\`Name\`}"
-                                     ELSE "Added \${company.\`Name\`}" END
+was     = FIRST(company-[:@old]->)
+verb    = IF was == null THEN "Added" ELSE "Updated" END
+changed = was != null AND was.\`Domains\` != company.\`Domains\`
 \`\`\`
 
-\`company-[:@old]->\` is the record as it stood before the write: there is none when the write minted a new record.
+| The write | \`company-[:@old]->\` |
+|---|---|
+| created the record | empty, so \`FIRST\` is null |
+| matched an existing record | a snapshot: a distinct position holding the values as they stood, with the fields the lookup fetched and every field this write set |
+| matched, every \`?:\` declined | a snapshot whose values equal the handle's |
+
+- A write off a record found earlier (\`x = write c { … }\` on a traversal's landing or a matched record) is a write handle too: \`x-[:@old]->\` carries the fields the walk fetched plus those written.
+- \`write org { … }\` updates the record \`org\` names, and \`org\` reads the new values afterwards. After a second write, \`org-[:@old]->\` is the handle as it stood before that write, with its own \`@old\`: \`prev = FIRST(org-[:@old]->)\`, then \`FIRST(prev-[:@old]->)\`.
+- So \`EXISTS(org-[:@old]->)\` after a second write is always true. To know whether a write created the record, read the walk right after that write, or walk the chain.
+- Under \`dry_run\` the walk lands on the handle itself (\`FIRST(org-[:@old]->) == org\`), since nothing is written.
+- \`@\` is reserved for engine-made edges. \`created\` and \`committed\` are not fields of a handle; \`committed\` is a fact of the run log.
 
 ### set-if-empty
 
@@ -103,13 +114,18 @@ company = match crm-[:Companies]-> {
   Name:    AI("the company name this email is about")
   Domains: [msg-[:Sender]->.domain]
 }
+if company == null {
+  write crm-[:Companies]-> { unique by (\`Name\`), Name: "Unknown" }
+} else {
+  write company-[:Notes]-> { Title: "Seen again", Content: company.\`Name\` }
+}
 \`\`\`
 
+- A named \`match\` is the record or absent. Test it with \`== null\` (the \`else\` arm sees it present), \`!= null\` or \`EXISTS(company)\`; reading its fields without a guard is refused. An unnamed \`match\` is refused.
 - The identity clauses work as in \`write\`: two clauses mean either, so this finds the company by a similar name or by its domain.
 - The fields are the values to match on, and nothing is written, so \`?:\`, \`+:\` and \`+?:\` are refused.
-- The lines after it run only when the record exists. On a miss the enclosing scope ends quietly: that iteration skips, or the run stops after the work already done.
-- Written without a name (\`match crm-[:Companies]-> { … }\`), it is a gate: the rest of the block runs only if the record is there.
-- The handle reads like a write's, without \`created\` and \`committed\`. A polymorphic edge takes the type explicitly: \`match a-[:related]-><Companies> { … }\`.
+- A matched record is the old record: it has no \`@old\`.
+- The handle reads like a write's. A polymorphic edge takes the type explicitly: \`match a-[:related]-><Companies> { … }\`.
 - A \`WHERE\` on the target's hop says which existing records may be matched: \`match crm-[c:Companies WHERE EXISTS(c-[:Team]->)]-> { … }\` considers only companies with someone on their team. Each candidate is read the way a traversal's \`WHERE\` reads a record, before the identity is settled. On \`write\` the \`WHERE\` limits what may be updated, never whether to write: with no candidate left, the write creates.
 - Use \`write … unique by\` instead when the record should be created if it is missing.
 
@@ -165,12 +181,11 @@ Each path is a handle plus one edge its type declares, and the written type must
 \`\`\`
 link champion -[:led]-> part
 
-c = link p -[:Company]-> { unique by (FUZZY \`Name\`), Name: "Acme" }
+to = match p-[:Company]-> { unique by (FUZZY \`Name\`), Name: "Acme" }
+if to != null { link p -[:Company]-> to }
 \`\`\`
 
-The first form joins two handles in the same graph, over an edge the from-side declares. The second takes a \`match\` body: it is \`c = match p-[:Company]-> { … }\` then \`link p -[:Company]-> c\`, and written without a name it links without binding. \`Name\` selects Acme, it doesn't rename anything, and a miss skips the \`link\` with the rest of the scope.
-
-A link body with no \`unique by\` identifies by all of its fields, exactly: \`link p -[:Company]-> { Name: "Acme", City: "Berlin" }\` finds the company whose Name and City both agree.
+The first form joins two handles in the same graph, over an edge the from-side declares. To link a record you look up, \`match\` it first, test it, then link. \`Name\` selects Acme, it doesn't rename anything. A \`link\` or \`unlink\` whose end may be absent (a \`match\` handle or a \`FIRST(…)\` result) needs the guard too.
 
 ### looking-up-existing-records
 
@@ -184,7 +199,7 @@ write company-[:Notes]-> { Title: "Enriched", Content: "found \${company.Name}" 
 
 The hop's \`WHERE\` is the criteria, rooted at any instance in scope. The guard ends the run with a reason when nothing matches.
 
-So: a lookup finds a record that must be there, and a miss fails the run; \`match\` finds one that may not be, and a miss skips the rest of the scope; \`write … unique by\` finds *or creates*; \`write <alias>\` updates the exact record you already hold.
+So: a lookup finds a record that must be there, and a miss fails the run; \`match\` finds one that may not be, and a miss is absent; \`write … unique by\` finds *or creates*; \`write <alias>\` updates the exact record you already hold.
 
 ### updating-a-record-in-place
 
@@ -194,7 +209,7 @@ crm-[record:Companies WHERE \`Categories\` == "Lead"]-> {
 }
 \`\`\`
 
-\`write <alias> { … }\` updates the record the alias already stands on — traversed, or a handle from earlier in the run — and \`write m.k { … }\` updates the one a map's key holds, as \`x = m.k\` then \`write x { … }\` would. Nothing is left to resolve, so \`unique by\` is rejected, and there is no create to gate: set only the fields that change, and use \`link\`/\`unlink\` for connections. A target that can't update by id (an append-only channel, a drive that only creates files) is flagged at save.
+\`write <alias> { … }\` updates the record the alias already stands on — traversed, or a handle from earlier in the run, which then reads the new values — and \`write m.k { … }\` updates the one a map's key holds, as \`x = m.k\` then \`write x { … }\` would. Nothing is left to resolve, so \`unique by\` is rejected, and there is no create to gate: set only the fields that change, and use \`link\`/\`unlink\` for connections. A target that can't update by id (an append-only channel, a drive that only creates files) is flagged at save.
 
 ### removal
 
@@ -223,7 +238,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
 `,
     },
     {
-      construct: 'match statements (find by identity, binding the found handle), then link',
+      construct: 'match statements (find by identity, guarded), then link',
       status: 'runs',
       probe: `
 import { email, attio } from adapters
@@ -235,13 +250,15 @@ crm   = attio(credentials: acme)
 function \`Intake\`(m: <inbox-[:Email]->>) {
   person = write crm-[:People]-> { unique by (\`Job Title\`), Name: m.\`From\` }
   employer = match person-[:Company]-> { unique by (\`Name\`), Name: "Acme" }
-  link person -[:Company]-> employer
-  write employer-[:Notes]-> { Title: "Introduced", Content: m.\`Subject\` }
+  if employer != null {
+    link person -[:Company]-> employer
+    write employer-[:Notes]-> { Title: "Introduced", Content: m.\`Subject\` }
+  }
 }
 `,
     },
     {
-      construct: 'link with a match body (match then link), bound and unbound, with and without unique by',
+      construct: 'match then guarded link, with unique by',
       status: 'runs',
       probe: `
 import { email, attio } from adapters
@@ -252,9 +269,11 @@ crm   = attio(credentials: acme)
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
   person = write crm-[:People]-> { unique by (\`Job Title\`), Name: m.\`From\` }
-  employer = link person -[:Company]-> { unique by (FUZZY \`Name\`), Name: "Acme" }
-  link person -[:Company]-> { Name: m.\`Subject\` }
-  write employer-[:Notes]-> { Title: "Introduced", Content: m.\`Subject\` }
+  employer = match person-[:Company]-> { unique by (FUZZY \`Name\`), Name: "Acme" }
+  if employer != null {
+    link person -[:Company]-> employer
+    write employer-[:Notes]-> { Title: "Introduced", Content: m.\`Subject\` }
+  }
 }
 `,
     },
@@ -273,12 +292,14 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
     unique by (FUZZY \`Name\`)
     Name: m.\`Subject\`
   }
-  write company-[:Notes]-> { Title: "Seen again", Content: m.\`Subject\` }
+  if company != null {
+    write company-[:Notes]-> { Title: "Seen again", Content: m.\`Subject\` }
+  }
 }
 `,
     },
     {
-      construct: 'unbound match as a gate, with FUZZY and two OR-ed identity clauses',
+      construct: 'named match with a guard, FUZZY and two OR-ed identity clauses',
       status: 'runs',
       probe: `
 import { email, attio } from adapters
@@ -288,13 +309,15 @@ inbox = email()
 crm   = attio(credentials: acme)
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  match crm-[:Companies]-> {
+  company = match crm-[:Companies]-> {
     unique by (FUZZY \`Name\`)
     unique by (\`Domains\`)
     Name:    m.\`Subject\`
     Domains: [m.\`From\`]
   }
-  write crm-[:People]-> { unique by (\`Name\`), Name: m.\`From\` }
+  if company != null {
+    write crm-[:People]-> { unique by (\`Name\`), Name: m.\`From\` }
+  }
 }
 `,
     },

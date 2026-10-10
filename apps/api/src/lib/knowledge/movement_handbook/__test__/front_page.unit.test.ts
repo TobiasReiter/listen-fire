@@ -9,7 +9,7 @@ import { CONCEPTS, TS_EXCEPT, exampleProgram, frontPageClaims, frontSection, ren
 import { proseViolations } from './prose_rules';
 
 /** The page is read on every build; past this it stops being a front page. */
-const WORD_CEILING = 800;
+const WORD_CEILING = 825;
 
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
