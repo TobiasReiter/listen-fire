@@ -48,3 +48,31 @@ fn case_maps_as_nodes_icu_maps_it() {
     assert!(mismatches.is_empty(), "{} of {} differ:\n{}", mismatches.len(), cases.len(), mismatches.join("\n"));
     eprintln!("{differs_from_rust} of {} map differently under Rust's own tables", cases.len());
 }
+
+/// ORDER BY and `SORT` over keys that mix numbers with texts and other
+/// kinds, past V8's 64-item insertion sort: the comparator is no total
+/// order, so V8's TimSort alone decides where items land, and the port lands
+/// them there too.
+#[test]
+fn mixed_keys_sort_as_v8s_timsort_sorts_them() {
+    use movement_engine::env::decode;
+    use movement_engine::order_limit::sort_by_order_key;
+    use movement_parser::lowering::expression::OrderDirection;
+    let cases: Vec<Json> = serde_json::from_str(include_str!("oracle/mixed_sort.json")).expect("mixed_sort.json reads");
+    assert!(cases.len() >= 400);
+    let mut past_64 = 0;
+    for (i, case) in cases.iter().enumerate() {
+        let keys: Vec<js::Js> = case["keys"].as_array().unwrap().iter().map(|k| decode(k).unwrap()).collect();
+        let direction = match case["direction"].as_str() {
+            Some("asc") => Some(OrderDirection::Asc),
+            Some("desc") => Some(OrderDirection::Desc),
+            _ => None,
+        };
+        let expected: Vec<usize> = case["order"].as_array().unwrap().iter().map(|i| i.as_u64().unwrap() as usize).collect();
+        assert_eq!(sort_by_order_key(&keys, direction), expected, "case {i}: {} keys, {:?}", keys.len(), case["direction"]);
+        if keys.len() > 64 {
+            past_64 += 1;
+        }
+    }
+    assert!(past_64 >= 350, "{past_64} cases past 64 keys");
+}

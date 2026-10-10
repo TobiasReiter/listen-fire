@@ -823,8 +823,8 @@ expression.ts and run.ts run it:
   (`Number(v) || 0`), `MIN`/`MAX` (`Math.min`/`Math.max`: NaN if any is),
   `JOIN` (`String(v)`, nothing left out, `", "` by default), `COLLECT` and
   `SORT` (`sortByOrderKey`, keyless over plain values, by a field name over
-  maps; past 64 members of mixed key kinds it fails, as a hop's ORDER BY
-  does), over a value, a walk read for a field, or (`COUNT` only) the
+  maps; V8's TimSort, so mixed key kinds land as JavaScript lands them),
+  over a value, a walk read for a field, or (`COUNT` only) the
   records a walk lands on, counted.
 - **A pick** (`x = FIRST|LAST|ONLY(<one hop>)`, `selectedPositionBinding`):
   walked as a block head walks (a stream page by page), the record picked
@@ -1155,10 +1155,6 @@ TypeScript engine runs the segment, having seen only reads.
   the reply's read the TypeScript stores it as the entity's prototype
   (row 5). MOVENG_UNSUPPORTED naming it, once the spec is built for the
   firing.
-- A hop's ORDER BY over more than 64 records whose keys mix numbers with
-  other kinds, or a `SORT` over more than 64 such members:
-  MOVENG_UNSUPPORTED ("Transition artefacts to mirror" below). TypeScript orders them by
-  V8's merge.
 - `x IS <Decl>` of a node whose landing under a declared edge is a system's
   record (a handle, a landed record): MOVENG_UNSUPPORTED, as that landing's
   structure is its system's types. Admission lets no such node reach an
@@ -1322,7 +1318,7 @@ Sizes are estimates (XS, S, M, L).
 | 2 | date parsing | ISO texts only; V8's legacy forms handed back, including under every `<` between two texts with a digit (filter.rs) and ORDER BY | V8's legacy parser ported (dateparser.cc: keyword tables, parenthesised comments, zone names, two-digit years), fuzzed against Node; an ISO date-time without offset read in a local zone that becomes a run input | L |
 | 3 | Unicode case mapping | mirrored (chunk 7A Task 5): Node 22.20's ICU 77.1 (Unicode 16), its tables generated into src/case_mapping.rs by tests/oracle/case_mapping.ts, the final sigma's cased and ignorable neighbours probed through `toLowerCase` itself; regenerate when the pinned Node moves | oracle case_mapping.json (4,000 seeded texts, seed 20261013, tests/tail_oracle.rs) | done |
 | 3a | the local edge's word split (`/[^\p{L}\p{N}]+/u`, FUZZY candidates) | src/letter_number.rs, generated from Node 22.20 (Unicode 16) by tests/oracle/letter_number.ts | regenerated with row 3's data whenever the pinned Node moves; the language's own Unicode version once one is named | XS |
-| 4 | ORDER BY and `SORT` over mixed key kinds | V8's binary insertion to 64 records; past 64 with mixed kinds, MOVENG_UNSUPPORTED (detail below) | V8's TimSort ported exactly (run detection, merge_lo/merge_hi, galloping); oracle by seeded mixed-key lists | M to L |
+| 4 | ORDER BY and `SORT` over mixed key kinds | mirrored (chunk 7A Task 5): V8's ArrayTimSort ported step for step (crate::order_limit: the minimum run, runs found and reversed, binary insertion, the pending-run invariants, `merge_lo`/`merge_hi` with galloping and the shared `minGallop`, the early exits an inconsistent comparator takes), so keys mixing numbers with texts land where JavaScript lands them at every length; the 64-record refusal is gone | oracle mixed_sort.json (400 seeded key lists, 1 to 2,000 keys, seed 20261014, tests/tail_oracle.rs; the stable merge it replaces got 317 of them wrong) | done |
 | 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | mirrored (chunk 7A Task 5) in crate::extract::validate: a declared key read through the reply's prototype (js.rs's one `Object.prototype` name table), a key handed on written with `object[key] = value` (`__proto__` sets the prototype), a declared `__proto__` no key of the shape; the emitted entity's fields read through that prototype. An extraction DECLARING a field or node `__proto__` is refused mid-run (`unreproduced`, below) | oracle extraction.json, every program 0 reply pinned to TypeScript's verdict unfiltered (tests/extraction_pin.rs) | done |
 | 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | 0 |
 | 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | follows 9 |
@@ -1337,7 +1333,7 @@ Sizes are estimates (XS, S, M, L).
 
 #### The rows in detail
 
-Row 4 is the one a run admitted here can meet today:
+Neither row 3 nor row 4 can be met any more:
 
 - **Row 3 (mirrored): case maps as Node's ICU maps it.** Rust's own
   tables follow Unicode 17 and differed from Node 22's (Unicode 16) on
@@ -1346,18 +1342,13 @@ Row 4 is the one a run admitted here can meet today:
   `αςʕ` here and `ασʕ` in TypeScript. The tables are now Node's, pinned to
   Node 22.20 (ICU 77.1); a Node upgrade that moves ICU regenerates them
   (tests/oracle/case_mapping.ts), and the oracle says what moved.
-- **Row 4: one reading fails loudly: a hop's ORDER BY over keys that mix
-  numbers with other kinds, past 64 records.** The sort is V8's
-  (crate::order_limit): binary insertion up to 64 items, which reproduces
-  V8 exactly for any comparator; past 64 V8 merges its runs, which this
-  engine reproduces for every total order. Mixed number and text keys are
-  not one (the comparator has cycles), so there V8's merge alone decides
-  where records land. Rather than order them differently, the run fails
-  with MOVENG_UNSUPPORTED naming the ORDER BY and the record count (or,
-  met before the run's first effect, is declined to the TypeScript engine,
-  `unreproduced`). Ruled:
-  no silent divergence (the order_limit pin holds every set of 64 or
-  fewer, mixed included).
+- **Row 4 (mirrored): mixed keys sort as V8 sorts them.** The sort was
+  V8's binary insertion up to 64 items and a stable merge past it, which
+  agrees with V8 for every total order; keys mixing numbers with texts are
+  not one (the comparator has cycles), so past 64 V8's merge alone decides
+  where records land, and the run failed rather than order them otherwise.
+  crate::order_limit now runs V8's TimSort itself, galloping included, so
+  the order is V8's at every length.
 
 What each of rows 1, 2, 4, 5 to 10 does today, in the TypeScript and here
 (written when these were to be specified by a language-version bump; the
@@ -1368,9 +1359,8 @@ mirror replaces that plan):
   - date parsing (what a date text may be, and no local time);
   - Unicode case mapping: which Unicode version the language's case tables
     follow, so neither engine's runtime decides it.
-  - a hop's ORDER BY, and a `SORT`, over keys of mixed types: one total
-    order over every key kind (say: nulls, then numbers, then text), so no
-    sort algorithm's merge decides where a record lands.
+  - a hop's ORDER BY, and a `SORT`, over keys of mixed types (mirrored,
+    row 4: V8's TimSort decides where a record lands, here as there).
   - a reply field named after an `Object.prototype` member
     (`constructor`, `toString`, `hasOwnProperty`, `__proto__`, …), mirrored
     (row 5): zod reads a declared key through the record's prototype, so a

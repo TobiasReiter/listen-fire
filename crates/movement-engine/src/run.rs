@@ -2288,11 +2288,9 @@ mod tests {
     /// not. The run fails, naming it.
     #[test]
     fn on_error_never_forgives_this_engines_own_refusal() {
-        let mixed: Vec<String> = (0..65).map(|i| if i % 2 == 0 { i.to_string() } else { format!("\"{i}\"") }).collect();
-        let source = format!(
-            "import {{ email }} from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n  ys = MAP([1, 2], {{ onError: \"ignore\" }}, (x) => {{\n    return SORT([{}])\n  }})\n  return ys\n}}",
-            mixed.join(", ")
-        );
+        // An extraction declaring a `__proto__` field, which this engine
+        // reads but does not store as the TypeScript does.
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  ys = MAP([1, 2], { onError: \"ignore\" }, (x) => {\n    d = extract from [msg.`subject`] {\n      __proto__: \"p\"\n    }\n    return d\n  })\n  return ys\n}".to_string();
         // Met before any effect, the refusal hands the run to the
         // TypeScript engine; after one (the gate's trace handed over), it
         // fails the run.
@@ -2302,7 +2300,7 @@ mod tests {
         let (done, _) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
         let error = done.get("thrown").or_else(|| done.get("failed").map(|f| &f["error"])).unwrap_or_else(|| panic!("the run fails: {done}"));
         assert_eq!(error["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
-        assert!(error["message"].as_str().is_some_and(|m| m.starts_with("SORT over 65 members")), "{done}");
+        assert!(error["message"].as_str().is_some_and(|m| m.starts_with("an extraction field or node named `__proto__`")), "{done}");
     }
 
     /// The engine reads no clock: a sleep asks the host's `clock.now` and

@@ -11,10 +11,15 @@
 //   - case_mapping.json: `LOWER` and `UPPER` of seeded texts (builtins.ts
 //     `applyMovementFunction`, so `toLowerCase` / `toUpperCase` over Node's
 //     ICU), the final sigma's contexts among them.
+//   - mixed_sort.json: ORDER BY / `SORT` keys that mix numbers with texts
+//     and other kinds, past V8's 64-item insertion sort (order_limit.ts
+//     `sortByOrderKey`, so V8's TimSort over a comparator no total order
+//     agrees with): the order the items land in.
 
 import type { FileRef } from '../../../../apps/api/src/services/translation_graph/adapter';
 import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
 import { boundFileText, maxFileChars } from '../../../../apps/api/src/services/movement_engine/extraction';
+import { sortByOrderKey } from '../../../../packages/shared/expression/order_limit';
 
 type Rand = () => number;
 type Write = (name: string, text: string) => void;
@@ -23,6 +28,7 @@ type Write = (name: string, text: string) => void;
 export async function writeTailOracles(seeded: (seed: number) => Rand, write: Write): Promise<void> {
   writeFileBoundOracle(seeded(20261012), write);
   writeCaseMappingOracle(seeded(20261013), write);
+  await writeMixedSortOracle(seeded(20261014), write);
 }
 
 const lines = (cases: unknown[]): string => `[\n${cases.map((c) => JSON.stringify(c)).join(',\n')}\n]\n`;
@@ -110,4 +116,60 @@ function writeCaseMappingOracle(rand: Rand, write: Write): void {
   }
   write('case_mapping.json', lines(cases));
   console.log(`case_mapping.json: ${cases.length} cases`);
+}
+
+// ── mixed_sort.json ───────────────────────────────────────────────────────────
+
+/** The eval wire's form of a key (crates/movement-engine/src/env.rs). */
+function wireKey(value: unknown): unknown {
+  if (value === undefined) return ['u'];
+  if (typeof value === 'number' && !Number.isFinite(value)) return ['n', String(value)];
+  if (Array.isArray(value)) return ['l', 0, value.map(wireKey)];
+  return value;
+}
+
+/** One key: a number, a numeric text (whose text and numeric orders
+ *  disagree), a text, a boolean, an empty, a list. */
+function mixedKey(rand: Rand): unknown {
+  const roll = rand();
+  if (roll < 0.35) return Math.floor(rand() * 200) - 20;
+  if (roll < 0.55) return String(Math.floor(rand() * 200));
+  if (roll < 0.7) return ['Acme', 'acme', 'Z', '', 'Ümlaut', 'b', '1e3', ' 7'][Math.floor(rand() * 8)];
+  if (roll < 0.78) return rand() < 0.5;
+  if (roll < 0.86) return rand() < 0.5 ? null : undefined;
+  if (roll < 0.92) return [rand() < 0.5 ? 'a' : 3];
+  return [1.5, NaN, Infinity, -0.5][Math.floor(rand() * 4)];
+}
+
+/** Keys laid out in runs (ascending, descending, constant) so V8's run
+ *  detection, merges and galloping all see work. */
+function mixedKeys(rand: Rand, count: number): unknown[] {
+  const keys: unknown[] = [];
+  while (keys.length < count) {
+    const run = 1 + Math.floor(rand() * (rand() < 0.3 ? 80 : 12));
+    const shape = rand();
+    let base = Math.floor(rand() * 100);
+    for (let i = 0; i < run && keys.length < count; i++) {
+      if (shape < 0.3) keys.push(mixedKey(rand));
+      else if (shape < 0.55) keys.push(base++);
+      else if (shape < 0.7) keys.push(String(base--));
+      else if (shape < 0.85) keys.push(rand() < 0.5 ? base : String(base));
+      else keys.push(base + (rand() < 0.5 ? 0 : 1));
+    }
+  }
+  return keys;
+}
+
+async function writeMixedSortOracle(rand: Rand, write: Write): Promise<void> {
+  const cases: unknown[] = [];
+  for (let i = 0; i < 400; i++) {
+    const roll = rand();
+    const count = roll < 0.1 ? 1 + Math.floor(rand() * 64) : roll < 0.9 ? 65 + Math.floor(rand() * 300) : 400 + Math.floor(rand() * 1600);
+    const keys = mixedKeys(rand, count);
+    const direction = (['asc', 'desc', undefined] as const)[Math.floor(rand() * 3)];
+    const order = await sortByOrderKey(keys.map((_, index) => index), direction, { value: async (index) => keys[index] });
+    cases.push({ direction: direction ?? null, keys: keys.map(wireKey), order });
+  }
+  write('mixed_sort.json', lines(cases));
+  console.log(`mixed_sort.json: ${cases.length} cases`);
 }

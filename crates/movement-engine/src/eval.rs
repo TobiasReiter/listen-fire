@@ -81,11 +81,6 @@ impl EvalError {
     }
 
     /// `unsupported(construct)`, with no detail.
-    /// This engine's own refusal (`ErrorClass::Unreproduced`).
-    fn unreproduced(construct: &str, detail: &str) -> EvalError {
-        EvalError::Thrown { class: ErrorClass::Unreproduced, message: format!("{construct} is not supported by the movement engine yet ({detail})") }
-    }
-
     fn unsupported_bare(construct: &str) -> EvalError {
         EvalError::engine("MOVENG_UNSUPPORTED", format!("{construct} is not supported by the movement engine yet"))
     }
@@ -655,12 +650,6 @@ impl<'a> Evaluator<'a> {
                 ));
             }
             keys.push(self.member_key(member, key)?);
-        }
-        if keys.len() > 64 && crate::order_limit::mixed_kinds(&keys) {
-            return Err(EvalError::unreproduced(
-                &format!("SORT over {} members whose keys mix numbers with text or other kinds", keys.len()),
-                "past 64 members the order of mixed keys is the JavaScript sort's own; give the key one kind, or run this movement on the TypeScript engine",
-            ));
         }
         let order = crate::order_limit::sort_by_order_key(&keys, direction);
         Ok(Evaluated { value: Js::array(order.into_iter().map(|i| members[i].clone()).collect()), prov })

@@ -49,7 +49,7 @@ fn a_hop_pushes_and_keeps_what_typescript_pushes_and_keeps() {
 
         let keys: Option<Vec<Js>> = case.get("keys").map(|keys| keys.as_array().unwrap().iter().map(|k| decode(k).unwrap()).collect());
         let count = keys.as_ref().map_or_else(|| case["count"].as_u64().unwrap() as usize, Vec::len);
-        let plan = apply_hop_order_limit(count, step.cardinality.as_ref(), keys.as_deref()).expect("the pin sorts no mixed keys past 64 items");
+        let plan = apply_hop_order_limit(count, step.cardinality.as_ref(), keys.as_deref());
         let expected: Vec<usize> = case["plan"].as_array().unwrap().iter().map(|i| i.as_u64().unwrap() as usize).collect();
         assert_eq!(plan, expected, "{hop} keys {:?}", case.get("keys"));
     }
