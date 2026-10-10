@@ -49,7 +49,7 @@ import {
 import { builtinParamAt, describeBuiltin, lookupBuiltin, type Builtin } from './standard_library';
 import { extractCallNestedMessage } from './calls';
 import { neverAsAny } from '../never';
-import { before, since, type LanguageVersion } from '../language_version';
+import { before, describeLanguageVersion, since, type LanguageVersion } from '../language_version';
 import { Span } from '../parser/ast';
 import {
   describeFieldType,
@@ -124,6 +124,15 @@ export const TypedDiagnosticCodes = {
   LINKED_TYPE_MISMATCH: 'MOV_LINKED_TYPE_MISMATCH',
   LINKED_TARGET_NOT_WRITABLE: 'MOV_LINKED_TARGET_NOT_WRITABLE',
   TRAVERSE_UNKNOWN_EDGE: 'MOV_TRAVERSE_UNKNOWN_EDGE',
+  /** Since language version 4: `-[:@old]->` off something no write returned —
+   *  a matched record, a traversal landing, a local node. `@old` is the record
+   *  as it stood before a write; a record you found already IS the record as
+   *  it stands, so there is no earlier one to reach. */
+  OLD_EDGE_NOT_A_WRITE: 'MOV_OLD_EDGE_NOT_A_WRITE',
+  /** Since language version 4: an edge named with the reserved `@` prefix that
+   *  the engine does not make. `@` edges are the engine's, never a system's
+   *  (the host refuses an adapter edge so named), and the only one is `@old`. */
+  ARTIFICIAL_EDGE_UNKNOWN: 'MOV_ARTIFICIAL_EDGE_UNKNOWN',
   /** A read traversal walks a WRITE-ONLY edge (`EdgeSchema.readable: false`)
    *  — a pure create path with no read API behind it (WhatsApp's `replies`).
    *  Traversing it would silently yield nothing, so the read is an error;
@@ -152,6 +161,12 @@ export const TypedDiagnosticCodes = {
   /** A property read names a field a CLOSED typed position does not declare
    *  (positions are closed unless the schema marks them `openProperties`). */
   UNKNOWN_PROPERTY: 'MOV_UNKNOWN_PROPERTY',
+  /** Since language version 4: `.created` / `.committed` read off a write's
+   *  handle, where the record declares no such field. They were facts about
+   *  the write, not fields of the record, and `-[:@old]->` answers both: no
+   *  old record ⇒ the write created it. Before 4 the handle carried them, and a
+   *  program pinned there still reads them. */
+  HANDLE_FIELD_RETIRED: 'MOV_HANDLE_FIELD_RETIRED',
   /** A read or traversal through a handle NOTHING HAS DESCRIBED
    *  (`PositionSchema.undescribed`) — an unnarrowed event's `record` edge
    *  landing on the meta type, a type no describe answered for.
@@ -705,7 +720,13 @@ export type PositionTypeRef =
    *  into `edges` because it is a fact about one construction site, not about
    *  the type — two `Choose` asks in one movement have the same edges and
    *  different landings. Empty/absent ⇒ every edge lands on its declared
-   *  target. */
+   *  target.
+   *
+   *  `written`: a WRITE produced this handle — a fact about its derivation,
+   *  compared and never parsed. It is what gives the handle an `-[:@old]->`
+   *  (the record as it stood before that write) since language version 4; a
+   *  match's or a link's found handle is the record as it already stood, so it
+   *  has none (`foundHandle` drops the flag). */
   | {
       kind: 'handle';
       instance: InstanceRef;
@@ -713,6 +734,7 @@ export type PositionTypeRef =
       resultShape: Record<string, FieldType>;
       edges?: Record<string, EdgeSchema>;
       genericLandings?: Record<string, string>;
+      written?: true;
     }
   /** A position in an extract result graph (the root binding or a traversed
    *  node). `present` holds the fields a guard in scope has proven present —
@@ -1069,6 +1091,24 @@ export interface ExtractNodeType {
   /** Child nodes (from any stage) — the result graph's edges. */
   children: Map<string, ExtractNodeType>;
 }
+
+// ── Edges the engine makes ──
+
+/** The prefix that marks an edge the ENGINE makes rather than one a system
+ *  declares. Reserved in every version: the host refuses an adapter edge so
+ *  named, so the two can never collide. */
+export const ARTIFICIAL_EDGE_PREFIX = '@';
+
+/** A write handle's record as it stood before that write. */
+export const OLD_EDGE = '@old';
+
+export function isArtificialEdge(edge: string): boolean {
+  return edge.startsWith(ARTIFICIAL_EDGE_PREFIX);
+}
+
+/** What a write's handle once said about the write itself — retired since
+ *  language version 4, where `-[:@old]->` answers both. */
+const RETIRED_HANDLE_FIELDS: ReadonlySet<string> = new Set(['created', 'committed']);
 
 // ── Describing types in diagnostics ──
 
@@ -5699,6 +5739,16 @@ export class ExpressionTyping {
     // Only a position/handle hop carries an `EdgeSchema`; reset per hop so the
     // last-resolved edge's schema survives for the `await` checker.
     this.lastEdgeSchema = undefined;
+    // A maybe-empty node steps its inner node (below), which comes back here.
+    // Before 4 an `@` name is an ordinary edge name and its lookup fails as
+    // any unknown edge's does — the behaviour a pinned program was checked by.
+    if (
+      isArtificialEdge(edge) &&
+      from.kind !== 'maybeEmpty' &&
+      since(this.options.languageVersion, 4)
+    ) {
+      return this.stepArtificialEdge(from, edge);
+    }
     switch (from.kind) {
       case 'meta': {
         const target = from.instance.schema.collections[edge]?.target;
@@ -5926,6 +5976,30 @@ export class ExpressionTyping {
   }
 
   /**
+   * A hop along an edge the ENGINE makes rather than one a system declares —
+   * never looked up in the target's edges, so no adapter name can collide
+   * with one. `@old` from a write's handle lands on the same type: the record
+   * before the write is the same kind of record, and is itself a handle a
+   * write produced, so the chain types (`-[:@old]->-[:@old]->`); how long it
+   * is, is a run-time fact.
+   */
+  private stepArtificialEdge(from: PositionTypeRef, edge: string): PositionTypeRef | undefined {
+    if (edge !== OLD_EDGE) {
+      this.report(
+        TypedDiagnosticCodes.ARTIFICIAL_EDGE_UNKNOWN,
+        `'-[:${edge}]->': '@' names an edge the engine makes, not one a system declares — the only one is '${OLD_EDGE}' (the record as it stood before a write)`,
+      );
+      return undefined;
+    }
+    if (from.kind === 'handle' && from.written === true) return from;
+    this.report(
+      TypedDiagnosticCodes.OLD_EDGE_NOT_A_WRITE,
+      `only a handle a write returned has an '${OLD_EDGE}' (the record as it stood before that write), and ${describePosition(from)} is not one — a record a match or a traversal found already is the record as it stands, so read it directly`,
+    );
+    return undefined;
+  }
+
+  /**
    * NOTHING HAS DESCRIBED this position, so anything you do with the handle is
    * a guess — say so instead of waving it through.
    *
@@ -6058,6 +6132,20 @@ export class ExpressionTyping {
           return fromPosition;
         }
         if (schema && this.reportWriteOnlyProperty(position, schema, propertyId)) return undefined;
+        // Ahead of the open-surface silence: an open target is wider than its
+        // enumerated fields, but these two names were the WRITE's, never the
+        // record's, so openness says nothing about them.
+        if (
+          position.written === true &&
+          RETIRED_HANDLE_FIELDS.has(propertyId) &&
+          since(this.options.languageVersion, 4)
+        ) {
+          this.report(
+            TypedDiagnosticCodes.HANDLE_FIELD_RETIRED,
+            `'${propertyId}' is no longer a field of a write's handle since ${describeLanguageVersion(4)} — ask the record before the write instead: \`EXISTS(h-[:${OLD_EDGE}]->)\` is FALSE when this write created the record; \`FIRST(h-[:${OLD_EDGE}]->) == h\` when it was only rehearsed; compare fields against \`FIRST(h-[:${OLD_EDGE}]->)\` for what changed`,
+          );
+          return undefined;
+        }
         if (schema && this.reportUndescribed(position, schema, `the field '${propertyId}'`)) {
           return undefined;
         }

@@ -28,11 +28,11 @@ company = write crm-[:Companies]-> {
 A handle carries what the write actually did, so a later message can say it honestly:
 
 \`\`\`
-Message: IF company.created THEN "Added \${company.\`Name\`}"
-                            ELSE "Updated \${company.\`Name\`}" END
+Message: IF EXISTS(company-[:@old]->) THEN "Updated \${company.\`Name\`}"
+                                     ELSE "Added \${company.\`Name\`}" END
 \`\`\`
 
-\`created\` is \`TRUE\` when the write minted a new record, \`FALSE\` when it matched an existing one. \`committed\` is \`TRUE\` when it landed in the target system, \`FALSE\` when the instance was only rehearsing (\`dry_run: true\`).
+\`company-[:@old]->\` is the record as it stood before the write: there is none when the write minted a new record.
 
 ### set-if-empty
 

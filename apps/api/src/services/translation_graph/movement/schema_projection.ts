@@ -31,7 +31,7 @@ import type {
   WritableRootSchema,
   WriteUnionShape,
 } from 'movement-lang';
-import { unionDisplay, unionKey, unionVariants } from 'movement-lang';
+import { isArtificialEdge, unionDisplay, unionKey, unionVariants } from 'movement-lang';
 import type { AdapterManifest } from '../adapter';
 import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
 import type {
@@ -174,6 +174,19 @@ function projectWriteUnion(input: {
       return { name: variant.name, fields };
     }),
   };
+}
+
+/**
+ * `@` names an edge the ENGINE makes (a write handle's `-[:@old]->`), and the
+ * checker never looks such a name up among a system's edges — so an adapter
+ * edge spelled that way would publish something no author can reach. A loud
+ * refusal at catalog build, rather than an edge that silently isn't there.
+ */
+function refuseArtificialEdgeName(adapterType: string, edge: string): void {
+  if (!isArtificialEdge(edge)) return;
+  throw new Error(
+    `${adapterType}: the edge '${edge}' starts with '@', which is reserved for edges the engine makes (such as '@old') — rename it in the adapter`,
+  );
 }
 
 /**
@@ -461,6 +474,7 @@ export function instanceSchemaFromDescriptors(input: {
     // is reached through its container's edge, not off the root.
     if (metaEdgeTypeIds.has(entry.typeId) && (entry.readable || entry.writable)) {
       const collectionName = entry.collectionName ?? name;
+      refuseArtificialEdgeName(input.adapterType, collectionName);
       const capability = rootCapabilities.get(collectionName);
       collections[collectionName] = {
         target: name,
@@ -562,6 +576,7 @@ export function instanceSchemaFromDescriptors(input: {
     const requiredEdges: Array<{ edge: string; from: string }> = [];
     for (const ref of descriptor.references) {
       const edge = ref.name ?? ref.fieldId;
+      refuseArtificialEdgeName(input.adapterType, edge);
       const targetNames = targetNamesOf(ref);
       // ONE edge, ONE landing TYPE — but that type may be a UNION. A reference
       // that declares several targets projects as a polymorphic edge onto a
@@ -750,16 +765,12 @@ export function instanceSchemaFromDescriptors(input: {
         // re-fetch moves the snapshot of fields like an ask's read-only `State`,
         // so those must be part of the handle's type even though the create body
         // never wrote them. Write echoes win on shared names (same type anyway).
-        // `created` / `committed` are write-EVENT facts, not record fields: whether
-        // the write minted a new record (vs matched an existing one through
-        // `unique by`) and whether it actually landed (vs was rehearsed). The
-        // engine has always served them off the handle; declaring them here is what
-        // lets an author branch on the outcome to word a confirmation honestly.
+        // What the write DID is not a field of the record: an author asks the
+        // handle's `-[:@old]->`, and the checker supplies the retired
+        // `created` / `committed` itself to a program pinned before it.
         resultShape: {
           externalId: 'text',
           url: 'text',
-          created: 'boolean',
-          committed: 'boolean',
           ...properties,
           ...writableFields,
         },

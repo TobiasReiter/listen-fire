@@ -348,12 +348,10 @@ const hubspotSchema: InstanceSchema = {
   writableRoots: {
     company: {
       fields: { name: 'text', domain: 'text', city: 'text', nickname: 'text' },
-      // As the adapter projection declares every write shape: the write-event
-      // facts ride the result beside the record's own fields.
+      // As the adapter projection declares every write shape: the record's own
+      // fields; the checker adds the retired write-event facts before 4.
       resultShape: {
         externalId: 'text',
-        created: 'boolean',
-        committed: 'boolean',
         name: 'text',
         domain: 'text',
         city: 'text',
@@ -3423,7 +3421,7 @@ describe('match', () => {
     expect(codes(body('write'))).toContain(C.WRITE_READ_ONLY_EDGE);
   });
 
-  it("the handle is the record: 'created' / 'committed' are a write's, not a match's", () => {
+  it("'created' / 'committed' were a write's, never a match's — and are retired from the write's handle under 4", () => {
     const read = (verb: string, field: string) =>
       [
         'import { email, hubspot } from adapters',
@@ -3435,11 +3433,16 @@ describe('match', () => {
         `  if co != null { write crm2-[:companies]-> { domain: "x", name: co.${field} } }`,
         '}',
       ].join('\n');
+    const under = (version: number, source: string) =>
+      checkProgram(parseProgram(source), catalog, { languageVersion: version }).filter(d => (d.severity ?? 'error') === 'error');
     for (const field of ['created', 'committed']) {
-      expectClean(read('write', field));
-      const found = check(read('match', field));
-      expect(found.map((d) => d.code)).toEqual([C.UNKNOWN_PROPERTY]);
-      expect(found[0].message).toContain(`no field '${field}'`);
+      expect(under(3, read('write', field)).map((d) => d.code)).toEqual([]);
+      expect(under(4, read('write', field)).map((d) => d.code)).toEqual([C.HANDLE_FIELD_RETIRED]);
+      for (const version of [3, 4]) {
+        const found = under(version, read('match', field));
+        expect(found.map((d) => d.code)).toEqual([C.UNKNOWN_PROPERTY]);
+        expect(found[0].message).toContain(`no field '${field}'`);
+      }
     }
     expectClean(read('match', 'name'));
   });

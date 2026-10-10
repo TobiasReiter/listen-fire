@@ -645,6 +645,11 @@ export const DiagnosticCodes = {
    *  Before 4 a miss ended the scope; from 4 the name is absent and the block
    *  carries on, so whatever followed now runs on a miss too. */
   MATCH_MISS_CONTINUES: 'MOV_MATCH_MISS_CONTINUES',
+  /** Warning, upgrade only: `write org { … }` on a handle a write returned, in
+   *  a program moving up across 4. Before 4 the alias kept the values of its
+   *  own write; from 4 it reads as the updated record below the line. The type
+   *  is the same either way — what changed is what it holds. */
+  HANDLE_UPDATED_IN_PLACE: 'MOV_HANDLE_UPDATED_IN_PLACE',
   /** `unique by (…)` on a target that decides record identity itself and does
    *  not accept author-defined uniqueness (the adapter declared
    *  `uniquenessAuthorable: false` — e.g. Affinity, whose org/person matching
@@ -1389,14 +1394,16 @@ function readableMatchRoot(position: PositionSchema | undefined): WritableRootSc
 
 /**
  * The handle a `match` binds: the record, without the write-outcome facts. A
- * write's handle answers "what happened" (`created`, `committed`) as well as
- * "which record"; a match only ever answers the second, so the first is not
- * part of its type rather than a flag that is always false.
+ * write's handle answers "what happened" (`created`, `committed` before
+ * language version 4; its `-[:@old]->` since) as well as "which record"; a
+ * match only ever answers the second, so the first is not part of its type
+ * rather than a flag that is always false.
  */
 function foundHandle(handle: PositionTypeRef | undefined): PositionTypeRef | undefined {
   if (handle?.kind !== 'handle') return handle;
   const { created: _created, committed: _committed, ...resultShape } = handle.resultShape;
-  return { ...handle, resultShape };
+  const { written: _written, ...found } = handle;
+  return { ...found, resultShape };
 }
 
 function recordedTargetOf(handle: PositionTypeRef | undefined): RecordedTarget | undefined {
@@ -7373,9 +7380,19 @@ class Checker {
     return {
       ...handle,
       ...(minted ? { position: position! } : {}),
-      resultShape: variant.resultShape,
+      resultShape: handle.written === true ? this.writeResultShape(variant.resultShape) : variant.resultShape,
       ...(variant.edges !== undefined ? { edges: variant.edges } : {}),
     };
+  }
+
+  /**
+   * What a write's handle reads, given the record's own result shape. Before 4
+   * that included the write-outcome facts `created` / `committed`; the host no
+   * longer projects them, so this conditional — which a future cleanup deletes
+   * — is the only place they live. The record's own fields win a shared name.
+   */
+  private writeResultShape(shape: Record<string, FieldType>): Record<string, FieldType> {
+    return before(this.languageVersion, 4) ? { created: 'boolean', committed: 'boolean', ...shape } : shape;
   }
 
   /**
@@ -7618,6 +7635,24 @@ class Checker {
       rootDescription = position.description;
       local = position.local === true;
       declaredTarget = position.declared === true;
+      // Nothing is rebound: the alias keeps its type (a write constrains its
+      // body by that type already), so the only change across 4 is what the
+      // alias holds at run time — said where the program moves up, at the
+      // write nobody named, since a named one's reader reads the new name.
+      const alias = pathRootName(write.target);
+      if (
+        options?.binding === undefined &&
+        alias !== undefined &&
+        handle?.kind === 'handle' &&
+        handle.written === true &&
+        this.upgradeCrosses(4)
+      ) {
+        this.reportUpgradeWarning(
+          DiagnosticCodes.HANDLE_UPDATED_IN_PLACE,
+          `since ${describeLanguageVersion(4)} '${alias}' reads as the updated record below this line; before, it kept the values of its own write`,
+          write.target.span,
+        );
+      }
     }
 
     // A DISCRIMINATED write shape (the write-side dual of read narrowing): the
@@ -8770,11 +8805,14 @@ class Checker {
     // was already rejected above, rather than inheriting one from its target).
     // The link-vs-create distinction is PARKED: an edge that can only link
     // over-promises create and fails loudly at run time.
+    const resultShape = root?.resultShape ?? instance.schema.positions[written]?.properties ?? {};
     const handle: PositionTypeRef = {
       kind: 'handle',
       instance,
       ...(instance.schema.positions[written] ? { position: written } : {}),
-      resultShape: root?.resultShape ?? instance.schema.positions[written]?.properties ?? {},
+      resultShape: input.purpose === 'write' ? this.writeResultShape(resultShape) : resultShape,
+      // A write produced this handle, which is what gives it an `@old`.
+      ...(input.purpose === 'write' ? { written: true as const } : {}),
       // The write shape's relationship table, so a handle to a writable-only
       // type (no minted position) can still traverse its edges — `await
       // a-[:Response]->` off an ask's `Check`. When a position IS minted the
