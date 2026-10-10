@@ -261,6 +261,7 @@ Each is a stable snake_case string: the one log line per run names it, and
 
 | reason | the construct |
 |---|---|
+| `language_version_unsupported` | the run is pinned to a language version this release does not support (`SUPPORTED_LANGUAGE_VERSIONS`), refused by that name before the parse and before any construct's reason (the TypeScript engine refuses it with its own message) |
 | `source_does_not_parse` | the source does not parse here (the TypeScript engine throws the parse error) |
 | `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` |
 | `file_assignment` | a file-level binding that is neither an instance construction nor a value (a file-level `extract`, …) |
@@ -400,8 +401,9 @@ parse, before anything is asked):
 
 This engine runs language versions 1 to 3. Version 4 (Luminous Owl, main's
 d5bb93f794) changed what four constructs mean, and each is refused by name
-under `since(v, 4)` until it is ported (PLAN-07A); a version 1 to 3 program
-is admitted exactly as before.
+under `since(v, 4)` until it is ported (PLAN-07A), for a supported version
+only (an unsupported one is `language_version_unsupported` first); a version
+1 to 3 program is admitted exactly as before.
 
 | main's change | sha | refused as |
 |---|---|---|
@@ -1295,6 +1297,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 287, v2 350, v3 379). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 287, v2 349, v3 379). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

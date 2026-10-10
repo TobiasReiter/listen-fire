@@ -1,3 +1,4 @@
+// On this branch the v3 corpus is its own pre-merge copy (35cd3a3ea8) of the version-3 tests, adapted to the host interface exactly as v1/v2 were carried.
 // Runs a conformance corpus under language version 3 ("Steady Lynx", the
 // language from v0.10.0 until version 4). Every parse, check, story and run that
 // names no version compiles and executes under the current version, so making

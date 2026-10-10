@@ -318,6 +318,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let version = input.language_version;
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
+    if let Some(reason) = crate::admit::version_refusal(version) {
+        return Err(Stop::Refused(reason));
+    }
     let root = program::parse(&input.source, version).map_err(|_| Stop::Refused("source_does_not_parse".into()))?;
     // What a plugin call binds is the snapshot's to say, read off the input.
     let plugins = serde_json::from_str::<CatalogPlugins>(input.catalog.get()).ok();

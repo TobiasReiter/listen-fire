@@ -1,3 +1,4 @@
+// On this branch the v3 corpus is its own pre-merge copy (35cd3a3ea8) of the version-3 tests, adapted to the host interface exactly as v1/v2 were carried.
 // Language version 3's conformance corpus: the movement-lang tests as they
 // stood before version 4 — on this branch, main's b3078e0053 (v0.10.9) tests as
 // cloud-native carried them onto the Rust parser (35cd3a3ea8, the last commit

@@ -74,6 +74,18 @@ impl Plugins<'_> {
 /// Why this engine does not run `program`, or `None` when it does. Every
 /// movement in the file is walked, not only the one an event dispatches.
 /// A cost cap refuses nothing: a run that meets it suspends (crate::park).
+/// A language version this release does not support, refused by that name
+/// before the parse or any construct's refusal reads the program: the
+/// TypeScript engine refuses it with its own message, naming the version and
+/// the fix. Every construct refusal below is for a supported version.
+pub fn version_refusal(language_version: u32) -> Option<String> {
+    if movement_parser::version::SUPPORTED_LANGUAGE_VERSIONS.contains(&language_version) {
+        None
+    } else {
+        Some("language_version_unsupported".into())
+    }
+}
+
 pub fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<'_>) -> Option<String> {
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
@@ -1446,6 +1458,15 @@ mod tests {
             ("  r = M(msg)", "function_call"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+        }
+    }
+
+    #[test]
+    fn refuses_an_unsupported_version_by_that_name() {
+        assert_eq!(version_refusal(99).as_deref(), Some("language_version_unsupported"));
+        assert_eq!(version_refusal(0).as_deref(), Some("language_version_unsupported"));
+        for version in 1..=4 {
+            assert_eq!(version_refusal(version), None, "{version}");
         }
     }
 
