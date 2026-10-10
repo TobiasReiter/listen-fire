@@ -699,12 +699,14 @@ export interface ExtractCallInput {
 
 /** What the call hands back: the list of records for `extract`; for
  *  `extractOne` the record, or absent when there is none. */
-function answerOf(landings: NodePosition[], finds: ExtractCallFinds): Binding {
+export function answerOf(landings: NodePosition[], finds: ExtractCallFinds): Binding {
   switch (finds) {
     case 'each':
       return binding({ kind: 'positions', landings });
     case 'one':
-      return landings[0] ?? { kind: 'value', value: null, provenance: NO_PROVENANCE };
+      return (
+        landings[0] ?? binding({ kind: 'value', value: null, provenance: NO_PROVENANCE })
+      );
     default:
       return neverAsAny(finds);
   }

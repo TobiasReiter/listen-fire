@@ -89,11 +89,12 @@ import { runMovement } from '../run';
 import {
   EXTRACT_CALL_SYSTEM_PROMPT,
   ExtractCallPrefixes,
+  answerOf,
   type ExtractCallLlmInput,
   type ExtractCallLlmResult,
 } from '../extraction_call';
 import type { FileTextResolution } from '../extraction';
-import type { MovementTraceEntry } from '../expression';
+import { bindingOf, type MovementTraceEntry } from '../expression';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import {
   containerAssociation,
@@ -743,5 +744,19 @@ describe('what a call extracted is on its trace entry', () => {
     const [entry] = extractions(result.trace);
     expect(entry.entities?.Detail).toHaveLength(20);
     expect(entry.truncatedCount).toEqual({ Detail: 2 });
+  });
+});
+
+describe("extractOne's absent answer", () => {
+  it('is an engine object (absent on the value plane), never data shaped like one', () => {
+    const absent = answerOf([], 'one');
+    expect(bindingOf(absent)).toBe(absent);
+    expect(absent).toMatchObject({ kind: 'value', value: null });
+  });
+
+  it("extract's empty answer is one too", () => {
+    const none = answerOf([], 'each');
+    expect(bindingOf(none)).toBe(none);
+    expect(none).toEqual({ kind: 'positions', landings: [] });
   });
 });

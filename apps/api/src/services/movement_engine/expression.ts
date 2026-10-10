@@ -366,8 +366,8 @@ export function snapshotOfHandle(
   const { writtenValues, resultData } = live.handle;
   // The value bags are copied, not shared: the live handle is the earlier
   // write's firing record, and a refresh through this snapshot must not
-  // rewrite what that write logged.
-  // Through the constructor: a spread copies the fields, never the mark.
+  // rewrite what that write logged. Built through the constructor: a spread
+  // copies the fields, never the mark.
   const snapshot: Extract<Binding, { kind: 'handle' }> = binding({
     ...live,
     handle: {
@@ -530,14 +530,22 @@ export interface LocalLandingShape {
 }
 
 /**
- * The mark every engine object carries and no data can. Module-private and
- * never exported: nothing outside this file can name it, so the only way to
- * make a binding is `binding()`. Set non-enumerable, so a spread, a JSON
- * round-trip or a structured clone never copies it — whatever a host hands
- * back (an adapter's field value, a webhook body, a plugin's output) is data,
- * whatever keys it carries.
+ * The mark every engine object carries and no data can: a private field, which
+ * only an object constructed by this class has. Data reaches the engine as
+ * JSON or plain objects — an adapter's field value, a webhook body, a plugin's
+ * output — and nothing in that data can name a private field, so whatever keys
+ * it carries it is never taken for a binding. Not exported: `binding()` is the
+ * only way to make one. JSON, the park writer and a spread see only a binding's
+ * own enumerable fields, never the mark.
  */
-const BRAND: unique symbol = Symbol('binding');
+class Bound {
+  readonly #brand = true;
+  // Every instance is made by `binding()` around a shape, so holding the mark
+  // IS being a binding.
+  static has(value: unknown): value is Binding {
+    return typeof value === 'object' && value !== null && #brand in value;
+  }
+}
 
 /**
  * One Environment binding: a shape the engine itself made, carrying the mark
@@ -545,17 +553,17 @@ const BRAND: unique symbol = Symbol('binding');
  * data only (slug + credential name); adapter resolution and caching are
  * the interpreter's concern (`run.ts`) so the value model stays inert.
  */
-export type Binding = { readonly [BRAND]: true } & BindingShape;
+export type Binding = Bound & BindingShape;
 
 /**
- * The ONE constructor of a binding. Every engine object is made here — a
- * derived one too (a spread copies the fields but never the mark), which is
- * what lets `bindingOf` tell an engine object from data by the mark alone.
+ * The ONE constructor of a binding, and the only place a shape becomes one: a
+ * fresh marked object holding the shape's fields. A derived binding (a copy
+ * with a field changed) comes through here too, because a spread drops the
+ * mark — in the type as well as at run time — which is what lets `bindingOf`
+ * tell an engine object from data by the mark alone.
  */
-export function binding<S extends BindingShape>(shape: S): S & { readonly [BRAND]: true } {
-  Object.defineProperty(shape, BRAND, { value: true, enumerable: false });
-  // The mark was set on the line above; the type cannot see a defineProperty.
-  return shape as S & { readonly [BRAND]: true };
+export function binding<S extends BindingShape>(shape: S): S & Bound {
+  return Object.assign(new Bound(), shape);
 }
 
 /** One emitted entity of an extraction, as the position a hop lands on. */
@@ -774,9 +782,8 @@ export type BindingShape =
  * by the shape: data carrying a `kind` key is still data.
  */
 export function bindingOf(value: unknown): Binding | undefined {
-  if (value === null || typeof value !== 'object') return undefined;
   // Only `binding()` sets the mark, so this is true of engine objects alone.
-  return BRAND in value ? (value as Binding) : undefined;
+  return Bound.has(value) ? value : undefined;
 }
 
 /**
