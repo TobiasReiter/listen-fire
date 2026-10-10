@@ -27,6 +27,8 @@ use movement_parser::lowering::expression::EdgeDirection;
 use movement_parser::lowering::condition::MovementCondition;
 use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
+use movement_parser::version::since;
+
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
 /// The flat built-ins and namespaced members the evaluator runs
@@ -686,7 +688,7 @@ impl Names<'_> {
         };
         let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
         let TraversalStep::Edge(step) = step else { return refuse("block_head_step") };
-        refuse_meta_edge(&step.edge_type_id)?;
+        refuse_meta_edge(&step.edge_type_id, self.language_version)?;
         if let Some(filter) = &step.expression_filter {
             self.scoped(filter)?;
         }
@@ -752,7 +754,7 @@ impl Names<'_> {
     /// One hop of a walk: an edge, its WHERE and ORDER BY key scoped at the
     /// landed record.
     fn hop(&self, step: &movement_parser::lowering::expression::EdgeStep) -> Admitted {
-        refuse_meta_edge(&step.edge_type_id)?;
+        refuse_meta_edge(&step.edge_type_id, self.language_version)?;
         // The hop's alias names the record it landed on, there.
         let mut landings = self.landings.clone();
         landings.extend(step.alias.iter().cloned());
@@ -984,11 +986,24 @@ impl Names<'_> {
                 if !self.handles.contains(name) && !self.landings.contains(name) {
                     return refuse("write_position_not_record");
                 }
+                // Version 4: `write org { … }` moves the handle `org` on to
+                // the updated record in place, and the record before it is
+                // `org`'s `@old`; through a landing, the new handle reads
+                // the landing's fields the write did not send.
+                if since(self.language_version, 4) {
+                    return refuse(if self.handles.contains(name) { "v4_write_in_place" } else { "v4_handle_read_as_found" });
+                }
             }
             WriteTarget::Linked { path, .. } => self.target_path(path, "write")?,
         }
         for clause in &write.unique_by {
             unique_clause(&clause.predicate.raw)?;
+        }
+        // Version 4: a write whose identity finds a record updates it, and
+        // its handle reads the record as found for the fields the write did
+        // not send (`foundData`) and holds it as `@old`.
+        if !write.unique_by.is_empty() && since(self.language_version, 4) {
+            return refuse("v4_handle_read_as_found");
         }
         for spread in write.spreads.iter().flatten() {
             if spread.path.is_some() {
@@ -1018,6 +1033,7 @@ impl Names<'_> {
         }
         match edge_shape(path) {
             EdgeShape::One { edge, .. } if is_meta_edge(&edge) => refuse("traversal_meta_edge"),
+            EdgeShape::One { edge, .. } if is_old_edge(&edge, self.language_version) => refuse("v4_old_edge"),
             EdgeShape::One { where_: Some(where_), .. } => self.scoped(&where_.filter),
             EdgeShape::One { where_: None, .. } => Ok(()),
             EdgeShape::MultiHop | EdgeShape::Invalid(_) => refuse(format!("{verb}_multi_hop")),
@@ -1034,6 +1050,11 @@ impl Names<'_> {
         }
         for clause in &m.unique_by {
             unique_clause(&clause.predicate.raw)?;
+        }
+        // Version 4: a match that finds nothing binds absent and the block
+        // carries on, where this engine ends the scope.
+        if since(self.language_version, 4) {
+            return refuse("v4_match_absent");
         }
         m.fields.iter().try_for_each(|field| self.slot(&field.value))
     }
@@ -1341,8 +1362,21 @@ fn is_meta_edge(edge: &str) -> bool {
     edge.starts_with('#')
 }
 
-fn refuse_meta_edge(edge: &str) -> Admitted {
-    if is_meta_edge(edge) { refuse("traversal_meta_edge") } else { Ok(()) }
+/// `-[:@old]->` (version 4 on): the record a write handle held before its
+/// write, which the handle answers itself and this engine does not keep
+/// (PLAN-07A). `@` names only artificial edges from version 4, so any is it.
+fn is_old_edge(edge: &str, language_version: u32) -> bool {
+    since(language_version, 4) && edge.starts_with('@')
+}
+
+fn refuse_meta_edge(edge: &str, language_version: u32) -> Admitted {
+    if is_meta_edge(edge) {
+        refuse("traversal_meta_edge")
+    } else if is_old_edge(edge, language_version) {
+        refuse("v4_old_edge")
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1413,6 +1447,39 @@ mod tests {
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
+    }
+
+    /// Language version 4 (Luminous Owl, main's d5bb93f794): each construct
+    /// whose meaning changed is refused by name under version 4, and the
+    /// same program under version 3 is admitted (or refused as before).
+    #[test]
+    fn refuses_version_4s_changed_constructs_by_name_and_leaves_version_3_alone() {
+        let under = |body: &str, version: u32| {
+            let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            let program = movement_parser::stmt::parse_program(&source, version, false).expect("the test's program parses");
+            refusal(&program, version, &Plugins(None))
+        };
+        for (body, reason, before) in [
+            ("  co = match crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_match_absent", None),
+            ("  match crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_match_absent", None),
+            (
+                "  co = write crm-[:companies]-> { name: \"a\" }\n  fund = link co -[:portfolio]-> { unique by (`name`), name: \"F\" }",
+                "v4_match_absent",
+                None,
+            ),
+            ("  co = write crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_handle_read_as_found", None),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  write co { name: \"b\" }", "v4_write_in_place", None),
+            ("  crm-[c:companies]-> {\n    write c { name: \"b\" }\n  }", "v4_handle_read_as_found", None),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = co-[:@old]->.`name`", "v4_old_edge", None),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  co-[o:@old]-> {\n    x = 1\n  }", "v4_old_edge", None),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  if EXISTS(co-[:@old]->) {\n    x = 1\n  }", "v4_old_edge", None),
+        ] {
+            assert_eq!(under(body, 4).as_deref(), Some(reason), "{body}");
+            assert_eq!(under(body, 3).as_deref(), before, "{body} under version 3");
+        }
+        // A create with no identity, and a write off a handle, run as before.
+        let body = "  co = write crm-[:companies]-> { name: \"a\" }\n  write co-[:notes]-> { title: co.`name` }";
+        assert_eq!(under(body, 4), None, "{body}");
     }
 
     /// Main's v0.10.2–v0.10.9 language changes (the merge's port list): each

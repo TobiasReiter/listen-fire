@@ -92,6 +92,7 @@ Measured 2026-10-07 (gzip -9):
 | extraction specs, prompts and the validator (chunk 6A, not yet run) | 2,185,406 | 623,115 |
 | the extraction keyword and plugin calls run whole (chunk 6A) | 2,423,062 | 694,914 |
 | folds, EXISTS, IS and a record named twice (chunk 6A Task 4) | 2,458,709 | 710,999 |
+| language version 4's changed constructs refused at admission (main merge 2) | 2,459,419 | 711,283 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -303,6 +304,10 @@ one is refused where it stands (`graph_shape`, `node_declared_entry`,
 | `write_tuple` | a tuple write |
 | `write_position_not_record` | `write x { … }` where `x` is not a write's handle or a block's hop alias (a node or graph entry the run built, updated in place, among them) |
 | `write_position_member_path` | `write m.k { … }`: a write from the record a map's member holds |
+| `v4_match_absent` | under language version 4, any `match` (bound, a statement, a link's body): a miss binds absent and the block carries on, where this engine ends the scope |
+| `v4_old_edge` | under language version 4, a hop over an `@` edge (`-[:@old]->`, a block head's, a walk's, an `EXISTS`'s, a write's or a match's target): the record a write handle held before its write |
+| `v4_write_in_place` | under language version 4, `write org { … }` on a write's handle: the handle moves on to the updated record in place, and its `@old` is the handle as it stood |
+| `v4_handle_read_as_found` | under language version 4, a write with `unique by`, or `write c { … }` on a block's hop alias: an update's handle reads the record as found for the fields the write did not send (`foundData`) and holds it as `@old` |
 | `write_root_expression`, `match_root_expression` | a linked write or match rooted at an expression |
 | `write_root_not_held`, `match_root_not_held` | a linked write or match rooted at a name that is not an instance, a handle, the event or a block's hop alias |
 | `write_node_root`, `match_node_root` | a write or a match into an edge of a node this run built (the in-process stand-in adapter is the TypeScript engine's) |
@@ -390,6 +395,20 @@ parse, before anything is asked):
 | `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` |
 | `graph_copy_walks_edges` | a graph's record spread whose copy plan walks the record's edges (the checker stamps one only on a shaped graph, which admission refuses: a guard) |
 | `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read (a shim fault in all but name) |
+
+### Language version 4: the port list
+
+This engine runs language versions 1 to 3. Version 4 (Luminous Owl, main's
+d5bb93f794) changed what four constructs mean, and each is refused by name
+under `since(v, 4)` until it is ported (PLAN-07A); a version 1 to 3 program
+is admitted exactly as before.
+
+| main's change | sha | refused as |
+|---|---|---|
+| a named match that finds nothing binds absent and the block carries on; a judge outage on a match leaves a `MOVENG_MATCH_JUDGE_UNAVAILABLE` warning | 26ed0b502f, 30e1acc55b | `v4_match_absent` |
+| `-[:@old]->` off a write handle: the record the write found, the handle itself under `dry_run`, the previous handle on a chained write | 1bd0d3aa10, 30e1acc55b | `v4_old_edge` |
+| `write org { … }` on a handle updates it in place | 1bd0d3aa10 | `v4_write_in_place` |
+| a handle reads the record as found (`foundData`) for a field its write did not set; a parent link carries only what the parent's own write got back | 1bd0d3aa10, ac7ac15ec8 | `v4_handle_read_as_found` |
 
 ### What admission cannot decide
 

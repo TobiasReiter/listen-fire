@@ -3,7 +3,7 @@
 //! current one, because every conditional is a comparison against the
 //! version a behaviour arrived in.
 
-pub const CURRENT_LANGUAGE_VERSION: u32 = 3;
+pub const CURRENT_LANGUAGE_VERSION: u32 = 4;
 
 /// `version` has the behaviour version `n` introduced.
 pub fn since(version: u32, n: u32) -> bool {
