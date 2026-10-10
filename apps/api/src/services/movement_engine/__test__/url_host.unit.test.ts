@@ -3,14 +3,14 @@
 // case → stdlibFunctionById → applyStdlib), so no per-function runtime code
 // was needed; this pins that the registration in stdlib.ts alone is enough.
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { listUnsupportedConstructs } from '../interpretable';
 import { parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) {
-    env.declare(name, { kind: 'value', value });
+    env.declare(name, binding({ kind: 'value', value }));
   }
   return (await evalMovementExpr(parseMovementExpression(text), { env })).value;
 }

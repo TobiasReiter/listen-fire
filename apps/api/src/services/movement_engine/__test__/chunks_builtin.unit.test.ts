@@ -15,6 +15,7 @@ jest.mock('../../logger', () => ({
 
 import { parseMovementExpression } from 'movement-lang';
 import {
+  binding,
   Environment,
   evalMovementExpr,
   type FileTextResolution,
@@ -48,8 +49,8 @@ async function evaluate(
   } = {},
 ) {
   const env = new Environment();
-  env.declare('body', { kind: 'value', value: opts.body ?? null });
-  env.declare('attachment', { kind: 'value', value: opts.attachment ?? null });
+  env.declare('body', binding({ kind: 'value', value: opts.body ?? null }));
+  env.declare('attachment', binding({ kind: 'value', value: opts.attachment ?? null }));
   return evalMovementExpr(parseMovementExpression(text), {
     env,
     ...(opts.resolveFileText ? { resolveFileText: opts.resolveFileText } : {}),

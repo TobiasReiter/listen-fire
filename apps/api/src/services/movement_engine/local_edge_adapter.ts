@@ -39,7 +39,7 @@ import {
 } from '../translation_graph/adapter';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
 import type { LockRequest } from './effect_locks';
-import type { Binding, LocalLandingShape, NodeEdge } from './expression';
+import { binding, type Binding, type LocalLandingShape, type NodeEdge } from './expression';
 
 /** The `adapterType` a write into the run's own graph records. Compared, never
  *  parsed — it names the absence of a system, not one more of them. */
@@ -351,14 +351,14 @@ export function localEdgeAdapter(input: {
     },
 
     async createRecord(write: WriteInput): Promise<WriteResult> {
-      const landing: LocalLanding = {
+      const landing: LocalLanding = binding({
         kind: 'nodePosition',
         landedOn: input.edgeName,
         fields: { ...write.fields },
         fieldOrder: landingFieldOrder(input.edge.landingShape?.fields ?? [], write.fields),
         fieldProvenance: {},
         edges: landingEdges(input.edge.landingShape),
-      };
+      });
       landings.push(landing);
       return refFor(landings.length - 1, landing.fields, write.recordType);
     },

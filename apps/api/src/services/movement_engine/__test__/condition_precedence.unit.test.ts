@@ -5,7 +5,7 @@
 // `(a OR b) AND c` and the second was refused. Fixed under every language
 // version (plans/functional-extract-2026-10-02/2_one_grammar.md).
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { parseMovementCondition, parseMovementExpression, type MovementCondition } from 'movement-lang';
 
 /** A condition's truth as the run reads it: every top-level conjunct holds. */
@@ -23,7 +23,7 @@ async function holds(condition: MovementCondition, env: Environment): Promise<bo
 
 function envOf(bindings: Record<string, unknown>): Environment {
   const env = new Environment();
-  for (const [name, value] of Object.entries(bindings)) env.declare(name, { kind: 'value', value });
+  for (const [name, value] of Object.entries(bindings)) env.declare(name, binding({ kind: 'value', value }));
   return env;
 }
 

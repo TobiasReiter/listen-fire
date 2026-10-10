@@ -62,6 +62,7 @@ import {
   type TracedTree,
 } from './extraction';
 import {
+  binding,
   bindingOf,
   isFileUnreadable,
   MovementEngineError,
@@ -568,14 +569,14 @@ function buildRecords(
     // An extracted record is one this run built, so it updates in place
     // (`write r { … }`) as a record on one of the run's own edges does — the
     // extraction's node is the edge it landed on.
-    const record: NodePosition = {
+    const record: NodePosition = binding({
       kind: 'nodePosition',
       fields,
       fieldOrder: (stage?.fields ?? []).map((f) => f.name),
       fieldProvenance,
       landedOn: spec.name,
       edges,
-    };
+    });
     if (isBlankFields(record, spec)) tallies.empty[spec.name] = (tallies.empty[spec.name] ?? 0) + 1;
     if (isEmptyRecord(record, spec)) {
       tallies.dropped[spec.name] = (tallies.dropped[spec.name] ?? 0) + 1;
@@ -701,7 +702,7 @@ export interface ExtractCallInput {
 function answerOf(landings: NodePosition[], finds: ExtractCallFinds): Binding {
   switch (finds) {
     case 'each':
-      return { kind: 'positions', landings };
+      return binding({ kind: 'positions', landings });
     case 'one':
       return landings[0] ?? { kind: 'value', value: null, provenance: NO_PROVENANCE };
     default:

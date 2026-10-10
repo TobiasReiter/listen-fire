@@ -8,7 +8,7 @@
 // gates away one it should have sent. This pins the agreement over the null case
 // — and, for contrast, over the non-null one.
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import type { ExtractEmission } from '../extraction';
 import { parseMovementCondition, parseMovementExpression } from 'movement-lang';
 
@@ -25,11 +25,11 @@ function emission(fields: Record<string, unknown>): ExtractEmission {
 /** `f` bound to one extracted entity, plus the scalar the message interpolates. */
 function envFor(name: string | null): Environment {
   const env = new Environment();
-  env.declare('f', {
+  env.declare('f', binding({
     kind: 'extractPosition',
     emission: emission({ name, is_raising: true }),
-  });
-  env.declare('requested_partner_name', { kind: 'value', value: 'Ramzi' });
+  }));
+  env.declare('requested_partner_name', binding({ kind: 'value', value: 'Ramzi' }));
   return env;
 }
 

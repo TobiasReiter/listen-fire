@@ -8,7 +8,7 @@
 // nobody sees, or an LLM call burned comparing two unrelated companies that
 // happen to both be AI.
 
-import type { Binding } from '../expression';
+import { binding, type Binding } from '../expression';
 import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
 import {
   LOCAL_ADAPTER_TYPE,
@@ -24,7 +24,7 @@ import { EffectLocks } from '../effect_locks';
 const MUTATION_CONTEXT = { source: { adapterType: 'local' } } as never;
 
 function landing(fields: Record<string, unknown>): Binding {
-  return { kind: 'nodePosition', fields, fieldOrder: Object.keys(fields), fieldProvenance: {}, edges: {} };
+  return binding({ kind: 'nodePosition', fields, fieldOrder: Object.keys(fields), fieldProvenance: {}, edges: {} });
 }
 
 function store(...initial: Binding[]) {
@@ -141,13 +141,13 @@ describe('the store over an edge’s landings', () => {
   });
 
   it('a landing the run did not synthesise is never a candidate', async () => {
-    const foreign: Binding = {
+    const foreign: Binding = binding({
       kind: 'shapePosition',
       shape: 'S',
       node: 'n',
       fields: { name: 'Acme' },
       fieldProvenance: {},
-    };
+    });
     const s = store(foreign, landing({ name: 'Acme' }));
     const resolved = await s.store.adapter.resolveEntity({
       record: { name: 'Acme' },
@@ -195,7 +195,7 @@ describe('the store over an edge’s landings', () => {
 });
 
 describe('the lock an update of a landing holds', () => {
-  const node = () => ({ kind: 'nodePosition' as const, fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} });
+  const node = () => binding({ kind: 'nodePosition', fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} });
 
   it('names the record by its identity: one node, one lock; two nodes, two', () => {
     const a = node();

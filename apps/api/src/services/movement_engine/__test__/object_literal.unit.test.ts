@@ -6,14 +6,14 @@
 // This is the currency an adapter write receives, so nothing along the way
 // may stringify or comma-join it.
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { listUnsupportedConstructs } from '../interpretable';
 import { parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) {
-    env.declare(name, { kind: 'value', value });
+    env.declare(name, binding({ kind: 'value', value }));
   }
   return (await evalMovementExpr(parseMovementExpression(text), { env })).value;
 }
@@ -58,7 +58,7 @@ describe('object literal evaluation', () => {
 
   it('carries the provenance of every value read', async () => {
     const env = new Environment();
-    env.declare('subject', { kind: 'value', value: 'Acme' });
+    env.declare('subject', binding({ kind: 'value', value: 'Acme' }));
     const result = await evalMovementExpr(parseMovementExpression('{ text: subject }'), { env });
     expect(result.value).toEqual({ text: 'Acme' });
     expect(result.provenance).toBeDefined();

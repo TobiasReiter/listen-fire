@@ -4,12 +4,12 @@
 // fixed: a template is present text, and an absent part contributes "". This
 // pins the runtime half of that promise, so the two cannot drift apart.
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { parseMovementExpression } from 'movement-lang';
 
 async function render(raw: string, bindings: Record<string, unknown>): Promise<unknown> {
   const env = new Environment();
-  for (const [name, value] of Object.entries(bindings)) env.declare(name, { kind: 'value', value });
+  for (const [name, value] of Object.entries(bindings)) env.declare(name, binding({ kind: 'value', value }));
   return (await evalMovementExpr(parseMovementExpression(raw), { env })).value;
 }
 

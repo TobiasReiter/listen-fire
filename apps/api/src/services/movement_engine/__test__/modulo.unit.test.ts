@@ -4,14 +4,14 @@
 // all agree a construct is live before an author can use it. Same shape as
 // negate.unit.test.ts (unary minus, 2026-09-28).
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { listUnsupportedConstructs } from '../interpretable';
 import { parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) {
-    env.declare(name, { kind: 'value', value });
+    env.declare(name, binding({ kind: 'value', value }));
   }
   return (await evalMovementExpr(parseMovementExpression(text), { env })).value;
 }

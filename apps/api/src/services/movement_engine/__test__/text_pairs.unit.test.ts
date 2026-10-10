@@ -1,13 +1,13 @@
 // TEXT.PAIRS rendered through the engine, including inside `${…}`
 // interpolation — the Project A composer-row case from the handbook.
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) {
-    env.declare(name, { kind: 'value', value });
+    env.declare(name, binding({ kind: 'value', value }));
   }
   return (await evalMovementExpr(parseMovementExpression(text), { env })).value;
 }

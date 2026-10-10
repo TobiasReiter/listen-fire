@@ -172,7 +172,7 @@ import {
 } from '../serialize';
 import { createSingleFlight } from '../single_flight';
 import type { Binding, SourceRead } from '../expression';
-import { Environment, MovementEngineError, evalMovementExpr } from '../expression';
+import { binding, Environment, MovementEngineError, evalMovementExpr } from '../expression';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
@@ -1751,7 +1751,7 @@ describe('the run clock is pinned to the firing instant', () => {
 describe('array indexing — the `at` expression node, frozen semantics mirrored', () => {
   async function evalAt(value: unknown, index: number): Promise<unknown> {
     const env = new Environment();
-    env.declare('xs', { kind: 'value', value });
+    env.declare('xs', binding({ kind: 'value', value }));
     const expr: Expression = {
       type: 'at',
       expression: { type: 'alias_ref', name: 'xs' },
@@ -4731,7 +4731,7 @@ describe('await landing — the bound sourcePosition round-trips via the FILE-SC
 
   function makeCtx(fileScope: Record<string, Adapter>): RehydrationContext {
     return {
-      resolveInstance: async (id) => ({
+      resolveInstance: async (id) => binding({
         kind: 'instance',
         name: id.name,
         adapterSlug: id.adapterSlug,
@@ -4739,7 +4739,7 @@ describe('await landing — the bound sourcePosition round-trips via the FILE-SC
       }),
       resolveSourceRead: fileScopedResolveSourceRead(fileScope),
       reviveFileRef: (d) => ({ __brand: 'FileRef', ...d, retrieve: async () => ({ stream: {} as never }) }),
-      resolveCodeRef: (name) => ({ kind: 'opaque', what: name }),
+      resolveCodeRef: (name) => binding({ kind: 'opaque', what: name }),
     };
   }
 
@@ -4747,7 +4747,7 @@ describe('await landing — the bound sourcePosition round-trips via the FILE-SC
   // carrying the landing fields, read through the awaitable adapter under a
   // given instance name.
   function awaitedLanding(instanceName: string, adapter: Adapter): Binding {
-    return {
+    return binding({
       kind: 'sourcePosition',
       position: makeUnstablePosition({
         adapterType: 'ask',
@@ -4755,7 +4755,7 @@ describe('await landing — the bound sourcePosition round-trips via the FILE-SC
         data: { Answer: 'yes' },
       }),
       read: { adapter, instanceName },
-    };
+    });
   }
 
   it('rehydrates when instanceName is the file-scope instance (the fix)', async () => {
