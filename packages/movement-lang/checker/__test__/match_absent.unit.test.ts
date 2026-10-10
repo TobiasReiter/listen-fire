@@ -297,6 +297,32 @@ describe('a match under language version 4', () => {
     expect(d[0].message).toContain('!= null');
     expect(errors(3, body)).toEqual([]);
   });
+  describe('a link onto a match handle', () => {
+    const FOUND = [
+      '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+      '  fr = match graph-[:funding_round]-> { unique by (`stage`), stage: "Seed" }',
+    ];
+    const LINK = '  link co -[:rounds]-> fr';
+    it('under 4, unguarded, is MOV_ABSENT_REQUIRED naming the guard', () => {
+      const d = under(4, [...FOUND, LINK].join('\n'));
+      expect(d.map((x) => x.code)).toEqual([C.ABSENT_REQUIRED]);
+      expect(d[0].message).toContain('if fr != null { link co -[:rounds]-> fr }');
+    });
+    it('under 4, tested first, is clean', () => {
+      expect(errors(4, [...FOUND, '  if fr != null {', `  ${LINK}`, '  }'].join('\n'))).toEqual([]);
+    });
+    it('under 4, from a match handle, is MOV_ABSENT_REQUIRED too', () => {
+      const body = [
+        '  c = match graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+        '  r = write graph-[:funding_round]-> { unique by (`stage`), stage: "Seed" }',
+        '  link c -[:rounds]-> r',
+      ].join('\n');
+      expect(errors(4, body)).toEqual([C.ABSENT_REQUIRED]);
+    });
+    it('under 3, unguarded, is clean (the handle was never absent)', () => {
+      expect(errors(3, [...FOUND, LINK].join('\n'))).toEqual([]);
+    });
+  });
   it('crossing 4 every bound match carries the upgrade warning; validating under 4 without upgradingFrom does not', () => {
     const crossing = checkProgram(parseProgram(inMovement(NAMED.join('\n'))), catalog, { languageVersion: 4, upgradingFrom: 3 });
     const w = crossing.find((d) => d.code === C.MATCH_MISS_CONTINUES);

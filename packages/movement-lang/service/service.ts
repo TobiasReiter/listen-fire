@@ -265,7 +265,7 @@ const STDLIB_COMPLETIONS: MovementCompletionItem[] = [
 const RVALUE_KEYWORDS: MovementCompletionItem[] = [
   { label: 'write', insert: 'write ', kind: 'keyword', detail: 'bind the write handle' },
   { label: 'match', insert: 'match ', kind: 'keyword', detail: 'find a record by identity and bind it — the record, or absent when nothing matches; never creates' },
-  { label: 'link', insert: 'link ', kind: 'keyword', detail: 'match a record by a body, link it, and bind it' },
+  { label: 'link', insert: 'link ', kind: 'keyword', detail: 'connect two records you hold — find one first (`to = match …`), then `if to != null { link a -[:e]-> to }`' },
   { label: 'extract from', insert: 'extract from [', kind: 'keyword', detail: 'materialise an extraction' },
   { label: 'callback', insert: 'callback({', kind: 'keyword', detail: 'mint a deferred invocation: bind its .id into a button, await its Called edge' },
 ];

@@ -9034,6 +9034,28 @@ class Checker {
       );
       return undefined;
     }
+    // A link's two ends are required, as a write's parent is: since 4 a match
+    // handle may be absent, and a link onto nothing can't happen — so it needs
+    // the same test first (`T | absent` passed where `T` is required).
+    if (since(this.languageVersion, 4)) {
+      const toName = link.to.kind === 'handle' ? link.to.name : undefined;
+      const toResolution = toName !== undefined ? scope.resolve(toName) : undefined;
+      const toType =
+        toResolution?.kind === 'found' ? this.symbolPositionType(toResolution.symbol) : undefined;
+      const absentEnd =
+        fromType?.kind === 'maybeEmpty'
+          ? { name: link.from, type: fromType }
+          : toName !== undefined && toType?.kind === 'maybeEmpty'
+            ? { name: toName, type: toType }
+            : undefined;
+      if (absentEnd !== undefined) {
+        this.report(
+          DiagnosticCodes.ABSENT_REQUIRED,
+          `'${absentEnd.name}' is ${describePosition(absentEnd.type.of)} that may not be there, so this link can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: 'if ${absentEnd.name} != null { link ${link.from} -[:${link.edge}]-> ${toName ?? '…'} }'.`,
+          link.span,
+        );
+      }
+    }
     if (fromType?.kind === 'local') {
       if (link.to.kind === 'match') {
         this.report(
