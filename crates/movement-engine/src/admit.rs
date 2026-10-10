@@ -10,7 +10,7 @@
 //! every built-in an expression may call. Whatever this engine would refuse
 //! mid-run because of what the program SAYS is refused here instead; what it
 //! refuses because of what a value turns out to HOLD (a `__proto__` key
-//! spread in, a record compared by identity or shaped like a binding, a
+//! spread in, a record compared by identity, a
 //! field that is `Object.prototype`'s) cannot be known from the text, and
 //! stays a documented mid-run failure (the README's "Errors a run can meet
 //! mid-run"). What needs the checker's stamps is refused after the check

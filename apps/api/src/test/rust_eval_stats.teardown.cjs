@@ -44,8 +44,10 @@ const path = require('node:path');
 // (language_version_unsupported) rather than running it to the check's
 // refusal. The forward merge of cloud-native into chunk 7A (2026-10-10)
 // runs v1 1060, v2 1362 (its version-99 case refused by that name), v3 1918
-// whole; the floors are those less a margin
-// of 2. A floor
+// whole; the floors are those less a margin of 2. Chunk 7A Task 4b (host
+// data never read as an engine object, 2026-10-11) runs the same v1 1060,
+// v2 1362, v3 1918 whole (no corpus program held a binding-shaped dict);
+// the floors stay those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.

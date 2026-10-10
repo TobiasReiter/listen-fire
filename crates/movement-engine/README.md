@@ -823,24 +823,19 @@ REDUCE, GROUPBY, KEYBY and MEMBERS run one member at a time
 version 3). A park writes a held record as the TypeScript's `recordValue`
 descriptor and refuses a function (MOVENG_PARK_NONSERIALIZABLE). On the
 eval wire a built-in crosses as `["f", name]` and `Object.prototype` as
-`["p"]`; the event's binding object crosses as `{kind: 'event'}`. A request
+`["p"]`; a record whose binding object is data (the event, a callback, a
+shape position, a resource) crosses to the host as `["x", id, descriptor]`
+and back as `["x", id]`, and every object the host sends is data. A request
 holding any other record is never made (`HeldRecord`, per request).
-Pinned by tests/oracle/records.json: 3,753 cases — 1,200 programs from 36
-body templates, 4 written out for `onError` and held walks, and 68 directed
-ones (17 dicts a walk or instance reading meets, each under 4 bodies), each
-under versions 1 to 3 where the checker passes it, seed 20261010 — run on
-the TypeScript engine against an adapter
-that answers walks (`items`, `subs`, two records named `__proto__`) and
-writes. The generated dicts include instances with non-text slugs, schemas
-of their own and non-map configs, walks with captured pairs, text where
-records belong, and `kind: "__proto__"`; the templates include lists a
-GROUPBY filing makes hold themselves, and hops past a kept walk whose WHERE
-reads names declared after it; the directed dicts carry the walk and
-instance shapes the TypeScript reads without refusing. GROUPBY and KEYBY answers are read
-by member. The Rust engine ends each as the TypeScript did (0 differ; 147 are
-refused at admission: the programs `AT`-ing a record by a name,
-`at_record_key`, and those walking straight off a `lazy` binding,
-`traversal_root`).
+Pinned by tests/oracle/records.json: 213 cases, seed 20261010, run on the
+TypeScript engine against an adapter that answers walks (`items`, `subs`,
+two records named `__proto__`) and writes; the Rust engine ends each as the
+TypeScript did (0 differ; 3 are refused at admission, `traversal_root`).
+The generator's other 4,269 cases (of 4,482) held a dict whose `kind` names
+a binding kind or an `Object.prototype` name, which the TypeScript engine on
+this branch still takes for a record; chunk 7A Task 4b deleted them (data
+is never an engine object, on this engine already), and they are to be
+regenerated from the fixed TypeScript engine when main's fix merges forward.
 
 ### Expressions that walk, fold, test and name records
 
