@@ -115,7 +115,17 @@ export interface ExtractEmissionDescriptor {
 export type BindingDescriptor =
   | { kind: 'event' }
   | { kind: 'instance'; instance: InstanceIdentityDescriptor }
-  | { kind: 'handle'; handle: WriteRecord; targetType: string; graph: HandleGraphDescriptor }
+  | {
+      kind: 'handle';
+      handle: Omit<WriteRecord, 'old'>;
+      targetType: string;
+      graph: HandleGraphDescriptor;
+      /** The record before the handle's write (`-[:@old]->`), itself a
+       *  handle. A rehearsed write's `old` is the handle itself, which JSON
+       *  cannot nest, so it is said instead (`oldIsSelf`). */
+      old?: BindingDescriptor;
+      oldIsSelf?: true;
+    }
   | { kind: 'extractRoot'; emission: ExtractEmissionDescriptor }
   | { kind: 'extractPosition'; emission: ExtractEmissionDescriptor }
   | {
@@ -490,13 +500,16 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
     // ── Bucket 1 — pure data ──
     case 'event':
       return { kind: 'event' };
-    case 'handle':
+    case 'handle': {
+      const { old, ...handle } = binding.handle;
       return {
         kind: 'handle',
-        handle: binding.handle,
+        handle,
         targetType: binding.targetType,
         graph: serializeHandleGraph(binding.graph),
+        ...(old === binding ? { oldIsSelf: true as const } : old !== undefined ? { old: serialize(old) } : {}),
       };
+    }
     case 'extractRoot':
       return { kind: 'extractRoot', emission: serializeEmission(binding.emission) };
     case 'extractPosition':
@@ -725,13 +738,27 @@ async function rehydrateInPark(
     // ── Bucket 1 — pure data ──
     case 'event':
       return { kind: 'event' };
-    case 'handle':
-      return {
+    case 'handle': {
+      const binding: Extract<Binding, { kind: 'handle' }> = {
         kind: 'handle',
-        handle: descriptor.handle,
+        handle: { ...descriptor.handle },
         targetType: descriptor.targetType,
         graph: await rehydrateHandleGraph(descriptor.graph, ctx),
       };
+      if (descriptor.oldIsSelf === true) {
+        binding.handle.old = binding;
+      } else if (descriptor.old !== undefined) {
+        const old = await rehydrate(descriptor.old);
+        if (old.kind !== 'handle') {
+          throw new MovementEngineError(
+            'MOVENG_RUNTIME',
+            `the parked state's record before a write is ${old.kind}, not a handle`,
+          );
+        }
+        binding.handle.old = old;
+      }
+      return binding;
+    }
     case 'extractRoot':
       return { kind: 'extractRoot', emission: rehydrateEmission(descriptor.emission, ctx) };
     case 'extractPosition':
