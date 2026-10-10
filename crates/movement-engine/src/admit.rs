@@ -77,7 +77,7 @@ impl Plugins<'_> {
 pub fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>, language_version: u32) -> Option<&'m ast::MovementDeclaration> {
     match wanted.filter(|w| !w.is_empty()) {
         Some(wanted) => movements.iter().find(|m| m.name == wanted).or_else(|| {
-            (language_version >= 3).then(|| movements.iter().find(|m| m.name.to_lowercase() == wanted.to_lowercase())).flatten()
+            (language_version >= 3).then(|| movements.iter().find(|m| crate::js::to_lower_case(&m.name) == crate::js::to_lower_case(wanted))).flatten()
         }),
         None if movements.len() == 1 => movements.first(),
         None => None,
@@ -107,7 +107,7 @@ pub fn reachable<'p>(program: &'p ast::Program, entry: Option<&str>, language_ve
         // A tree that does not serialise is read as naming every movement.
         let Some(spelled) = names_spelled(movement) else { return movements };
         for other in &movements {
-            if !reached.iter().any(|r| std::ptr::eq(*r, *other)) && spelled.contains(&other.name.to_lowercase()) {
+            if !reached.iter().any(|r| std::ptr::eq(*r, *other)) && spelled.contains(&crate::js::to_lower_case(&other.name)) {
                 reached.push(other);
             }
         }
@@ -123,13 +123,13 @@ fn names_spelled(movement: &ast::MovementDeclaration) -> Option<BTreeSet<String>
     fn strings(value: &serde_json::Value, names: &mut BTreeSet<String>) {
         match value {
             serde_json::Value::String(text) => {
-                names.insert(text.to_lowercase());
+                names.insert(crate::js::to_lower_case(text));
                 let units: Vec<u16> = text.encode_utf16().collect();
                 let mut at = 0;
                 while at < units.len() {
                     match movement_parser::scan::scan_name(&units, at) {
                         Some((name, end)) => {
-                            names.insert(name.to_lowercase());
+                            names.insert(crate::js::to_lower_case(&name));
                             at = end;
                         }
                         None => at += 1,
@@ -203,7 +203,7 @@ pub fn refusals(
     let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
     // `resolveCallee`: as written, or from version 3 in any letter case.
     let movement_named = |callee: &str| {
-        movement_names.contains(callee) || (language_version >= 3 && movement_names.iter().any(|m| m.to_lowercase() == callee.to_lowercase()))
+        movement_names.contains(callee) || (language_version >= 3 && movement_names.iter().any(|m| crate::js::to_lower_case(m) == crate::js::to_lower_case(callee)))
     };
     // File-level values, in source order: each may read the ones before it.
     // One already refused binds its name and is not walked again.
@@ -688,7 +688,7 @@ impl<'p> Callees<'p> {
     fn callee(&self, written: &str, bound_in_body: bool) -> Option<&'p ast::MovementDeclaration> {
         self.movement(written).or_else(|| {
             let bound = bound_in_body || self.file_scope.contains(written);
-            (self.language_version >= 3 && !bound).then(|| self.movements.iter().copied().find(|m| m.name.to_lowercase() == written.to_lowercase())).flatten()
+            (self.language_version >= 3 && !bound).then(|| self.movements.iter().copied().find(|m| crate::js::to_lower_case(&m.name) == crate::js::to_lower_case(written))).flatten()
         })
     }
 
@@ -2129,7 +2129,7 @@ impl Names<'_> {
         }
         let declared = self.binds(&call.callee)
             || self.language_version < 3
-            || self.movements.iter().any(|m| m.to_lowercase() == call.callee.to_lowercase());
+            || self.movements.iter().any(|m| crate::js::to_lower_case(m) == crate::js::to_lower_case(&call.callee));
         if declared {
             return Err("function_call".into());
         }
@@ -2972,7 +2972,7 @@ fn selection(expr: &Expression) -> Option<(&str, &[TraversalStep])> {
 /// Whether `callee` resolves to an imported plugin (`resolveCallee`): as
 /// written, or from version 3 in any letter case, as a function does.
 fn names_plugin(plugins: &BTreeSet<String>, callee: &str, language_version: u32) -> bool {
-    plugins.contains(callee) || (language_version >= 3 && plugins.iter().any(|p| p.to_lowercase() == callee.to_lowercase()))
+    plugins.contains(callee) || (language_version >= 3 && plugins.iter().any(|p| crate::js::to_lower_case(p) == crate::js::to_lower_case(callee)))
 }
 
 /// An expression slot, lowered.

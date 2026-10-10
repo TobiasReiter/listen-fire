@@ -967,7 +967,7 @@ mod tests {
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
-                Poll::Ready(Ok(Evaluated { value: Js::str(field.to_uppercase()), prov: Prov::Built(Trail::default()) }))
+                Poll::Ready(Ok(Evaluated { value: Js::str(crate::js::to_upper_case(&field)), prov: Prov::Built(Trail::default()) }))
             }))
         }
 
@@ -1005,7 +1005,7 @@ mod tests {
         let text = format!("CONCAT(\"<\", {})", fields.iter().map(|f| format!("msg.`{f}`")).collect::<Vec<_>>().join(", "));
         let reader = Counting::default();
         let (result, waits) = drive(&in_run(&reader), &expression(&text));
-        let expected: String = std::iter::once("<".to_string()).chain(fields.iter().map(|f| f.to_uppercase())).collect();
+        let expected: String = std::iter::once("<".to_string()).chain(fields.iter().map(|f| crate::js::to_upper_case(f))).collect();
         assert!(matches!(result.unwrap().value, Js::String(s) if s == expected));
         assert_eq!(*reader.asked.borrow(), fields);
         assert_eq!(waits, 20);

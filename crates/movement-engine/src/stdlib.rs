@@ -69,8 +69,8 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
         "trim" => text_or_null(|s| js::trim(s).to_string()),
         // Rust's case mappings are Unicode's, with JavaScript's special
         // casings (ß → SS, the final sigma).
-        "lower" => text_or_null(str::to_lowercase),
-        "upper" => text_or_null(str::to_uppercase),
+        "lower" => text_or_null(js::to_lower_case),
+        "upper" => text_or_null(js::to_upper_case),
         "length" => match &a {
             Js::Undefined | Js::Null => Js::Number(0.0),
             Js::Array(list) => Js::Number(list.items().len() as f64),
@@ -201,7 +201,7 @@ fn figure_number(figure: &Js) -> Js {
             if !base.is_finite() {
                 return Js::Null;
             }
-            Js::Number(base * suffix.map_or(1.0, |s| magnitude(&s.to_lowercase())))
+            Js::Number(base * suffix.map_or(1.0, |s| magnitude(&js::to_lower_case(&s))))
         }
     }
 }
@@ -301,7 +301,7 @@ fn format_figure(value: &Js, code: &Js) -> Js {
     let Some(n) = coerce_to_number(value) else { return Js::Null };
     let sign = if n < 0.0 { "-" } else { "" };
     let amount = compact_magnitude(n.abs());
-    let code = if code.is_nullish() { String::new() } else { js::trim(&code.to_js_string()).to_uppercase() };
+    let code = if code.is_nullish() { String::new() } else { js::to_upper_case(js::trim(&code.to_js_string())) };
     if code.is_empty() {
         return Js::String(format!("{sign}{amount}"));
     }
@@ -629,7 +629,7 @@ fn text_slug(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
     let bare: String = decomposed.chars().filter(|c| !('\u{300}'..='\u{36f}').contains(c)).collect();
     let mut slug = String::new();
     let mut gap = false;
-    for c in bare.to_lowercase().chars() {
+    for c in js::to_lower_case(&bare).chars() {
         if c.is_ascii_lowercase() || c.is_ascii_digit() {
             if gap && !slug.is_empty() {
                 slug.push('-');
@@ -1039,13 +1039,14 @@ mod tests {
         assert_eq!(host("http://a%41.com"), "aa.com");
     }
 
-    /// An accepted divergence (README): Rust's tables are Unicode 17,
-    /// Node 22's ICU is Unicode 16, and U+0295 is cased for the final-sigma
-    /// rule only in the newer one. TypeScript lowers "ΑΣʕ" to "ασʕ".
+    /// Node 22's ICU (Unicode 16), not Rust's tables (Unicode 17): U+0295
+    /// is cased for the final-sigma rule in the older one, so the sigma
+    /// before it is not final.
     #[test]
-    fn case_mapping_follows_rusts_unicode_tables() {
-        assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "αςʕ");
+    fn case_mapping_follows_nodes_icu() {
+        assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "ασʕ");
         assert_eq!(text(call("lower", vec![s("ΑΣ ʕ")])), "ας ʕ");
+        assert_eq!(text(call("lower", vec![s("AΣ\u{345}")])), "aς\u{345}");
     }
 
     #[test]

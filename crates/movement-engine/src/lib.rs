@@ -21,6 +21,7 @@ pub mod admit;
 mod awaits;
 pub mod bindings;
 pub mod call;
+mod case_mapping;
 mod code;
 pub mod collection;
 mod combinator;

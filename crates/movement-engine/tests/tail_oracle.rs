@@ -4,6 +4,7 @@
 //! generate.ts.
 
 use movement_engine::extract::bound_text;
+use movement_engine::js;
 use serde_json::Value as Json;
 
 /// A source file bounded for the prompt under a seeded
@@ -24,4 +25,26 @@ fn a_file_is_bounded_as_the_typescript_bounds_it() {
         assert_eq!(chars, case["chars"].as_f64().unwrap(), "{label}");
         assert_eq!(from.map(|n| n as u64), case["truncatedFrom"].as_u64(), "{label}");
     }
+}
+
+/// `LOWER` and `UPPER` of seeded texts as Node's ICU maps them: not Rust's
+/// tables, which follow the toolchain's Unicode.
+#[test]
+fn case_maps_as_nodes_icu_maps_it() {
+    let cases: Vec<Json> = serde_json::from_str(include_str!("oracle/case_mapping.json")).expect("case_mapping.json reads");
+    assert!(cases.len() >= 4000);
+    let mut mismatches = Vec::new();
+    let mut differs_from_rust = 0;
+    for case in &cases {
+        let text = case["text"].as_str().unwrap();
+        let (lower, upper) = (js::to_lower_case(text), js::to_upper_case(text));
+        if lower != case["lower"].as_str().unwrap() || upper != case["upper"].as_str().unwrap() {
+            mismatches.push(format!("{text:?}: {lower:?} {upper:?}, node {} {}", case["lower"], case["upper"]));
+        }
+        if text.to_lowercase() != lower || text.to_uppercase() != upper {
+            differs_from_rust += 1;
+        }
+    }
+    assert!(mismatches.is_empty(), "{} of {} differ:\n{}", mismatches.len(), cases.len(), mismatches.join("\n"));
+    eprintln!("{differs_from_rust} of {} map differently under Rust's own tables", cases.len());
 }

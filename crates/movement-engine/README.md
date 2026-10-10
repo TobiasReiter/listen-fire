@@ -211,7 +211,7 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `trim`, `\s` | JavaScript's WhiteSpace + LineTerminator set (with U+FEFF, without U+0085); not `char::is_whitespace` | `js::tests::strings_are_utf16_where_javascript_says_so` |
 | `.length`, `<` on text | UTF-16 code units; comparison in code-unit order | `js::tests::strings_are_utf16_where_javascript_says_so`, `stdlib::tests::flat_builtins` |
 | `split("")` | per UTF-16 unit: BMP text splits per character, astral text goes back to TypeScript | `stdlib::tests::flat_builtins`, `oracle::…` (`flat.split`) |
-| `toLowerCase`/`toUpperCase` | Rust's case mapping, which follows Unicode 17; Node 22's ICU follows Unicode 16. **An accepted divergence**: a character whose properties changed between the two can map differently. Known case: U+0295 (ʕ) counts as cased for the final-sigma rule in Rust and not in Node, so `"ΑΣʕ"` lowers to `αςʕ` here and `ασʕ` in TypeScript | `stdlib::tests::case_mapping_follows_rusts_unicode_tables` |
+| `toLowerCase`/`toUpperCase` | Node 22.20's ICU (77.1, Unicode 16), not Rust's tables (which follow the toolchain's Unicode, 17 today): each code point's mapping and the final sigma's neighbours read off Node into src/case_mapping.rs by tests/oracle/case_mapping.ts; every case mapping the engine does goes through `js::to_lower_case` / `js::to_upper_case` (`LOWER`, `UPPER`, case-insensitive name lookup, enum matching, slugs) | tests/tail_oracle.rs (case_mapping.json), `stdlib::tests::case_mapping_follows_nodes_icu` |
 | `new Date(text)` | the ISO forms V8's spec parser reads (`YYYY-MM-DD`, `…THH:mm[:ss[.f…]]` with `Z`/`±HH:mm`; day 31 rolls over, `24:00`, three fraction digits kept); a text with no digit is Invalid; anything else (V8's legacy parser, a date-time without offset = local time) goes back to TypeScript | `js_date::tests::reads_the_iso_forms_as_v8_does`, `js_date::tests::leaves_what_only_v8_can_read_unknown` |
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
 | `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) | `js_date::tests::iso_strings_outside_four_digit_years`, `js_date::tests::time_clip_bounds_and_truncates`, `tests::coalesce_short_circuits_from_version_three` |
@@ -1314,7 +1314,7 @@ Sizes are estimates (XS, S, M, L).
 |---|---|---|---|---|
 | 1 | the regex dialect | `js_regex` reads most of it; hands back lookbehind, named groups and `\k<name>`, octal and `\c` escapes, a class escape at a range end, groups nested past 100, a step or depth budget met | `js_regex` kept and made complete, with no budget (a budget diverges where TypeScript is merely slow); oracle regex.json | M |
 | 2 | date parsing | ISO texts only; V8's legacy forms handed back, including under every `<` between two texts with a digit (filter.rs) and ORDER BY | V8's legacy parser ported (dateparser.cc: keyword tables, parenthesised comments, zone names, two-digit years), fuzzed against Node; an ISO date-time without offset read in a local zone that becomes a run input | L |
-| 3 | Unicode case mapping | Rust's tables (Unicode 17); a known divergence (detail below) | Node's ICU (Unicode 16): code points assigned after 16 unmapped, the cased and final-sigma deltas fixed (U+0295); the data pinned to Node 22's ICU | S |
+| 3 | Unicode case mapping | mirrored (chunk 7A Task 5): Node 22.20's ICU 77.1 (Unicode 16), its tables generated into src/case_mapping.rs by tests/oracle/case_mapping.ts, the final sigma's cased and ignorable neighbours probed through `toLowerCase` itself; regenerate when the pinned Node moves | oracle case_mapping.json (4,000 seeded texts, seed 20261013, tests/tail_oracle.rs) | done |
 | 3a | the local edge's word split (`/[^\p{L}\p{N}]+/u`, FUZZY candidates) | src/letter_number.rs, generated from Node 22.20 (Unicode 16) by tests/oracle/letter_number.ts | regenerated with row 3's data whenever the pinned Node moves; the language's own Unicode version once one is named | XS |
 | 4 | ORDER BY and `SORT` over mixed key kinds | V8's binary insertion to 64 records; past 64 with mixed kinds, MOVENG_UNSUPPORTED (detail below) | V8's TimSort ported exactly (run detection, merge_lo/merge_hi, galloping); oracle by seeded mixed-key lists | M to L |
 | 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | read as any other field | a fixed table of `Object.prototype` member names with zod's issue text per declared type, and the prototype-set semantics, in crate::extract::validate; the oracle marks these replies (`prototype_key`) | M |
@@ -1331,16 +1331,15 @@ Sizes are estimates (XS, S, M, L).
 
 #### The rows in detail
 
-Rows 3 and 4 are the two a run admitted here can meet today:
+Row 4 is the one a run admitted here can meet today:
 
-- **Row 3: one reading differs.** `toLowerCase` /
-  `toUpperCase` follow Rust's tables (Unicode 17); Node 22's ICU follows
-  Unicode 16. A character whose properties changed between the two can map
-  differently. The known case is U+0295 (ʕ), which counts as cased for the
-  final-sigma rule in Rust and not in Node: `"ΑΣʕ"` lowers to `αςʕ` here and
-  `ασʕ` in TypeScript. Pinned by
-  `stdlib::tests::case_mapping_follows_rusts_unicode_tables`, and not
-  handed back.
+- **Row 3 (mirrored): case maps as Node's ICU maps it.** Rust's own
+  tables follow Unicode 17 and differed from Node 22's (Unicode 16) on
+  characters whose properties changed between the two: U+0295 (ʕ) is cased
+  for the final-sigma rule in Node and not in Rust, so `"ΑΣʕ"` lowered to
+  `αςʕ` here and `ασʕ` in TypeScript. The tables are now Node's, pinned to
+  Node 22.20 (ICU 77.1); a Node upgrade that moves ICU regenerates them
+  (tests/oracle/case_mapping.ts), and the oracle says what moved.
 - **Row 4: one reading fails loudly: a hop's ORDER BY over keys that mix
   numbers with other kinds, past 64 records.** The sort is V8's
   (crate::order_limit): binary insertion up to 64 items, which reproduces
@@ -1437,8 +1436,8 @@ mirror replaces that plan):
 ### Known divergences
 
 Where this engine differs from the TypeScript engine on a program that
-checks and that admission lets through: row 3 above (pinned), and the rows
-that refuse, hand back or fail loudly rather than differ. None is known
+checks and that admission lets through: the rows above that refuse, hand
+back or fail loudly rather than differ. None is known
 beyond those, and these, held back by decision:
 
 | construct | the TypeScript | this engine | why held |

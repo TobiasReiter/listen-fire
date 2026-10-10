@@ -519,7 +519,7 @@ impl Run<'_> {
     /// or the instance's own construction says so.
     pub(crate) async fn target_adapter(&self, instance: &InstanceBinding) -> Result<Rc<TargetAdapter>, Stop> {
         let dry = self.input.dry_run
-            || instance.construction_config.iter().any(|(k, v)| k == "dry_run" && js::trim(v).to_lowercase() == "true");
+            || instance.construction_config.iter().any(|(k, v)| k == "dry_run" && js::to_lower_case(js::trim(v)) == "true");
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let construction_args: std::collections::BTreeMap<String, String> = instance
             .construction_config

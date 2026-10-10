@@ -8,8 +8,12 @@
 //     (extraction.ts `boundFileText`) under a seeded `EXTRACTION_FILE_CHARS`,
 //     fractional ones included: the content, the marker, and the `chars`
 //     the trace reports.
+//   - case_mapping.json: `LOWER` and `UPPER` of seeded texts (builtins.ts
+//     `applyMovementFunction`, so `toLowerCase` / `toUpperCase` over Node's
+//     ICU), the final sigma's contexts among them.
 
 import type { FileRef } from '../../../../apps/api/src/services/translation_graph/adapter';
+import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
 import { boundFileText, maxFileChars } from '../../../../apps/api/src/services/movement_engine/extraction';
 
 type Rand = () => number;
@@ -18,6 +22,7 @@ type Write = (name: string, text: string) => void;
 /** Every accident's oracle, each from its own seed. */
 export async function writeTailOracles(seeded: (seed: number) => Rand, write: Write): Promise<void> {
   writeFileBoundOracle(seeded(20261012), write);
+  writeCaseMappingOracle(seeded(20261013), write);
 }
 
 const lines = (cases: unknown[]): string => `[\n${cases.map((c) => JSON.stringify(c)).join(',\n')}\n]\n`;
@@ -64,4 +69,45 @@ function writeFileBoundOracle(rand: Rand, write: Write): void {
   }
   write('file_bound.json', lines(cases));
   console.log(`file_bound.json: ${cases.length} cases`);
+}
+
+// ── case_mapping.json ─────────────────────────────────────────────────────────
+
+/** Characters whose case mapping is where engines part: the sigma and what
+ *  it reads around it (cased letters, case-ignorable marks and
+ *  punctuation, a letter both cased and ignorable), expansions (`ß`, `ŉ`,
+ *  `İ`, the iota subscripts, ligatures), titlecase digraphs, and scripts whose
+ *  case Unicode added late (Cherokee, Georgian Mtavruli, Garay). */
+const CASE_UNITS = [
+  'Σ', 'σ', 'ς', 'A', 'a', '1', ' ', '.', "'", ':', 'ͅ', '́', '­', '‍', 'ʕ', 'ʰ', 'ª', 'İ', 'I', 'ı', 'ß', 'ẞ',
+  'ŉ', 'ǅ', 'Ǆ', 'ᾳ', 'ᾼ', 'ΐ', 'Ω', 'ﬀ', 'ﬃ', 'ŀ', 'µ', 'ÿ', 'ſ', 'K', 'Ⅷ', 'ⓐ', 'Ꭰ', 'ꭰ', 'ა', 'Ა', '𐐀', '𐐨', '𞤀', '𐵐', '𐵰',
+  'Ꞔ', 'ꟊ', 'Ɤ', '中', 'é', 'É',
+  // Cased only from Unicode 17, which Rust's own tables follow and Node 22's
+  // ICU does not: Latin additions and Beria Erfe.
+  '\uA7CE', '\uA7D3', '\u{16EA0}', '\u{16EBB}',
+];
+
+function caseText(rand: Rand): string {
+  const length = Math.floor(rand() * 9);
+  let text = '';
+  for (let i = 0; i < length; i++) {
+    if (rand() < 0.15) {
+      let code = Math.floor(rand() * 0x110000);
+      if (code >= 0xd800 && code <= 0xdfff) code -= 0x800;
+      text += String.fromCodePoint(code);
+    } else {
+      text += CASE_UNITS[Math.floor(rand() * CASE_UNITS.length)]!;
+    }
+  }
+  return text;
+}
+
+function writeCaseMappingOracle(rand: Rand, write: Write): void {
+  const cases: unknown[] = [];
+  for (let i = 0; i < 4000; i++) {
+    const text = caseText(rand);
+    cases.push({ text, lower: applyMovementFunction('lower', [text]), upper: applyMovementFunction('upper', [text]) });
+  }
+  write('case_mapping.json', lines(cases));
+  console.log(`case_mapping.json: ${cases.length} cases`);
 }

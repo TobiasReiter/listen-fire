@@ -656,7 +656,7 @@ pub fn normalise_identity_value(value: &Js) -> String {
         Js::Array(list) => list.items().iter().filter(|v| !v.is_nullish()).map(Js::to_js_string).collect::<Vec<_>>().join(" "),
         other => other.to_js_string(),
     };
-    let lowered = js::trim(&flat).to_lowercase();
+    let lowered = js::to_lower_case(js::trim(&flat));
     let mut collapsed = String::with_capacity(lowered.len());
     let mut in_space = false;
     for c in lowered.chars() {

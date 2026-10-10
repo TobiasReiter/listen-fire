@@ -273,12 +273,12 @@ fn values_match(asserted: &Js, candidate: &Js, version: u32) -> bool {
     if is_blank(asserted, version) || is_blank(candidate, version) {
         return false;
     }
-    let target = asserted.to_js_string().to_lowercase();
+    let target = js::to_lower_case(&asserted.to_js_string());
     let pool = match candidate {
         Js::Array(list) => list.items().clone(),
         other => vec![other.clone()],
     };
-    pool.iter().any(|v| !v.is_nullish() && v.to_js_string().to_lowercase() == target)
+    pool.iter().any(|v| !v.is_nullish() && js::to_lower_case(&v.to_js_string()) == target)
 }
 
 /// `candidateIsAllExact`.
@@ -428,7 +428,7 @@ fn fold_key_value(value: &Js) -> Option<String> {
 fn fold_text(text: &str) -> String {
     let decomposed = crate::env_services::current().normalize(text, crate::env_services::NormalForm::Nfkd);
     let unmarked: String = decomposed.chars().filter(|c| !crate::letter_number::is_mark(*c)).collect();
-    let mut folded = js::trim(&unmarked).to_lowercase();
+    let mut folded = js::to_lower_case(js::trim(&unmarked));
     let scheme_end = scheme_length(&folded);
     if let Some(end) = scheme_end {
         folded = folded[end..].to_string();

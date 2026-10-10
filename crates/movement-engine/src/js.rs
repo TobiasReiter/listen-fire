@@ -501,6 +501,62 @@ pub fn is_bmp(s: &str) -> bool {
     s.chars().all(|c| (c as u32) < 0x10000)
 }
 
+// ── Case ──────────────────────────────────────────────────────────────────────
+
+/// `toLowerCase()`, as Node's ICU reads it (crate::case_mapping): Rust's
+/// tables follow the toolchain's Unicode, which runs ahead of Node's, so they
+/// are not used for text. The root locale's one contextual mapping is kept:
+/// a capital sigma with a cased letter before it and none after it (case
+/// ignorable letters skipped on both sides) lowers to `ς`.
+pub fn to_lower_case(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    for (at, &c) in chars.iter().enumerate() {
+        if c == 'Σ' {
+            let final_sigma = cased_neighbour(chars[..at].iter().rev()) && !cased_neighbour(chars[at + 1..].iter());
+            out.push(if final_sigma { 'ς' } else { 'σ' });
+        } else {
+            map_case(&crate::case_mapping::LOWER, c, &mut out);
+        }
+    }
+    out
+}
+
+/// `toUpperCase()`, as Node's ICU reads it: no context in the root locale.
+pub fn to_upper_case(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        map_case(&crate::case_mapping::UPPER, c, &mut out);
+    }
+    out
+}
+
+fn map_case(mapping: &crate::case_mapping::Mapping, c: char, out: &mut String) {
+    let code = c as u32;
+    let run = mapping.runs.partition_point(|&(start, ..)| start <= code).checked_sub(1).map(|i| mapping.runs[i]);
+    if let Some((start, count, stride, delta)) = run
+        && (code - start).is_multiple_of(stride)
+        && (code - start) / stride < count
+    {
+        out.push(char::from_u32(code.wrapping_add_signed(delta)).expect("a case run maps to a scalar value"));
+    } else if let Ok(i) = mapping.expansions.binary_search_by_key(&code, |&(from, _)| from) {
+        out.push_str(mapping.expansions[i].1);
+    } else {
+        out.push(c);
+    }
+}
+
+/// ICU's final-sigma test on one side: the first neighbour that is not case
+/// ignorable is cased.
+fn cased_neighbour<'c>(mut side: impl Iterator<Item = &'c char>) -> bool {
+    side.find(|&&c| !in_ranges(crate::case_mapping::IGNORABLE, c)).is_some_and(|&c| in_ranges(crate::case_mapping::CASED, c))
+}
+
+fn in_ranges(ranges: &[(u32, u32)], c: char) -> bool {
+    let code = c as u32;
+    ranges.partition_point(|&(from, _)| from <= code).checked_sub(1).is_some_and(|i| code <= ranges[i].1)
+}
+
 // ── Numbers ───────────────────────────────────────────────────────────────────
 
 /// `Number(text)`: StringToNumber. Rust's `parse::<f64>` disagrees in both

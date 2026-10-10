@@ -492,8 +492,8 @@ fn match_option(candidate: &Js, options: &[String]) -> Option<String> {
     if let Some(exact) = options.iter().find(|o| *o == trimmed) {
         return Some(exact.clone());
     }
-    let lowered = trimmed.to_lowercase();
-    options.iter().find(|o| o.to_lowercase() == lowered).cloned()
+    let lowered = js::to_lower_case(trimmed);
+    options.iter().find(|o| js::to_lower_case(o) == lowered).cloned()
 }
 
 /// `salvagedQuote`: the quote in a citation that is not text — under

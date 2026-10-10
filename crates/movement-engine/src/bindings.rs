@@ -265,10 +265,10 @@ impl Scope {
     /// `resolveFunction`: the declared name of a function in scope (a
     /// movement, a plugin, an import) written `name` in another letter case.
     pub fn resolve_function(&self, name: &str) -> Option<String> {
-        let folded = name.to_lowercase();
+        let folded = crate::js::to_lower_case(name);
         let own = self.bindings.borrow().iter().find_map(|(bound, binding)| {
             let callable = matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque);
-            (callable && bound.to_lowercase() == folded).then(|| bound.clone())
+            (callable && crate::js::to_lower_case(bound) == folded).then(|| bound.clone())
         });
         own.or_else(|| self.parent.as_ref().and_then(|p| p.resolve_function(name)))
     }

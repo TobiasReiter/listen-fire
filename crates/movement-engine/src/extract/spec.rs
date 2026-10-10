@@ -477,7 +477,7 @@ impl<'s> Region<'s> {
 pub fn sanitize_site_name(name: &str) -> String {
     let mut out = String::new();
     let mut gap = false;
-    for c in name.to_lowercase().chars() {
+    for c in crate::js::to_lower_case(name).chars() {
         if c.is_ascii_lowercase() || c.is_ascii_digit() {
             if gap && !out.is_empty() {
                 out.push('_');

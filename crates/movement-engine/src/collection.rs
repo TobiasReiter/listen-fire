@@ -194,7 +194,7 @@ pub(crate) enum Reading {
 
 /// `lookupBuiltin(written)` for the forms this module runs.
 fn builtin_form(written: &str) -> Option<Option<CollectionOp>> {
-    match written.to_lowercase().as_str() {
+    match crate::js::to_lower_case(written).as_str() {
         "map" => Some(Some(CollectionOp::Map)),
         "filter" => Some(Some(CollectionOp::Filter)),
         "reduce" => Some(Some(CollectionOp::Reduce)),
