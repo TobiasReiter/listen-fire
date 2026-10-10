@@ -3723,6 +3723,11 @@ export class ExpressionTyping {
   private reportHandleReadFound(root: string, position: PositionTypeRef | undefined, propertyId: string): void {
     if (position?.kind !== 'handle' || position.written !== true) return;
     if (position.setFields?.has(propertyId) === true) return;
+    // A name the write's result declares and the record does not (the host's
+    // `externalId`, `url`) is the handle's own — its identity and the write's
+    // link — and reads the same on either side of 4.
+    const ofRecord = positionSchemaOfRef(position)?.properties[propertyId] !== undefined;
+    if (!ofRecord && position.resultShape[propertyId] !== undefined) return;
     if (!this.upgradeCrosses(4)) return;
     this.report(
       TypedDiagnosticCodes.HANDLE_READ_FOUND,

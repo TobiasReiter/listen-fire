@@ -207,6 +207,11 @@ describe('a field the write did not set, read off its handle', () => {
   it('crossing 4 reading a field the body set with plain `:` is silent', () => {
     expect(crossing([SET_NAME, '  write crm-[:notes]-> { title: org.`Name` }'].join('\n'))).toEqual([]);
   });
+  it("crossing 4 the handle's own fields (externalId, url) do not warn; an unset record field still does", () => {
+    expect(crossing([SET_NAME, read('url')].join('\n'))).toEqual([]);
+    expect(crossing([SET_NAME, read('externalId')].join('\n'))).toEqual([]);
+    expect(crossing([SET_NAME, read('Domains')].join('\n'))).toHaveLength(1);
+  });
   it('crossing 4 a `?:` fill does not count as set', () => {
     const fill = '  org = write crm-[:companies]-> { unique by (`Name`), Name: "Acme", Domains ?: ["acme.com"] }';
     expect(crossing([fill, read('Domains')].join('\n'))).toHaveLength(1);
