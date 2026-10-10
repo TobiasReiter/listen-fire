@@ -20,7 +20,7 @@ import type { FileTextResolution, TransformInvocationResult } from '../extractio
 import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import { positionData } from '../../translation_graph/types';
+import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../test_host';
 import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
 import type { ParkedScopeState } from '../serialize';
@@ -64,7 +64,7 @@ const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } fr
   '\n',
 );
 
-function emailAdapter(): Adapter {
+function emailAdapter(messages: ReadonlyArray<Record<string, unknown>> = []): Adapter {
   return {
     adapterType: 'email',
     supportedTriggers: [],
@@ -76,7 +76,8 @@ function emailAdapter(): Adapter {
       const data = positionData(input.position) as Record<string, unknown> | undefined;
       return data?.[input.fieldId];
     },
-    getRelated: async () => [],
+    getRelated: async ({ fieldId }) =>
+      fieldId === 'companies' ? messages.map((data) => ({ position: makeUnstablePosition({ adapterType: 'attio', recordType: 'company', data }) })) : [],
     createRecord: async () => ({ adapterType: 'email', externalId: 'r1', data: {} }),
     updateRecord: async (input) => ({ adapterType: 'email', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
     deleteRecord: async () => ({}),
@@ -99,6 +100,26 @@ interface Case {
   /** What the host's file reader answers, for every file. */
   fileText?: FileTextResolution;
   event?: TriggerEvent;
+  /** The companies a block over `crm` walks. */
+  messages?: ReadonlyArray<Record<string, unknown>>;
+  /** A park sink that can suspend: what it is handed is compared. */
+  parks?: true;
+}
+
+/** A park sink that suspends, recording each call (its state key for key). */
+function suspendingSink(parked: unknown[]) {
+  const base = makeFakeParkSink().sink;
+  return {
+    ...base,
+    commitSuspension: async (input: { address: string; state: unknown }) => {
+      parked.push(['commitSuspension', input.address, JSON.stringify(input.state)]);
+    },
+    // A request's fields, not their order: the engines name the segment in
+    // different places, which no host reads.
+    commitLimitPause: async (pause: unknown) => {
+      parked.push(['commitLimitPause', pause]);
+    },
+  };
 }
 
 /** One run on one engine: what it returned or threw, and what the model
@@ -108,6 +129,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
   process.env.MOVEMENT_ENGINE = engine;
   const asked: unknown[] = [];
   const invoked: unknown[] = [];
+  const parked: unknown[] = [];
   const replies = [...(c.replies ?? [])];
   const fileText = c.fileText;
   const input: RunMovementInput = {
@@ -118,7 +140,8 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
     ...c.spend,
     host: makeTestHost({
-      adapters: { resolve: () => emailAdapter() },
+      adapters: { resolve: () => emailAdapter(c.messages) },
+      ...(c.parks === true ? { park: { sink: suspendingSink(parked) } } : {}),
       llm: {
         client: {
           call: async (request): Promise<LlmCallResult> => {
@@ -137,9 +160,9 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
     }),
   };
   try {
-    return { result: await runMovement(input), asked, invoked };
+    return { result: await runMovement(input), asked, invoked, parked };
   } catch (error) {
-    return { error, asked, invoked };
+    return { error, asked, invoked, parked };
   } finally {
     if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
     else process.env.MOVEMENT_ENGINE = previous;
@@ -156,6 +179,7 @@ async function agree(c: Case, onRust: { runsWhole: true } | { refused: string })
   else expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, hostCalls: {} });
   expect(rust.asked).toEqual(ts.asked);
   expect(rust.invoked).toEqual(ts.invoked);
+  expect(rust.parked).toEqual(ts.parked);
   if ('error' in ts) {
     expect('error' in rust).toBe(true);
     const rustError = 'error' in rust ? rust.error : undefined;
@@ -252,6 +276,40 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect([reason, rustRunStats.notAdmitted]).toEqual([reason, { [reason]: 1 }]);
       expect(rustRunStats.hostCalls).toEqual({});
     }
+  });
+
+  it('suspends before a plugin call a suspendAt names, as the TypeScript engine does: it never invokes the plugin', async () => {
+    const source = 'import { fetch_url } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n  page = fetch_url(url: msg.`text`)\n}';
+    // With a sink that can suspend: the run parks before the call.
+    const parked = await agree({ source, spend: { suspendAt: ['s0.c0'] }, parks: true }, { runsWhole: true });
+    expect(parked.invoked).toEqual([]);
+    expect(parked.parked).toEqual([['commitSuspension', 's0', expect.stringContaining('"suspended":true')]]);
+    // Without one, there is nowhere to park.
+    const failed = await agree({ source, spend: { suspendAt: ['s0.c0'] } }, { runsWhole: true });
+    expect(failed.invoked).toEqual([]);
+    expect('error' in failed && String(runFailureCause(failed.error))).toContain('nowhere durable to park');
+  });
+
+  it('suspends inside a block where the cap is met at an extraction’s priced stage, as the TypeScript engine does', async () => {
+    const source = [
+      'import { fetch_url } from plugins',
+      'import { attio } from adapters',
+      'import { acme_main } from credentials',
+      'crm = attio(credentials: acme_main)',
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  crm-[e:companies]-> {',
+      '    d = extract from [e.`name`] through [fetch_url(url: e.`name`)] {',
+      '      name: "a"',
+      '    }',
+      '  }',
+      '}',
+    ].join('\n');
+    const c: Case = { source, spend: { priorSpentMicrodollars: 1000, costCapMicrodollars: 1000 }, messages: [{ name: 'one' }, { name: 'two' }] };
+    const parked = await agree({ ...c, parks: true }, { runsWhole: true });
+    expect(parked.invoked).toEqual([]);
+    expect(parked.parked.map((p) => (p as unknown[])[0])).toEqual(expect.arrayContaining(['commitLimitPause', 'commitSuspension']));
+    const failed = await agree(c, { runsWhole: true });
+    expect('error' in failed && runFailureCause(failed.error)).toBeInstanceOf(RunCostCapExceeded);
   });
 
   describe('records held as values reaching a request', () => {

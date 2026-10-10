@@ -37,9 +37,23 @@ pub fn output_under(spec: &PluginSpec, language_version: u32) -> Option<&PluginO
 }
 
 impl Run<'_> {
+    /// `executeCall` for a plugin: the statement's next call opened (so it is
+    /// numbered, a `suspendAt` before it suspends, and a statement re-run
+    /// hands back what it bound rather than invoking it again), then
+    /// `executePluginCall`.
+    pub(crate) async fn plugin_call(&self, written: &str, args: &[(String, movement_parser::ast::ExprSlot)], scope: &Rc<Scope>) -> Result<Binding, Stop> {
+        let event = self.begin_call_event().await?;
+        if let Some(replayed) = &event.replayed {
+            return Ok(replayed.value.clone().unwrap_or_else(|| Binding::Value(ValueBinding { value: Js::Undefined, trail: None, many: false })));
+        }
+        let bound = self.invoke_plugin(written, args, scope).await?;
+        self.finish_call(&event, Some(&bound));
+        Ok(bound)
+    }
+
     /// `executePluginCall`: `args` are the call's named arguments, in the
     /// order written.
-    pub(crate) async fn plugin_call(&self, written: &str, args: &[(String, movement_parser::ast::ExprSlot)], scope: &Rc<Scope>) -> Result<Binding, Stop> {
+    async fn invoke_plugin(&self, written: &str, args: &[(String, movement_parser::ast::ExprSlot)], scope: &Rc<Scope>) -> Result<Binding, Stop> {
         let registered = self.registered_plugin(written, scope);
         let declared = self.plugin_spec(&registered).and_then(|spec| output_under(spec, self.version())).cloned();
         let Some(declared) = declared else {
