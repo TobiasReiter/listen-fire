@@ -89,7 +89,7 @@ jest.mock('../../../lib/prompts/execute', () => ({
 import { execute } from '../../../lib/prompts/execute';
 import { runMovement } from '../run';
 
-import type { InstanceSchema } from 'movement-lang';
+import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
@@ -227,7 +227,11 @@ function webhookEvent(payload: Record<string, unknown>): TriggerEvent {
   return { pipelineInputId: 'pi-match', adapterType: 'email', triggerType: 'webhook', payload };
 }
 
-function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
+function run(
+  body: string[],
+  adapters: { email: Adapter; attio: Adapter },
+  options: { languageVersion?: LanguageVersion } = {},
+) {
   const source =
     PRELUDE +
     [
@@ -240,6 +244,7 @@ function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
   return runMovement({
     source,
     movementName: 'intake',
+    ...options,
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
@@ -267,7 +272,7 @@ describe('a match against a system', () => {
     '  co = match crm-[:companies]-> { unique by (FUZZY `name`)',
     '    name: "Acme"',
     '  }',
-    '  write crm-[:notes]-> { title: co.`summary` }',
+    '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
   ];
 
   it('a lone fuzzy hit goes to the judge; accepted, the handle is the record and the block runs', async () => {
@@ -285,11 +290,11 @@ describe('a match against a system', () => {
     ]);
   });
 
-  it('the judge declining is a miss: the scope ends, nothing is written', async () => {
+  it('under version 3 the judge declining is a miss: the scope ends, nothing is written', async () => {
     mockExecute.mockResolvedValue(judged(null));
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio', { company: [ACME] });
-    const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter });
+    const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter }, { languageVersion: 3 });
 
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(attio.creates).toEqual([]);
@@ -302,7 +307,7 @@ describe('a match against a system', () => {
     await run(
       [
         '  co = match crm-[:companies]-> { unique by (`name`), name: "Acme Incorporated" }',
-        '  write crm-[:notes]-> { title: co.`summary` }',
+        '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: email.adapter, attio: attio.adapter },
     );
@@ -310,17 +315,17 @@ describe('a match against a system', () => {
     expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'already there' } }]);
   });
 
-  it('an unbound match is a gate: what follows runs only when the record exists', async () => {
+  it('under version 3 an unbound match is a gate: what follows runs only when the record exists', async () => {
     const gate = [
       '  match crm-[:companies]-> { unique by (`name`), name: "Acme Incorporated" }',
       '  write crm-[:notes]-> { title: "known company" }',
     ];
     const hit = makeFakeAdapter('attio', { company: [ACME] });
-    await run(gate, { email: makeFakeAdapter('email').adapter, attio: hit.adapter });
+    await run(gate, { email: makeFakeAdapter('email').adapter, attio: hit.adapter }, { languageVersion: 3 });
     expect(hit.creates.map((c) => c.fields.title)).toEqual(['known company']);
 
     const miss = makeFakeAdapter('attio');
-    const result = await run(gate, { email: makeFakeAdapter('email').adapter, attio: miss.adapter });
+    const result = await run(gate, { email: makeFakeAdapter('email').adapter, attio: miss.adapter }, { languageVersion: 3 });
     expect(miss.creates).toEqual([]);
     expect(result.writes).toEqual([]);
   });
@@ -342,7 +347,7 @@ describe('the shortlist narrowed by a non-equality conjunct', () => {
     const result = await run(
       [
         '  co = match crm-[:companies]-> { unique by (`name`, `summary` != "stale"), name: "Acme" }',
-        '  write crm-[:notes]-> { title: co.`summary` }',
+        '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: makeFakeAdapter('email').adapter, attio: attio.adapter },
     );
@@ -359,7 +364,7 @@ describe('a match against a node this run built', () => {
       [
         '  write deduped-[:companies]-> { unique by (`name`), name: "Acme", summary: "first" }',
         '  hit = match deduped-[:companies]-> { unique by (`name`), name: "Acme" }',
-        '  write crm-[:notes]-> { title: hit.`summary` }',
+        '  if hit != null { write crm-[:notes]-> { title: hit.`summary` } }',
       ],
       { email: email.adapter, attio: attio.adapter },
     );
@@ -368,7 +373,7 @@ describe('a match against a node this run built', () => {
     expect(found).toMatchObject({ kind: 'match', local: { edge: 'companies' }, committed: false, writtenValues: {} });
   });
 
-  it('a miss ends the scope and adds nothing to the edge', async () => {
+  it('under version 3 a miss ends the scope and adds nothing to the edge', async () => {
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');
     await run(
@@ -378,7 +383,58 @@ describe('a match against a node this run built', () => {
         '  write crm-[:notes]-> { title: "never" }',
       ],
       { email: email.adapter, attio: attio.adapter },
+      { languageVersion: 3 },
     );
     expect(attio.creates).toEqual([]);
+  });
+});
+
+describe('a miss under language version 4', () => {
+  const NAMED_MISS = [
+    '  existing = match crm-[:companies]-> { unique by (`name`), name: "Nope Ltd" }',
+    '  write crm-[:notes]-> { title: IF existing == null THEN "absent" ELSE "found" END }',
+  ];
+
+  // The fake answers by record type alone, so a miss is a CRM with no companies.
+  it('binds absent and the next statement runs', async () => {
+    const attio = makeFakeAdapter('attio');
+    const result = await run(NAMED_MISS, { email: makeFakeAdapter('email').adapter, attio: attio.adapter });
+    expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'absent' } }]);
+    // No match row on a miss: the run log shows only what was found or written.
+    expect(result.writes.map((w) => w.kind ?? 'write')).toEqual(['write']);
+  });
+
+  it('a hit binds the record exactly as before', async () => {
+    const attio = makeFakeAdapter('attio', { company: [ACME] });
+    await run([NAMED_MISS[0].replace('Nope Ltd', 'Acme Incorporated'), NAMED_MISS[1]], {
+      email: makeFakeAdapter('email').adapter,
+      attio: attio.adapter,
+    });
+    expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'found' } }]);
+  });
+
+  it('under version 3 the same miss still ends the scope', async () => {
+    const attio = makeFakeAdapter('attio');
+    const result = await run(
+      NAMED_MISS,
+      { email: makeFakeAdapter('email').adapter, attio: attio.adapter },
+      { languageVersion: 3 },
+    );
+    expect(attio.creates).toEqual([]);
+    expect(result.writes).toEqual([]);
+  });
+
+  it('a miss against a node this run built binds absent too', async () => {
+    const attio = makeFakeAdapter('attio');
+    const result = await run(
+      [
+        '  write deduped-[:companies]-> { unique by (`name`), name: "Acme" }',
+        '  missing = match deduped-[:companies]-> { unique by (`name`), name: "Beta" }',
+        '  write crm-[:notes]-> { title: IF missing == null THEN "absent" ELSE "found" END }',
+      ],
+      { email: makeFakeAdapter('email').adapter, attio: attio.adapter },
+    );
+    expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'absent' } }]);
+    expect(result.writes.some((w) => w.kind === 'match')).toBe(false);
   });
 });

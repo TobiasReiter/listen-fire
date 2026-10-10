@@ -2268,16 +2268,42 @@ function describeMatchTarget(match: MatchExpression): string {
 }
 
 /**
- * Control-flow sentinel — the documented find-on-missing semantics: a
+ * Control-flow sentinel — the find-on-missing semantics before version 4: a
  * `match` found no record, so the ENCLOSING SCOPE ends quietly. Caught at
  * scope boundaries (a fan-out iteration skips, a callee body returns, the
  * movement body simply stops); nothing throws outward, because
  * transactionality across systems can't be guaranteed.
+ *
+ * From version 4 a miss binds absent and the block carries on, and the checker
+ * refuses the unnamed match and the link body form, so only programs pinned to
+ * an older version reach this.
  */
 class ScopeEndedQuietly extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ScopeEndedQuietly';
+  }
+}
+
+type MatchMissPolicy = 'absent' | 'endScope';
+
+/** A match that found nothing: bind absent, or end the enclosing scope. */
+function missed(input: {
+  onMiss: MatchMissPolicy;
+  bindingName: string | undefined;
+  env: Environment;
+  reason: string;
+}): Binding {
+  switch (input.onMiss) {
+    case 'absent': {
+      const absent: Binding = { kind: 'value', value: null };
+      if (input.bindingName !== undefined) input.env.declare(input.bindingName, absent);
+      return absent;
+    }
+    case 'endScope':
+      throw new ScopeEndedQuietly(input.reason);
+    default:
+      return neverAsAny(input.onMiss);
   }
 }
 
@@ -2482,6 +2508,11 @@ class Interpreter {
    *  read (a plugin or adapter reads the same value off the run scope). */
   private get languageVersion(): LanguageVersion {
     return this.input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
+  }
+
+  /** What a match statement or a bound match does when it finds nothing. */
+  private get matchMissPolicy(): MatchMissPolicy {
+    return since(this.languageVersion, 4) ? 'absent' : 'endScope';
   }
 
   /** Where a trace entry lands: the running flow's own buffer inside a
@@ -4456,7 +4487,7 @@ class Interpreter {
         break;
       }
       case 'match':
-        await this.executeMatch(statement.match, undefined, env);
+        await this.executeMatch(statement.match, undefined, env, { onMiss: this.matchMissPolicy });
         break;
       case 'link':
         await this.executeLink(statement.link, undefined, env);
@@ -4570,7 +4601,7 @@ class Interpreter {
         await this.interpretBlock(value.block, name, env, stmtAddress);
         break;
       case 'match':
-        await this.executeMatch(value.match, name, env);
+        await this.executeMatch(value.match, name, env, { onMiss: this.matchMissPolicy });
         break;
       case 'link':
         await this.executeLink(value.link, name, env);
@@ -10029,10 +10060,14 @@ class Interpreter {
     }
     // The body form is `match` then `link`: the match runs exactly as the
     // statement would (its own run-log row, a quiet end of the scope on a
-    // miss), and the link then connects the record it found.
+    // miss), and the link then connects the record it found. Version 4
+    // refuses this form, so a miss here always ends the scope.
     const to =
       link.to.kind === 'match'
-        ? { name: bindingName ?? '{ … }', binding: await this.executeMatch(link.to.match, bindingName, env) }
+        ? {
+            name: bindingName ?? '{ … }',
+            binding: await this.executeMatch(link.to.match, bindingName, env, { onMiss: 'endScope' }),
+          }
         : { name: link.to.name, binding: env.resolve(link.to.name) };
     const at = `link ${link.from} -[:${link.edge}]-> ${to.name}`;
     const resolved = await this.resolveLinkStatement({ from: link.from, edge: link.edge, to }, env, at);
@@ -10234,9 +10269,11 @@ class Interpreter {
    * what it found — its full result data via `readRecord` where the adapter
    * offers it, over the candidate's snapshot.
    *
-   * On a miss the ENCLOSING SCOPE ends quietly — the documented
-   * find-on-missing semantics (a fan-out iteration skips; nothing throws,
-   * because transactionality across systems can't be guaranteed).
+   * On a miss, `onMiss` decides: `'absent'` (version 4) binds absent, as an
+   * empty `FIRST(…)` does, and the block carries on; `'endScope'` (before
+   * version 4) ends the ENCLOSING SCOPE quietly (a fan-out iteration skips;
+   * nothing throws, because transactionality across systems can't be
+   * guaranteed). Either way a miss adds no run-log row.
    *
    * The run log gets a `kind: 'match'` row so an inspector sees what the run
    * resolved to. It is not a write: nothing counted as written counts it.
@@ -10245,10 +10282,11 @@ class Interpreter {
     match: MatchExpression,
     bindingName: string | undefined,
     env: Environment,
+    options: { onMiss: MatchMissPolicy },
   ): Promise<Binding> {
     const rooted = await this.bindTargetRoots(match.target, env);
     if (rooted !== undefined) {
-      const found = await this.executeMatch({ ...match, target: rooted.target }, bindingName, rooted.env);
+      const found = await this.executeMatch({ ...match, target: rooted.target }, bindingName, rooted.env, options);
       if (bindingName !== undefined) env.declare(bindingName, found);
       return found;
     }
@@ -10257,7 +10295,15 @@ class Interpreter {
       const root = pathRootName(match.target.path);
       const rootBinding = root !== undefined ? env.resolve(root) : undefined;
       if (rootBinding?.kind === 'nodePosition') {
-        return this.executeLocalMatch({ match, target: match.target, from: rootBinding, bindingName, env, at });
+        return this.executeLocalMatch({
+          match,
+          target: match.target,
+          from: rootBinding,
+          bindingName,
+          env,
+          at,
+          onMiss: options.onMiss,
+        });
       }
     }
     const resolved = await this.resolveWriteTarget(match, env, 'match');
@@ -10279,9 +10325,12 @@ class Interpreter {
       asserted: fields,
     });
     if (matched === undefined) {
-      throw new ScopeEndedQuietly(
-        `${at}: no existing ${resolved.recordType} matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
-      );
+      return missed({
+        onMiss: options.onMiss,
+        bindingName,
+        env,
+        reason: `${at}: no existing ${resolved.recordType} matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
+      });
     }
     let resultData: Record<string, unknown> = {
       ...(matched.url !== undefined ? { url: matched.url } : {}),
@@ -10330,6 +10379,7 @@ class Interpreter {
     bindingName: string | undefined;
     env: Environment;
     at: string;
+    onMiss: MatchMissPolicy;
   }): Promise<Binding> {
     const { match, from, env, at } = input;
     const { edgeName, where } = this.singleWriteEdge(input.target.path);
@@ -10359,9 +10409,12 @@ class Interpreter {
     });
     const landing = matched !== undefined ? store.landingOf(matched.externalId) : undefined;
     if (landing === undefined) {
-      throw new ScopeEndedQuietly(
-        `${at}: no landing on '${edgeName}' matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
-      );
+      return missed({
+        onMiss: input.onMiss,
+        bindingName: input.bindingName,
+        env,
+        reason: `${at}: no landing on '${edgeName}' matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
+      });
     }
     this.recordLocalWrite({
       record: {
