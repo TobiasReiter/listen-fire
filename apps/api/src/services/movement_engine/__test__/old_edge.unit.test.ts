@@ -90,7 +90,7 @@ jest.mock('../../../lib/prompts/execute', () => ({
 import { runMovement } from '../run';
 
 import type { InstanceSchema, LanguageVersion } from 'movement-lang';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -99,9 +99,10 @@ import {
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000022' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000022');
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: true, edgeProperties: true }, resources: true };
@@ -209,7 +210,7 @@ const crmSchema: InstanceSchema = {
   supportsInPlaceUpdate: true,
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
   instanceSchemas: { attio: crmSchema },
 });
@@ -252,12 +253,16 @@ function run(
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return makeInbox();
-      if (adapterType === 'attio') return crm;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return makeInbox();
+          if (adapterType === 'attio') return crm;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
   });
 }
 
