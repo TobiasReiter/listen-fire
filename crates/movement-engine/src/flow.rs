@@ -386,8 +386,8 @@ impl<F: Future> Future for InFlow<'_, F> {
     type Output = (F::Output, FlowState);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Nothing here is pinned in place: the future is boxed.
-        let this = unsafe { self.get_unchecked_mut() };
+        // Every field is Unpin (the future is boxed), so this is too.
+        let this = self.get_mut();
         let mut state = this.state.take().expect("a flow is polled until it ends, not after");
         this.run.swap_flow(&mut state);
         let polled = this.future.as_mut().poll(cx);
@@ -445,5 +445,74 @@ impl<T: Clone> Future for SharedWait<T> {
         }
         self.shared.waiters.borrow_mut().push(cx.waker().clone());
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shared(group: &str) -> LockMode {
+        LockMode::Shared(group.into())
+    }
+
+    fn held(acquire: &Acquire) -> bool {
+        acquire.granted.get()
+    }
+
+    #[test]
+    fn a_free_gate_is_taken_at_once_and_one_group_shares_it() {
+        let gate = Rc::new(Gate::default());
+        let (a, b) = (gate.acquire(shared("name")), gate.acquire(shared("name")));
+        assert!(held(&a) && held(&b), "one group shares the lock");
+        let other = gate.acquire(shared("domain"));
+        assert!(!held(&other), "another group waits");
+        gate.release();
+        assert!(!held(&other), "until every holder has given it back");
+        gate.release();
+        assert!(held(&other));
+        gate.release();
+        assert!(gate.idle());
+    }
+
+    /// First come, first served: a flow that could join the holders still
+    /// waits behind anyone already waiting, so one group cannot starve
+    /// another (effect_locks.ts `Gate`).
+    #[test]
+    fn a_compatible_ask_waits_behind_a_waiter() {
+        let gate = Rc::new(Gate::default());
+        let first = gate.acquire(shared("name"));
+        let exclusive = gate.acquire(LockMode::Exclusive);
+        let late = gate.acquire(shared("name"));
+        assert!(held(&first) && !held(&exclusive) && !held(&late));
+        gate.release();
+        assert!(held(&exclusive) && !held(&late), "the exclusive ask was first in line");
+        gate.release();
+        assert!(held(&late));
+        gate.release();
+        assert!(gate.idle());
+    }
+
+    /// A shared group, then an exclusive ask, then the group again: each is
+    /// granted in arrival order, a run of compatible waiters together.
+    #[test]
+    fn release_grants_in_arrival_order_a_compatible_run_together() {
+        let gate = Rc::new(Gate::default());
+        let exclusive = gate.acquire(LockMode::Exclusive);
+        let (a, b) = (gate.acquire(shared("k")), gate.acquire(shared("k")));
+        let then = gate.acquire(LockMode::Exclusive);
+        let c = gate.acquire(shared("k"));
+        assert!(held(&exclusive) && !held(&a) && !held(&b) && !held(&then) && !held(&c));
+        gate.release();
+        assert!(held(&a) && held(&b), "the two shared waiters at the front, together");
+        assert!(!held(&then) && !held(&c), "the exclusive ask behind them stops the run");
+        gate.release();
+        assert!(!held(&then));
+        gate.release();
+        assert!(held(&then) && !held(&c));
+        gate.release();
+        assert!(held(&c));
+        gate.release();
+        assert!(gate.idle());
     }
 }

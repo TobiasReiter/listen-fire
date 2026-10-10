@@ -1,23 +1,22 @@
 //! `parallel` and `race` (chunk 7A Task 4): every program in
 //! tests/oracle/parallel.json run on this engine as the TypeScript engine ran
-//! it. The host is scripted by the TypeScript's run: of the requests this
-//! engine has in flight, it answers the one the TypeScript asked next (each
-//! adapter call, each cross-run lock taken, by name); the rest of the host
-//! (the check, resolutions, the trace, the clock, a lock given back) is
-//! answered as soon as it is asked. So a case passes only if this engine
-//! can ask in the TypeScript's interleaving: an arm held back where the
-//! TypeScript's ran on (a lock gate it does not share, a join it closes too
-//! early) leaves the request the TypeScript asked next unasked, and the case
-//! differs there. Ids are minted in the order creates are answered, so the
-//! writes then come back in the order the TypeScript's write ledger hands
-//! them back, each with the id its create was minted.
-//!
-//! The TypeScript's interleaving itself turns on how many microtasks each
-//! of its layers takes between two requests, which this engine does not
-//! reproduce, so the order a FIFO host would see is not compared: only that
-//! this engine admits the TypeScript's order, and ends as it ended.
+//! it. Both runs had the same scheduled host: the adapter's calls and the
+//! cross-run locks are answered one at a time, and the run goes as far as it
+//! can before the next: the oldest step's request first, and among the
+//! requests one step let several flows ask, the least by its text (which of
+//! them reached the host first turns on the TypeScript's microtasks). Here,
+//! everything else the host
+//! serves is answered as soon as it is asked, as the TypeScript's in-process
+//! host answers it). So the two runs must ask the same requests in the same
+//! order: an arm held back where the TypeScript's ran on (a lock gate it does
+//! not share, a join it closes too early), or let through where it waited,
+//! asks out of turn. A lock taken carries what its flow asked next (the only
+//! flow the answer lets run), so which arm took it, and for which key, is
+//! compared too. Ids are minted in the order creates are answered, and the
+//! writes come back in the order the TypeScript's write ledger hands them
+//! back, each with its id.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use serde_json::{Value as Json, json};
 
@@ -87,9 +86,11 @@ impl Host<'_> {
             ("adapters", "call") => {
                 let args = self.sent.plain(&request.args["args"]);
                 match request.args["method"].as_str() {
-                    Some("resolveEntity") => Some(json!(["resolveEntity", [field(&args["record"], "body"), field(&args["record"], "payload")]])),
+                    Some("resolveEntity") => Some(json!(["resolveEntity", [field(&args["record"], "body"), field(&args["record"], "payload"), field(&args["record"], "tag")]])),
                     Some("getRelated") => Some(json!(["getRelated", args["fieldId"]])),
-                    Some("createRecord") => Some(json!(["createRecord", [field(&args["fields"], "body"), field(&args["fields"], "payload")]])),
+                    Some("createRecord") => Some(json!(["createRecord", [field(&args["fields"], "body"), field(&args["fields"], "payload"), field(&args["fields"], "tag")]])),
+                    Some("updateRecord") => Some(json!(["updateRecord", [args["externalId"], field(&args["fields"], "body")]])),
+                    Some("linkRecords") => Some(json!(["linkRecords", [args["from"]["externalId"], args["edgeName"], args["to"]["externalId"]]])),
                     _ => None,
                 }
             }
@@ -102,7 +103,7 @@ impl Host<'_> {
             ("check", "program") => json!({ "value": self.check }),
             ("adapters", "resolve") => {
                 let slug = request.args.get("adapterType").and_then(Json::as_str).unwrap_or_default();
-                let methods = ["listEntryPoints", "describe", "resolveEntity", "getFieldValue", "getRelated", "createRecord", "updateRecord", "deleteRecord"];
+                let methods = ["listEntryPoints", "describe", "resolveEntity", "getFieldValue", "getRelated", "createRecord", "updateRecord", "deleteRecord", "linkRecords"];
                 json!({ "value": { "instance": format!("i-{slug}"), "adapterType": slug, "methods": methods } })
             }
             ("control.cancel", _) => json!({ "value": false }),
@@ -139,54 +140,110 @@ impl Host<'_> {
                 let (o, d) = (self.id(), self.id());
                 json!(["o", o, [["adapterType", "kg"], ["externalId", format!("n{}", self.created)], ["data", ["o", d, []]]]])
             }
+            Some("updateRecord") => {
+                let (o, d) = (self.id(), self.id());
+                json!(["o", o, [["adapterType", "kg"], ["externalId", args["externalId"]], ["data", ["o", d, []]], ["association", "none"]]])
+            }
+            Some("linkRecords") => {
+                let o = self.id();
+                json!(["o", o, [["created", true]]])
+            }
             Some("describe") => Json::Null,
             other => panic!("the oracle's adapter answers nothing else: {other:?} {}", request.args),
         }
     }
 }
 
-/// The arm a recorded request is one of: where its write is written (a
-/// keyed write's `at`, else its body's name), `None` for a count or a lock.
-fn arm_of(event: &Json) -> Option<String> {
-    let [body, payload] = event.get(1)?.as_array()?.as_slice() else { return None };
-    let at = payload.get("at").and_then(Json::as_str).or(body.as_str())?;
-    Some(at.split('.').next().unwrap_or(at).to_string())
-}
-
-fn arms(events: &[Json]) -> Vec<String> {
-    let mut arms: Vec<String> = events.iter().filter_map(arm_of).collect();
-    arms.sort();
-    arms.dedup();
-    arms
-}
-
-fn of_arm(events: &[Json], arm: &str) -> Vec<Json> {
-    events.iter().filter(|e| arm_of(e).as_deref() == Some(arm)).cloned().collect()
-}
-
-/// A keyed write's request, or a lock: what two arms racing for one key's
-/// gate ask.
-fn at_a_key_gate(event: &Json) -> bool {
-    event.get(0).and_then(Json::as_str) == Some("acquire")
-        || event.get(1).and_then(|e| e.get(1)).and_then(|p| p.get("at")).is_some()
-}
-
-/// Whether another arm's keyed write holds the key `next` waits for here:
-/// begun (its search asked, or its search in flight) and not yet created;
-/// or past its run's own gates, taking its cross-run lock (whose names do not
-/// say the key: the key's gate is the run's own, taken before). For a lock
-/// taken, any keyed write in progress.
-fn key_held_by_another(next: &Json, asked: &[Json], in_flight: &[Json]) -> bool {
-    if in_flight.iter().any(|e| e[0] == "acquire") {
+/// Two arms one step let run reaching one in-run gate in modes that
+/// exclude each other: the TypeScript's flows reach it in the order their
+/// layers' microtasks let them, this engine's in arm order, so each engine
+/// may let the other arm in first. Where the runs first differ (one of them
+/// at a lock taken), the first lock of that name each then took is by a
+/// different arm, for writes the gate keeps apart; each lock names the
+/// request its flow asked next.
+fn a_gate_race(typescript: &[Json], rust: &[Json]) -> bool {
+    let is_lock = |e: &Json| e[0] == "acquire";
+    if !typescript.first().is_some_and(is_lock) && !rust.first().is_some_and(is_lock) {
+        return false;
+    }
+    let Some(names) = typescript.iter().chain(rust).find(|e| is_lock(e)).map(|e| e[1].clone()) else { return false };
+    let first = |events: &[Json]| events.iter().find(|e| is_lock(e) && e[1] == names).cloned();
+    let (Some(t), Some(r)) = (first(typescript), first(rust)) else { return false };
+    let (a, b) = (&t[2], &r[2]);
+    if arm_of(a).is_none() || arm_of(a) == arm_of(b) {
+        return false;
+    }
+    let name = names[0].as_str().unwrap_or_default();
+    if !name.starts_with("identity ") {
+        // A record's or an edge's lock: exclusive, one name.
         return true;
     }
-    let keyed = |e: &Json| e.get(1).and_then(|e| e.get(1)).and_then(|p| p.get("at")).cloned().map(|at| (e[1][0].clone(), at));
-    let created: Vec<_> = asked.iter().filter(|e| e[0] == "createRecord").filter_map(keyed).collect();
-    let mut begun = asked.iter().chain(in_flight).filter(|e| e[0] == "resolveEntity").filter_map(keyed).filter(|w| !created.contains(w));
-    match keyed(next) {
-        Some((key, at)) => begun.any(|(k, a)| k == key && a != at),
-        None => begun.next().is_some(),
+    // The type lock: FUZZY takes it exclusive; two key-set groups share it
+    // only among themselves; one group shares it, but a key is exclusive.
+    let (body_a, body_b) = (a[1][0].as_str().unwrap_or_default(), b[1][0].as_str().unwrap_or_default());
+    let fuzzy = |body: &str| body.starts_with('f');
+    let group = |w: &Json| !w[1][2].is_null();
+    fuzzy(body_a) || fuzzy(body_b) || group(a) != group(b) || body_a == body_b
+}
+
+/// Two flows one step let run asking the very same lock (the same names):
+/// the requests are one text, so no host can tell them apart, and each
+/// engine may answer the other's first. The two locks taken next are the
+/// same pair, for the same two requests.
+fn twin_locks(typescript: &[Json], rust: &[Json]) -> bool {
+    let [t0, t1, ..] = typescript else { return false };
+    let [r0, r1, ..] = rust else { return false };
+    let lock = |e: &Json| (e[0] == "acquire").then(|| e[1].clone());
+    let names = lock(t0);
+    names.is_some() && [t1, r0, r1].iter().all(|e| lock(e) == names) && t0[2] == r1[2] && t1[2] == r0[2] && t0[2] != t1[2]
+}
+
+/// Where two engines let different arms through a gate first, what must
+/// still hold: every request asked, and no other; each arm's own requests
+/// in order; the writes in the ledger's order (their ids follow the order
+/// creates were answered, so not those); the ending.
+fn race_problems(typescript: &[Json], rust: &[Json], ts_writes: &Json, rust_writes: &Json, ended: &Json, ts_ended: &Json) -> Vec<Json> {
+    let mut problems = Vec::new();
+    if ended != ts_ended {
+        problems.push(json!({ "outcome": ended }));
     }
+    let sorted = |events: &[Json]| {
+        let mut texts: Vec<String> = events.iter().map(Json::to_string).collect();
+        texts.sort();
+        texts
+    };
+    if sorted(typescript) != sorted(rust) {
+        problems.push(json!("not the same requests"));
+    }
+    let mut arms: Vec<String> = typescript.iter().filter_map(arm_of).collect();
+    arms.sort();
+    arms.dedup();
+    for arm in arms {
+        let of = |events: &[Json]| events.iter().filter(|e| arm_of(e).as_deref() == Some(arm.as_str())).cloned().collect::<Vec<_>>();
+        if of(typescript) != of(rust) {
+            problems.push(json!({ "arm": arm, "typescript": of(typescript), "rust": of(rust) }));
+        }
+    }
+    let unminted = |ws: &Json| Json::Array(ws.as_array().into_iter().flatten().map(|w| json!({ "body": w["body"], "payload": w["payload"] })).collect());
+    if unminted(ts_writes) != unminted(rust_writes) {
+        problems.push(json!({ "writes": rust_writes }));
+    }
+    problems
+}
+
+/// The arm a recorded request is one of: where it is written (a keyed
+/// write's `at`, an update's or a plain write's text), the arm a lock was
+/// taken for by what its flow asked next; `None` for a count, a link, or
+/// what the movement does outside its arms.
+fn arm_of(event: &Json) -> Option<String> {
+    let at = match event[0].as_str()? {
+        "acquire" => return arm_of(&event[2]),
+        "resolveEntity" | "createRecord" => event[1][1].get("at").and_then(Json::as_str).or(event[1][0].as_str())?,
+        "updateRecord" => event[1][1].as_str()?,
+        _ => return None,
+    };
+    let (arm, _) = at.split_once('.')?;
+    Some(arm.to_string())
 }
 
 /// A record's field as the oracle's fakes record it (`?? null`).
@@ -218,12 +275,13 @@ fn writes(done: &Json, sent: &Sent) -> Json {
 }
 
 #[test]
-fn parallel_arms_interleave_lock_and_order_their_writes_as_the_typescript_does() {
+fn parallel_arms_ask_lock_and_order_their_writes_as_the_typescript_does() {
     let oracle: Json = serde_json::from_str(include_str!("oracle/parallel.json")).expect("parallel.json reads");
     let prelude = oracle["prelude"].as_str().expect("a prelude");
     let cases = oracle["cases"].as_array().expect("cases");
     let mut differ = Vec::new();
-    let mut raced = 0;
+    let mut races = 0;
+    let mut swapped = 0;
     for case in cases {
         let source = prelude.replace("BODY", case["body"].as_str().expect("a body"));
         let event = json!(["o", 0, [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]]);
@@ -242,42 +300,34 @@ fn parallel_arms_interleave_lock_and_order_their_writes_as_the_typescript_does()
         host.sent.register(&event);
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");
-        let expected: Vec<Json> = case["events"].as_array().expect("events").clone();
-        // The TypeScript's requests not yet asked here, in its order.
-        let mut remaining = expected.clone();
-        let mut stalls = Vec::new();
         // What is in flight, each with what the oracle records of it.
-        let mut waiting: VecDeque<(PendingRequest, Option<Json>)> = VecDeque::new();
+        // Each with the step it was asked at (how many recorded requests had
+        // been answered).
+        let mut waiting: Vec<(PendingRequest, Option<Json>, usize)> = Vec::new();
+        // A lock just answered: the next request recorded names its flow.
+        let mut taken: Option<usize> = None;
         let done = loop {
             match step {
-                Step::Done(done) => break Some(done),
+                Step::Done(done) => break done,
                 Step::Pending(pending) => {
                     for request in pending {
                         let event = host.event(&request);
-                        waiting.push_back((request, event));
+                        if let (Some(at), Some(event)) = (taken, &event) {
+                            host.events[at].as_array_mut().expect("an event").push(event.clone());
+                            taken = None;
+                        }
+                        waiting.push((request, event, host.events.len()));
                     }
-                    let rank = |event: &Json| remaining.iter().position(|e| e == event);
-                    let at = waiting.iter().position(|(_, e)| e.is_none()).or_else(|| {
-                        // The TypeScript's next request, if this engine has
-                        // asked it; else, where two arms raced to one key's
-                        // gate and the other won here, the in-flight request
-                        // the TypeScript asked soonest.
-                        waiting.iter().position(|(_, e)| e.as_ref() == remaining.first()).or_else(|| {
-                            let soonest = waiting.iter().enumerate().filter_map(|(i, (_, e))| Some((rank(e.as_ref()?)?, i))).min()?;
-                            let in_flight: Vec<Json> = waiting.iter().filter_map(|(_, e)| e.clone()).collect();
-                            stalls.push(json!({
-                                "typescriptNext": remaining.first(),
-                                "answered": waiting[soonest.1].1,
-                                "rival": remaining.first().is_some_and(|next| key_held_by_another(next, &host.events, &in_flight)),
-                            }));
-                            Some(soonest.1)
-                        })
+                    // The rest of the host first, as an in-process host answers
+                    // it; then the oldest step's request, the least by its text.
+                    let at = waiting.iter().position(|(_, e, _)| e.is_none()).unwrap_or_else(|| {
+                        (0..waiting.len()).min_by_key(|&i| (waiting[i].2, waiting[i].1.as_ref().map(Json::to_string))).expect("a segment waits only on what it asked")
                     });
-                    let Some(at) = at else { break None };
-                    let (request, event) = waiting.remove(at).expect("in flight");
+                    let (request, event, _) = waiting.remove(at);
                     if let Some(event) = event {
-                        let Some(index) = rank(&event) else { break None };
-                        remaining.remove(index);
+                        if event[0] == "acquire" {
+                            taken = Some(host.events.len());
+                        }
                         host.events.push(event);
                     }
                     let reply = movement_engine::read_answer(&host.answer(&request).to_string()).expect("an answer");
@@ -285,50 +335,28 @@ fn parallel_arms_interleave_lock_and_order_their_writes_as_the_typescript_does()
                 }
             }
         };
-        let (ended, written) = match &done {
-            Some(done) if done.get("result").is_some() => (json!({ "completed": true }), writes(done, &host.sent)),
-            Some(done) => (json!({ "unexpected": done }), Json::Null),
-            None => (json!({ "stuck": { "asked": waiting.iter().map(|(_, e)| e.clone()).collect::<Vec<_>>(), "typescriptNext": remaining.first() } }), Json::Null),
-        };
-        let mut problems = Vec::new();
-        if ended != case["outcome"] {
-            problems.push(json!({ "outcome": ended }));
+        // A lock taken last, after which its flow asked nothing more.
+        if let Some(at) = taken {
+            host.events[at].as_array_mut().expect("an event").push(Json::Null);
         }
-        // Every request the TypeScript made, and no other.
-        if !remaining.is_empty() {
-            problems.push(json!({ "unasked": remaining }));
-        }
-        // Each arm asked what it asks in the TypeScript's order.
-        for arm in arms(&expected) {
-            let (ts, rust) = (of_arm(&expected, &arm), of_arm(&host.events, &arm));
-            if ts != rust {
-                problems.push(json!({ "arm": arm, "typescript": ts, "rust": rust }));
-            }
-        }
-        // Only where the TypeScript's next request waits at a key's gate,
-        // which another arm took first here, may the order differ.
-        for stall in &stalls {
-            if !at_a_key_gate(&stall["typescriptNext"]) || stall["rival"] != json!(true) {
-                problems.push(json!({ "stall": stall }));
-            }
-        }
-        // The writes in the write ledger's order; each with the id its own
-        // create was minted (the same ids as the TypeScript's where the run
-        // asked in its order throughout).
-        if written != Json::Null {
-            let unminted = |ws: &Json| Json::Array(ws.as_array().into_iter().flatten().map(|w| json!({ "body": w["body"], "payload": w["payload"] })).collect());
-            if unminted(&written) != unminted(&case["writes"]) || (stalls.is_empty() && written != case["writes"]) {
-                problems.push(json!({ "writes": written, "typescript": case["writes"] }));
-            }
-            for w in written.as_array().into_iter().flatten() {
-                if host.minted.get(&json!([w["body"], w["payload"]]).to_string()) != w["externalId"].as_str().map(str::to_string).as_ref() {
-                    problems.push(json!({ "citation": w, "minted": host.minted.get(&json!([w["body"], w["payload"]]).to_string()), "written": written }));
+        let (ended, written) = if done.get("result").is_some() { (json!({ "completed": true }), writes(&done, &host.sent)) } else { (json!({ "unexpected": done }), Json::Null) };
+        let rust = json!({ "events": host.events, "writes": written, "outcome": ended });
+        let typescript = json!({ "events": case["events"], "writes": case["writes"], "outcome": case["outcome"] });
+        if rust != typescript {
+            let expected = case["events"].as_array().expect("events");
+            let first = host.events.iter().zip(expected).position(|(r, t)| r != t);
+            let raced = first.is_some_and(|f| a_gate_race(&expected[f..], &host.events[f..]));
+            let twins = first.is_some_and(|f| twin_locks(&expected[f..], &host.events[f..]));
+            let problems = if raced || twins { race_problems(expected, &host.events, &case["writes"], &written, &ended, &case["outcome"]) } else { vec![json!("ordered otherwise")] };
+            if problems.is_empty() {
+                if raced {
+                    races += 1;
+                } else {
+                    swapped += 1;
                 }
+            } else {
+                differ.push(json!({ "body": case["body"], "firstDifference": first, "problems": problems, "typescript": typescript, "rust": rust }));
             }
-        }
-        raced += usize::from(!stalls.is_empty());
-        if !problems.is_empty() {
-            differ.push(json!({ "body": case["body"], "problems": problems, "typescript": expected, "rust": host.events }));
         }
     }
     if let Ok(path) = std::env::var("ORACLE_DUMP") {
@@ -336,5 +364,5 @@ fn parallel_arms_interleave_lock_and_order_their_writes_as_the_typescript_does()
     }
     let shown: Vec<String> = differ.iter().take(5).map(|d| d.to_string()).collect();
     assert!(differ.is_empty(), "{} of {} cases differ:\n{}", differ.len(), cases.len(), shown.join("\n"));
-    println!("{} cases, {raced} with two arms racing for one key's gate", cases.len());
+    println!("{} cases, {races} with arms of one step racing for one gate, {swapped} with two identical lock requests answered the other way", cases.len());
 }

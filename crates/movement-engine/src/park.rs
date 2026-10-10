@@ -170,8 +170,37 @@ pub(crate) fn serialize_alone(run: &Run<'_>, binding: &Binding) -> Result<Js, Fa
     serialize_binding(run, "", binding, &mut Vec::new())
 }
 
-/// The nodes one park has written, numbered as first reached (`ParkWriter`).
-type ParkWriter = Vec<*const ()>;
+/// The nodes one park has written, numbered as first reached (`ParkWriter`),
+/// each held so that it outlives the writing that numbers it.
+type ParkWriter = Vec<Written>;
+
+/// A node a park has written: one the run built, or a `nodePosition` dict
+/// a value held.
+enum Written {
+    Node(Rc<RefCell<crate::bindings::Node>>),
+    Dict(Rc<JsObject>),
+}
+
+impl Written {
+    fn is(&self, other: &Written) -> bool {
+        match (self, other) {
+            (Written::Node(a), Written::Node(b)) => Rc::ptr_eq(a, b),
+            (Written::Dict(a), Written::Dict(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+/// The number `written` has in this park, numbering it if it is new.
+fn number(park: &mut ParkWriter, written: Written) -> Result<usize, usize> {
+    match park.iter().position(|p| p.is(&written)) {
+        Some(id) => Err(id),
+        None => {
+            park.push(written);
+            Ok(park.len() - 1)
+        }
+    }
+}
 
 fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Result<Js, Failure> {
     let mut bindings = JsObject::new();
@@ -186,14 +215,12 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
     let kind = |k: &str| ("kind", Js::str(k));
     Ok(match binding {
         Binding::Node(node) => {
-            let address = Rc::as_ptr(node).cast::<()>();
-            if let Some(id) = park.iter().position(|p| *p == address) {
-                return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))]));
-            }
             // Numbered before its edges are walked: an edge back here is a
             // reference, not another lap.
-            let id = park.len();
-            park.push(address);
+            let id = match number(park, Written::Node(node.clone())) {
+                Ok(id) => id,
+                Err(id) => return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))])),
+            };
             let node = node.borrow();
             let mut edges = JsObject::new();
             for (name, edge) in &node.edges {
@@ -418,12 +445,10 @@ fn serialize_shaped(run: &Run<'_>, dict: &Rc<JsObject>, park: &mut ParkWriter) -
         }
         "shapePosition" => object_of(vec![kind("shapePosition"), ("shape", at("shape")?), ("node", at("node")?), ("fields", at("fields")?), ("fieldProvenance", at("fieldProvenance")?)]),
         "nodePosition" => {
-            let address = Rc::as_ptr(dict).cast::<()>();
-            if let Some(id) = park.iter().position(|p| *p == address) {
-                return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))]));
-            }
-            let id = park.len();
-            park.push(address);
+            let id = match number(park, Written::Dict(dict.clone())) {
+                Ok(id) => id,
+                Err(id) => return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))])),
+            };
             // `Object.entries(binding.edges)`.
             let edges = match at("edges")? {
                 Js::Undefined | Js::Null => return Err(eval(type_error("Cannot convert undefined or null to object"))),

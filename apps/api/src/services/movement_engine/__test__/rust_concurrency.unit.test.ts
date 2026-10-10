@@ -27,10 +27,24 @@ const KG = 'kg';
 const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 const kgSchema: InstanceSchema = {
-  positions: { note: { properties: { body: 'text', payload: 'json' }, edges: {} } },
-  collections: { note: { target: 'note' } },
-  writableRoots: { note: { fields: { body: 'text', payload: 'json' }, resultShape: { externalId: 'text' } } },
+  positions: { note: { properties: { body: 'text', payload: 'json' }, edges: {} }, 'Check Response': { properties: { Answer: 'boolean' }, edges: {} } },
+  collections: { note: { target: 'note' }, Check: { target: 'Check' } },
+  writableRoots: {
+    note: { fields: { body: 'text', payload: 'json' }, resultShape: { externalId: 'text' } },
+    // A check whose response an awaitable adapter lands later.
+    Check: {
+      fields: { Prompt: 'text' },
+      resultShape: { externalId: 'text', Prompt: 'text' },
+      requiredFields: ['Prompt'],
+      edges: { Response: { target: 'Check Response', writable: true, awaitable: true, watchable: true, resolvesEmpty: true } },
+    },
+  },
+  createShapes: { 'Check Response': { fields: { Answer: 'boolean' }, resultShape: { externalId: 'text', Answer: 'boolean' }, requiredFields: ['Answer'] } },
 };
+
+/** What the awaitable adapter's `resolveAwait` answers: still pending (with
+ *  the key a wake names the park by), landed, or settled empty. */
+type Landing = 'pending' | 'landed' | 'empty';
 
 const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
@@ -61,8 +75,9 @@ function manualEvent(): TriggerEvent {
   };
 }
 
-function makeKgFake() {
+function makeKgFake(landing: Landing) {
   const creates: WriteInput[] = [];
+  const awaited: unknown[] = [];
   const caps = (): RuntimeCapabilities => ({ traversal: { incoming: false, edgeProperties: false }, resources: false });
   const adapter: Adapter = {
     adapterType: KG,
@@ -83,8 +98,16 @@ function makeKgFake() {
       return { adapterType: KG, externalId: input.externalId, data: {}, association: containerAssociation(input) };
     },
     deleteRecord: async () => ({}),
+    awaitable: {
+      async resolveAwait(point) {
+        awaited.push(point);
+        if (landing === 'pending') return { status: 'pending', correlationKey: `ck:${point.recordId}` };
+        if (landing === 'empty') return { status: 'empty' };
+        return { status: 'landed', correlationKey: `ck:${point.recordId}`, landings: [{ recordId: 'r1', recordType: 'Check Response', fields: { Answer: true } }] };
+      },
+    },
   };
-  return { adapter, creates };
+  return { adapter, creates, awaited };
 }
 
 /** Every call the park sink and the callback store get, in order: the
@@ -202,6 +225,8 @@ interface Case {
   settle?: string;
   /** Fire `resume`, a callback's state, with these values (`fireCallbackBody`). */
   fire?: { values: Record<string, unknown>; callIndex: number };
+  /** What an awaited landing's adapter answers; pending by default. */
+  landing?: Landing;
 }
 
 interface Outcome {
@@ -216,12 +241,14 @@ interface Outcome {
   rows: SinkRows;
   /** The state each minted callback captured. */
   minted: ParkedScopeState[];
+  /** Each point the awaitable adapter was asked to resolve. */
+  awaited: unknown[];
 }
 
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
-  const kg = makeKgFake();
+  const kg = makeKgFake(c.landing ?? 'pending');
   const events: Events = [];
   const sink = makeSink(events, c.rows);
   const minted: ParkedScopeState[] = [];
@@ -251,7 +278,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       wakes: wakes as never[],
     }),
   };
-  const world = () => ({ trace, appends, events, wakes, bodies: kg.creates.map((w) => w.fields), parks: sink.parks, rows: sink, minted });
+  const world = () => ({ trace, appends, events, wakes, bodies: kg.creates.map((w) => w.fields), parks: sink.parks, rows: sink, minted, awaited: kg.awaited });
   const enter = () => {
     if (c.resume === undefined) return runMovement(input);
     const resumed = { ...input, state: c.resume };
@@ -291,12 +318,15 @@ async function agree(c: Case) {
   expect(JSON.stringify(rust.result?.writes)).toBe(JSON.stringify(ts.result?.writes));
   expect(rust.result?.parkedAddress).toBe(ts.result?.parkedAddress);
   expect(rust.result?.parked).toBe(ts.result?.parked);
+  expect(rust.result?.deferredRaceFrames).toEqual(ts.result?.deferredRaceFrames);
+  expect(rust.result?.cancelled).toBe(ts.result?.cancelled);
   expect(rust.trace).toEqual(ts.trace);
   expect(rust.appends).toEqual(ts.appends);
   // Key for key, in order.
   expect(rust.events).toEqual(ts.events);
   expect(rust.wakes).toEqual(ts.wakes);
   expect(rust.bodies).toEqual(ts.bodies);
+  expect(rust.awaited).toEqual(ts.awaited);
   return { ts, rust };
 }
 
@@ -554,10 +584,20 @@ describe('parks resumed across the engines', () => {
   it('defers a race’s settlement under a batch resume, then settles it once', async () => {
     const parked = await agree({ source: RACE });
     const [first] = [...parked.ts.parks.keys()];
-    await parkThenResume({ source: RACE }, [
+    const { last } = await parkThenResume({ source: RACE }, [
       (p) => ({ source: RACE, resume: parkAt(p, first), deferRaceSettlement: true }),
-      (p) => ({ source: RACE, resume: parkAt(p, first), settle: 's0' }),
+      (p) => {
+        // The batch resume settled nothing: it handed the frame back.
+        expect(p.result?.deferredRaceFrames).toEqual(['s0']);
+        expect(p.events.map(([method]) => method)).not.toContain('cancelSubtrees');
+        return { source: RACE, resume: parkAt(p, first), settle: 's0' };
+      },
     ]);
+    // Settled once: the loser cancelled, the continuation run.
+    for (const o of last) {
+      expect(o.events.filter(([method]) => method === 'cancelSubtrees')).toHaveLength(1);
+      expect(o.result?.deferredRaceFrames).toBeUndefined();
+    }
   });
 
   it('re-enters an until that still does not hold, and parks it again', async () => {
@@ -599,4 +639,58 @@ describe('parks resumed across the engines', () => {
     const source = program(['  graph-[n:note]-> {', '    write graph-[:note]-> { body: n.`body` }', '  }', '  write graph-[:note]-> { body: "done" }'].join('\n'));
     await parkThenResume({ source, suspendAt: ['s0.i1.s0'] }, [(p) => ({ source, resume: parkAt(p), reenter: true })]);
   });
+
+  const LANDING = program(['  a = write graph-[:Check]-> { Prompt: "q" }', '  r = await FIRST(a-[:Response]->)', '  write graph-[:note]-> { body: "after" }'].join('\n'));
+
+  it('parks an await on a landing still pending, under the key the adapter names', async () => {
+    const { rust } = await agree({ source: LANDING });
+    expect(rust.events.map(([method]) => method)).toEqual(['commitAwaitPark']);
+    expect(rust.events[0]?.[1]).toContain('"correlationKey":"ck:');
+    expect(rust.result?.parkedAddress).toBe('s1');
+  });
+
+  it('goes on past a landing that has landed, and past one settled empty', async () => {
+    for (const landing of ['landed', 'empty'] as const) {
+      const { rust } = await agree({ source: LANDING, landing });
+      expect(rust.events).toEqual([]);
+      expect(bodies(rust)).toContain('after');
+    }
+  });
+
+  it('re-enters a parked landing await: landed, it goes on; still pending, it parks again', async () => {
+    const landed = await parkThenResume({ source: LANDING }, [(p) => ({ source: LANDING, resume: parkAt(p), reenter: true, landing: 'landed' })]);
+    for (const o of landed.last) expect(bodies(o)).toEqual(['after']);
+    const pending = await parkThenResume({ source: LANDING }, [(p) => ({ source: LANDING, resume: parkAt(p), reenter: true })]);
+    for (const o of pending.last) expect(o.events.map(([method]) => method)).toEqual(['commitAwaitPark']);
+  });
+
+});
+
+/** The one park's state, as the sink stored it. */
+const stateText = (o: Outcome): string => JSON.stringify([...o.parks.values()].map((p) => p.state));
+
+describe('binding kinds parked and resumed across the engines', () => {
+  // Each binds a name of one kind, parks with it in scope, and reads it
+  // after: both engines write the kind key for key, and each engine's state
+  // resumes on both to the same writes and trace.
+  for (const [kind, body, ledger] of [
+    ['sourcePosition', ['  x = FIRST(graph-[n:note ORDER BY `body`]->)', '  await sleep(1h)', '  write graph-[:note]-> { payload: { b: x.`body` } }'], undefined],
+    ['positions', ['  xs = graph-[n:note]-> {', '    return n', '  }', '  await sleep(1h)', '  count = COUNT(xs)', '  write graph-[:note]-> { payload: { n: count } }'], undefined],
+    ['recordValue', ['  x = FIRST(graph-[n:note ORDER BY `body`]->)', '  l = [x, x]', '  await sleep(1h)', '  y = FIRST(l)', '  write graph-[:note]-> { payload: { b: y.`body`, n: COUNT(l) } }'], undefined],
+    [
+      'shapePosition',
+      ['  cb = callback((note: <text>) => { write graph-[:note]-> { body: note } })', '  c = await FIRST(cb-[:Called]->)', '  await sleep(1h)', '  write graph-[:note]-> { payload: { b: c.note } }'],
+      { cb_1: [{ at: '2026-10-05T10:00:00.000Z', values: { note: 'yes' } }] },
+    ],
+  ] as const) {
+    it(`parks a ${kind} and resumes it`, async () => {
+      const source = program(body.join('\n'));
+      const c: Case = { source, ...(ledger !== undefined ? { ledger } : {}) };
+      const { parked, last } = await parkThenResume(c, [(p) => ({ ...c, resume: parkAt(p) })]);
+      expect(parked.ts.error).toBeUndefined();
+      expect(stateText(parked.rust)).toBe(stateText(parked.ts));
+      expect(stateText(parked.ts)).toContain(`"kind":"${kind}"`);
+      for (const o of last) expect([o.error, o.bodies.length]).toEqual([undefined, 1]);
+    });
+  }
 });

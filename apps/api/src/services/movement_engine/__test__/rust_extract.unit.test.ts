@@ -444,8 +444,14 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       '      first: "first name"',
       '    }',
       '  }',
+      // The founders held as the block's returned records.
+      '  kept = found-[k:founder]-> {',
+      '    return k',
+      '  }',
       '  await sleep(1h)',
       '  write crm-[:companies]-> { name: found.name }',
+      '  held = COUNT(kept)',
+      '  write crm-[:companies]-> { name: "${held} kept" }',
       '  found-[f:founder]-> {',
       '    write crm-[:companies]-> { name: f.first }',
       '  }',
@@ -481,14 +487,16 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         else process.env.MOVEMENT_ENGINE = previous;
       }
     }
-    async function resumedOnTypeScript(state: string) {
+    async function resumedOn(engine: 'ts' | 'rust', state: string) {
       const previous = process.env.MOVEMENT_ENGINE;
-      process.env.MOVEMENT_ENGINE = 'ts';
+      process.env.MOVEMENT_ENGINE = engine;
       try {
         const creates: unknown[] = [];
         const parsed: ParkedScopeState = JSON.parse(state);
-        await resumeMovement({ ...baseInput(source), state: parsed, host: hostWith(makeFakeParkSink(), creates) });
-        return creates;
+        resetRustRunStats();
+        const result = await resumeMovement({ ...baseInput(source), state: parsed, host: hostWith(makeFakeParkSink(), creates) });
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {}, shimFaults: 0 });
+        return { creates, writes: result.writes, trace: result.trace };
       } finally {
         if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
         else process.env.MOVEMENT_ENGINE = previous;
@@ -499,11 +507,21 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const rust = await parkOn('rust');
     expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
     expect(rust).toBe(ts);
-    const fromTs = await resumedOnTypeScript(ts);
-    expect(await resumedOnTypeScript(rust)).toEqual(fromTs);
+    // What the extraction yielded, its records and the citations to it.
+    for (const kind of ['"kind":"extractRoot"', '"kind":"extractPosition"', '"kind":"extraction"']) expect(ts).toContain(kind);
+    // Each engine's state resumed on each: the same writes, trace and creates.
+    const resumed = await resumedOn('ts', ts);
+    for (const [engine, state] of [['ts', rust], ['rust', ts], ['rust', rust]] as const) {
+      const other = await resumedOn(engine, state);
+      expect(JSON.stringify(other.creates)).toBe(JSON.stringify(resumed.creates));
+      expect(other.writes).toEqual(resumed.writes);
+      expect(other.trace).toEqual(resumed.trace);
+    }
+    const fromTs = resumed.creates;
     // The resumed writes cite what was extracted, and carry its source.
     expect(fromTs).toEqual([
       expect.objectContaining({ fields: { name: 'Acme' }, evidence: { name: { quote: 'q', type: 'extraction' } }, resources: [expect.objectContaining({ type: 'TEXT' })] }),
+      expect.objectContaining({ fields: { name: '2 kept' } }),
       expect.objectContaining({ fields: { name: 'Ada' } }),
       expect.objectContaining({ fields: { name: 'Grace' } }),
     ]);
