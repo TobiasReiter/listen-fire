@@ -363,9 +363,18 @@ export interface WriteRecord {
 export function snapshotOfHandle(
   binding: Extract<Binding, { kind: 'handle' }>,
 ): Extract<Binding, { kind: 'handle' }> {
+  const { writtenValues, resultData } = binding.handle;
+  // The value bags are copied, not shared: the live handle is the earlier
+  // write's firing record, and a refresh through this snapshot must not
+  // rewrite what that write logged.
   const snapshot: Extract<Binding, { kind: 'handle' }> = {
     ...binding,
-    handle: { ...binding.handle, snapshot: true },
+    handle: {
+      ...binding.handle,
+      writtenValues: { ...writtenValues },
+      ...(resultData !== undefined ? { resultData: { ...resultData } } : {}),
+      snapshot: true,
+    },
   };
   if (binding.handle.old === binding) snapshot.handle.old = snapshot;
   return snapshot;

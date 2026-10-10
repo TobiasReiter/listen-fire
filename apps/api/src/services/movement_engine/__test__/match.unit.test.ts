@@ -404,6 +404,25 @@ describe('a miss under language version 4', () => {
     expect(result.writes.map((w) => w.kind ?? 'write')).toEqual(['write']);
   });
 
+  it('a judge outage binds absent, and the trace says the judge never answered', async () => {
+    mockExecute.mockRejectedValue(new Error('anthropic 529'));
+    const attio = makeFakeAdapter('attio', { company: [ACME] });
+    const result = await run(
+      [
+        '  existing = match crm-[:companies]-> { unique by (FUZZY `name`), name: "Acme" }',
+        NAMED_MISS[1],
+      ],
+      { email: makeFakeAdapter('email').adapter, attio: attio.adapter },
+    );
+    expect(mockExecute).toHaveBeenCalled();
+    expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'absent' } }]);
+    const warnings = result.trace.filter(
+      (e): e is Extract<typeof e, { kind: 'warning' }> => e.kind === 'warning',
+    );
+    expect(warnings.map((w) => w.code)).toEqual(['MOVENG_MATCH_JUDGE_UNAVAILABLE']);
+    expect(warnings[0].message).toContain('judge unavailable: anthropic 529');
+  });
+
   it('a hit binds the record exactly as before', async () => {
     const attio = makeFakeAdapter('attio', { company: [ACME] });
     await run([NAMED_MISS[0].replace('Nope Ltd', 'Acme Incorporated'), NAMED_MISS[1]], {

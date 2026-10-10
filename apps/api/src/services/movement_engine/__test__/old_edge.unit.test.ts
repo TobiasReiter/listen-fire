@@ -407,6 +407,21 @@ describe('a chained write updates the handle in place (version 4)', () => {
     expect(notes(crm)).toEqual(['second.example', 'old.example', 'third.example']);
   });
 
+  it('under dry run an in-place write also meets itself at @old: nothing changed, so before is after', async () => {
+    const crm = makeCrm([ACME]);
+    await run(
+      [
+        '  org = write rehearsed-[:companies]-> { unique by (`name`), name: "Acme Incorporated", domain: "second.example" }',
+        '  write org { domain: "third.example" }',
+        note('IF FIRST(org-[:@old]->) == org THEN "rehearsed" ELSE "live" END'),
+      ],
+      crm.adapter,
+      { head: ['  rehearsed = attio(credentials: acme_main, dry_run: true)'] },
+    );
+    expect(notes(crm)).toEqual(['rehearsed']);
+    expect(crm.updates).toEqual([]);
+  });
+
   it('under version 3 write org { … } leaves org as the first handle (stale, as before)', async () => {
     const crm = makeCrm([ACME]);
     await run(

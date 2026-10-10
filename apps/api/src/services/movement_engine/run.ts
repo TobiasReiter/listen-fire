@@ -1769,6 +1769,8 @@ type MemberAnswer = { kept: true; value: unknown } | { kept: false };
 const COLLECTION_MEMBER_FAILED = 'MOVENG_COLLECTION_MEMBER_FAILED';
 /** A file the run could not fetch the bytes of — warned once per file. */
 const FILE_BYTES_UNAVAILABLE = 'MOVENG_FILE_BYTES_UNAVAILABLE';
+/** A match whose judge never answered, bound absent all the same. */
+const MATCH_JUDGE_UNAVAILABLE = 'MOVENG_MATCH_JUDGE_UNAVAILABLE';
 
 function memberLeftOut(
   spelling: string,
@@ -2317,9 +2319,22 @@ function missed(input: {
   bindingName: string | undefined;
   env: Environment;
   reason: string;
+  /** The judge's outage, when it never answered — "not found" is then a
+   *  guess, and a program that creates on absent would duplicate. */
+  judgeUnavailable: string | undefined;
+  trace: MovementTraceEntry[];
 }): Binding {
   switch (input.onMiss) {
     case 'absent': {
+      // The binding is absent either way; the trace is what tells an outage
+      // apart from a considered "nothing matched".
+      if (input.judgeUnavailable !== undefined) {
+        input.trace.push({
+          kind: 'warning',
+          code: MATCH_JUDGE_UNAVAILABLE,
+          message: `${input.reason}; the judge was unavailable, so the match was treated as finding nothing`,
+        });
+      }
       const absent: Binding = { kind: 'value', value: null };
       if (input.bindingName !== undefined) input.env.declare(input.bindingName, absent);
       return absent;
@@ -9180,6 +9195,7 @@ class Interpreter {
       env,
       target: resolved.target,
       fieldProvenance,
+      rehearsed: !this.committedThrough(resolved.target.adapter),
       // `write org { … }` is a mutation of the record `org` names, not a
       // rebinding (`org` is never bound twice): since 4 the handle moves on to
       // the new record in place, so every scope holding it — an enclosing
@@ -10452,6 +10468,8 @@ class Interpreter {
         bindingName,
         env,
         reason: `${at}: no existing ${resolved.recordType} matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
+        judgeUnavailable,
+        trace: this.trace,
       });
     }
     let resultData: Record<string, unknown> = {
@@ -10536,6 +10554,8 @@ class Interpreter {
         bindingName: input.bindingName,
         env,
         reason: `${at}: no landing on '${edgeName}' matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
+        judgeUnavailable,
+        trace: this.trace,
       });
     }
     this.recordLocalWrite({
