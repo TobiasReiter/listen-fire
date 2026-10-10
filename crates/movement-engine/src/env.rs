@@ -113,12 +113,44 @@ fn read_trail(json: &Json) -> Result<Trail, String> {
     })
 }
 
-#[derive(Default)]
-struct Decoder {
-    seen: HashMap<u64, Js>,
+/// `Object.is`, over what a member decoded to (members the host sent again
+/// already decoded as the objects held).
+fn identical(a: &Js, b: &Js) -> bool {
+    match (a, b) {
+        (Js::Number(x), Js::Number(y)) => x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()),
+        _ => crate::js::strict_equals(a, b),
+    }
 }
 
-impl Decoder {
+#[derive(Default)]
+struct Decoder<'h> {
+    seen: HashMap<u64, Js>,
+    /// What the host sent before, by id: an object it sends again, as it
+    /// was, decodes as the very object held (`===` itself, as the one
+    /// object the host handed the TypeScript engine twice is).
+    held: Option<&'h HashMap<u64, Js>>,
+}
+
+impl Decoder<'_> {
+    /// The object or list the host sent under `id` before, when `fresh` is
+    /// still what it was.
+    fn again(&self, id: u64, fresh: &Js) -> Option<Js> {
+        let held = self.held?.get(&id)?;
+        let same = match (held, fresh) {
+            (Js::Array(was), Js::Array(now)) => {
+                let (was, now) = (was.items(), now.items());
+                was.len() == now.len() && was.iter().zip(now.iter()).all(|(a, b)| identical(a, b))
+            }
+            (Js::Object(was), Js::Object(now)) => {
+                was.proto.is_none()
+                    && was.entries().len() == now.entries().len()
+                    && was.entries().iter().zip(now.entries()).all(|((k, a), (l, b))| k == l && identical(a, b))
+            }
+            _ => false,
+        };
+        same.then(|| held.clone())
+    }
+
     fn value(&mut self, json: &Json) -> Result<Js, String> {
         Ok(match json {
             Json::Null => Js::Null,
@@ -144,6 +176,7 @@ impl Decoder {
                         let mut array = JsArray::new(items);
                         array.origin = Some(id as u32);
                         let value = Js::Array(Rc::new(array));
+                        let value = self.again(id, &value).unwrap_or(value);
                         self.seen.insert(id, value.clone());
                         value
                     }
@@ -159,6 +192,7 @@ impl Decoder {
                         }
                         object.origin = Some(id as u32);
                         let value = Js::object(object);
+                        let value = self.again(id, &value).unwrap_or(value);
                         self.seen.insert(id, value.clone());
                         value
                     }
@@ -208,7 +242,9 @@ pub fn encode_plain(value: &Js) -> Json {
 /// in its answers — by the id the wire gave it. Each value arrives whole (a
 /// back-reference only within it), so answers decode in whatever order the
 /// engine reads them and an object re-sent after a mutation reads as it now
-/// is. A request hands a sent one back as itself (`["i", id]`), so an object
+/// is; one re-sent unchanged, under the id it was first sent under, decodes
+/// as the very object held. Answers are data, as the event is: a dict shaped
+/// like a binding is one `bindingOf` reads where a value is bound. A request hands a sent one back as itself (`["i", id]`), so an object
 /// an adapter answered reaches the next host call as that very object, as it
 /// does in the TypeScript engine; anything this engine built is written out.
 #[derive(Default)]
@@ -226,9 +262,12 @@ pub struct HeldRecord(pub String);
 impl Wire {
     /// A value the host sent.
     pub fn decode(&self, json: &Json) -> Result<Js, String> {
-        let mut decoder = Decoder::default();
-        let value = decoder.value(json)?;
-        self.sent.borrow_mut().extend(decoder.seen);
+        let (value, seen) = {
+            let held = self.sent.borrow();
+            let mut decoder = Decoder { held: Some(&held), ..Decoder::default() };
+            (decoder.value(json)?, decoder.seen)
+        };
+        self.sent.borrow_mut().extend(seen);
         Ok(value)
     }
 
@@ -508,6 +547,17 @@ impl<'de> serde::de::DeserializeSeed<'de> for InOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_object_the_host_sends_again_unchanged_is_the_one_held() {
+        let wire = Wire::default();
+        let sent = json!(["o", 3, [["kind", "instance"], ["slug", ["l", 4, ["email"]]]]]);
+        let (Js::Object(first), Js::Object(again)) = (wire.decode(&sent).unwrap(), wire.decode(&sent).unwrap()) else { panic!("objects") };
+        assert!(Rc::ptr_eq(&first, &again));
+        let changed = json!(["o", 3, [["kind", "instance"], ["slug", ["l", 4, ["attio"]]]]]);
+        let Js::Object(now) = wire.decode(&changed).unwrap() else { panic!("an object") };
+        assert!(!Rc::ptr_eq(&first, &now), "re-sent after a change, it reads as it now is");
+    }
     use crate::js::strict_equals;
 
     #[test]

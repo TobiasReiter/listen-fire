@@ -138,8 +138,9 @@ export class WireOut {
   /** `whole`: each value is written whole — a back-reference only within
    *  it — because a segment's engine decodes each answer on its own, in the
    *  order it reads them, and an object re-sent after a mutation must cross
-   *  as it now is. Every id still names its object, so an object sent twice
-   *  has two ids, each handed back as that one object. */
+   *  as it now is. An object keeps the id it was first sent under, so the
+   *  engine knows an object sent twice for the one object it is (the same
+   *  object a host hands the TypeScript engine twice is `===` itself). */
   constructor(private readonly options: { asData?: true; whole?: true } = {}) {
     this.asData = options.asData === true;
   }
@@ -163,6 +164,8 @@ export class WireOut {
   private readonly sent: object[] = [];
   /** The ids of the objects written so far: a back-reference names one. */
   private readonly ids = new Map<object, number>();
+  /** The id each object was first sent under, kept across values. */
+  private readonly identity = new Map<object, number>();
   private readonly open = new Set<object>();
   readonly origins: ProvenanceOrigin[] = [];
   private readonly originIds = new Map<ProvenanceOrigin, number>();
@@ -215,8 +218,12 @@ export class WireOut {
     const proto: unknown = Object.getPrototypeOf(value);
     const isList = Array.isArray(value) && proto === Array.prototype;
     if (!isList && (proto !== Object.prototype || (!this.asData && bindingOf(value) !== undefined))) return REFUSED;
-    const id = this.sent.length;
-    this.sent.push(value);
+    let id = this.identity.get(value);
+    if (id === undefined) {
+      id = this.sent.length;
+      this.sent.push(value);
+      this.identity.set(value, id);
+    }
     this.ids.set(value, id);
     this.open.add(value);
     try {

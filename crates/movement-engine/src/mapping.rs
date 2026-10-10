@@ -5,8 +5,9 @@
 //! dict), which this engine reads as the TypeScript reads such a dict. The
 //! literal is data, so an entry that would evaluate an expression or walk a
 //! head, a spread to apply and a shape to build to stay this engine's
-//! refusals; the rest — the TypeErrors where the data is not a literal's
-//! shape, nested nodes, declared edges, empty graphs — is mirrored.
+//! refusals (README, "Known divergences"); the rest — the TypeErrors where
+//! the data is not a literal's shape, nested nodes, declared edges named by
+//! any value, empty graphs — is mirrored.
 
 use std::rc::Rc;
 
@@ -36,14 +37,31 @@ fn iterated(value: &Js) -> Option<Vec<Js>> {
     }
 }
 
-/// An edge's name as `node.edges[name] = …` keys it: text this engine
-/// writes as itself (a key the prototype setter takes, or one a number
-/// orders, is refused).
-fn edge_name(entry: &Js) -> Result<String, Failure> {
-    match get(entry, "name").map_err(eval)? {
-        Js::String(name) if name != "__proto__" => Ok(name),
-        _ => Err(refused("names an edge by something other than text")),
+/// `edges[name] = edge`: the name keyed by its text (an index-like key
+/// ordered as JavaScript orders one), `__proto__` the prototype's setter.
+fn set_edge(edges: &mut JsObject, name: &Js, edge: Js) -> Result<(), Failure> {
+    let key = name.to_text().map_err(|e| eval(type_error(&e.message)))?;
+    if key == "__proto__" {
+        edges.proto = Some(edge);
+    } else {
+        edges.set(key, edge);
     }
+    Ok(())
+}
+
+/// A declaration a mapping's shape names in scope: `resolvedShape` walks its
+/// chain from `declaration.extends`, which a dict holding none fails on.
+fn shape_named(binding: &Binding) -> Failure {
+    if let Binding::Shaped(dict) = binding {
+        match get(&Js::Object(dict.clone()), "declaration") {
+            Ok(declaration) if declaration.is_nullish() => {
+                return eval(type_error(&format!("Cannot read properties of {} (reading 'extends')", declaration.to_js_string())));
+            }
+            Err(error) => return eval(error),
+            Ok(_) => {}
+        }
+    }
+    refused("builds to a declaration in scope")
 }
 
 fn new_node() -> JsObject {
@@ -78,18 +96,18 @@ pub(crate) fn synthesise_node(literal: &Js, resolve: Resolve<'_>) -> Result<Rc<J
             Js::String(kind) if kind == "nodes" => {
                 let nested = iterated(&get(&entry, "nodes").map_err(eval)?).ok_or_else(|| eval(type_error("entry.nodes is not iterable")))?;
                 let landings = nested.iter().map(|n| synthesise_node(n, resolve).map(Js::Object)).collect::<Result<Vec<_>, _>>()?;
-                edges.set(edge_name(&entry)?, landed(landings));
+                set_edge(&mut edges, &get(&entry, "name").map_err(eval)?, landed(landings))?;
             }
             // A declared edge starts empty; one naming a declaration in
             // scope would carry that declaration's landing shape.
             Js::String(kind) if kind == "declared" => {
                 let declared = get(&entry, "type").map_err(eval)?;
                 if matches!(get(&declared, "hopsRaw").map_err(eval)?, Js::Undefined)
-                    && resolve(&get(&declared, "graph").map_err(eval)?).is_some_and(|b| crate::record::kind_of(&b) == "shape")
+                    && let Some(shape) = resolve(&get(&declared, "graph").map_err(eval)?).filter(|b| crate::record::kind_of(b) == "shape")
                 {
-                    return Err(refused("declares an edge by a declaration in scope"));
+                    return Err(shape_named(&shape));
                 }
-                edges.set(edge_name(&entry)?, landed(Vec::new()));
+                set_edge(&mut edges, &get(&entry, "name").map_err(eval)?, landed(Vec::new()))?;
             }
             _ => {}
         }
@@ -104,8 +122,8 @@ fn build_graph(literal: &Js, resolve: Resolve<'_>) -> Result<Rc<JsObject>, Failu
     let optional = |value: &Js, key: &str| if value.is_nullish() { Ok(Js::Undefined) } else { get(value, key).map_err(eval) };
     let name = optional(&optional(&get(literal, "graph").map_err(eval)?, "shape")?, "name")?;
     if !matches!(name, Js::Undefined) {
-        if resolve(&name).is_some_and(|b| crate::record::kind_of(&b) == "shape") {
-            return Err(refused("builds a graph to a declaration in scope"));
+        if let Some(shape) = resolve(&name).filter(|b| crate::record::kind_of(b) == "shape") {
+            return Err(shape_named(&shape));
         }
         let name = name.to_text().map_err(|e| eval(type_error(&e.message)))?;
         return Err(Failure::engine("MOVENG_RUNTIME", format!("'graph<{name}>' names no node declaration in scope")));
@@ -146,10 +164,10 @@ fn build_graph_body(literal: &Js) -> Result<Rc<JsObject>, Failure> {
             Js::String(kind) if kind == "nodes" => {
                 let nested = iterated(&get(entry, "nodes").map_err(eval)?).ok_or_else(|| eval(type_error("entry.nodes is not iterable")))?;
                 let landings = nested.iter().map(build_graph_body).collect::<Result<Vec<_>, _>>()?;
-                let name = edge_name(entry)?;
+                let name = get(entry, "name").map_err(eval)?;
                 // `setGraphEdge`: a node built on the edge has landed there.
                 let landings = landings.into_iter().map(|landing| Js::Object(landed_on(landing, &name))).collect();
-                edges.set(name, landed(landings));
+                set_edge(&mut edges, &name, landed(landings))?;
             }
             Js::String(kind) if kind == "declared" => {
                 let name = get(entry, "name").map_err(eval)?.to_text().map_err(|e| eval(type_error(&e.message)))?;
@@ -165,10 +183,10 @@ fn build_graph_body(literal: &Js) -> Result<Rc<JsObject>, Failure> {
 }
 
 /// A node `buildGraphBody` built, marked as landed on `edge`.
-fn landed_on(node: Rc<JsObject>, edge: &str) -> Rc<JsObject> {
+fn landed_on(node: Rc<JsObject>, edge: &Js) -> Rc<JsObject> {
     let mut node = JsObject::clone_of(&node);
     if node.get("landedOn").is_none() {
-        node.set("landedOn".into(), Js::str(edge));
+        node.set("landedOn".into(), edge.clone());
     }
     Rc::new(node)
 }

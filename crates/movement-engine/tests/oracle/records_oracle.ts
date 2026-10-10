@@ -482,6 +482,33 @@ const DIRECTED_DICTS: Array<Record<string, unknown>> = [
     { entries: [{ kind: 'thing' }], graph: {}, spreads: [null] },
   ].map((mapping) => ({ kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: ITEMS, mapping } })),
   { kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: { root: { kind: 'name', name: 'e' }, hopsRaw: '-[a:items]->' }, mapping: { entries: [], graph: { shape: { name: 'a' } } } } },
+  // A mapping naming a declaration in scope that a dict stands for.
+  ...[{ entries: [], graph: { shape: { name: 'S' } } }, { entries: [{ kind: 'declared', name: 'subs', type: { graph: 'S' } }] }].map((mapping) => ({
+    kind: 'lazyWalk',
+    walk: { captured: [['e', EVENT], ['S', { kind: 'shape' }]], head: ITEMS, mapping },
+  })),
+  // Edges a mapping names by any value.
+  ...[5, '0', '__proto__', null, ['subs'], 'subs'].flatMap((name) =>
+    [{ entries: [{ kind: 'nodes', name, nodes: [{ entries: [] }] }] }, { entries: [{ kind: 'nodes', name, nodes: [{ entries: [] }] }], graph: {} }].map((mapping) => ({
+      kind: 'lazyWalk',
+      walk: { captured: [['e', EVENT]], head: ITEMS, mapping },
+    })),
+  ),
+  // Instance dicts whose own schema has positions and no collections, paged
+  // or not: a WHERE's member check, and hops off what landed.
+  ...['email', 'attio'].flatMap((adapterSlug) =>
+    [
+      { positions: { meta: { edges: { items: { target: 'item' } } } }, selectedMembers: {} },
+      { positions: { item: { edges: { subs: { target: 'item' } } } } },
+      { positions: { item: { edges: { subs: { target: 'item' } } } }, unions: { item: {} } },
+      { positions: { item: { edges: { subs: { target: 'thing' } } } }, selectedMembers: {} },
+    ].flatMap((schema) =>
+      ['-[:items]->', '-[:items WHERE `rank` > 1]->'].map((hopsRaw) => ({
+        kind: 'lazyWalk',
+        walk: { captured: [['e', { kind: 'instance', name: 'crm', adapterSlug, credentialName: 'inbox_cred', schema }]], head: { root: { kind: 'name', name: 'e' }, hopsRaw } },
+      })),
+    ),
+  ),
 ];
 /** The reads each directed dict meets: walked on, walked, forgiven, and as a
  *  block's head. */

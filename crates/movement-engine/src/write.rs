@@ -1001,18 +1001,27 @@ impl Run<'_> {
                         let incoming = to_field_array(value);
                         let mut merged = current_list.clone();
                         for v in incoming {
-                            if mode == FieldWriteMode::Append || !current_list.iter().any(|c| deep_equal(c, &v)) {
+                            let mut present = false;
+                            if mode == FieldWriteMode::AppendMissing {
+                                for c in &current_list {
+                                    if deep_equal(c, &v).map_err(thrown)? {
+                                        present = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if !present {
                                 merged.push(v);
                             }
                         }
                         let merged = Js::array(merged);
-                        if has_current && deep_equal(&merged, &Js::array(current_list)) {
+                        if has_current && deep_equal(&merged, &Js::array(current_list)).map_err(thrown)? {
                             continue;
                         }
                         to_write.set(field.clone(), merged);
                     }
                     None => {
-                        if has_current && deep_equal(value, &now) {
+                        if has_current && deep_equal(value, &now).map_err(thrown)? {
                             continue;
                         }
                         to_write.set(field.clone(), value.clone());
@@ -1492,22 +1501,55 @@ fn to_field_array(value: &Js) -> Vec<Js> {
     }
 }
 
-/// run.ts's `deepEqual`.
-pub fn deep_equal(a: &Js, b: &Js) -> bool {
-    // Identity first, so a recursion ends wherever either side is acyclic,
-    // as every caller's host value is.
+/// run.ts's `deepEqual`. Two values that hold themselves differently send
+/// the TypeScript's recursion round the same pair again until its stack runs
+/// out: the pair seen again is that RangeError.
+pub(crate) fn deep_equal(a: &Js, b: &Js) -> Result<bool, Failure> {
+    deep_equal_within(a, b, &mut Vec::new())
+}
+
+fn deep_equal_within(a: &Js, b: &Js, pairs: &mut Vec<(*const (), *const ())>) -> Result<bool, Failure> {
+    // Identity first, as JavaScript's `===`.
     if js::strict_equals(a, b) {
-        return true;
+        return Ok(true);
     }
-    match (a, b) {
-        (Js::Null, _) | (_, Js::Null) => false,
-        (Js::Array(x), Js::Array(y)) => x.items().len() == y.items().len() && x.items().iter().zip(y.items().iter()).all(|(p, q)| deep_equal(p, q)),
+    let pair: (*const (), *const ()) = match (a, b) {
+        (Js::Array(x), Js::Array(y)) => (Rc::as_ptr(x).cast(), Rc::as_ptr(y).cast()),
+        (Js::Object(x), Js::Object(y)) => (Rc::as_ptr(x).cast(), Rc::as_ptr(y).cast()),
+        _ => return Ok(false),
+    };
+    if pairs.contains(&pair) {
+        let thrown = js::stack_overflow();
+        return Err(Failure::Engine { class: crate::eval::ErrorClass::RangeError, message: thrown.message });
+    }
+    pairs.push(pair);
+    let equal = match (a, b) {
+        (Js::Array(x), Js::Array(y)) => {
+            let (x, y) = (x.items().clone(), y.items().clone());
+            let mut equal = x.len() == y.len();
+            for (p, q) in x.iter().zip(y.iter()) {
+                if !equal {
+                    break;
+                }
+                equal = deep_equal_within(p, q, pairs)?;
+            }
+            equal
+        }
         (Js::Object(x), Js::Object(y)) => {
-            x.entries().len() == y.entries().len()
-                && x.entries().iter().all(|(k, v)| deep_equal(v, y.get(k).unwrap_or(&Js::Undefined)))
+            // `b[k]`, read up its prototype chain.
+            let mut equal = x.entries().len() == y.entries().len();
+            for (k, v) in x.entries() {
+                if !equal {
+                    break;
+                }
+                equal = deep_equal_within(v, &js::object_property(y, k), pairs)?;
+            }
+            equal
         }
         _ => false,
-    }
+    };
+    pairs.pop();
+    Ok(equal)
 }
 
 /// `discriminatedHandleType`: the variant a discriminated write's own body
@@ -1727,8 +1769,21 @@ mod tests {
         let Js::Array(list) = &held else { unreachable!() };
         list.push(held.clone());
         let plain = Js::array(vec![Js::Number(1.0), Js::Null]);
-        assert!(!deep_equal(&plain, &held));
-        assert!(!deep_equal(&held, &plain));
-        assert!(deep_equal(&held, &held.clone()), "the same list, by identity");
+        assert!(!deep_equal(&plain, &held).unwrap());
+        assert!(!deep_equal(&held, &plain).unwrap());
+        assert!(deep_equal(&held, &held.clone()).unwrap(), "the same list, by identity");
+    }
+
+    #[test]
+    fn two_values_that_hold_themselves_end_as_the_recursion_does() {
+        let held = |n: f64| {
+            let list = Js::array(vec![Js::Number(n)]);
+            let Js::Array(cells) = &list else { unreachable!() };
+            cells.push(list.clone());
+            list
+        };
+        let Err(Failure::Engine { class, message }) = deep_equal(&held(1.0), &held(1.0)) else { panic!("a RangeError") };
+        assert_eq!((class, message.as_str()), (crate::eval::ErrorClass::RangeError, "Maximum call stack size exceeded"));
+        assert!(!deep_equal(&held(1.0), &held(2.0)).unwrap(), "unequal before the circle closes");
     }
 }

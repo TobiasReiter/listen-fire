@@ -127,7 +127,9 @@ const ROUTES: Record<string, Route> = {
     if (request.dryRun !== undefined && request.dryRun !== true) throw new RustShimError('adapters.resolve dryRun is true or absent');
     return host.adapters.resolve({
       segmentId: segmentOf(request),
-      adapterType: registryKey(request.adapterType),
+      // As the dict holds it (absent where it holds none): the host keys its
+      // registry by it, as TypeScript's in-process resolution does.
+      adapterType: request.adapterType,
       ...(credentialsId !== undefined ? { credentialsId } : {}),
       ...(constructionArgs !== undefined ? { constructionArgs } : {}),
       role,
@@ -154,7 +156,9 @@ const ROUTES: Record<string, Route> = {
       hostErrors.push(hostCallFailure(answer.error));
       return new Plain(plainJson({ error: { ...answer.error, ref: hostErrors.length - 1 } }, `adapters.call ${method} error`));
     }
-    const result = wire.value(answer.result);
+    // An adapter's answer is data, as the event is: a dict in it shaped like
+    // a binding is one the engine reads as TypeScript's `bindingOf` does.
+    const result = wire.valueAsData(answer.result);
     if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
     return new Plain({ result });
   },
@@ -380,19 +384,6 @@ export function shimRoutePaths(): string[] {
   return Object.keys(ROUTES);
 }
 
-/** The slug an instance dict holds, forwarded as it is (absent where the
- *  dict holds none). The TypeScript engine hands its host the dict's slug
- *  whatever it holds (`bindingOf` takes the dict for an instance binding,
- *  typed as text), and the host keys its registry by property lookup, which
- *  reads a list `["email"]` as `email` and fails a number with its own
- *  "Unknown adapter type" error, which `onError` forgives. So the host does
- *  the lookup here too, raising its own error. */
-function registryKey(value: unknown): string {
-  // The host's type says text; the TypeScript engine's in-process call hands
-  // it this same value under that type.
-  return value as string;
-}
-
 /** The segment a forwarded request names (`serve` has held it to the one
  *  the run host opened). */
 function segmentOf(request: Record<string, unknown>): string {
@@ -568,8 +559,8 @@ function builtinAnswer(segment: WireOut, run: () => unknown): unknown {
     if (error instanceof Error && error.constructor === Error) return { threw: { class: 'Error', message: error.message } };
     throw new RustShimError(`a built-in threw what the Rust engine cannot rethrow: ${String(error)}`);
   }
-  if (new WireOut().value(value) === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
-  return { value: segment.value(value) };
+  if (new WireOut({ asData: true }).value(value) === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
+  return { value: segment.valueAsData(value) };
 }
 
 /** A MovementEngineError's message without the `CODE: ` its constructor adds. */

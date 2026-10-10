@@ -685,13 +685,16 @@ describe('choosing the engine', () => {
 });
 
 describe("a segment's wire", () => {
-  it('writes each value whole, and hands every id it gave an object back as that object', () => {
+  it('writes each value whole, an object again under the id it was first sent under, and hands each id back as its object', () => {
     const wire = new WireOut({ whole: true });
     const shared = { n: 1 };
     expect(wire.value({ a: shared, b: shared })).toEqual(['o', 0, [['a', ['o', 1, [['n', 1]]]], ['b', ['r', 1]]]]);
+    // The one object, as it now is: the engine reads it as the object it
+    // holds while it is unchanged, and as it is when it changed.
+    expect(wire.value(shared)).toEqual(['o', 1, [['n', 1]]]);
     shared.n = 2;
-    expect(wire.value(shared)).toEqual(['o', 2, [['n', 2]]]);
+    expect(wire.value(shared)).toEqual(['o', 1, [['n', 2]]]);
+    expect(wire.value({ other: 1 })).toEqual(['o', 2, [['other', 1]]]);
     expect(wire.read(['i', 1])).toBe(shared);
-    expect(wire.read(['i', 2])).toBe(shared);
   });
 });

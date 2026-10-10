@@ -93,7 +93,10 @@ export type PricedAnswer<Output> = Costed<Output> | BudgetRefusal;
 
 /** What the engine asks of an adapter instance. */
 export interface AdapterResolution {
-  adapterType: string;
+  /** The instance's slug: a JSON value the host keys its registry by,
+   *  normally text. One a program reads from a value is whatever the value
+   *  holds (absent where it holds none). */
+  adapterType?: unknown;
   credentialsId?: string;
   /** Non-credential construction args (unquoted) — the instance's entry
    *  position (Sheets' `spreadsheet:`). Position-free adapters ignore it. */

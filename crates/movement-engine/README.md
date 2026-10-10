@@ -775,7 +775,8 @@ empty text), is written by the JSON writers as `safeStringify` writes it
 with its circles cut where the TypeScript never meets one, fails a park,
 `TEXT.SERIALISE` and `plainValueOf` with the RangeError their recursive
 writers end in, crosses the eval wire as shared references, and compares
-by identity first. A
+by identity first (`deepEqual` over two that hold themselves differently
+ends in the RangeError its recursion does). A
 collection op's `onError` never forgives this engine's own refusal
 (`ErrorClass::Unreproduced`). MAP, FILTER,
 REDUCE, GROUPBY, KEYBY and MEMBERS run one member at a time
@@ -1088,29 +1089,33 @@ fails); none produces a different answer.
   admission refuses each route it knows, by name).
 - A dict shaped like an `instance` whose own schema holds a `collections`
   table the read wrapper's types do not read, or is `null`, read through its
-  graph: MOVENG_UNSUPPORTED. One with no `collections` at all reads as the
-  TypeScript reads it: a collection scan fails with the read wrapper's
-  TypeError after the scan, a streamed walk (which no read wrapper touches)
-  proceeds, and a hop's WHERE through one naming selected members fails as
-  `hopSelection` does where the hop's target is not in its positions; a
-  wrapped hop off a record through one, and a WHERE through one whose
-  positions name the target, are MOVENG_UNSUPPORTED. Its slug, credential
-  name and construction config are read as the TypeScript reads them,
-  whatever they are, and the host is asked for the slug as the dict holds
-  it (the host keys its registry by it, as the TypeScript's does).
+  graph: MOVENG_UNSUPPORTED. One with no `collections` at all is read off the
+  data as the TypeScript reads it: a collection scan fails with the read
+  wrapper's TypeError after the scan; a streamed walk (which no read wrapper
+  touches) proceeds; a wrapped hop off a record stamps what lands from the
+  schema's `positions` and `unions`; a hop's WHERE sets up a member check
+  only where `selectedMembers` holds an entry for it (one that does is
+  MOVENG_UNSUPPORTED), failing as `hopSelection` does where the hop's target
+  is not in its positions. Its slug, credential name and construction
+  config are read as the TypeScript reads them, whatever they are, and the
+  host is asked for the slug as the dict holds it (the host keys its
+  registry by it, as the TypeScript's does).
 - A walk a dict holds as data (`lazyWalk`, a deferred edge) rooted at an
   expression with source text, or whose mapping has an entry that evaluates
-  a value or walks a head, a spread to apply, a graph shape or a declared
-  edge naming a declaration in scope, or an edge named by anything but text:
-  MOVENG_UNSUPPORTED. Every other walk a dict holds runs as the TypeScript
-  runs it: captured pairs keyed by the value itself (a root named by no text
-  reads the pair keyed by that very value), a later pair replacing an
-  earlier one, the root spelled and the hops probed as their text, and a
-  mapping building the nodes, nested nodes, declared edges and graphs the
-  data writes, with the TypeErrors where it is not a literal's shape. A head
-  rooted at a dict shaped like a synthesised node, a kept walk or a meta-node
-  walks that kind's plane; one hop off a dict shaped like a callback is
-  MOVENG_UNSUPPORTED (the TypeScript reads the calls its callback sink holds).
+  a value or walks a head, or a spread to apply: MOVENG_UNSUPPORTED (held
+  back by decision: "Known divergences" below). One whose mapping names a
+  declaration in scope fails as `resolvedShape` does on a dict holding no
+  `declaration` (MOVENG_UNSUPPORTED on one that holds one). Every other walk
+  a dict holds runs as the TypeScript runs it: captured pairs keyed by the
+  value itself (a root named by no text reads the pair keyed by that very
+  value), a later pair replacing an earlier one, the root spelled and the
+  hops probed as their text, and a mapping building the nodes, nested
+  nodes, declared edges and graphs the data writes — an edge keyed by its
+  name's text, `__proto__` the prototype's setter — with the TypeErrors
+  where it is not a literal's shape. A head rooted at a dict shaped like a
+  synthesised node, a kept walk or a meta-node walks that kind's plane; one
+  hop off a dict shaped like a callback is MOVENG_UNSUPPORTED (the
+  TypeScript reads the calls its callback sink holds).
 - Parking a value whose message or data would print a record's binding
   object other than the event's or a block's returned records' (its read
   seam, its computed schema): MOVENG_UNSUPPORTED.
@@ -1292,7 +1297,7 @@ Sizes are estimates (XS, S, M, L).
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |
-| 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`) | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | — |
+| 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`), and an object the host sends again, unchanged, under the id it was first sent under, decodes as the one object already held (so `msg.meta == msg.meta` holds, as in process) | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | — |
 
 #### The rows in detail
 
@@ -1401,7 +1406,12 @@ mirror replaces that plan):
 Where this engine differs from the TypeScript engine on a program that
 checks and that admission lets through: row 3 above (pinned), and the rows
 that refuse, hand back or fail loudly rather than differ. None is known
-beyond those.
+beyond those, and these, held back by decision:
+
+| construct | the TypeScript | this engine | why held |
+|---|---|---|---|
+| a walk a dict holds as data whose mapping has an entry that evaluates a value (`{kind: "value", value: {raw}}`) or walks a head (`{kind: "traversal"}`) | parses and evaluates the program text the host's data carries | fails the run, MOVENG_UNSUPPORTED by name, mid-run | evaluating expression text found in host data is a design decision (Henry's), not a port |
+| the same mapping's `spreads` that apply to an entry (`after` naming its index) | evaluates the spread's source text the data carries | the same refusal | the same decision |
 
 ## The check
 

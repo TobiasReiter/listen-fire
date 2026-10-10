@@ -33,9 +33,9 @@ import {
 import { newDryRunRehearsal, wrapAdapterForDryRun, type DryRunRehearsal, type DryRunWriteSink } from './dry_run_adapter';
 
 /** Where a table's live instances come from: the resolution, for the
- *  segment's team. */
+ *  segment's team, its slug the registry key it is read as. */
 export type LiveAdapterResolver = (
-  input: AdapterResolution & { segmentId: string; teamId: TenantId },
+  input: Omit<AdapterResolution, 'adapterType'> & { adapterType: string; segmentId: string; teamId: TenantId },
 ) => Adapter | Promise<Adapter>;
 
 /** Each method, as a call into a live instance. A method the instance lacks
@@ -282,8 +282,11 @@ export function adapterTable(options: {
       const { segmentId, dryRun, ...resolution } = input;
       // A segment that is not open resolves nothing: refused, naming it.
       const { teamId } = options.segments.facts(segmentId);
+      // The registry is keyed by property lookup, so a slug is read as its
+      // text (`String`, which a lookup's key conversion is): a list
+      // `["email"]` names `email`. The instance stays the slug's own.
       return segmentNamed(segmentId).resolve({ resolution, dryRun: dryRun === true }, () =>
-        options.resolveLive({ ...resolution, segmentId, teamId }),
+        options.resolveLive({ ...resolution, adapterType: String(resolution.adapterType), segmentId, teamId }),
       );
     },
     call,
