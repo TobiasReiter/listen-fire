@@ -263,7 +263,7 @@ import {
 } from '../provision';
 import type { DerivedTriggerRow } from '../store';
 import { movementSourceHash } from '../version_store';
-import { mockCatalog } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, mockCatalog } from 'movement-lang';
 
 const db = jest.requireMock('../../../../lib/kysely') as {
   __tables: Record<string, Array<Record<string, unknown>>>;
@@ -1351,11 +1351,11 @@ describe('the language version pin', () => {
     const saved = await saveMovement({ teamId: TEAM, source: SOURCE_V1 });
     expect(saved.ok).toBe(true);
     const [row] = db.__tables.movement;
-    expect(row.language_version).toBe(3);
-    expect(row.validity_checked_against).toBe(3);
+    expect(row.language_version).toBe(CURRENT_LANGUAGE_VERSION);
+    expect(row.validity_checked_against).toBe(CURRENT_LANGUAGE_VERSION);
 
     const [item] = await listMovements(TEAM);
-    expect(item).toMatchObject({ languageVersion: 3, validityCheckedAgainst: 3 });
+    expect(item).toMatchObject({ languageVersion: CURRENT_LANGUAGE_VERSION, validityCheckedAgainst: CURRENT_LANGUAGE_VERSION });
   });
 
   it('a re-save keeps an older pin and validates under it', async () => {
