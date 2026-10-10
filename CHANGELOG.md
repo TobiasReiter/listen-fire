@@ -8,6 +8,32 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 <!-- add merged PRs here -->
 
+Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check moves an existing automation up to it when it validates cleanly there. An automation that does not validate stays on its version until it is repaired and upgraded, and behaves exactly as before. The deploy check and `upgradeAutomation` show an upgrade warning where the same text now does something different.
+
+### Language version 4, Luminous Owl: what breaks
+
+Each item applies only to an automation on Luminous Owl (4). Versions 1 to 3 keep their old behaviour exactly (proved by a version 3 conformance corpus). Every rule, with examples and rewrites, is in the [Luminous Owl migration guide](docs/language/luminous-owl-migration.md).
+
+- **A named `match` yields a handle or absent.** A miss binds absent and the block carries on. Why: a miss ending the enclosing scope was never the intent, and it made `match` useless as a lookup. Guard with `== null`, `!= null`, `EXISTS` or `ISNULL`. Unguarded use where a value is required is `MOV_ABSENT_REQUIRED`, and so is a `link` or `unlink` whose end may be absent. Upgrade warning on every bound match: `MOV_MATCH_MISS_CONTINUES`.
+  - An unnamed `match … { }` is `MOV_MATCH_UNNAMED`: write `existing = match … { … }` then `if existing != null { … }`.
+  - `link a -[:e]-> { match … }` is `MOV_LINK_MATCH_BODY_RETIRED`: bind the match, then `if to != null { link a -[:e]-> to }`.
+- **`created` and `committed` leave the write handle** (`MOV_HANDLE_FIELD_RETIRED`). Why: they made a write handle a different type from a read. `-[:@old]->` carries the pre-write record instead, so an automation can say honestly whether it created or matched, and what changed. `.created` becomes `EXISTS(h-[:@old]->) == FALSE`. `.committed` becomes `FIRST(h-[:@old]->) == h` (the same position only under `dry_run`), or is dropped where `dry_run` is a literal on the instance. `committed` remains in the run log.
+- **`write org { … }` on a write handle updates the record `org` names in place.** `org` reads the new values below the line; before, it kept the values of its own write. Why: the handle names a record, so a write to it should change what it shows. Upgrade warning `MOV_HANDLE_UPDATED_IN_PLACE`, on the unnamed form and on `x = write org { … }`, which names the same record.
+
+### Language version 4, Luminous Owl: new
+
+- `-[:@old]->` on any write handle: empty when the write created, a snapshot of the record as it stood when it matched, the handle itself under `dry_run`, and the previous handle after a second write. `@old` on a match handle, a traversal landing or a local node is `MOV_OLD_EDGE_NOT_A_WRITE`; any other `@name` is `MOV_ARTIFICIAL_EDGE_UNKNOWN`.
+- The named match pattern: `existing = match … { … }` then `if existing != null { … }`.
+- A write off a record found earlier (`x = write c { … }` on a traversal landing or a matched record) is a write handle, with `@old`.
+
+### Changes to what a saved automation does (every language version)
+
+These apply to every language version. Full text: the [migration guide's appendix](docs/language/luminous-owl-migration.md#appendix-every-version-changes-in-full).
+
+- The `else` arm of a null test narrows absence. It accepts only programs that were refused before.
+- An adapter edge or collection whose name starts with `@` is left out of the catalog with a note, instead of failing the connection's `describe`.
+- An Affinity identity candidate carries the organisation's or person's fields as Affinity holds them, not the asserted values.
+
 ## [v0.10.9] - 2026-10-07
 
 ### Changed
