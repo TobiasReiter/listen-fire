@@ -265,7 +265,9 @@ describe('two or more unique by clauses — each clause keeps its own non-equali
         '    name: "Nova Labs"',
         '    domain: "nova.example"',
         '  }',
-        '  write crm-[:companies]-> { unique by (`name`), name: co.`name` }',
+        '  if co != null {',
+        '    write crm-[:companies]-> { unique by (`name`), name: co.`name` }',
+        '  }',
       ],
       crm.adapter,
     );
