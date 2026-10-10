@@ -174,6 +174,9 @@ function tokenize(stream: StringStream, state: MvtState): string | null {
 
   if (stream.match(/^\d+(\.\d+)?/)) return "number";
 
+  // A hop label is a name like any edge name, including the artificial `@old`.
+  if (stream.string[stream.pos - 1] === ":" && stream.match(/^@[A-Za-z_]\w*/)) return "variableName";
+
   if (stream.match(/^@[A-Za-z_][\w.]*/)) return "atom";
 
   const word = stream.match(/^[A-Za-z_]\w*/);
