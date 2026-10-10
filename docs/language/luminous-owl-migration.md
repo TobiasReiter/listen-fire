@@ -15,12 +15,11 @@ Language version 4, **Luminous Owl**, arrives after v0.10.9. The release's [chan
 
 ## 1. How the pin moves
 
-- Language version 4 arrives: **Luminous Owl**. A new automation is written in it, and the deploy check moves an automation up to it when it validates cleanly there. An unnamed `match`, a `.created` or `.committed` read, and a `link` body that is a `match` are all refused under it, so automations using them stay on their version until repaired and upgraded.
-- An automation that does not validate under Luminous Owl (4) is shown with the **Review** badge, and the automation page lists the diagnostics.
-- An automation that does validate moves up, but its behaviour changes in two ways the checker cannot refuse. The deploy check and `upgradeAutomation` therefore show an upgrade warning on each:
+- Language version 4 arrives: **Luminous Owl**. A new automation is written in it, and the deploy check moves an automation up to it when it validates cleanly there: no error and no move-up warning.
+- An automation with an error under Luminous Owl (4), or with a move-up warning, stays on its version. It shows the **Review** badge, and the automation page lists the diagnostics. Two warnings are move-up warnings, because they mark places where the same text now does something different:
   - `MOV_MATCH_MISS_CONTINUES` on every bound match: a miss no longer ends the enclosing scope (see [section 2](#2-a-named-match-yields-a-handle-or-absent)).
   - `MOV_HANDLE_UPDATED_IN_PLACE` on a `write` off a write handle (see [section 6](#6-a-write-on-a-write-handle-updates-in-place)).
-- Read each warning before upgrading. Each marks a place where the same text now does something different.
+- A move-up warning fires whether or not the code was edited, so it holds the pin until you acknowledge it. Read each warning, edit what assumed the old behaviour, then upgrade with `upgradeAutomation` and acknowledge. An error cannot be acknowledged: repair it first.
 
 ## 2. A named match yields a handle or absent
 
@@ -37,7 +36,7 @@ if existing != null {
 - The `else` arm of a null test sees the record present: after `if existing == null { … } else { … }`, `existing` is a handle in the `else` arm.
 - Using the handle unguarded where a value is required is `MOV_ABSENT_REQUIRED`. That covers a field read written into a required field, and a handle passed where a record is required.
 - A `link` or `unlink` whose end may be absent is `MOV_ABSENT_REQUIRED` until guarded. This covers a match handle and a `FIRST(…)` result. Under every earlier version the end was not checked.
-- `MOV_MATCH_MISS_CONTINUES` is an upgrade warning, not a refusal. It marks every bound match, because code below the match used to be skipped on a miss and now runs. If the code below assumed a hit, add the guard.
+- `MOV_MATCH_MISS_CONTINUES` is a move-up warning, not a refusal: it holds the pin until acknowledged. It marks every bound match, because code below the match used to be skipped on a miss and now runs. If the code below assumed a hit, add the guard.
 - Versions 1 to 3 keep the old behaviour exactly (proved by the version 3 conformance corpus).
 
 ## 3. Retired and refused forms
@@ -81,7 +80,7 @@ if to != null {
 
 | Before | After |
 | --- | --- |
-| `h.created` | `EXISTS(h-[:@old]->) == FALSE`, or `FIRST(h-[:@old]->) == null` |
+| `h.created` | `NOT EXISTS(h-[:@old]->)`, or `FIRST(h-[:@old]->) == null` |
 | `h.committed` | `FIRST(h-[:@old]->) == h` (the same position only under `dry_run`), or drop the test where `dry_run` is a literal on the instance |
 
 - `committed` remains in the run log, which `inspectRun` shows.
@@ -124,7 +123,7 @@ write org { Stage: "Customer" }
 # org.Stage is "Customer" here; before, it was whatever the first write left
 ```
 
-- `MOV_HANDLE_UPDATED_IN_PLACE` is an upgrade warning on the unnamed form and on the named form. It marks places where a read of the handle below the write sees different values than before.
+- `MOV_HANDLE_UPDATED_IN_PLACE` is a move-up warning on the unnamed form and on the named form, and holds the pin until acknowledged. It marks places where a read of the handle below the write sees different values than before.
 
 ## 7. Diagnostic code index
 
@@ -133,9 +132,9 @@ write org { Stage: "Customer" }
 | `MOV_ABSENT_REQUIRED` | [A named match yields a handle or absent](#2-a-named-match-yields-a-handle-or-absent) (new sites: a match handle used unguarded, and an absent end of a `link` or `unlink`) |
 | `MOV_ARTIFICIAL_EDGE_UNKNOWN` | [The old edge](#5-the-old-edge-what-a-write-found) |
 | `MOV_HANDLE_FIELD_RETIRED` | [A write handle has no created or committed](#4-a-write-handle-has-no-created-or-committed) |
-| `MOV_HANDLE_UPDATED_IN_PLACE` | [A write on a write handle updates in place](#6-a-write-on-a-write-handle-updates-in-place) (upgrade warning) |
+| `MOV_HANDLE_UPDATED_IN_PLACE` | [A write on a write handle updates in place](#6-a-write-on-a-write-handle-updates-in-place) (move-up warning) |
 | `MOV_LINK_MATCH_BODY_RETIRED` | [Retired and refused forms](#3-retired-and-refused-forms) |
-| `MOV_MATCH_MISS_CONTINUES` | [A named match yields a handle or absent](#2-a-named-match-yields-a-handle-or-absent) (upgrade warning) |
+| `MOV_MATCH_MISS_CONTINUES` | [A named match yields a handle or absent](#2-a-named-match-yields-a-handle-or-absent) (move-up warning) |
 | `MOV_MATCH_UNNAMED` | [Retired and refused forms](#3-retired-and-refused-forms) |
 | `MOV_OLD_EDGE_NOT_A_WRITE` | [The old edge](#5-the-old-edge-what-a-write-found) |
 
