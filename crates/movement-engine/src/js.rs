@@ -129,6 +129,8 @@ pub(crate) fn inherited(proto: &Js, key: &str) -> Js {
             Ok(Js::Null) | Err(_) => base(),
             Ok(found) => found,
         },
+        // `Object.create(null)`'s: nothing to inherit.
+        Js::Null => Js::Undefined,
         _ => base(),
     }
 }
@@ -210,10 +212,22 @@ impl JsObject {
     }
 
     /// `object[key] = value` for any key but `__proto__` (which sets the
-    /// prototype instead; callers refuse it before getting here). A key
-    /// already there keeps its place.
+    /// prototype instead; callers refuse it before getting here, or call
+    /// `assign`). A key already there keeps its place.
     pub fn set(&mut self, key: String, value: Js) {
         insert_in_object_order(&mut self.entries, key, value);
+    }
+
+    /// `object[key] = value` for any key: `__proto__` is
+    /// `Object.prototype`'s setter, which makes an object the prototype,
+    /// makes `null` none at all, and ignores anything else.
+    pub fn assign(&mut self, key: String, value: Js) {
+        if key != "__proto__" {
+            return self.set(key, value);
+        }
+        if matches!(value, Js::Object(_) | Js::Array(_) | Js::Record(_) | Js::Function(_) | Js::Null) {
+            self.proto = Some(value);
+        }
     }
 }
 

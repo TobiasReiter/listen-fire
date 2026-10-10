@@ -330,7 +330,9 @@ function shapeFields(g: Program$, indent: string, depth: number): string[] {
   return lines;
 }
 
-/** Fields named after `Object.prototype` members: the known divergence. */
+/** Fields named after `Object.prototype` members, and one declared
+ *  `__proto__`: what zod reads through a reply's prototype, and the key its
+ *  shape never holds. */
 const PROTOTYPE_KEYS = [
   'import { attio } from adapters',
   'crm = attio()',
@@ -338,7 +340,11 @@ const PROTOTYPE_KEYS = [
   '  found = extract from [msg.`name`] {',
   '    constructor: "c"',
   '    toString: <text> "t"',
+  '    __proto__: <number> "p"',
   '    name: "n"',
+  '    node valueOf: "d" {',
+  '      v: "v"',
+  '    }',
   '  }',
   '}',
 ].join('\n');
@@ -546,20 +552,16 @@ class Replies {
 }
 
 /**
- * zod reads a declared key through the record's prototype. A field named
+ * zod reads a declared key through the record's prototype: a field named
  * after an `Object.prototype` member that the reply leaves out is a function,
  * and fails `expected object, received function`; a `__proto__` the reply
  * writes becomes the record's prototype rather than its own key. The Rust
- * engine reads both as any other field (README, "Transition artefacts to mirror"). The
- * expectation for such a reply is TypeScript's with exactly that taken out:
- * those issues dropped (the retry and the failure's detail worked out from
- * what is left), a `__proto__` record kept as an own key, and a reply with no
- * issue left read clean.
+ * engine reproduces both (README, "Transition artefacts to mirror", row 5),
+ * so its verdicts are TypeScript's as they stand.
  */
-const PROTOTYPE_ISSUE = (i: { message: string }) => i.message.endsWith('received function');
 
 /** `JSON.parse(JSON.stringify(data))`, with a prototype zod gave a record put
- *  back as the record's `__proto__` key. */
+ *  back as the record's `__proto__` key, last. */
 function plain(value: unknown, restored: { any: boolean }): unknown {
   if (Array.isArray(value)) return value.map((v) => plain(v, restored));
   if (value === null || typeof value !== 'object') return value;
@@ -581,7 +583,7 @@ function verdict(site: CallSite, text: string): unknown {
     const restored = { any: false };
     const data = plain(parsed.data, restored);
     return {
-      ...(restored.any ? { divergence: 'prototype_key' } : {}),
+      ...(restored.any ? { prototype: true } : {}),
       data,
       // Key for key, in order (the `data` above is compared as a value).
       dataText: JSON.stringify(data),
@@ -590,33 +592,44 @@ function verdict(site: CallSite, text: string): unknown {
       envelope: sink.envelopeSnapshot() ?? null,
     };
   }
-  const issues = parsed.error.issues.filter((i) => !PROTOTYPE_ISSUE(i));
-  const divergence = issues.length < parsed.error.issues.length ? { divergence: 'prototype_key' } : {};
-  // Nothing left: the reply is one the Rust engine reads clean.
-  if (issues.length === 0) return { ...divergence, clean: true };
+  const { issues } = parsed.error;
   return {
-    ...divergence,
     issues: issues.map((i) => ({ path: i.path, message: i.message })),
     retry: retryUserMessage('', site, issues),
-    // The detail reads only the rejection's issues.
-    detail: unansweredDetail(site, reply, { ...parsed.error, issues } as Parameters<typeof unansweredDetail>[2]),
+    detail: unansweredDetail(site, reply, parsed.error),
   };
 }
 
-/** Replies to program 0's root region, each prototype-named field present
- *  and absent, beside an ordinary failure so a filtered verdict still fails. */
-const PROTOTYPE_REPLIES: unknown[] = (() => {
+/** Replies to program 0's root region: each prototype-named field present
+ *  and absent, the declared `__proto__` valid, invalid, `null`, alone and
+ *  missing, an undeclared one, and an ordinary failure beside them. Written
+ *  as JSON text, so `__proto__` is an own key as `JSON.parse` makes it. */
+const PROTOTYPE_REPLIES: string[] = (() => {
   const w = (value: unknown) => ({ evidence: 'e', value });
-  const all = { constructor: w(1), toString: w('t'), hasOwnProperty: w(true), ['__proto__']: w(3), name: w('Acme') };
-  const without = (...keys: string[]) => Object.fromEntries(Object.entries(all).filter(([k]) => !keys.includes(k)));
+  const all: Array<[string, unknown]> = [
+    ['constructor', w(1)], ['toString', w('t')], ['hasOwnProperty', w(true)], ['__proto__', w(3)], ['name', w('Acme')], ['valueOf', [{ v: w('x') }]],
+  ];
+  const record = (entries: Array<[string, unknown]>) => `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${JSON.stringify(v)}`).join(',')}}`;
+  const without = (...keys: string[]) => all.filter(([k]) => !keys.includes(k));
+  const replacing = (key: string, value: unknown) => all.map(([k, v]): [string, unknown] => [k, k === key ? value : v]);
+  const list = (...records: string[]) => `[${records.join(',')}]`;
   return [
-    [all],
-    [without('constructor')],
-    [without('toString', 'hasOwnProperty')],
-    [without('__proto__')],
-    [without('constructor', 'toString', 'hasOwnProperty', '__proto__')],
-    [{ ...without('constructor'), name: 5 }],
-    [{ name: w('a') }, { ...all, toString: 'bare' }],
+    list(record(all)),
+    list(record(without('constructor'))),
+    list(record(without('toString', 'hasOwnProperty'))),
+    list(record(without('valueOf'))),
+    list(record(without('__proto__'))),
+    list(record(without('constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf'))),
+    list(record([...without('constructor'), ['name', 5]])),
+    list(record([['name', w('a')]]), record(replacing('toString', 'bare'))),
+    list(record(replacing('__proto__', 'not a wrapper'))),
+    list(record(replacing('__proto__', null))),
+    list(record(replacing('__proto__', w('three')))),
+    list(record(replacing('__proto__', [1, 2]))),
+    list(record([['__proto__', w(3)]])),
+    list(record([['__proto__', { name: w('through the prototype') }], ...without('__proto__')])),
+    list(record([...all, ['extra', 1], ['__proto__', w(4)]])),
+    record([['__proto__', { x: 1 }]]),
   ];
 })();
 
@@ -665,7 +678,7 @@ async function programCase(rand: Rand, index: number): Promise<unknown | undefin
     envelope: envelopeExample(site),
     replies: [
       ...Array.from({ length: 6 }, () => JSON.stringify(replies.reply(site))),
-      ...(index === 0 && at === 0 ? PROTOTYPE_REPLIES.map((entities) => JSON.stringify({ [site.siteId]: entities })) : []),
+      ...(index === 0 && at === 0 ? PROTOTYPE_REPLIES.map((entities) => `{${JSON.stringify(site.siteId)}:${entities}}`) : []),
     ].map((text) => ({ reply: text, verdict: verdict(site, text) })),
   }));
   return { case: index, source, link, spec, regions };

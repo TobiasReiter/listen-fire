@@ -54,6 +54,25 @@ impl Firing for Stand<'_> {
     }
 }
 
+/// The oracle's `plain`: a prototype a record was given (an object, not
+/// `null`) put back as its own `__proto__` key, last, at every depth.
+fn restored(value: &Js) -> Js {
+    match value {
+        Js::Array(list) => Js::array(list.items().iter().map(restored).collect()),
+        Js::Object(object) => {
+            let mut out = js::JsObject::new();
+            for (key, value) in object.entries() {
+                out.set(key.clone(), restored(value));
+            }
+            if let Some(proto @ (Js::Object(_) | Js::Array(_))) = &object.proto {
+                out.set("__proto__".into(), restored(proto));
+            }
+            Js::object(out)
+        }
+        other => other.clone(),
+    }
+}
+
 /// A reply as `JSON.parse` reads it: its keys in the order written.
 fn reply_of(text: &str) -> Js {
     let raw: Box<serde_json::value::RawValue> = serde_json::from_str(text).expect("a reply is JSON");
@@ -143,7 +162,8 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
     let schemas: BTreeMap<String, InstanceSchema> = serde_json::from_value(world["schemas"].clone()).expect("the schemas read");
     let plugins: JsMap<PluginSpec> = serde_json::from_value(world["plugins"].clone()).expect("the plugins read");
     let firing = Stand { schemas: &schemas };
-    let (mut programs, mut regions_seen, mut replies, mut divergences, mut messages, mut data, mut priced) = (0, 0, 0, 0, 0, 0, 0);
+    let (mut programs, mut regions_seen, mut replies, mut messages, mut data, mut priced) = (0, 0, 0, 0, 0, 0);
+    let (mut prototype_replies, mut prototyped) = (0, 0);
 
     for case in &cases[1..] {
         match case["kind"].as_str().unwrap() {
@@ -175,25 +195,18 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
                         let text = reply["reply"].as_str().unwrap();
                         let verdict = &reply["verdict"];
                         let read = validate::read_reply(region, &reply_of(text));
-                        // The one known divergence (README, "Transition artefacts to mirror"): the
-                        // expectation is TypeScript's with zod's prototype reads
-                        // taken out, so this engine is held to all the rest.
-                        let divergent = verdict.get("divergence").is_some();
-                        if divergent {
-                            divergences += 1;
-                        }
-                        if verdict.get("clean").is_some() {
-                            assert!(divergent, "only a divergence is pinned clean without its data");
-                            assert!(read.is_ok(), "{text}\nRust read {read:?}");
-                            continue;
+                        if text.contains("__proto__") || text.contains("constructor") {
+                            prototype_replies += 1;
                         }
                         match (read, verdict.get("data")) {
                             (Ok(read), Some(expected_data)) => {
-                                assert_eq!(&json_of_js(&read.value), expected_data, "{source}\n{text}");
-                                // Key order too, except where TypeScript's record lost a
-                                // `__proto__` key to its prototype (put back last).
-                                if !divergent {
-                                    assert_eq!(js::json_stringify(&read.value, 0), verdict["dataText"].as_str().unwrap(), "{text}");
+                                // A prototype zod gave a record is written back as
+                                // its `__proto__` key, last, on both sides.
+                                let restored = restored(&read.value);
+                                assert_eq!(&json_of_js(&restored), expected_data, "{source}\n{text}");
+                                assert_eq!(js::json_stringify(&restored, 0), verdict["dataText"].as_str().unwrap(), "{text}");
+                                if verdict.get("prototype").is_some() {
+                                    prototyped += 1;
                                 }
                                 assert_eq!(pairs(&read.coercions.values), verdict["coerced"], "{text}");
                                 assert_eq!(pairs(&read.coercions.evidence), verdict["evidenceCoerced"], "{text}");
@@ -288,5 +301,7 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
     }
     // A pin that silently lost its cases would hold nothing.
     assert!(programs >= 160 && regions_seen >= 300 && replies >= 1500 && messages >= 100 && data >= 15 && priced >= 80);
-    assert_eq!(divergences, 7, "program 0's prototype-named fields are the known divergence's replies");
+    // Program 0's replies with prototype-named fields: every one is held to
+    // TypeScript's verdict as it stands, those whose read set a prototype too.
+    assert!(prototype_replies >= 16 && prototyped >= 3, "{prototype_replies} prototype replies, {prototyped} prototyped");
 }

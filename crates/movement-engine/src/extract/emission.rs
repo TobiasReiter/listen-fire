@@ -134,7 +134,9 @@ pub(crate) fn project<'s>(raw: &JsObject, site: &Region<'s>, site_ref: &dyn Fn(&
     let mut context = JsObject::new();
     let mut provenance = Vec::new();
     for field in site.fields() {
-        let wrapped = raw.get(&field.name).cloned().unwrap_or(Js::Undefined);
+        // `raw[field.name]`: through the record's prototype, which a
+        // `__proto__` in the reply set (crate::extract::validate).
+        let wrapped = js::plain_property(raw, &field.name);
         let value = match &wrapped {
             Js::Object(object) => object.get("value").cloned().unwrap_or(Js::Undefined),
             _ => Js::Undefined,
@@ -160,10 +162,10 @@ pub(crate) fn project<'s>(raw: &JsObject, site: &Region<'s>, site_ref: &dyn Fn(&
     }
     let mut children = Vec::new();
     for child in &site.children {
-        let records = match raw.get(&child.spec.name) {
-            Some(Js::Array(list)) => list.items().clone(),
-            None | Some(Js::Undefined | Js::Null) => Vec::new(),
-            Some(other) => vec![other.clone()],
+        let records = match js::plain_property(raw, &child.spec.name) {
+            Js::Array(list) => list.items().clone(),
+            Js::Undefined | Js::Null => Vec::new(),
+            other => vec![other],
         };
         let projected = records
             .iter()

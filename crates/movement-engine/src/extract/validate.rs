@@ -7,11 +7,16 @@
 //! declares refused (`entitySchemaFor`) — with zod's issues, in zod's order
 //! and words, and what the read coerced (`CoercionTracker`).
 //!
-//! One zod accident is not reproduced (README, "Transition artefacts to mirror"): zod reads a
-//! declared key through the object's prototype, so a field named after an
+//! Two accidents of JavaScript objects under zod are reproduced (README,
+//! "Transition artefacts to mirror", row 5): zod reads a declared key
+//! through the reply's prototype, so a field named after an
 //! `Object.prototype` member (`constructor`, `toString`, …) that the reply
-//! leaves out is a function, and fails, and a `__proto__` the reply writes
-//! becomes the record's prototype. Here each is a field like any other.
+//! leaves out is a function, and fails (`expected object, received
+//! function`); and zod writes each key it hands on with `object[key] =
+//! value`, so a `__proto__` the reply writes becomes the record's prototype
+//! (an object or `null`; anything else is dropped). A field DECLARED
+//! `__proto__` is no key of zod's shape at all (`shape.__proto__ = …` set
+//! the shape's prototype), so it is never checked, nor counted as declared.
 
 use crate::extract::spec::Region;
 use crate::js::{self, Js, JsObject};
@@ -259,7 +264,7 @@ impl Parse {
         out.set(region.site_id.clone(), records);
         for (key, value) in object.entries() {
             if *key != region.site_id {
-                out.set(key.clone(), value.clone());
+                out.assign(key.clone(), value.clone());
             }
         }
         Js::object(out)
@@ -284,17 +289,20 @@ impl Parse {
         };
         // The schema's keys in the order a JavaScript object holds them: a
         // child named like a field takes the field's place.
+        // `shape.__proto__ = …` sets the shape's prototype: no key of it.
         let mut declared: Vec<(String, Declared<'_, '_>)> = Vec::new();
         let fields = site.fields().iter().map(|f| (f.name.clone(), Declared::Field(f)));
         let children = site.children.iter().map(|c| (c.spec.name.clone(), Declared::Child(c)));
-        for (key, kind) in fields.chain(children) {
+        for (key, kind) in fields.chain(children).filter(|(key, _)| key != "__proto__") {
             js::insert_in_object_order(&mut declared, key, kind);
         }
         let declared_names: Vec<String> = declared.iter().map(|(k, _)| k.clone()).collect();
         let before = self.issues.len();
         let mut out = JsObject::new();
         for (key, kind) in &declared {
-            let raw = object.get(key).cloned();
+            // `input[key]`, read through the reply's prototype: a member
+            // of `Object.prototype` the reply leaves out is its function.
+            let raw = object.get(key).cloned().or_else(|| js::is_object_prototype_name(key).then(|| js::plain_property(object, key)));
             let parsed = self.at(PathKey::Key(key.clone()), |p| match kind {
                 Declared::Field(field) => {
                     let ctx = format!("{}.{}", site.spec.name, field.name);
@@ -312,7 +320,7 @@ impl Parse {
         }
         for (key, value) in object.entries() {
             if !declared_names.contains(key) {
-                out.set(key.clone(), value.clone());
+                out.assign(key.clone(), value.clone());
             }
         }
         // The refinement runs on an entity whose own parse raised nothing,
@@ -570,14 +578,23 @@ mod tests {
         crate::env::js_of_serialized(&serde_json::from_str::<Box<serde_json::value::RawValue>>(text).unwrap())
     }
 
-    /// The divergence the README lists: zod reads `constructor` through the
-    /// prototype and fails the reply that leaves it out.
+    /// zod reads `constructor` through the prototype and fails the reply
+    /// that leaves it out (README, row 5); a `__proto__` the reply writes
+    /// becomes the record's prototype, and a declared one is no key.
     #[test]
-    fn a_field_named_after_a_prototype_member_reads_absent() {
+    fn a_field_named_after_a_prototype_member_reads_through_the_prototype() {
         let spec = node(&["constructor", "name"]);
         let region = Region::plan(&spec, 0, true, &mut || 1);
-        let read = read_reply(&region, &reply(r#"{"x:n#1": [{"name": {"evidence": "e", "value": "Acme"}}]}"#)).expect("an absent field is absent");
-        assert_eq!(crate::env::json_of_js(&read.value), serde_json::json!({ "x:n#1": [{ "name": { "evidence": "e", "value": "Acme" } }] }));
+        let issues = read_reply(&region, &reply(r#"{"x:n#1": [{"name": {"evidence": "e", "value": "Acme"}}]}"#)).expect_err("a function is no field");
+        assert_eq!(issue_lines(&issues), ["  - x:n#1.0.constructor: Invalid input: expected object, received function"]);
+        let spec = node(&["__proto__", "name"]);
+        let region = Region::plan(&spec, 0, true, &mut || 1);
+        let read = read_reply(&region, &reply(r#"{"x:n#1": [{"__proto__": {"evidence": 5, "value": "x"}}]}"#)).expect("a declared `__proto__` is never checked");
+        let Js::Object(answer) = &read.value else { panic!("an object") };
+        let Some(Js::Array(records)) = answer.get("x:n#1") else { panic!("a list") };
+        let Js::Object(record) = &records.items()[0] else { panic!("a record") };
+        assert!(record.entries().is_empty());
+        assert!(matches!(&record.proto, Some(Js::Object(proto)) if proto.get("value").is_some()));
     }
 
     /// A number past the double range crosses the eval wire as the

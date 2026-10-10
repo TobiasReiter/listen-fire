@@ -1149,6 +1149,11 @@ TypeScript engine runs the segment, having seen only reads.
 - Parking a value whose message or data would print a record's binding
   object other than the event's or a block's returned records' (its read
   seam, its computed schema): MOVENG_UNSUPPORTED.
+- An extraction whose tree declares a field or a node named `__proto__`
+  (inline, from a node declaration, or borrowed from a live schema): past
+  the reply's read the TypeScript stores it as the entity's prototype
+  (row 5). MOVENG_UNSUPPORTED naming it, once the spec is built for the
+  firing.
 - A hop's ORDER BY over more than 64 records whose keys mix numbers with
   other kinds, or a `SORT` over more than 64 such members:
   MOVENG_UNSUPPORTED ("Transition artefacts to mirror" below). TypeScript orders them by
@@ -1317,7 +1322,7 @@ Sizes are estimates (XS, S, M, L).
 | 3 | Unicode case mapping | mirrored (chunk 7A Task 5): Node 22.20's ICU 77.1 (Unicode 16), its tables generated into src/case_mapping.rs by tests/oracle/case_mapping.ts, the final sigma's cased and ignorable neighbours probed through `toLowerCase` itself; regenerate when the pinned Node moves | oracle case_mapping.json (4,000 seeded texts, seed 20261013, tests/tail_oracle.rs) | done |
 | 3a | the local edge's word split (`/[^\p{L}\p{N}]+/u`, FUZZY candidates) | src/letter_number.rs, generated from Node 22.20 (Unicode 16) by tests/oracle/letter_number.ts | regenerated with row 3's data whenever the pinned Node moves; the language's own Unicode version once one is named | XS |
 | 4 | ORDER BY and `SORT` over mixed key kinds | V8's binary insertion to 64 records; past 64 with mixed kinds, MOVENG_UNSUPPORTED (detail below) | V8's TimSort ported exactly (run detection, merge_lo/merge_hi, galloping); oracle by seeded mixed-key lists | M to L |
-| 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | read as any other field | a fixed table of `Object.prototype` member names with zod's issue text per declared type, and the prototype-set semantics, in crate::extract::validate; the oracle marks these replies (`prototype_key`) | M |
+| 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | mirrored (chunk 7A Task 5) in crate::extract::validate: a declared key read through the reply's prototype (js.rs's one `Object.prototype` name table), a key handed on written with `object[key] = value` (`__proto__` sets the prototype), a declared `__proto__` no key of the shape; the emitted entity's fields read through that prototype. An extraction DECLARING a field or node `__proto__` is refused mid-run (`unreproduced`, below) | oracle extraction.json, every program 0 reply pinned to TypeScript's verdict unfiltered (tests/extraction_pin.rs) | done |
 | 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | 0 |
 | 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | follows 9 |
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
@@ -1366,27 +1371,27 @@ mirror replaces that plan):
     order over every key kind (say: nulls, then numbers, then text), so no
     sort algorithm's merge decides where a record lands.
   - a reply field named after an `Object.prototype` member
-    (`constructor`, `toString`, `hasOwnProperty`, `__proto__`, …): zod
-    reads a declared key through the record's prototype, so a reply that
-    leaves such a field out hands zod a function, which fails the call
-    (`expected object, received function`), and a `__proto__` the reply
-    writes becomes the record's prototype instead of its key.
-    crate::extract::validate reads each as any other field. The oracle marks
-    those replies (`divergence: "prototype_key"`) and holds this engine to
-    TypeScript's verdict with exactly that taken out: the function issues
-    dropped (the retry and the failure's detail worked out from what is
-    left), the `__proto__` record kept as a key, and a reply with nothing
-    left read clean.
-    zod also never validates a field a declaration DECLARES as `__proto__`:
-    building the entity's object schema assigns `shape.__proto__`, which
-    sets the schema's prototype instead of a key, so whatever the reply
-    writes there passes unchecked, and the field is missing from the keys
-    the "answered under keys none of which it declares" check counts as
-    declared (and from that check's message). crate::extract::validate
-    validates it, and counts it, as an ordinary field. The oracle holds this
-    engine only to replies whose `__proto__` value is valid; the difference
-    is in what an invalid one, or one answered under `__proto__` alone,
-    does.
+    (`constructor`, `toString`, `hasOwnProperty`, `__proto__`, …), mirrored
+    (row 5): zod reads a declared key through the record's prototype, so a
+    reply that leaves such a field out hands zod a function, which fails the
+    call (`expected object, received function`, at the field, or at the
+    first record of a child node so named); and zod hands each key on with
+    `object[key] = value`, so a `__proto__` the reply writes becomes the
+    record's prototype instead of its key (an object or `null`; any other
+    value is dropped). zod never validates a field a declaration DECLARES as
+    `__proto__`: building the entity's object schema assigns
+    `shape.__proto__`, which sets the schema's prototype instead of a key,
+    so whatever the reply writes there passes unchecked, and the field is
+    missing from the keys the "answered under keys none of which it
+    declares" check counts as declared (and from that check's message).
+    crate::extract::validate does each of these, and the oracle pins every
+    such reply to TypeScript's verdict as it stands. Past the read, the
+    TypeScript stores a declared `__proto__` field as its entity's
+    prototype too (`context[field.name] = …`, `provenance[field.name] =
+    …`); that is not reproduced, so an extraction declaring one fails
+    instead (see "Errors a run can meet mid-run"). A reply's own
+    `__proto__` key still never reaches this engine over the eval wire
+    (row 7).
   - a reply number above the double range (past ±1.8e308): `JSON.parse`
     reads it as `Infinity`, which zod's number check refuses (`expected
     number, received number`). The reply crosses to this engine on the eval
