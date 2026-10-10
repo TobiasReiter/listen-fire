@@ -305,7 +305,7 @@ describe('the handle a discriminated write hands back', () => {
       withOrg(
         'entry = write o-[:`List Entries`]-> { listName: "Deals" }\n' +
           '    owner = match entry-[:Owners]-> { unique by (`Name`), Name: "Ada" }\n' +
-          '    link entry -[:Owners]-> owner',
+          '    if owner != null { link entry -[:Owners]-> owner }',
       ),
     );
   });

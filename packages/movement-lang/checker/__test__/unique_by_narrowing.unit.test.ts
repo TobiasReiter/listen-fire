@@ -48,6 +48,9 @@ const inMovement = (...body: string[]) =>
     '  wanted = "Example Holdings"',
     '  home = "Lisbon"',
     '  co = match reg-[:entities]-> { unique by (`Name`), Name: wanted }',
+    // Since language version 4 the find may miss; these cases are about what
+    // follows a hit.
+    '  if co == null { ERROR("no such entity") }',
     ...body,
     '}',
   ].join('\n');

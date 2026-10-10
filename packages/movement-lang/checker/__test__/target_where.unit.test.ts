@@ -62,7 +62,7 @@ const expectClean = (source: string): void =>
 describe('the final hop of a target takes a WHERE', () => {
   it('parses, and the WHERE lands on the final hop', () => {
     const source = inMovement(
-      '  match reg-[e:entities WHERE EXISTS(e-[:Holdings]->)]-> { unique by (FUZZY `Name`), Name: wanted }',
+      '  found = match reg-[e:entities WHERE EXISTS(e-[:Holdings]->)]-> { unique by (FUZZY `Name`), Name: wanted }',
     );
     const program = parseProgram(source);
     expect(program).toBeDefined();
@@ -74,7 +74,7 @@ describe('the final hop of a target takes a WHERE', () => {
   it('a match narrowed by a hop read is clean', () => {
     expectClean(
       inMovement(
-        '  match reg-[e:entities WHERE EXISTS(e-[:Holdings]->)]-> { unique by (FUZZY `Name`), Name: wanted }',
+        '  found = match reg-[e:entities WHERE EXISTS(e-[:Holdings]->)]-> { unique by (FUZZY `Name`), Name: wanted }',
       ),
     );
   });
@@ -94,7 +94,8 @@ describe('the final hop of a target takes a WHERE', () => {
     expectClean(
       inMovement(
         '  co = match reg-[:entities]-> { unique by (FUZZY `Name`), Name: wanted }',
-        '  match co-[b:Branches WHERE b.`City` == "Berlin" AND COUNT(b-[:Holdings]->) > 1]-> { unique by (FUZZY `Name`), Name: wanted }',
+        '  if co == null { ERROR("no such entity") }',
+        '  found = match co-[b:Branches WHERE b.`City` == "Berlin" AND COUNT(b-[:Holdings]->) > 1]-> { unique by (FUZZY `Name`), Name: wanted }',
       ),
     );
   });
@@ -102,8 +103,8 @@ describe('the final hop of a target takes a WHERE', () => {
 
 describe('the unique by forms the handbook documents beside it', () => {
   it('a component pinned to a value, and a non-equality component, check clean', () => {
-    expectClean(inMovement('  match reg-[:entities]-> { unique by (`Name`, `City` == "Berlin"), Name: wanted }'));
-    expectClean(inMovement('  match reg-[:entities]-> { unique by (`Name`, `Updated` WITHIN 30d), Name: wanted }'));
+    expectClean(inMovement('  found = match reg-[:entities]-> { unique by (`Name`, `City` == "Berlin"), Name: wanted }'));
+    expectClean(inMovement('  found = match reg-[:entities]-> { unique by (`Name`, `Updated` WITHIN 30d), Name: wanted }'));
   });
 });
 
@@ -111,7 +112,7 @@ describe('the WHERE is typed against the type the target lands on', () => {
   it('an unknown field, alias-qualified, is an error naming the landing type', () => {
     const found = errors(
       inMovement(
-        '  match reg-[e:entities WHERE e.`Ghost` == "x"]-> { unique by (FUZZY `Name`), Name: wanted }',
+        '  found = match reg-[e:entities WHERE e.`Ghost` == "x"]-> { unique by (FUZZY `Name`), Name: wanted }',
       ),
     );
     expect(found.map((d) => d.code)).toEqual([C.UNKNOWN_PROPERTY]);
@@ -128,7 +129,7 @@ describe('the WHERE is typed against the type the target lands on', () => {
     expect(
       codes(
         inMovement(
-          '  match reg-[e:entities WHERE EXISTS(e-[:Nowhere]->)]-> { unique by (FUZZY `Name`), Name: wanted }',
+          '  found = match reg-[e:entities WHERE EXISTS(e-[:Nowhere]->)]-> { unique by (FUZZY `Name`), Name: wanted }',
         ),
       ),
     ).toEqual([C.TRAVERSE_UNKNOWN_EDGE]);
@@ -139,7 +140,8 @@ describe('the WHERE is typed against the type the target lands on', () => {
       codes(
         inMovement(
           '  co = match reg-[:entities]-> { unique by (FUZZY `Name`), Name: wanted }',
-          '  match co-[b:Branches WHERE b.`Amount` > 1]-> { unique by (FUZZY `Name`), Name: wanted }',
+          '  if co == null { ERROR("no such entity") }',
+          '  found = match co-[b:Branches WHERE b.`Amount` > 1]-> { unique by (FUZZY `Name`), Name: wanted }',
         ),
       ),
     ).toEqual([C.UNKNOWN_PROPERTY]);
@@ -161,7 +163,7 @@ describe('where a target WHERE is refused', () => {
     expect(
       codes(
         inMovement(
-          '  match reg-[e:entities WHERE write reg-[:entities]-> { Name: "x" }]-> { unique by (FUZZY `Name`), Name: wanted }',
+          '  found = match reg-[e:entities WHERE write reg-[:entities]-> { Name: "x" }]-> { unique by (FUZZY `Name`), Name: wanted }',
         ),
       ),
     ).toEqual([C.EXPR_PARSE]);
@@ -171,7 +173,7 @@ describe('where a target WHERE is refused', () => {
     expect(
       codes(
         inMovement(
-          '  match reg-[e:entities WHERE await e-[:Holdings]->]-> { unique by (FUZZY `Name`), Name: wanted }',
+          '  found = match reg-[e:entities WHERE await e-[:Holdings]->]-> { unique by (FUZZY `Name`), Name: wanted }',
         ),
       ),
     ).toEqual([C.EXPR_PARSE]);
@@ -181,6 +183,7 @@ describe('where a target WHERE is refused', () => {
     const found = errors(
       inMovement(
         '  co = match reg-[:entities]-> { unique by (FUZZY `Name`), Name: wanted }',
+        '  if co == null { ERROR("no such entity") }',
         '  write reg-[e:entities WHERE e.`City` == "Berlin"]-> bind co { Name: wanted }',
       ),
     );
@@ -193,7 +196,7 @@ describe('where a target WHERE is refused', () => {
         inMovement(
           '  seen = node { entries: <Entry> }',
           '  write seen-[:entries]-> { unique by (`Name`), Name: wanted }',
-          '  match seen-[x:entries WHERE x.`Name` == "y"]-> { unique by (`Name`), Name: wanted }',
+          '  found = match seen-[x:entries WHERE x.`Name` == "y"]-> { unique by (`Name`), Name: wanted }',
         ),
       ),
     ).toEqual([C.TARGET_WHERE_LOCAL]);

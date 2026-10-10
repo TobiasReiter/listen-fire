@@ -439,7 +439,7 @@ export async function resolveFieldValue(
     return match ? match.id : null;
   } else if (fieldDef.value_type === valueType.ORGANIZATION) {
     const name = String(value);
-    let match = await operations.findMatchingOrganisation({ name });
+    let match: { id: number } | null = await operations.findMatchingOrganisation({ name });
     if (!match) {
       const newOrg = await operations.getClient().createOrganisation({ name });
       match = newOrg ? { id: newOrg.id } : null;

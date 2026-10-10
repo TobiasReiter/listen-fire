@@ -86,7 +86,7 @@ describe('AffinityOperations.findMatchingPerson — email is matched the way Aff
       email: 'B.Smith@Acme.example',
     });
 
-    expect(match).toEqual({ id: 1 });
+    expect(match).toEqual(BOB);
   });
 
   it('matches an email carrying stray surrounding whitespace', async () => {
@@ -97,7 +97,7 @@ describe('AffinityOperations.findMatchingPerson — email is matched the way Aff
       email: `  ${STORED} `,
     });
 
-    expect(match).toEqual({ id: 1 });
+    expect(match).toEqual(BOB);
   });
 
   it('matches on a secondary email, not just the primary', async () => {
@@ -110,7 +110,7 @@ describe('AffinityOperations.findMatchingPerson — email is matched the way Aff
       email: STORED.toUpperCase(),
     });
 
-    expect(match).toEqual({ id: 1 });
+    expect(match).toEqual({ ...BOB, primary_email: 'other@acme.example', emails: ['other@acme.example', STORED] });
   });
 
   it('does not invent a match when the email genuinely belongs to nobody', async () => {

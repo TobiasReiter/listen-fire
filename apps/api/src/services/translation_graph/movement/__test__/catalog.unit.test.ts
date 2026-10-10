@@ -721,16 +721,14 @@ describe('instanceSchemaFromDescriptors', () => {
     expect(Object.keys(projected.schema.positions)).toEqual(['Meeting Note']);
   });
 
-  it('writable entries become writableRoots with externalId/url + the write-event facts in the result shape', () => {
+  it('writable entries become writableRoots with externalId/url + the record in the result shape', () => {
     expect(attio.schema.writableRoots['Companies']).toEqual({
       fields: { name: 'text', description: 'text', team_size: 'number' },
+      // Only what the record holds: what the write DID is asked of the
+      // handle's `-[:@old]->`, never projected as a field.
       resultShape: {
         externalId: 'text',
         url: 'text',
-        // What the write DID, not what the record holds — created vs matched,
-        // committed vs rehearsed.
-        created: 'boolean',
-        committed: 'boolean',
         name: 'text',
         description: 'text',
         team_size: 'number',
@@ -765,8 +763,6 @@ describe('instanceSchemaFromDescriptors', () => {
       resultShape: {
         externalId: 'text',
         url: 'text',
-        created: 'boolean',
-        committed: 'boolean',
         user: 'text',
         text: 'text',
       },

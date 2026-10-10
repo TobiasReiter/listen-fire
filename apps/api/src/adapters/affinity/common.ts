@@ -66,7 +66,7 @@ function splitNameByLastToken(name: string): { firstName: string; lastName: stri
   return { firstName: tokens.slice(0, -1).join(' '), lastName: tokens[tokens.length - 1] };
 }
 
-type AffinityOrganisation = Awaited<ReturnType<AffinityAPIClient['findManyOrganisations']>>[number];
+export type AffinityOrganisation = Awaited<ReturnType<AffinityAPIClient['findManyOrganisations']>>[number];
 
 /** Which rule decided a match — logged on every decision so production shows
  *  why a company was adopted or created. `none` hands the caller a create. */

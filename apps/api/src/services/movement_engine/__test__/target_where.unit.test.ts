@@ -85,7 +85,7 @@ import { execute } from '../../../lib/prompts/execute';
 import { runMovement } from '../run';
 import { meteredArbitration } from '../../translation_graph/engine/entity_match';
 
-import type { InstanceSchema } from 'movement-lang';
+import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
@@ -228,7 +228,11 @@ function webhookEvent(payload: Record<string, unknown>): TriggerEvent {
   return { pipelineInputId: 'pi-target-where', adapterType: 'email', triggerType: 'webhook', payload };
 }
 
-function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
+function run(
+  body: string[],
+  adapters: { email: Adapter; attio: Adapter },
+  options: { languageVersion?: LanguageVersion } = {},
+) {
   const source =
     PRELUDE +
     [
@@ -255,6 +259,7 @@ function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
         },
       },
     }),
+    ...options,
   });
 }
 
@@ -279,12 +284,17 @@ beforeEach(() => {
 });
 
 describe('a match whose target carries a WHERE', () => {
-  const MATCH_WITH_DEALS = [
+  const MATCH_WITH_DEALS_HEAD = [
     '  co = match crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { unique by (FUZZY `name`)',
     '    name: "Example Labs"',
     '  }',
-    '  write crm-[:notes]-> { title: co.`summary` }',
   ];
+  const MATCH_WITH_DEALS = [
+    ...MATCH_WITH_DEALS_HEAD,
+    '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
+  ];
+  // Version 3: a miss ends the scope, so the write needs no guard.
+  const MATCH_WITH_DEALS_V3 = [...MATCH_WITH_DEALS_HEAD, '  write crm-[:notes]-> { title: co.`summary` }'];
 
   it('control — without the WHERE both candidates reach the judge, and index 0 is the first', async () => {
     mockExecute.mockResolvedValue(judged(0));
@@ -292,7 +302,7 @@ describe('a match whose target carries a WHERE', () => {
     const result = await run(
       [
         '  co = match crm-[:companies]-> { unique by (FUZZY `name`), name: "Example Labs" }',
-        '  write crm-[:notes]-> { title: co.`summary` }',
+        '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: email(), attio: attio.adapter },
     );
@@ -309,9 +319,9 @@ describe('a match whose target carries a WHERE', () => {
     expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'active' } }]);
   });
 
-  it('when every candidate fails, the match is a miss: the scope ends and nothing is written', async () => {
+  it('under version 3, when every candidate fails, the match is a miss: the scope ends and nothing is written', async () => {
     const attio = makeFakeAdapter('attio', { company: [WITHOUT_DEALS] });
-    const result = await run(MATCH_WITH_DEALS, { email: email(), attio: attio.adapter });
+    const result = await run(MATCH_WITH_DEALS_V3, { email: email(), attio: attio.adapter }, { languageVersion: 3 });
 
     expect(mockExecute).not.toHaveBeenCalled();
     expect(attio.creates).toEqual([]);
@@ -324,7 +334,7 @@ describe('a match whose target carries a WHERE', () => {
     const result = await run(
       [
         '  co = match crm-[c:companies WHERE c.`region` == "EU"]-> { unique by (FUZZY `name`), name: "Example Labs" }',
-        '  write crm-[:notes]-> { title: co.`summary` }',
+        '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: email(), attio: attio.adapter },
     );
@@ -339,7 +349,7 @@ describe('a match whose target carries a WHERE', () => {
     const result = await run(
       [
         '  co = match crm-[:companies WHERE `region` == "EU"]-> { unique by (FUZZY `name`), name: "Example Labs" }',
-        '  write crm-[:notes]-> { title: co.`summary` }',
+        '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: email(), attio: attio.adapter },
     );

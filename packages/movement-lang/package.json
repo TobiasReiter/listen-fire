@@ -14,6 +14,7 @@
     "language:conformance": "node -r ../../apps/api/node_modules/ts-node/register/transpile-only conformance/language_conformance.ts",
     "test:conformance:v1": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v1.cjs",
     "test:conformance:v2": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v2.cjs",
+    "test:conformance:v3": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v3.cjs",
     "harvest:programs": "T=$(mktemp -d) && for c in v1 v2 current; do HARVEST_CORPUS=$c HARVEST_OUT=$T/$c.jsonl node ../../apps/api/node_modules/jest/bin/jest.js --config parser/harvest/jest.harvest.cjs || exit 1; done && node parser/harvest/build_fixture.cjs v1=$T/v1.jsonl v2=$T/v2.jsonl current=$T/current.jsonl",
     "harvest:slots": "T=$(mktemp -d) && for c in v1 v2 current; do HARVEST_CORPUS=$c HARVEST_OUT=$T/$c.jsonl node ../../apps/api/node_modules/jest/bin/jest.js --config parser/expression/harvest/jest.harvest.cjs || exit 1; done && node parser/expression/harvest/build_fixture.cjs v1=$T/v1.jsonl v2=$T/v2.jsonl current=$T/current.jsonl",
     "harvest:checks": "T=$(mktemp -d) && for c in v1 v2 current; do HARVEST_CORPUS=$c HARVEST_OUT=$T/$c.jsonl node ../../apps/api/node_modules/jest/bin/jest.js --config checker/harvest/jest.harvest.cjs || exit 1; done && node checker/harvest/build_fixture.cjs v1=$T/v1.jsonl v2=$T/v2.jsonl current=$T/current.jsonl"

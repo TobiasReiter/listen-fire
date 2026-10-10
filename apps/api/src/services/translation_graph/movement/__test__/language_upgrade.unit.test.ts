@@ -31,7 +31,7 @@ import {
   type ResolveFile,
 } from 'movement-lang';
 
-import type { AuthoringDiagnostic } from '../authoring';
+import { assessMovementValidity, type AuthoringDiagnostic } from '../authoring';
 
 import { getMovementRow, type MovementRow } from '../store';
 import {
@@ -350,7 +350,7 @@ describe('which checks are upgrade checks', () => {
   });
 });
 
-describe('an explicit upgrade blocks on what the sweep blocks on', () => {
+describe('an explicit upgrade: errors block, meaning-changed warnings are acknowledged', () => {
   const upgradeWith = async (diagnostics: AuthoringDiagnostic[]) => {
     jest.mocked(getMovementRow).mockResolvedValueOnce(movement({ id: 'old' }));
     return upgradeMovement({
@@ -366,10 +366,36 @@ describe('an explicit upgrade blocks on what the sweep blocks on', () => {
     expect(result).toEqual(expect.objectContaining({ status: 'needs_acknowledgement', diagnostics: [] }));
   });
 
-  it('a meaning-changed warning blocks, and is what it reports', async () => {
+  it('a meaning-changed warning is listed and awaits acknowledgement', async () => {
     const warning = meaningChanged('changed meaning');
     const result = await upgradeWith([warning, diagnostic('warning', 'a cost note')]);
-    expect(result).toEqual(expect.objectContaining({ status: 'blocked', diagnostics: [warning] }));
+    expect(result).toEqual(
+      expect.objectContaining({ status: 'needs_acknowledgement', diagnostics: [warning] }),
+    );
+  });
+
+  it('a meaning-changed warning moves up once acknowledged', async () => {
+    jest.mocked(assessMovementValidity).mockReturnValueOnce({ status: 'valid', reason: null } as never);
+    jest.mocked(getMovementRow).mockResolvedValueOnce(movement({ id: 'old' }));
+    const result = await upgradeMovement({
+      teamId: 'team-1',
+      id: 'old',
+      acknowledge: true,
+      validate: async () => ({ diagnostics: [meaningChanged('changed meaning')], gaps: [] }),
+    });
+    expect(result.status).toBe('upgraded');
+  });
+
+  it('an error blocks even when acknowledged', async () => {
+    jest.mocked(getMovementRow).mockResolvedValueOnce(movement({ id: 'old' }));
+    const error = diagnostic('error', 'refused');
+    const result = await upgradeMovement({
+      teamId: 'team-1',
+      id: 'old',
+      acknowledge: true,
+      validate: async () => ({ diagnostics: [error, meaningChanged('changed meaning')], gaps: [] }),
+    });
+    expect(result.status).toBe('blocked');
   });
 });
 

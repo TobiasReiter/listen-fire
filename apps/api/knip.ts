@@ -17,6 +17,8 @@ const config: KnipConfig = {
     'src/test/jest-integration.config.ts', // used by Jest, referenced in package.json
     'src/test/jest-unit.config.ts', // used by Jest, referenced in package.json
     'src/test/jest-conformance-v1.config.ts', // used by Jest, referenced in package.json
+    'src/test/jest-conformance-v2.config.ts', // used by Jest, referenced in package.json
+    'src/test/jest-conformance-v3.config.ts', // used by Jest, referenced in package.json
     'src/interfaces/trpc/index.ts', // entrypoint for trpc types for UI
     'src/lib/utils/email_providers.ts', // standalone value?
     'src/lib/cache.ts', // standalone value?

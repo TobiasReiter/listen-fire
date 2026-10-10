@@ -42,16 +42,16 @@ A list field holding people is a relationship, so it is asserted rather than set
 \`\`\`
 d-[o:owners]-> {
   owner = match entry-[:Owners]-> { Name: o.name }
-  link entry -[:Owners]-> owner
+  if owner != null { link entry -[:Owners]-> owner }
 }
 \`\`\`
 
 \`entry\` is the handle the write above handed back, and it stands on the list it named — so that list's own relationships (\`Owners\`, \`Scouted By\`) are reachable from it, and nothing else's are.
 
-Affinity decides who a person is itself, so the \`match\` body is only what it looks them up by: nobody is created, and nothing about the person found is changed. Somebody who cannot be found is skipped quietly, so walking a list of names attaches the ones that resolve. \`unlink\` takes one back off; severing what was never there does nothing.
+Affinity decides who a person is itself, so the \`match\` body is only what it looks them up by: nobody is created, and nothing about the person found is changed. Somebody who cannot be found is absent, so guard the link (\`if owner != null\`); walking a list of names then attaches the ones that resolve. \`unlink\` takes one back off; severing what was never there does nothing.
 
 ### Common mistakes
 
-- **Writing one block per name.** A name is a value like any other — walk the names you have and \`match\` and \`link\` inside the walk.
+- **Writing one block per name.** A name is a value like any other — walk the names you have and \`match\`, guard and \`link\` inside the walk.
 - **Computing the list name.** The list decides which fields exist, so it has to be known while the program is being written, not while it runs.`,
 };

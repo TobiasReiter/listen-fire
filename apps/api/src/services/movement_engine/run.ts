@@ -256,6 +256,9 @@ import {
   hopOrderKeyReader,
   nodeEdgeLandings,
   readLandingField,
+  snapshotOfHandle,
+  snapshotOfRecord,
+  startsWithOldEdge,
   unsupported,
   type Binding,
   type DeferredWalk,
@@ -1678,6 +1681,8 @@ type MemberAnswer = { kept: true; value: unknown } | { kept: false };
 const COLLECTION_MEMBER_FAILED = 'MOVENG_COLLECTION_MEMBER_FAILED';
 /** A file the run could not fetch the bytes of — warned once per file. */
 const FILE_BYTES_UNAVAILABLE = 'MOVENG_FILE_BYTES_UNAVAILABLE';
+/** A match whose judge never answered, bound absent all the same. */
+const MATCH_JUDGE_UNAVAILABLE = 'MOVENG_MATCH_JUDGE_UNAVAILABLE';
 
 function memberLeftOut(
   spelling: string,
@@ -2126,6 +2131,24 @@ interface UpdateInput {
    *  itself (`recordLock`); a write whose adapter stands in for another
    *  system's record names that record's locks instead. */
   locks?: LockRequest[];
+  /** What the engine already held of the record before this update, when the
+   *  update's handle is one the program reads — see `PriorRecord`. */
+  prior?: PriorRecord;
+}
+
+/**
+ * What the engine held of a record before a write updated it (an identity
+ * candidate's fields, a landing's fetched data, a handle's values) and the
+ * binding a handle on it stands on. Overlaid with the pre-write read the merge
+ * makes anyway, it is the record as it stood — the handle's `-[:@old]->` — at
+ * no extra adapter call; and the new handle reads the fields the write did not
+ * send from it, so a handle on a found record reads that record rather than
+ * only what this write said. Both since version 4 (`recordBefore`).
+ */
+interface PriorRecord {
+  data: Record<string, unknown>;
+  targetType: string;
+  graph: HandleGraph;
 }
 
 /** What the identity-resolve write path (`executeResolvedWrite`) is handed. */
@@ -2152,6 +2175,9 @@ interface ResolvedWriteInput {
   body: BodyContext;
   /** The locks an update of the matched record holds — see `UpdateInput.locks`. */
   updateLocks?: (externalId: string) => Promise<LockRequest[]>;
+  /** The binding the write's handle will stand on, when the program holds
+   *  one: what a matched record's snapshot (`@old`) stands on too. */
+  handle?: Pick<PriorRecord, 'targetType' | 'graph'>;
 }
 
 /** A standalone link statement's resolved shape (see `resolveLinkStatement`)
@@ -2181,16 +2207,55 @@ function describeMatchTarget(match: MatchExpression): string {
 }
 
 /**
- * Control-flow sentinel — the documented find-on-missing semantics: a
+ * Control-flow sentinel — the find-on-missing semantics before version 4: a
  * `match` found no record, so the ENCLOSING SCOPE ends quietly. Caught at
  * scope boundaries (a fan-out iteration skips, a callee body returns, the
  * movement body simply stops); nothing throws outward, because
  * transactionality across systems can't be guaranteed.
+ *
+ * From version 4 a miss binds absent and the block carries on, and the checker
+ * refuses the unnamed match and the link body form, so only programs pinned to
+ * an older version reach this.
  */
 class ScopeEndedQuietly extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ScopeEndedQuietly';
+  }
+}
+
+type MatchMissPolicy = 'absent' | 'endScope';
+
+/** A match that found nothing: bind absent, or end the enclosing scope. */
+function missed(input: {
+  onMiss: MatchMissPolicy;
+  bindingName: string | undefined;
+  env: Environment;
+  reason: string;
+  /** The judge's outage, when it never answered — "not found" is then a
+   *  guess, and a program that creates on absent would duplicate. */
+  judgeUnavailable: string | undefined;
+  trace: MovementTraceEntry[];
+}): Binding {
+  switch (input.onMiss) {
+    case 'absent': {
+      // The binding is absent either way; the trace is what tells an outage
+      // apart from a considered "nothing matched".
+      if (input.judgeUnavailable !== undefined) {
+        input.trace.push({
+          kind: 'warning',
+          code: MATCH_JUDGE_UNAVAILABLE,
+          message: `${input.reason}; the judge was unavailable, so the match was treated as finding nothing`,
+        });
+      }
+      const absent: Binding = { kind: 'value', value: null };
+      if (input.bindingName !== undefined) input.env.declare(input.bindingName, absent);
+      return absent;
+    }
+    case 'endScope':
+      throw new ScopeEndedQuietly(input.reason);
+    default:
+      return neverAsAny(input.onMiss);
   }
 }
 
@@ -2228,6 +2293,25 @@ function untilConditionMet(value: unknown): boolean {
 /** The block head as the author wrote it — `mentions-[c:company]->`. */
 function blockRootLabel(block: TraversalBlock): string {
   return spellPathHead(block.head);
+}
+
+/** A handle a WRITE returned and that still names the live record — not what
+ *  a match found, and not a snapshot reached through `-[:@old]->`. */
+function isWrittenHandle(binding: Extract<Binding, { kind: 'handle' }>): boolean {
+  return binding.handle.kind === undefined && binding.handle.snapshot !== true;
+}
+
+/** What the run already holds of the record a position write names: a
+ *  handle's values, or the data a traversal fetched with the landing. */
+function knownRecordData(binding: Binding | undefined): Record<string, unknown> {
+  if (binding?.kind === 'handle') {
+    return { ...binding.handle.foundData, ...binding.handle.resultData, ...binding.handle.writtenValues };
+  }
+  if (binding?.kind === 'sourcePosition') {
+    const data = positionData(binding.position);
+    return isDictValue(data) ? { ...data } : {};
+  }
+  return {};
 }
 
 /** Whether an instance was constructed with the universal `dry_run: true`
@@ -2407,6 +2491,11 @@ class Interpreter {
    *  it). */
   private get languageVersion(): LanguageVersion {
     return this.context.languageVersion;
+  }
+
+  /** What a match statement or a bound match does when it finds nothing. */
+  private get matchMissPolicy(): MatchMissPolicy {
+    return since(this.languageVersion, 4) ? 'absent' : 'endScope';
   }
 
   /** Where a trace entry lands: the running flow's own buffer inside a
@@ -4356,7 +4445,7 @@ class Interpreter {
         break;
       }
       case 'match':
-        await this.executeMatch(statement.match, undefined, env);
+        await this.executeMatch(statement.match, undefined, env, { onMiss: this.matchMissPolicy });
         break;
       case 'link':
         await this.executeLink(statement.link, undefined, env);
@@ -4470,7 +4559,7 @@ class Interpreter {
         await this.interpretBlock(value.block, name, env, stmtAddress);
         break;
       case 'match':
-        await this.executeMatch(value.match, name, env);
+        await this.executeMatch(value.match, name, env, { onMiss: this.matchMissPolicy });
         break;
       case 'link':
         await this.executeLink(value.link, name, env);
@@ -6800,7 +6889,7 @@ class Interpreter {
                 role: 'source',
       });
       const handle = binding.handle;
-      snapshot = { ...(handle.resultData ?? {}), ...handle.writtenValues };
+      snapshot = { ...handle.foundData, ...handle.resultData, ...handle.writtenValues };
       applyFresh = (fresh) => this.applyRefreshToHandle(handle, fresh);
     } else if (binding.kind === 'sourcePosition') {
       const identity = binding.position.identity;
@@ -7758,6 +7847,9 @@ class Interpreter {
       if (probe?.type !== 'traverse') {
         throw unsupported(`this block head over ${describeBinding[rootBinding.kind]}`);
       }
+      if (rootBinding.kind === 'handle' && startsWithOldEdge(probe.steps)) {
+        return this.oldEdgeHeadIterations({ binding: rootBinding, head, root, probe, env });
+      }
       const resolved = await this.graphReadFor(root, rootBinding);
       if (!resolved) {
         throw unsupported(`block heads rooted at '${root}' (a ${rootBinding.kind} binding)`);
@@ -7890,6 +7982,43 @@ class Interpreter {
     }
 
     throw unsupported(`block heads rooted at '${root}' (a ${rootBinding.kind} binding)`);
+  }
+
+  /**
+   * `org-[w:@old]-> { … }` — the record before `org`'s write, which the handle
+   * holds itself (no system has the edge): one iteration, or none when the
+   * write created the record. Hops past it walk on from that record, as a
+   * head rooted there would.
+   */
+  private async oldEdgeHeadIterations(opts: {
+    binding: Extract<Binding, { kind: 'handle' }>;
+    head: PathHead;
+    root: string;
+    probe: Extract<Expression, { type: 'traverse' }>;
+    env: Environment;
+  }): Promise<BlockIteration[]> {
+    const [step, ...rest] = opts.probe.steps;
+    const old = opts.binding.handle.old;
+    if (old === undefined || step.type !== 'edge') return [];
+    if (
+      step.expressionFilter !== undefined
+      && !(await hopFilterKeeps({ step, filter: step.expressionFilter, landed: old, ctx: this.exprContext(opts.env) }))
+    ) {
+      return [];
+    }
+    const aliases = new Map<string, Binding>(step.alias !== undefined ? [[step.alias, old]] : []);
+    if (rest.length === 0) return [{ bindings: aliases, landing: old }];
+    const onward = await this.headIterationsFrom({
+      binding: old,
+      head: opts.head,
+      root: opts.root,
+      probe: { ...opts.probe, steps: rest },
+      env: opts.env,
+    });
+    return onward.map((iteration) => ({
+      ...iteration,
+      bindings: new Map([...aliases, ...iteration.bindings]),
+    }));
   }
 
   /**
@@ -8383,9 +8512,17 @@ class Interpreter {
             resources,
             parentLinks,
             body,
+            handle: { targetType: target.handleType ?? target.recordType, graph: target.graph },
           });
 
-    return this.recordWrite({ write: handle, bindingName, env, target, fieldProvenance });
+    return this.recordWrite({
+      write: handle,
+      bindingName,
+      env,
+      target,
+      fieldProvenance,
+      rehearsed: !this.committedThrough(adapter),
+    });
   }
 
   /**
@@ -8591,6 +8728,14 @@ class Interpreter {
         resources: input.resources,
         parentLinks: input.parentLinks,
         ...(input.updateLocks !== undefined ? { locks: await input.updateLocks(matchedExternalId) } : {}),
+        ...(input.handle !== undefined && matched !== undefined
+          ? {
+              prior: {
+                ...input.handle,
+                data: { ...(matched.url !== undefined ? { url: matched.url } : {}), ...matched.data },
+              },
+            }
+          : {}),
       });
       // A record resolved by identity moments ago is essentially never gone;
       // if the adapter nonetheless reports not-found, fall through to create.
@@ -8701,6 +8846,9 @@ class Interpreter {
         fieldEvidence: input.fieldEvidence,
         resources: input.resources,
         parentLinks: input.parentLinks,
+        // The binding found the record, so the write's handle has an `@old`;
+        // all that is known of it is what the merge reads back.
+        prior: { data: {}, targetType: target.handleType ?? target.recordType, graph: target.graph },
       });
       if (!('notFound' in updated)) return updated;
 
@@ -8979,6 +9127,11 @@ class Interpreter {
       fieldEvidence,
       resources,
       parentLinks: [],
+      prior: {
+        data: knownRecordData(binding),
+        targetType: resolved.target.recordType,
+        graph: resolved.target.graph,
+      },
     });
     // A position write updates a record the author already holds; there is no
     // identity to re-resolve and nothing to self-heal. If the adapter reports
@@ -8990,12 +9143,28 @@ class Interpreter {
       );
     }
 
+    // Through a write's handle, the record before this write is that handle
+    // as it stood — its own `@old` included, so the chain walks back through
+    // every write. A found record or a landing is snapshotted from what was
+    // known of it (the merge did that above). Version 4 on, as `@old` is.
+    const written =
+      binding?.kind === 'handle' && isWrittenHandle(binding) && since(this.languageVersion, 4)
+        ? binding
+        : undefined;
+    if (written !== undefined) handle.old = snapshotOfHandle(written);
     return this.recordWrite({
       write: handle,
       bindingName,
       env,
       target: resolved.target,
       fieldProvenance,
+      rehearsed: !this.committedThrough(resolved.target.adapter),
+      // `write org { … }` is a mutation of the record `org` names, not a
+      // rebinding (`org` is never bound twice): since 4 the handle moves on to
+      // the new record in place, so every scope holding it — an enclosing
+      // body past an `if` arm, a closure, a second name — reads the update.
+      // Before 4 `org` keeps the values of its own write.
+      ...(written !== undefined ? { into: written } : {}),
     });
   }
 
@@ -9993,10 +10162,14 @@ class Interpreter {
     }
     // The body form is `match` then `link`: the match runs exactly as the
     // statement would (its own run-log row, a quiet end of the scope on a
-    // miss), and the link then connects the record it found.
+    // miss), and the link then connects the record it found. Version 4
+    // refuses this form, so a miss here always ends the scope.
     const to =
       link.to.kind === 'match'
-        ? { name: bindingName ?? '{ … }', binding: await this.executeMatch(link.to.match, bindingName, env) }
+        ? {
+            name: bindingName ?? '{ … }',
+            binding: await this.executeMatch(link.to.match, bindingName, env, { onMiss: 'endScope' }),
+          }
         : { name: link.to.name, binding: env.resolve(link.to.name) };
     const at = `link ${link.from} -[:${link.edge}]-> ${to.name}`;
     const resolved = await this.resolveLinkStatement({ from: link.from, edge: link.edge, to }, env, at);
@@ -10200,9 +10373,11 @@ class Interpreter {
    * what it found — its full result data via `readRecord` where the adapter
    * offers it, over the candidate's snapshot.
    *
-   * On a miss the ENCLOSING SCOPE ends quietly — the documented
-   * find-on-missing semantics (a fan-out iteration skips; nothing throws,
-   * because transactionality across systems can't be guaranteed).
+   * On a miss, `onMiss` decides: `'absent'` (version 4) binds absent, as an
+   * empty `FIRST(…)` does, and the block carries on; `'endScope'` (before
+   * version 4) ends the ENCLOSING SCOPE quietly (a fan-out iteration skips;
+   * nothing throws, because transactionality across systems can't be
+   * guaranteed). Either way a miss adds no run-log row.
    *
    * The run log gets a `kind: 'match'` row so an inspector sees what the run
    * resolved to. It is not a write: nothing counted as written counts it.
@@ -10211,10 +10386,11 @@ class Interpreter {
     match: MatchExpression,
     bindingName: string | undefined,
     env: Environment,
+    options: { onMiss: MatchMissPolicy },
   ): Promise<Binding> {
     const rooted = await this.bindTargetRoots(match.target, env);
     if (rooted !== undefined) {
-      const found = await this.executeMatch({ ...match, target: rooted.target }, bindingName, rooted.env);
+      const found = await this.executeMatch({ ...match, target: rooted.target }, bindingName, rooted.env, options);
       if (bindingName !== undefined) env.declare(bindingName, found);
       return found;
     }
@@ -10223,7 +10399,15 @@ class Interpreter {
       const root = pathRootName(match.target.path);
       const rootBinding = root !== undefined ? env.resolve(root) : undefined;
       if (rootBinding?.kind === 'nodePosition') {
-        return this.executeLocalMatch({ match, target: match.target, from: rootBinding, bindingName, env, at });
+        return this.executeLocalMatch({
+          match,
+          target: match.target,
+          from: rootBinding,
+          bindingName,
+          env,
+          at,
+          onMiss: options.onMiss,
+        });
       }
     }
     const resolved = await this.resolveWriteTarget(match, env, 'match');
@@ -10245,9 +10429,14 @@ class Interpreter {
       asserted: fields,
     });
     if (matched === undefined) {
-      throw new ScopeEndedQuietly(
-        `${at}: no existing ${resolved.recordType} matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
-      );
+      return missed({
+        onMiss: options.onMiss,
+        bindingName,
+        env,
+        reason: `${at}: no existing ${resolved.recordType} matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
+        judgeUnavailable,
+        trace: this.trace,
+      });
     }
     let resultData: Record<string, unknown> = {
       ...(matched.url !== undefined ? { url: matched.url } : {}),
@@ -10296,6 +10485,7 @@ class Interpreter {
     bindingName: string | undefined;
     env: Environment;
     at: string;
+    onMiss: MatchMissPolicy;
   }): Promise<Binding> {
     const { match, from, env, at } = input;
     const { edgeName, where } = this.singleWriteEdge(input.target.path);
@@ -10325,9 +10515,14 @@ class Interpreter {
     });
     const landing = matched !== undefined ? store.landingOf(matched.externalId) : undefined;
     if (landing === undefined) {
-      throw new ScopeEndedQuietly(
-        `${at}: no landing on '${edgeName}' matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
-      );
+      return missed({
+        onMiss: input.onMiss,
+        bindingName: input.bindingName,
+        env,
+        reason: `${at}: no landing on '${edgeName}' matched${judgeUnavailable !== undefined ? ` (judge unavailable: ${judgeUnavailable})` : ''}`,
+        judgeUnavailable,
+        trace: this.trace,
+      });
     }
     this.recordLocalWrite({
       record: {
@@ -10590,6 +10785,14 @@ class Interpreter {
     /** Trails of the evaluated field values — summarised onto the
      *  firing record for the fields that were actually written. */
     fieldProvenance: Record<string, Provenance>;
+    /** The write went through a rehearsing (dry-run) adapter: nothing
+     *  changed, so a record it found stood before the write exactly as the
+     *  handle shows it — its `@old` is the handle itself. */
+    rehearsed?: boolean;
+    /** The handle binding this write moves on to the new record, in place
+     *  (`write org { … }` since version 4) — every scope and closure holding
+     *  it sees the update. Absent ⇒ a new binding. */
+    into?: Extract<Binding, { kind: 'handle' }>;
   }): Binding {
     const writeIndex = this.writeLedger.nextIndex;
     const record = input.write;
@@ -10607,17 +10810,24 @@ class Interpreter {
       ...(record.externalId !== undefined ? { externalId: record.externalId } : {}),
     };
     this.writeLedger.append(record, this.writeOrder);
-    const binding: Binding = {
-      kind: 'handle',
-      handle: record,
-      // NATURAL currency — linked writes infer their type from the
-      // (natural-named) graph schema via this handle; `target.recordType` is
-      // that natural name, narrowed by `handleType` where the write's own
-      // discriminant named a more specific type than the one it was addressed
-      // to (a list entry is a row of ITS list).
-      targetType: input.target.handleType ?? input.target.recordType,
-      graph: input.target.graph,
-    };
+    let binding: Extract<Binding, { kind: 'handle' }>;
+    if (input.into !== undefined) {
+      binding = input.into;
+      binding.handle = record;
+    } else {
+      binding = {
+        kind: 'handle',
+        handle: record,
+        // NATURAL currency — linked writes infer their type from the
+        // (natural-named) graph schema via this handle; `target.recordType` is
+        // that natural name, narrowed by `handleType` where the write's own
+        // discriminant named a more specific type than the one it was addressed
+        // to (a list entry is a row of ITS list).
+        targetType: input.target.handleType ?? input.target.recordType,
+        graph: input.target.graph,
+      };
+    }
+    if (input.rehearsed === true && record.old !== undefined) record.old = binding;
     if (input.bindingName !== undefined) {
       input.env.declare(input.bindingName, binding);
     }
@@ -11231,6 +11441,7 @@ class Interpreter {
           fieldIds: Object.keys(input.fields),
         })
       : null;
+    const before = this.recordBefore(input, currentValues);
     const fieldsToWrite: Record<string, unknown> = {};
     for (const [fieldId, value] of Object.entries(input.fields)) {
       const mode = input.fieldSemantics[fieldId];
@@ -11287,9 +11498,11 @@ class Interpreter {
         committed: this.committedThrough(input.adapter),
         externalId: input.externalId,
         writtenValues: {},
+        ...(before.reads !== undefined ? { foundData: before.reads } : {}),
         outcome: 'noop',
         provenance: {},
         ...this.parentSummaries(input.parentLinks),
+        ...(before.old !== undefined ? { old: before.old } : {}),
       };
     }
     // Any `FileRef` in the fields is a descriptor — the consuming adapter
@@ -11336,6 +11549,7 @@ class Interpreter {
       externalId: input.externalId,
       writtenValues: fieldsToWrite,
       resultData: writeResultData(updated),
+      ...(before.reads !== undefined ? { foundData: before.reads } : {}),
       // 'attach' is the parent-only send: no field of the record's own
       // changed, the adapter was called purely to make the association — and
       // the adapter has just confirmed the association holds.
@@ -11346,6 +11560,36 @@ class Interpreter {
       ...(updated.association === 'made' || updated.association === 'already'
         ? { association: updated.association }
         : {}),
+      ...(before.old !== undefined ? { old: before.old } : {}),
+    };
+  }
+
+  /**
+   * The record an update found, as it stood: the snapshot its handle's
+   * `-[:@old]->` lands on, and the values the new handle reads for the fields
+   * the write did not send. Both come from what the engine already held plus
+   * the read the merge has just made; nothing here asks the adapter again.
+   *
+   * Version 4 on. Before it a handle read only what its write sent and the
+   * adapter answered (a pinned program reading another field still reads
+   * null), and it has no `@old` to reach — its checker refuses the hop.
+   */
+  private recordBefore(
+    input: UpdateInput,
+    currentValues: Record<string, unknown> | null,
+  ): { old?: Extract<Binding, { kind: 'handle' }>; reads?: Record<string, unknown> } {
+    if (input.prior === undefined || before(this.languageVersion, 4)) return {};
+    const data = { ...input.prior.data, ...(currentValues ?? {}) };
+    return {
+      old: snapshotOfRecord({
+        adapterType: input.adapter.adapterType,
+        recordType: input.recordType,
+        externalId: input.externalId,
+        data,
+        targetType: input.prior.targetType,
+        graph: input.prior.graph,
+      }),
+      reads: { ...data },
     };
   }
 
@@ -11597,6 +11841,9 @@ class Interpreter {
     if (path === undefined || path.aliasRoot === undefined) return undefined;
     const rootBinding = env.resolve(path.aliasRoot);
     if (rootBinding === undefined) return undefined;
+    // `-[:@old]->` is no system's edge: the evaluator answers it from the
+    // handle, and the record it selects binds as itself.
+    if (rootBinding.kind === 'handle' && startsWithOldEdge(path.steps)) return undefined;
     const resolved =
       rootBinding.kind === 'event' || rootBinding.kind === 'sourcePosition'
         ? this.source !== undefined

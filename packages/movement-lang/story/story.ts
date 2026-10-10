@@ -539,7 +539,9 @@ export type Step =
     }
   | { kind: 'write'; record: string; at: Span }
   /** `match`: a record FOUND by identity — a row of the graph (action
-   *  `find`), never written. The rest of its scope runs only when found. */
+   *  `find`), never written. On a miss, since language version 4 the run
+   *  carries on with the binding absent; before 4 the rest of its scope ran
+   *  only when found. */
   | { kind: 'match'; record: string; binding?: string; at: Span }
   | { kind: 'link'; edge: string; from: StoryEndpoint; to: StoryEndpoint; at: Span }
   | { kind: 'unlink'; edge: string; from: StoryEndpoint; to: StoryEndpoint; at: Span }

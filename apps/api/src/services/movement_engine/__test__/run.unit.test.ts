@@ -123,7 +123,7 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import type { InstanceSchema } from 'movement-lang';
+import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import {
@@ -1183,8 +1183,20 @@ describe('unique by — entity resolution through the shared arbitration split',
         writtenValues: { name: 'U123', summary: 'second message' },
         outcome: 'update',
         provenance: expectedProvenance,
+        // Since version 4 the handle on a found record reads that record (the
+        // values the write did not send), and `@old` is the record as found.
         resultData: {},
+        foundData: { name: 'U123', summary: 'first message' },
         origin: { kind: 'write', writeIndex: 0, externalId: 'ext-attio-1' },
+        old: expect.objectContaining({
+          kind: 'handle',
+          handle: expect.objectContaining({
+            externalId: 'ext-attio-1',
+            snapshot: true,
+            writtenValues: {},
+            resultData: { name: 'U123', summary: 'first message' },
+          }),
+        }),
       },
     ]);
     // No duplicate — the second run updated the first run's record.
@@ -3612,9 +3624,34 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
     return { fake, resolveCalls, linkCalls };
   }
 
-  async function runFind(adapters: { attio: Adapter; slack: Adapter }, source = FIND_AND_LINK) {
+  // Version 4 types the found fund as maybe-absent, so a link onto it needs
+  // the test first; the hit path is the same run under either version.
+  const GUARDED_FIND_AND_LINK = FIND_AND_LINK.replace(
+    [
+      '  link co -[:portfolio]-> fund',
+      '  write inbox-[:messages]-> {',
+      '    channel: "#funds"',
+      '    text:    "${fund.`vintage`} ${fund.`name`}"',
+      '  }',
+    ].join('\n'),
+    [
+      '  if fund != null {',
+      '    link co -[:portfolio]-> fund',
+      '    write inbox-[:messages]-> {',
+      '      channel: "#funds"',
+      '      text:    "${fund.`vintage`} ${fund.`name`}"',
+      '    }',
+      '  }',
+    ].join('\n'),
+  );
+
+  async function runFind(
+    adapters: { attio: Adapter; slack: Adapter },
+    options: { source?: string; languageVersion?: LanguageVersion } = {},
+  ) {
     return runMovement({
-      source,
+      source: options.source ?? FIND_AND_LINK,
+      ...(options.languageVersion !== undefined ? { languageVersion: options.languageVersion } : {}),
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog,
@@ -3628,7 +3665,7 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
   it('resolves like a write identity, binds the found record (resultData via readRecord), and link joins it', async () => {
     const { fake, resolveCalls, linkCalls } = fundAttio();
     const slack = makeFakeAdapter('slack');
-    const result = await runFind({ attio: fake.adapter, slack: slack.adapter });
+    const result = await runFind({ attio: fake.adapter, slack: slack.adapter }, { source: GUARDED_FIND_AND_LINK });
 
     // The match resolved through the same resolveEntity gate a write uses;
     // the found record is never created and never written.
@@ -3683,7 +3720,7 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
     ]);
   });
 
-  it('on missing, the enclosing scope ends quietly — the movement body stops after the work already done', async () => {
+  it('under version 3, on missing, the enclosing scope ends quietly — the movement body stops after the work already done', async () => {
     const fake = makeFakeAdapter('attio'); // no fund candidates ever
     const linkCalls: Parameters<NonNullable<Adapter['linkRecords']>>[0][] = [];
     fake.adapter.linkRecords = async (input) => {
@@ -3691,7 +3728,7 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
       return { created: true };
     };
     const slack = makeFakeAdapter('slack');
-    const result = await runFind({ attio: fake.adapter, slack: slack.adapter });
+    const result = await runFind({ attio: fake.adapter, slack: slack.adapter }, { languageVersion: 3 });
 
     // The company write stands; the match found nothing, so the rest of
     // the body — the link and the message — never ran. Nothing threw, and
@@ -3705,7 +3742,9 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
     expect(slack.creates).toEqual([]);
   });
 
-  describe('a link body is match then link', () => {
+  // Version 4 retires the body form (the checker refuses it), so only
+  // programs pinned to an older version reach it.
+  describe('under version 3, a link body is match then link', () => {
     const TWO = [
       '  fund = match co-[:portfolio]-> { unique by (`name`), name: "Fund III" }',
       '  link co -[:portfolio]-> fund',
@@ -3722,7 +3761,7 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
           return resolve(input);
         };
         const slack = makeFakeAdapter('slack');
-        const result = await runFind({ attio: fake.adapter, slack: slack.adapter }, source);
+        const result = await runFind({ attio: fake.adapter, slack: slack.adapter }, { source, languageVersion: 3 });
         return { result, resolveCalls, linkCalls, constraints, messages: slack.creates };
       };
       return { twoStatements: await run(FIND_AND_LINK), sugar: await run(sugared(statement)) };
@@ -3773,7 +3812,7 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
       const slack = makeFakeAdapter('slack');
       const result = await runFind(
         { attio: fake.adapter, slack: slack.adapter },
-        sugared('  fund = link co -[:portfolio]-> { name: "Fund III" }'),
+        { source: sugared('  fund = link co -[:portfolio]-> { name: "Fund III" }'), languageVersion: 3 },
       );
       expect(result.writes.map((w) => [w.recordType, w.kind ?? 'write'])).toEqual([['company', 'write']]);
       expect(fake.creates.map((c) => c.recordType)).toEqual(['company']);
@@ -3783,7 +3822,7 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
     });
   });
 
-  it('on missing inside a fan-out, THAT iteration skips and the next proceeds', async () => {
+  it('under version 3, on missing inside a fan-out, THAT iteration skips and the next proceeds', async () => {
     // One iteration per file; the match only finds a fund named 'Fund III'.
     const FILES_FIND = [
       PRELUDE,
@@ -3829,6 +3868,7 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
 
     const result = await runMovement({
       source: FILES_FIND,
+      languageVersion: 3,
       event: webhookEvent('slack', {
         files: [
           { name: 'deck.pdf', url: 'Fund III' },
@@ -3923,7 +3963,7 @@ describe('a discriminated write hands back a handle of the variant it named', ()
     '  o = write crm-[:organizations]-> { name: msg.`user` }',
     '  e = write o-[:`List Entries`]-> { listName: "Deals" }',
     '  owner = match e-[:Owners]-> { unique by (`name`), name: "Ada" }',
-    '  link e -[:Owners]-> owner',
+    '  if owner != null { link e -[:Owners]-> owner }',
     '}',
   ].join('\n');
 

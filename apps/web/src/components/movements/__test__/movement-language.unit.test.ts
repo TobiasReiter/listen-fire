@@ -222,6 +222,20 @@ describe("movement language tokenizer", () => {
     });
   });
 
+  it("tokenizes the @old hop label like a declared edge name", () => {
+    const toks = tokenizeDocument("was = FIRST(org-[:@old]->)");
+    expect(styleOf(toks, "@old", 0)).toBe(styleOf(tokenizeDocument("was = FIRST(org-[:message]->)"), "message", 0));
+  });
+
+  it("tokenizes @old after a hop alias like a declared edge name", () => {
+    const toks = tokenizeDocument("org-[w:@old]-> { x = w }");
+    expect(styleOf(toks, "@old", 0)).toBe(styleOf(tokenizeDocument("org-[w:message]-> { x = w }"), "message", 0));
+  });
+
+  it("leaves `@x` outside a hop label an atom", () => {
+    expect(styleOf(tokenizeDocument("k:@x"), "@x", 0)).toBe("atom");
+  });
+
   // The keyword lists were hand-copied from the syntax sketch and drifted from
   // the parser's actual keyword set — `await`/`lazy` (and several others) were
   // never added. This pins the full sweep against parse.ts's own recognition.

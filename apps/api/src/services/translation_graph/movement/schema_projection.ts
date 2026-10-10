@@ -21,7 +21,7 @@
 // adapter, the KG included; the engine/host carries no translation. The
 // projection here only produces the checker's `InstanceSchema`.
 
-import { unionDisplay, unionKey, unionVariants } from 'movement-lang';
+import { isArtificialEdge, unionDisplay, unionKey, unionVariants } from 'movement-lang';
 
 import type {
   CollectionSchema,
@@ -176,6 +176,22 @@ function projectWriteUnion(input: {
       return { name: variant.name, fields };
     }),
   };
+}
+
+/**
+ * `@` names an edge the ENGINE makes (a write handle's `-[:@old]->`), and the
+ * checker never looks such a name up among a system's edges — so an edge
+ * spelled that way would publish something no author can reach. A described
+ * surface is the user's own naming (an Airtable table or link field), so the
+ * edge is left out with a note rather than failing the whole connection's
+ * describe. Returns true when the edge is to be left out.
+ */
+function leaveOutArtificialEdge(input: { adapterType: string; edge: string; notes: string[] }): boolean {
+  if (!isArtificialEdge(input.edge)) return false;
+  input.notes.push(
+    `${input.adapterType}: the edge '${input.edge}' starts with '@', which is reserved for edges the engine makes (such as '@old') — it was left out; rename it in the source system to reach it`,
+  );
+  return true;
 }
 
 /**
@@ -463,11 +479,13 @@ export function instanceSchemaFromDescriptors(input: {
     // is reached through its container's edge, not off the root.
     if (metaEdgeTypeIds.has(entry.typeId) && (entry.readable || entry.writable)) {
       const collectionName = entry.collectionName ?? name;
-      const capability = rootCapabilities.get(collectionName);
-      collections[collectionName] = {
-        target: name,
-        ...(capability !== undefined ? { capability } : {}),
-      };
+      if (!leaveOutArtificialEdge({ adapterType: input.adapterType, edge: collectionName, notes })) {
+        const capability = rootCapabilities.get(collectionName);
+        collections[collectionName] = {
+          target: name,
+          ...(capability !== undefined ? { capability } : {}),
+        };
+      }
     }
 
     const descriptor = input.descriptors.get(entry.typeId);
@@ -564,6 +582,7 @@ export function instanceSchemaFromDescriptors(input: {
     const requiredEdges: Array<{ edge: string; from: string }> = [];
     for (const ref of descriptor.references) {
       const edge = ref.name ?? ref.fieldId;
+      if (leaveOutArtificialEdge({ adapterType: input.adapterType, edge, notes })) continue;
       const targetNames = targetNamesOf(ref);
       // ONE edge, ONE landing TYPE — but that type may be a UNION. A reference
       // that declares several targets projects as a polymorphic edge onto a
@@ -752,16 +771,12 @@ export function instanceSchemaFromDescriptors(input: {
         // re-fetch moves the snapshot of fields like an ask's read-only `State`,
         // so those must be part of the handle's type even though the create body
         // never wrote them. Write echoes win on shared names (same type anyway).
-        // `created` / `committed` are write-EVENT facts, not record fields: whether
-        // the write minted a new record (vs matched an existing one through
-        // `unique by`) and whether it actually landed (vs was rehearsed). The
-        // engine has always served them off the handle; declaring them here is what
-        // lets an author branch on the outcome to word a confirmation honestly.
+        // What the write DID is not a field of the record: an author asks the
+        // handle's `-[:@old]->`, and the checker supplies the retired
+        // `created` / `committed` itself to a program pinned before it.
         resultShape: {
           externalId: 'text',
           url: 'text',
-          created: 'boolean',
-          committed: 'boolean',
           ...properties,
           ...writableFields,
         },

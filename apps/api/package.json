@@ -81,6 +81,7 @@
     "test:unit": "jest --config src/test/jest-unit.config.ts",
     "test:conformance:v1": "jest --config src/test/jest-conformance-v1.config.ts",
     "test:conformance:v2": "jest --config src/test/jest-conformance-v2.config.ts",
+    "test:conformance:v3": "jest --config src/test/jest-conformance-v3.config.ts",
     "harvest:engine-runs": "UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v1 && UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v2 && UPDATE_ENGINE_RUNS=1 pnpm test:unit --testPathPattern 'movement_engine/conformance/__test__/engine_runs'",
     "db:restore": ". ./scripts/restore_db_snapshot.sh",
     "db:dump": ". ./scripts/dump_db_snapshot.sh",

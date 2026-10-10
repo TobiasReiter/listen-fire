@@ -125,7 +125,9 @@ movement intake(m: <inbox-[:message]->>) {
   c = write book-[:Companies]-> { unique by (\`Name\`) Name ?: facts.name }
   d = write c-[:Deals]-> { Title: "Deal — \${facts.name}", Summary: AI("summarise the thread") }
   lead = match c-[:Owner]-> { unique by (\`Name\`) Name: "sam" }
-  link c -[:Owner]-> lead
+  if lead != null {
+    link c -[:Owner]-> lead
+  }
   a = write questions-[:Check]-> { prompt: "approve this deal?" }
   answer = await FIRST(a-[:Response]->)
   amount = COALESCE(facts.amount, 0)
@@ -328,10 +330,14 @@ describe('edges — the record graph', () => {
   });
 
   it('a link body projects as its two statements: the find, then the link onto what it found', () => {
+    const GUARDED = 'lead = match c-[:Owner]-> { unique by (`Name`) Name: "sam" }\n  if lead != null {\n    link c -[:Owner]-> lead\n  }';
     const TWO = 'lead = match c-[:Owner]-> { unique by (`Name`) Name: "sam" }\n  link c -[:Owner]-> lead';
-    expect(SOURCE).toContain(TWO);
-    const project = (source: string) => {
-      const result = storyOf({ source, catalog, name: 'Deal intake' });
+    expect(SOURCE).toContain(GUARDED);
+    const PINNED = SOURCE.replace(GUARDED, TWO);
+    // The body form is retired since language version 4, so its projection is
+    // the story of a program pinned before it.
+    const project = (source: string, languageVersion?: number) => {
+      const result = storyOf({ source, catalog, name: 'Deal intake', ...(languageVersion !== undefined ? { languageVersion } : {}) });
       if (!result.ok) throw new Error(`expected a story, got ${result.reason}`);
       const ir = result.story;
       const found = ir.records.filter((r) => r.action === 'find');
@@ -344,15 +350,15 @@ describe('edges — the record graph', () => {
         link: ir.edges.filter((e) => e.kind === 'link' && e.to.kind === 'record' && e.to.id === found[0].id).map((e) => e.edge),
       };
     };
-    const twoStatements = project(SOURCE);
+    const twoStatements = project(PINNED, 3);
     expect(twoStatements).toEqual({
       find: { binding: 'lead', fields: '"sam"', uniqueBy: ['`Name`'] },
       order: ['match', 'link'],
       link: ['Owner'],
     });
-    expect(project(SOURCE.replace(TWO, 'lead = link c -[:Owner]-> { unique by (`Name`) Name: "sam" }'))).toEqual(twoStatements);
+    expect(project(PINNED.replace(TWO, 'lead = link c -[:Owner]-> { unique by (`Name`) Name: "sam" }'), 3)).toEqual(twoStatements);
     // Unbound, with no unique by: the body's fields are its identity.
-    expect(project(SOURCE.replace(TWO, 'link c -[:Owner]-> { Name: "sam" }'))).toEqual({
+    expect(project(PINNED.replace(TWO, 'link c -[:Owner]-> { Name: "sam" }'), 3)).toEqual({
       find: { binding: undefined, fields: '"sam"', uniqueBy: ['Name'] },
       order: ['match', 'link'],
       link: ['Owner'],
@@ -403,9 +409,15 @@ describe('flow — pauses and branches are step kinds, nested in place', () => {
     ]);
   });
 
+  // The intake's first branch is the guard on the found owner (since language
+  // version 4 a match may find nothing); the cases below are about the second.
+  const amountBranch = () => stepsOfKind(intakeSteps(story()), 'branch')[1];
+
   it('a branch nests its arms and its else, with the condition as a chip', () => {
-    const branches = stepsOfKind(intakeSteps(story()), 'branch');
-    expect(branches).toHaveLength(1);
+    const all = stepsOfKind(intakeSteps(story()), 'branch');
+    expect(all.map((b) => b.arms[0].condition.source)).toEqual(['lead != null', 'amount > 1000']);
+    expect(all[0].arms[0].steps.map((s) => s.kind)).toEqual(['link']);
+    const branches = [amountBranch()];
     expect(branches[0].arms).toHaveLength(1);
     expect(branches[0].arms[0].condition.source).toBe('amount > 1000');
     expect(branches[0].arms[0].condition.refs.map((r) => r.name)).toEqual(['amount']);
@@ -414,7 +426,7 @@ describe('flow — pauses and branches are step kinds, nested in place', () => {
   });
 
   it('an arm and its otherwise carry `terminates` — false here, neither ends in ERROR', () => {
-    const branches = stepsOfKind(intakeSteps(story()), 'branch');
+    const branches = [amountBranch()];
     expect(branches[0]!.arms[0]!.terminates).toBe(false);
     expect(branches[0]!.otherwise!.terminates).toBe(false);
   });
@@ -595,7 +607,7 @@ describe('references say what they refer to', () => {
   });
 
   it('a condition splits into its two sides and the operator between them', () => {
-    const branch = stepsOfKind(intakeSteps(story()), 'branch')[0];
+    const branch = stepsOfKind(intakeSteps(story()), 'branch')[1];
     expect(branch.arms[0].condition.parts).toEqual([
       {
         kind: 'test',
@@ -616,8 +628,8 @@ describe('references say what they refer to', () => {
   it('a value-position WALK carries its hops and landings, like a for-each head', () => {
     const result = storyOf({
       source: `${SOURCE.replace(
-        'link c -[:Owner]-> lead',
-        'link c -[:Owner]-> lead\n  owner = c-[:Owner]->.Name',
+        '  a = write questions-[:Check]->',
+        '  owner = c-[:Owner]->.Name\n  a = write questions-[:Check]->',
       )}`,
       catalog,
     });
@@ -635,8 +647,8 @@ describe('references say what they refer to', () => {
   it('an expression shown WHOLE says which names are visible inside it', () => {
     const result = storyOf({
       source: `${SOURCE.replace(
-        'link c -[:Owner]-> lead',
-        'link c -[:Owner]-> lead\n  pick = IF facts.amount > 1 THEN facts.name ELSE "none" END',
+        '  a = write questions-[:Check]->',
+        '  pick = IF facts.amount > 1 THEN facts.name ELSE "none" END\n  a = write questions-[:Check]->',
       )}`,
       catalog,
     });

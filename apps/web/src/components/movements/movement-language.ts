@@ -174,6 +174,12 @@ function tokenize(stream: StringStream, state: MvtState): string | null {
 
   if (stream.match(/^\d+(\.\d+)?/)) return "number";
 
+  // Inside a hop label (`-[:@old]->`, `-[w:@old]->`) `@old` is a name like
+  // any edge name.
+  if (stream.string[stream.pos - 1] === ":" && insideHopLabel(stream.string, stream.pos - 1) && stream.match(/^@[A-Za-z_]\w*/)) {
+    return "variableName";
+  }
+
   if (stream.match(/^@[A-Za-z_][\w.]*/)) return "atom";
 
   const word = stream.match(/^[A-Za-z_]\w*/);
@@ -357,3 +363,13 @@ export const movementSyntax = [
   stringLineWashPlugin,
   stringLineWashTheme,
 ];
+
+/** Whether `pos` sits inside a hop's still-open `-[` on this line: scanning
+ *  back reaches the `[` without passing a `]`. */
+function insideHopLabel(line: string, pos: number): boolean {
+  for (let i = pos - 1; i >= 0; i--) {
+    if (line[i] === "]") return false;
+    if (line[i] === "[") return line[i - 1] === "-";
+  }
+  return false;
+}

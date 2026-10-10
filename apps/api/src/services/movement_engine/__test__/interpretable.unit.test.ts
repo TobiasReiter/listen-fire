@@ -216,6 +216,19 @@ movement intake(m: <inbox-[:message]->>) {
     expect(listUnsupportedConstructs(source)).toContain('file-level extract expressions');
   });
 
+  it('passes a hop labelled @old and a bound match (language version 4 forms)', () => {
+    const source = `${PRELUDE}
+movement intake(m: <inbox-[:message]->>) {
+  existing = match crm-[:companies]-> { unique by (\`name\`), name: "Acme" }
+  if existing != null {
+    org = write crm-[:companies]-> { unique by (\`name\`), name: "Acme" }
+    was = FIRST(org-[:@old]->)
+  }
+}
+`;
+    expect(listUnsupportedConstructs(source)).toEqual([]);
+  });
+
   it('names file-level matches and links — the engine runs neither outside a movement body', () => {
     const source = `${PRELUDE}
 co = match crm-[:companies]-> { unique by (\`name\`), name: "Acme" }
