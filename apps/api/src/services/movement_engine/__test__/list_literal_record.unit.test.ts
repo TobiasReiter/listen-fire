@@ -324,3 +324,34 @@ describe('a record through a list literal is the record', () => {
     });
   });
 });
+
+describe('a map holding a record under a key, spread into a graph', () => {
+  const RECORD_IN_FIELD =
+    /'owner' holds a record, and a map spread into a graph copies values and maps — a graph field cannot hold a record/;
+  const RECORD_IN_CHILD =
+    /'founder' holds a record, and a map spread into a graph copies values and maps — a graph field cannot hold a record/;
+
+  it('with no shape: an engine error naming the key, never the record stored as a field', async () => {
+    await expect(
+      run([
+        ...SEED,
+        '  e = FIRST(deduped-[:entries]->)',
+        '  held = { name: "x", owner: e }',
+        '  g = graph { ...held }',
+        '  write crm-[:companies]-> { name: g.name }',
+      ]),
+    ).rejects.toThrow(RECORD_IN_FIELD);
+  });
+
+  it('with a shape declaring the key a child, holding records by key: the same engine error', async () => {
+    await expect(
+      run([
+        ...SEED,
+        '  byName = KEYBY(deduped-[:entries]->, (x) => x.name)',
+        '  held = { name: "x", founder: byName }',
+        '  g = graph<`Recap Entry`> { ...held }',
+        '  write crm-[:companies]-> { name: g.name }',
+      ]),
+    ).rejects.toThrow(RECORD_IN_CHILD);
+  });
+});

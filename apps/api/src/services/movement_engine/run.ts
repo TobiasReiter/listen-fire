@@ -1248,6 +1248,14 @@ function setGraphEdge(
   };
 }
 
+/** Whether a value is, or anywhere holds, a record the engine made. */
+function holdsRecord(value: unknown): boolean {
+  if (bindingOf(value) !== undefined) return true;
+  if (Array.isArray(value)) return value.some(holdsRecord);
+  if (isDictValue(value)) return Object.values(value).some(holdsRecord);
+  return false;
+}
+
 /** A spread value read as child nodes: one map, or a list of nothing but maps. */
 function asMapList(value: unknown): Array<Record<string, unknown>> | undefined {
   if (isDictValue(value)) return [value];
@@ -9977,6 +9985,15 @@ class Interpreter {
     shape: ShapeNode | undefined,
   ): void {
     for (const [key, value] of Object.entries(map)) {
+      // A graph built from a map holds values and nested maps; a record under
+      // a key is neither, and storing the engine's own object as a field would
+      // hand it on to whatever serialises or writes the field.
+      if (holdsRecord(value)) {
+        throw new MovementEngineError(
+          'MOVENG_RUNTIME',
+          `'${key}' holds a record, and a map spread into a graph copies values and maps — a graph field cannot hold a record (the checker should have caught this)`,
+        );
+      }
       const child = shape?.children.find((c) => c.name === key);
       const maps = asMapList(value);
       const asChild = shape !== undefined ? child !== undefined : maps !== undefined;
