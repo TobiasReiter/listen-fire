@@ -90,6 +90,39 @@ pub struct Request {
     pub args: Json,
 }
 
+impl Request {
+    /// A request the host keeps nothing of: a read, a check, a clock, the
+    /// cancel gate. Everything else (a write, a lock, a priced call, an id,
+    /// a park, the trace, a log line) is an effect.
+    pub fn is_read(&self) -> bool {
+        match self.family {
+            Family::Check | Family::Builtins | Family::Clock | Family::ControlCancel => true,
+            Family::Adapters if self.method == "resolve" => true,
+            Family::Adapters => matches!(
+                self.args.get("method").and_then(Json::as_str),
+                Some(
+                    "listEntryPoints"
+                        | "describe"
+                        | "edgesFrom"
+                        | "resolveEntity"
+                        | "getFieldValue"
+                        | "getRelated"
+                        | "iterateRelatedPage"
+                        | "listEventTypes"
+                        | "resolveAwait"
+                        | "wakeKeys"
+                        | "readRecord"
+                        | "translateFilter"
+                        | "getDedupRules"
+                        | "getActorCandidates"
+                        | "describeOpaqueId"
+                )
+            ),
+            _ => false,
+        }
+    }
+}
+
 /// An adapter instance as `adapters.resolve` answered it: its opaque id,
 /// meaningful only within the segment, and the methods it implements (an
 /// optional member such as `readRecord` is asked of this list, never of the

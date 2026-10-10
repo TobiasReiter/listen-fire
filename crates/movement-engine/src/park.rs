@@ -1075,6 +1075,7 @@ mod tests {
             call_stack: RefCell::default(),
             called: Vec::new(),
             wire: crate::env::Wire::default(),
+            effected: std::cell::Cell::new(false),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },

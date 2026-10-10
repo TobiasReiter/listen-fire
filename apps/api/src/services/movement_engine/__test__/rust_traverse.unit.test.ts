@@ -671,15 +671,28 @@ describe('traversal blocks in the Rust engine', () => {
     });
   });
 
-  it('fails loudly on an ORDER BY over more than 64 records whose keys mix numbers and text, where the TypeScript engine orders them', async () => {
+  it('hands an ORDER BY over more than 64 records whose keys mix numbers and text to the TypeScript engine, before any effect', async () => {
     const rows: Row[] = Array.from({ length: 65 }, (_, i) => ({ id: `m-${i}`, fields: { name: `co ${i}`, revenue: i % 2 === 0 ? i : `${i}` } }));
     const c: Case = { body: NOTE_PER_COMPANY('company ORDER BY `revenue`'), graph: { collections: { company: rows } } };
+    const ts = await runOn('ts', c);
+    expect(ts.failed).toBe(false);
+    resetRustRunStats();
+    // Its own refusal, met while the run had only read: the TypeScript
+    // engine runs the segment, as for a refusal at admission.
+    const rust = await runOn('rust', c);
+    expect(rustRunStats).toMatchObject({ ranWhole: 0, notAdmitted: {}, declined: { unreproduced: 1 } });
+    expect(rust.failed).toBe(false);
+    expect(rust.captured).toEqual(ts.captured);
+  });
+
+  it('fails loudly on that ORDER BY once the run has had an effect', async () => {
+    const rows: Row[] = Array.from({ length: 65 }, (_, i) => ({ id: `m-${i}`, fields: { name: `co ${i}`, revenue: i % 2 === 0 ? i : `${i}` } }));
+    const c: Case = { body: `  write kg-[:note]-> { text: "first" }\n${NOTE_PER_COMPANY('company ORDER BY `revenue`')}`, graph: { collections: { company: rows } } };
     expect((await runOn('ts', c)).failed).toBe(false);
     resetRustRunStats();
     const rust = await runOn('rust', c);
     expect(rustRunStats).toMatchObject({ ranWhole: 1, notAdmitted: {}, declined: {} });
     expect(String(runFailureCause(rust.error))).toContain('ORDER BY over 65 records whose keys mix numbers with text or other kinds is not supported');
-    expect(rust.captured).toEqual([]);
   });
 
   describe('edge properties', () => {

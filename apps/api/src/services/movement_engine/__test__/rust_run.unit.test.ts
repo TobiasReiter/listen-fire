@@ -377,6 +377,45 @@ describe('a whole run in the Rust engine', () => {
       expect(ended(ts.error)).toBe('MovementEngineError: MOVENG_ERROR: 2');
     });
 
+    describe('a refusal of its own, by name, mid-run', () => {
+      // Program text in host data: a kept walk rooted at an expression the
+      // data writes, which the TypeScript engine evaluates and this engine
+      // refuses by name (README "Known divergences").
+      const expressionRooted = {
+        kind: 'lazyWalk',
+        walk: { captured: [], head: { root: { kind: 'expression', expr: { raw: 'crm' } }, hopsRaw: '-[:companies]->' } },
+      };
+      const host = keyedRegistry(() => ({ email: fakeEmail().adapter, attio: attio({ streams: false }) }));
+
+      it('before the run’s first effect, hands the run to the TypeScript engine, as a refusal at admission does', async () => {
+        const c: Case = { source: body('  ERROR("${COUNT(v-[:deals]->)}")'), event: webhook({ meta: expressionRooted, subject: 'Acme' }), host };
+        const ts = await runOn('ts', c);
+        resetRustRunStats();
+        const rust = await runOn('rust', c);
+        expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 0, notAdmitted: {}, declined: { unreproduced: 1 } });
+        // The TypeScript engine's run of it, whole: what it read and how it ended.
+        expect(String(runFailureCause('error' in rust ? rust.error : undefined))).toBe(String(runFailureCause('error' in ts ? ts.error : undefined)));
+        expect(rust.trace).toEqual(ts.trace);
+        expect(rust.appends).toEqual(ts.appends);
+      });
+
+      it('after an effect, fails the run naming the construct', async () => {
+        // The gate's trace entry is handed to the host as its statement ends.
+        const c: Case = {
+          source: body('  if msg.`subject` == "Acme" {', '    x = 1', '  }', '  ERROR("${COUNT(v-[:deals]->)}")'),
+          event: webhook({ meta: expressionRooted, subject: 'Acme' }),
+          host,
+        };
+        resetRustRunStats();
+        const rust = await runOn('rust', c);
+        expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, declined: {} });
+        expect(rust.appends).toEqual([[{ kind: 'gate', outcome: true }]]);
+        expect(String(runFailureCause('error' in rust ? rust.error : undefined))).toContain(
+          'a walk a value holds as data rooted at an expression is not supported by the movement engine yet',
+        );
+      });
+    });
+
     it('walks on past a landing whose answer holds a shaped value it never reads', async () => {
       const { ts } = await agree({
         source: ['movement m(msg: <inbox-[:message]->>) {', '  ERROR("${COUNT(crm-[:companies]->)}")', '}'].join('\n'),
@@ -637,6 +676,27 @@ describe('a whole run in the Rust engine', () => {
       declined: {},
       hostCalls: {},
     });
+  });
+});
+
+describe('the run counts', () => {
+  it('count a refusal only for a run the Rust engine did not run, and a whole run under no reason', async () => {
+    resetRustRunStats();
+    const runs = [
+      'movement m(msg: <inbox-[:message]->>) {\n  x = AI("why?")\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  y = @user_email\n  z = AI("again")\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  return UPPER(msg.`subject`)\n}',
+    ];
+    for (const source of runs) await runOn('rust', { source, event: webhook({ subject: 'Acme' }) });
+    // `routed` counts every segment the engine started, its admission's
+    // refusals among them; the refused ones are exactly `routed - admitted`,
+    // and each is under one first reason.
+    expect(rustRunStats).toMatchObject({ routed: 4, admitted: 2, ranWhole: 2, declined: {} });
+    const refused = Object.values(rustRunStats.notAdmitted).reduce((a, b) => a + b, 0);
+    expect(refused).toBe(rustRunStats.routed - rustRunStats.admitted);
+    expect(rustRunStats.notAdmitted).toEqual({ 'expression:llm': 1, 'meta:user_email': 1 });
+    expect(rustRunStats.allReasons).toEqual({ 'expression:llm': 2, 'meta:user_email': 1 });
   });
 });
 

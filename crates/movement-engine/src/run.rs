@@ -71,6 +71,10 @@ use crate::stdlib::Surroundings;
 use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
 
+/// Why a segment this engine refused mid-run, before any effect, is the
+/// TypeScript engine's to run (`declined`).
+pub(crate) const UNREPRODUCED: &str = "unreproduced";
+
 /// The slot a `return` binds its value into (run.ts `RETURN_SLOT`): a name
 /// the grammar cannot spell.
 pub(crate) const RETURN_SLOT: &str = "#return";
@@ -225,6 +229,12 @@ impl Failure {
         Failure::Engine { class: ErrorClass::Unreproduced, message: unsupported_message(construct, detail) }
     }
 
+    /// This engine's own refusal of what the TypeScript engine runs on
+    /// through (`unreproduced`).
+    pub(crate) fn is_unreproduced(&self) -> bool {
+        matches!(self, Failure::Engine { class: ErrorClass::Unreproduced, .. })
+    }
+
     /// The failure as an evaluation carries it out of a read it awaited.
     pub(crate) fn into_eval(self) -> EvalError {
         match self {
@@ -359,6 +369,10 @@ pub(crate) struct Run<'a> {
     pub(crate) called: Vec<(String, Vec<String>)>,
     /// The segment's wire with its host: what the host sent, by id.
     pub(crate) wire: env::Wire,
+    /// The run has asked its host for something other than a read: from
+    /// then on, a refusal of this engine's own fails the run rather than
+    /// handing it to the TypeScript engine.
+    pub(crate) effected: std::cell::Cell<bool>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -436,6 +450,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         call_stack: RefCell::default(),
         called,
         wire,
+        effected: std::cell::Cell::new(false),
     };
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
@@ -449,6 +464,14 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         run.trace(TraceEntry::Warning { code, message });
     }
     let outcome = run.execute().await;
+    // This engine's own refusal, met before anything the host keeps: the
+    // TypeScript engine runs the segment, as for a refusal at admission.
+    if let Err(Stop::Failed(failure, _) | Stop::Thrown(failure)) = &outcome
+        && failure.is_unreproduced()
+        && !run.effected.get()
+    {
+        return Err(Stop::Declined(UNREPRODUCED.into()));
+    }
     // What the segment traced after its last statement's hand-over (a park,
     // a failure, a body that never ran). The TypeScript hands it over as its
     // segment closes, where a failure to is logged and never the run's
@@ -1563,6 +1586,9 @@ impl Run<'_> {
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
+        if !request.is_read() {
+            self.effected.set(true);
+        }
         self.host.request(request).await.map_err(Failure::Host)
     }
 
@@ -2041,6 +2067,12 @@ mod tests {
             "import {{ email }} from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n  ys = MAP([1, 2], {{ onError: \"ignore\" }}, (x) => {{\n    return SORT([{}])\n  }})\n  return ys\n}}",
             mixed.join(", ")
         );
+        // Met before any effect, the refusal hands the run to the
+        // TypeScript engine; after one (the gate's trace handed over), it
+        // fails the run.
+        let (done, _) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
+        assert_eq!(done, json!({ "declined": "unreproduced" }));
+        let source = source.replace("  ys = MAP", "  if 1 == 1 {\n    g = 1\n  }\n  ys = MAP");
         let (done, _) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
         let error = done.get("thrown").or_else(|| done.get("failed").map(|f| &f["error"])).unwrap_or_else(|| panic!("the run fails: {done}"));
         assert_eq!(error["code"], json!("MOVENG_UNSUPPORTED"), "{done}");

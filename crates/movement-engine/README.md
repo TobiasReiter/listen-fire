@@ -255,7 +255,9 @@ this order, and the program is parsed once, here:
    (`rustRunStats.hostCalls` stays `{}`).
 3. **The stamp declines** (`Run::stamp_decline`), after the check and
    before anything the host can see (the version warning's trace entry
-   included): what only the checker's stamps say.
+   included): what only the checker's stamps say. A refusal of this
+   engine's own met mid-run before the run's first effect declines too
+   (`unreproduced`, below).
 
 Either way the shim runs the program on the TypeScript engine.
 
@@ -470,6 +472,7 @@ engine parked must resume here, so each is a port too:
 | `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` | a `Date` value on the wire (or a ruling that adapters never answer one) |
 | `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read | to become errors: shim faults in all but name |
 | `source_does_not_parse` | a source this engine's parser refuses and the checker passes | the grammar this engine lacks (none is known) |
+| `unreproduced` | mid-run, this engine's own refusal of what the TypeScript engine runs on through (MOVENG_UNSUPPORTED naming the construct, "Errors a run can meet mid-run" below), met before the run's first effect: it has asked its host only reads (the check, `adapters.resolve`, an adapter's read methods, the clock, the cancel gate, `builtins.*`), so nothing it did is kept | each construct's port; after an effect the same refusal fails the run |
 
 **Not refusals, still TypeScript.** Zero refusals is not zero TypeScript:
 
@@ -1067,9 +1070,12 @@ statement runs again, from the run's spend with the cap counted afresh
 
 ### Errors a run can meet mid-run
 
-These end a run partway through, after it has made adapter calls, where the
-TypeScript engine would carry on. Each comes back as an error (the run
-fails); none produces a different answer.
+These end a run partway through, where the TypeScript engine would carry
+on. Each comes back as an error (the run fails), naming the construct; none
+produces a different answer. One met before the run's first effect (a
+write, a lock, a priced call, an id, a park, the trace handed over, a log
+line) is a decline instead (`unreproduced`, "After the check" above): the
+TypeScript engine runs the segment, having seen only reads.
 
 - An adapter answers a value the eval wire cannot carry as itself (a
   `Date`, a class instance, a function): `RustShimError` from the shim.
@@ -1297,7 +1303,7 @@ Sizes are estimates (XS, S, M, L).
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |
-| 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`), and an object the host sends again, unchanged, under the id it was first sent under, decodes as the one object already held (so `msg.meta == msg.meta` holds, as in process) | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | — |
+| 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`), and an object the host sends again UNCHANGED, under the id it was first sent under, decodes as the one object already held; an object the host MUTATES between two answers decodes fresh the second time, where the TypeScript holds the one object (see "Known divergences") | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | — |
 
 #### The rows in detail
 
@@ -1318,7 +1324,9 @@ Rows 3 and 4 are the two a run admitted here can meet today:
   engine reproduces for every total order. Mixed number and text keys are
   not one (the comparator has cycles), so there V8's merge alone decides
   where records land. Rather than order them differently, the run fails
-  with MOVENG_UNSUPPORTED naming the ORDER BY and the record count. Ruled:
+  with MOVENG_UNSUPPORTED naming the ORDER BY and the record count (or,
+  met before the run's first effect, is declined to the TypeScript engine,
+  `unreproduced`). Ruled:
   no silent divergence (the order_limit pin holds every set of 64 or
   fewer, mixed included).
 
@@ -1412,6 +1420,26 @@ beyond those, and these, held back by decision:
 |---|---|---|---|
 | a walk a dict holds as data whose mapping has an entry that evaluates a value (`{kind: "value", value: {raw}}`) or walks a head (`{kind: "traversal"}`) | parses and evaluates the program text the host's data carries | fails the run, MOVENG_UNSUPPORTED by name, mid-run | evaluating expression text found in host data is a design decision (Henry's), not a port |
 | the same mapping's `spreads` that apply to an entry (`after` naming its index) | evaluates the spread's source text the data carries | the same refusal | the same decision |
+| a walk a value holds as data whose mapping names a shape in scope that is a dict holding a `declaration` | reads the declaration the dict carries as the shape's own (its `extends`, fields and edges) | the same refusal | type-model structure found in host data: the same decision |
+| a walk a value holds as data rooted at an expression with source text (`root: {kind: "expression", expr: {raw}}`) | parses and evaluates the expression text the data carries | the same refusal | program text found in host data: the same decision |
+| a dict shaped like an `instance` whose own schema is no instance schema (its entries do not parse, or it lacks `positions`) | reads its graph's types off whatever the dict holds | the same refusal | the same decision |
+| a dict shaped like an `instance` whose own schema holds a member entry for a hop's WHERE (`selectedMembers[<refinement key>]`) but no `collections` table | builds the member check from the entry the data carries | the same refusal | the same decision |
+| a dict shaped like an `instance` whose own schema names an edge's target by something other than text, or `null` | reads the target as the schema's type it names | the same refusal | the same decision |
+| a dict shaped like an `instance` whose own schema's `positions` are not a dict, on an incoming hop | reads the positions as the schema's own | the same refusal | the same decision |
+| an object an in-process adapter answered and then MUTATED before answering it again | holds the one object: a later read, `IN` or `CONTAINS` sees the mutation through every name holding it | decodes the second answer fresh: names bound to the first answer keep its old contents | parked (Task 3 review): only an in-process adapter that mutates what it already returned can produce it; a protocol-v2 adapter answers fresh JSON each time, so cannot; no corpus program does |
+
+The line these rows draw: a binding-shaped dict that is DATA — an event,
+record, positions, items, candidates or instance dict with plain fields — is
+read as the TypeScript reads it (row 11 above, the records oracle); one that
+carries TYPE-MODEL STRUCTURE or PROGRAM TEXT for the engine to read as its
+own (a mapping's value or traversal entries, an applied spread, a shape's
+declaration, a schema's member entries and edge targets) is refused by name
+mid-run (MOVENG_UNSUPPORTED naming the construct), pending Henry's ruling:
+mirror the TypeScript reading host data as program, or a language version
+that stops reading host data as engine bindings. A refusal raised before the
+run's first effect is a decline (`unreproduced`): the run goes to the
+TypeScript engine, as an admission refusal does ("Admission" above); after an
+effect it fails the run, the construct named.
 
 ## The check
 
