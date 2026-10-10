@@ -1399,10 +1399,17 @@ function readableMatchRoot(position: PositionSchema | undefined): WritableRootSc
  * match only ever answers the second, so the first is not part of its type
  * rather than a flag that is always false.
  */
-function foundHandle(handle: PositionTypeRef | undefined): PositionTypeRef | undefined {
+function foundHandle(
+  handle: PositionTypeRef | undefined,
+  languageVersion: LanguageVersion,
+): PositionTypeRef | undefined {
   if (handle?.kind !== 'handle') return handle;
-  const { created: _created, committed: _committed, ...resultShape } = handle.resultShape;
   const { written: _written, ...found } = handle;
+  // Before 4 the host projected the two onto every write shape, so a match
+  // inherited them and they are stripped. From 4 nothing projects them: a
+  // `created` the shape still declares is the record's own field.
+  if (since(languageVersion, 4)) return found;
+  const { created: _created, committed: _committed, ...resultShape } = handle.resultShape;
   return { ...found, resultShape };
 }
 
@@ -7849,23 +7856,28 @@ class Checker {
   }
 
   /**
-   * What `x = write c { … }` hands back when `c` is a traversal landing. Since
-   * 4 the write is the record's latest version, with the landing as it stood
-   * before as its `-[:@old]->` — a handle a write produced, standing on the
-   * landing's own type. The alias `c` keeps its position type: its reads were
-   * always live. Before 4 the result was the landing's type itself.
+   * What `x = write c { … }` hands back when `c` is a record FOUND rather than
+   * written — a traversal landing, or a match's handle. Since 4 the write is
+   * the record's latest version, with `c` as it stood before as its
+   * `-[:@old]->` — a handle a write produced, standing on `c`'s own type. The
+   * alias `c` keeps its own type (a landing's reads were always live; a found
+   * handle is still the record as found). Before 4 the result was `c`'s type
+   * itself, which is why this returns early there — and so the write-outcome
+   * fields a pinned program reads are never in question here.
    */
   private positionWriteResult(
     target: PositionTypeRef | undefined,
     root: WritableRootSchema | undefined,
   ): PositionTypeRef | undefined {
-    if (target?.kind !== 'position' || before(this.languageVersion, 4)) return target;
+    if (before(this.languageVersion, 4)) return target;
+    if (target?.kind === 'handle') return target.written === true ? target : { ...target, written: true };
+    if (target?.kind !== 'position') return target;
     const properties = positionSchemaOfRef(target)?.properties ?? {};
     return {
       kind: 'handle',
       instance: target.instance,
       position: target.position,
-      resultShape: this.writeResultShape(root?.resultShape ?? properties),
+      resultShape: root?.resultShape ?? properties,
       ...(root?.edges !== undefined ? { edges: root.edges } : {}),
       written: true,
     };
@@ -8340,7 +8352,7 @@ class Checker {
         match.span,
       );
     }
-    return foundHandle(handle);
+    return foundHandle(handle, this.languageVersion);
   }
 
   /**

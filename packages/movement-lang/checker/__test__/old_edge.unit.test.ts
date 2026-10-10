@@ -178,3 +178,15 @@ describe('a write off a traversal landing', () => {
     expect(errors(3, body('n = COUNT(w-[:@old]->)'))).toEqual([C.TRAVERSE_UNKNOWN_EDGE]);
   });
 });
+
+describe('a write off a found record', () => {
+  const FOUND = '  ex = match crm-[:companies]-> { unique by (`Name`), Name: "Acme" }';
+  const body = (read: string) =>
+    [FOUND, '  if ex != null {', '    w = write ex { Name: "Acme Ltd" }', `    ${read}`, '  }'].join('\n');
+  it('under 4 the named result is a written handle: @old types', () => {
+    expect(errors(4, body('n = COUNT(w-[:@old]->)'))).toEqual([]);
+  });
+  it('under 4 the match handle itself is still the record as found: ex-[:@old]-> is refused', () => {
+    expect(errors(4, body('n = COUNT(ex-[:@old]->)'))).toEqual([C.OLD_EDGE_NOT_A_WRITE]);
+  });
+});

@@ -1,7 +1,7 @@
 // `@` names an edge the ENGINE makes (`-[:@old]->`, a write handle's record as
 // it stood before the write). The checker never looks such a name up among a
 // system's declared edges, so a system that declared one would publish an edge
-// no author could reach. The projection refuses one at catalog build, and this
+// no author could reach. The projection leaves one out with a note, and this
 // file proves no registered adapter declares one today.
 
 import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../types';
@@ -75,26 +75,36 @@ describe('the reserved @ edge prefix', () => {
       ],
     ]);
 
-  it('projecting an adapter that declares an edge starting with @ throws, naming the prefix', () => {
-    const project = (referenceName: string) =>
-      instanceSchemaFromDescriptors({
-        adapterType: 'calendar',
-        entries,
-        descriptors: descriptors(referenceName),
-        supportsInPlaceUpdate: false,
-      });
-    expect(() => project('@old')).toThrow(/'@old'.*'@'/);
-    expect(Object.keys(project('Venue').schema.positions['Event'].edges)).toEqual(['Venue']);
+  it('an adapter edge starting with @ is left out of the projection, with a note naming the prefix', () => {
+    const projected = instanceSchemaFromDescriptors({
+      adapterType: 'calendar',
+      entries,
+      descriptors: descriptors('@old'),
+      supportsInPlaceUpdate: false,
+    });
+    expect(projected.schema.positions['Event'].edges).toEqual({});
+    expect(projected.notes).toEqual(
+      expect.arrayContaining([expect.stringMatching(/'@old'.*'@'.*left out/)]),
+    );
+    // The same reference named plainly projects, so the leaving-out is the prefix's doing.
+    expect(Object.keys(instanceSchemaFromDescriptors({
+      adapterType: 'calendar',
+      entries,
+      descriptors: descriptors('Venue'),
+      supportsInPlaceUpdate: false,
+    }).schema.positions['Event'].edges)).toEqual(['Venue']);
   });
 
-  it('projecting an entry whose collection starts with @ throws too — a root collection is an edge', () => {
-    expect(() =>
-      instanceSchemaFromDescriptors({
-        adapterType: 'calendar',
-        entries: [{ ...entries[0], collectionName: '@events' }, entries[1]],
-        descriptors: descriptors('Venue'),
-        supportsInPlaceUpdate: false,
-      }),
-    ).toThrow(/'@events'.*'@'/);
+  it('a root collection starting with @ is left out too — a root collection is an edge', () => {
+    const projected = instanceSchemaFromDescriptors({
+      adapterType: 'calendar',
+      entries: [{ ...entries[0], collectionName: '@events' }, entries[1]],
+      descriptors: descriptors('Venue'),
+      supportsInPlaceUpdate: false,
+    });
+    expect(projected.schema.collections['@events']).toBeUndefined();
+    expect(projected.notes).toEqual(
+      expect.arrayContaining([expect.stringMatching(/'@events'.*'@'.*left out/)]),
+    );
   });
 });

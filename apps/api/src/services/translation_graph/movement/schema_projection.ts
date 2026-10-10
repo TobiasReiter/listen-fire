@@ -178,15 +178,18 @@ function projectWriteUnion(input: {
 
 /**
  * `@` names an edge the ENGINE makes (a write handle's `-[:@old]->`), and the
- * checker never looks such a name up among a system's edges — so an adapter
- * edge spelled that way would publish something no author can reach. A loud
- * refusal at catalog build, rather than an edge that silently isn't there.
+ * checker never looks such a name up among a system's edges — so an edge
+ * spelled that way would publish something no author can reach. A described
+ * surface is the user's own naming (an Airtable table or link field), so the
+ * edge is left out with a note rather than failing the whole connection's
+ * describe. Returns true when the edge is to be left out.
  */
-function refuseArtificialEdgeName(adapterType: string, edge: string): void {
-  if (!isArtificialEdge(edge)) return;
-  throw new Error(
-    `${adapterType}: the edge '${edge}' starts with '@', which is reserved for edges the engine makes (such as '@old') — rename it in the adapter`,
+function leaveOutArtificialEdge(input: { adapterType: string; edge: string; notes: string[] }): boolean {
+  if (!isArtificialEdge(input.edge)) return false;
+  input.notes.push(
+    `${input.adapterType}: the edge '${input.edge}' starts with '@', which is reserved for edges the engine makes (such as '@old') — it was left out; rename it in the source system to reach it`,
   );
+  return true;
 }
 
 /**
@@ -474,12 +477,13 @@ export function instanceSchemaFromDescriptors(input: {
     // is reached through its container's edge, not off the root.
     if (metaEdgeTypeIds.has(entry.typeId) && (entry.readable || entry.writable)) {
       const collectionName = entry.collectionName ?? name;
-      refuseArtificialEdgeName(input.adapterType, collectionName);
-      const capability = rootCapabilities.get(collectionName);
-      collections[collectionName] = {
-        target: name,
-        ...(capability !== undefined ? { capability } : {}),
-      };
+      if (!leaveOutArtificialEdge({ adapterType: input.adapterType, edge: collectionName, notes })) {
+        const capability = rootCapabilities.get(collectionName);
+        collections[collectionName] = {
+          target: name,
+          ...(capability !== undefined ? { capability } : {}),
+        };
+      }
     }
 
     const descriptor = input.descriptors.get(entry.typeId);
@@ -576,7 +580,7 @@ export function instanceSchemaFromDescriptors(input: {
     const requiredEdges: Array<{ edge: string; from: string }> = [];
     for (const ref of descriptor.references) {
       const edge = ref.name ?? ref.fieldId;
-      refuseArtificialEdgeName(input.adapterType, edge);
+      if (leaveOutArtificialEdge({ adapterType: input.adapterType, edge, notes })) continue;
       const targetNames = targetNamesOf(ref);
       // ONE edge, ONE landing TYPE — but that type may be a UNION. A reference
       // that declares several targets projects as a polymorphic edge onto a

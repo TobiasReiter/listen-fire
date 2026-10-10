@@ -131,7 +131,7 @@ export const TypedDiagnosticCodes = {
   OLD_EDGE_NOT_A_WRITE: 'MOV_OLD_EDGE_NOT_A_WRITE',
   /** Since language version 4: an edge named with the reserved `@` prefix that
    *  the engine does not make. `@` edges are the engine's, never a system's
-   *  (the host refuses an adapter edge so named), and the only one is `@old`. */
+   *  (the host leaves an adapter edge so named out of its projection), and the only one is `@old`. */
   ARTIFICIAL_EDGE_UNKNOWN: 'MOV_ARTIFICIAL_EDGE_UNKNOWN',
   /** A read traversal walks a WRITE-ONLY edge (`EdgeSchema.readable: false`)
    *  — a pure create path with no read API behind it (WhatsApp's `replies`).
@@ -1095,8 +1095,8 @@ export interface ExtractNodeType {
 // ── Edges the engine makes ──
 
 /** The prefix that marks an edge the ENGINE makes rather than one a system
- *  declares. Reserved in every version: the host refuses an adapter edge so
- *  named, so the two can never collide. */
+ *  declares. Reserved in every version: the host leaves an adapter edge so
+ *  named out of its projection, with a note, so the two can never collide. */
 export const ARTIFICIAL_EDGE_PREFIX = '@';
 
 /** A write handle's record as it stood before that write. */
