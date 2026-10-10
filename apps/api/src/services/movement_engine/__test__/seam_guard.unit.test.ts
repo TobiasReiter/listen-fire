@@ -1434,7 +1434,8 @@ describe('every family crosses as JSON', () => {
         '  co = match crm-[:companies]-> { unique by (`name`)',
         '    name: "Acme"',
         '  }',
-        '  write crm-[:notes]-> bind co { title: m.`subject` }',
+        // Since version 4 a match may find nothing, so the bind is guarded.
+        '  if co != null { write crm-[:notes]-> bind co { title: m.`subject` } }',
       ],
       {
         crm: fakeCrm({
