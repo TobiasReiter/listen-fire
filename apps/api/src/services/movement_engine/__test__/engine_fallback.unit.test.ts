@@ -170,13 +170,13 @@ describe('MOVEMENT_ENGINE_FALLBACK=none', () => {
     expect(recorded).toEqual([{ runId: 'run-1', engine: 'rust', reason: 'admitted' }]);
   });
 
-  it('fails a resume the shim refuses before any run context opens, and records the refusal', async () => {
+  it('fails a resume the Rust engine refuses, and records the refusal', async () => {
     const host = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
     const failure = await underConfig({ engine: 'rust', fallback: 'none' }, () =>
-      resumeMovement({ ...inputOf(ADMITTED, host, 'run-resume'), state: { version: 1 } as never, answer: true }),
+      resumeMovement({ ...inputOf(REFUSED, host, 'run-resume'), state: { version: 1 } as never, answer: true }),
     ).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'resume_answer' } });
-    expect(recorded).toEqual([{ runId: 'run-resume', engine: 'rust', reason: 'resume_answer' }]);
+    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'expression_closure' } });
+    expect(recorded).toEqual([{ runId: 'run-resume', engine: 'rust', reason: 'expression_closure' }]);
   });
 
   it('fails a run the engine admits and then declines, recording the decline', async () => {

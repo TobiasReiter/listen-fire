@@ -52,6 +52,8 @@ const program = (...body: string[]) =>
 const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
 /** Refused by its admission: a closure in an expression. */
 const REFUSED = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  return msg.`subject`');
+/** Refused for two reasons: the closure, and a meta key read through the host. */
+const REFUSED_TWICE = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  y = @user_email', '  return msg.`subject`');
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
 
@@ -179,14 +181,34 @@ describe('the admission dry run, through the real artifact', () => {
     expect(rustRunStats).toMatchObject({ routed: 0, admitted: 0, ranWhole: 0, notAdmitted: {}, declined: {}, hostCalls: {} });
   });
 
-  it("counts a resume the shim refuses by the shim's reason, and starts no engine for it", async () => {
-    const { segment, asked } = await failingSegment(ADMITTED);
-    const { engine, log } = startingWith({ pending: [] });
-    const state = { version: 1 } as never;
-    dryAdmitResume({ input: { ...segment.input, state, answer: true }, context: segment.context }, engine);
-    expect(log.started).toBe(0);
+  it('counts every reason the walk meets, not only the first', async () => {
+    const { segment, asked } = await failingSegment(REFUSED_TWICE, 'run-twice');
+    dryAdmitRun(segment);
     expect(asked).toEqual([]);
-    expect(rustRunStats.dryRun.first).toEqual({ resume_answer: 1 });
+    expect(rustRunStats.dryRun).toMatchObject({ first: { expression_closure: 1 }, all: { expression_closure: 1, 'meta:user_email': 1 } });
+    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['expression_closure', 'meta:user_email'] }]);
+  });
+
+  it("puts a resume to the engine's start as a real resume, its answer included", async () => {
+    const { segment, asked } = await failingSegment(ADMITTED);
+    const starts: unknown[] = [];
+    const engine: EngineProtocol = {
+      start: (input) => {
+        starts.push(input);
+        return { done: { refused: 'park_state', reasons: ['park_state'] } };
+      },
+      answer: () => {
+        throw new Error('test: a dry run answered the engine');
+      },
+      finish: () => undefined,
+    };
+    const state = { version: 1 } as never;
+    dryAdmitResume({ input: { ...segment.input, state, answer: 'yes' }, context: segment.context }, engine);
+    expect(asked).toEqual([]);
+    expect(starts).toHaveLength(1);
+    // The state crosses on the eval wire, as a real resume's does.
+    expect(starts[0]).toMatchObject({ resume: { state: ['o', 0, [['version', 1]]], answer: 'yes' } });
+    expect(rustRunStats.dryRun.first).toEqual({ park_state: 1 });
   });
 });
 

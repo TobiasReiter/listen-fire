@@ -135,6 +135,11 @@ interface Outcome {
   error?: string;
 }
 
+/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
+ *  the constructs whose meaning changed (admit.rs), so the two engines are
+ *  compared under the newest version both run. */
+const RUST_LANGUAGE_VERSION = 3;
+
 async function runOn(engine: 'ts' | 'rust', source: string): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
@@ -145,6 +150,7 @@ async function runOn(engine: 'ts' | 'rust', source: string): Promise<Outcome> {
       event: webhook(),
       teamId: TEAM_ID,
       catalog,
+      languageVersion: RUST_LANGUAGE_VERSION,
       host: makeTestHost({
         adapters: { resolve: ({ adapterType }) => (adapterType === 'attio' ? attio.adapter : fakeEmail()) },
         llm: { extractCall: extractLlm, transforms },

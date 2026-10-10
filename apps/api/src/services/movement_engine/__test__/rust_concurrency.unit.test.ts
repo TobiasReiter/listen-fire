@@ -245,6 +245,11 @@ interface Outcome {
   awaited: unknown[];
 }
 
+/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
+ *  the constructs whose meaning changed (admit.rs), so the two engines are
+ *  compared under the newest version both run. */
+const RUST_LANGUAGE_VERSION = 3;
+
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
@@ -262,6 +267,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     catalog,
     movementName: 'recap',
     firedAt: '2026-10-05T09:00:00.000Z',
+    languageVersion: RUST_LANGUAGE_VERSION,
     ...(c.dryRun === true ? { dryRun: true } : {}),
     ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
     host: makeTestHost({
