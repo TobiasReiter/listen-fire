@@ -2953,7 +2953,8 @@ const INTERNAL_KEYS: [&str; 12] = ["provenance", "graph", "read", "fields", "fie
 
 /// The built-ins whose reading this engine may hand back to the TypeScript
 /// member (`builtins.function`) on what their arguments hold: a date V8
-/// reads its own way, a regex feature, astral text.
+/// reads its own way, a regex nested past what V8's stack allows, astral
+/// text.
 const HANDED_BACK: [&str; 7] = ["split", "date", "datetime", "date.add_days", "date.format", "date.format_iso", "text.regex_extract"];
 
 /// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` of a bare walk, its root and

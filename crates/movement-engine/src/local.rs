@@ -682,7 +682,7 @@ pub fn identity_values_equal(a: &Js, b: &Js) -> bool {
 /// `hostnameLabels`: a hostname-shaped value's registrable-domain labels.
 fn hostname_labels(normalised: &str) -> Option<Vec<String>> {
     let shape = crate::js_regex::Regex::new(HOSTNAME_SHAPE).expect("the hostname shape is a valid pattern");
-    let found = shape.exec(normalised).ok().flatten()?;
+    let found = shape.exec(normalised)?;
     let labels = found.get(1).cloned().flatten()?;
     Some(String::from_utf16_lossy(&labels).split('.').map(String::from).collect())
 }

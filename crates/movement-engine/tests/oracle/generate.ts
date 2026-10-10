@@ -8,7 +8,10 @@
 //     hex), the 17-digit ties included;
 //   - regex.json: `new RegExp(pattern).exec(text)` for seeded patterns over
 //     backreferences, lazy quantifiers, lookaheads, \b, classes, anchors,
-//     alternation and empty iterations;
+//     alternation and empty iterations; then the rest of the dialect from a
+//     second seed (lookbehind, named groups and `\k`, Annex B's octal, `\c`
+//     and identity escapes, class escapes at a range's end, quantified
+//     lookaheads, deep nesting, long texts);
 //   - order_limit.json: a hop's pushdown and ORDER BY / LIMIT plan
 //     (./order_limit_oracle.ts; not ./order_limit, which Node resolves to
 //     the .json beside it);
@@ -272,6 +275,15 @@ function regexPattern(depth: number, groups: { count: number }): string {
   return terms.join('');
 }
 
+function regexOutcome(pattern: string, text: string): unknown {
+  try {
+    const match = new RegExp(pattern).exec(text);
+    return match === null ? { match: null } : { match: [...match].map((g) => (g === undefined ? null : g)) };
+  } catch {
+    return { syntaxError: true };
+  }
+}
+
 const TEXT_UNITS = ['a', 'b', 'c', 'x', ' ', '1', '_', '-', '.', '\n', 'A', 'é'];
 const regexCases: Array<{ pattern: string; text: string; outcome: unknown }> = [];
 for (let p = 0; p < 400; p++) {
@@ -280,16 +292,86 @@ for (let p = 0; p < 400; p++) {
     const length = Math.floor(rx() * 10);
     let text = '';
     for (let i = 0; i < length; i++) text += pick(TEXT_UNITS);
-    let outcome: unknown;
-    try {
-      const match = new RegExp(pattern).exec(text);
-      outcome = match === null ? { match: null } : { match: [...match].map((g) => (g === undefined ? null : g)) };
-    } catch {
-      outcome = { syntaxError: true };
-    }
-    regexCases.push({ pattern, text, outcome });
+    regexCases.push({ pattern, text, outcome: regexOutcome(pattern, text) });
   }
 }
+// The rest of the dialect, from its own seed so the cases above stay as
+// they were.
+const ry = mulberry32(8);
+const pickY = <T>(items: readonly T[]): T => items[Math.floor(ry() * items.length)]!;
+const ATOMS_B = [
+  ...ATOMS, '\\0', '\\07', '\\101', '\\377', '\\400', '\\8', '\\9', '\\cA', '\\cj', '\\c1', '\\c', '\\x4', '\\x41', '\\u0041',
+  '\\u12', '\\k', '\\p', '\\P{L}', '[\\d-z]', '[a-\\w]', '[\\s-\\d]', '[\\c_]', '[\\c*]', '[\\c]', '[\\101-\\103]', '[\\b]', '[\\B]',
+  '[\\18]', '\\-', '\\/', '{', '}', ']', 'k', '<', '>', '\\$', '[^\\W\\d]', '[]', '[^]',
+];
+const GROUPS_B = ['(', '(', '(?:', '(?=', '(?!', '(?<=', '(?<!', '(?<=', 'named'];
+
+function regexPatternB(depth: number, groups: { count: number; names: string[] }): string {
+  const terms: string[] = [];
+  const length = 1 + Math.floor(ry() * 4);
+  for (let i = 0; i < length; i++) {
+    const roll = ry();
+    let term: string;
+    let quantifiable = true;
+    if (roll < 0.1) {
+      term = pickY(ASSERTIONS);
+      quantifiable = false;
+    } else if (roll < 0.17) {
+      // A backreference, sometimes to a group past the last, which reads as
+      // an octal escape or a digit.
+      term = `\\${1 + Math.floor(ry() * (groups.count + 3))}`;
+    } else if (roll < 0.22) {
+      // A name declared before, the first name (which may come after), or
+      // one never declared.
+      const roll2 = ry();
+      term = `\\k<${groups.names.length > 0 && roll2 < 0.8 ? pickY(groups.names) : roll2 < 0.93 ? 'n0' : 'n9'}>`;
+    } else if (roll < 0.5 && depth < 5) {
+      let kind = pickY(GROUPS_B);
+      if (kind === 'named') {
+        const name = ry() < 0.05 && groups.names.length > 0 ? pickY(groups.names) : `n${groups.names.length}`;
+        groups.names.push(name);
+        kind = `(?<${name}>`;
+      }
+      if (kind === '(' || kind.startsWith('(?<n')) groups.count += 1;
+      const inner = [regexPatternB(depth + 1, groups)];
+      if (ry() < 0.4) inner.push(regexPatternB(depth + 1, groups));
+      term = `${kind}${inner.join('|')})`;
+      // Annex B quantifies a lookahead; a lookbehind quantified is an error.
+      if (kind.startsWith('(?<=') || kind.startsWith('(?<!')) quantifiable = ry() < 0.05;
+    } else term = pickY(ATOMS_B);
+    if (quantifiable && ry() < 0.4) term += pickY(QUANTIFIERS);
+    terms.push(term);
+  }
+  if (ry() < 0.08 && depth === 0) terms.push(pickY(['(', ')', '[', '*', '{2,1}', '(?<1>a)', '(?<>a)', '(?<a', '\\', '(?x)']));
+  return terms.join('');
+}
+
+const TEXT_UNITS_B = [...TEXT_UNITS, '\u0001', '\u0007', 'k', '<', '>', '8', '\\', 'A', 'B', '\u0000', '{', '0', '9', '$', 'p', 'u'];
+for (let p = 0; p < 500; p++) {
+  const pattern = regexPatternB(0, { count: 0, names: [] });
+  for (let t = 0; t < 8; t++) {
+    const length = Math.floor(ry() * 12);
+    let text = '';
+    for (let i = 0; i < length; i++) text += pickY(TEXT_UNITS_B);
+    regexCases.push({ pattern, text, outcome: regexOutcome(pattern, text) });
+  }
+}
+// Long texts and deep nesting, which a step or depth budget would have
+// stopped short of.
+for (const [pattern, text] of [
+  ['(a|b)*c', 'ab'.repeat(2500)],
+  ['(a|b)*$', 'ab'.repeat(2500)],
+  ['^(?:a+)+$', `${'a'.repeat(20)}`],
+  ['(?<=(a+))b', `${'a'.repeat(3000)}b`],
+  ['(x+x+)+y', 'x'.repeat(16)],
+  [`${'('.repeat(300)}a${')'.repeat(300)}`, 'xa'],
+  [`${'(?:'.repeat(1000)}a${')'.repeat(1000)}`, 'xa'],
+  [`${'(?=('.repeat(150)}a${'))'.repeat(150)}`, 'ba'],
+  [`${'(?<=('.repeat(150)}a${'))'.repeat(150)}b`, 'ab'],
+]) {
+  regexCases.push({ pattern, text, outcome: regexOutcome(pattern, text) });
+}
+
 writeFileSync(
   path.join(__dirname, 'regex.json'),
   `[\n${regexCases.map((c) => JSON.stringify(c)).join(',\n')}\n]\n`,

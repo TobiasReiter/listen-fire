@@ -599,12 +599,7 @@ fn text_regex_extract(args: &[Js]) -> Result<Js, EvalError> {
         Err(RegexError::Syntax) => return Ok(Js::Null),
         Err(RegexError::Unsupported(what)) => return Err(EvalError::Fallback(what)),
     };
-    let found = match regex.exec(&text.to_js_string()) {
-        Ok(found) => found,
-        Err(RegexError::Syntax) => return Ok(Js::Null),
-        Err(RegexError::Unsupported(what)) => return Err(EvalError::Fallback(what)),
-    };
-    let Some(groups) = found else { return Ok(Js::Null) };
+    let Some(groups) = regex.exec(&text.to_js_string()) else { return Ok(Js::Null) };
     let index = if args.len() > 2 { group.to_number() } else if groups.len() > 1 { 1.0 } else { 0.0 };
     if !js::is_integer(index) || index < 0.0 || index >= groups.len() as f64 {
         return Ok(Js::Null);

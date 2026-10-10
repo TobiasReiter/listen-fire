@@ -1,9 +1,11 @@
 // Writes src/letter_number.rs: the code points JavaScript's `/[\p{L}\p{N}]/u`
-// (and `/\p{M}/u`) matches, as ranges, read off the Node this repository runs (its Unicode
+// (and `/\p{M}/u`, `/\p{ID_Start}/u`, `/\p{ID_Continue}/u`) matches, as ranges, read off the Node this repository runs (its Unicode
 // version is in the file's head). local_edge_adapter.ts splits a name into
 // its words on `/[^\p{L}\p{N}]+/u`, which no Rust standard predicate
 // reproduces (`char::is_alphabetic` also takes the combining marks that
-// spell Indic vowels). Deterministic: a rerun on the same Node writes the
+// spell Indic vowels). A regex group's name is spelled in ID_Start and
+// ID_Continue (src/js_regex.rs), which Rust's standard library does not
+// carry. Deterministic: a rerun on the same Node writes the
 // same bytes.
 //
 // Regenerate from apps/api:
@@ -33,7 +35,10 @@ const rowsOf = (ranges: Array<[number, number]>) => ranges.map(([from, to]) => `
 const letters = rangesOf(/[\p{L}\p{N}]/u);
 // effect_locks.ts `foldText` drops the combining marks an NFKD leaves.
 const marks = rangesOf(/\p{M}/u);
-const source = `//! The code points \`/[\\p{L}\\p{N}]/u\` and \`/\\p{M}/u\` match in Node ${process.versions.node}
+const idStart = rangesOf(/\p{ID_Start}/u);
+const idContinue = rangesOf(/\p{ID_Continue}/u);
+const source = `//! The code points \`/[\\p{L}\\p{N}]/u\`, \`/\\p{M}/u\`, \`/\\p{ID_Start}/u\` and
+//! \`/\\p{ID_Continue}/u\` match in Node ${process.versions.node}
 //! (Unicode ${process.versions.unicode}), as sorted inclusive ranges. Written by
 //! tests/oracle/letter_number.ts; do not edit by hand.
 
@@ -47,6 +52,16 @@ pub fn is_mark(c: char) -> bool {
     within(&MARKS, c)
 }
 
+/// Whether \`c\` may start an identifier (\`\\p{ID_Start}\`).
+pub fn is_id_start(c: char) -> bool {
+    within(&ID_START, c)
+}
+
+/// Whether \`c\` may continue an identifier (\`\\p{ID_Continue}\`).
+pub fn is_id_continue(c: char) -> bool {
+    within(&ID_CONTINUE, c)
+}
+
 fn within(ranges: &[(u32, u32)], c: char) -> bool {
     let code = c as u32;
     ranges.binary_search_by(|&(from, to)| if to < code { std::cmp::Ordering::Less } else if from > code { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal }).is_ok()
@@ -58,6 +73,14 @@ ${rowsOf(letters)}
 
 const MARKS: [(u32, u32); ${marks.length}] = [
 ${rowsOf(marks)}
+];
+
+const ID_START: [(u32, u32); ${idStart.length}] = [
+${rowsOf(idStart)}
+];
+
+const ID_CONTINUE: [(u32, u32); ${idContinue.length}] = [
+${rowsOf(idContinue)}
 ];
 `;
 writeFileSync(path.join(__dirname, '../../src/letter_number.rs'), source);

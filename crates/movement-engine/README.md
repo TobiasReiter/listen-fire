@@ -215,7 +215,7 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `new Date(text)` | the ISO forms V8's spec parser reads (`YYYY-MM-DD`, `…THH:mm[:ss[.f…]]` with `Z`/`±HH:mm`; day 31 rolls over, `24:00`, three fraction digits kept); a text with no digit is Invalid; anything else (V8's legacy parser, a date-time without offset = local time) goes back to TypeScript | `js_date::tests::reads_the_iso_forms_as_v8_does`, `js_date::tests::leaves_what_only_v8_can_read_unknown` |
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
 | `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) | `js_date::tests::iso_strings_outside_four_digit_years`, `js_date::tests::time_clip_bounds_and_truncates`, `tests::coalesce_short_circuits_from_version_three` |
-| regexes (TEXT.REGEX_EXTRACT) | a backtracking matcher over UTF-16 units with Annex B syntax: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators. Invalid patterns are null, as `new RegExp` throws; lookbehind, named groups, octal and `\c` escapes, an escape class at a range end, groups nested past 100, and a match past its step/depth budget go back to TypeScript | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them` (3,200 seeded cases) |
+| regexes (TEXT.REGEX_EXTRACT) | V8's whole flagless dialect, compiled to a flat program run on an explicit backtracking stack over UTF-16 units: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators; lookahead and lookbehind (right to left, its captures and backreferences too), named groups and `\k<name>`, Annex B's octal, `\c` and identity escapes, a class escape at a range's end, quantified lookaheads. No step budget (a pattern V8 runs slowly runs slowly here). Invalid patterns are null, as `new RegExp` throws. Groups nested past 1,000 levels go back to TypeScript: V8 itself overflows its stack somewhere past 5,000, at a depth set by the stack it runs on | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them` (7,209 seeded cases) |
 | `URL` (URL.HOST) | `new URL` itself, asked of the environment (`url_parse`); only the TypeScript's own pre-reading (trim, the assumed `http://`, opaque uris) is written here | `stdlib::tests::url_host_as_whatwg_reads_it`, `oracle::…` (`url.host`) |
 | `normalize("NFKD")` (TEXT.SLUG) | asked of the environment (`normalize`) | `stdlib::tests::text_members`, `oracle::…` (`text.slug`) |
 | `Intl.DateTimeFormat` (DATE.TODAY, DATETIME.AT) | the zone's wall reading asked of the environment (`tz_convert`); `instantAtZonedWallTime`'s search over those readings written out, `Date.UTC`'s 19xx years included | `stdlib::tests::datetime_at_names_the_instant_on_the_zones_wall_clock`, `oracle::…` (`date.today`, `datetime.at`) |
@@ -234,7 +234,8 @@ written by tests/oracle/generate.ts with the others, and CI diffs it too.
 `tests/stdlib_oracle.rs` holds every built-in and the comparator to the
 TypeScript's own answers (tests/oracle/stdlib.json, 10,455 cases), number
 printing to 30,000 seeded doubles (numbers.json) and the regex matcher to
-Node over 3,200 seeded pattern/text pairs (regex.json). Each function may
+Node over 7,209 seeded pattern/text pairs (regex.json: 3,200 over the core
+dialect, 4,000 over the rest of it, and nine long texts and deep nestings). Each function may
 hand back to TypeScript no more than its recorded share. All three files are
 written by tests/oracle/generate.ts, deterministically; CI regenerates and
 diffs them.
@@ -520,7 +521,7 @@ TypeScript takes through its host is a host request here:
 | `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`, with the run's budget (`ledger`); its cost is charged |
 | `locks.acquire`, `locks.release` | around an identity search and an update by id | `host.locks`: a token per acquire, released by token |
 | `clock.now` | a `sleep`'s wake time; a `WITHIN` the comparator measures (once per comparison in an expression, once per conjunct of a hop's WHERE and once per record of a `unique by` narrowing that reaches one, as expression.ts `decideWithClock`) | `host.clock.now`, its answer read as the TypeScript engine reads it |
-| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex feature, `WITHIN` with the clock's answer) | the TypeScript member itself |
+| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex match that splits an astral character or a pattern nested past 1,000 groups, `WITHIN` with the clock's answer) | the TypeScript member itself |
 | `park.sink.commitTimerPark` | a `sleep` in a run that is not a rehearsal, on a host that serves it | `host.park.sink`; `wakeAt` is `clock.now`'s answer plus the sleep |
 | `park.sink.commitLimitPause` | the first time the run meets its cost cap (a budget refusal, charged, that the ledger says is the cap), on a host that serves it and can suspend | `host.park.sink.commitLimitPause` |
 | `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address; on a host that serves it | `host.park.sink.commitSuspension` |
@@ -1317,7 +1318,7 @@ Sizes are estimates (XS, S, M, L).
 
 | # | the artefact | here today | the mirror | size |
 |---|---|---|---|---|
-| 1 | the regex dialect | `js_regex` reads most of it; hands back lookbehind, named groups and `\k<name>`, octal and `\c` escapes, a class escape at a range end, groups nested past 100, a step or depth budget met | `js_regex` kept and made complete, with no budget (a budget diverges where TypeScript is merely slow); oracle regex.json | M |
+| 1 | the regex dialect | mirrored (chunk 7A Task 5): `js_regex` made complete and kept (lookbehind, named groups and `\k<name>`, Annex B's octal and `\c` escapes, a class escape at a range end, quantified lookaheads), with no budget, on an explicit stack so neither long texts nor nesting cost native stack; a group name spelled in ID_Start/ID_Continue read off Node (src/letter_number.rs). Residual: nesting past 1,000 levels hands back, where V8's own limit depends on its stack | oracle regex.json, 7,209 cases (the 4,009 new from seed 8), none handed back | done |
 | 2 | date parsing | ISO texts only; V8's legacy forms handed back, including under every `<` between two texts with a digit (filter.rs) and ORDER BY | V8's legacy parser ported (dateparser.cc: keyword tables, parenthesised comments, zone names, two-digit years), fuzzed against Node; an ISO date-time without offset read in a local zone that becomes a run input | L |
 | 3 | Unicode case mapping | mirrored (chunk 7A Task 5): Node 22.20's ICU 77.1 (Unicode 16), its tables generated into src/case_mapping.rs by tests/oracle/case_mapping.ts, the final sigma's cased and ignorable neighbours probed through `toLowerCase` itself; regenerate when the pinned Node moves | oracle case_mapping.json (4,000 seeded texts, seed 20261013, tests/tail_oracle.rs) | done |
 | 3a | the local edge's word split (`/[^\p{L}\p{N}]+/u`, FUZZY candidates) | src/letter_number.rs, generated from Node 22.20 (Unicode 16) by tests/oracle/letter_number.ts | regenerated with row 3's data whenever the pinned Node moves; the language's own Unicode version once one is named | XS |
@@ -1362,8 +1363,8 @@ What each of rows 1, 2, 4, 5 to 10 does today, in the TypeScript and here
 (written when these were to be specified by a language-version bump; the
 mirror replaces that plan):
 
-  - the regex dialect (the hand-written matcher, `js_regex`, is a
-    transition artefact that the bump retires);
+  - the regex dialect (mirrored, row 1: `js_regex` is kept and reads the
+    whole of V8's flagless dialect);
   - date parsing (what a date text may be, and no local time);
   - Unicode case mapping: which Unicode version the language's case tables
     follow, so neither engine's runtime decides it.

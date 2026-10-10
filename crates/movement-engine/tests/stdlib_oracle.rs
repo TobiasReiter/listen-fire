@@ -155,7 +155,7 @@ fn regexes_match_as_node_matches_them() {
     let mut mismatches = Vec::new();
     for case in &cases {
         let (pattern, text) = (case["pattern"].as_str().unwrap(), case["text"].as_str().unwrap());
-        let got = match Regex::new(pattern).and_then(|r| r.exec(text)) {
+        let got = match Regex::new(pattern).map(|r| r.exec(text)) {
             Err(RegexError::Unsupported(_)) => {
                 fallbacks += 1;
                 continue;
@@ -173,7 +173,8 @@ fn regexes_match_as_node_matches_them() {
     }
     eprintln!("{} regex cases, {fallbacks} handed back to TypeScript", cases.len());
     assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
-    // Lookbehind and named groups, which the generator writes on purpose:
-    // 80 of 3,200 when recorded.
-    assert!(fallbacks as f64 <= 0.025 * cases.len() as f64, "{fallbacks} of {} handed back", cases.len());
+    // The whole dialect, deep nesting and long texts included: nothing is
+    // handed back.
+    assert!(cases.len() >= 7200, "the oracle holds {} cases", cases.len());
+    assert_eq!(fallbacks, 0, "{fallbacks} of {} handed back", cases.len());
 }
