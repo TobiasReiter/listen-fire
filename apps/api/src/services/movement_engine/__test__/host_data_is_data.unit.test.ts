@@ -92,7 +92,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
 }));
 
 import { mockCatalog, parseMovementExpression, type InstanceSchema } from 'movement-lang';
-import { runMovement } from '../run';
+import { MovementRunFailed, runMovement } from '../run';
 import { MovementEngineError } from '../errors';
 import type { Adapter, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
@@ -261,11 +261,12 @@ describe('a host value shaped like an engine object is data', () => {
       () => undefined,
       (e: unknown) => e,
     );
-    expect(error).toBeInstanceOf(MovementEngineError);
-    if (!(error instanceof MovementEngineError)) throw new Error('unreachable');
+    expect(error).toBeInstanceOf(MovementRunFailed);
+    if (!(error instanceof MovementRunFailed)) throw new Error('unreachable');
+    expect(error.cause).toBeInstanceOf(MovementEngineError);
     expect(error.message).toMatch(/traversing from a value binding \('v'\) is not supported/);
     expect(error.message).not.toContain('NOSUCHFN');
-    expect(JSON.stringify(error.details ?? null)).not.toContain('NOSUCHFN');
+    expect(JSON.stringify(error.partial.trace)).not.toContain('NOSUCHFN');
     expect(parsedTexts().some((text) => text.includes('NOSUCHFN'))).toBe(false);
     expect(email.calls.getFieldValue).toEqual(['meta']);
     expect(email.calls.getRelated).toBe(0);
