@@ -770,9 +770,12 @@ its captured pairs. The hops past a kept walk run inside it
 captured, so a WHERE there reads the names as they were when the walk was
 kept, and breadth first across its origins, hop by hop, as the TypeScript
 asks. A list that holds itself joins as V8 joins it (the repeated list is
-empty text), fails `JSON.stringify` with V8's TypeError and a park with
-the RangeError the TypeScript's recursive writer ends in, crosses the eval
-wire as shared references, and compares by identity first. A
+empty text), is written by the JSON writers as `safeStringify` writes it
+(its text, the fallback V8's circular-structure TypeError takes there) or
+with its circles cut where the TypeScript never meets one, fails a park,
+`TEXT.SERIALISE` and `plainValueOf` with the RangeError their recursive
+writers end in, crosses the eval wire as shared references, and compares
+by identity first. A
 collection op's `onError` never forgives this engine's own refusal
 (`ErrorClass::Unreproduced`). MAP, FILTER,
 REDUCE, GROUPBY, KEYBY and MEMBERS run one member at a time
@@ -1085,19 +1088,29 @@ fails); none produces a different answer.
   admission refuses each route it knows, by name).
 - A dict shaped like an `instance` whose own schema holds a `collections`
   table the read wrapper's types do not read, or is `null`, read through its
-  graph: MOVENG_UNSUPPORTED. One with no `collections` at all fails as the
-  TypeScript does, with the read wrapper's TypeError after its collection
-  scan. Its slug, credential name and construction config are read as the
-  TypeScript reads them, whatever they are, and the host is asked for the
-  slug as the dict holds it.
-- A walk a dict holds as data (`lazyWalk`, a deferred edge) whose mapping
-  has entries to build, rooted at an expression with source text, or rooted
-  at a name that is no text: MOVENG_UNSUPPORTED. Every other walk a dict
-  holds runs as the TypeScript runs it: a captured pair keyed by no text is
-  one no name reads, a later pair replaces an earlier one, hops that are no
-  text are probed as their text, and a head rooted at a dict shaped like a
-  synthesised node, a kept walk, a meta-node or a callback walks that kind's
-  plane.
+  graph: MOVENG_UNSUPPORTED. One with no `collections` at all reads as the
+  TypeScript reads it: a collection scan fails with the read wrapper's
+  TypeError after the scan, a streamed walk (which no read wrapper touches)
+  proceeds, and a hop's WHERE through one naming selected members fails as
+  `hopSelection` does where the hop's target is not in its positions; a
+  wrapped hop off a record through one, and a WHERE through one whose
+  positions name the target, are MOVENG_UNSUPPORTED. Its slug, credential
+  name and construction config are read as the TypeScript reads them,
+  whatever they are, and the host is asked for the slug as the dict holds
+  it (the host keys its registry by it, as the TypeScript's does).
+- A walk a dict holds as data (`lazyWalk`, a deferred edge) rooted at an
+  expression with source text, or whose mapping has an entry that evaluates
+  a value or walks a head, a spread to apply, a graph shape or a declared
+  edge naming a declaration in scope, or an edge named by anything but text:
+  MOVENG_UNSUPPORTED. Every other walk a dict holds runs as the TypeScript
+  runs it: captured pairs keyed by the value itself (a root named by no text
+  reads the pair keyed by that very value), a later pair replacing an
+  earlier one, the root spelled and the hops probed as their text, and a
+  mapping building the nodes, nested nodes, declared edges and graphs the
+  data writes, with the TypeErrors where it is not a literal's shape. A head
+  rooted at a dict shaped like a synthesised node, a kept walk or a meta-node
+  walks that kind's plane; one hop off a dict shaped like a callback is
+  MOVENG_UNSUPPORTED (the TypeScript reads the calls its callback sink holds).
 - Parking a value whose message or data would print a record's binding
   object other than the event's or a block's returned records' (its read
   seam, its computed schema): MOVENG_UNSUPPORTED.

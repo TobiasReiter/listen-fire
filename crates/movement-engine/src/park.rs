@@ -166,7 +166,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         ]),
         // `holdsRecords` recurses through a value that holds itself until
         // V8's stack runs out: the park fails as the TypeScript's does.
-        Binding::Value(value) if crate::js::circular(&value.value).is_some() => {
+        Binding::Value(value) if crate::js::holds_itself(&value.value) => {
             return Err(Failure::Engine { class: crate::eval::ErrorClass::RangeError, message: crate::js::stack_overflow().message });
         }
         // A value that holds a record anywhere is written down to its
@@ -354,7 +354,7 @@ fn serialize_shaped(run: &Run<'_>, dict: &Rc<JsObject>, park: &mut ParkWriter) -
         "resource" => object_of(vec![kind("resource"), ("resource", at("resource")?)]),
         "value" => {
             let value = at("value")?;
-            if crate::js::circular(&value).is_some() {
+            if crate::js::holds_itself(&value) {
                 return Err(Failure::Engine { class: crate::eval::ErrorClass::RangeError, message: crate::js::stack_overflow().message });
             }
             let provenance = at("provenance")?;

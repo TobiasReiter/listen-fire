@@ -298,7 +298,7 @@ The engine never holds a live adapter. It resolves an instance to data and an op
 ```ts
 request: {
   segmentId: string;
-  adapterType: string;
+  adapterType?: unknown;                       // a JSON value the host keys its registry by; normally text (absent: a value naming none)
   credentialsId?: string;
   constructionArgs?: Record<string, string>;   // non-credential construction args, unquoted (Sheets' `spreadsheet:`)
   role: 'source' | 'target';
@@ -323,6 +323,7 @@ answer: {
 - `methods` lists the `adapters.call` methods the instance implements, plus `iterateRelated` when it streams a traversal (the engine walks the stream with `iterateRelatedPage`). An instance may stream, page, both or neither.
 - **Rehearsal.** A `dryRun` instance captures each create, update, delete, link and unlink into the host's write sink instead of making it, and answers with ids it invents; its reads go to the live system. The rehearsal (the sink, the invented ids) belongs to the segment, because a write chained off a rehearsed parent routinely crosses systems.
 - **Throws** when the adapter cannot be constructed (an unknown type, a credential it cannot load), and when the segment is not open.
+- **The slug is a key.** An instance a program reads from a value names its slug with whatever the value holds, and the engine forwards it as it is. The host looks it up as a property key (its text: a list `["email"]` finds `email`); a slug that names no adapter is the unknown-type throw, a host error the engine treats as any other.
 - **Persist:** nothing. **Retry:** idempotent within a segment.
 
 #### `adapters.call`

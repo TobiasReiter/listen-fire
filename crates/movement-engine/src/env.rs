@@ -360,7 +360,7 @@ pub fn object_of(entries: Vec<(&str, Js)>) -> Js {
 /// `undefined` members dropped (null in a list), non-finite numbers null,
 /// `-0` 0. `undefined` itself stays `undefined`.
 pub fn json_round_trip(value: &Js) -> Js {
-    if crate::js::circular(value).is_some() {
+    if crate::js::holds_itself(value) {
         return json_round_trip(&crate::js::acyclic(value));
     }
     match value {
@@ -398,7 +398,7 @@ pub fn json_round_trip(value: &Js) -> Js {
 /// A value as `JSON.parse(JSON.stringify(value))` hands it back: `undefined`
 /// members dropped (null in a list), non-finite numbers null, `-0` 0.
 pub fn json_of_js(value: &Js) -> Json {
-    if crate::js::circular(value).is_some() {
+    if crate::js::holds_itself(value) {
         return json_of_js(&crate::js::acyclic(value));
     }
     json_of_tree(value)

@@ -532,7 +532,7 @@ impl Run<'_> {
         }
         let resolved = self
             .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
-                adapter_type: Json::String(instance.adapter_slug.clone()),
+                adapter_type: Some(Json::String(instance.adapter_slug.clone())),
                 credentials_id,
                 construction_args: (!construction_args.is_empty()).then_some(construction_args),
                 role: Role::Target,
@@ -1494,13 +1494,10 @@ fn to_field_array(value: &Js) -> Vec<Js> {
 
 /// run.ts's `deepEqual`.
 pub fn deep_equal(a: &Js, b: &Js) -> bool {
+    // Identity first, so a recursion ends wherever either side is acyclic,
+    // as every caller's host value is.
     if js::strict_equals(a, b) {
         return true;
-    }
-    // A value that holds itself is compared with its circles cut (a
-    // backstop: the TypeScript would recurse until its stack ran out).
-    if js::circular(a).is_some() || js::circular(b).is_some() {
-        return deep_equal(&js::acyclic(a), &js::acyclic(b));
     }
     match (a, b) {
         (Js::Null, _) | (_, Js::Null) => false,
@@ -1722,5 +1719,16 @@ mod tests {
         for none in [json!({ "index": -1 }), json!({ "index": 0.5 }), json!({ "index": null }), json!({}), json!({ "index": "1" })] {
             assert_eq!(judged_index(&none), None, "{none}");
         }
+    }
+
+    #[test]
+    fn a_value_that_holds_itself_equals_no_acyclic_value_of_its_shape() {
+        let held = Js::array(vec![Js::Number(1.0)]);
+        let Js::Array(list) = &held else { unreachable!() };
+        list.push(held.clone());
+        let plain = Js::array(vec![Js::Number(1.0), Js::Null]);
+        assert!(!deep_equal(&plain, &held));
+        assert!(!deep_equal(&held, &plain));
+        assert!(deep_equal(&held, &held.clone()), "the same list, by identity");
     }
 }

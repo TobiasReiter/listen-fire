@@ -35,6 +35,7 @@ pub mod js_regex;
 pub mod letter_number;
 pub mod ledger;
 pub mod local;
+mod mapping;
 pub mod node;
 pub mod order_limit;
 pub mod park;

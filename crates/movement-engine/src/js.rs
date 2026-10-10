@@ -694,7 +694,7 @@ pub fn json_quote(s: &str) -> String {
 pub fn json_stringify(value: &Js, indent: usize) -> String {
     // A value that holds itself: `safeStringify`'s fallback, its text (the
     // prompt's writers are the ones a user's value reaches).
-    if circular(value).is_some() {
+    if holds_itself(value) {
         return value.to_js_string();
     }
     let mut out = String::new();
@@ -946,64 +946,24 @@ mod tests {
     }
 }
 
-/// `JSON.stringify`'s TypeError for a value that holds itself (V8's text,
-/// the path from the object the circle starts at to the key that closes
-/// it), or `None` for a value that does not: every walker of a value's
-/// lists and maps asks first, since a GROUPBY filing can make one.
-pub fn circular(value: &Js) -> Option<String> {
-    let mut stack: Vec<(*const (), &'static str, String)> = Vec::new();
-    find_circle(value, &mut stack)
-}
-
-fn constructor_of(value: &Js) -> &'static str {
-    match value {
-        Js::Array(_) => "Array",
-        Js::Object(object) => match &object.proto {
-            Some(proto @ (Js::Array(_) | Js::Object(_))) => constructor_of(proto),
-            _ => "Object",
-        },
-        _ => "Object",
-    }
-}
-
-fn find_circle(value: &Js, stack: &mut Vec<(*const (), &'static str, String)>) -> Option<String> {
-    let (address, members): (*const (), Vec<(String, Js)>) = match value {
-        Js::Array(list) => (Rc::as_ptr(list).cast(), list.items().iter().enumerate().map(|(i, item)| (format!("index {i}"), item.clone())).collect()),
-        Js::Object(object) => (Rc::as_ptr(object).cast(), object.entries().iter().map(|(k, item)| (format!("property '{k}'"), item.clone())).collect()),
-        _ => return None,
-    };
-    stack.push((address, constructor_of(value), String::new()));
-    for (key, member) in members {
-        let child = match &member {
-            Js::Array(list) => Some(Rc::as_ptr(list).cast::<()>()),
-            Js::Object(object) => Some(Rc::as_ptr(object).cast::<()>()),
-            _ => None,
+/// Whether a value holds itself, through its lists and maps: every walker
+/// of a value's members asks first, since a GROUPBY filing can make one.
+pub fn holds_itself(value: &Js) -> bool {
+    fn walk(value: &Js, stack: &mut Vec<*const ()>) -> bool {
+        let (address, members): (*const (), Vec<Js>) = match value {
+            Js::Array(list) => (Rc::as_ptr(list).cast(), list.items().clone()),
+            Js::Object(object) => (Rc::as_ptr(object).cast(), object.entries().iter().map(|(_, item)| item.clone()).collect()),
+            _ => return false,
         };
-        if let Some(child) = child
-            && let Some(start) = stack.iter().position(|(a, _, _)| *a == child)
-        {
-            let mut lines = vec!["Converting circular structure to JSON".to_string(), format!("    --> starting at object with constructor '{}'", stack[start].1)];
-            // Each step from the start to the object whose key closes it.
-            let steps: Vec<String> = (start + 1..stack.len()).map(|j| format!("    |     {} -> object with constructor '{}'", stack[j - 1].2, stack[j].1)).collect();
-            if steps.len() > 3 {
-                lines.extend(steps[..2].iter().cloned());
-                lines.push("    |     ...".into());
-                lines.push(steps[steps.len() - 1].clone());
-            } else {
-                lines.extend(steps);
-            }
-            lines.push(format!("    --- {key} closes the circle"));
-            return Some(lines.join("\n"));
+        if stack.contains(&address) {
+            return true;
         }
-        if let Some(top) = stack.last_mut() {
-            top.2 = key;
-        }
-        if let Some(found) = find_circle(&member, stack) {
-            return Some(found);
-        }
+        stack.push(address);
+        let found = members.iter().any(|member| walk(member, stack));
+        stack.pop();
+        found
     }
-    stack.pop();
-    None
+    walk(value, &mut Vec::new())
 }
 
 /// `value` with each edge that closes a circle cut (`null` in its place): what

@@ -127,7 +127,7 @@ const ROUTES: Record<string, Route> = {
     if (request.dryRun !== undefined && request.dryRun !== true) throw new RustShimError('adapters.resolve dryRun is true or absent');
     return host.adapters.resolve({
       segmentId: segmentOf(request),
-      adapterType: string(request.adapterType, 'adapters.resolve adapterType'),
+      adapterType: registryKey(request.adapterType),
       ...(credentialsId !== undefined ? { credentialsId } : {}),
       ...(constructionArgs !== undefined ? { constructionArgs } : {}),
       role,
@@ -378,6 +378,19 @@ const ROUTES: Record<string, Route> = {
  *  `ENGINE_OWN_ROUTES`, which the seam guard holds. */
 export function shimRoutePaths(): string[] {
   return Object.keys(ROUTES);
+}
+
+/** The slug an instance dict holds, forwarded as it is (absent where the
+ *  dict holds none). The TypeScript engine hands its host the dict's slug
+ *  whatever it holds (`bindingOf` takes the dict for an instance binding,
+ *  typed as text), and the host keys its registry by property lookup, which
+ *  reads a list `["email"]` as `email` and fails a number with its own
+ *  "Unknown adapter type" error, which `onError` forgives. So the host does
+ *  the lookup here too, raising its own error. */
+function registryKey(value: unknown): string {
+  // The host's type says text; the TypeScript engine's in-process call hands
+  // it this same value under that type.
+  return value as string;
 }
 
 /** The segment a forwarded request names (`serve` has held it to the one

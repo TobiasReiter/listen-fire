@@ -67,6 +67,8 @@ impl Sent {
 
 struct Host<'o> {
     sent: Sent,
+    /// The errors the host answered with, by the `ref` each answer carries.
+    errors: Vec<Json>,
     positions: HashMap<u64, Json>,
     related: &'o Json,
     check: &'o Json,
@@ -76,14 +78,30 @@ impl Host<'_> {
     fn answer(&mut self, request: &PendingRequest) -> Json {
         let answer = match (request.family, request.method.as_str()) {
             ("check", "program") => return json!({ "value": self.check }),
-            ("adapters", "resolve") => return json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["getFieldValue", "getRelated", "createRecord", "describe"] } }),
+            ("adapters", "resolve") => return self.resolve(request.args.get("adapterType")),
             ("control.cancel", _) => return json!({ "value": false }),
+            ("clock", "now") => return json!({ "value": { "nowIso": "2026-01-01T00:00:00.000Z" } }),
+            ("park.sink", _) => return json!({ "value": null }),
             ("trace", "append") | ("log", "write") => return json!({}),
             ("adapters", "call") => self.call(request),
             other => panic!("the oracle's programs ask nothing else: {other:?} {}", request.args),
         };
         self.sent.register(&answer);
         json!({ "value": { "result": answer } })
+    }
+
+    /// The registry's lookup, by the slug's text (`registry[adapterType]`).
+    fn resolve(&mut self, slug: Option<&Json>) -> Json {
+        let key = slug.map_or_else(|| "undefined".to_string(), property_key);
+        match key.as_str() {
+            "email" => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["getFieldValue", "getRelated", "createRecord", "describe"] } }),
+            "attio" => json!({ "value": { "instance": "i2", "adapterType": "attio", "methods": ["getFieldValue", "getRelated", "createRecord", "describe", "iterateRelated", "iterateRelatedPage"] } }),
+            other => {
+                let message = format!("Unknown adapter type: {other}");
+                self.errors.push(json!({ "class": "Error", "message": message }));
+                json!({ "error": { "message": message, "name": "Error", "ref": self.errors.len() - 1 } })
+            }
+        }
     }
 
     fn call(&mut self, request: &PendingRequest) -> Json {
@@ -115,6 +133,11 @@ impl Host<'_> {
                 let field = self.sent.member(args, "fieldId").and_then(Json::as_str).expect("a hop names its edge");
                 self.related.get(field).cloned().unwrap_or_else(|| json!(["l", 990_000, []]))
             }
+            Some("iterateRelatedPage") => {
+                let field = self.sent.member(args, "fieldId").and_then(Json::as_str).expect("a hop names its edge");
+                let items = self.related.get(field).cloned().unwrap_or_else(|| json!(["l", 990_000, []]));
+                json!(["o", 990_005, [["items", items]]])
+            }
             Some("createRecord") => json!(["o", 990_001, [["adapterType", "email"], ["externalId", "w1"], ["data", ["o", 990_002, [["name", "w"]]]]]]),
             Some("describe") => Json::Null,
             Some("resolveEntity") => json!(["o", 990_003, [["candidates", ["l", 990_004, []]]]]),
@@ -123,9 +146,26 @@ impl Host<'_> {
     }
 }
 
-/// How a segment ended, as the TypeScript's run ended: its error.
-fn ending(done: &Json) -> Json {
+/// A JSON value as a property key: JavaScript's `String(value)`.
+fn property_key(value: &Json) -> String {
+    match value {
+        Json::String(text) => text.clone(),
+        Json::Null => "null".into(),
+        Json::Bool(b) => b.to_string(),
+        Json::Number(n) => movement_engine::js::Js::Number(n.as_f64().expect("a finite number")).to_js_string(),
+        Json::Array(items) => items.iter().map(|item| if item.is_null() { String::new() } else { property_key(item) }).collect::<Vec<_>>().join(","),
+        Json::Object(_) => "[object Object]".into(),
+    }
+}
+
+/// How a segment ended, as the TypeScript's run ended: its error (a host's
+/// error as the host raised it).
+fn ending(done: &Json, errors: &[Json]) -> Json {
     let error = done.get("thrown").or_else(|| done.get("failed").map(|f| &f["error"]));
+    let error = match error.and_then(|e| e.get("hostError")).and_then(Json::as_u64) {
+        Some(index) => Some(&errors[usize::try_from(index).expect("an index")]),
+        None => error,
+    };
     match error {
         Some(error) => json!({ "error": error }),
         None if done.get("result").is_some() => json!({ "completed": true }),
@@ -152,13 +192,13 @@ fn records_held_as_values_read_as_the_typescript_reads_them() {
             "source": source,
             "languageVersion": version,
             "segmentId": "g1",
-            "serves": [],
+            "serves": ["park.sink.commitTimerPark"],
             "now": "2026-01-01T00:00:00.000Z",
             "event": event,
             "catalog": oracle["catalog"],
             "credentialIds": { "inbox_cred": "cred-inbox_cred" },
         });
-        let mut host = Host { sent: Sent::default(), positions: HashMap::new(), related: &oracle["related"], check: &case["check"] };
+        let mut host = Host { sent: Sent::default(), errors: Vec::new(), positions: HashMap::new(), related: &oracle["related"], check: &case["check"] };
         host.sent.register(&event);
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");
@@ -176,7 +216,7 @@ fn records_held_as_values_read_as_the_typescript_reads_them() {
                 }
             }
         };
-        let rust = ending(&done);
+        let rust = ending(&done, &host.errors);
         if let Some(reason) = rust.get("refused") {
             refused += 1;
             *reasons.entry(reason.as_str().unwrap_or_default().to_string()).or_default() += 1;

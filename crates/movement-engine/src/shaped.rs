@@ -136,7 +136,10 @@ impl Run<'_> {
                 // No `collections` table to index: the read wrapper's
                 // TypeError, where its collection scan reads it.
                 None if !schema.is_nullish() && get(&schema, "collections").map_err(eval)?.is_nullish() => {
-                    schema_fault = Some(get(&schema, "collections").map_err(eval)?);
+                    schema_fault = Some(crate::traverse::SchemaFault {
+                        collections: get(&schema, "collections").map_err(eval)?,
+                        schema: schema.clone(),
+                    });
                     None
                 }
                 None => {
@@ -151,7 +154,8 @@ impl Run<'_> {
         let binding = InstanceBinding { name: name.to_js_string(), adapter_slug: slug.to_js_string(), credential_name, construction_config, schema };
         // The adapter is the one resolved for the slug, credential and
         // config; the read names this dict's instance (`instanceName`).
-        let read = self.instance_read_as(&binding, crate::env::json_of_js(&slug)).await?;
+        let slug = (!matches!(slug, Js::Undefined)).then(|| crate::env::json_of_js(&slug));
+        let read = self.instance_read_as(&binding, slug).await?;
         let mut named = (*read).clone();
         named.instance_name = name.to_js_string();
         named.instance_label = name;

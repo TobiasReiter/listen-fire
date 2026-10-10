@@ -257,6 +257,43 @@ describe('the Rust engine shim', () => {
     expect(finished()).toBe(true);
   });
 
+  it('forwards the slug an instance value holds as it is, for the host to key its registry by', async () => {
+    // A registry keyed as the platform's is, by property lookup: a list reads
+    // as its text, and a slug naming no adapter is the host's own error.
+    const registry: Record<string, Adapter> = { fake: fakeAdapter() };
+    const served = await hostWith({
+      adapters: {
+        resolve: ({ adapterType }) => {
+          const adapter = registry[adapterType];
+          if (adapter === undefined) throw new Error(`Unknown adapter type: ${adapterType}`);
+          return adapter;
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
+    const hostErrors: unknown[] = [];
+    const { role } = RESOLVE;
+    const { engine, answers } = scriptedEngine((seen) =>
+      seen.length === 0
+        ? {
+            pending: [
+              request(1, 'adapters', 'resolve', inSegment(segmentId, { adapterType: ['fake'], role })),
+              request(2, 'adapters', 'resolve', inSegment(segmentId, { adapterType: 5, role })),
+              request(3, 'adapters', 'resolve', inSegment(segmentId, { role })),
+            ],
+          }
+        : seen.length < 3
+          ? { pending: [] }
+          : { done: null },
+    );
+    await driveEngine(engine, {}, { ...served, hostErrors });
+    const byId = Object.fromEntries(answers.map(({ id, answer }) => [id, answer]));
+    expect(byId[1]).toEqual({ value: expect.objectContaining({ adapterType: 'fake' }) });
+    expect(byId[2]).toEqual({ error: { message: 'Unknown adapter type: 5', name: 'Error', ref: expect.any(Number) } });
+    expect(byId[3]).toEqual({ error: { message: 'Unknown adapter type: undefined', name: 'Error', ref: expect.any(Number) } });
+    expect(hostErrors).toHaveLength(2);
+  });
+
   it("answers an adapter's failure as data, holding the error the TypeScript engine raises for it", async () => {
     const served = await hostWith({
       adapters: { resolve: () => fakeAdapter({ getFieldValue: async () => { throw new TypeError('remote down'); } }) },

@@ -19,6 +19,10 @@
 // values and compared (`==` by identity, else by address), spread, walked
 // on, sorted and tested with `EXISTS`; nodes the run built likewise.
 //
+// The host's registry is keyed by property lookup, as the platform's is: it
+// holds `email` and `attio` (which streams its traversals), and fails any
+// other slug with its own error. It has a park sink, so a sleep parks.
+//
 // A case carries its body, the event's payload on the eval wire, the check's
 // answer as the shim hands it to the Rust engine (`check.program`), and the
 // error the run ended with. The file carries the related records the adapter
@@ -30,8 +34,8 @@ import { tenantIdOf } from '../../../../packages/engine-contracts';
 import { MovementEngineError } from '../../../../apps/api/src/services/movement_engine/errors';
 import { checkAnswer, checkPinned } from '../../../../apps/api/src/services/movement_engine/program_check';
 import { runFailureCause, runMovement } from '../../../../apps/api/src/services/movement_engine/run';
-import { credentialIdsFor, makeTestHost } from '../../../../apps/api/src/services/movement_engine/test_host';
-import type { Adapter } from '../../../../apps/api/src/services/translation_graph/adapter';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../../../../apps/api/src/services/movement_engine/test_host';
+import type { Adapter, GetRelatedInput } from '../../../../apps/api/src/services/translation_graph/adapter';
 import { makeStablePosition, positionData } from '../../../../apps/api/src/services/translation_graph/types';
 
 type Rand = () => number;
@@ -325,6 +329,26 @@ const adapter: Adapter = {
   deleteRecord: async () => ({}),
 };
 
+/** An adapter that streams its traversals (`iterateRelated`), answering as
+ *  the email adapter does. */
+const streaming: Adapter = {
+  ...adapter,
+  adapterType: 'attio',
+  // eslint-disable-next-line @typescript-eslint/require-await -- the stream's shape is the contract's
+  async *iterateRelated(input: GetRelatedInput) {
+    yield* RELATED[input.fieldId] ?? [];
+  },
+};
+
+/** The registry, keyed as the platform's is: by property lookup, so a slug
+ *  is read as its text, and one naming no adapter is the host's own error. */
+const REGISTRY: Record<string, Adapter> = { email: adapter, attio: streaming };
+function resolveAdapter({ adapterType }: { adapterType: string }): Adapter {
+  const found = REGISTRY[adapterType];
+  if (found === undefined) throw new Error(`Unknown adapter type: ${adapterType}`);
+  return found;
+}
+
 /** `RELATED` on the eval wire, by edge (the harness answers each edge's
  *  walk with it). */
 function related(): Record<string, unknown> {
@@ -362,13 +386,29 @@ const PINNED: Array<{ text: string; data: Record<string, unknown> }> = [
     text: '  ys = MAP([1, 2], { onError: "ignore" }, (i) => {\n    return COUNT(v-[:items]->)\n  })\n  ERROR("${COUNT(ys)}")',
     data: { subject: 'Acme', meta: { kind: 'lazyWalk', walk: { captured: {} } }, more: [] },
   },
+  // A list that holds itself, parked and serialised: the recursive writers
+  // run out of stack.
+  ...[
+    '  await sleep(1h)\n  ERROR("${COUNT(a)}")',
+    '  held = { k: a }\n  await sleep(1h)\n  ERROR("${COUNT(a)}")',
+    '  await sleep(1h)\n  ERROR("parked")',
+    '  ERROR("${TEXT.SERIALISE(a, "JSON")}")',
+    '  ERROR("${TEXT.SERIALISE(b, "JSON")}")',
+    '  ys = MAP([1, 2], { onError: "ignore" }, (i) => {\n    return TEXT.SERIALISE(a, "JSON")\n  })\n  ERROR("${COUNT(ys)}")',
+  ].map((tail) => ({
+    text: `  a = [1]\n  b = [a, a]\n  g = GROUPBY([a, b], (x) => {\n    return IF COUNT(x) == 1 THEN "__proto__" ELSE "0" END\n  })\n${tail}`,
+    data: { subject: 'Acme', meta: {}, more: [] },
+  })),
 ];
 
 /** Each walk or instance a dict holds whose reading the TypeScript does not
- *  refuse: a kept walk's mapping, captured pairs keyed by no text or bound
- *  twice, hops that are no text, an expression root, a captured scope that
- *  roots the head at a node, a kept walk, a meta-node or a callback, and
- *  instances whose own schema is no instance schema. */
+ *  refuse: a kept walk's mapping (with entries, nested nodes, graphs),
+ *  captured pairs keyed by no text or bound twice, hops that are no text,
+ *  roots named by no text, an expression root, a captured scope that roots
+ *  the head at a node, a kept walk, a meta-node or a callback, instances
+ *  whose own schema is no instance schema (walked through a streaming
+ *  instance too), and slugs the registry reads as their text or knows no
+ *  adapter by. */
 const EVENT = { kind: 'event' };
 const ITEMS = { root: { kind: 'name', name: 'e' }, hopsRaw: '-[:items]->' };
 const DIRECTED_DICTS: Array<Record<string, unknown>> = [
@@ -389,6 +429,59 @@ const DIRECTED_DICTS: Array<Record<string, unknown>> = [
   { kind: 'instance', name: 'inbox', adapterSlug: 'email', credentialName: 'inbox_cred', schema: 'x' },
   { kind: 'instance', name: 'inbox', adapterSlug: 'email', credentialName: 'inbox_cred', schema: { positions: {} } },
   { kind: 'instance', name: 'inbox', adapterSlug: 5, credentialName: 'inbox_cred' },
+  // Slugs the registry keys by their text, or names no adapter by.
+  { kind: 'instance', name: 'inbox', adapterSlug: ['email'], credentialName: 'inbox_cred' },
+  { kind: 'instance', name: 'inbox', credentialName: 'inbox_cred' },
+  { kind: 'instance', name: 'inbox', adapterSlug: 'nope', credentialName: 'inbox_cred' },
+  // Kept walks through a streaming instance, whose own schema is no instance
+  // schema: no read wrapper touches the stream.
+  ...[{ positions: {} }, 'x', { positions: {}, selectedMembers: {} }, undefined].flatMap((schema) =>
+    ['-[:items]->', '-[:items WHERE `rank` > 1]->'].map((hopsRaw) => ({
+      kind: 'lazyWalk',
+      walk: {
+        captured: [['e', { kind: 'instance', name: 'crm', adapterSlug: 'attio', credentialName: 'inbox_cred', ...(schema !== undefined ? { schema } : {}) }]],
+        head: { root: { kind: 'name', name: 'e' }, hopsRaw },
+      },
+    })),
+  ),
+  // Heads rooted at a name that is no text: spelled as its text, bound by
+  // the very value.
+  ...[5, null, true, {}, ['e'], { toString: 'x' }].map((name) => ({ kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: { root: { kind: 'name', name }, hopsRaw: '-[:items]->' } } })),
+  { kind: 'lazyWalk', walk: { captured: [[5, EVENT]], head: { root: { kind: 'name', name: 5 }, hopsRaw: '-[:items]->' } } },
+  { kind: 'lazyWalk', walk: { captured: [['5', EVENT]], head: { root: { kind: 'name', name: 5 }, hopsRaw: '-[:items]->' } } },
+  // Mappings with entries, and graphs.
+  ...[
+    { entries: [] },
+    { entries: 'ab' },
+    { entries: [{ kind: 'thing' }, 5, null] },
+    { entries: [{ kind: 'declared', name: 'subs', type: { hopsRaw: 'x' } }] },
+    { entries: [{ kind: 'declared', name: 'subs', type: { graph: 'e' } }] },
+    { entries: [{ kind: 'declared', name: 'subs' }] },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: [{ entries: [] }, { entries: [{ kind: 'nodes', name: 'items', nodes: [{ entries: [] }] }] }] }] },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: 'ab' }] },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: [null] }] },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: 5 }] },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: [[]] }] },
+    [],
+    { entries: [], graph: {} },
+    { entries: 'ab', graph: {} },
+    { graph: {} },
+    { entries: [], graph: null },
+    { entries: [], graph: { shape: { name: 'S' } } },
+    { entries: [], graph: { shape: { name: 'e' } } },
+    { entries: [], graph: { shape: 5 } },
+    { entries: [null], graph: {} },
+    { entries: [{ kind: 'thing', name: 'q' }], graph: {} },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: [{ entries: [] }] }], graph: {} },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: [[]] }], graph: {} },
+    { entries: [{ kind: 'nodes', name: 'subs', nodes: ['a'] }], graph: {} },
+    { entries: [{ kind: 'declared', name: 'subs' }], graph: {} },
+    { entries: [], graph: {}, spreads: [] },
+    { entries: [], graph: {}, spreads: 'ab' },
+    { entries: [{ kind: 'thing' }], graph: {}, spreads: [{ after: 5 }] },
+    { entries: [{ kind: 'thing' }], graph: {}, spreads: [null] },
+  ].map((mapping) => ({ kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: ITEMS, mapping } })),
+  { kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: { root: { kind: 'name', name: 'e' }, hopsRaw: '-[a:items]->' }, mapping: { entries: [], graph: { shape: { name: 'a' } } } } },
 ];
 /** The reads each directed dict meets: walked on, walked, forgiven, and as a
  *  block's head. */
@@ -429,7 +522,7 @@ export async function writeRecordsOracle(rand: Rand, write: (name: string, text:
           catalog: RECORDS_CATALOG,
           teamId: tenantIdOf('00000000-0000-0000-0000-0000000000a7'),
           credentialIds: credentialIdsFor(RECORDS_CATALOG, (name) => `cred-${name}`),
-          host: makeTestHost({ adapters: { resolve: () => adapter } }),
+          host: makeTestHost({ adapters: { resolve: resolveAdapter }, park: { sink: makeFakeParkSink().sink } }),
         });
         outcome = { completed: true };
       } catch (error) {

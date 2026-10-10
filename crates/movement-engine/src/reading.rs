@@ -675,7 +675,7 @@ impl Run<'_> {
                 let mut next = Vec::new();
                 for cursor in &cursors {
                     let gate = match cursor {
-                        Binding::Landed(landed) => crate::traverse::member_gate(step, &landed.position, &landed.read).map(|g| (g, landed.read.clone())),
+                        Binding::Landed(landed) => crate::traverse::member_gate(step, &landed.position, &landed.read)?.map(|g| (g, landed.read.clone())),
                         _ => None,
                     };
                     let mut kept = Vec::new();
@@ -852,7 +852,7 @@ impl Run<'_> {
             _ => return Err(eval(record::type_error("walk.captured is not iterable"))),
         };
         let at = Scope::root();
-        let mut declared: Vec<(String, Binding)> = Vec::new();
+        let mut declared: Vec<(Js, Binding)> = Vec::new();
         for pair in pairs {
             let (key, held) = match &pair {
                 Js::Array(list) => (list.items().first().cloned().unwrap_or(Js::Undefined), list.items().get(1).cloned().unwrap_or(Js::Undefined)),
@@ -863,10 +863,10 @@ impl Run<'_> {
                 _ => return Err(eval(record::type_error(".for is not iterable"))),
             };
             // `env.declare(name, binding)`: a `Map` keyed by the value as it
-            // is, so a key that is no text is one no name ever reads.
-            let Js::String(key) = key else { continue };
-            // The later pair wins; one bound to nothing reads as not in scope.
-            declared.retain(|(k, _)| *k != key);
+            // is, so a key that is no text is one only a root of that very
+            // value reads. The later pair wins; one bound to nothing reads as
+            // not in scope.
+            declared.retain(|(k, _)| !crate::js::same_value_zero(k, &key));
             let binding = match held {
                 held if !held.truthy() => continue,
                 Js::Object(dict) => Binding::Shaped(dict),
@@ -875,9 +875,12 @@ impl Run<'_> {
             };
             declared.push((key, binding));
         }
-        for (key, binding) in declared {
-            at.declare(key, binding);
+        for (key, binding) in &declared {
+            if let Js::String(name) = key {
+                at.declare(name.clone(), binding.clone());
+            }
         }
+        let captured = |name: &Js| declared.iter().find(|(k, _)| crate::js::same_value_zero(k, name)).map(|(_, b)| b.clone());
         let mapping = record::get(walk, "mapping").map_err(eval)?;
         let mapped = !matches!(mapping, Js::Undefined);
         // `probePathHead`: the root's spelling, then the hops as a template
@@ -885,16 +888,19 @@ impl Run<'_> {
         let head = record::get(walk, "head").map_err(eval)?;
         let root = record::get(&head, "root").map_err(eval)?;
         enum Root {
-            Name(String),
+            Name(Js),
             Expression(Js),
         }
         let (probe_root, root) = match &root {
             Js::Undefined => (String::new(), None),
             root => match record::get(root, "kind").map_err(eval)? {
-                Js::String(kind) if kind == "name" => match record::get(root, "name").map_err(eval)? {
-                    Js::String(name) => (crate::write::spell_name(&name), Some(Root::Name(name))),
-                    _ => return Err(Stop::Thrown(Failure::unreproduced("a walk a value holds as data rooted at a name that is no text", "the TypeScript engine spells whatever the data holds"))),
-                },
+                // `spellName(name)`: its test and its template read the name
+                // as text, whatever it is.
+                Js::String(kind) if kind == "name" => {
+                    let name = record::get(root, "name").map_err(eval)?;
+                    let text = name.to_text().map_err(|e| eval(record::type_error(&e.message)))?;
+                    (crate::write::spell_name(&text), Some(Root::Name(name)))
+                }
                 _ => ("__movement_expression_root__".to_string(), Some(Root::Expression(record::get(root, "expr").map_err(eval)?))),
             },
         };
@@ -904,7 +910,7 @@ impl Run<'_> {
             return Err(Stop::Thrown(Failure::unsupported("rootless block heads (relative traversal)", "root the head at a named binding")));
         };
         let (binding, root) = match root {
-            Root::Name(name) => (at.resolve(&name), crate::write::spell_name(&name)),
+            Root::Name(name) => (captured(&name), probe_root.clone()),
             // `bindSlotValue(root.expr)` reads the slot's source text first.
             Root::Expression(expr) => {
                 let raw = record::get(&expr, "raw").map_err(eval)?;
@@ -923,15 +929,21 @@ impl Run<'_> {
         if !mapped || iterations.is_empty() {
             return Ok(iterations);
         }
-        // `mapIterations` → `synthesiseNode(mapping, …)`, which reads the
-        // literal's `graph`, then iterates its entries.
-        if !matches!(record::get(&mapping, "graph").map_err(eval)?, Js::Undefined) {
-            return Err(Stop::Thrown(Failure::unreproduced("a walk a value holds as data with a mapping that builds a graph", "the TypeScript engine builds the graph the data writes")));
+        // `mapIterations`: each landing built through the literal in the
+        // walk's scope with that iteration's hop aliases; past the mapping
+        // the hops cross the built nodes' own edges.
+        let mut nodes = Vec::new();
+        for (aliases, _) in &iterations {
+            let resolve = |name: &Js| match name {
+                Js::String(text) => aliases.iter().find(|(alias, _)| alias == text).map(|(_, b)| b.clone()).or_else(|| captured(name)),
+                _ => captured(name),
+            };
+            nodes.push((Vec::new(), Binding::Shaped(crate::mapping::synthesise_node(&mapping, &resolve).map_err(Stop::Thrown)?)));
         }
-        Err(match record::get(&mapping, "entries").map_err(eval)? {
-            Js::Array(_) | Js::String(_) => Stop::Thrown(Failure::unreproduced("a walk a value holds as data with a mapping", "the TypeScript engine builds the nodes the data writes")),
-            _ => eval(record::type_error("literal.entries is not iterable")),
-        })
+        if extra.is_empty() {
+            return Ok(nodes);
+        }
+        self.walk_node_plane(nodes, extra, &at, &span).await
     }
 
     /// `for (const landing of edge.landings)`: what a landed edge a dict

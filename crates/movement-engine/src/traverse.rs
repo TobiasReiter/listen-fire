@@ -77,10 +77,8 @@ pub struct Read {
     /// dict's may be no text).
     pub instance_label: Js,
     pub schema: Option<InstanceSchema>,
-    /// An instance dict's own schema that holds no `collections` table: the
-    /// value its `collections` reads as, which the read wrapper indexes after
-    /// a collection scan (`schema?.collections[read.fieldId]`).
-    pub schema_fault: Option<Js>,
+    /// An instance dict's own schema that holds no `collections` table.
+    pub schema_fault: Option<SchemaFault>,
     /// The movement parameter's declared position, which names a typeless
     /// event root (the event's source only).
     pub start_surface_type: Option<String>,
@@ -91,6 +89,18 @@ pub struct Read {
     /// The instance streams a traversal (`methods` lists `iterateRelated`),
     /// which the engine walks a page at a time.
     pub streams: bool,
+}
+
+/// An instance dict's own schema with no `collections` table, as the reads
+/// through it meet it.
+#[derive(Debug, Clone)]
+pub struct SchemaFault {
+    /// What its `collections` reads as, which the read wrapper indexes after
+    /// a collection scan (`schema?.collections[read.fieldId]`).
+    pub collections: Js,
+    /// The schema itself, which a hop's member gate reads where it names
+    /// selected members (`hopSelection`).
+    pub schema: Js,
 }
 
 impl Read {
@@ -226,7 +236,9 @@ pub(crate) fn head_probe(root: &str, hops_raw: &str, extra: &[TraversalStep]) ->
     let probe = format!("{root}{hops_raw}.`__movement_engine_probe__`");
     let invalid = |e: String| Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"));
     let tree = movement_parser::expr::parse_expression(&probe).map_err(|e| invalid(format!("{e:?}")))?;
-    let steps = match movement_parser::lowering::lower_expression(&tree, &probe).map_err(|e| invalid(format!("{e:?}")))? {
+    // Every lowering refusal is a `BridgeError`, which `probeHead` rewraps
+    // by its message.
+    let steps = match movement_parser::lowering::lower_expression(&tree, &probe).map_err(|e| invalid(e.message))? {
         Expression::Traverse { mut steps, .. } => {
             steps.extend(extra.iter().cloned());
             Some(steps)
@@ -319,8 +331,44 @@ pub(crate) struct MemberGate {
 
 /// `hopMemberGate`: a record of another member than the one a WHERE
 /// narrowed the hop to is not a match.
-pub(crate) fn member_gate(step: &EdgeStep, origin: &Js, read: &Read) -> Option<MemberGate> {
-    let filter = step.expression_filter.as_deref()?;
+pub(crate) fn member_gate(step: &EdgeStep, origin: &Js, read: &Read) -> Result<Option<MemberGate>, Failure> {
+    let Some(filter) = step.expression_filter.as_deref() else { return Ok(None) };
+    if let Some(fault) = &read.schema_fault {
+        return faulted_selection(fault, step, origin).map(|()| None);
+    }
+    Ok(selection(filter, step, origin, read))
+}
+
+/// `hopSelection` over an instance dict's own schema with no `collections`:
+/// one naming selected members reads the hop's declared target off its
+/// positions, then off the collections it lacks.
+fn faulted_selection(fault: &SchemaFault, step: &EdgeStep, origin: &Js) -> Result<(), Failure> {
+    let eval = |e| Failure::of_eval(e, "");
+    let get = |value: &Js, key: &str| crate::record::get(value, key).map_err(eval);
+    if matches!(get(&fault.schema, "selectedMembers")?, Js::Undefined) {
+        return Ok(());
+    }
+    let edge = &step.edge_type_id;
+    let declared = match record_type(origin) {
+        Some(from) => match get(&get(&fault.schema, "positions")?, &from)? {
+            position if position.is_nullish() => Js::Undefined,
+            position => match get(&get(&position, "edges")?, edge)? {
+                found if found.is_nullish() => Js::Undefined,
+                found => get(&found, "target")?,
+            },
+        },
+        None => Js::Undefined,
+    };
+    if declared.is_nullish() {
+        return Err(eval(crate::record::type_error(&format!("Cannot read properties of {} (reading '{edge}')", fault.collections.to_js_string()))));
+    }
+    Err(Failure::unreproduced(
+        "a WHERE on a hop through a value shaped like a constructed adapter instance whose schema selects members but has no collections",
+        "the TypeScript engine reads the selection off whatever the dict holds",
+    ))
+}
+
+fn selection(filter: &Expression, step: &EdgeStep, origin: &Js, read: &Read) -> Option<MemberGate> {
     let schema = read.schema.as_ref()?;
     let selected = schema.selected_members.as_ref()?;
     let declared = record_type(origin)
@@ -794,13 +842,13 @@ impl Run<'_> {
     /// `instanceSourceRead`: the instance resolved as a source, once per
     /// (adapter, credential, construction arguments).
     pub(crate) async fn instance_read(&self, instance: &InstanceBinding) -> Result<Rc<Read>, Failure> {
-        self.instance_read_as(instance, Json::String(instance.adapter_slug.clone())).await
+        self.instance_read_as(instance, Some(Json::String(instance.adapter_slug.clone()))).await
     }
 
     /// `instanceSourceRead` asking the host for `adapter_type`, the slug as
     /// the binding holds it; cached by its text, as the TypeScript's key is
     /// a template literal.
-    pub(crate) async fn instance_read_as(&self, instance: &InstanceBinding, adapter_type: Json) -> Result<Rc<Read>, Failure> {
+    pub(crate) async fn instance_read_as(&self, instance: &InstanceBinding, adapter_type: Option<Json>) -> Result<Rc<Read>, Failure> {
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let construction_args: std::collections::BTreeMap<String, String> = instance
             .construction_config
@@ -855,13 +903,15 @@ impl Run<'_> {
     /// when it is a member the hop is about and its WHERE holds.
     async fn fetch(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, how: Fetch<'_>, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Rc<Landed>>, Failure> {
         let Fetch { pushdown, paged } = how;
-        if read.schema_fault.is_some() && (paged || record_type(start).as_deref() != Some("meta")) {
+        // The stream goes through no read wrapper, so only a wrapped hop off
+        // a record reads the schema's types.
+        if read.schema_fault.is_some() && !paged && record_type(start).as_deref() != Some("meta") {
             return Err(Failure::unreproduced(
                 "reading through a value shaped like a constructed adapter instance whose schema is no instance schema",
                 "the TypeScript engine reads its graph's types off whatever the dict holds",
             ));
         }
-        let gate = member_gate(step, start, read);
+        let gate = member_gate(step, start, read)?;
         let mut args = vec![("fieldId", Js::str(step.edge_type_id.clone())), ("direction", Js::str(direction_text(step.direction)))];
         args.extend(pushdown.iter().map(|(k, v)| (k.as_str(), v.clone())));
         let mut kept = Vec::new();
@@ -926,7 +976,7 @@ impl Run<'_> {
             (from, landed_surface_type(schema, surface.as_deref(), &step.edge_type_id, step.direction))
         };
         let related = self.call_adapter_at(&read.instance, "getRelated", &from, args).await?;
-        if let Some(collections) = &read.schema_fault {
+        if let Some(SchemaFault { collections, .. }) = &read.schema_fault {
             return Err(Failure::of_eval(
                 crate::record::type_error(&format!("Cannot read properties of {} (reading '{}')", collections.to_js_string(), step.edge_type_id)),
                 "",
