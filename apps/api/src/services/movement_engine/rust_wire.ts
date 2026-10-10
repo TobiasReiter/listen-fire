@@ -3,8 +3,9 @@
 // (crates/movement-engine/src/env.rs says the format), the plain-JSON check,
 // and the shim's own faults.
 
+import { isCallbackParamType, type CallbackParamSpec } from 'engine-contracts';
 import { neverAsAny } from '../../lib/utils/types';
-import { bindingOf } from './expression';
+import type { Binding } from './expression';
 import type { Provenance, ProvenanceOrigin } from './provenance';
 
 export class RunAborted extends Error {
@@ -127,38 +128,53 @@ function builtinNamed(name: unknown): unknown {
   return builtin;
 }
 
+export function isCallbackParam(value: unknown): value is CallbackParamSpec {
+  if (typeof value !== 'object' || value === null) return false;
+  const type: unknown = Reflect.get(value, 'type');
+  return typeof Reflect.get(value, 'name') === 'string' && typeof type === 'string' && isCallbackParamType(type);
+}
+
+/**
+ * A record the engine handed the host (`["x", id, descriptor]`), built from
+ * the descriptor the engine wrote: the event's binding object, or a
+ * callback's. Only the wire's own tag makes one, so nothing the host or a
+ * webhook sends can become one, whatever keys it carries.
+ */
+function bindingFromWire(descriptor: unknown): Binding {
+  const kind = typeof descriptor === 'object' && descriptor !== null ? Reflect.get(descriptor, 'kind') : undefined;
+  if (kind === 'event') return { kind: 'event' };
+  if (kind === 'callback' && typeof descriptor === 'object' && descriptor !== null) {
+    const callbackId: unknown = Reflect.get(descriptor, 'callbackId');
+    const url: unknown = Reflect.get(descriptor, 'url');
+    const params: unknown = Reflect.get(descriptor, 'params');
+    if (typeof callbackId !== 'string' || typeof url !== 'string' || !Array.isArray(params) || !params.every(isCallbackParam)) {
+      throw new RustShimError('the engine handed the host a callback that is not {callbackId, url, params}');
+    }
+    return { kind: 'callback', callbackId, url, params };
+  }
+  throw new RustShimError(`the engine handed the host a record of kind ${String(kind)}, which the shim does not rebuild`);
+}
+
 /**
  * The wire to the Rust evaluator and back (crates/movement-engine/src/env.rs
  * says the format): values with their identity, and the origins of the trails
- * they carry, numbered.
+ * they carry, numbered. A value is data or one of the engine's records, and
+ * the two never share a form: every object the host writes is data, whatever
+ * keys it carries; a record is only ever one the engine handed out
+ * (`["x", id, descriptor]`), handed back by its id.
  */
 export class WireOut {
-  /** `asData`: a dict shaped like an engine binding crosses as the data it
-   *  is (a parked state's descriptors), not refused as a record. */
   /** `whole`: each value is written whole — a back-reference only within
    *  it — because a segment's engine decodes each answer on its own, in the
    *  order it reads them, and an object re-sent after a mutation must cross
    *  as it now is. An object keeps the id it was first sent under, so the
    *  engine knows an object sent twice for the one object it is (the same
    *  object a host hands the TypeScript engine twice is `===` itself). */
-  constructor(private readonly options: { asData?: true; whole?: true } = {}) {
-    this.asData = options.asData === true;
-  }
+  constructor(private readonly options: { whole?: true } = {}) {}
 
-  /** Whether the value being written crosses binding-shaped dicts as data. */
-  private asData: boolean;
-
-  /** `value`, a binding-shaped dict in it crossing as the data it is (a
-   *  host's answer on a segment's wire, which also carries its records). */
-  valueAsData(value: unknown): unknown {
-    const before = this.asData;
-    this.asData = true;
-    try {
-      return this.value(value);
-    } finally {
-      this.asData = before;
-    }
-  }
+  /** The records the engine handed out, by the id it gave each. */
+  private readonly records = new Map<number, Binding>();
+  private readonly recordIds = new Map<object, number>();
 
   /** The objects and lists sent, by the id the wire gave them. */
   private readonly sent: object[] = [];
@@ -174,7 +190,8 @@ export class WireOut {
   private writing = 0;
 
   /** `value` on the wire, or REFUSED where it would not cross as itself: a
-   *  function, a Date, a class instance, a record, a lone surrogate. */
+   *  function, a Date, a class instance, a lone surrogate. A record the
+   *  engine handed out crosses back as itself; nothing else is a record. */
   value(value: unknown): unknown {
     if (this.options.whole === true && this.writing === 0) this.ids.clear();
     this.writing += 1;
@@ -213,11 +230,13 @@ export class WireOut {
 
   private composite(value: unknown): unknown {
     if (value === null || typeof value !== 'object') return value;
+    const record = this.recordIds.get(value);
+    if (record !== undefined) return ['x', record];
     const seen = this.ids.get(value);
     if (seen !== undefined) return this.open.has(value) ? REFUSED : ['r', seen];
     const proto: unknown = Object.getPrototypeOf(value);
     const isList = Array.isArray(value) && proto === Array.prototype;
-    if (!isList && (proto !== Object.prototype || (!this.asData && bindingOf(value) !== undefined))) return REFUSED;
+    if (!isList && proto !== Object.prototype) return REFUSED;
     let id = this.identity.get(value);
     if (id === undefined) {
       id = this.sent.length;
@@ -290,6 +309,15 @@ export class WireOut {
       case 'r':
         if (typeof a !== 'number' || !made.has(a)) throw new RustShimError(`the wire names no value ${String(a)} it made`);
         return made.get(a);
+      case 'x': {
+        if (typeof a !== 'number') throw new RustShimError(`the engine handed the host a record it cannot carry (${String(a)})`);
+        const held = this.records.get(a);
+        if (held !== undefined) return held;
+        const record = bindingFromWire(this.read(b, made));
+        this.records.set(a, record);
+        this.recordIds.set(record, a);
+        return record;
+      }
       case 'l': {
         if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire list is ["l", id, items]');
         const list: unknown[] = [];

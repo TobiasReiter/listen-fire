@@ -48,7 +48,7 @@ type SerializedFrame =
 
 `BindingDescriptor` is a tagged union, one variant per kind of value a scope can hold: `event`, `instance`, `handle`, `extractRoot`, `extractPosition`, `sourcePosition`, `resource`, `blockMeta`, `positions`, `tuple`, `closure`, `value`, `recordValue`, `callback`, `shape`, `localShape`, `movement`, `shapePosition`, `nodePosition`, `nodeRef`, `lazyWalk` and `opaque`. Each variant's members are in `park_state.ts`. Three rules govern them:
 
-- **Data is carried as data.** A value, a record's fields, a file descriptor (`FileRef`, never its bytes) and a minted callback's id and link are plain JSON.
+- **Data is carried as data.** A value, a record's fields, a file descriptor (`FileRef`, never its bytes) and a minted callback's id and link are plain JSON. A data payload is never read as a binding, whatever keys it carries: only a descriptor's own tag makes one.
 - **Live things are carried as identities.** An adapter instance is its type, credential name and construction config, re-resolved on resume, and its schema is fetched afresh. A stored traversal is its recipe (head, captured scope, mapping), walked again when read: a run that parked for a day sees the source as it is now.
 - **Code is carried as a name, or as its syntax tree.** A shape or movement declared at file scope is its name, found again in the re-parsed program. A closure's body, a body-local declaration, a collection op and a run-time arm travel as their syntax tree, which the version pin keeps identical.
 

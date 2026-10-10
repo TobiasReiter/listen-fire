@@ -212,11 +212,6 @@ impl Run<'_> {
                             name: None,
                             runtime: Some(closure.code.clone()),
                         }),
-                        // Program text found in host data: refused by name.
-                        Some(binding @ Binding::Shaped(_)) if crate::record::kind_of(&binding) == "closure" => Err(Stop::Thrown(Failure::unreproduced(
-                            "running as an arm a value shaped like a closure",
-                            "the TypeScript engine runs the body the data writes",
-                        ))),
                         _ => Err(Stop::Thrown(Failure::engine(
                             "MOVENG_RUNTIME",
                             format!("arm {index} of '{kind}' is not a function — a combinator runs what it is given, and this is {}", entry.type_of()),

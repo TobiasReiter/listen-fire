@@ -40,7 +40,6 @@ pub mod js_regex;
 pub mod letter_number;
 pub mod ledger;
 pub mod local;
-mod mapping;
 pub mod node;
 pub mod order_limit;
 pub mod park;
@@ -48,7 +47,6 @@ pub mod plugin;
 pub mod program;
 pub mod reading;
 mod resume;
-mod shaped;
 pub mod record;
 pub mod run;
 pub mod stdlib;
@@ -277,12 +275,8 @@ mod tests {
         let refused = eval("[...m]", json!({ "m": "x" }));
         assert_eq!(refused["error"]["message"], "'...' splices a list's members into a list, and this value is not a list (string)");
         assert_eq!(value("{ ...m }", json!({ "m": ["o", 1, [["kind", "nope"]]] })), json!(["o", 0, [["kind", "nope"]]]));
-        // A dict whose `kind` names a binding's is that binding to the
-        // TypeScript, the event's fields not in hand.
-        assert_eq!(
-            eval("{ ...m }", json!({ "m": ["o", 1, [["kind", "event"]]] }))["error"]["message"],
-            "reading every field of the movement parameter (the event position) is not supported by the movement engine yet (a system record has no field list in hand — build a dict of the fields you want, `{ name: r.name, … }`)"
-        );
+        // A dict whose `kind` names a binding's is the dict it is.
+        assert_eq!(value("{ ...m }", json!({ "m": ["o", 1, [["kind", "event"]]] })), json!(["o", 0, [["kind", "event"]]]));
     }
 
     #[test]

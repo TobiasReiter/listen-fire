@@ -28,7 +28,7 @@ import { logger } from '../logger';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import { servedHostMethods } from './host';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
-import { pinnedNow } from './expression';
+import { bindingOf, pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { maxFileChars } from './extraction';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
@@ -314,7 +314,6 @@ export function recordTypeScriptRun(input: Pick<RunMovementInput, 'runId' | 'dry
 /** Why the TypeScript engine runs a run that `MOVEMENT_ENGINE` did not route. */
 export const ENGINE_CHOICE_TS = 'movement_engine_ts';
 
-/**
 // ── The admission dry run ─────────────────────────────────────────────────────
 
 /**
@@ -497,18 +496,17 @@ class SettleQueue {
  *  (a stored state's is the order it was stored in). Undefined for an input
  *  that cannot cross as itself. */
 function segmentInput(input: RunMovementInput, context: RunContext, resume: Resumption | undefined, wire: WireOut): unknown {
-  // A dict in the event shaped like a binding crosses as the dict it is:
-  // the engine reads it as `bindingOf` does (crates/movement-engine's
-  // record module, pinned by tests/oracle/records.json).
-  const event = wire.valueAsData(input.event);
+  // The event is data, whatever keys it carries: a dict shaped like a
+  // binding crosses, and is read, as the dict it is.
+  const event = wire.value(input.event);
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
-  const state = resume !== undefined ? new WireOut({ asData: true }).value(resume.state) : undefined;
+  const state = resume !== undefined ? new WireOut().value(resume.state) : undefined;
   if (state === REFUSED) return undefined;
   // The answer a step-past resume binds and a fired callback's values are
   // data, as the event is.
-  const answer = resume?.answer !== undefined ? wire.valueAsData(resume.answer) : undefined;
+  const answer = resume?.answer !== undefined ? wire.value(resume.answer) : undefined;
   if (answer === REFUSED) return undefined;
-  const values = resume?.fire !== undefined ? wire.valueAsData(resume.fire.values) : undefined;
+  const values = resume?.fire !== undefined ? wire.value(resume.fire.values) : undefined;
   if (values === REFUSED) return undefined;
   const resumed =
     resume === undefined
@@ -783,6 +781,14 @@ export function rustCanEval(expr: Expression): boolean {
   }
 }
 
+/** Whether a record (`bindingOf`) is anywhere inside `value`. */
+function holdsBinding(value: unknown, seen = new Set<object>()): boolean {
+  if (typeof value !== 'object' || value === null || seen.has(value)) return false;
+  if (bindingOf(value) !== undefined) return true;
+  seen.add(value);
+  return Object.values(value).some((member) => holdsBinding(member, seen));
+}
+
 /**
  * `expr` evaluated by the Rust engine, or undefined where the TypeScript
  * evaluator must answer: not admitted, a name that is not a value binding, a
@@ -801,6 +807,9 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
   for (const name of namesRead(expr)) {
     const binding = ctx.env.resolve(name);
     if (binding?.kind !== 'value') return notAdmitted();
+    // The one place the TypeScript engine's own values cross: a record a
+    // value holds stays with the evaluator that made it.
+    if (holdsBinding(binding.value)) return notAdmitted();
     const value = wire.value(binding.value);
     if (value === REFUSED) return notAdmitted();
     read.set(name, binding);

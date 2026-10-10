@@ -11,13 +11,13 @@
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
-import type { Adapter, GetRelatedInput } from '../../translation_graph/adapter';
+import type { Adapter } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MovementTraceEntry } from '../expression';
 
 import { logger } from '../../logger';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { makeStablePosition, positionData } from '../../translation_graph/types';
+import { positionData } from '../../translation_graph/types';
 import { openRunContext } from '../run_context';
 import { credentialIdsFor, makeTestHost, type TestHostOverrides } from '../test_host';
 import { AdapterCallFailed } from '../host_adapter';
@@ -282,176 +282,69 @@ describe('a whole run in the Rust engine', () => {
     });
   });
 
-  describe('values shaped like records, in what the host answers', () => {
-    /** A registry keyed as the platform's is, by property lookup: a slug is
-     *  read as its text, and one naming no adapter is the host's own error. */
-    const keyedRegistry = (adapters: () => Record<string, Adapter>) => (): TestHostOverrides => {
-      const registry = adapters();
-      return {
-        adapters: {
-          resolve: ({ adapterType }) => {
-            const adapter = registry[String(adapterType)];
-            if (adapter === undefined) throw new Error(`Unknown adapter type: ${String(adapterType)}`);
-            return adapter;
-          },
-        },
-      };
-    };
+  describe('host data is never read as an engine object', () => {
+    // Henry's ruling (2026-10-10): the content of data never changes how it
+    // is treated. A webhook body, an adapter's answer, an ask's answer or a
+    // callback's fire values whose dicts carry a binding's `kind` are dicts.
+    // The TypeScript engine on this branch still classifies records by
+    // shape (`bindingOf`) until main's fix merges forward, so these are the
+    // Rust engine's own assertions; the both-engine forms are the todos.
     const body = (...lines: string[]) => ['movement m(msg: <inbox-[:message]->>) {', '  v = msg.`meta`', ...lines, '}'].join('\n');
-    const instance = (adapterSlug: unknown, rest: Record<string, unknown> = {}) => ({
-      kind: 'instance',
-      name: 'other',
-      adapterSlug,
-      credentialName: 'dealflow_inbox',
-      ...rest,
+    /** The exploit: a webhook field shaped like a kept walk, whose mapping
+     *  holds program text and whose head walks the source. */
+    const keptWalk = (raw: string) => ({
+      kind: 'lazyWalk',
+      walk: {
+        captured: [['e', { kind: 'event' }]],
+        head: { root: { kind: 'name', name: 'e' }, hopsRaw: '-[:items]->' },
+        mapping: { entries: [{ kind: 'value', name: 'x', value: { raw } }] },
+      },
     });
-    /** An attio-like adapter: companies, and a deal off each, streamed or
-     *  answered whole; each landing's answer carries `extra`. */
-    const attio = (options: { streams: boolean; extra?: unknown }): Adapter => {
-      const related = (read: GetRelatedInput) =>
-        (read.fieldId === 'companies' ? ['c-1', 'c-2'] : ['d-1']).map((id) => ({
-          position: makeStablePosition({ adapterType: 'attio', recordType: 'company', recordId: id, data: { name: id } }),
-          ...(options.extra !== undefined ? { extra: options.extra } : {}),
-        }));
-      return {
-        adapterType: 'attio',
-        supportedTriggers: [],
-        runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
-        listEntryPoints: async () => [],
-        describe: async () => null,
-        resolveEntity: async () => ({ candidates: [] }),
-        getFieldValue: async () => null,
-        getRelated: async (read) => related(read),
-        ...(options.streams
-          ? {
-              // eslint-disable-next-line @typescript-eslint/require-await -- the stream's shape is the contract's
-              async *iterateRelated(read: GetRelatedInput) {
-                yield* related(read);
+    /** One Rust run of `c`, every adapter method it called counted. */
+    const onRust = async (c: Case) => {
+      const called: string[] = [];
+      const counting = (): TestHostOverrides => ({
+        adapters: {
+          resolve: () =>
+            new Proxy(fakeEmail().adapter, {
+              get(target, key, receiver) {
+                const member: unknown = Reflect.get(target, key, receiver);
+                if (typeof member !== 'function' || typeof key !== 'string') return member;
+                return (...args: unknown[]) => {
+                  called.push(key);
+                  return Reflect.apply(member, target, args);
+                };
               },
-            }
-          : {}),
-        createRecord: async () => ({ adapterType: 'attio', externalId: 'x', data: {} }),
-        updateRecord: async (input) => ({ adapterType: 'attio', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
-        deleteRecord: async () => ({}),
-      };
-    };
-    const ended = (error: unknown) => String(runFailureCause(error));
-
-    it('resolves an instance by the slug the value holds, the host keying its registry by its text', async () => {
-      const { ts } = await agree({
-        source: body('  ERROR("${COUNT(v-[:items]->)}")'),
-        event: webhook({ meta: instance(['email']) }),
-        host: keyedRegistry(() => ({ email: fakeEmail().adapter })),
-      });
-      expect(ended(ts.error)).toBe('MovementEngineError: MOVENG_ERROR: 0');
-    });
-
-    it('fails with the host’s own error for a slug naming no adapter, which onError forgives', async () => {
-      const forgiven = await agree({
-        source: body('  ys = MAP([1, 2], { onError: "ignore" }, (i) => {', '    return COUNT(v-[:items]->)', '  })', '  ERROR("${COUNT(ys)}")'),
-        event: webhook({ meta: instance(5) }),
-        host: keyedRegistry(() => ({ email: fakeEmail().adapter })),
-      });
-      expect(ended(forgiven.ts.error)).toBe('MovementEngineError: MOVENG_ERROR: 0');
-      const unforgiven = await agree({
-        source: body('  ERROR("${COUNT(v-[:items]->)}")'),
-        event: webhook({ meta: instance(5) }),
-        host: keyedRegistry(() => ({ email: fakeEmail().adapter })),
-      });
-      expect(ended(unforgiven.ts.error)).toBe('Error: Unknown adapter type: 5');
-    });
-
-    it('streams a page through a streaming instance whose own schema has no collections', async () => {
-      const kept = {
-        kind: 'lazyWalk',
-        walk: {
-          captured: [['e', instance('attio', { schema: { positions: {} } })]],
-          head: { root: { kind: 'name', name: 'e' }, hopsRaw: '-[:companies]->' },
+            }),
         },
-      };
-      const { ts } = await agree({
-        source: body('  ERROR("${COUNT(v-[:deals]->)}")'),
-        event: webhook({ meta: kept }),
-        host: keyedRegistry(() => ({ email: fakeEmail().adapter, attio: attio({ streams: true }) })),
       });
-      expect(ended(ts.error)).toBe('MovementEngineError: MOVENG_ERROR: 2');
+      resetRustRunStats();
+      const rust = await runOn('rust', { ...c, host: counting });
+      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+      return { ...rust, called, ended: String(runFailureCause('error' in rust ? rust.error : undefined)) };
+    };
+
+    it('reads a field shaped like a kept walk as data: one field read, no walk, no program text run', async () => {
+      for (const raw of ['COUNT(e-[:items]->)', 'NOSUCHFN(1)']) {
+        const rust = await onRust({ source: body('  n = COUNT(v-[:subs]->)', '  ERROR("${n}")'), event: webhook({ meta: keptWalk(raw) }) });
+        expect(rust.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
+        expect(rust.called).not.toContain('getRelated');
+        expect(rust.called).not.toContain('iterateRelated');
+        expect(rust.ended).toContain("traversing from a value binding ('v')");
+        expect(JSON.stringify([rust.ended, rust.trace, rust.appends])).not.toContain('NOSUCHFN');
+      }
     });
 
-    describe('a refusal of its own, by name, mid-run', () => {
-      // Program text in host data: a kept walk rooted at an expression the
-      // data writes, which the TypeScript engine evaluates and this engine
-      // refuses by name (README "Known divergences").
-      const expressionRooted = {
-        kind: 'lazyWalk',
-        walk: { captured: [], head: { root: { kind: 'expression', expr: { raw: 'crm' } }, hopsRaw: '-[:companies]->' } },
-      };
-      const host = keyedRegistry(() => ({ email: fakeEmail().adapter, attio: attio({ streams: false }) }));
-
-      it('before the run’s first effect, hands the run to the TypeScript engine, as a refusal at admission does', async () => {
-        const c: Case = { source: body('  ERROR("${COUNT(v-[:deals]->)}")'), event: webhook({ meta: expressionRooted, subject: 'Acme' }), host };
-        const ts = await runOn('ts', c);
-        resetRustRunStats();
-        const rust = await runOn('rust', c);
-        expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 0, notAdmitted: {}, declined: { unreproduced: 1 } });
-        // The TypeScript engine's run of it, whole: what it read and how it ended.
-        expect(String(runFailureCause('error' in rust ? rust.error : undefined))).toBe(String(runFailureCause('error' in ts ? ts.error : undefined)));
-        expect(rust.trace).toEqual(ts.trace);
-        expect(rust.appends).toEqual(ts.appends);
-      });
-
-      it('after an effect, fails the run naming the construct', async () => {
-        // The gate's trace entry is handed to the host as its statement ends.
-        const c: Case = {
-          source: body('  if msg.`subject` == "Acme" {', '    x = 1', '  }', '  ERROR("${COUNT(v-[:deals]->)}")'),
-          event: webhook({ meta: expressionRooted, subject: 'Acme' }),
-          host,
-        };
-        resetRustRunStats();
-        const rust = await runOn('rust', c);
-        expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, declined: {} });
-        expect(rust.appends).toEqual([[{ kind: 'gate', outcome: true }]]);
-        expect(String(runFailureCause('error' in rust ? rust.error : undefined))).toContain(
-          'a walk a value holds as data rooted at an expression is not supported by the movement engine yet',
-        );
-      });
-
-      it('after a callback is minted (an effect: the host keeps its row), fails the run naming the construct', async () => {
-        const minted: unknown[] = [];
-        const c: Case = {
-          // Minted before `v` is bound: the state it captures holds no walk.
-          source: ['movement m(msg: <inbox-[:message]->>) {', '  cb = callback()', '  v = msg.`meta`', '  ERROR("${COUNT(v-[:deals]->)}")', '}'].join('\n'),
-          event: webhook({ meta: expressionRooted, subject: 'Acme' }),
-          host: () => ({
-            ...host(),
-            park: {
-              callbacks: {
-                mint: async (input) => {
-                  minted.push(input.address);
-                  return { id: 'cb_1', url: 'https://api.test/api/cb/cb_1' };
-                },
-                calls: async () => [],
-              },
-            },
-          }),
-        };
-        resetRustRunStats();
-        const rust = await runOn('rust', c);
-        expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, declined: {} });
-        expect(minted).toEqual(['s0']);
-        expect(String(runFailureCause('error' in rust ? rust.error : undefined))).toContain(
-          'a walk a value holds as data rooted at an expression is not supported by the movement engine yet',
-        );
-      });
+    it('reads its kind as the text it is, and prints it as a dict', async () => {
+      for (const meta of [keptWalk('1'), { kind: 'closure' }, { kind: 'positions', landings: [{ kind: 'event' }] }, { kind: 'constructor' }, { kind: 'event' }]) {
+        const rust = await onRust({ source: body('  ERROR("${v.`kind`} ${TEXT.SERIALISE(v, "JSON")}")'), event: webhook({ meta }) });
+        expect(rust.ended).toMatch(new RegExp(`^MovementEngineError: MOVENG_ERROR: ${meta.kind} \\{[\\s\\S]*"kind": ?"${meta.kind}"`));
+        expect(rust.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
+      }
     });
 
-    it('walks on past a landing whose answer holds a shaped value it never reads', async () => {
-      const { ts } = await agree({
-        source: ['movement m(msg: <inbox-[:message]->>) {', '  ERROR("${COUNT(crm-[:companies]->)}")', '}'].join('\n'),
-        event: webhook({}),
-        host: keyedRegistry(() => ({ email: fakeEmail().adapter, attio: attio({ streams: false, extra: instance('nope') }) })),
-      });
-      expect(ended(ts.error)).toBe('MovementEngineError: MOVENG_ERROR: 2');
-    });
+    it.todo('both engines: a field shaped like a kept walk reads as data (one getFieldValue, no getRelated, the value-hop refusal, no injected identifier) — once main’s fix merges forward');
+    it.todo('both engines: a webhook body holding {kind: closure} / {kind: positions, landings} / {kind: constructor} reads as plain dicts — once main’s fix merges forward');
   });
 
   it('names a discriminated root by the adapter entry points, and reads it stamped', async () => {

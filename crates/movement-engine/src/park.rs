@@ -172,28 +172,11 @@ pub(crate) fn serialize_alone(run: &Run<'_>, binding: &Binding) -> Result<Js, Fa
 
 /// The nodes one park has written, numbered as first reached (`ParkWriter`),
 /// each held so that it outlives the writing that numbers it.
-type ParkWriter = Vec<Written>;
-
-/// A node a park has written: one the run built, or a `nodePosition` dict
-/// a value held.
-enum Written {
-    Node(Rc<RefCell<crate::bindings::Node>>),
-    Dict(Rc<JsObject>),
-}
-
-impl Written {
-    fn is(&self, other: &Written) -> bool {
-        match (self, other) {
-            (Written::Node(a), Written::Node(b)) => Rc::ptr_eq(a, b),
-            (Written::Dict(a), Written::Dict(b)) => Rc::ptr_eq(a, b),
-            _ => false,
-        }
-    }
-}
+type ParkWriter = Vec<Rc<RefCell<crate::bindings::Node>>>;
 
 /// The number `written` has in this park, numbering it if it is new.
-fn number(park: &mut ParkWriter, written: Written) -> Result<usize, usize> {
-    match park.iter().position(|p| p.is(&written)) {
+fn number(park: &mut ParkWriter, written: Rc<RefCell<crate::bindings::Node>>) -> Result<usize, usize> {
+    match park.iter().position(|p| Rc::ptr_eq(p, &written)) {
         Some(id) => Err(id),
         None => {
             park.push(written);
@@ -217,7 +200,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Node(node) => {
             // Numbered before its edges are walked: an edge back here is a
             // reference, not another lap.
-            let id = match number(park, Written::Node(node.clone())) {
+            let id = match number(park, node.clone()) {
                 Ok(id) => id,
                 Err(id) => return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))])),
             };
@@ -325,10 +308,10 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             let landings: Vec<Js> = landings.iter().map(|l| serialize_binding(run, "", l, park)).collect::<Result<_, _>>()?;
             object_of(vec![kind("positions"), ("landings", Js::array(landings))])
         }
-        // A dict the TypeScript takes for a binding is serialised by its
-        // kind's case, reading the dict's own keys; one whose kind is
-        // `Object.prototype`'s reaches `assertNever`.
-        Binding::Shaped(dict) => return serialize_shaped(run, dict, park),
+        // Data only: the binding object as it stands.
+        Binding::Callback(_) | Binding::ShapePosition(_) | Binding::Resource(_) => {
+            crate::record::data_object(binding).expect("a callback, a shape position and a resource are data")
+        }
         // The extraction ran: its output is data, never run again.
         Binding::Extracted { emission, root, .. } => object_of(vec![
             kind(if *root { "extractRoot" } else { "extractPosition" }),
@@ -355,178 +338,6 @@ fn serialize_deferred_walk(run: &Run<'_>, walk: &crate::bindings::DeferredWalk, 
         members.push(("mapping", run.program_code(path)?));
     }
     Ok(object_of(members))
-}
-
-/// `serializeBinding` of a dict the TypeScript takes for a binding: its
-/// kind's case, reading the dict's own keys as that case reads the
-/// binding's, V8's TypeError where data is not the `Map` or the list the
-/// case iterates.
-fn serialize_shaped(run: &Run<'_>, dict: &Rc<JsObject>, park: &mut ParkWriter) -> Result<Js, Failure> {
-    use crate::record::{get, type_error};
-    let this = Js::Object(dict.clone());
-    let eval = |e| Failure::of_eval(e, "");
-    let at = |key: &str| get(&this, key).map_err(eval);
-    let kind = |k: &str| ("kind", Js::str(k));
-    let not_iterable = |what: &str| eval(type_error(&format!("{what} is not iterable")));
-    // `assertNever`'s message carries `JSON.stringify` of what it met.
-    let unhandled = |value: &Js| match crate::js::try_json_stringify(value, 0) {
-        Ok(text) => Failure::engine("MOVENG_PARK_NONSERIALIZABLE", format!("unhandled binding kind in scope serialisation: {text}")),
-        Err(kind) => Failure::unreproduced(
-            &format!("parking a value whose message would print a record's binding object ({})", crate::record::describe_kind(&kind)),
-            "the TypeScript engine writes its read seam and schema into the message",
-        ),
-    };
-    let instance_identity = |instance: &Js| -> Result<Js, Failure> {
-        let mut out = vec![("name", get(instance, "name").map_err(eval)?), ("adapterSlug", get(instance, "adapterSlug").map_err(eval)?)];
-        let credential = get(instance, "credentialName").map_err(eval)?;
-        if !matches!(credential, Js::Undefined) {
-            out.push(("credentialName", credential));
-        }
-        let config = get(instance, "constructionConfig").map_err(eval)?;
-        if !matches!(config, Js::Undefined) {
-            out.push(("constructionConfig", config));
-        }
-        Ok(object_of(out))
-    };
-    // `for (const … of <what>)` over data, which holds no `Map`: a list
-    // would be walked as one, and that is refused.
-    let iterate = |value: &Js, what: &str| -> Result<(), Failure> {
-        match value {
-            Js::Array(_) | Js::String(_) => Err(Failure::unreproduced(&format!("parking a value shaped like a record whose {what} is a list"), "the TypeScript engine walks its members as entries")),
-            _ => Err(not_iterable(what)),
-        }
-    };
-    let list_of = |value: &Js, what: &str, park: &mut ParkWriter| -> Result<Js, Failure> {
-        let Js::Array(list) = value else {
-            return Err(eval(if value.is_nullish() {
-                type_error(&format!("Cannot read properties of {} (reading 'map')", value.to_js_string()))
-            } else {
-                type_error(&format!("{what}.map is not a function"))
-            }));
-        };
-        let mut out = Vec::with_capacity(list.items().len());
-        for member in list.items().iter() {
-            out.push(match member {
-                Js::Object(dict) => serialize_shaped(run, dict, park)?,
-                // A record the run holds: `serializeBinding` of the binding itself.
-                Js::Record(record) => serialize_binding(run, "", record, park)?,
-                Js::Undefined | Js::Null => return Err(eval(type_error(&format!("Cannot read properties of {} (reading 'kind')", member.to_js_string())))),
-                other => return Err(unhandled(other)),
-            });
-        }
-        Ok(Js::array(out))
-    };
-    let shaped_kind = crate::record::kind_of(&Binding::Shaped(dict.clone()));
-    Ok(match shaped_kind.as_str() {
-        "event" => object_of(vec![kind("event")]),
-        "handle" => {
-            let handle = at("handle")?;
-            let target_type = at("targetType")?;
-            let graph = at("graph")?;
-            let instance = instance_identity(&get(&graph, "instance").map_err(eval)?)?;
-            object_of(vec![kind("handle"), ("handle", handle), ("targetType", target_type), ("graph", object_of(vec![kind("instance"), ("instance", instance)]))])
-        }
-        "extractRoot" | "extractPosition" => {
-            let emission = at("emission")?;
-            iterate(&get(&emission, "children").map_err(eval)?, "emission.children")?;
-            unreachable!("data iterates no children")
-        }
-        "sourcePosition" => {
-            let mut out = vec![kind("sourcePosition"), ("position", at("position")?)];
-            let properties = at("edgeProperties")?;
-            if !matches!(properties, Js::Undefined) {
-                out.push(("edgeProperties", properties));
-            }
-            let read = at("read")?;
-            if !matches!(read, Js::Undefined) {
-                out.push(("read", object_of(vec![("instanceName", get(&read, "instanceName").map_err(eval)?)])));
-            }
-            object_of(out)
-        }
-        "shapePosition" => object_of(vec![kind("shapePosition"), ("shape", at("shape")?), ("node", at("node")?), ("fields", at("fields")?), ("fieldProvenance", at("fieldProvenance")?)]),
-        "nodePosition" => {
-            let id = match number(park, Written::Dict(dict.clone())) {
-                Ok(id) => id,
-                Err(id) => return Ok(object_of(vec![kind("nodeRef"), ("id", Js::Number(id as f64))])),
-            };
-            // `Object.entries(binding.edges)`.
-            let edges = match at("edges")? {
-                Js::Undefined | Js::Null => return Err(eval(type_error("Cannot convert undefined or null to object"))),
-                Js::Object(edges) => edges,
-                _ => return Err(Failure::unreproduced("parking a value shaped like a synthesised node whose edges are no map", "the TypeScript engine reads the entries of what it is")),
-            };
-            let mut out_edges = JsObject::new();
-            for (name, edge) in edges.entries() {
-                let landed = matches!(get(edge, "kind").map_err(eval)?, Js::String(k) if k == "landed");
-                if !landed {
-                    iterate(&get(&get(edge, "walk").map_err(eval)?, "captured").map_err(eval)?, "walk.captured")?;
-                }
-                let landings = list_of(&get(edge, "landings").map_err(eval)?, "edge.landings", park)?;
-                let mut descriptor = vec![kind("landed"), ("landings", landings)];
-                let shape = get(edge, "landingShape").map_err(eval)?;
-                if !matches!(shape, Js::Undefined) {
-                    descriptor.push(("landing", shape));
-                }
-                out_edges.set(name.clone(), object_of(descriptor));
-            }
-            let mut out = vec![kind("nodePosition"), ("id", Js::Number(id as f64)), ("fields", at("fields")?), ("fieldOrder", at("fieldOrder")?), ("fieldProvenance", at("fieldProvenance")?)];
-            let landed_on = at("landedOn")?;
-            if !matches!(landed_on, Js::Undefined) {
-                out.push(("landedOn", landed_on));
-            }
-            out.push(("edges", Js::object(out_edges)));
-            object_of(out)
-        }
-        "lazyWalk" => {
-            iterate(&get(&at("walk")?, "captured").map_err(eval)?, "walk.captured")?;
-            unreachable!("data iterates no captured scope")
-        }
-        "callback" => object_of(vec![kind("callback"), ("callbackId", at("callbackId")?), ("url", at("url")?), ("params", at("params")?)]),
-        "instance" => object_of(vec![kind("instance"), ("instance", instance_identity(&this)?)]),
-        "resource" => object_of(vec![kind("resource"), ("resource", at("resource")?)]),
-        "value" => {
-            let value = at("value")?;
-            if crate::js::holds_itself(&value) {
-                return Err(Failure::Engine { class: crate::eval::ErrorClass::RangeError, message: crate::js::stack_overflow().message });
-            }
-            let provenance = at("provenance")?;
-            let many = matches!(at("many")?, Js::Bool(true));
-            let mut out = if crate::record::holds_records(&value) {
-                vec![kind("recordValue"), ("value", serialize_value(run, &value, park)?)]
-            } else {
-                vec![kind("value"), ("value", json_serializable(&value, "value binding")?)]
-            };
-            if !matches!(provenance, Js::Undefined) {
-                out.push(("provenance", provenance));
-            }
-            if many {
-                out.push(("many", Js::Bool(true)));
-            }
-            object_of(out)
-        }
-        "shape" => {
-            let declaration = at("declaration")?;
-            if matches!(at("local")?, Js::Bool(true)) {
-                object_of(vec![kind("localShape"), ("declaration", declaration)])
-            } else {
-                object_of(vec![kind("shape"), ("name", get(&declaration, "name").map_err(eval)?)])
-            }
-        }
-        "movement" => object_of(vec![kind("movement"), ("name", get(&at("declaration")?, "name").map_err(eval)?)]),
-        "plugin" => object_of(vec![kind("opaque"), ("what", Js::str("a plugin")), ("name", Js::str(""))]),
-        "opaque" => object_of(vec![kind("opaque"), ("what", at("what")?), ("name", Js::str(""))]),
-        "positions" => object_of(vec![kind("positions"), ("landings", list_of(&at("landings")?, "binding.landings", park)?)]),
-        "tuple" => object_of(vec![kind("tuple"), ("slots", list_of(&at("slots")?, "binding.slots", park)?)]),
-        "closure" => {
-            iterate(&at("captured")?, "binding.captured")?;
-            unreachable!("data iterates no captured scope")
-        }
-        "blockMeta" => {
-            iterate(&at("edges")?, "binding.edges")?;
-            unreachable!("data iterates no edges")
-        }
-        _ => return Err(unhandled(&this)),
-    })
 }
 
 /// `serializeValue`: a record as its own descriptor, a list or a map walked,

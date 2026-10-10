@@ -1332,16 +1332,12 @@ impl Run<'_> {
             | Binding::LazyWalk(_)
             | Binding::Positions(_)
             | Binding::Tuple(_)
-            | Binding::Closure(_) => true,
+            | Binding::Closure(_)
+            | Binding::Callback(_)
+            | Binding::ShapePosition(_)
+            | Binding::Resource(_) => true,
             Binding::Shape(_) => self.version() >= 3,
             Binding::Value(_) | Binding::Instance(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque => false,
-            // The switch's cases by kind; a kind it has none for falls out of
-            // it, aliasing nothing.
-            Binding::Shaped(_) => matches!(
-                crate::record::kind_of(binding).as_str(),
-                "event" | "handle" | "extractRoot" | "extractPosition" | "sourcePosition" | "resource" | "blockMeta" | "shapePosition" | "nodePosition"
-                    | "lazyWalk" | "callback" | "positions" | "closure" | "tuple"
-            ) || (crate::record::kind_of(binding) == "shape" && self.version() >= 3),
         }
     }
 
@@ -1481,24 +1477,6 @@ impl Run<'_> {
             },
             Ask::ScopedField { field, edge } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
                 Scoped::Landed(landed) => self.scoped_field(landed, &field, edge, scope).await.map(Ok),
-                // `scopeOf` a dict shaped like a traversed record: the
-                // position scope its own keys make, read as any position's.
-                Scoped::Binding(Binding::Shaped(dict)) if crate::record::kind_of(&Binding::Shaped(dict.clone())) == "sourcePosition" => {
-                    let this = Js::Object(dict.clone());
-                    let (position, read) = self.shaped_source_record(&this)?;
-                    let properties = crate::record::get(&this, "edgeProperties").map_err(|e| Failure::of_eval(e, ""))?;
-                    match read {
-                        crate::shaped::GraphRead::Live(read) => {
-                            let inline = !properties.is_nullish() && !matches!(crate::record::get(&properties, &field), Ok(Js::Undefined) | Err(_));
-                            if !(edge && inline) {
-                                crate::shaped::wrapper_reads(&position, read.start_surface_type.as_deref()).map_err(|e| Failure::of_eval(e, ""))?;
-                            }
-                            let landed = Rc::new(crate::bindings::Landed::new(position, (!properties.is_nullish()).then_some(properties), read));
-                            self.scoped_field(&landed, &field, edge, scope).await.map(Ok)
-                        }
-                        crate::shaped::GraphRead::Foreign(read) => Ok(Err(crate::shaped::foreign_call(&read, "seam", "getFieldValue"))),
-                    }
-                }
                 Scoped::Emission(_) if edge => Ok(Err(EvalError::engine(
                     "MOVENG_UNSUPPORTED",
                     "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),

@@ -8,13 +8,9 @@
 //! read, a walk, `==` (identity, else a stored record's address), a spread or
 //! `TEXT.PAIRS` (its fields), a block head (its landings).
 //!
-//! `bindingOf` is structural: any plain dict whose `kind` names a binding
-//! kind is a binding to it, and `kind in describeBinding` walks the
-//! prototype chain, so `{kind: "toString"}` is one too. Such a dict is
-//! `Binding::Shaped`, read here as the TypeScript reads a binding of its
-//! kind: through the dict's own keys, failing where a key it needs is not
-//! there with the TypeError JavaScript throws (tests/oracle/records.json
-//! pins every reading to the TypeScript's own).
+//! A record is a `Js::Record` and nothing else: a dict is data whatever
+//! keys it carries, a `kind` naming a binding's included (Henry's ruling,
+//! 2026-10-10: the content of data never changes how it is treated).
 
 use std::rc::Rc;
 
@@ -24,17 +20,9 @@ use crate::bindings::Binding;
 use crate::eval::{ErrorClass, EvalError};
 use crate::js::{self, Js, JsObject};
 
-/// The binding kinds `bindingOf` recognises (`describeBinding`'s own keys).
-pub const BINDING_KINDS: [&str; 20] = [
-    "event", "instance", "handle", "extractRoot", "extractPosition", "sourcePosition", "resource", "blockMeta",
-    "positions", "tuple", "closure", "value", "shape", "movement", "shapePosition", "nodePosition", "lazyWalk", "callback",
-    "plugin", "opaque",
-];
-
 /// The binding's `kind`, as the TypeScript's object carries it.
 pub fn kind_of(binding: &Binding) -> String {
     let kind = match binding {
-        Binding::Shaped(dict) => return shaped_kind(dict),
         Binding::Value(_) => "value",
         Binding::Event => "event",
         Binding::Instance(_) => "instance",
@@ -51,27 +39,16 @@ pub fn kind_of(binding: &Binding) -> String {
         Binding::Closure(_) => "closure",
         Binding::Extracted { root: true, .. } => "extractRoot",
         Binding::Extracted { root: false, .. } => "extractPosition",
+        Binding::Callback(_) => "callback",
+        Binding::ShapePosition(_) => "shapePosition",
+        Binding::Resource(_) => "resource",
     };
     kind.to_string()
 }
 
-fn shaped_kind(dict: &JsObject) -> String {
-    // `binding.kind`, through the prototype a filing gave the dict.
-    match &js::plain_property(dict, "kind") {
-        Js::String(kind) => kind.clone(),
-        // A walk's member the TypeScript switches on by `kind` without
-        // asking `bindingOf`: a kind that is no text names nothing.
-        _ => "undefined".into(),
-    }
-}
-
-/// `describeBinding[kind]`, as a template string prints it: a kind the table
-/// does not own is `Object.prototype`'s member of that name.
+/// `describeBinding[binding.kind]`.
 pub fn describe(binding: &Binding) -> String {
-    match binding {
-        Binding::Shaped(dict) => describe_kind(&shaped_kind(dict)),
-        other => crate::write::describe_binding(other),
-    }
+    crate::write::describe_binding(binding)
 }
 
 pub fn describe_kind(kind: &str) -> String {
@@ -96,34 +73,67 @@ pub fn describe_kind(kind: &str) -> String {
         "callback" => "a callback",
         "plugin" => "a plugin",
         "opaque" => "an import",
-        other => return js::prototype_member(other, &Rc::new(JsObject::new())).to_js_string(),
+        other => return other.to_string(),
     };
     described.to_string()
 }
 
-/// `bindingOf`: the record a value IS, where it is one.
+/// `bindingOf`: the record a value IS, where it is one. Only an engine
+/// object is: a dict is data.
 pub fn binding_of(value: &Js) -> Option<Binding> {
     match value {
         Js::Record(record) => Some((**record).clone()),
-        Js::Object(dict) if is_shaped(dict) => Some(Binding::Shaped(dict.clone())),
         _ => None,
     }
 }
 
-/// A dict whose `kind` is text that `describeBinding` holds, its prototype's
-/// names included.
-pub fn is_shaped(dict: &JsObject) -> bool {
-    // `value.kind in describeBinding` reads `kind` up the prototype chain.
-    matches!(js::plain_property(dict, "kind"), Js::String(kind) if BINDING_KINDS.contains(&kind.as_str()) || js::is_object_prototype_name(&kind))
+/// A record as the value a list, a map or a collection op holds it as: the
+/// binding object itself.
+pub fn held(binding: Binding) -> Js {
+    Js::Record(Rc::new(binding))
 }
 
-/// A record as the value a list, a map or a collection op holds it as: the
-/// binding object itself (a shaped dict is the dict it is).
-pub fn held(binding: Binding) -> Js {
-    match binding {
-        Binding::Shaped(dict) => Js::Object(dict),
-        other => Js::Record(Rc::new(other)),
-    }
+/// The binding object a record IS to the TypeScript engine, for the kinds
+/// whose object holds data only (the event, a callback, a shape position, a
+/// resource): what a JSON writer prints and the descriptor a host is handed
+/// (`["x", id, descriptor]` on the segment's wire). None for a kind whose
+/// object holds what only an engine has (a read seam, a schema, code).
+pub fn data_object(binding: &Binding) -> Option<Js> {
+    let kind = ("kind", Js::str(kind_of(binding)));
+    Some(crate::env::object_of(match binding {
+        Binding::Event => vec![kind],
+        Binding::Callback(callback) => vec![kind, ("callbackId", callback.callback_id.clone()), ("url", callback.url.clone()), ("params", callback.params.clone())],
+        Binding::ShapePosition(position) => vec![
+            kind,
+            ("shape", position.shape.clone()),
+            ("node", position.node.clone()),
+            ("fields", position.fields.clone()),
+            ("fieldProvenance", position.field_provenance.clone()),
+        ],
+        Binding::Resource(resource) => vec![kind, ("resource", (**resource).clone())],
+        _ => return None,
+    }))
+}
+
+/// A record from the data object `data_object` wrote: the very kinds it
+/// writes, none other.
+pub fn of_data_object(object: &Js) -> Option<Binding> {
+    let at = |key: &str| match object {
+        Js::Object(o) => o.get(key).cloned().unwrap_or(Js::Undefined),
+        _ => Js::Undefined,
+    };
+    Some(match at("kind") {
+        Js::String(kind) if kind == "event" => Binding::Event,
+        Js::String(kind) if kind == "callback" => Binding::Callback(Rc::new(crate::bindings::Callback { callback_id: at("callbackId"), url: at("url"), params: at("params") })),
+        Js::String(kind) if kind == "shapePosition" => Binding::ShapePosition(Rc::new(crate::bindings::ShapePosition {
+            shape: at("shape"),
+            node: at("node"),
+            fields: at("fields"),
+            field_provenance: at("fieldProvenance"),
+        })),
+        Js::String(kind) if kind == "resource" => Binding::Resource(Rc::new(at("resource"))),
+        _ => return None,
+    })
 }
 
 /// `bindValue`: a record binds as the record it is, anything else on the
@@ -192,9 +202,17 @@ fn nullish_to_null(value: Js) -> Js {
 /// member, which is truthy.
 pub fn is_position(binding: &Binding) -> bool {
     match binding {
-        Binding::Event | Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Positions(_) | Binding::Node(_) | Binding::LazyWalk(_) => true,
+        Binding::Event
+        | Binding::Handle(_)
+        | Binding::Extracted { .. }
+        | Binding::Landed(_)
+        | Binding::Positions(_)
+        | Binding::Node(_)
+        | Binding::LazyWalk(_)
+        | Binding::Callback(_)
+        | Binding::ShapePosition(_)
+        | Binding::Resource(_) => true,
         Binding::Instance(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque | Binding::Tuple(_) | Binding::Closure(_) => false,
-        Binding::Shaped(dict) => !matches!(shaped_kind(dict).as_str(), "instance" | "tuple" | "closure" | "value" | "shape" | "movement" | "plugin" | "opaque"),
     }
 }
 
@@ -203,13 +221,9 @@ pub fn is_position(binding: &Binding) -> bool {
 /// which hands the (truthy) binding back.
 pub fn is_one_record(binding: &Binding) -> bool {
     match binding {
-        Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Node(_) => true,
+        Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Node(_) | Binding::Callback(_) | Binding::ShapePosition(_) | Binding::Resource(_) => true,
         Binding::Event | Binding::Instance(_) | Binding::Positions(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::LazyWalk(_)
         | Binding::Plugin(_) | Binding::Opaque | Binding::Tuple(_) | Binding::Closure(_) => false,
-        Binding::Shaped(dict) => !matches!(
-            shaped_kind(dict).as_str(),
-            "event" | "instance" | "blockMeta" | "positions" | "tuple" | "closure" | "value" | "shape" | "movement" | "lazyWalk" | "plugin" | "opaque"
-        ),
     }
 }
 
@@ -228,7 +242,14 @@ pub fn own_property(binding: &Binding, key: &str) -> Result<Js, EvalError> {
         ))
     };
     match (binding, key) {
-        (Binding::Shaped(dict), key) => Ok(dict.get(key).cloned().unwrap_or(Js::Null)),
+        (Binding::Callback(callback), "callbackId") => Ok(callback.callback_id.clone()),
+        (Binding::Callback(callback), "url") => Ok(callback.url.clone()),
+        (Binding::Callback(callback), "params") => Ok(callback.params.clone()),
+        (Binding::ShapePosition(position), "shape") => Ok(position.shape.clone()),
+        (Binding::ShapePosition(position), "node") => Ok(position.node.clone()),
+        (Binding::ShapePosition(position), "fields") => Ok(position.fields.clone()),
+        (Binding::ShapePosition(position), "fieldProvenance") => Ok(position.field_provenance.clone()),
+        (Binding::Resource(resource), "resource") => Ok((**resource).clone()),
         (Binding::Value(value), "value") => Ok(value.value.clone()),
         (Binding::Value(value), "many") if value.many => Ok(Js::Bool(true)),
         (Binding::Value(_), "provenance") => internal("provenance"),
@@ -269,7 +290,7 @@ pub fn compare_records(left: &Js, op: FilterOperator, right: &Js) -> Result<Opti
         return Ok(None);
     }
     let same = match (&a, &b) {
-        (Some(a), Some(b)) => same_record(a, b)?,
+        (Some(a), Some(b)) => same_record(a, b),
         _ => false,
     };
     Ok(Some(if op == FilterOperator::Eq { same } else { !same }))
@@ -277,73 +298,39 @@ pub fn compare_records(left: &Js, op: FilterOperator, right: &Js) -> Result<Opti
 
 /// `sameRecord`: one binding object, or two reads of one stored record (its
 /// address).
-fn same_record(a: &Binding, b: &Binding) -> Result<bool, EvalError> {
-    let identical = match (a, b) {
-        (Binding::Shaped(x), Binding::Shaped(y)) => Rc::ptr_eq(x, y),
-        _ => a.is(b),
-    };
-    if identical {
-        return Ok(true);
+fn same_record(a: &Binding, b: &Binding) -> bool {
+    if a.is(b) {
+        return true;
     }
-    let Some(first) = address(a)? else { return Ok(false) };
-    Ok(address(b)?.is_some_and(|other| other == first))
+    let Some(first) = address(a) else { return false };
+    address(b).is_some_and(|other| other == first)
 }
 
 /// `recordAddress`: a stable record's `adapterType:recordType:recordId`, a
 /// handle's `adapterType:externalId`; none for a record the run built.
-fn address(binding: &Binding) -> Result<Option<String>, EvalError> {
+fn address(binding: &Binding) -> Option<String> {
     let text = |value: Js| value.to_js_string();
     match binding {
         Binding::Landed(landed) => {
             let position = &landed.position;
             let identity = crate::unique::get(position, "identity");
             if !matches!(crate::unique::get(&identity, "kind"), Js::String(kind) if kind == "stable") {
-                return Ok(None);
+                return None;
             }
-            Ok(Some(format!(
+            Some(format!(
                 "{}:{}:{}",
                 text(crate::unique::get(position, "adapterType")),
                 text(crate::unique::get(position, "recordType")),
                 text(crate::unique::get(&identity, "recordId"))
-            )))
+            ))
         }
-        Binding::Handle(handle) => Ok(Some(format!("{}:{}", text(handle.record.get("adapterType")), text(handle.record.get("externalId"))))),
-        Binding::Shaped(dict) => {
-            let dict = Js::Object(dict.clone());
-            match shaped_kind_of(&dict).as_str() {
-                "sourcePosition" => {
-                    let position = get(&dict, "position")?;
-                    let identity = get(&position, "identity")?;
-                    if !matches!(get(&identity, "kind")?, Js::String(kind) if kind == "stable") {
-                        return Ok(None);
-                    }
-                    Ok(Some(format!(
-                        "{}:{}:{}",
-                        text(get(&position, "adapterType")?),
-                        text(get(&position, "recordType")?),
-                        text(get(&identity, "recordId")?)
-                    )))
-                }
-                "handle" => {
-                    let handle = get(&dict, "handle")?;
-                    Ok(Some(format!("{}:{}", text(get(&handle, "adapterType")?), text(get(&handle, "externalId")?))))
-                }
-                _ => Ok(None),
-            }
-        }
-        _ => Ok(None),
+        Binding::Handle(handle) => Some(format!("{}:{}", text(handle.record.get("adapterType")), text(handle.record.get("externalId")))),
+        _ => None,
     }
 }
 
-fn shaped_kind_of(dict: &Js) -> String {
-    match dict {
-        Js::Object(object) => shaped_kind(object),
-        _ => unreachable!("a shaped binding is a dict"),
-    }
-}
-
-/// `value[key]` as JavaScript reads it, for the TypeScript's reads of a
-/// shaped binding's own keys: the TypeError it throws off nothing.
+/// `value[key]` as JavaScript reads it: the TypeError it throws off
+/// nothing.
 pub fn get(value: &Js, key: &str) -> Result<Js, EvalError> {
     match value {
         Js::Undefined | Js::Null => Err(type_error(&format!("Cannot read properties of {} (reading '{key}')", value.to_js_string()))),
@@ -447,9 +434,23 @@ pub fn fields_of(binding: &Binding) -> Result<JsObject, EvalError> {
         | Binding::Closure(_) => {
             return Err(unsupported(&format!("reading every field of {}", describe(binding)), None));
         }
-        Binding::Shaped(dict) => return crate::record::shaped::fields(dict),
+        Binding::Callback(callback) => {
+            fields.set("id".into(), callback.callback_id.clone());
+            fields.set("url".into(), callback.url.clone());
+        }
+        Binding::ShapePosition(position) => spread(&mut fields, &position.fields),
+        Binding::Resource(resource) => spread(&mut fields, &get(resource, "data").unwrap_or(Js::Undefined)),
     }
     Ok(fields)
+}
+
+/// `{...value}` of an object, into `fields`.
+fn spread(fields: &mut JsObject, value: &Js) {
+    if let Js::Object(source) = value {
+        for (key, item) in source.entries() {
+            fields.set(key.clone(), item.clone());
+        }
+    }
 }
 
 fn object_field(object: &JsObject, field: &str) -> Js {
@@ -492,20 +493,13 @@ fn plain_value(value: &Js, path: &mut Vec<Binding>) -> Result<Js, EvalError> {
 }
 
 fn plain_record(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js, EvalError> {
-    if path.iter().any(|seen| same_object(seen, binding)) {
+    if path.iter().any(|seen| seen.is(binding)) {
         return Err(unsupported("writing out a record that contains itself through its edges", None));
     }
     path.push(binding.clone());
     let plain = plain_record_within(binding, path);
     path.pop();
     plain
-}
-
-fn same_object(a: &Binding, b: &Binding) -> bool {
-    match (a, b) {
-        (Binding::Shaped(x), Binding::Shaped(y)) => Rc::ptr_eq(x, y),
-        _ => a.is(b),
-    }
 }
 
 fn plain_record_within(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js, EvalError> {
@@ -553,114 +547,23 @@ fn plain_record_within(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js,
     Ok(Js::object(plain))
 }
 
-pub mod shaped {
-    //! A shaped binding read as the TypeScript reads a binding of its kind.
-
-    use std::rc::Rc;
-
-    use crate::eval::EvalError;
-    use crate::js::{Js, JsObject};
-
-    use super::{get, shaped_kind, unsupported};
-
-    /// `recordFields` of a shaped binding.
-    pub fn fields(dict: &Rc<JsObject>) -> Result<JsObject, EvalError> {
-        let this = Js::Object(dict.clone());
-        let kind = shaped_kind(dict);
-        let mut fields = JsObject::new();
-        let spread = |fields: &mut JsObject, value: &Js| {
-            if let Js::Object(source) = value {
-                for (key, item) in source.entries() {
-                    fields.set(key.clone(), item.clone());
-                }
-            }
-        };
-        match kind.as_str() {
-            "nodePosition" => {
-                let order = get(&this, "fieldOrder")?;
-                let Js::Array(order) = order else {
-                    get(&order, "map")?;
-                    return Err(super::type_error("binding.fieldOrder.map is not a function"));
-                };
-                let values = get(&this, "fields")?;
-                for field in order.items().iter() {
-                    let key = field.to_js_string();
-                    let value = get(&values, &key)?;
-                    fields.set(key, if value.is_nullish() { Js::Null } else { value });
-                }
-            }
-            "shapePosition" => spread(&mut fields, &get(&this, "fields")?),
-            "extractPosition" | "extractRoot" => spread(&mut fields, &get(&get(&this, "emission")?, "fields")?),
-            "handle" => {
-                let handle = get(&this, "handle")?;
-                let written = get(&handle, "writtenValues")?;
-                spread(&mut fields, &written);
-                if let Js::Object(data) = get(&handle, "resultData")? {
-                    for (key, value) in data.entries() {
-                        let written_key = match &written {
-                            Js::Object(w) => w.get(key).is_some() || crate::js::is_object_prototype_name(key),
-                            _ => return Err(super::type_error(&format!("Cannot use 'in' operator to search for '{key}' in {}", written.to_js_string()))),
-                        };
-                        if !written_key {
-                            fields.set(key.clone(), value.clone());
-                        }
-                    }
-                }
-            }
-            "resource" => {
-                let data = get(&get(&this, "resource")?, "data")?;
-                spread(&mut fields, &data);
-            }
-            "callback" => {
-                fields.set("id".into(), get(&this, "callbackId")?);
-                fields.set("url".into(), get(&this, "url")?);
-            }
-            "value" => {
-                let value = get(&this, "value")?;
-                match &value {
-                    Js::Object(_) | Js::Record(_) => spread(&mut fields, &value),
-                    other => return Err(unsupported(&format!("reading every field of {}", super::describe_held_value(other)), None)),
-                }
-            }
-            "sourcePosition" | "event" => {
-                return Err(unsupported(
-                    &format!("reading every field of {}", super::describe_kind(&kind)),
-                    Some("a system record has no field list in hand — build a dict of the fields you want, `{ name: r.name, … }`"),
-                ));
-            }
-            "positions" | "blockMeta" | "lazyWalk" | "tuple" | "instance" | "closure" | "shape" | "movement" | "plugin" | "opaque" => {
-                return Err(unsupported(&format!("reading every field of {}", super::describe_kind(&kind)), None));
-            }
-            // `neverAsAny(binding)`: the dict itself.
-            _ => spread(&mut fields, &this),
-        }
-        Ok(fields)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `kind in describeBinding` walks the prototype chain: a dict whose
-    /// `kind` is one of `Object.prototype`'s names is a record too.
+    /// A dict is data whatever its `kind` says: a binding kind, an
+    /// `Object.prototype` name, anything.
     #[test]
-    fn a_dict_is_a_record_when_its_kind_is_a_binding_kind_or_a_prototype_name() {
+    fn a_dict_is_never_a_record_whatever_its_kind() {
         let with_kind = |kind: &str| {
             let mut o = JsObject::new();
             o.set("kind".into(), Js::str(kind));
             Js::object(o)
         };
-        for kind in ["event", "handle", "toString", "constructor", "valueOf", "__proto__", "hasOwnProperty"] {
-            assert!(binding_of(&with_kind(kind)).is_some(), "{kind}");
-        }
-        for kind in ["nope", "tostring", "prototype", ""] {
+        for kind in ["event", "handle", "lazyWalk", "callback", "closure", "positions", "toString", "constructor", "__proto__", "nope"] {
             assert!(binding_of(&with_kind(kind)).is_none(), "{kind}");
         }
-        assert!(binding_of(&Js::str("event")).is_none());
-        assert_eq!(describe_kind("constructor"), "function Object() { [native code] }");
-        assert_eq!(describe_kind("__proto__"), "[object Object]");
-        assert_eq!(describe_kind("toString"), "function toString() { [native code] }");
+        assert!(binding_of(&held(Binding::Event)).is_some());
     }
 
     /// ToPrimitive over a dict: its own `toString` that is no function

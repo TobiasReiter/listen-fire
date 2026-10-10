@@ -11,7 +11,7 @@ use std::rc::Rc;
 use movement_parser::lowering::POSITION_SENTINEL;
 use movement_parser::lowering::expression::{EdgeDirection, EdgeStep, Expression, TraversalStep};
 
-use crate::bindings::{Binding, Identity, Landed, Scope};
+use crate::bindings::{Binding, Callback, Identity, Landed, Scope, ShapePosition};
 use crate::env::Trail;
 use crate::eval::{Evaluated, Prov, field_terminal};
 use crate::executor::join_all;
@@ -88,66 +88,16 @@ impl Run<'_> {
                 .collect();
             return Ok(Evaluated { value: Js::array(values), prov });
         }
-        // A dict the TypeScript takes for a value binding reads as the value
-        // it holds.
-        if let Binding::Shaped(dict) = &binding
-            && record::kind_of(&binding) == "value"
-        {
-            let Binding::Value(value) = self.shaped_value(&Js::Object(dict.clone())).map_err(|e| Failure::of_eval(e, ""))? else {
-                unreachable!("a shaped value binding reads as a value")
-            };
-            return Ok(Evaluated { value: value.value, prov: Prov::Built(value.trail.unwrap_or_default()) });
-        }
         if record::is_one_record(&binding) {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: record::held(binding), prov });
         }
-        if let Binding::Shaped(dict) = &binding
-            && matches!(record::kind_of(&binding).as_str(), "positions" | "tuple")
-        {
-            return self.bare_shaped_list(&Js::Object(dict.clone()), &record::kind_of(&binding));
-        }
         Err(unsupported(&format!("reading '{name}' ({}) as a bare value", record::describe(&binding))))
-    }
-
-    /// `readBareName` of a `positions` dict (its `landings`, as they are) or
-    /// a `tuple` dict (its `slots`, each a value's value or null): the list
-    /// mapped as the TypeScript maps it, its members' origins with it.
-    fn bare_shaped_list(&self, this: &Js, kind: &str) -> Result<Evaluated, Failure> {
-        let eval = |e| Failure::of_eval(e, "");
-        let (key, method) = if kind == "positions" { ("landings", "flatMap") } else { ("slots", "map") };
-        let list = record::get(this, key).map_err(eval)?;
-        let Js::Array(items) = &list else {
-            return Err(eval(if list.is_nullish() {
-                record::type_error(&format!("Cannot read properties of {} (reading '{method}')", list.to_js_string()))
-            } else {
-                record::type_error(&format!("binding.{key}.{method} is not a function"))
-            }));
-        };
-        let members = items.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
-        let value = if kind == "positions" {
-            list.clone()
-        } else {
-            let mut slots = Vec::with_capacity(members.len());
-            for member in &members {
-                slots.push(match member {
-                    Binding::Shaped(dict) if record::kind_of(member) == "value" => record::get(&Js::Object(dict.clone()), "value").map_err(eval)?,
-                    _ => Js::Null,
-                });
-            }
-            Js::array(slots)
-        };
-        let mut origins = Vec::new();
-        for member in &members {
-            origins.extend(self.entity_origins(member)?);
-        }
-        Ok(Evaluated { value, prov: Prov::Built(Trail { origins, direct: None }) })
     }
 
     /// `bindingEntityOrigins`: the origins a record cites, read in a list
     /// of records (a dict taken for one reads its own keys for them).
     pub(crate) fn entity_origins(&self, landing: &Binding) -> Result<Vec<u32>, Failure> {
-        let eval = |e| Failure::of_eval(e, "");
         Ok(match landing {
             Binding::Handle(handle) => match handle.record.get("origin") {
                 origin if !origin.truthy() => Vec::new(),
@@ -180,74 +130,21 @@ impl Run<'_> {
                 }
                 origins
             }
-            Binding::Shaped(dict) => {
-                let this = Js::Object(dict.clone());
-                let origin_of = |holder: &Js| -> Result<Vec<u32>, Failure> {
-                    let origin = record::get(holder, "origin").map_err(eval)?;
-                    Ok(if origin.truthy() { vec![self.intern_origin(origin)] } else { Vec::new() })
-                };
-                match record::kind_of(landing).as_str() {
-                    "handle" => origin_of(&record::get(&this, "handle").map_err(eval)?)?,
-                    "extractPosition" | "extractRoot" => origin_of(&record::get(&this, "emission").map_err(eval)?)?,
-                    "value" => {
-                        let Binding::Value(value) = self.shaped_value(&this).map_err(eval)? else { unreachable!("a shaped value binding reads as a value") };
-                        value.trail.map_or_else(Vec::new, |t| t.origins)
-                    }
-                    "shapePosition" | "nodePosition" => {
-                        // `Object.values(…)`: nothing throws; any other value
-                        // holds no provenance.
-                        let provenance = record::get(&this, "fieldProvenance").map_err(eval)?;
-                        if provenance.is_nullish() {
-                            return Err(Failure::of_eval(record::type_error("Cannot convert undefined or null to object"), ""));
-                        }
-                        let Js::Object(provenance) = provenance else { return Ok(Vec::new()) };
-                        let mut origins: Vec<u32> = Vec::new();
-                        for (_, trail) in provenance.entries() {
-                            for origin in self.trail_of_provenance(trail).origins {
-                                if !origins.contains(&origin) {
-                                    origins.push(origin);
-                                }
+            Binding::ShapePosition(position) => {
+                // `Object.values(binding.fieldProvenance)`.
+                let mut origins: Vec<u32> = Vec::new();
+                if let Js::Object(provenance) = &position.field_provenance {
+                    for (_, trail) in provenance.entries() {
+                        for origin in self.trail_of_provenance(trail).origins {
+                            if !origins.contains(&origin) {
+                                origins.push(origin);
                             }
                         }
-                        origins
                     }
-                    "resource" => {
-                        let resource = record::get(&this, "resource").map_err(eval)?;
-                        let mut origin = vec![("kind", Js::str("resource"))];
-                        let external_id = record::get(&resource, "externalId").map_err(eval)?;
-                        if !matches!(external_id, Js::Undefined) {
-                            origin.push(("externalId", external_id));
-                        }
-                        let name = record::get(&resource, "name").map_err(eval)?;
-                        if !matches!(name, Js::Undefined) {
-                            origin.push(("name", name));
-                        }
-                        vec![self.mint_origin(crate::env::object_of(origin))]
-                    }
-                    // `binding.landings.flatMap(bindingEntityOrigins)`.
-                    kind @ ("positions" | "tuple") => {
-                        let key = if kind == "positions" { "landings" } else { "slots" };
-                        let held = record::get(&this, key).map_err(eval)?;
-                        let Js::Array(list) = &held else {
-                            if held.is_nullish() {
-                                return Err(Failure::of_eval(record::type_error(&format!("Cannot read properties of {} (reading 'flatMap')", held.to_js_string())), ""));
-                            }
-                            return Err(Failure::of_eval(record::type_error(&format!("binding.{key}.flatMap is not a function")), ""));
-                        };
-                        let mut origins = Vec::new();
-                        for member in list.items().iter() {
-                            if member.is_nullish() {
-                                return Err(Failure::of_eval(record::type_error(&format!("Cannot read properties of {} (reading 'kind')", member.to_js_string())), ""));
-                            }
-                            if let Some(binding) = record::binding_of(member) {
-                                origins.extend(self.entity_origins(&binding)?);
-                            }
-                        }
-                        origins
-                    }
-                    _ => Vec::new(),
                 }
+                origins
             }
+            Binding::Resource(resource) => vec![self.mint_origin(resource_origin(resource, None))],
             _ => Vec::new(),
         })
     }
@@ -343,7 +240,18 @@ impl Run<'_> {
                     at.declare(name, binding);
                     self.evaluate_in(expr, &at, Some(span.clone()), None).await.map_err(crate::write::failure_of)
                 }
-                binding @ Binding::Shaped(_) => self.read_shaped(expr, name, binding, scope, span).await,
+                Binding::Resource(resource) => {
+                    let field = direct_field(expr, name, "a resource")?;
+                    Ok(self.resource_field(&resource, field))
+                }
+                Binding::ShapePosition(position) => {
+                    let field = direct_field(expr, name, "a shape position")?;
+                    Ok(self.shape_position_field(&position, field))
+                }
+                Binding::Callback(callback) => {
+                    let field = direct_field(expr, name, "a callback")?;
+                    Ok(Evaluated { value: callback_field(&callback, field), prov: none() })
+                }
                 other => Err(unsupported(&format!("reading '{name}' ({}) in an expression", record::describe(&other)))),
             }
         })
@@ -376,61 +284,6 @@ impl Run<'_> {
         Ok(self.collapse(results))
     }
 
-    /// `readAdapterTraverse` from `start` through `read`: a graph this run
-    /// reads, or a dict's own `read`, which fails where the TypeScript calls
-    /// into it.
-    async fn read_graph(&self, expr: &Expression, name: &str, what: &str, start: Js, read: crate::shaped::GraphRead, scope: &Rc<Scope>, span: &Js) -> Result<Evaluated, Failure> {
-        let read = match read {
-            crate::shaped::GraphRead::Live(read) => {
-                // The read wrapper reads the position's type (and, to restamp
-                // it, its identity) before it hands a read or a hop on.
-                let (steps, terminal) = parts(expr);
-                let asks = !steps.is_empty()
-                    || matches!(terminal, Expression::Exists { steps, .. } if !steps.is_empty())
-                    || field_terminal(terminal).is_some_and(|f| f != POSITION_SENTINEL);
-                if asks {
-                    crate::shaped::wrapper_reads(&start, read.start_surface_type.as_deref()).map_err(|e| Failure::of_eval(e, ""))?;
-                }
-                return self.read_adapter(expr, name, what, Rc::new(Landed::new(start, None, read)), scope, span).await;
-            }
-            crate::shaped::GraphRead::Foreign(read) => read,
-        };
-        let eval = |e| Failure::of_eval(e, "");
-        let exists = exists_terminal(expr, name, true)?;
-        let (steps, terminal) = parts(expr);
-        if let Some(step) = steps.first() {
-            let TraversalStep::Edge(_) = step else {
-                return Err(unsupported(&format!("'{}' hops in a traversal from '{name}'", crate::traverse::step_type(step))));
-            };
-            // The hop's pushdown asks `read.adapter.runtimeCapabilities()`.
-            return Err(eval(crate::shaped::foreign_call(&read, "read", "runtimeCapabilities")));
-        }
-        let landed = || {
-            let mut object = crate::js::JsObject::new();
-            object.set("kind".into(), Js::str("sourcePosition"));
-            object.set("position".into(), start.clone());
-            object.set("read".into(), read.clone());
-            Js::object(object)
-        };
-        if let Some((hops, where_)) = exists {
-            let Some(TraversalStep::Edge(step)) = hops.first() else {
-                return match (hops.first(), where_) {
-                    (Some(step), _) => Err(unsupported(&format!("'{}' hops inside EXISTS()", crate::traverse::step_type(step)))),
-                    (None, None) => Ok(Evaluated { value: Js::Bool(true), prov: none() }),
-                    (None, Some(_)) => Err(eval(crate::shaped::foreign_call(&read, "seam", "getFieldValue"))),
-                };
-            };
-            return Err(eval(crate::shaped::foreign_related(&read, step.direction == EdgeDirection::Incoming)));
-        }
-        let Some(field) = field_terminal(terminal) else {
-            return Err(unsupported(&format!("this read shape on {what} ('{name}')")));
-        };
-        if field == POSITION_SENTINEL {
-            return Ok(Evaluated { value: Js::array(vec![landed()]), prov: none() });
-        }
-        Err(eval(crate::shaped::foreign_call(&read, "seam", "getFieldValue")))
-    }
-
     /// `walkMetaSteps`: the hops over records in hand — a node's edges, an
     /// extraction's children, a list's members — and, from a record in a
     /// graph, the rest of the walk through that graph.
@@ -442,10 +295,6 @@ impl Run<'_> {
             };
             let mut reached = Vec::new();
             for binding in start {
-                if let Binding::Shaped(dict) = &binding {
-                    reached.extend(self.walk_meta_shaped(&binding, &Js::Object(dict.clone()), step, steps, rest, name, scope, span).await?);
-                    continue;
-                }
                 match &binding {
                     // A lazy binding IS the walk: the whole remaining chain,
                     // this hop included, continues from it.
@@ -524,93 +373,6 @@ impl Run<'_> {
         })
     }
 
-    /// `walkMetaSteps` over a dict the TypeScript takes for a record, kind
-    /// by kind in the order its checks run.
-    #[allow(clippy::too_many_arguments)]
-    async fn walk_meta_shaped(
-        &self,
-        binding: &Binding,
-        this: &Js,
-        step: &EdgeStep,
-        steps: &[TraversalStep],
-        rest: &[TraversalStep],
-        name: &str,
-        scope: &Rc<Scope>,
-        span: &Js,
-    ) -> Result<Vec<Binding>, Failure> {
-        let eval = |e| Failure::of_eval(e, "");
-        let kind = record::kind_of(binding);
-        let graph = match kind.as_str() {
-            "lazyWalk" => return self.shaped_walk(&record::get(this, "walk").map_err(eval)?, steps).await,
-            "sourcePosition" => Some(self.shaped_source_record(this)?),
-            "handle" => Some(self.shaped_handle_record(this, name).await?),
-            _ => None,
-        };
-        if let Some((start, read)) = graph {
-            return match read {
-                crate::shaped::GraphRead::Live(read) => {
-                    crate::shaped::wrapper_reads(&start, read.start_surface_type.as_deref()).map_err(eval)?;
-                    Ok(self.walk_adapter(&start, &read, steps, name, scope, span).await?.into_iter().map(Binding::Landed).collect())
-                }
-                crate::shaped::GraphRead::Foreign(read) => Err(eval(crate::shaped::foreign_call(&read, "read", "runtimeCapabilities"))),
-            };
-        }
-        if kind == "value" {
-            let Binding::Value(value) = self.shaped_value(this).map_err(eval)? else { unreachable!("a value") };
-            if let Some(held) = record::held_binding(&value.value) {
-                let landings = match held {
-                    Binding::Positions(landings) => landings,
-                    one => vec![one],
-                };
-                return self.walk_meta(landings, steps, name, scope, span).await;
-            }
-        }
-        if kind == "nodePosition" {
-            let edge = record::get(&record::get(this, "edges").map_err(eval)?, &step.edge_type_id).map_err(eval)?;
-            if !edge.is_nullish() && matches!(record::get(&edge, "kind").map_err(eval)?, Js::String(k) if k == "deferred") {
-                if step.expression_filter.is_some() {
-                    return Err(Failure::unsupported(
-                        &format!("WHERE filters on a synthesised node's edges ('{name}')"),
-                        "narrow the entry's own traversal instead — the WHERE belongs on the hop the node's edge is built from",
-                    ));
-                }
-                return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, rest).await;
-            }
-            let landings = if edge.is_nullish() { Js::Undefined } else { record::get(&edge, "landings").map_err(eval)? };
-            let landings = match landings {
-                Js::Undefined | Js::Null => Vec::new(),
-                Js::Array(_) | Js::String(_) => self.raw_landings(landings, "")?,
-                other => return Err(eval(record::type_error(&format!("{} is not iterable (cannot read property Symbol(Symbol.iterator))", typed(&other))))),
-            };
-            let mut kept = Vec::new();
-            for landed in landings {
-                if self.hop_keeps_binding(step, &landed, scope, span).await? {
-                    kept.push(landed);
-                }
-            }
-            return self.walk_meta(kept, rest, name, scope, span).await;
-        }
-        if step.expression_filter.is_some() {
-            return Err(unsupported(&format!("WHERE filters on block meta-node hops ('{name}')")));
-        }
-        match kind.as_str() {
-            "blockMeta" => Err(eval(edges_get(this, "binding"))),
-            "positions" => {
-                let landings = self.raw_landings(record::get(this, "landings").map_err(eval)?, "start")?;
-                self.walk_meta(landings, steps, name, scope, span).await
-            }
-            "extractPosition" | "extractRoot" => {
-                let children = record::get(&record::get(this, "emission").map_err(eval)?, "children").map_err(eval)?;
-                Err(eval(if children.is_nullish() {
-                    record::type_error(&format!("Cannot read properties of {} (reading 'get')", children.to_js_string()))
-                } else {
-                    record::type_error("binding.emission.children.get is not a function")
-                }))
-            }
-            _ => Err(unsupported(&format!("traversing '{}' from {} inside a meta-node read", step.edge_type_id, record::describe(binding)))),
-        }
-    }
-
     /// `runDeferredWalk(walk, extraSteps)`: the walk's landings, the hops
     /// past it walked inside it, in the scope it captured.
     async fn deferred_landings(&self, walk: &crate::bindings::DeferredWalk, steps: &[TraversalStep]) -> Result<Vec<Binding>, Failure> {
@@ -676,7 +438,9 @@ impl Run<'_> {
                 let reads = landings.iter().map(|b| self.read_binding_field(b, field, name)).collect::<Result<Vec<_>, _>>()?;
                 Ok(self.collapse(reads))
             }
-            Binding::Shaped(_) => self.shaped_field(binding, field, name),
+            Binding::Resource(resource) => Ok(self.resource_field(resource, field)),
+            Binding::ShapePosition(position) => Ok(self.shape_position_field(position, field)),
+            Binding::Callback(callback) => Ok(Evaluated { value: callback_field(callback, field), prov: none() }),
             other => Err(unsupported(&format!("reading '{field}' off {} reached through '{name}'", record::describe(other)))),
         }
     }
@@ -785,206 +549,9 @@ impl Run<'_> {
                     Some(held) => self.step_cursor(&held, step, scope, span).await,
                     None => Err(unsupported(&format!("traversing '{}' from {} inside EXISTS()", step.edge_type_id, record::describe(cursor)))),
                 },
-                Binding::Shaped(dict) => self.step_shaped(cursor, &Js::Object(dict.clone()), step, scope, span).await,
                 other => Err(unsupported(&format!("traversing '{}' from {} inside EXISTS()", step.edge_type_id, record::describe(other)))),
             }
         })
-    }
-
-    /// `stepExistsCursor` of a dict the TypeScript takes for a record: each
-    /// kind's case, reading the dict's own keys where the TypeScript does.
-    async fn step_shaped(&self, cursor: &Binding, this: &Js, step: &EdgeStep, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
-        let eval = |e| Failure::of_eval(e, "");
-        let graph = match record::kind_of(cursor).as_str() {
-            "sourcePosition" => Some(self.shaped_source_record(this)?),
-            "handle" => Some(self.shaped_handle_record(this, "a write handle").await?),
-            "extractRoot" | "extractPosition" => {
-                let children = record::get(&record::get(this, "emission").map_err(eval)?, "children").map_err(eval)?;
-                return Err(eval(if children.is_nullish() {
-                    record::type_error(&format!("Cannot read properties of {} (reading 'get')", children.to_js_string()))
-                } else {
-                    record::type_error("cursor.emission.children.get is not a function")
-                }));
-            }
-            "blockMeta" => return Err(eval(edges_get(this, "cursor"))),
-            "nodePosition" => {
-                let edge = record::get(&record::get(this, "edges").map_err(eval)?, &step.edge_type_id).map_err(eval)?;
-                if !edge.is_nullish() && matches!(record::get(&edge, "kind").map_err(eval)?, Js::String(k) if k == "deferred") {
-                    return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, &[]).await;
-                }
-                let landings = if edge.is_nullish() { Js::Undefined } else { record::get(&edge, "landings").map_err(eval)? };
-                return self.raw_landings(if landings.is_nullish() { Js::array(Vec::new()) } else { landings }, "(intermediate value)");
-            }
-            "positions" => {
-                let landings = record::get(this, "landings").map_err(eval)?;
-                let Js::Array(list) = &landings else {
-                    return Err(eval(if landings.is_nullish() {
-                        record::type_error(&format!("Cannot read properties of {} (reading 'map')", landings.to_js_string()))
-                    } else {
-                        record::type_error("cursor.landings.map is not a function")
-                    }));
-                };
-                let cursors = list.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
-                let hops: Vec<_> = cursors.iter().map(|landing| self.step_cursor(landing, step, scope, span)).collect();
-                let mut reached = Vec::new();
-                for result in join_all(hops).await {
-                    reached.extend(result?);
-                }
-                return Ok(reached);
-            }
-            "value" => {
-                let Binding::Value(value) = self.shaped_value(this).map_err(eval)? else { unreachable!("a value") };
-                return match record::held_binding(&value.value) {
-                    Some(held) => self.step_cursor(&held, step, scope, span).await,
-                    None => Err(unsupported(&format!("traversing '{}' from {} inside EXISTS()", step.edge_type_id, record::describe(cursor)))),
-                };
-            }
-            _ => None,
-        };
-        let Some((start, read)) = graph else {
-            return Err(unsupported(&format!("traversing '{}' from {} inside EXISTS()", step.edge_type_id, record::describe(cursor))));
-        };
-        match read {
-            crate::shaped::GraphRead::Live(read) => {
-                crate::shaped::wrapper_reads(&start, read.start_surface_type.as_deref()).map_err(eval)?;
-                self.step_cursor(&Binding::Landed(Rc::new(Landed::new(start, None, read))), step, scope, span).await
-            }
-            crate::shaped::GraphRead::Foreign(read) => Err(eval(crate::shaped::foreign_related(&read, step.direction == EdgeDirection::Incoming))),
-        }
-    }
-
-    /// `runDeferredWalk` of a dict's `walk`, its landings.
-    pub(crate) async fn shaped_walk(&self, walk: &Js, steps: &[TraversalStep]) -> Result<Vec<Binding>, Failure> {
-        Ok(self.shaped_walk_iterations(walk, steps).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect())
-    }
-
-    /// `runDeferredWalk(walk, extraSteps)` of a dict's `walk`: a fresh scope
-    /// of its `captured` pairs (`for (const [name, binding] of
-    /// walk.captured)`), then its head resolved there with the hops past it
-    /// appended, as `resolveHeadIterations` reads the head.
-    pub(crate) async fn shaped_walk_iterations(&self, walk: &Js, extra: &[TraversalStep]) -> Result<crate::traverse::Paths, crate::run::Stop> {
-        use crate::run::Stop;
-        let eval = |e| Stop::Thrown(Failure::of_eval(e, ""));
-        let captured = record::get(walk, "captured").map_err(eval)?;
-        let pairs: Vec<Js> = match &captured {
-            Js::Array(list) => list.items().clone(),
-            Js::String(text) => text.chars().map(|c| Js::String(c.to_string())).collect(),
-            _ => return Err(eval(record::type_error("walk.captured is not iterable"))),
-        };
-        let at = Scope::root();
-        let mut declared: Vec<(Js, Binding)> = Vec::new();
-        for pair in pairs {
-            let (key, held) = match &pair {
-                Js::Array(list) => (list.items().first().cloned().unwrap_or(Js::Undefined), list.items().get(1).cloned().unwrap_or(Js::Undefined)),
-                Js::String(text) => {
-                    let mut chars = text.chars().map(|c| Js::String(c.to_string()));
-                    (chars.next().unwrap_or(Js::Undefined), chars.next().unwrap_or(Js::Undefined))
-                }
-                _ => return Err(eval(record::type_error(".for is not iterable"))),
-            };
-            // `env.declare(name, binding)`: a `Map` keyed by the value as it
-            // is, so a key that is no text is one only a root of that very
-            // value reads. The later pair wins; one bound to nothing reads as
-            // not in scope.
-            declared.retain(|(k, _)| !crate::js::same_value_zero(k, &key));
-            let binding = match held {
-                held if !held.truthy() => continue,
-                Js::Object(dict) => Binding::Shaped(dict),
-                Js::Record(record) => (*record).clone(),
-                _ => Binding::Shaped(Rc::new(crate::js::JsObject::new())),
-            };
-            declared.push((key, binding));
-        }
-        for (key, binding) in &declared {
-            if let Js::String(name) = key {
-                at.declare(name.clone(), binding.clone());
-            }
-        }
-        let captured = |name: &Js| declared.iter().find(|(k, _)| crate::js::same_value_zero(k, name)).map(|(_, b)| b.clone());
-        let mapping = record::get(walk, "mapping").map_err(eval)?;
-        let mapped = !matches!(mapping, Js::Undefined);
-        // `probePathHead`: the root's spelling, then the hops as a template
-        // literal writes them.
-        let head = record::get(walk, "head").map_err(eval)?;
-        let root = record::get(&head, "root").map_err(eval)?;
-        enum Root {
-            Name(Js),
-            Expression(Js),
-        }
-        let (probe_root, root) = match &root {
-            Js::Undefined => (String::new(), None),
-            root => match record::get(root, "kind").map_err(eval)? {
-                // `spellName(name)`: its test and its template read the name
-                // as text, whatever it is.
-                Js::String(kind) if kind == "name" => {
-                    let name = record::get(root, "name").map_err(eval)?;
-                    let text = name.to_text().map_err(|e| eval(record::type_error(&e.message)))?;
-                    (crate::write::spell_name(&text), Some(Root::Name(name)))
-                }
-                _ => ("__movement_expression_root__".to_string(), Some(Root::Expression(record::get(root, "expr").map_err(eval)?))),
-            },
-        };
-        let hops_raw = record::get(&head, "hopsRaw").map_err(eval)?.to_js_string();
-        let steps = crate::traverse::head_probe(&probe_root, &hops_raw, if mapped { &[] } else { extra }).map_err(Stop::Thrown)?;
-        let Some(root) = root else {
-            return Err(Stop::Thrown(Failure::unsupported("rootless block heads (relative traversal)", "root the head at a named binding")));
-        };
-        let (binding, root) = match root {
-            Root::Name(name) => (captured(&name), probe_root.clone()),
-            // `bindSlotValue(root.expr)` reads the slot's source text first.
-            Root::Expression(expr) => {
-                let raw = record::get(&expr, "raw").map_err(eval)?;
-                return Err(if raw.is_nullish() {
-                    eval(record::type_error(&format!("Cannot read properties of {} (reading 'trim')", raw.to_js_string())))
-                } else {
-                    Stop::Thrown(Failure::unreproduced("a walk a value holds as data rooted at an expression", "the TypeScript engine evaluates the expression the data writes"))
-                });
-            }
-        };
-        let binding = binding
-            .ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{root}' is not in scope — the checker should have caught this"))))?;
-        let origin = movement_parser::ast::Loc { line: 0, col: 0 };
-        let span = crate::env::js_of_serialized(&movement_parser::ast::Span { start: origin, end: origin });
-        let iterations = self.head_iterations_from(binding, &root, steps.as_deref(), &at, &span).await?;
-        if !mapped || iterations.is_empty() {
-            return Ok(iterations);
-        }
-        // `mapIterations`: each landing built through the literal in the
-        // walk's scope with that iteration's hop aliases; past the mapping
-        // the hops cross the built nodes' own edges.
-        let mut nodes = Vec::new();
-        for (aliases, _) in &iterations {
-            let resolve = |name: &Js| match name {
-                Js::String(text) => aliases.iter().find(|(alias, _)| alias == text).map(|(_, b)| b.clone()).or_else(|| captured(name)),
-                _ => captured(name),
-            };
-            nodes.push((Vec::new(), Binding::Shaped(crate::mapping::synthesise_node(&mapping, &resolve).map_err(Stop::Thrown)?)));
-        }
-        if extra.is_empty() {
-            return Ok(nodes);
-        }
-        self.walk_node_plane(nodes, extra, &at, &span).await
-    }
-
-    /// `for (const landing of edge.landings)`: what a landed edge a dict
-    /// holds hands the walk, a TypeError where it is not iterable.
-    pub(crate) fn iterated_landings(&self, landings: Js) -> Result<Vec<Binding>, Failure> {
-        match landings {
-            Js::Array(_) | Js::String(_) => self.raw_landings(landings, ""),
-            other => Err(Failure::of_eval(record::type_error(&format!("{} is not iterable (cannot read property Symbol(Symbol.iterator))", typed(&other))), "")),
-        }
-    }
-
-    /// What a dict's `landings` hands a walk as its records: each member as
-    /// the TypeScript reads it, by its `kind`.
-    pub(crate) fn raw_landings(&self, landings: Js, variable: &str) -> Result<Vec<Binding>, Failure> {
-        let eval = |e| Failure::of_eval(e, "");
-        match &landings {
-            Js::Array(list) => list.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval),
-            // A text iterates as its characters, each a cursor of no `kind`.
-            Js::String(text) => Ok(text.chars().map(|_| Binding::Shaped(Rc::new(crate::js::JsObject::new()))).collect()),
-            _ => Err(eval(record::type_error(&format!("{variable} is not iterable")))),
-        }
     }
 
     /// `applyHopOrderLimit` over records of any kind, each key read in its
@@ -1024,306 +591,29 @@ impl Run<'_> {
     }
 }
 
-/// The TypeScript's reads of a dict it takes for a binding (`Binding::Shaped`):
-/// each kind's case of `traverseFrom` and `readBindingField`, reading the
-/// dict's own keys in the order the TypeScript does, so a key it lacks fails
-/// where JavaScript's would.
 impl Run<'_> {
-    fn read_shaped<'s>(&'s self, expr: &'s Expression, name: &'s str, binding: Binding, scope: &'s Rc<Scope>, span: &'s Js) -> Reads<'s, Evaluated> {
-        Box::pin(async move {
-            let Binding::Shaped(dict) = &binding else { unreachable!("a shaped binding") };
-            let this = Js::Object(dict.clone());
-            let kind = record::kind_of(&binding);
-            let (steps, terminal) = parts(expr);
-            let in_hand = steps.is_empty() && !matches!(terminal, Expression::Exists { .. });
-            let eval = |e| Failure::of_eval(e, "");
-            match kind.as_str() {
-                "event" => self.read_from(expr, name, Binding::Event, scope, span).await,
-                "sourcePosition" => {
-                    let (start, read) = self.shaped_source_record(&this)?;
-                    self.read_graph(expr, name, "a traversed source record", start, read, scope, span).await
-                }
-                // `graphRead` resolves the instance before a read with no
-                // hops is refused.
-                "instance" => {
-                    let slug = record::get(&this, "adapterSlug").map_err(eval)?;
-                    let read = self.shaped_instance_read(&this).await;
-                    if steps.is_empty() && !matches!(terminal, Expression::Exists { .. }) {
-                        // What the resolution would have asked outside the
-                        // host contract is not asked; the refusal is the same.
-                        if let Err(failure) = read
-                            && !matches!(failure, Failure::Engine { class: crate::eval::ErrorClass::Unreproduced, .. })
-                        {
-                            return Err(failure);
-                        }
-                        return Err(Failure::unsupported(
-                            &format!("reading fields of '{name}' ({})", record::describe(&binding)),
-                            &format!("traverse a collection — {name}-[x:…]->"),
-                        ));
-                    }
-                    let start = crate::traverse::meta_position_of(slug);
-                    self.read_graph(expr, name, &format!("the '{name}' graph"), start, crate::shaped::GraphRead::Live(read?), scope, span).await
-                }
-                "handle" if !in_hand => {
-                    let (start, read) = self.shaped_handle_record(&this, name).await?;
-                    self.read_graph(expr, name, "a write handle", start, read, scope, span).await
-                }
-                "handle" if in_hand => {
-                    let field = direct_field(expr, name, "a write handle")?;
-                    self.shaped_handle_field(&record::get(&this, "handle").map_err(eval)?, field).map_err(eval)
-                }
-                "extractRoot" | "extractPosition" if in_hand => {
-                    let Some(field) = field_terminal(terminal) else {
-                        return Err(unsupported(&format!("this read shape on an extracted entity ('{name}')")));
-                    };
-                    if field == POSITION_SENTINEL {
-                        let emission = record::get(&this, "emission").map_err(eval)?;
-                        return Ok(Evaluated { value: Js::array(vec![record::get(&emission, "fields").map_err(eval)?]), prov: none() });
-                    }
-                    self.shaped_emission_field(&record::get(&this, "emission").map_err(eval)?, field).map_err(eval)
-                }
-                "blockMeta" => {
-                    let field = field_terminal(terminal);
-                    if steps.is_empty() && field == Some(POSITION_SENTINEL) {
-                        return Ok(Evaluated { value: Js::array(vec![this]), prov: none() });
-                    }
-                    if !steps.is_empty() && let Some(TraversalStep::Edge(step)) = steps.first()
-                        && step.expression_filter.is_some()
-                    {
-                        return Err(unsupported(&format!("WHERE filters on block meta-node hops ('{name}')")));
-                    }
-                    let variable = if matches!(terminal, Expression::Exists { .. }) && steps.is_empty() { "cursor" } else { "binding" };
-                    if !steps.is_empty() || matches!(terminal, Expression::Exists { steps, .. } if !steps.is_empty()) || field.is_some() {
-                        return Err(Failure::of_eval(edges_get(&this, variable), ""));
-                    }
-                    Err(unsupported(&format!("this read shape on a block meta-node ('{name}')")))
-                }
-                "resource" => {
-                    let field = direct_field(expr, name, "a resource")?;
-                    self.shaped_resource_field(&record::get(&this, "resource").map_err(eval)?, field).map_err(eval)
-                }
-                "shapePosition" => {
-                    let field = direct_field(expr, name, "a shape position")?;
-                    self.shaped_planar_field(&this, field).map_err(eval)
-                }
-                "nodePosition" if in_hand => {
-                    let field = direct_field(expr, name, "a synthesised node")?;
-                    self.shaped_planar_field(&this, field).map_err(eval)
-                }
-                "nodePosition" => {
-                    let reached = self.walk_meta(vec![binding.clone()], steps, name, scope, span).await?;
-                    if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
-                        let found = self.exists(hops, where_, reached, scope, span).await?;
-                        return Ok(Evaluated { value: Js::Bool(found), prov: none() });
-                    }
-                    self.read_landings(expr, reached, name, "a synthesised node").await
-                }
-                // `walkExtractSteps` over the dict's `emission`, whose
-                // `children` data cannot make a `Map`.
-                "extractRoot" | "extractPosition" => {
-                    if let Some(step) = steps.first() {
-                        let TraversalStep::Edge(edge) = step else {
-                            return Err(unsupported(&format!("'{}' hops over the extract result ('{name}')", crate::traverse::step_type(step))));
-                        };
-                        if edge.expression_filter.is_some() {
-                            return Err(unsupported(&format!("WHERE filters on extract-result hops ('{name}')")));
-                        }
-                        let children = record::get(&record::get(&this, "emission").map_err(eval)?, "children").map_err(eval)?;
-                        return Err(eval(if children.is_nullish() {
-                            record::type_error(&format!("Cannot read properties of {} (reading 'get')", children.to_js_string()))
-                        } else {
-                            record::type_error("e.children.get is not a function")
-                        }));
-                    }
-                    // `EXISTS` over the one entity: its hop asks its children.
-                    let Some((hops, where_)) = exists_terminal(expr, name, true)? else { unreachable!("an entity read in hand is read above") };
-                    self.exists(hops, where_, vec![binding.clone()], scope, span).await.map(|found| Evaluated { value: Js::Bool(found), prov: none() })
-                }
-                "callback" => {
-                    let field = direct_field(expr, name, "a callback")?;
-                    Ok(Evaluated { value: shaped_callback_field(&this, field).map_err(eval)?, prov: none() })
-                }
-                "value" => {
-                    let value = self.shaped_value(&this).map_err(eval)?;
-                    self.read_from(expr, name, value, scope, span).await
-                }
-                // `resolveDeferred` runs the walk: its captured scope first.
-                "lazyWalk" => {
-                    let reached = self.shaped_walk(&record::get(&this, "walk").map_err(eval)?, steps).await?;
-                    if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
-                        let found = self.exists(hops, where_, reached, scope, span).await?;
-                        return Ok(Evaluated { value: Js::Bool(found), prov: none() });
-                    }
-                    self.read_landings(expr, reached, name, "a deferred traversal").await
-                }
-                // `walkMetaSteps(binding.landings, steps)`: no hops hand back
-                // the landings as they are.
-                "positions" => {
-                    let landings = record::get(&this, "landings").map_err(eval)?;
-                    if !steps.is_empty() {
-                        let start = self.raw_landings(landings, "start")?;
-                        let reached = self.walk_meta(start, steps, name, scope, span).await?;
-                        if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
-                            let found = self.exists(hops, where_, reached, scope, span).await?;
-                            return Ok(Evaluated { value: Js::Bool(found), prov: none() });
-                        }
-                        return self.read_landings(expr, reached, name, "a block's returned records").await;
-                    }
-                    if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
-                        let cursors = if hops.is_empty() {
-                            // `cursors.length > 0`, then each cursor scoped for the WHERE.
-                            match &landings {
-                                Js::Array(_) | Js::String(_) if where_.is_none() => {
-                                    return Ok(Evaluated { value: Js::Bool(!matches!(&landings, Js::Array(l) if l.items().is_empty()) && !matches!(&landings, Js::String(t) if t.is_empty())), prov: none() });
-                                }
-                                Js::Undefined | Js::Null => return Err(eval(record::type_error(&format!("Cannot read properties of {} (reading 'length')", landings.to_js_string())))),
-                                Js::Array(_) | Js::String(_) => self.raw_landings(landings, "cursors")?,
-                                _ => return Ok(Evaluated { value: Js::Bool(false), prov: none() }),
-                            }
-                        } else {
-                            self.raw_landings(landings, "cursors")?
-                        };
-                        let found = self.exists(hops, where_, cursors, scope, span).await?;
-                        return Ok(Evaluated { value: Js::Bool(found), prov: none() });
-                    }
-                    let Some(field) = field_terminal(terminal) else {
-                        return Err(unsupported(&format!("this read shape on a block's returned records ('{name}')")));
-                    };
-                    if field == POSITION_SENTINEL {
-                        let Js::Array(list) = &landings else {
-                            return Err(eval(if landings.is_nullish() {
-                                record::type_error(&format!("Cannot read properties of {} (reading 'map')", landings.to_js_string()))
-                            } else {
-                                record::type_error("landed.map is not a function")
-                            }));
-                        };
-                        let members = list.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
-                        return self.read_landings(expr, members, name, "a block's returned records").await;
-                    }
-                    let members = self.raw_landings(landings, "landed")?;
-                    self.read_landings(expr, members, name, "a block's returned records").await
-                }
-                _ => Err(unsupported(&format!("reading '{name}' ({}) in an expression", record::describe(&binding)))),
-            }
-        })
-    }
-
-    /// `readBindingField` of a shaped binding.
-    fn shaped_field(&self, binding: &Binding, field: &str, name: &str) -> Result<Evaluated, Failure> {
-        let Binding::Shaped(dict) = binding else { unreachable!("a shaped binding") };
-        let this = Js::Object(dict.clone());
-        let eval = |e| Failure::of_eval(e, "");
-        match record::kind_of(binding).as_str() {
-            "handle" => self.shaped_handle_field(&record::get(&this, "handle").map_err(eval)?, field).map_err(eval),
-            "extractPosition" | "extractRoot" => self.shaped_emission_field(&record::get(&this, "emission").map_err(eval)?, field).map_err(eval),
-            "value" => {
-                let value = self.shaped_value(&this).map_err(eval)?;
-                self.read_binding_field(&value, field, name)
-            }
-            "resource" => self.shaped_resource_field(&record::get(&this, "resource").map_err(eval)?, field).map_err(eval),
-            "shapePosition" | "nodePosition" => self.shaped_planar_field(&this, field).map_err(eval),
-            "callback" => Ok(Evaluated { value: shaped_callback_field(&this, field).map_err(eval)?, prov: none() }),
-            "blockMeta" => Err(Failure::of_eval(edges_get(&this, "binding"), "")),
-            // `binding.landings.map(…)`, each member read by its `kind`.
-            "positions" => match record::get(&this, "landings").map_err(eval)? {
-                Js::Array(list) => {
-                    let mut reads = Vec::with_capacity(list.items().len());
-                    for member in list.items().iter() {
-                        reads.push(self.read_binding_field(&raw_cursor(member).map_err(eval)?, field, name)?);
-                    }
-                    Ok(self.collapse(reads))
-                }
-                landings if landings.is_nullish() => Err(eval(record::type_error(&format!("Cannot read properties of {} (reading 'map')", landings.to_js_string())))),
-                _ => Err(eval(record::type_error("binding.landings.map is not a function"))),
-            },
-            _ => Err(unsupported(&format!("reading '{field}' off {} reached through '{name}'", record::describe(binding)))),
-        }
-    }
-
-    /// `readHandleField` and `handleFieldProvenance` over a dict's `handle`.
-    fn shaped_handle_field(&self, handle: &Js, field: &str) -> Result<Evaluated, crate::eval::EvalError> {
-        let or_null = |v: Js| if v.is_nullish() { Js::Null } else { v };
-        let value = match field {
-            "externalId" => or_null(record::get(handle, "externalId")?),
-            "created" => record::get(handle, "created")?,
-            "committed" => record::get(handle, "committed")?,
-            _ => {
-                let written = record::get(handle, "writtenValues")?;
-                if js_in(&written, field)? {
-                    or_null(record::get(&written, field)?)
-                } else {
-                    match record::get(handle, "resultData")? {
-                        data if data.is_nullish() => Js::Null,
-                        data => or_null(record::get(&data, field)?),
-                    }
-                }
-            }
-        };
-        let origin = record::get(handle, "origin")?;
-        if !origin.truthy() {
-            return Ok(Evaluated { value, prov: none() });
-        }
-        let mut read = crate::js::JsObject::new();
-        spread_into(&mut read, &origin);
-        read.set("field".into(), Js::str(field));
-        let id = self.mint_origin(Js::object(read));
-        Ok(Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
-    }
-
-    /// `readEmissionField` over a dict's `emission`.
-    fn shaped_emission_field(&self, emission: &Js, field: &str) -> Result<Evaluated, crate::eval::EvalError> {
-        let origin = record::get(&record::get(emission, "provenance")?, field)?;
-        let value = record::get(&record::get(emission, "fields")?, field)?;
-        let value = if value.is_nullish() { Js::Null } else { value };
-        if !origin.truthy() {
-            return Ok(Evaluated { value, prov: none() });
-        }
-        let id = self.intern_origin(origin);
-        Ok(Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
-    }
-
     /// The resource case: `resource.data?.[field] ?? null`, cited by the
     /// resource.
-    fn shaped_resource_field(&self, resource: &Js, field: &str) -> Result<Evaluated, crate::eval::EvalError> {
-        let value = match record::get(resource, "data")? {
-            data if data.is_nullish() => Js::Null,
-            data => record::get(&data, field)?,
+    fn resource_field(&self, resource: &Js, field: &str) -> Evaluated {
+        let value = match record::get(resource, "data") {
+            Ok(data) if !data.is_nullish() => record::get(&data, field).unwrap_or(Js::Undefined),
+            _ => Js::Null,
         };
         let value = if value.is_nullish() { Js::Null } else { value };
-        let mut origin = vec![("kind", Js::str("resource"))];
-        let external_id = record::get(resource, "externalId")?;
-        if !matches!(external_id, Js::Undefined) {
-            origin.push(("externalId", external_id));
-        }
-        let name = record::get(resource, "name")?;
-        if !matches!(name, Js::Undefined) {
-            origin.push(("name", name));
-        }
-        origin.push(("field", Js::str(field)));
-        let id = self.mint_origin(crate::env::object_of(origin));
-        Ok(Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
+        let id = self.mint_origin(resource_origin(resource, Some(field)));
+        Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) }
     }
 
-    /// `readShapePositionField` / `readNodePositionField` over a dict's
-    /// `fields` and `fieldProvenance`.
-    fn shaped_planar_field(&self, this: &Js, field: &str) -> Result<Evaluated, crate::eval::EvalError> {
-        let value = record::get(&record::get(this, "fields")?, field)?;
+    /// `readShapePositionField`: its `fields` and `fieldProvenance`.
+    fn shape_position_field(&self, position: &ShapePosition, field: &str) -> Evaluated {
+        let value = record::get(&position.fields, field).unwrap_or(Js::Undefined);
         let value = if value.is_nullish() { Js::Null } else { value };
-        let provenance = record::get(&record::get(this, "fieldProvenance")?, field)?;
-        Ok(Evaluated { value, prov: Prov::Built(self.trail_of_provenance(&provenance)) })
+        let provenance = record::get(&position.field_provenance, field).unwrap_or(Js::Undefined);
+        Evaluated { value, prov: Prov::Built(self.trail_of_provenance(&provenance)) }
     }
 
-    /// A dict's `value` case as the value binding it is to the TypeScript.
-    fn shaped_value(&self, this: &Js) -> Result<Binding, crate::eval::EvalError> {
-        let value = record::get(this, "value")?;
-        let provenance = record::get(this, "provenance")?;
-        let many = matches!(record::get(this, "many")?, Js::Bool(true));
-        let trail = if provenance.is_nullish() { Trail::default() } else { self.trail_of_provenance(&provenance) };
-        Ok(Binding::Value(crate::env::ValueBinding { value, trail: Some(trail), many }))
-    }
-
-    /// A provenance a dict carries, as a trail: its origins and `direct`,
-    /// each the very object, interned.
+    /// A provenance a record carries as data, as a trail: its origins and
+    /// `direct`, each the very object, interned.
     fn trail_of_provenance(&self, provenance: &Js) -> Trail {
         let Js::Object(object) = provenance else { return Trail::default() };
         let origins = match object.get("origins") {
@@ -1338,71 +628,26 @@ impl Run<'_> {
     }
 }
 
+/// `resourceOrigin`: `{kind: 'resource', externalId?, name?, field?}`.
+fn resource_origin(resource: &Js, field: Option<&str>) -> Js {
+    let mut origin = vec![("kind", Js::str("resource"))];
+    for key in ["externalId", "name"] {
+        let value = record::get(resource, key).unwrap_or(Js::Undefined);
+        if !matches!(value, Js::Undefined) {
+            origin.push((key, value));
+        }
+    }
+    if let Some(field) = field {
+        origin.push(("field", Js::str(field)));
+    }
+    crate::env::object_of(origin)
+}
 
 /// `readCallbackField`.
-fn shaped_callback_field(this: &Js, field: &str) -> Result<Js, crate::eval::EvalError> {
+fn callback_field(callback: &Callback, field: &str) -> Js {
     match field {
-        "id" => record::get(this, "callbackId"),
-        "url" => record::get(this, "url"),
-        _ => Ok(Js::Null),
-    }
-}
-
-/// `<variable>.edges.get(…)` on a dict, whose `edges` is no `Map`.
-pub(crate) fn edges_get(this: &Js, variable: &str) -> crate::eval::EvalError {
-    match record::get(this, "edges") {
-        Err(error) => error,
-        Ok(edges) if edges.is_nullish() => record::type_error(&format!("Cannot read properties of {} (reading 'get')", edges.to_js_string())),
-        Ok(_) => record::type_error(&format!("{variable}.edges.get is not a function")),
-    }
-}
-
-/// `key in value`: its own keys and its prototype's; a TypeError on anything
-/// that is not an object.
-fn js_in(value: &Js, key: &str) -> Result<bool, crate::eval::EvalError> {
-    match value {
-        Js::Object(object) => Ok(object.get(key).is_some() || crate::js::is_object_prototype_name(key)),
-        Js::Record(record) => Ok(key == "kind" || !matches!(record::own_property(record, key)?, Js::Null) || crate::js::is_object_prototype_name(key)),
-        Js::Array(list) => Ok(key == "length" || key.parse::<usize>().is_ok_and(|i| i < list.items().len())),
-        Js::Function(_) => Ok(matches!(key, "length" | "name" | "prototype")),
-        other => Err(record::type_error(&format!("Cannot use 'in' operator to search for '{key}' in {}", other.to_js_string()))),
-    }
-}
-
-/// `{...value}` into `object`: an object's own keys, a text's characters.
-fn spread_into(object: &mut crate::js::JsObject, value: &Js) {
-    match value {
-        Js::Object(source) => {
-            for (key, item) in source.entries() {
-                object.set(key.clone(), item.clone());
-            }
-        }
-        Js::String(text) => {
-            for (index, c) in text.encode_utf16().enumerate() {
-                object.set(index.to_string(), Js::String(String::from_utf16_lossy(&[c])));
-            }
-        }
-        _ => {}
-    }
-}
-
-/// A member of a dict's `landings` as a cursor the TypeScript switches on by
-/// its `kind`: a dict as the record it is shaped like (or a kind none of the
-/// switches names), anything else a cursor of no kind — and `null` or
-/// `undefined`, whose `kind` cannot be read.
-fn raw_cursor(member: &Js) -> Result<Binding, crate::eval::EvalError> {
-    match member {
-        Js::Object(dict) => Ok(Binding::Shaped(dict.clone())),
-        Js::Undefined | Js::Null => Err(record::type_error(&format!("Cannot read properties of {} (reading 'kind')", member.to_js_string()))),
-        _ => Ok(Binding::Shaped(Rc::new(crate::js::JsObject::new()))),
-    }
-}
-
-/// How V8 names a value it cannot iterate that no variable names: its type,
-/// then the value where it prints one.
-fn typed(value: &Js) -> String {
-    match value {
-        Js::Bool(_) | Js::Number(_) => format!("{} {}", value.type_of(), value.to_js_string()),
-        other => other.type_of().to_string(),
+        "id" => callback.callback_id.clone(),
+        "url" => callback.url.clone(),
+        _ => Js::Null,
     }
 }

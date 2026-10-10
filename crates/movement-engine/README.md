@@ -222,7 +222,7 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `Intl.DateTimeFormat` (DATE.TODAY, DATETIME.AT) | the zone's wall reading asked of the environment (`tz_convert`); `instantAtZonedWallTime`'s search over those readings written out, `Date.UTC`'s 19xx years included | `stdlib::tests::datetime_at_names_the_instant_on_the_zones_wall_clock`, `oracle::…` (`date.today`, `datetime.at`) |
 | `JSON.stringify` (TEXT.SERIALISE) | its quoting and two-space layout; keys sorted by UTF-16 unit, then laid out in object order (index keys first) as `Object.fromEntries` does | `js::tests::json_stringify_indents_as_javascript_does`, `stdlib::tests::text_members` |
 | object-literal prototypes | `MAGNITUDE_SUFFIXES["constructor"]` is `Object`, so `"5 constructor"` is NaN; `MONTH_NAMES["constructor"]` fails `validParts` like no month | `stdlib::tests::figures_read_as_the_regex_reads_them` |
-| a dict whose `kind` names a binding kind | read as a record, as `bindingOf` reads it (`kind in describeBinding` walks the prototype chain, so `"toString"` and `"constructor"` count); its reads, `==`, spreads and record arguments are the TypeScript's for that kind | `record::tests::*`, `records_oracle::records_held_as_values_read_as_the_typescript_reads_them` |
+| a dict whose `kind` names a binding kind (or an `Object.prototype` name) | data, as every dict is: only an engine object (`Js::Record`) is a record, so the content of data never changes how it is treated (Henry's ruling, 2026-10-10; chunk 7A Task 4b) | `record::tests::a_dict_is_never_a_record_whatever_its_kind`, `tests::maps_keep_javascript_key_order`, apps/api's `rust_engine.unit.test.ts` ("host data is never read as an engine object") |
 
 `tests/extraction_pin.rs` holds crate::extract and the priced-plugin cap to
 tests/oracle/extraction.json: 160 seeded programs (library files, `extends`,
@@ -494,10 +494,9 @@ only (an unsupported one is `language_version_unsupported` first); a version
 
 These depend on what a value holds, not on what the program says, and stay
 mid-run failures ("Errors a run can meet mid-run" below): a `__proto__` key
-spread in from a value, a record held in a value handed to the host, a
-binding-shaped dict of a kind whose reading needs what the run does not hold
-for it. A name typed as a value may hold a record at run time (a member of
-a walk read as a list, a dict whose `kind` names a binding kind), so
+spread in from a value, a record held in a value handed to the host. A
+name typed as a value may hold a record at run time (a member of a walk
+read as a list), so
 admission walks a collection op's function, a closure's body and a
 movement's position parameters under every kind a value can carry there
 (`Kind::Held`), and the run dispatches on the binding it holds. Two mid-run
@@ -788,32 +787,24 @@ record from a bound block, heads of more than one hop, heads off a value, a node
 ### Records held as values
 
 A value may hold a record (chunk 7A Task 3): a member of a walk read as a
-list, a closure's parameter, a dict whose `kind` names a binding kind or
-an `Object.prototype` member (`bindingOf`, mirrored in record.rs). Each is
+list, a closure's parameter (`bindingOf`, record.rs). Only an engine object
+is one (`Js::Record`): a dict is data whatever keys it carries, a `kind`
+naming a binding's included (chunk 7A Task 4b). Each is
 read, compared, spread, written from, linked and walked as the TypeScript
 reads that binding (`readBareName`, `traverseFrom`, `readBindingField`,
 `compareRecords`, `spreadKeysOf`, `resolveTupleWriteTarget`,
 `referencedRecords`), with V8's TypeError messages where the TypeScript
 throws one. Records compare by identity, else by address. A field an
 object lacks reads `Object.prototype`'s member, and a dict made text runs
-V8's ToPrimitive over its own `toString` and `valueOf`. A dict the
-TypeScript takes for a record of a system (a `sourcePosition`, a `handle`,
-an `instance`) is read through its graph as that binding is (shaped.rs):
-the event's source, or an instance resolved from the dict's slug,
-credential name and construction config; a dict's own `read` holds no
-adapter, so a read through it throws V8's TypeError where the TypeScript
-calls into it. Every other kind's walks, `EXISTS` hops, field reads, bare
-reads and parks read the dict's keys in the order the TypeScript's case
-reads the binding's, a member of its lists switched on by its `kind`. A
+V8's ToPrimitive over its own `toString` and `valueOf`. A
 GROUPBY or KEYBY filing a member under `__proto__` sets the answer's
 prototype (`JsObject::proto`): reads go through it, a list there makes
 the answer's text a join, the answer is no dict (`isDictValue`), and the
 eval wire carries the prototype (`["o", id, entries, prototype]`); a list
-there answers `Array.prototype`'s names (`["f", "Array#<name>"]`), a record
-there makes the answer that record to `bindingOf` (the KEYBY case), and a
+there answers `Array.prototype`'s names (`["f", "Array#<name>"]`) (a record
+there leaves the answer a dict: no prototype makes data a record), and a
 filing onto a list the prototype holds pushes onto that very list (lists
-are shared and mutable, `JsArray::push`). A walk a dict carries runs from
-its captured pairs. The hops past a kept walk run inside it
+are shared and mutable, `JsArray::push`). The hops past a kept walk run inside it
 (`resolveHeadIterations(walk.head, env, extraSteps)`): in the scope it
 captured, so a WHERE there reads the names as they were when the walk was
 kept, and breadth first across its origins, hop by hop, as the TypeScript
@@ -1179,35 +1170,6 @@ TypeScript engine runs the segment, having seen only reads.
 - A record held in a value reaching a host request admission did not
   foresee: MOVENG_UNSUPPORTED before the request is made (a backstop;
   admission refuses each route it knows, by name).
-- A dict shaped like an `instance` whose own schema holds a `collections`
-  table the read wrapper's types do not read, or is `null`, read through its
-  graph: MOVENG_UNSUPPORTED. One with no `collections` at all is read off the
-  data as the TypeScript reads it: a collection scan fails with the read
-  wrapper's TypeError after the scan; a streamed walk (which no read wrapper
-  touches) proceeds; a wrapped hop off a record stamps what lands from the
-  schema's `positions` and `unions`; a hop's WHERE sets up a member check
-  only where `selectedMembers` holds an entry for it (one that does is
-  MOVENG_UNSUPPORTED), failing as `hopSelection` does where the hop's target
-  is not in its positions. Its slug, credential name and construction
-  config are read as the TypeScript reads them, whatever they are, and the
-  host is asked for the slug as the dict holds it (the host keys its
-  registry by it, as the TypeScript's does).
-- A walk a dict holds as data (`lazyWalk`, a deferred edge) rooted at an
-  expression with source text, or whose mapping has an entry that evaluates
-  a value or walks a head, or a spread to apply: MOVENG_UNSUPPORTED (held
-  back by decision: "Known divergences" below). One whose mapping names a
-  declaration in scope fails as `resolvedShape` does on a dict holding no
-  `declaration` (MOVENG_UNSUPPORTED on one that holds one). Every other walk
-  a dict holds runs as the TypeScript runs it: captured pairs keyed by the
-  value itself (a root named by no text reads the pair keyed by that very
-  value), a later pair replacing an earlier one, the root spelled and the
-  hops probed as their text, and a mapping building the nodes, nested
-  nodes, declared edges and graphs the data writes — an edge keyed by its
-  name's text, `__proto__` the prototype's setter — with the TypeErrors
-  where it is not a literal's shape. A head rooted at a dict shaped like a
-  synthesised node, a kept walk or a meta-node walks that kind's plane; one
-  hop off a dict shaped like a callback is MOVENG_UNSUPPORTED (the
-  TypeScript reads the calls its callback sink holds).
 - Parking a value whose message or data would print a record's binding
   object other than the event's or a block's returned records' (its read
   seam, its computed schema): MOVENG_UNSUPPORTED.
@@ -1217,7 +1179,7 @@ TypeScript engine runs the segment, having seen only reads.
   `IS` (a `node { … }` literal nests nodes only; a `graph { … }` literal is
   refused, `is_test_declared_graph`).
 
-None of the first five is a built-in's reading, so none can be handed to the
+None of the first three is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`).
 
 The record verbs, the target WHERE, nested and bound blocks add none: each
@@ -1381,7 +1343,7 @@ Sizes are estimates (XS, S, M, L).
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
 | 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | mirrored (chunk 7A Task 5): the shim passes the deployment's number as written; the text is cut where `slice` truncates it and the marker and the trace's `chars` print the number itself (`first 2.5 of …`) | oracle file_bound.json (seed 20261012, tests/tail_oracle.rs) | done |
-| 11 | records held in values (binding-shaped dicts: `bindingOf` walks the prototype chain), `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` and `Binding::Shaped`, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run" | oracle records.json (3,612 whole programs, seed 20261010, tests/records_oracle.rs) | done |
+| 11 | records held in values, `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` the only record, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run". The structural binding emulation (a dict whose `kind` names a binding's read as that binding, `Binding::Shaped`) is deleted (chunk 7A Task 4b): data is never an engine object | oracle records.json (213 whole programs, seed 20261010, tests/records_oracle.rs: the 4,269 whose payload impersonated a binding deleted, to be regenerated from the fixed TypeScript engine when main's fix merges forward) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |
@@ -1496,28 +1458,7 @@ beyond those, and these, held back by decision:
 
 | construct | the TypeScript | this engine | why held |
 |---|---|---|---|
-| a walk a dict holds as data whose mapping has an entry that evaluates a value (`{kind: "value", value: {raw}}`) or walks a head (`{kind: "traversal"}`) | parses and evaluates the program text the host's data carries | fails the run, MOVENG_UNSUPPORTED by name, mid-run | evaluating expression text found in host data is a design decision (Henry's), not a port |
-| the same mapping's `spreads` that apply to an entry (`after` naming its index) | evaluates the spread's source text the data carries | the same refusal | the same decision |
-| a walk a value holds as data whose mapping names a shape in scope that is a dict holding a `declaration` | reads the declaration the dict carries as the shape's own (its `extends`, fields and edges) | the same refusal | type-model structure found in host data: the same decision |
-| a walk a value holds as data rooted at an expression with source text (`root: {kind: "expression", expr: {raw}}`) | parses and evaluates the expression text the data carries | the same refusal | program text found in host data: the same decision |
-| a dict shaped like an `instance` whose own schema is no instance schema (its entries do not parse, or it lacks `positions`) | reads its graph's types off whatever the dict holds | the same refusal | the same decision |
-| a dict shaped like an `instance` whose own schema holds a member entry for a hop's WHERE (`selectedMembers[<refinement key>]`) but no `collections` table | builds the member check from the entry the data carries | the same refusal | the same decision |
-| a dict shaped like an `instance` whose own schema names an edge's target by something other than text, or `null` | reads the target as the schema's type it names | the same refusal | the same decision |
-| a dict shaped like an `instance` whose own schema's `positions` are not a dict, on an incoming hop | reads the positions as the schema's own | the same refusal | the same decision |
 | an object an in-process adapter answered and then MUTATED before answering it again | holds the one object: a later read, `IN` or `CONTAINS` sees the mutation through every name holding it | decodes the second answer fresh: names bound to the first answer keep its old contents | parked (Task 3 review): only an in-process adapter that mutates what it already returned can produce it; a protocol-v2 adapter answers fresh JSON each time, so cannot; no corpus program does |
-
-The line these rows draw: a binding-shaped dict that is DATA — an event,
-record, positions, items, candidates or instance dict with plain fields — is
-read as the TypeScript reads it (row 11 above, the records oracle); one that
-carries TYPE-MODEL STRUCTURE or PROGRAM TEXT for the engine to read as its
-own (a mapping's value or traversal entries, an applied spread, a shape's
-declaration, a schema's member entries and edge targets) is refused by name
-mid-run (MOVENG_UNSUPPORTED naming the construct), pending Henry's ruling:
-mirror the TypeScript reading host data as program, or a language version
-that stops reading host data as engine bindings. A refusal raised before the
-run's first effect is a decline (`unreproduced`): the run goes to the
-TypeScript engine, as an admission refusal does ("Admission" above); after an
-effect it fails the run, the construct named.
 
 ## The check
 

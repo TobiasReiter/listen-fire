@@ -1680,7 +1680,6 @@ pub(crate) fn infer_linked_type(
 /// `describeBinding`, for the kinds this engine binds.
 pub fn describe_binding(binding: &Binding) -> String {
     let described = match binding {
-        Binding::Shaped(_) => return crate::record::describe(binding),
         Binding::Value(_) => "a value binding",
         Binding::Event => "the movement parameter (the event position)",
         Binding::Instance(_) => "a constructed adapter instance",
@@ -1697,6 +1696,9 @@ pub fn describe_binding(binding: &Binding) -> String {
         Binding::Closure(_) => "a closure",
         Binding::Extracted { root: true, .. } => "an extract result",
         Binding::Extracted { root: false, .. } => "an extracted entity",
+        Binding::Callback(_) => "a callback",
+        Binding::ShapePosition(_) => "an in-memory shape position",
+        Binding::Resource(_) => "a resource",
     };
     described.to_string()
 }

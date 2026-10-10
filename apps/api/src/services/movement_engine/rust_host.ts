@@ -18,7 +18,7 @@
 // engine hands it in process, and an adapter's result comes back the same way.
 
 import { applyStdlib, languageVersionDiagnostic, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
-import { isCallbackParamType, isFileRef, type CallbackParamSpec, type ParkedScopeState } from 'engine-contracts';
+import { isFileRef, type ParkedScopeState } from 'engine-contracts';
 import { z } from 'zod';
 
 import { compareValues } from '#shared/expression/filter';
@@ -41,6 +41,7 @@ import {
   RunAborted,
   RustShimError,
   WireOut,
+  isCallbackParam,
   optionalString,
   optionalStringRecord,
   plainJson,
@@ -156,9 +157,8 @@ const ROUTES: Record<string, Route> = {
       hostErrors.push(hostCallFailure(answer.error));
       return new Plain(plainJson({ error: { ...answer.error, ref: hostErrors.length - 1 } }, `adapters.call ${method} error`));
     }
-    // An adapter's answer is data, as the event is: a dict in it shaped like
-    // a binding is one the engine reads as TypeScript's `bindingOf` does.
-    const result = wire.valueAsData(answer.result);
+    // An adapter's answer is data, as the event is, whatever keys it carries.
+    const result = wire.value(answer.result);
     if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
     return new Plain({ result });
   },
@@ -361,7 +361,7 @@ const ROUTES: Record<string, Route> = {
       segmentId: segmentOf(request),
       frameAddress: string(request.frameAddress, 'park.sink.collectBranchExports frameAddress'),
     });
-    const value = wire.valueAsData(rows);
+    const value = wire.value(rows);
     if (value === REFUSED) throw new RustShimError('park.sink.collectBranchExports answered exports the eval wire cannot carry as themselves');
     return new Plain(value);
   },
@@ -419,7 +419,7 @@ const ROUTES: Record<string, Route> = {
       segmentId: segmentOf(request),
       callbackId: string(request.callbackId, 'park.callbacks.calls callbackId'),
     });
-    const value = wire.valueAsData(calls);
+    const value = wire.value(calls);
     if (value === REFUSED) throw new RustShimError('park.callbacks.calls answered calls the eval wire cannot carry as themselves');
     return new Plain(value);
   },
@@ -443,7 +443,7 @@ const ROUTES: Record<string, Route> = {
     segmentOf(request);
     // On the eval wire, so each entry keeps the key order the engine wrote.
     if (request.wire !== true) throw new RustShimError('trace.append carries its entries on the eval wire');
-    const entries = new WireOut({ asData: true }).read(request.entries);
+    const entries = new WireOut().read(request.entries);
     if (!Array.isArray(entries)) throw new RustShimError('trace.append entries are a list');
     if (request.closing !== undefined && request.closing !== true) throw new RustShimError('trace.append closing is true or absent');
     context.trace.entries.push(...entries.map(traceEntry));
@@ -589,12 +589,6 @@ function count(value: unknown, what: string): number {
   return value;
 }
 
-function isCallbackParam(value: unknown): value is CallbackParamSpec {
-  if (typeof value !== 'object' || value === null) return false;
-  const type: unknown = Reflect.get(value, 'type');
-  return typeof Reflect.get(value, 'name') === 'string' && typeof type === 'string' && isCallbackParamType(type);
-}
-
 function instant(value: unknown, what: string): string {
   const text = string(value, what);
   if (Number.isNaN(new Date(text).getTime())) throw new RustShimError(`${what} is not an ISO 8601 instant`);
@@ -611,8 +605,8 @@ function instant(value: unknown, what: string): string {
 function wired(wire: WireOut, answer: object, method: string, members: readonly string[]): unknown {
   // Tried apart first: what goes out on the segment's wire is what the
   // engine reads, every id it names included.
-  const carries = (value: unknown) => new WireOut({ asData: true }).value(value) !== REFUSED;
-  if (carries(answer)) return wire.valueAsData(answer);
+  const carries = (value: unknown) => new WireOut().value(value) !== REFUSED;
+  if (carries(answer)) return wire.value(answer);
   const kept: Record<string, unknown> = {};
   const uncarried: string[] = [];
   for (const [key, value] of Object.entries(answer)) {
@@ -621,7 +615,7 @@ function wired(wire: WireOut, answer: object, method: string, members: readonly 
   }
   const value = { ...kept, uncarried };
   if (!carries(value)) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
-  return wire.valueAsData(value);
+  return wire.value(value);
 }
 
 function isEffort(value: string): value is Effort {
@@ -707,8 +701,8 @@ function builtinAnswer(segment: WireOut, run: () => unknown): unknown {
     if (error instanceof Error && error.constructor === Error) return { threw: { class: 'Error', message: error.message } };
     throw new RustShimError(`a built-in threw what the Rust engine cannot rethrow: ${String(error)}`);
   }
-  if (new WireOut({ asData: true }).value(value) === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
-  return { value: segment.valueAsData(value) };
+  if (new WireOut().value(value) === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
+  return { value: segment.value(value) };
 }
 
 /** A MovementEngineError's message without the `CODE: ` its constructor adds. */

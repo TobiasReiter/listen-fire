@@ -904,21 +904,19 @@ impl Run<'_> {
                     let many = matches!(at(descriptor, "many"), Some(Js::Bool(true)));
                     crate::record::bind_value(value, Some(trail.unwrap_or_default()), many)
                 }
-                // Data: the binding object, as it stood.
-                Some("callback") => shaped(vec![
-                    ("kind", Js::str("callback")),
-                    ("callbackId", at(descriptor, "callbackId").cloned().unwrap_or(Js::Undefined)),
-                    ("url", at(descriptor, "url").cloned().unwrap_or(Js::Undefined)),
-                    ("params", at(descriptor, "params").cloned().unwrap_or(Js::Undefined)),
-                ]),
-                Some("shapePosition") => shaped(vec![
-                    ("kind", Js::str("shapePosition")),
-                    ("shape", at(descriptor, "shape").cloned().unwrap_or(Js::Undefined)),
-                    ("node", at(descriptor, "node").cloned().unwrap_or(Js::Undefined)),
-                    ("fields", at(descriptor, "fields").cloned().unwrap_or(Js::Undefined)),
-                    ("fieldProvenance", at(descriptor, "fieldProvenance").cloned().unwrap_or(Js::Undefined)),
-                ]),
-                Some("resource") => shaped(vec![("kind", Js::str("resource")), ("resource", rehydrate_resource(at(descriptor, "resource").unwrap_or(&Js::Undefined)))]),
+                // Data only: the binding object, as it stood.
+                Some("callback") => Binding::Callback(Rc::new(crate::bindings::Callback {
+                    callback_id: at(descriptor, "callbackId").cloned().unwrap_or(Js::Undefined),
+                    url: at(descriptor, "url").cloned().unwrap_or(Js::Undefined),
+                    params: at(descriptor, "params").cloned().unwrap_or(Js::Undefined),
+                })),
+                Some("shapePosition") => Binding::ShapePosition(Rc::new(crate::bindings::ShapePosition {
+                    shape: at(descriptor, "shape").cloned().unwrap_or(Js::Undefined),
+                    node: at(descriptor, "node").cloned().unwrap_or(Js::Undefined),
+                    fields: at(descriptor, "fields").cloned().unwrap_or(Js::Undefined),
+                    field_provenance: at(descriptor, "fieldProvenance").cloned().unwrap_or(Js::Undefined),
+                })),
+                Some("resource") => Binding::Resource(Rc::new(rehydrate_resource(at(descriptor, "resource").unwrap_or(&Js::Undefined)))),
                 Some("instance") => Binding::Instance(Rc::new(self.rehydrate_instance(at(descriptor, "instance").unwrap_or(&Js::Null))?)),
                 // Code refs, re-resolved from the re-parsed program by name.
                 Some("shape" | "movement" | "opaque") => {
@@ -1181,14 +1179,6 @@ pub(crate) fn rematerialise_answer(answer: Js) -> Binding {
         })
         .collect();
     Binding::Extracted { emission: emission(JsObject::new(), vec![(type_name.clone(), kids)]), root: true, id: crate::bindings::Identity::new() }
-}
-
-fn shaped(entries: Vec<(&str, Js)>) -> Binding {
-    let mut object = JsObject::new();
-    for (key, value) in entries {
-        object.set(key.to_string(), value);
-    }
-    Binding::Shaped(Rc::new(object))
 }
 
 /// `rehydrateResource`: a file's descriptor branded again.

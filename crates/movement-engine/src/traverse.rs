@@ -294,11 +294,10 @@ fn extract_paths(root: Binding, steps: &[TraversalStep]) -> Result<Paths, Failur
     Ok(paths)
 }
 
-/// An edge of a node's arrow plane: a kept walk (the node's own, or one a
-/// dict holds) or the landings it holds.
+/// An edge of a node's arrow plane: the node's kept walk, or the landings
+/// it holds.
 enum PlaneEdge {
     Kept(Rc<crate::bindings::DeferredWalk>),
-    KeptData(Js),
     Landed(Vec<Binding>),
 }
 
@@ -597,7 +596,6 @@ impl Run<'_> {
         span: &'s Js,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Paths, Stop>> + 's>> {
         Box::pin(async move {
-            let eval = |e| Stop::Thrown(Failure::of_eval(e, ""));
             let over = |what: String| Stop::Thrown(Failure::unsupported(&format!("this block head over {what}"), ""));
             match binding {
                 // The hops off each returned record, concatenated.
@@ -649,104 +647,26 @@ impl Run<'_> {
                     }
                     Ok(iterations)
                 }
-                Binding::Shaped(dict) => {
-                    let this = Js::Object(dict.clone());
-                    let kind = crate::record::kind_of(&Binding::Shaped(dict.clone()));
-                    match kind.as_str() {
-                        "event" => self.head_iterations_from(Binding::Event, root, steps, scope, span).await,
-                        "value" => {
-                            let value = crate::record::get(&this, "value").map_err(eval)?;
-                            let binding = Binding::Value(crate::env::ValueBinding { value, trail: None, many: false });
-                            self.head_iterations_from(binding, root, steps, scope, span).await
-                        }
-                        // A dict a walk's captured scope holds (`runDeferredWalk`):
-                        // each kind's case of `headIterationsFrom`.
-                        "sourcePosition" | "handle" | "instance" => {
-                            let Some(steps) = steps else { return Err(over(crate::record::describe_kind(&kind))) };
-                            let thrown = |f: Failure| Stop::Thrown(f);
-                            let (start, read) = match kind.as_str() {
-                                "sourcePosition" => self.shaped_source_record(&this).map_err(thrown)?,
-                                "instance" => {
-                                    let read = self.shaped_instance_read(&this).await.map_err(thrown)?;
-                                    let slug = crate::record::get(&this, "adapterSlug").map_err(eval)?;
-                                    (meta_position_of(slug), crate::shaped::GraphRead::Live(read))
-                                }
-                                _ => {
-                                    let handle = crate::record::get(&this, "handle").map_err(eval)?;
-                                    if matches!(crate::record::get(&handle, "externalId"), Ok(Js::Undefined)) {
-                                        return Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a handle binding)"), "")));
-                                    }
-                                    self.shaped_handle_record(&this, root).await.map_err(thrown)?
-                                }
-                            };
-                            self.shaped_source_paths(&start, read, steps, scope, span).await.map_err(Stop::Thrown)
-                        }
-                        // `for (const landing of rootBinding.landings)`, each the
-                        // root of the same hops.
-                        "positions" => {
-                            let landings = crate::record::get(&this, "landings").map_err(eval)?;
-                            let roots = self.raw_landings(landings, "rootBinding.landings").map_err(Stop::Thrown)?;
-                            let mut iterations = Vec::new();
-                            for landing in roots {
-                                iterations.extend(self.head_iterations_from(landing, root, steps, scope, span).await?);
-                            }
-                            Ok(iterations)
-                        }
-                        "extractRoot" | "extractPosition" => {
-                            let Some(steps) = steps else { return Err(over("an extract result".into())) };
-                            extract_step(&steps[0]).map_err(Stop::Thrown)?;
-                            let emission = crate::record::get(&this, "emission").map_err(eval)?;
-                            let children = crate::record::get(&emission, "children").map_err(eval)?;
-                            Err(eval(if children.is_nullish() {
-                                crate::record::type_error(&format!("Cannot read properties of {} (reading 'get')", children.to_js_string()))
-                            } else {
-                                crate::record::type_error("path.emission.children.get is not a function")
-                            }))
-                        }
-                        "nodePosition" => {
-                            let Some(steps) = steps else { return Err(over(crate::record::describe_kind(&kind))) };
-                            self.walk_node_plane(vec![(Vec::new(), Binding::Shaped(dict))], steps, scope, span).await
-                        }
-                        "lazyWalk" => {
-                            let Some(steps) = steps else { return Err(over(crate::record::describe_kind(&kind))) };
-                            let walk = crate::record::get(&this, "walk").map_err(eval)?;
-                            self.shaped_walk_iterations(&walk, steps).await
-                        }
-                        // `metaEdgeBindings`: `binding.edges.get(edge)`, which a
-                        // dict's edges never answer.
-                        "blockMeta" => {
-                            let Some(steps) = steps else { return Err(over(crate::record::describe_kind(&kind))) };
-                            let TraversalStep::Edge(step) = &steps[0] else {
-                                return Err(Stop::Thrown(Failure::unsupported(&format!("'{}' hops in a block head over a block meta-node", step_type(&steps[0])), "")));
-                            };
-                            if step.expression_filter.is_some() {
-                                return Err(Stop::Thrown(Failure::unsupported("WHERE filters on block meta-node block heads", "")));
-                            }
-                            Err(eval(crate::reading::edges_get(&this, "binding")))
-                        }
-                        // `cb-[c:Called]-> { … }`: the calls so far, read off the
-                        // ledger; none before anything fires is an empty walk.
-                        "callback" => match steps {
-                            Some([TraversalStep::Edge(step)]) if step.edge_type_id == crate::awaits::CALLED => {
-                                let filter = step.expression_filter.as_deref().map(|filter| (filter.clone(), step.alias.clone()));
-                                let landings = self.called_landings(&Binding::Shaped(dict.clone()), filter.as_ref(), scope).await?;
-                                Ok(landings
-                                    .into_iter()
-                                    .map(|landing| {
-                                        let aliases = step.alias.iter().map(|alias| (alias.clone(), landing.clone())).collect();
-                                        (aliases, landing)
-                                    })
-                                    .collect())
-                            }
-                            Some([TraversalStep::Edge(step)]) => Err(Stop::Thrown(Failure::unsupported(
-                                &format!("'-[:{}]->' on a callback", step.edge_type_id),
-                                &format!("a callback has one edge, '{}'", crate::awaits::CALLED),
-                            ))),
-                            _ => Err(Stop::Thrown(Failure::unsupported("this block head over a callback", ""))),
-                        },
-                        kind => Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a {kind} binding)"), ""))),
+                // `cb-[c:Called]-> { … }`: the calls so far, read off the
+                // ledger; none before anything fires is an empty walk.
+                callback @ Binding::Callback(_) => match steps {
+                    Some([TraversalStep::Edge(step)]) if step.edge_type_id == crate::awaits::CALLED => {
+                        let filter = step.expression_filter.as_deref().map(|filter| (filter.clone(), step.alias.clone()));
+                        let landings = self.called_landings(&callback, filter.as_ref(), scope).await?;
+                        Ok(landings
+                            .into_iter()
+                            .map(|landing| {
+                                let aliases = step.alias.iter().map(|alias| (alias.clone(), landing.clone())).collect();
+                                (aliases, landing)
+                            })
+                            .collect())
                     }
-                }
+                    Some([TraversalStep::Edge(step)]) => Err(Stop::Thrown(Failure::unsupported(
+                        &format!("'-[:{}]->' on a callback", step.edge_type_id),
+                        &format!("a callback has one edge, '{}'", crate::awaits::CALLED),
+                    ))),
+                    _ => Err(Stop::Thrown(Failure::unsupported("this block head over a callback", ""))),
+                },
                 binding @ (Binding::Instance(_) | Binding::Handle(_) | Binding::Event | Binding::Landed(_)) => {
                     let Some(steps) = steps else { return Err(over(crate::record::describe(&binding))) };
                     let (start, read) = self.head_start(&binding, root).await.map_err(Stop::Thrown)?;
@@ -755,17 +675,6 @@ impl Run<'_> {
                 other => Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a {} binding)", crate::record::kind_of(&other)), ""))),
             }
         })
-    }
-
-    /// `walkSourceHeadPaths` from a graph a dict names: its read wrapper's
-    /// checks, then the walk.
-    async fn shaped_source_paths(&self, start: &Js, read: crate::shaped::GraphRead, steps: &[TraversalStep], scope: &Rc<Scope>, span: &Js) -> Result<Paths, Failure> {
-        let read = match read {
-            crate::shaped::GraphRead::Live(read) => read,
-            crate::shaped::GraphRead::Foreign(read) => return Err(Failure::of_eval(crate::shaped::foreign_call(&read, "read", "runtimeCapabilities"), "")),
-        };
-        crate::shaped::wrapper_reads(start, read.start_surface_type.as_deref()).map_err(|e| Failure::of_eval(e, ""))?;
-        self.source_head_paths(start, read, steps, scope, span).await
     }
 
     /// `walkSourceHeadPaths`: each hop off every path the hop before it
@@ -820,28 +729,15 @@ impl Run<'_> {
             let TraversalStep::Edge(step) = first else {
                 return Err(Stop::Thrown(Failure::unsupported(&format!("'{}' hops over a synthesised node", step_type(first)), "")));
             };
-            let eval = |e| Stop::Thrown(Failure::of_eval(e, ""));
             let mut reached = Vec::new();
             for (aliases, binding) in paths {
-                let kind = crate::record::kind_of(&binding);
                 let edge = match &binding {
                     Binding::LazyWalk(walk) => {
                         reached.extend(continue_deferred(aliases, self.run_deferred_past(walk, steps).await?, None));
                         continue;
                     }
-                    Binding::Shaped(dict) if kind == "lazyWalk" => {
-                        let walk = crate::record::get(&Js::Object(dict.clone()), "walk").map_err(eval)?;
-                        reached.extend(continue_deferred(aliases, self.shaped_walk_iterations(&walk, steps).await?, None));
-                        continue;
-                    }
                     Binding::Landed(landed) => {
                         let onward = self.source_head_paths(&landed.position, landed.read.clone(), steps, scope, span).await.map_err(Stop::Thrown)?;
-                        reached.extend(continue_deferred(aliases, onward, None));
-                        continue;
-                    }
-                    Binding::Shaped(dict) if kind == "sourcePosition" => {
-                        let (start, read) = self.shaped_source_record(&Js::Object(dict.clone())).map_err(Stop::Thrown)?;
-                        let onward = self.shaped_source_paths(&start, read, steps, scope, span).await.map_err(Stop::Thrown)?;
                         reached.extend(continue_deferred(aliases, onward, None));
                         continue;
                     }
@@ -850,16 +746,6 @@ impl Run<'_> {
                         match deferred {
                             Some(walk) => PlaneEdge::Kept(walk),
                             None => PlaneEdge::Landed(node.borrow().landings(&step.edge_type_id)),
-                        }
-                    }
-                    Binding::Shaped(dict) if kind == "nodePosition" => {
-                        let this = Js::Object(dict.clone());
-                        let edge = crate::record::get(&crate::record::get(&this, "edges").map_err(eval)?, &step.edge_type_id).map_err(eval)?;
-                        let edge_kind = if edge.is_nullish() { Js::Undefined } else { crate::record::get(&edge, "kind").map_err(eval)? };
-                        match edge_kind {
-                            Js::String(k) if k == "deferred" => PlaneEdge::KeptData(crate::record::get(&edge, "walk").map_err(eval)?),
-                            Js::String(k) if k == "landed" => PlaneEdge::Landed(self.iterated_landings(crate::record::get(&edge, "landings").map_err(eval)?).map_err(Stop::Thrown)?),
-                            _ => PlaneEdge::Landed(Vec::new()),
                         }
                     }
                     other => {
@@ -889,7 +775,6 @@ impl Run<'_> {
                         }
                         let iterations = match kept {
                             PlaneEdge::Kept(walk) => self.run_deferred_past(&walk, rest).await?,
-                            PlaneEdge::KeptData(walk) => self.shaped_walk_iterations(&walk, rest).await?,
                             PlaneEdge::Landed(_) => unreachable!("taken above"),
                         };
                         reached.extend(continue_deferred(aliases, iterations, step.alias.as_deref()));

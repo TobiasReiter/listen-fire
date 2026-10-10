@@ -74,6 +74,10 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check moves an existing automation up to it when it validates cleanly there. An automation with an error, or with a move-up warning (`MOV_MATCH_MISS_CONTINUES`, `MOV_HANDLE_UPDATED_IN_PLACE`, `MOV_HANDLE_READ_FOUND`: the same text now does something different), stays on its version, shows Review and lists the diagnostics, and behaves exactly as before. Read each warning, edit what assumed the old behaviour, and upgrade with `upgradeAutomation`, acknowledging it.
 
+### Security
+
+- Under `MOVEMENT_ENGINE=rust`: data an automation reads (a webhook body, an adapter's answer, an answer to a question, a callback's fired values, a plugin's output) is never taken for one of the engine's own objects, whatever keys it carries. Before, a dict whose `kind` named an engine object (`lazyWalk`, `closure`, `instance`, `toString`, …) was read as that object, so a webhook body could make the run walk a system, or run expression text the body carried. Now such a dict is a plain dict on the Rust engine: its `kind` reads as text and a hop off it is refused as a hop off any value is. The TypeScript engine's side of the fix arrives with main's. Not a language version: no construct's meaning changes, and a saved automation runs as it did unless its data impersonated an engine object.
+
 ### Language version 4, Luminous Owl: what breaks
 
 Each item applies only to an automation on Luminous Owl (4). Versions 1 to 3 keep their old behaviour exactly (proved by a version 3 conformance corpus). Every rule, with examples and rewrites, is in the [Luminous Owl migration guide](docs/language/luminous-owl-migration.md).

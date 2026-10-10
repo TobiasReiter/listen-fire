@@ -802,13 +802,17 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
     match value {
         Js::Undefined | Js::Null | Js::Function(_) => out.push_str("null"),
         // `JSON.stringify` of the binding object: the event's is
-        // `{kind: 'event'}`, a block's returned records the list of theirs.
-        // Any other's holds what only the TypeScript engine has; the first
-        // met is named (`try_json_stringify`), and written as `{}` for the
-        // writers no record reaches (admission keeps them from a `from`
-        // datum; the rest read one down to its fields first).
+        // `{kind: 'event'}`, a callback's, a shape position's and a
+        // resource's their data (`record::data_object`), a block's returned
+        // records the list of theirs. Any other's holds what only the
+        // TypeScript engine has; the first met is named
+        // (`try_json_stringify`), and written as `{}` for the writers no
+        // record reaches (admission keeps them from a `from` datum; the rest
+        // read one down to its fields first).
         Js::Record(record) => match record.as_ref() {
-            crate::bindings::Binding::Event => out.push_str(r#"{"kind":"event"}"#),
+            data if crate::record::data_object(data).is_some() => {
+                write_json(&crate::record::data_object(data).expect("tested"), indent, depth, out, held);
+            }
             crate::bindings::Binding::Positions(landings) => {
                 let landings = Js::array(landings.iter().cloned().map(crate::record::held).collect());
                 let mut object = JsObject::new();

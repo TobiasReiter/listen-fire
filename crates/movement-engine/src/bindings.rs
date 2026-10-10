@@ -58,12 +58,32 @@ pub enum Binding {
     /// program holds it, the scope it was written in captured flat, and from
     /// version 3 the name its body may call it by.
     Closure(Rc<Closure>),
-    /// A plain dict whose `kind` the TypeScript engine reads as a binding's
-    /// (`bindingOf`: `kind in describeBinding`, which walks the prototype
-    /// chain, so `toString` counts): to it the dict IS a binding of that
-    /// kind, its other keys the binding's own (crate::record, the shaped
-    /// reads).
-    Shaped(Rc<JsObject>),
+    /// A minted callback (`kind: 'callback'`): the id and URL the host
+    /// minted it under, and its fire-time parameters.
+    Callback(Rc<Callback>),
+    /// An in-memory record of no graph (`kind: 'shapePosition'`): a fired
+    /// callback's `Called` landing.
+    ShapePosition(Rc<ShapePosition>),
+    /// A file an extraction read (`kind: 'resource'`), its descriptor as a
+    /// park holds it.
+    Resource(Rc<Js>),
+}
+
+/// `{kind: 'callback', callbackId, url, params}`.
+#[derive(Debug)]
+pub struct Callback {
+    pub callback_id: Js,
+    pub url: Js,
+    pub params: Js,
+}
+
+/// `{kind: 'shapePosition', shape, node, fields, fieldProvenance}`.
+#[derive(Debug)]
+pub struct ShapePosition {
+    pub shape: Js,
+    pub node: Js,
+    pub fields: Js,
+    pub field_provenance: Js,
 }
 
 /// `{kind: 'closure', closure, captured, self?}`.
@@ -109,6 +129,9 @@ impl Binding {
             (Binding::LazyWalk(a), Binding::LazyWalk(b)) => Rc::ptr_eq(a, b),
             (Binding::Tuple(a), Binding::Tuple(b)) => Rc::ptr_eq(a, b),
             (Binding::Closure(a), Binding::Closure(b)) => Rc::ptr_eq(a, b),
+            (Binding::Callback(a), Binding::Callback(b)) => Rc::ptr_eq(a, b),
+            (Binding::ShapePosition(a), Binding::ShapePosition(b)) => Rc::ptr_eq(a, b),
+            (Binding::Resource(a), Binding::Resource(b)) => Rc::ptr_eq(a, b),
             // A block's returned records are one object only as the record
             // holding them is (the same allocation, above): two lists of the
             // same landings are two objects, as two `positions` bindings are.
@@ -318,14 +341,9 @@ impl Names for Scope {
         matches!(self.resolve(name), Some(Binding::Event))
     }
 
-    /// `binding.kind !== 'value'`: a dict the TypeScript takes for a value
-    /// binding is one.
+    /// `binding.kind !== 'value'`.
     fn binds_non_value(&self, name: &str) -> bool {
-        self.resolve(name).is_some_and(|binding| match &binding {
-            Binding::Value(_) => false,
-            Binding::Shaped(_) => crate::record::kind_of(&binding) != "value",
-            _ => true,
-        })
+        self.resolve(name).is_some_and(|binding| !matches!(binding, Binding::Value(_)))
     }
 }
 

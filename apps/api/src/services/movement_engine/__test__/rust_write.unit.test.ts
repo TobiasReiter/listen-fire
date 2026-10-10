@@ -916,7 +916,10 @@ describe('parks in the Rust engine', () => {
     '}',
   ].join('\n');
 
-  it('parks a dict holding a handle, shaped like returned records, with the state the TypeScript engine writes', async () => {
+  it('parks a dict holding a handle, whose kind names returned records, as the dict holding a record it is', async () => {
+    // Data is never an engine object (Henry's ruling, 2026-10-10): the
+    // TypeScript engine on this branch still parks the dict as a block's
+    // returned records until main's fix merges forward (the todo below).
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  co = write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }',
@@ -925,11 +928,17 @@ describe('parks in the Rust engine', () => {
       '  write crm-[:companies]-> { name: "after" }',
       '}',
     ].join('\n');
-    const { ts, rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    resetRustRunStats();
+    const rust = await runOn('rust', { source, event: webhook({ subject: 'Acme' }) });
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
     expect(rust.parks).toHaveLength(1);
-    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
-    expect(JSON.stringify(rust.parks[0]?.state)).toContain('"kind":"handle"');
+    const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
+    const held = JSON.stringify(state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined));
+    expect(held).toMatch(/^\{"kind":"recordValue","value":\{"kind":"map",/);
+    expect(held).toContain('"kind":"handle"');
   });
+
+  it.todo('both engines: a dict holding a handle, whose kind names returned records, parks as the dict holding a record it is — once main’s fix merges forward');
 
   it('parks at a sleep with the state the TypeScript engine writes', async () => {
     const { ts, rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
@@ -1108,6 +1117,22 @@ describe('parks in the Rust engine', () => {
     expect(JSON.stringify(rust.attio)).toBe(JSON.stringify(ts.attio));
     expect(JSON.stringify(rust.result)).toBe(JSON.stringify(ts.result));
     expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}');
+  });
+
+  it('revives a parked value whose data carries a binding\'s kind as the dict it is', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  d = msg.`meta`',
+      '  await sleep(30s)',
+      '  write crm-[:companies]-> { name: "after", blob: d }',
+      '}',
+    ].join('\n');
+    const event = webhook({ meta: { name: 'Acme' } });
+    const parked = await runOn('ts', { source, event });
+    const state = JSON.parse(JSON.stringify(parked.parks[0]?.state).replace('{"name":"Acme"}', '{"kind":"event"}')) as ParkedScopeState;
+    expect(JSON.stringify(state)).toContain('"d":{"kind":"value","value":{"kind":"event"}');
+    const { rust } = await agree({ source, event, resume: state });
+    expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"kind":"event"}}');
   });
 
   it('leaves to the TypeScript engine a state it does not resume, refused before it asks its host anything', async () => {

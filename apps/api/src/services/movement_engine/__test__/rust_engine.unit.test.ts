@@ -622,14 +622,17 @@ describe('the segment input', () => {
     expect(asked).toEqual([]);
   });
 
-  it('carries a dict in the event shaped like a binding as the dict it is', async () => {
+  it('carries a dict in the event shaped like a binding as the data it is, never as a record', async () => {
     const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
     const input = { source: '', event: { payload: { meta: { kind: 'event' }, list: [{ kind: 'toString' }] } }, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host } as unknown as RunMovementInput;
     const { engine, started } = scriptedEngine(() => ({ done: { result: {} } }));
     resetRustRunStats();
     await runSegmentInRust({ input, context: served.context }, engine).catch(() => undefined);
     expect(rustRunStats.notAdmitted).toEqual({});
+    // Data, as every dict is: no record tag anywhere in the input.
+    expect(JSON.stringify(started)).toContain('["meta",["o",2,[["kind","event"]]]]');
     expect(JSON.stringify(started)).toContain('"kind","toString"');
+    expect(JSON.stringify(started)).not.toContain('["x"');
   });
 });
 
@@ -675,6 +678,18 @@ describe('choosing the engine', () => {
 });
 
 describe("a segment's wire", () => {
+  it('hands a record the engine handed out back by its id, and carries every other object as data, whatever its kind', () => {
+    const wire = new WireOut({ whole: true });
+    const event = wire.read(['x', 0, ['o', 0, [['kind', 'event']]]]);
+    expect(event).toEqual({ kind: 'event' });
+    expect(wire.read(['x', 0])).toBe(event);
+    expect(wire.value(event)).toEqual(['x', 0]);
+    expect(wire.value([event, { kind: 'event' }])).toEqual(['l', 0, [['x', 0], ['o', 1, [['kind', 'event']]]]]);
+    expect(wire.value({ kind: 'lazyWalk', walk: {} })).toEqual(['o', 2, [['kind', 'lazyWalk'], ['walk', ['o', 3, []]]]]);
+    expect(() => wire.read(['x', 'handle'])).toThrow('the engine handed the host a record it cannot carry (handle)');
+    expect(() => wire.read(['x', 1, ['o', 4, [['kind', 'lazyWalk']]]])).toThrow('a record of kind lazyWalk, which the shim does not rebuild');
+  });
+
   it('writes each value whole, an object again under the id it was first sent under, and hands each id back as its object', () => {
     const wire = new WireOut({ whole: true });
     const shared = { n: 1 };

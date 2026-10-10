@@ -157,15 +157,9 @@ impl Run<'_> {
             _ => String::new(),
         };
         let bound = scope.resolve(&root);
-        if let Some(callback) = bound.as_ref().filter(|b| crate::record::kind_of(b) == "callback") {
-            return self.await_callback(callback, &edge, filter.as_ref(), binding_name, scope, at).await;
-        }
         match bound {
+            Some(callback @ Binding::Callback(_)) => self.await_callback(&callback, &edge, filter.as_ref(), binding_name, scope, at).await,
             Some(Binding::Handle(handle)) => self.await_landing(&handle, &edge, filter.as_ref(), binding_name, scope, at).await,
-            Some(binding @ Binding::Shaped(_)) if crate::record::kind_of(&binding) == "handle" => Err(Stop::Thrown(Failure::unreproduced(
-                &format!("await '{root}-[:{edge}]->' over a value shaped like a write handle"),
-                "the TypeScript engine awaits the record the data names",
-            ))),
             _ => Err(Stop::Thrown(Failure::unsupported(
                 &format!("await '{root}-[:{edge}]->'"),
                 "await needs a written record handle as its head (e.g. an ask written with `write asks-[:Check]->`)",
@@ -213,8 +207,8 @@ impl Run<'_> {
     /// A callback binding's `callbackId`.
     pub(crate) fn callback_id(&self, callback: &Binding) -> Result<Js, Stop> {
         match callback {
-            Binding::Shaped(dict) => crate::record::get(&Js::Object(dict.clone()), "callbackId").map_err(|e| Stop::Thrown(Failure::of_eval(e, ""))),
-            _ => unreachable!("a callback is the binding object it is"),
+            Binding::Callback(callback) => Ok(callback.callback_id.clone()),
+            _ => unreachable!("only a callback has calls"),
         }
     }
 
@@ -426,7 +420,7 @@ impl Run<'_> {
         let request = host::park::mint_callback(self.segment(), &address, env::json_of_js(&params_js), self.encode(&state).map_err(Stop::Thrown)?, single_use, expires_at.as_deref());
         let minted = self.ask(request).await.map_err(Stop::Thrown)?.unwrap_or(Json::Null);
         let field = |key: &str| minted.get(key).map_or(Js::Undefined, env::js_of_json);
-        Ok(Binding::Shaped(Rc::new(object(vec![("kind", Js::str("callback")), ("callbackId", field("id")), ("url", field("url")), ("params", params_js)]))))
+        Ok(Binding::Callback(Rc::new(crate::bindings::Callback { callback_id: field("id"), url: field("url"), params: params_js })))
     }
 
     /// `callbackParams`: the fire-time signature, in declaration order.
@@ -526,13 +520,12 @@ pub(crate) fn called_landing(call: &Js) -> Binding {
             fields.set(key.clone(), value.clone());
         }
     }
-    Binding::Shaped(Rc::new(object(vec![
-        ("kind", Js::str("shapePosition")),
-        ("shape", Js::str("callback")),
-        ("node", Js::str(CALLED)),
-        ("fields", Js::object(fields)),
-        ("fieldProvenance", Js::object(JsObject::new())),
-    ])))
+    Binding::ShapePosition(Rc::new(crate::bindings::ShapePosition {
+        shape: Js::str("callback"),
+        node: Js::str(CALLED),
+        fields: Js::object(fields),
+        field_provenance: Js::object(JsObject::new()),
+    }))
 }
 
 /// `declareAwaitResult`'s position: the landing's fields inline, read
@@ -550,13 +543,6 @@ fn null_value() -> Binding {
     Binding::Value(ValueBinding { value: Js::Null, trail: Some(Trail::default()), many: false })
 }
 
-fn object(entries: Vec<(&str, Js)>) -> JsObject {
-    let mut object = JsObject::new();
-    for (key, value) in entries {
-        object.set(key.to_string(), value);
-    }
-    object
-}
 
 /// `untilConditionMet`: identity against true, with a stringified fallback
 /// for sources that hand booleans back as `"true"`, never against a node.

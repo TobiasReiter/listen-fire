@@ -305,15 +305,14 @@ impl Run<'_> {
                 ))),
                 // A position parameter takes the record its argument is bound to.
                 CallArg::Expr { expr, .. } => match self.bind_slot_binding(expr, scope).await? {
-                    binding @ (Binding::Event | Binding::Handle(_) | Binding::Landed(_) | Binding::Node(_) | Binding::Extracted { .. } | Binding::LazyWalk(_)) => Ok(binding),
-                    binding @ Binding::Shaped(_)
-                        if matches!(
-                            crate::record::kind_of(&binding).as_str(),
-                            "event" | "handle" | "shapePosition" | "extractRoot" | "extractPosition" | "sourcePosition" | "resource" | "nodePosition" | "lazyWalk"
-                        ) =>
-                    {
-                        Ok(binding)
-                    }
+                    binding @ (Binding::Event
+                    | Binding::Handle(_)
+                    | Binding::Landed(_)
+                    | Binding::Node(_)
+                    | Binding::Extracted { .. }
+                    | Binding::LazyWalk(_)
+                    | Binding::ShapePosition(_)
+                    | Binding::Resource(_)) => Ok(binding),
                     other => Err(Stop::Thrown(Failure::unsupported(
                         &format!("passing {} ('{}') as a movement argument", crate::write::describe_binding(&other), crate::js::trim(&expr.raw)),
                         "arguments are positions — pass the event, a write handle, or adapt with an inline shape-write",
