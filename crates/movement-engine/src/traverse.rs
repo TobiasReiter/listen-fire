@@ -89,6 +89,10 @@ pub struct Read {
     /// The instance streams a traversal (`methods` lists `iterateRelated`),
     /// which the engine walks a page at a time.
     pub streams: bool,
+    /// The adapter itself, not the surface-read wrapper over it: a field read
+    /// hands it the position as it is (an awaited landing's, run.ts
+    /// `declareAwaitResult`).
+    pub raw: bool,
 }
 
 /// An instance dict's own schema with no `collections` table, as the reads
@@ -119,6 +123,7 @@ impl Read {
             start_surface_type,
             incoming: flag("incoming"),
             edge_properties: flag("edgeProperties"),
+            raw: false,
         }
     }
 }
@@ -503,6 +508,8 @@ impl Run<'_> {
         self.trace(TraceEntry::Block { root: spell_path_head(&block.head), positions: iterations.len() });
         let body = format!("{path}/block/body");
         let mut returned: Vec<Binding> = Vec::new();
+        let mut finished: Vec<(usize, Binding)> = Vec::new();
+        let mut parked = 0;
         for (index, (aliases, _)) in iterations.into_iter().enumerate() {
             // Per-landing isolation: an iteration's bindings never reach the
             // next, and the only way a value leaves one is its `return`,
@@ -512,6 +519,13 @@ impl Run<'_> {
                 iteration.declare(alias, landed);
             }
             let flow = match self.body(&block.body, &iteration, &at.iter(index), &body, 0).await {
+                // A parked iteration keeps its leaf (at its `i j`) but does
+                // not halt the fan-out: the next runs its own prefix and
+                // parks at its own.
+                Err(Stop::Parked(_)) => {
+                    parked += 1;
+                    continue;
+                }
                 // A match inside found nothing: this iteration skips, the
                 // next runs.
                 Err(Stop::EndedQuietly) => continue,
@@ -521,11 +535,23 @@ impl Run<'_> {
             if let Flow::Returned = flow
                 && let Some(value) = iteration.resolve_own(crate::run::RETURN_SLOT)
             {
-                returned.push(value);
+                returned.push(value.clone());
+                finished.push((index, value));
             }
         }
         if let Some(name) = binding_name {
             scope.declare(name, block_value(returned));
+        }
+        // An iteration parked: the fan-out is a pending join at its own
+        // address, what the finished ones returned kept at its frame.
+        if parked > 0 {
+            let frame = at.encode();
+            for (index, value) in &finished {
+                let exports = env::object_of(vec![(crate::run::RETURN_SLOT, crate::park::serialize_alone(self, value).map_err(Stop::Thrown)?)]);
+                self.persist_branch_export(&frame, &at.iter(*index).encode(), *index as i64, &exports).await?;
+            }
+            self.record_join(&frame, parked).await?;
+            return Err(Stop::Parked(frame));
         }
         Ok(Flow::FellThrough)
     }
@@ -698,13 +724,25 @@ impl Run<'_> {
                             }
                             Err(eval(crate::reading::edges_get(&this, "binding")))
                         }
-                        // One hop reads the callback's calls through its sink.
+                        // `cb-[c:Called]-> { … }`: the calls so far, read off the
+                        // ledger; none before anything fires is an empty walk.
                         "callback" => match steps {
-                            Some([_]) => Err(Stop::Thrown(Failure::unreproduced(
-                                &format!("a block head rooted at '{root}', a value shaped like a callback"),
-                                "the TypeScript engine reads the calls its callback sink holds",
+                            Some([TraversalStep::Edge(step)]) if step.edge_type_id == crate::awaits::CALLED => {
+                                let filter = step.expression_filter.as_deref().map(|filter| (filter.clone(), step.alias.clone()));
+                                let landings = self.called_landings(&Binding::Shaped(dict.clone()), filter.as_ref(), scope).await?;
+                                Ok(landings
+                                    .into_iter()
+                                    .map(|landing| {
+                                        let aliases = step.alias.iter().map(|alias| (alias.clone(), landing.clone())).collect();
+                                        (aliases, landing)
+                                    })
+                                    .collect())
+                            }
+                            Some([TraversalStep::Edge(step)]) => Err(Stop::Thrown(Failure::unsupported(
+                                &format!("'-[:{}]->' on a callback", step.edge_type_id),
+                                &format!("a callback has one edge, '{}'", crate::awaits::CALLED),
                             ))),
-                            _ => Err(over(crate::record::describe_kind(&kind))),
+                            _ => Err(Stop::Thrown(Failure::unsupported("this block head over a callback", ""))),
                         },
                         kind => Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a {kind} binding)"), ""))),
                     }
@@ -936,13 +974,13 @@ impl Run<'_> {
             return Ok(cached.clone());
         }
         let resolved = self
-            .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
+            .resolve_adapter(&ResolveAdapter {
                 adapter_type,
                 credentials_id,
                 construction_args: (!construction_args.is_empty()).then_some(construction_args),
                 role: Role::Source,
                 dry_run: false,
-            }))
+            })
             .await?
             .unwrap_or(Json::Null);
         let handle = host::instance_of(&resolved).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("adapters.resolve answered {resolved}")))?;
@@ -1386,6 +1424,9 @@ impl Run<'_> {
     pub(crate) async fn landed_field(&self, landed: &Landed, field: &str) -> Result<Evaluated, Failure> {
         let read = &landed.read;
         let position = landed.surface.get_or_init(|| {
+            if read.raw {
+                return landed.position.clone();
+            }
             let natural = record_type(&landed.position).or_else(|| read.start_surface_type.clone());
             restamp(&landed.position, natural.as_deref(), &read.adapter_type)
         });
@@ -1466,7 +1507,7 @@ fn describe_head_value(value: &Js) -> &'static str {
 /// run.ts `blockValue`: values returned bind as the list of them, their
 /// trails unioned; anything else (here: nothing returned) as the returned
 /// records.
-fn block_value(returned: Vec<Binding>) -> Binding {
+pub(crate) fn block_value(returned: Vec<Binding>) -> Binding {
     let values: Option<Vec<crate::env::ValueBinding>> =
         returned.iter().map(|b| if let Binding::Value(v) = b { Some(v.clone()) } else { None }).collect();
     match values {

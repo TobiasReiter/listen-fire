@@ -99,6 +99,17 @@ impl FlowTrace {
         self.pending.borrow_mut().push(entry);
     }
 
+    /// Several entries, after those already waiting: a joined flow's.
+    pub fn extend(&self, entries: Vec<TraceEntry>) {
+        self.pending.borrow_mut().extend(entries);
+    }
+
+    /// The buffer exchanged for `other`: the running flow's for another's
+    /// (crate::flow).
+    pub fn swap(&self, other: &mut Vec<TraceEntry>) {
+        std::mem::swap(&mut *self.pending.borrow_mut(), other);
+    }
+
     /// Everything buffered, emptying the buffer: the next `trace.append`'s
     /// entries, or a joined flow's for its parent to splice.
     pub fn take(&self) -> Vec<TraceEntry> {

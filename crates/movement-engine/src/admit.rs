@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use movement_parser::ast::{
     self, ArmExpression, CollectionOp, AwaitSource, CallArg, CallStatement, CollectionOpExpression, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef,
-    PathHead, PathRoot, RValue, Statement, TraversalBlock, WriteExpression, WriteTarget,
+    PathHead, PathRoot, RValue, Statement, TraversalBlock, WriteExpression, WriteTarget, UntilCondition, CombinatorArms, CallbackSubject,
 };
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 use movement_parser::lowering::expression::EdgeDirection;
@@ -291,7 +291,6 @@ pub fn refusals(
                 shapes: &shapes,
                 callees: &callees,
                 unknown_calls: &[],
-                in_callee: false,
                 language_version,
                 value_holders: &callees.file_holders,
                 record_nodes: &none,
@@ -323,7 +322,6 @@ pub fn refusals(
         shapes: &shapes,
         callees: &callees,
         unknown_calls: &[],
-        in_callee: false,
         language_version,
         value_holders: &callees.file_holders,
         record_nodes: &none,
@@ -386,7 +384,6 @@ pub fn refusals(
             shapes: &shapes,
             callees: &callees,
             unknown_calls: &bound.unknown_calls,
-            in_callee: walk.called,
             language_version,
             value_holders: &value_holders,
             record_nodes: &bound.record_nodes,
@@ -446,47 +443,13 @@ fn walks<'p>(callees: &'p Callees<'p>, movements: &[&'p ast::MovementDeclaration
     walks
 }
 
-/// Why this engine does not run `program` with this input, or `None`: a
-/// flow this engine runs must not suspend inside a traversal block, where
-/// the TypeScript engine records the iteration's park and joins the fan-out
-/// later (`interpretBlock`), which this engine does not do. A cost cap can
-/// be met at any judged write, so a capped run with a write in a block is
-/// refused; so is a `suspendAt` address inside one (an `i` step).
-pub fn input_refusal(program: &ast::Program, movements: &[&ast::MovementDeclaration], entry: Option<&ast::MovementDeclaration>, input: &Input<'_>) -> Option<String> {
-    let Input { capped, suspend_at, limit_paused, dry_run } = *input;
-    if suspend_at.iter().any(|address| address.split('.').any(|step| step.starts_with('i'))) {
-        return Some("suspend_at_inside_block".into());
-    }
-    // Before a statement's k-th call: the call's step this engine does not
-    // address (it keeps no call journal).
-    if suspend_at.iter().any(|address| address.split('.').any(|step| step.starts_with('c'))) {
-        return Some("suspend_at_call".into());
-    }
-    let plugins: BTreeSet<String> = program
-        .statements
-        .iter()
-        .filter_map(|s| match s {
-            Statement::Import(import) if matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins") => Some(import),
-            _ => None,
-        })
-        .flat_map(|import| import.names.iter().map(|name| name.alias.clone().unwrap_or_else(|| name.name.clone())))
-        .collect();
-    if capped && movements.iter().any(|m| priced_in_block(&m.body, false, &plugins)) {
-        return Some("cost_cap_inside_block".into());
-    }
-    // A cap met inside a callee suspends there, through a call frame; met
-    // after one of its statement's calls finished, with that call in the
-    // statement's journal. This engine writes neither.
-    let callee = |m: &&&ast::MovementDeclaration| entry.is_none_or(|e| !std::ptr::eq(**m, e));
-    if capped && (movements.iter().filter(callee).any(|m| priced_in_block(&m.body, true, &plugins)) || movements.iter().any(|m| call_spends(&m.body))) {
-        return Some("cost_cap_inside_call".into());
-    }
-    // A park writes every binding in scope, and this engine writes no kept
-    // walk (`serializeDeferredWalk`: the walk's AST and its captured scope).
-    let may_park = (!dry_run && movements.iter().any(|m| sleeps(&m.body))) || capped || !suspend_at.is_empty() || limit_paused;
-    if may_park && movements.iter().any(|m| holds_lazy(m)) {
-        return Some("lazy_park".into());
-    }
+/// Why this engine does not run `program` with this input, or `None`.
+/// Every input it is handed it now runs: a cap met or a `suspendAt` reached
+/// inside a block's iteration, a collection op's member or a callee
+/// suspends there, joined by the fan-out's frame or resumed through its call
+/// frames, the statement's finished calls journalled; a park holding a kept
+/// walk writes the walk (`serializeDeferredWalk`).
+pub fn input_refusal(_program: &ast::Program, _movements: &[&ast::MovementDeclaration], _entry: Option<&ast::MovementDeclaration>, _input: &Input<'_>) -> Option<String> {
     None
 }
 
@@ -501,16 +464,6 @@ pub struct Input<'a> {
     pub dry_run: bool,
 }
 
-/// Whether a body awaits a sleep anywhere.
-fn sleeps(statements: &[Statement]) -> bool {
-    statements.iter().any(|statement| match statement {
-        Statement::Await(_) | Statement::Assign(ast::AssignStatement { value: RValue::Await { .. }, .. }) => true,
-        Statement::Assign(ast::AssignStatement { value: RValue::Block { block }, .. }) => sleeps(&block.body),
-        Statement::If(statement) => statement.arms.iter().any(|arm| sleeps(&arm.body)) || statement.else_arm.as_ref().is_some_and(|arm| sleeps(&arm.body)),
-        Statement::Block(statement) => sleeps(&statement.block.body),
-        _ => false,
-    })
-}
 
 /// Whether a movement keeps a walk anywhere: `x = lazy …`, or a `lazy`
 /// entry in a node literal however deep. A body a construct admission
@@ -579,70 +532,50 @@ fn holds_lazy(movement: &ast::MovementDeclaration) -> bool {
     statements(&movement.body)
 }
 
-/// Whether a call's argument is a write or a call, at any depth: the step a
-/// cap may be met at with an earlier call of its statement finished.
-fn call_spends(statements: &[Statement]) -> bool {
-    fn args_spend(call: &CallStatement) -> bool {
-        call.args.iter().any(|arg| matches!(arg, CallArg::Write { .. } | CallArg::Call { .. }))
-    }
-    statements.iter().any(|statement| match statement {
-        Statement::Call(call) => args_spend(call),
-        Statement::Assign(ast::AssignStatement { value: RValue::Call { call }, .. }) => args_spend(call),
-        Statement::Assign(ast::AssignStatement { value: RValue::Block { block }, .. }) => call_spends(&block.body),
-        Statement::Return(ast::ReturnStatement { value: RValue::Call { call }, .. }) => args_spend(call),
-        Statement::If(statement) => {
-            statement.arms.iter().any(|arm| call_spends(&arm.body)) || statement.else_arm.as_ref().is_some_and(|arm| call_spends(&arm.body))
-        }
-        Statement::Block(statement) => call_spends(&statement.block.body),
-        _ => false,
-    })
-}
 
-/// Whether a priced step sits in a traversal block's body, at any depth: a
-/// write, a match that may ask the judge, an extraction, a plugin's call.
-fn priced_in_block(statements: &[Statement], in_block: bool, plugins: &BTreeSet<String>) -> bool {
-    let judged_link = |link: &ast::LinkExpression| matches!(link.to, ast::LinkTarget::Match { .. });
-    let priced = |value: &RValue| match value {
-        RValue::Write { .. } | RValue::Match { .. } | RValue::Extract { .. } => true,
-        RValue::Link { link } => judged_link(link),
-        RValue::Call { call } => plugins.contains(&call.callee),
-        RValue::Construct { construct } => plugins.contains(&construct.callee),
-        _ => false,
-    };
-    // A collection op's members are iterations too: a cap met in one is met
-    // inside the op.
-    let in_members = |value: Option<&RValue>, call: Option<&CallStatement>| {
-        let closure = match (value, call) {
-            (Some(RValue::Collection { collection }), _) => match &collection.r#fn {
-                ArmExpression::Closure { closure, .. } => Some(closure),
-                ArmExpression::Ref { .. } => None,
-            },
-            (Some(RValue::Call { call }), _) | (_, Some(call)) => call.args.iter().find_map(|arg| match arg {
-                CallArg::Closure { closure, .. } => Some(closure),
-                _ => None,
-            }),
-            _ => None,
-        };
-        closure.is_some_and(|closure| priced_in_block(&closure.body, true, plugins))
-    };
-    statements.iter().any(|statement| match statement {
-        Statement::Write(_) | Statement::Match(_) => in_block,
-        Statement::Link(statement) => in_block && judged_link(&statement.link),
-        Statement::Call(call) => (in_block && plugins.contains(&call.callee)) || in_members(None, Some(call)),
-        Statement::Collection(statement) => in_members(Some(&RValue::Collection { collection: statement.collection.clone() }), None),
-        Statement::Assign(assign) => {
-            (in_block && priced(&assign.value))
-                || matches!(&assign.value, RValue::Block { block } if priced_in_block(&block.body, true, plugins))
-                || in_members(Some(&assign.value), None)
+
+/// The closure bodies a statement holds in place: a combinator's literal
+/// arms, a closure bound or returned, a callback's inline body, an
+/// `until`'s condition.
+fn closure_bodies(statement: &Statement) -> Vec<&ast::ClosureExpression> {
+    fn combinator<'a>(c: &'a ast::CombinatorExpression, bodies: &mut Vec<&'a ast::ClosureExpression>) {
+        if let CombinatorArms::Literal { arms, .. } = &c.arms {
+            for arm in arms {
+                if let ArmExpression::Closure { closure, .. } = arm {
+                    bodies.push(closure);
+                }
+            }
         }
-        Statement::Return(ret) => (in_block && priced(&ret.value)) || in_members(Some(&ret.value), None),
-        Statement::If(statement) => {
-            statement.arms.iter().any(|arm| priced_in_block(&arm.body, in_block, plugins))
-                || statement.else_arm.as_ref().is_some_and(|arm| priced_in_block(&arm.body, in_block, plugins))
+    }
+    fn source<'a>(source: &'a AwaitSource, bodies: &mut Vec<&'a ast::ClosureExpression>) {
+        match source {
+            AwaitSource::Combinator { combinator: c, .. } => combinator(c, bodies),
+            AwaitSource::Until { condition: UntilCondition::Closure { closure }, .. } => bodies.push(closure),
+            _ => {}
         }
-        Statement::Block(statement) => priced_in_block(&statement.block.body, true, plugins),
-        _ => false,
-    })
+    }
+    fn value<'a>(value: &'a RValue, bodies: &mut Vec<&'a ast::ClosureExpression>) {
+        match value {
+            RValue::Await { r#await } => source(&r#await.source, bodies),
+            RValue::Combinator { combinator: c } => combinator(c, bodies),
+            RValue::Closure { closure } => bodies.push(closure),
+            RValue::Callback { callback } => {
+                if let CallbackSubject::Inline { closure, .. } = &callback.subject {
+                    bodies.push(closure);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut bodies = Vec::new();
+    match statement {
+        Statement::Await(statement) => source(&statement.r#await.source, &mut bodies),
+        Statement::Combinator(statement) => combinator(&statement.combinator, &mut bodies),
+        Statement::Assign(assign) => value(&assign.value, &mut bodies),
+        Statement::Return(ret) => value(&ret.value, &mut bodies),
+        _ => {}
+    }
+    bodies
 }
 
 /// The AST's own `kind` for a statement.
@@ -1049,8 +982,25 @@ impl<'c> Bound<'c> {
         }
     }
 
+    /// The closure bodies a statement holds (a combinator's literal arms, a
+    /// closure bound or returned, a callback's inline body, an `until`'s
+    /// condition), each in a scope of its own whose `return` is no `return`
+    /// of the movement's, its parameters members of whatever kind.
+    fn closures_of(&mut self, statement: &Statement, scope: &[usize]) {
+        for closure in closure_bodies(statement) {
+            let inner = self.enter(scope);
+            for param in &closure.params {
+                self.member_params.push((param.name.clone(), inner.clone()));
+            }
+            self.blocks += 1;
+            self.collect(&closure.body, &inner);
+            self.blocks -= 1;
+        }
+    }
+
     fn collect(&mut self, statements: &[Statement], scope: &[usize]) {
         for statement in statements {
+            self.closures_of(statement, scope);
             if let Some(op) = match statement {
                 Statement::Collection(statement) => Some(statement.collection.clone()),
                 Statement::Call(call) => self.call_collection(call),
@@ -1107,6 +1057,21 @@ impl<'c> Bound<'c> {
                             // A plugin's value output is its text; a type's members
                             // are its words.
                             RValue::Call { .. } | RValue::Construct { .. } | RValue::Members { .. } => Holder::Free,
+                            RValue::Combinator { combinator } => self.receipt_holder(combinator),
+                            RValue::Await { r#await } => match &r#await.source {
+                                AwaitSource::Combinator { combinator, .. } => self.receipt_holder(combinator),
+                                // A sleep's presence.
+                                AwaitSource::Sleep { .. } => Holder::Free,
+                                // A met `until`'s value: what the condition evaluates to,
+                                // or what its closure returned.
+                                AwaitSource::Until { condition: UntilCondition::Expr { expr }, .. } => self.holds(&expr.raw),
+                                AwaitSource::Until { condition: UntilCondition::Closure { closure }, .. } => self.returns_holder(&closure.body),
+                                // A landing: a callback's call (its fields data) or an
+                                // awaited system record.
+                                AwaitSource::Traversal { .. } | AwaitSource::First { .. } => Holder::Record,
+                            },
+                            // The callback's binding object: its fields (id, url) data.
+                            RValue::Callback { .. } => Holder::Record,
                             _ => Holder::Other,
                         };
                         let joined = self.value_holders.get(&assign.name).map_or(holder, |h| h.join(holder));
@@ -1430,6 +1395,21 @@ impl<'c> Bound<'c> {
         returned
     }
 
+    /// A combinator's receipt read as a value (`readBareName`): each slot's
+    /// value, a record's slot null — so it holds a record only where an arm
+    /// returned a value that may.
+    fn receipt_holder(&self, combinator: &ast::CombinatorExpression) -> Holder {
+        let CombinatorArms::Literal { arms, .. } = &combinator.arms else { return Holder::Other };
+        let mut held = Holder::Free;
+        for arm in arms {
+            let ArmExpression::Closure { closure, .. } = arm else { return Holder::Other };
+            if !matches!(self.returns_holder(&closure.body), Holder::Free | Holder::Record) {
+                held = Holder::Other;
+            }
+        }
+        held
+    }
+
     /// What a collection op hands back, as far as a record goes: a MAP the
     /// list of what its function returns, a FILTER its source's members.
     fn collection_holder(&self, op: &CollectionOpExpression) -> Holder {
@@ -1574,6 +1554,9 @@ impl<'c> Bound<'c> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Within {
     Body,
+    /// A `parallel`'s or a `race`'s arm, a closure's or a callback's body:
+    /// a body of its own, whose park its frame or its address leads back to.
+    Arm,
     Block,
     /// A collection op's function: its `return` is the member's answer (any
     /// right-hand side, as a body's), and a park in it would leave the
@@ -1622,8 +1605,6 @@ struct Names<'n> {
     callees: &'n Callees<'n>,
     /// The calls whose arguments or value are of a kind not known.
     unknown_calls: &'n [ast::Span],
-    /// The body runs as a callee: a park inside it would need a call frame.
-    in_callee: bool,
     language_version: u32,
     /// What each value (of `values`) holds, as far as a record goes; one
     /// not here may hold anything.
@@ -1641,15 +1622,10 @@ impl Names<'_> {
     }
 
     fn statement(&self, statement: &Statement, within: Within) -> Admitted {
-        let sleep = |source: &AwaitSource| {
-            sleep_only(source)?;
-            if within != Within::Body {
-                return refuse("block_park");
-            }
-            // A park inside a callee resumes through a call frame, which
-            // this engine does not write.
-            if self.in_callee { refuse("call_park") } else { Ok(()) }
-        };
+        // A park inside a block's iteration or a collection op's member is
+        // joined by its fan-out's frame; inside a callee, resumed through its
+        // call frames.
+        let sleep = |source: &AwaitSource| self.await_source(source);
         match statement {
             Statement::Assign(assign) => match &assign.value {
                 RValue::Write { write } => self.write(write),
@@ -1673,6 +1649,9 @@ impl Names<'_> {
                 RValue::Members { .. } => Ok(()),
                 RValue::Call { call } if let Some(reading) = self.reading(call)? => self.reading_admitted(&reading, "rvalue:collection"),
                 RValue::Call { call } if !self.plugin(&call.callee) => self.assigned(self.builtin_value(call)?),
+                RValue::Combinator { combinator } => self.combinator(combinator, within),
+                RValue::Closure { closure } => self.closure(&closure.params, &closure.body),
+                RValue::Callback { callback } => self.callback(callback),
                 other => self.rvalue(other),
             },
             // A returned call's value is the TypeScript's to hand back.
@@ -1693,6 +1672,10 @@ impl Names<'_> {
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
                 RValue::Expr { expr } => self.assigned(expr),
                 RValue::Call { call } => self.assigned(self.builtin_value(call)?),
+                RValue::Await { r#await } => sleep(&r#await.source),
+                RValue::Combinator { combinator } => self.combinator(combinator, within),
+                RValue::Closure { closure } => self.closure(&closure.params, &closure.body),
+                RValue::Callback { callback } => self.callback(callback),
                 other => self.rvalue(other),
             },
             Statement::Write(statement) => self.write(&statement.write),
@@ -1705,6 +1688,7 @@ impl Names<'_> {
                 if self.handles.contains(&statement.name) || self.landings.contains(&statement.name) { Ok(()) } else { refuse("delete_not_record") }
             }
             Statement::Await(statement) => sleep(&statement.r#await.source),
+            Statement::Combinator(statement) => self.combinator(&statement.combinator, within),
             Statement::If(statement) => {
                 for arm in &statement.arms {
                     self.reasons.noted(self.condition(&arm.condition));
@@ -1726,6 +1710,103 @@ impl Names<'_> {
                 crate::collection::Reading::Members(_) => refuse("statement:call"),
             },
             other => refuse(format!("statement:{}", statement_kind(other))),
+        }
+    }
+
+    /// What an `await` waits on (crate::awaits): a sleep; an `until`'s
+    /// condition, a closure's body or an expression; a combinator's arms; an
+    /// edge's WHERE, scoped at the landing.
+    fn await_source(&self, source: &AwaitSource) -> Admitted {
+        match source {
+            AwaitSource::Sleep { .. } => Ok(()),
+            AwaitSource::Until { condition: UntilCondition::Closure { closure }, .. } => self.closure(&closure.params, &closure.body),
+            AwaitSource::Until { condition: UntilCondition::Expr { expr }, .. } => self.slot(expr),
+            AwaitSource::Combinator { combinator, .. } => self.combinator(combinator, Within::Body),
+            AwaitSource::Traversal { head, .. } | AwaitSource::First { head, .. } => {
+                let Ok(step) = crate::traverse::head_step(head) else { return refuse("block_head_does_not_lower") };
+                match &step.expression_filter {
+                    Some(filter) => self.scoped(filter),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+
+    /// A `parallel`'s or a `race`'s arms (crate::combinator): each literal
+    /// closure's body walked as an arm's, which sees the names around it; a
+    /// name, the closure or movement it names, walked where it is written;
+    /// arms built at run time, the value that holds them.
+    fn combinator(&self, combinator: &ast::CombinatorExpression, _within: Within) -> Admitted {
+        match &combinator.arms {
+            CombinatorArms::Literal { arms, .. } => {
+                for arm in arms {
+                    if let ArmExpression::Closure { closure, .. } = arm {
+                        self.reasons.noted(self.closure(&closure.params, &closure.body));
+                    }
+                }
+                Ok(())
+            }
+            CombinatorArms::Dynamic { expr, .. } => self.slot(expr),
+        }
+    }
+
+    /// A closure's body, a body of its own: its parameters values (which may
+    /// hold records) over whatever else their names are bound to outside it.
+    fn closure(&self, params: &[ast::MovementParam], body: &[Statement]) -> Admitted {
+        self.closure_with(params, body, Holder::Other)
+    }
+
+    /// A closure's body, its parameters holding `held`.
+    fn closure_with(&self, params: &[ast::MovementParam], body: &[Statement], held: Holder) -> Admitted {
+        let params: BTreeSet<String> = params.iter().map(|p| p.name.clone()).collect();
+        let without = |set: &BTreeSet<String>| -> BTreeSet<String> { set.difference(&params).cloned().collect() };
+        let values: BTreeSet<String> = self.values.union(&params).cloned().collect();
+        let (events, handles, nodes, landings, members, lazies, extracts, graphs) = (
+            without(self.events),
+            without(self.handles),
+            without(self.nodes),
+            without(self.landings),
+            without(self.members),
+            without(self.lazies),
+            without(self.extracts),
+            without(self.graphs),
+        );
+        let mut value_holders = self.value_holders.clone();
+        for param in &params {
+            value_holders.insert(param.clone(), held);
+        }
+        let inner = Names {
+            value_holders: &value_holders,
+            values: &values,
+            events: &events,
+            handles: &handles,
+            nodes: &nodes,
+            landings: &landings,
+            members: &members,
+            lazies: &lazies,
+            extracts: &extracts,
+            graphs: &graphs,
+            instances: without(&self.instances),
+            ..*self
+        };
+        inner.body(body, Within::Arm);
+        Ok(())
+    }
+
+    /// `callback(…)`: an inline body walked as a closure's; a named one is
+    /// a call of its movement, made when it fires.
+    fn callback(&self, callback: &ast::CallbackExpression) -> Admitted {
+        for entry in &callback.config {
+            if entry.name == "once" {
+                self.slot(&entry.value)?;
+            }
+        }
+        match &callback.subject {
+            // What a fire binds its parameters to is the platform's data.
+            CallbackSubject::Inline { closure, .. } => self.closure_with(&closure.params, &closure.body, Holder::Free),
+            CallbackSubject::Named { movement, args, span, .. } => {
+                self.call(&CallStatement { callee: movement.clone(), args: args.clone(), expression: None, span: *span })
+            }
         }
     }
 
@@ -2930,14 +3011,6 @@ fn lowering_refused(refusal: &movement_parser::lowering::LoweringRefusal, otherw
     if refusal.code.as_deref() == Some(movement_parser::lowering::CLOSURE_POSITION_CODE) { "expression_closure".into() } else { otherwise.into() }
 }
 
-/// `await sleep(…)`, the only await this engine parks on.
-fn sleep_only(source: &AwaitSource) -> Admitted {
-    match source {
-        AwaitSource::Sleep { .. } => Ok(()),
-        _ => refuse("await_not_sleep"),
-    }
-}
-
 /// A `unique by` clause with a key (`identityKeyOf`), whose other conjuncts
 /// read only the candidate (`isPurePredicate`).
 fn unique_clause(raw: &str) -> Admitted {
@@ -3021,7 +3094,7 @@ mod tests {
             ("  helper(e: msg)", "expression:llm"),
             ("  r = helper(e: msg)", "expression:llm"),
             ("  r = HELPER(msg)", "expression:llm"),
-            ("  r = await parallel([helper])", "await_not_sleep"),
+            ("  r = await parallel([helper])", "expression:llm"),
             // A movement handed to a collection op by name is called once per
             // member; a name read whole (here refused at run time, as the
             // TypeScript refuses it) reaches it too.
@@ -3064,7 +3137,7 @@ mod tests {
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         assert_eq!(
             reasons_of(&source, "m", 3),
-            ["expression:llm", "within_compare", "expression_does_not_lower", "block_park", "statement:call"]
+            ["expression:llm", "within_compare", "expression_does_not_lower", "statement:call"]
         );
         assert_eq!(refused(body).as_deref(), Some("expression:llm"));
         // The file's reasons come first, then each movement's, in source order.
@@ -3100,7 +3173,6 @@ mod tests {
             ("  x = 1\n  x = write crm-[:companies]-> { name: \"a\" }", "name_rebound"),
             ("  inbox = 1", "name_shadowed"),
             ("  msg = 1", "name_shadowed"),
-            ("  x = await inbox-[:message]->", "await_not_sleep"),
             ("  write crm-[:companies]-> bind co { name: \"a\" }", "write_bind"),
             ("  write crm-[:companies]-> { unique by (`name` == \"a\" AND msg-[:replies]->.`y` == 1) name: \"a\" }", "unique_by_reads_beyond_candidate"),
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
@@ -3188,11 +3260,9 @@ mod tests {
     #[test]
     fn refuses_each_block_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  crm-[c:companies]-> {\n    await sleep(1h)\n  }", "block_park"),
             ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
             ("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }", "aggregate:only"),
             ("  crm-[c:companies WHERE `name` == @user_email]-> {\n    x = 1\n  }", "meta:user_email"),
-            ("  MAP([1], (v) => {\n    await sleep(1h)\n  })", "block_park"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
@@ -3253,7 +3323,7 @@ mod tests {
 
     /// Chunk 7A Task 2: a call reaches its callee, which is walked under
     /// what each call binds its parameters to; what a callee hands back is
-    /// the call's value; a park inside a callee is refused by name.
+    /// the call's value; a park inside a callee is admitted (Task 4).
     #[test]
     fn walks_each_callee_under_what_its_calls_bind() {
         let note = "node Note {\n  title: <text>\n  node kids {\n    first: <text>\n  }\n}\n";
@@ -3265,9 +3335,10 @@ mod tests {
         // The event as the argument: the same body walked as the event's
         // (a link from it fails as the TypeScript's does, at run time).
         assert_eq!(reasons(persist, "  persist(n: msg)"), Vec::<String>::new());
-        // Two calls, two signatures: each walked, each reason once.
+        // Two calls, two signatures: each walked; a park inside a block
+        // inside a callee is admitted (Chunk 7A Task 4).
         let lazy = "movement lazy(n: <Note>) {\n  n-[k:kids]-> {\n    await sleep(1h)\n  }\n}\n";
-        assert_eq!(reasons(lazy, "  lazy(n: msg)\n  lazy(n: node { title: \"t\", kids: <Note> })"), ["block_park"]);
+        assert_eq!(reasons(lazy, "  lazy(n: msg)\n  lazy(n: node { title: \"t\", kids: <Note> })"), Vec::<String>::new());
         // A value parameter takes the value; the event read whole is refused
         // at run time, as the TypeScript refuses it.
         let shout = "movement shout(t: <text>) {\n  return UPPER(t)\n}\n";
@@ -3288,9 +3359,10 @@ mod tests {
         assert_eq!(reasons(heads, "  one = FIRST([msg])\n  heads(n: one)"), Vec::<String>::new());
         let keeps = "movement keeps(n: <Note>) {\n  n-[k:kids]-> {\n    x = k.`first`\n  }\n}\nmovement kept(e: <inbox-[:message]->>) {\n  files = lazy e-[a:attachments]->\n}\n";
         assert_eq!(reasons(keeps, "  one = FIRST([msg])\n  keeps(n: one)\n  kept(e: msg)"), ["block_head_value_root"], "where the program keeps a walk, a value may hold one");
-        // A park inside a callee, at any depth.
+        // A park inside a callee, at any depth: it resumes through its
+        // call frames.
         let wait = "movement wait(e: <inbox-[:message]->>) {\n  if e.`subject` == \"a\" {\n    await sleep(1h)\n  }\n}\n";
-        assert_eq!(reasons(wait, "  wait(e: msg)"), ["call_park"]);
+        assert_eq!(reasons(wait, "  wait(e: msg)"), Vec::<String>::new());
         assert_eq!(reasons(wait, "  await sleep(1h)"), Vec::<String>::new(), "an uncalled movement is walked as before");
         // A capped run with a priced step inside a callee, or a call with a
         // write among its arguments; a kept walk where the run can park.
@@ -3302,22 +3374,22 @@ mod tests {
         let input = |capped: bool| Input { capped, suspend_at: &[], limit_paused: false, dry_run: false };
         let save = "movement save(n: <Note>) {\n  write crm-[:companies]-> { unique by (`name`) name: n.`title` }\n}\n";
         let called = parsed(save, "  save(n: node { title: \"t\" })");
-        assert_eq!(capped(&called, input(true)).as_deref(), Some("cost_cap_inside_call"));
+        assert_eq!(capped(&called, input(true)), None, "a cap met inside a callee parks in its frames");
         assert_eq!(capped(&called, input(false)), None);
         let written = parsed(shout, "  r = shout(t: \"a\")\n  write crm-[:notes]-> { body: r }");
         assert_eq!(capped(&written, input(true)), None, "a callee that spends nothing, called with values");
         let lazy = parsed("", "  files = lazy msg-[a:attachments]->\n  await sleep(1h)");
-        assert_eq!(capped(&lazy, input(false)).as_deref(), Some("lazy_park"));
+        assert_eq!(capped(&lazy, input(false)), None, "a kept walk parks with its head and mapping");
         assert_eq!(capped(&lazy, Input { dry_run: true, ..input(false) }), None, "a rehearsal fast-forwards its sleep");
         let entry = parsed("", "  n = node { title: \"t\", files: lazy msg-[a:attachments]-> }\n  await sleep(1h)");
-        assert_eq!(capped(&entry, input(false)).as_deref(), Some("lazy_park"), "a lazy entry in a node literal");
+        assert_eq!(capped(&entry, input(false)), None, "a lazy entry in a node literal");
         let argument = parsed(save, "  save(n: node { title: \"t\", files: lazy msg-[a:attachments]-> })\n  await sleep(1h)");
-        assert_eq!(capped(&argument, input(false)).as_deref(), Some("lazy_park"), "a lazy entry in a call's node argument");
+        assert_eq!(capped(&argument, input(false)), None, "a lazy entry in a call's node argument");
         // From version 3 a call's name bound exactly to something else (the
         // file's `crm` instance) names that, not a movement in another case.
-        let shadowed = "movement CRM(t: <text>) {\n  await sleep(1h)\n}\n";
-        assert_eq!(reasons(shadowed, "  CRM(t: \"a\")"), ["call_park"]);
-        assert!(!reasons(shadowed, "  crm(t: \"a\")").contains(&"call_park".to_string()), "{:?}", reasons(shadowed, "  crm(t: \"a\")"));
+        let shadowed = "movement CRM(t: <text>) {\n  x = 1\n}\n";
+        assert_eq!(reasons(shadowed, "  CRM(t: \"a\")"), Vec::<String>::new());
+        assert!(reasons(shadowed, "  crm(t: \"a\")").contains(&"statement:call".to_string()), "{:?}", reasons(shadowed, "  crm(t: \"a\")"));
     }
 
     /// Chunk 7A Task 2: the graphs a run builds, as heads, targets and
@@ -3366,21 +3438,27 @@ mod tests {
         }
     }
 
+    /// Chunk 7A Task 4: what the input makes the run do — a cap met or a
+    /// `suspendAt` reached inside a block's iteration, a member or a callee,
+    /// a park holding a kept walk — refuses nothing: each suspends where it
+    /// is and resumes through its join or its frames.
     #[test]
-    fn refuses_a_suspension_a_block_would_have_to_join() {
+    fn admits_every_input_it_is_handed() {
         let program = |body: &str| {
-            let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            let source = format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
             movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses")
         };
-        let in_block = program("  crm-[c:companies]-> {\n    if c.`name` != \"\" {\n      write crm-[:notes]-> { body: c.`name` }\n    }\n  }");
-        let outside = program("  write crm-[:notes]-> { body: \"x\" }\n  crm-[c:companies]-> {\n    x = c.`name`\n  }");
-        assert_eq!(input_refusal(&in_block, true, &[]).as_deref(), Some("cost_cap_inside_block"));
-        let matched = program("  crm-[c:companies]-> {\n    x = match crm-[:funds]-> { unique by (`name`), name: c.`name` }\n  }");
-        assert_eq!(input_refusal(&matched, true, &[]).as_deref(), Some("cost_cap_inside_block"), "a match may ask the judge");
-        assert_eq!(input_refusal(&in_block, false, &[]), None);
-        assert_eq!(input_refusal(&outside, true, &[]), None);
-        assert_eq!(input_refusal(&outside, false, &["s1.i0.s0".into()]).as_deref(), Some("suspend_at_inside_block"));
-        assert_eq!(input_refusal(&outside, false, &["s1".into()]), None);
+        for body in [
+            "  crm-[c:companies]-> {\n    if c.`name` != \"\" {\n      write crm-[:notes]-> { body: c.`name` }\n    }\n  }",
+            "  crm-[c:companies]-> {\n    x = match crm-[:funds]-> { unique by (`name`), name: c.`name` }\n  }",
+            "  crm-[c:companies]-> {\n    fetch_url(url: c.`name`)\n  }",
+            "  page = fetch_url(url: msg.`text`)",
+            "  files = lazy msg-[a:attachments]->\n  await sleep(1h)",
+        ] {
+            let parsed = program(body);
+            assert_eq!(input_refusal(&parsed, true, &[]), None, "{body}");
+            assert_eq!(input_refusal(&parsed, false, &["s1.i0.s0".into(), "s0.c0".into()]), None, "{body}");
+        }
     }
 
     #[test]
@@ -3580,20 +3658,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn refuses_a_suspension_at_a_call_and_a_capped_priced_step_in_a_block() {
-        let program = |body: &str| {
-            let source = format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
-            movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses")
-        };
-        let extract = program("  crm-[c:companies]-> {\n    d = extract from [c.`name`] {\n      a: \"a\"\n    }\n  }");
-        let call = program("  crm-[c:companies]-> {\n    fetch_url(url: c.`name`)\n  }");
-        for in_block in [&extract, &call] {
-            assert_eq!(input_refusal(in_block, true, &[]).as_deref(), Some("cost_cap_inside_block"));
-            assert_eq!(input_refusal(in_block, false, &[]), None);
-        }
-        let outside = program("  page = fetch_url(url: msg.`text`)");
-        assert_eq!(input_refusal(&outside, true, &[]), None);
-        assert_eq!(input_refusal(&outside, false, &["s0.c0".into()]).as_deref(), Some("suspend_at_call"));
-    }
+
 }

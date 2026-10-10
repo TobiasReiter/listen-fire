@@ -42,6 +42,22 @@ impl Address {
         Address(steps)
     }
 
+    /// `parseAddress`, `None` for a text that does not read.
+    pub fn parse(text: &str) -> Option<Address> {
+        if text.is_empty() {
+            return Some(Address::default());
+        }
+        text.split('.')
+            .map(|step| {
+                let mut chars = step.chars();
+                let kind = chars.next()?;
+                let digits = chars.as_str();
+                (matches!(kind, 's' | 'b' | 'i' | 'c') && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then(|| digits.parse().ok().map(|n| (kind, n)))?
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Address)
+    }
+
     /// `encodeAddress`.
     pub fn encode(&self) -> String {
         self.0.iter().map(|(kind, index)| format!("{kind}{index}")).collect::<Vec<_>>().join(".")

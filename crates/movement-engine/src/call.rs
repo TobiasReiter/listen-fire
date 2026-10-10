@@ -24,9 +24,20 @@ use std::rc::Rc;
 use movement_parser::ast::{CallArg, CallStatement, MovementDeclaration, ParamTypeRef, Statement};
 
 use crate::bindings::{Binding, Scope};
+use crate::flow::Boundary;
 use crate::run::{Address, Failure, Flow, Run, Stop};
 
 type Called<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<Binding>, Stop>> + 's>>;
+
+/// The k-th call of the statement running now, as `beginCall` opened it
+/// (`CallEvent`).
+pub(crate) struct CallEvent {
+    pub site: Option<Rc<crate::flow::Site>>,
+    pub index: usize,
+    /// Set when the call had already finished before a park: what it
+    /// handed back.
+    pub replayed: Option<crate::flow::CallRecord>,
+}
 type Bound<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Binding, Stop>> + 's>>;
 
 impl Run<'_> {
@@ -48,7 +59,20 @@ impl Run<'_> {
     /// `path` is the call's AST path (its arguments' stamps are under it).
     pub(crate) fn call<'s>(&'s self, call: &'s CallStatement, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str) -> Called<'s> {
         Box::pin(async move {
-            let index = self.begin_call();
+            let event = self.begin_call_event().await?;
+            if let Some(replayed) = &event.replayed {
+                return Ok(replayed.value.clone());
+            }
+            let value = self.run_call(call, scope, at, path, &event).await?;
+            self.finish_call(&event, value.as_ref());
+            Ok(value)
+        })
+    }
+
+    /// `runCall`: the callee's arguments evaluated in the caller's source
+    /// order, its body run inside the call's boundary.
+    fn run_call<'s>(&'s self, call: &'s CallStatement, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str, event: &'s CallEvent) -> Called<'s> {
+        Box::pin(async move {
             let name = self.callee_name(&call.callee, scope);
             let declaration = match scope.resolve(&name) {
                 Some(Binding::Movement(declared)) => self.declaration(&declared)?,
@@ -113,7 +137,8 @@ impl Run<'_> {
             }
             self.call_stack.borrow_mut().push(declaration.name.clone());
             let body_path = format!("/statements/{declared_at}/body");
-            let ran = self.body(&declaration.body, &callee, &at.call(index), &body_path, 0).await;
+            let address = self.call_address(event, at);
+            let ran = self.within_call(event, &name, self.body(&declaration.body, &callee, &address, &body_path, 0)).await;
             self.call_stack.borrow_mut().pop();
             match ran {
                 Ok(Flow::Returned) => Ok(callee.resolve_own(crate::run::RETURN_SLOT)),
@@ -132,6 +157,12 @@ impl Run<'_> {
         (self.version() >= 3 && scope.resolve(&name).is_none()).then_some(call.expression.as_ref()).flatten()
     }
 
+    /// `callAddress`: what runs inside a call is under its statement's
+    /// `call k` step.
+    pub(crate) fn call_address(&self, event: &CallEvent, at: &Address) -> Address {
+        event.site.as_ref().map_or(at, |site| &site.address).call(event.index)
+    }
+
     /// `requireCallValue`: a call whose value is bound or passed on.
     pub(crate) fn call_value(&self, callee: &str, value: Option<Binding>) -> Result<Binding, Stop> {
         value.ok_or_else(|| {
@@ -142,17 +173,50 @@ impl Run<'_> {
         })
     }
 
-    /// `beginCall`: the running statement's next call's index.
-    pub(crate) fn begin_call(&self) -> usize {
-        let mut sites = self.call_sites.borrow_mut();
-        match sites.last_mut() {
-            Some(next) => {
-                let index = *next;
-                *next += 1;
-                index
-            }
-            None => 0,
+    /// `beginCall`: the running statement's next call — on a re-run, what it
+    /// had already handed back before a park, which it hands back instead of
+    /// running; a `suspendAt` before it suspends the flow there.
+    pub(crate) async fn begin_call_event(&self) -> Result<CallEvent, Stop> {
+        let site = self.call_sites.borrow().last().cloned();
+        let Some(site) = site else { return Ok(CallEvent { site: None, index: 0, replayed: None }) };
+        let index = site.calls.borrow().next;
+        let replayed = site.calls.borrow().replay.iter().find(|(i, _)| *i == index).map(|(_, r)| r.clone());
+        if let Some(replayed) = replayed {
+            let mut calls = site.calls.borrow_mut();
+            calls.next = replayed.next;
+            calls.complete(index, replayed.clone());
+            drop(calls);
+            return Ok(CallEvent { site: Some(site), index, replayed: Some(replayed) });
         }
+        self.suspend_before_call(&site.address.call(index), &site).await?;
+        site.calls.borrow_mut().next += 1;
+        Ok(CallEvent { site: Some(site), index, replayed: None })
+    }
+
+    /// `finishCall`: what a call handed back, kept on its statement.
+    pub(crate) fn finish_call(&self, event: &CallEvent, value: Option<&Binding>) {
+        if let Some(site) = &event.site {
+            let mut calls = site.calls.borrow_mut();
+            let next = calls.next;
+            calls.complete(event.index, crate::flow::CallRecord { value: value.cloned(), next });
+        }
+    }
+
+    /// `enterCallee`: `future` run inside the call's body boundary, so a park
+    /// below it records how to get back. A call made outside any statement
+    /// has no statement to be re-run by, and runs as it always did.
+    pub(crate) async fn within_call<T>(&self, event: &CallEvent, callee: &str, future: impl std::future::Future<Output = T>) -> T {
+        let Some(site) = &event.site else { return future.await };
+        let next = site.calls.borrow().next;
+        self.within_boundary(Boundary::Call { site: site.clone(), index: event.index, next, callee: callee.to_string() }, future).await
+    }
+
+    /// `withinBoundary`: `future` run one body boundary deeper.
+    pub(crate) async fn within_boundary<T>(&self, boundary: Boundary, future: impl std::future::Future<Output = T>) -> T {
+        self.boundaries.borrow_mut().push(boundary);
+        let outcome = future.await;
+        self.boundaries.borrow_mut().pop();
+        outcome
     }
 
     /// Before version 3 a movement already running is not called again;

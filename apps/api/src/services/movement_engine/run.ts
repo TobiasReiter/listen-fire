@@ -347,9 +347,10 @@ import {
   ENGINE_CHOICE_TS,
   engineChoice,
   noteEngine,
+  fireSegmentInRust,
   resumeSegmentInRust,
   runSegmentInRust,
-  rustResumeRefusal,
+  settleSegmentInRust,
 } from './rust_engine';
 import { WriteLedger, forkWriteOrder, rootWriteOrder, type WriteOrder } from './write_ledger';
 import {
@@ -732,7 +733,7 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // A parked state the Rust engine resumes (its own or the TypeScript
   // engine's: the state is one shape) is the Rust engine's to admit, with
   // its program, as `runMovement` routes a run.
-  if (routesToRust(input) && rustResumeRefusal(input) === undefined) {
+  if (routesToRust(input)) {
     return inRunContext(input, async (context) => {
       const outcome = await resumeSegmentInRust({ input, context });
       if ('ran' in outcome) return outcome.ran;
@@ -780,6 +781,18 @@ export async function settleRaceFrame(
   input: SettleRaceInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
   refuseUnsupportedParkStateVersion(input.state.version);
+  if (routesToRust(input)) {
+    return inRunContext(input, async (context) => {
+      const outcome = await settleSegmentInRust({ input, context });
+      if ('ran' in outcome) return outcome.ran;
+      const { program, prepared } = parseAndCheck(input);
+      return new Interpreter(input, { ...prepared, context }).settleRaceFrame({
+        program,
+        state: input.state,
+        frameAddress: input.frameAddress,
+      });
+    });
+  }
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>
     new Interpreter(input, { ...prepared, context }).settleRaceFrame({
@@ -801,6 +814,19 @@ export async function fireCallbackBody(
   input: CallbackBodyInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
   refuseUnsupportedParkStateVersion(input.state.version);
+  if (routesToRust(input)) {
+    return inRunContext(input, async (context) => {
+      const outcome = await fireSegmentInRust({ input, context });
+      if ('ran' in outcome) return outcome.ran;
+      const { program, prepared } = parseAndCheck(input);
+      return new Interpreter(input, { ...prepared, context }).fireCallback({
+        program,
+        state: input.state,
+        values: input.values,
+        callIndex: input.callIndex,
+      });
+    });
+  }
   const { program, prepared } = parseAndCheck(input);
   return inRunContext(input, (context) =>
     new Interpreter(input, { ...prepared, context }).fireCallback({

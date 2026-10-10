@@ -144,7 +144,7 @@ impl Run<'_> {
     /// `readRecord {recordType, externalId}`.
     async fn read_record(&self, adapter: &crate::write::TargetAdapter, record_type: &str, external_id: &Js) -> Result<Js, Stop> {
         let read = env::object_of(vec![("recordType", Js::str(record_type)), ("externalId", external_id.clone())]);
-        self.store_call(&adapter, "readRecord", read).await.map_err(thrown)
+        self.store_call(adapter, "readRecord", read).await.map_err(thrown)
     }
 
     /// `executeLink`.
@@ -218,7 +218,7 @@ impl Run<'_> {
             ("to", endpoint(&edge.to_type, &edge.to_id)),
             ("mutationContext", self.mutation_context.borrow().clone()),
         ]);
-        self.with_locks(vec![lock], async { self.store_call(&edge.adapter, method, args).await.map_err(thrown) }).await
+        self.with_locks(vec![crate::flow::LockRequest::exclusive(lock)], async { self.store_call(&edge.adapter, method, args).await.map_err(thrown) }).await
     }
 
     /// `recordLinkStatement`.
@@ -244,7 +244,7 @@ impl Run<'_> {
             "provenance".into(),
             env::object_of(vec![("from", handle_provenance(&plan.from)), ("to", handle_provenance(&plan.to))]),
         );
-        self.writes.borrow_mut().push(Rc::new(WriteRecord { object: Js::object(record) }));
+        self.append_write(Rc::new(WriteRecord { object: Js::object(record) }));
     }
 
     /// `resolveLinkStatement`: two handles in one graph, the edge the from
@@ -368,7 +368,7 @@ impl Run<'_> {
         if let Some(name) = binding_name {
             record.set("bindingName".into(), Js::str(name));
         }
-        self.writes.borrow_mut().push(Rc::new(WriteRecord { object: Js::object(record) }));
+        self.append_write(Rc::new(WriteRecord { object: Js::object(record) }));
         if let Some(name) = binding_name {
             let mut handle = record_head(&adapter, &record_type, false, !adapter.dry, to_id.clone());
             handle.set("writtenValues".into(), Js::object(JsObject::new()));
@@ -402,7 +402,7 @@ impl Run<'_> {
             ("mutationContext", self.mutation_context.borrow().clone()),
         ]);
         let lock = unique::record_lock_name(&adapter.adapter_type, &external_id);
-        self.with_locks(vec![lock], async { self.store_call(&adapter, "deleteRecord", args).await.map_err(thrown) }).await?;
+        self.with_locks(vec![crate::flow::LockRequest::exclusive(lock)], async { self.store_call(adapter, "deleteRecord", args).await.map_err(thrown) }).await?;
         let mut record = JsObject::new();
         record.set("kind".into(), Js::str("delete"));
         record.set("adapterType".into(), Js::str(adapter.adapter_type.clone()));
@@ -416,7 +416,7 @@ impl Run<'_> {
             _ => Js::object(JsObject::new()),
         };
         record.set("provenance".into(), provenance);
-        self.writes.borrow_mut().push(Rc::new(WriteRecord { object: Js::object(record) }));
+        self.append_write(Rc::new(WriteRecord { object: Js::object(record) }));
         Ok(())
     }
 }

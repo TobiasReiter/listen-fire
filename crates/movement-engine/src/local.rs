@@ -394,7 +394,7 @@ impl Run<'_> {
         let identity = self.unique_by_identity(&write.unique_by, &target)?;
         let constraints = unique::merge(&Js::Undefined, identity.branches.clone());
         let resolve_record = overlaid(&fields.fields, &identity.overlay);
-        let locks = unique::identity_lock_names(LOCAL_ADAPTER_TYPE, &edge_name, &constraints, &resolve_record, &fields.fields, self.version());
+        let locks = unique::identity_lock_requests(LOCAL_ADAPTER_TYPE, &edge_name, &constraints, &resolve_record, &fields.fields, self.version());
         let record = self
             .with_locks(locks, self.find_then_write(&target, &fields, &resolve_record, &constraints, &identity.narrowings, &[], scope))
             .await?;
@@ -546,21 +546,21 @@ impl Run<'_> {
         self.summarise_written(&mut row, provenance, binding_name);
         let write_index = self.writes.borrow().len();
         row.set("origin".into(), env::object_of(vec![("kind", Js::str("write")), ("writeIndex", Js::Number(write_index as f64))]));
-        self.writes.borrow_mut().push(Rc::new(crate::write::WriteRecord { object: Js::object(row) }));
+        self.append_write(Rc::new(crate::write::WriteRecord { object: Js::object(row) }));
     }
 
     /// What an update of a local landing holds (`updateLocks`): nothing the
     /// host sees for a landing the run built; for a reference, the real
     /// record and the identity keys a direct write by the same `unique by`
     /// takes in its system.
-    pub(crate) async fn local_update_locks(&self, edge: &LocalEdge, external_id: &Js, constraints: &Js, resolve_record: &Js, fields: &Js) -> Result<Vec<String>, Failure> {
+    pub(crate) async fn local_update_locks(&self, edge: &LocalEdge, external_id: &Js, constraints: &Js, resolve_record: &Js, fields: &Js) -> Result<Vec<crate::flow::LockRequest>, Failure> {
         match edge.landing_of(external_id) {
-            None => Ok(vec![unique::record_lock_name(LOCAL_ADAPTER_TYPE, external_id)]),
+            None => Ok(vec![crate::flow::LockRequest::exclusive(unique::record_lock_name(LOCAL_ADAPTER_TYPE, external_id))]),
             Some(Binding::Node(_)) => Ok(Vec::new()),
             Some(reference) => {
                 let real = self.real_record(edge, &reference).await?;
-                let mut locks = vec![unique::record_lock_name(&real.adapter.adapter_type, &real.external_id)];
-                locks.extend(unique::identity_lock_names(&real.adapter.adapter_type, &real.record_type, constraints, resolve_record, fields, self.version()));
+                let mut locks = vec![crate::flow::LockRequest::exclusive(unique::record_lock_name(&real.adapter.adapter_type, &real.external_id))];
+                locks.extend(unique::identity_lock_requests(&real.adapter.adapter_type, &real.record_type, constraints, resolve_record, fields, self.version()));
                 Ok(locks)
             }
         }

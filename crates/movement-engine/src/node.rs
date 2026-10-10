@@ -141,7 +141,7 @@ impl Run<'_> {
                     }
                     // `lazy`: the walk is kept, and run at every read.
                     NodeEntry::Traversal { name, head, lazy: true, mapping, .. } => {
-                        let walk = self.defer_walk(head, mapping.as_ref(), scope, &format!("{path}/entries/{index}/mapping"));
+                        let walk = self.defer_walk(head, mapping.as_ref(), scope, &format!("{path}/entries/{index}"));
                         node.put(name, Edge { landings: Vec::new(), shape: None, deferred: Some(walk) });
                     }
                 }
@@ -157,8 +157,16 @@ impl Run<'_> {
     }
 
     /// `deferWalk`: the walk as written and the scope it was written in.
+    /// `deferWalk`: the walk kept, with the scope it is written in captured.
+    /// `path` is the walk's own AST path (its `head` and `mapping` are under
+    /// it).
     pub(crate) fn defer_walk(&self, head: &movement_parser::ast::PathHead, mapping: Option<&NodeLiteral>, scope: &Rc<Scope>, path: &str) -> Rc<DeferredWalk> {
-        Rc::new(DeferredWalk { head: head.clone(), captured: scope.capture(), mapping: mapping.map(|m| (m.clone(), path.to_string())) })
+        Rc::new(DeferredWalk {
+            head: head.clone(),
+            head_path: format!("{path}/head"),
+            captured: scope.capture(),
+            mapping: mapping.map(|m| (m.clone(), format!("{path}/mapping"))),
+        })
     }
 
     /// `runDeferredWalk`: a kept walk run now, against the live source, in

@@ -24,7 +24,6 @@ import {
   engineChoice,
   readRunResult,
   runSegmentInRust,
-  rustResumeRefusal,
   EVENT_DOES_NOT_CROSS,
   RustShimError,
   type EngineProtocol,
@@ -673,15 +672,6 @@ describe('choosing the engine', () => {
     expect(() => assertEngineChoiceConfigured({})).not.toThrow();
   });
 
-  it('admits no resume that answers or defers, reading its input alone, and counts each refusal by its reason', () => {
-    resetRustRunStats();
-    expect(rustResumeRefusal({ answer: true })).toBe('resume_answer');
-    expect(rustResumeRefusal({ deferRaceSettlement: true })).toBe('resume_defers_race_settlement');
-    // A pause or a suspension is the Rust engine's own (crates/movement-engine/src/park.rs).
-    expect(rustResumeRefusal({})).toBeUndefined();
-    expect(rustRunStats.notAdmitted).toEqual({ resume_answer: 1, resume_defers_race_settlement: 1 });
-    expect(rustRunStats.routed).toBe(0);
-  });
 });
 
 describe("a segment's wire", () => {

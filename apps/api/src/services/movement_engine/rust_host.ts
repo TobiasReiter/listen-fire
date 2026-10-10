@@ -18,7 +18,7 @@
 // engine hands it in process, and an adapter's result comes back the same way.
 
 import { applyStdlib, languageVersionDiagnostic, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
-import { isFileRef } from 'engine-contracts';
+import { isCallbackParamType, isFileRef, type CallbackParamSpec, type ParkedScopeState } from 'engine-contracts';
 import { z } from 'zod';
 
 import { compareValues } from '#shared/expression/filter';
@@ -298,6 +298,131 @@ const ROUTES: Record<string, Route> = {
     });
     return undefined;
   },
+  /** An await park (an awaitable adapter's edge, a callback's `Called`):
+   *  its state on the eval wire and the key a wake names it by. */
+  async 'park.sink.commitAwaitPark'(request, { host, wire }) {
+    const sink = host.park.sink;
+    if (sink?.commitAwaitPark === undefined) throw notServed('park.sink.commitAwaitPark');
+    if (request.wire !== true) throw new RustShimError('park.sink.commitAwaitPark carries its state on the eval wire');
+    await sink.commitAwaitPark({
+      segmentId: segmentOf(request),
+      address: string(request.address, 'park.sink.commitAwaitPark address'),
+      state: wire.read(request.state),
+      adapterType: string(request.adapterType, 'park.sink.commitAwaitPark adapterType'),
+      correlationKey: string(request.correlationKey, 'park.sink.commitAwaitPark correlationKey'),
+    });
+    return undefined;
+  },
+  /** A join frame's pending count. */
+  async 'park.sink.recordJoin'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink?.recordJoin === undefined) throw notServed('park.sink.recordJoin');
+    await sink.recordJoin({
+      segmentId: segmentOf(request),
+      frameAddress: string(request.frameAddress, 'park.sink.recordJoin frameAddress'),
+      parkedChildren: count(request.parkedChildren, 'park.sink.recordJoin parkedChildren'),
+    });
+    return undefined;
+  },
+  /** A finished branch's exports at its frame, on the eval wire. */
+  async 'park.sink.persistBranchExport'(request, { host, wire }) {
+    const sink = host.park.sink;
+    if (sink?.persistBranchExport === undefined) throw notServed('park.sink.persistBranchExport');
+    if (request.wire !== true) throw new RustShimError('park.sink.persistBranchExport carries its exports on the eval wire');
+    const branchIndex = request.branchIndex;
+    if (typeof branchIndex !== 'number' || !Number.isInteger(branchIndex)) throw new RustShimError('park.sink.persistBranchExport branchIndex is an integer');
+    await sink.persistBranchExport({
+      segmentId: segmentOf(request),
+      frameAddress: string(request.frameAddress, 'park.sink.persistBranchExport frameAddress'),
+      branchAddress: string(request.branchAddress, 'park.sink.persistBranchExport branchAddress'),
+      branchIndex,
+      exports: wire.read(request.exports),
+    });
+    return undefined;
+  },
+  /** A resumed branch's decrement of its frame: `{closed}`. */
+  async 'park.sink.decrementJoin'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink?.decrementJoin === undefined) throw notServed('park.sink.decrementJoin');
+    const { closed } = await sink.decrementJoin({
+      segmentId: segmentOf(request),
+      frameAddress: string(request.frameAddress, 'park.sink.decrementJoin frameAddress'),
+      branchAddress: string(request.branchAddress, 'park.sink.decrementJoin branchAddress'),
+      leafAddress: string(request.leafAddress, 'park.sink.decrementJoin leafAddress'),
+    });
+    return { closed: closed === true };
+  },
+  /** Every branch's exports at a frame, by branch index, as data on the
+   *  eval wire (the descriptors keep their key order). */
+  async 'park.sink.collectBranchExports'(request, { host, wire }) {
+    const sink = host.park.sink;
+    if (sink?.collectBranchExports === undefined) throw notServed('park.sink.collectBranchExports');
+    const rows = await sink.collectBranchExports({
+      segmentId: segmentOf(request),
+      frameAddress: string(request.frameAddress, 'park.sink.collectBranchExports frameAddress'),
+    });
+    const value = wire.valueAsData(rows);
+    if (value === REFUSED) throw new RustShimError('park.sink.collectBranchExports answered exports the eval wire cannot carry as themselves');
+    return new Plain(value);
+  },
+  /** The race cascade: every park at or below each prefix withdrawn. */
+  async 'park.sink.cancelSubtrees'(request, { host }) {
+    const sink = host.park.sink;
+    if (sink?.cancelSubtrees === undefined) throw notServed('park.sink.cancelSubtrees');
+    const subtrees = request.subtreeAddresses;
+    if (!Array.isArray(subtrees) || !subtrees.every((address) => typeof address === 'string')) {
+      throw new RustShimError('park.sink.cancelSubtrees subtreeAddresses are a list of texts');
+    }
+    const excludeLeaf = optionalString(request.excludeLeaf, 'park.sink.cancelSubtrees excludeLeaf');
+    await sink.cancelSubtrees({
+      segmentId: segmentOf(request),
+      subtreeAddresses: subtrees,
+      ...(excludeLeaf !== undefined ? { excludeLeaf } : {}),
+    });
+    return undefined;
+  },
+  /** "Resume whatever is parked on this key." */
+  async 'park.wake'(request, { host }) {
+    await host.park.wake({
+      segmentId: segmentOf(request),
+      adapterType: string(request.adapterType, 'park.wake adapterType'),
+      correlationKey: string(request.correlationKey, 'park.wake correlationKey'),
+    });
+    return undefined;
+  },
+  /** A callback minted, its captured continuation on the eval wire:
+   *  `{id, url}`. */
+  async 'park.callbacks.mint'(request, { host, wire }) {
+    const callbacks = host.park.callbacks;
+    if (callbacks === undefined) throw notServed('park.callbacks.mint');
+    if (request.wire !== true) throw new RustShimError('park.callbacks.mint carries its state on the eval wire');
+    if (typeof request.singleUse !== 'boolean') throw new RustShimError('park.callbacks.mint singleUse is a boolean');
+    const params = request.params;
+    if (!Array.isArray(params) || !params.every(isCallbackParam)) throw new RustShimError('park.callbacks.mint params are {name, type} each');
+    const expiresAt = request.expiresAt === undefined ? undefined : instant(request.expiresAt, 'park.callbacks.mint expiresAt');
+    const state = wire.read(request.state);
+    if (!isParkedState(state)) throw new RustShimError('park.callbacks.mint state is a parked state');
+    return callbacks.mint({
+      segmentId: segmentOf(request),
+      address: string(request.address, 'park.callbacks.mint address'),
+      params,
+      state,
+      singleUse: request.singleUse,
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    });
+  },
+  /** A callback's live call ledger, as data on the eval wire. */
+  async 'park.callbacks.calls'(request, { host, wire }) {
+    const callbacks = host.park.callbacks;
+    if (callbacks === undefined) throw notServed('park.callbacks.calls');
+    const calls = await callbacks.calls({
+      segmentId: segmentOf(request),
+      callbackId: string(request.callbackId, 'park.callbacks.calls callbackId'),
+    });
+    const value = wire.valueAsData(calls);
+    if (value === REFUSED) throw new RustShimError('park.callbacks.calls answered calls the eval wire cannot carry as themselves');
+    return new Plain(value);
+  },
   /** The host's instant now, read at the boundary as the TypeScript engine
    *  reads it (run_context.ts): an answer naming no instant fails the run. */
   async 'clock.now'(request, { context }) {
@@ -350,7 +475,8 @@ const ROUTES: Record<string, Route> = {
       const meta = { ...record(fields, 'a log line fields'), ...runLogFields(context) };
       if (level === 'warn') logger.warn(text, meta);
       else if (level === 'info') logger.info(text, meta);
-      else throw new RustShimError(`a log line's level is info or warn, not ${JSON.stringify(level)}`);
+      else if (level === 'error') logger.error(text, meta);
+      else throw new RustShimError(`a log line's level is info, warn or error, not ${JSON.stringify(level)}`);
     }
     return undefined;
   },
@@ -445,6 +571,28 @@ function microdollars(value: unknown, what: string): number {
  *  asks an optional one only where the segment input says it is served. */
 function notServed(path: string): RustShimError {
   return new RustShimError(`the engine asked ${path} of a host that does not serve it`);
+}
+
+/** The parked state's own fields, as the engine writes them; the rest is
+ *  the engine's to read back. */
+function isParkedState(value: unknown): value is ParkedScopeState {
+  if (typeof value !== 'object' || value === null) return false;
+  return (
+    Reflect.get(value, 'version') === 1
+    && typeof Reflect.get(value, 'address') === 'string'
+    && Array.isArray(Reflect.get(value, 'scopeChain'))
+  );
+}
+
+function count(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) throw new RustShimError(`${what} is a count`);
+  return value;
+}
+
+function isCallbackParam(value: unknown): value is CallbackParamSpec {
+  if (typeof value !== 'object' || value === null) return false;
+  const type: unknown = Reflect.get(value, 'type');
+  return typeof Reflect.get(value, 'name') === 'string' && typeof type === 'string' && isCallbackParamType(type);
 }
 
 function instant(value: unknown, what: string): string {

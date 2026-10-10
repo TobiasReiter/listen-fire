@@ -319,57 +319,149 @@ pub fn arbitrate_without_judge(asserted: &Js, candidates: &[Js], constraints: &J
     None
 }
 
-/// The cross-run names an identity write takes (`identityLocks` through
-/// `crossRunNames`): its record type's lock, or nothing. The per-key locks
-/// are the run's own and gate only flows that run at once, which this
-/// engine's runs do not.
-pub fn identity_lock_names(adapter_type: &str, record_type: &str, constraints: &Js, record: &Js, fields: &Js, version: u32) -> Vec<String> {
+/// The locks an identity write takes (effect_locks.ts `identityLocks`): a
+/// lock per key it searches by — (system, record type, which fields, their
+/// values), taken by this run only — plus a lock over its record type shared
+/// with every write searching by the same set of keys; a fuzzy key, or a key
+/// value with no exact text, holds the record type alone, exclusively.
+pub(crate) fn identity_lock_requests(adapter_type: &str, record_type: &str, constraints: &Js, record: &Js, fields: &Js, version: u32) -> Vec<crate::flow::LockRequest> {
+    use crate::flow::{LockMode, LockRequest};
     let any = branches(constraints);
     if any.is_empty() {
         return Vec::new();
     }
-    let type_lock = vec![format!("identity {} {}", js::json_quote(adapter_type), js::json_quote(record_type))];
+    let type_lock = format!("identity {} {}", js::json_quote(adapter_type), js::json_quote(record_type));
+    let whole_type = vec![LockRequest::exclusive(type_lock.clone())];
     if has_fuzzy(constraints) {
-        return type_lock;
+        return whole_type;
     }
-    let mut searchable_any = false;
-    for branch in &any {
-        let mut fields_of: Vec<String> = Vec::new();
-        for entry in entries(branch) {
-            let field = field_of(&entry);
-            if !fields_of.contains(&field) {
-                fields_of.push(field);
+    // Each branch's fields, distinct and sorted (`[...new Set(…)].sort()`).
+    let branch_fields: Vec<Vec<String>> = any
+        .iter()
+        .map(|branch| {
+            let mut fields_of: Vec<String> = Vec::new();
+            for entry in entries(branch) {
+                let field = field_of(&entry);
+                if !fields_of.contains(&field) {
+                    fields_of.push(field);
+                }
             }
-        }
+            fields_of.sort_by(|a, b| js::utf16_cmp(a, b));
+            fields_of
+        })
+        .collect();
+    let mut keys: Vec<LockRequest> = Vec::new();
+    for fields_of in &branch_fields {
+        let mut value_sets: Vec<Vec<String>> = Vec::new();
         let mut searchable = true;
-        for field in &fields_of {
-            let mut values = 0;
+        for field in fields_of {
+            let mut values: Vec<String> = Vec::new();
             for raw in [get(record, field), get(fields, field)] {
                 if is_blank(&raw, version) {
                     continue;
                 }
-                if !foldable(&raw) {
-                    return type_lock;
+                let Some(folded) = fold_key_value(&raw) else { return whole_type };
+                if !values.contains(&folded) {
+                    values.push(folded);
                 }
-                values += 1;
             }
-            if values == 0 {
+            if values.is_empty() {
                 searchable = false;
             }
+            value_sets.push(values);
         }
-        searchable_any |= searchable;
+        if !searchable {
+            continue;
+        }
+        let signature = js::json_quote(&fields_of.join(","));
+        for combination in cartesian(&value_sets) {
+            let stable = format!("[{}]", combination.iter().map(|v| js::json_quote(v)).collect::<Vec<_>>().join(","));
+            keys.push(LockRequest {
+                name: format!("key {} {} {signature} {stable}", js::json_quote(adapter_type), js::json_quote(record_type)),
+                mode: LockMode::Exclusive,
+                in_run_only: true,
+            });
+        }
     }
-    if searchable_any { type_lock } else { Vec::new() }
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let mut groups: Vec<String> = branch_fields.iter().map(|fields_of| fields_of.join(",")).collect();
+    groups.sort_by(|a, b| js::utf16_cmp(a, b));
+    groups.dedup();
+    let mut requests = vec![LockRequest { name: type_lock, mode: LockMode::Shared(groups.join(" | ")), in_run_only: false }];
+    requests.extend(keys);
+    requests
 }
 
-/// Whether `foldKeyValue` has an exact text for a value: a scalar, or a
-/// parent folded in as `{id}`.
-fn foldable(value: &Js) -> bool {
+/// The cross-run names an identity write takes (`identityLocks` through
+/// `crossRunNames`): its record type's lock, or nothing.
+pub fn identity_lock_names(adapter_type: &str, record_type: &str, constraints: &Js, record: &Js, fields: &Js, version: u32) -> Vec<String> {
+    crate::flow::cross_run_names(&identity_lock_requests(adapter_type, record_type, constraints, record, fields, version))
+}
+
+/// `cartesian`: every combination, one value from each set, in order.
+fn cartesian(sets: &[Vec<String>]) -> Vec<Vec<String>> {
+    sets.iter().fold(vec![Vec::new()], |combinations, values| {
+        combinations.iter().flat_map(|prefix| values.iter().map(move |value| [prefix.clone(), vec![value.clone()]].concat())).collect()
+    })
+}
+
+/// `foldKeyValue`: a key value folded so that any two values a system could
+/// consider the same fold to the same text; `None` for a value with no
+/// exact text (a list, a structured value).
+fn fold_key_value(value: &Js) -> Option<String> {
     match value {
-        Js::Number(_) | Js::Bool(_) | Js::String(_) => true,
-        Js::Object(object) => object.entries().len() == 1 && matches!(object.get("id"), Some(Js::String(_))),
-        _ => false,
+        Js::Number(_) | Js::Bool(_) => Some(value.to_js_string()),
+        Js::String(text) => Some(fold_text(text)),
+        // A parent folded in under its edge's name: a record id, exactly.
+        Js::Object(object) if object.entries().len() == 1 => match object.get("id") {
+            Some(Js::String(id)) => Some(format!("@{id}")),
+            _ => None,
+        },
+        _ => None,
     }
+}
+
+/// `foldText`: case and accents gone, a URL's scheme, `www.` and path gone,
+/// then everything but letters and digits gone.
+fn fold_text(text: &str) -> String {
+    let decomposed = crate::env_services::current().normalize(text, crate::env_services::NormalForm::Nfkd);
+    let unmarked: String = decomposed.chars().filter(|c| !crate::letter_number::is_mark(*c)).collect();
+    let mut folded = js::trim(&unmarked).to_lowercase();
+    let scheme_end = scheme_length(&folded);
+    if let Some(end) = scheme_end {
+        folded = folded[end..].to_string();
+    }
+    if scheme_end.is_some() || host_then_path(&folded) {
+        folded = folded.split(['/', '?', '#']).next().unwrap_or("").to_string();
+    }
+    if let Some(rest) = folded.strip_prefix("www.") {
+        folded = rest.to_string();
+    }
+    folded.chars().filter(|c| crate::letter_number::is_letter_or_number(*c)).collect()
+}
+
+/// `/^[a-z][a-z0-9+.-]*:\/\//`'s length, when it matches.
+fn scheme_length(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    if !bytes.first().is_some_and(u8::is_ascii_lowercase) {
+        return None;
+    }
+    let mut end = 1;
+    while end < bytes.len() && (bytes[end].is_ascii_lowercase() || bytes[end].is_ascii_digit() || matches!(bytes[end], b'+' | b'.' | b'-')) {
+        end += 1;
+    }
+    text[end..].starts_with("://").then_some(end + 3)
+}
+
+/// `/^[^\s/@]+\.[^\s/@]+\//`: a host with a dot inside it, then a path.
+fn host_then_path(text: &str) -> bool {
+    let outside = |c: char| c.is_whitespace() || c == '/' || c == '@';
+    let head: String = text.chars().take_while(|c| !outside(*c)).collect();
+    let rest = &text[head.len()..];
+    let dotted = head.char_indices().any(|(i, c)| c == '.' && i > 0 && i + c.len_utf8() < head.len());
+    dotted && rest.starts_with('/')
 }
 
 /// `recordLock`'s name.

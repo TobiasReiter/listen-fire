@@ -253,8 +253,16 @@ impl Segment {
         let Some(task) = self.task.as_mut() else {
             return Err(ProtocolError("the segment has already finished".into()));
         };
-        let mut cx = Context::from_waker(Waker::noop());
-        match task.as_mut().poll(&mut cx) {
+        // A flow can wake another without an answer (a lock it let go): the
+        // segment is polled again until nothing it holds was woken.
+        let woken = Arc::new(Woken::default());
+        let waker = Waker::from(woken.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut polled = task.as_mut().poll(&mut cx);
+        while polled.is_pending() && woken.0.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            polled = task.as_mut().poll(&mut cx);
+        }
+        match polled {
             Poll::Ready(result) => {
                 // The task's futures are gone; answers to anything it left in
                 // flight are protocol errors from here on.
@@ -269,6 +277,20 @@ impl Segment {
                 Ok(Step::Pending(sent))
             }
         }
+    }
+}
+
+/// Whether the segment's task was woken while it was being polled.
+#[derive(Default)]
+struct Woken(std::sync::atomic::AtomicBool);
+
+impl Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

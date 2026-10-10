@@ -75,6 +75,19 @@ impl Run<'_> {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: Js::array(landings.iter().cloned().map(record::held).collect()), prov });
         }
+        // The receipt read as a plain list: its slots' values, in order, a
+        // slot holding a record null (`slotValue`).
+        if let Binding::Tuple(slots) = &binding {
+            let prov = origins(&binding)?;
+            let values = slots
+                .iter()
+                .map(|slot| match slot {
+                    Binding::Value(value) => value.value.clone(),
+                    _ => Js::Null,
+                })
+                .collect();
+            return Ok(Evaluated { value: Js::array(values), prov });
+        }
         // A dict the TypeScript takes for a value binding reads as the value
         // it holds.
         if let Binding::Shaped(dict) = &binding
@@ -157,6 +170,13 @@ impl Run<'_> {
                 let mut origins = Vec::new();
                 for landing in landings {
                     origins.extend(self.entity_origins(landing)?);
+                }
+                origins
+            }
+            Binding::Tuple(slots) => {
+                let mut origins = Vec::new();
+                for slot in slots.iter() {
+                    origins.extend(self.entity_origins(slot)?);
                 }
                 origins
             }

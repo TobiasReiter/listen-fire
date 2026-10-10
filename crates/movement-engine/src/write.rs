@@ -30,6 +30,7 @@ use crate::executor::HostError;
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
 use crate::program::Stamp;
+use crate::flow::{LockMode, LockRequest};
 use crate::run::{Failure, Run, Stop};
 use crate::unique::{self, Key};
 
@@ -249,7 +250,7 @@ impl Run<'_> {
         let constraints = unique::merge(&native, identity.branches.clone());
         let resolve_record = self.identity_record(&evaluated.fields, &identity.overlay, &constraints, &target);
         let parent_links = parent_links(&target);
-        let lock_names = unique::identity_lock_names(
+        let lock_names = unique::identity_lock_requests(
             &target.adapter.adapter_type,
             &target.record_type,
             &constraints,
@@ -531,13 +532,13 @@ impl Run<'_> {
             return Ok(cached.clone());
         }
         let resolved = self
-            .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
+            .resolve_adapter(&ResolveAdapter {
                 adapter_type: Some(Json::String(instance.adapter_slug.clone())),
                 credentials_id,
                 construction_args: (!construction_args.is_empty()).then_some(construction_args),
                 role: Role::Target,
                 dry_run: dry,
-            }))
+            })
             .await
             .map_err(thrown)?
             .unwrap_or(Json::Null);
@@ -551,7 +552,7 @@ impl Run<'_> {
 
     /// `evaluateWriteFields`: `describe`, then each line in order.
     pub(crate) async fn write_fields(&self, lines: &[Line], adapter: &TargetAdapter, record_type: &str, scope: &Rc<Scope>) -> Result<Fields, Stop> {
-        let descriptor = self.store_call(&adapter, "describe", env::object_of(vec![("typeId", Js::str(record_type))])).await.map_err(thrown)?;
+        let descriptor = self.store_call(adapter, "describe", env::object_of(vec![("typeId", Js::str(record_type))])).await.map_err(thrown)?;
         let described: Vec<Js> = match unique::get(&descriptor, "fields") {
             Js::Array(list) => list.items().clone(),
             _ => Vec::new(),
@@ -895,7 +896,7 @@ impl Run<'_> {
                 let mut read = JsObject::new();
                 read.set("recordType".into(), Js::str(target.record_type.clone()));
                 read.set("externalId".into(), external_id.clone());
-                self.store_call(&adapter, "readRecord", Js::object(read)).await.map_err(thrown)?
+                self.store_call(adapter, "readRecord", Js::object(read)).await.map_err(thrown)?
             } else {
                 Js::Null
             };
@@ -948,7 +949,7 @@ impl Run<'_> {
         let matched = chosen.map(|c| unique::get(&c, "externalId"));
         if let Some(external_id) = matched.filter(|id| !matches!(id, Js::Undefined)) {
             let locks = match target.adapter.local_edge() {
-                None => vec![unique::record_lock_name(&target.adapter.adapter_type, &external_id)],
+                None => vec![LockRequest::exclusive(unique::record_lock_name(&target.adapter.adapter_type, &external_id))],
                 Some(edge) => self.local_update_locks(edge, &external_id, constraints, resolve_record, &fields.fields).await.map_err(thrown)?,
             };
             if let Some(updated) = self.apply_update(target, &external_id, fields, parent_links, locks).await? {
@@ -964,7 +965,7 @@ impl Run<'_> {
 
     /// `applyUpdate`: the record held while its current values are read and
     /// merged into. `None` when the adapter reports it gone.
-    pub(crate) async fn apply_update(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js], locks: Vec<String>) -> Result<Option<Js>, Stop> {
+    pub(crate) async fn apply_update(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js], locks: Vec<LockRequest>) -> Result<Option<Js>, Stop> {
         self.with_locks(locks, self.merge_into_record(target, external_id, fields, parent_links)).await
     }
 
@@ -979,7 +980,7 @@ impl Run<'_> {
             read.set("recordType".into(), Js::str(target.record_type.clone()));
             read.set("externalId".into(), external_id.clone());
             read.set("fieldIds".into(), Js::array(keys));
-            self.store_call(&adapter, "readRecord", Js::object(read)).await.map_err(thrown)?
+            self.store_call(adapter, "readRecord", Js::object(read)).await.map_err(thrown)?
         } else {
             Js::Null
         };
@@ -1054,7 +1055,7 @@ impl Run<'_> {
         }
         update.set("mutationContext".into(), self.mutation_context.borrow().clone());
         update.set("parentLinks".into(), Js::array(parent_links.to_vec()));
-        let updated = self.store_call(&adapter, "updateRecord", Js::object(update)).await.map_err(thrown)?;
+        let updated = self.store_call(adapter, "updateRecord", Js::object(update)).await.map_err(thrown)?;
         if let Js::Object(object) = &updated
             && object.get("notFound").is_some()
         {
@@ -1135,7 +1136,7 @@ impl Run<'_> {
         create.set("mutationContext".into(), self.mutation_context.borrow().clone());
         create.set("parentLinks".into(), Js::array(parent_links.to_vec()));
         create.set("bridgeToExternal".into(), Js::Undefined);
-        let created = self.store_call(&adapter, "createRecord", Js::object(create)).await.map_err(thrown)?;
+        let created = self.store_call(adapter, "createRecord", Js::object(create)).await.map_err(thrown)?;
         let mut record = record_head(adapter, &target.record_type, true, !adapter.dry, unique::get(&created, "externalId"));
         record.set("writtenValues".into(), fields.fields.clone());
         record.set("resultData".into(), write_result_data(&created));
@@ -1153,7 +1154,7 @@ impl Run<'_> {
         let (target, external_id) = self.position_target(alias, scope, "update").await?;
         let fields = self.write_fields(lines, &target.adapter, &target.record_type, scope).await?;
         let lock = unique::record_lock_name(&target.adapter.adapter_type, &external_id);
-        let Some(record) = self.apply_update(&target, &external_id, &fields, &[], vec![lock]).await? else {
+        let Some(record) = self.apply_update(&target, &external_id, &fields, &[], vec![LockRequest::exclusive(lock)]).await? else {
             return Err(thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!(
@@ -1249,7 +1250,7 @@ impl Run<'_> {
         }
         object.set("origin".into(), env::object_of(origin));
         let record = Rc::new(WriteRecord { object: Js::object(object) });
-        self.writes.borrow_mut().push(record.clone());
+        self.append_write(record.clone());
         let handle = Handle {
             record,
             target_type: target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
@@ -1329,28 +1330,92 @@ impl Run<'_> {
         }
     }
 
-    /// An effect run holding the cross-run locks it needs, let go however it
-    /// ends (`EffectLocks.withLocks` beneath the run's own flows, which in
-    /// this engine never run at once).
-    pub(crate) async fn with_locks<T>(&self, names: Vec<String>, effect: impl std::future::Future<Output = Result<T, Stop>>) -> Result<T, Stop> {
-        let mut names = names;
-        names.sort();
-        names.dedup();
-        if names.is_empty() {
+    /// `EffectLocks.withLocks`: an effect run holding every lock it asks
+    /// for — the run's own gates first, taken in name order (two effects
+    /// wanting the same locks in another order cannot each hold one the
+    /// other waits for), then the coarser cross-run names — let go however
+    /// it ends. A lock the running flow already holds is not waited for.
+    pub(crate) async fn with_locks<T>(&self, requests: Vec<LockRequest>, effect: impl std::future::Future<Output = Result<T, Stop>>) -> Result<T, Stop> {
+        let held = self.held_locks.borrow().clone();
+        let mut wanted: Vec<LockRequest> = Vec::new();
+        for request in crate::flow::canonical_requests(requests) {
+            match held.iter().find(|(name, _)| *name == request.name) {
+                None => wanted.push(request),
+                Some((_, LockMode::Exclusive)) => {}
+                Some((_, mine)) if *mine == request.mode => {}
+                Some(_) => {
+                    return Err(thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("an effect asked for '{}' on its own while already sharing it — the engine's effect locks are taken in the wrong order", request.name),
+                    )));
+                }
+            }
+        }
+        if wanted.is_empty() {
             return effect.await;
         }
-        let held = self.ask(host::locks::acquire(self.segment(), &names)).await.map_err(thrown)?;
-        let token = held
-            .as_ref()
-            .and_then(|answer| answer.get("token"))
-            .and_then(Json::as_str)
-            .map(String::from)
-            .ok_or_else(|| thrown(Failure::engine("MOVENG_RUNTIME", format!("locks.acquire answered {held:?}, not {{token}}"))))?;
-        let outcome = effect.await;
-        let released = self.ask(host::locks::release(self.segment(), &token)).await.map_err(thrown);
-        let value = outcome?;
-        released?;
-        Ok(value)
+        let mut taken: Vec<Rc<crate::flow::Gate>> = Vec::new();
+        for request in &wanted {
+            let gate = self.gate(&request.name);
+            gate.acquire(request.mode.clone()).await;
+            taken.push(gate);
+        }
+        // After the run's own gates, so the run's flows queue among
+        // themselves first and only one of them at a time waits on another
+        // run.
+        let names = crate::flow::cross_run_names(&wanted);
+        let token = if names.is_empty() {
+            Ok(None)
+        } else {
+            match self.ask(host::locks::acquire(self.segment(), &names)).await {
+                Ok(held) => held
+                    .as_ref()
+                    .and_then(|answer| answer.get("token"))
+                    .and_then(Json::as_str)
+                    .map(|token| Some(token.to_string()))
+                    .ok_or_else(|| thrown(Failure::engine("MOVENG_RUNTIME", format!("locks.acquire answered {held:?}, not {{token}}")))),
+                Err(failure) => Err(thrown(failure)),
+            }
+        };
+        let outcome = match token {
+            Err(stop) => Err(stop),
+            Ok(token) => {
+                let before = self.held_locks.borrow().len();
+                self.held_locks.borrow_mut().extend(wanted.iter().map(|r| (r.name.clone(), r.mode.clone())));
+                let outcome = effect.await;
+                self.held_locks.borrow_mut().truncate(before);
+                // A release that fails is what the effect ends with, as a
+                // throw in a `finally` is.
+                match token {
+                    Some(token) => match self.ask(host::locks::release(self.segment(), &token)).await {
+                        Ok(_) => outcome,
+                        Err(failure) => Err(thrown(failure)),
+                    },
+                    None => outcome,
+                }
+            }
+        };
+        for (gate, request) in taken.iter().zip(&wanted).rev() {
+            gate.release();
+            let mut gates = self.gates.borrow_mut();
+            if gate.idle()
+                && let Some(position) = gates.iter().position(|(name, held)| *name == request.name && Rc::ptr_eq(held, gate))
+            {
+                gates.remove(position);
+            }
+        }
+        outcome
+    }
+
+    /// The run's gate for the lock `name`, made the first time it is asked.
+    fn gate(&self, name: &str) -> Rc<crate::flow::Gate> {
+        let mut gates = self.gates.borrow_mut();
+        if let Some((_, gate)) = gates.iter().find(|(n, _)| n == name) {
+            return gate.clone();
+        }
+        let gate = Rc::new(crate::flow::Gate::default());
+        gates.push((name.to_string(), gate.clone()));
+        gate
     }
 }
 
@@ -1628,6 +1693,8 @@ pub fn describe_binding(binding: &Binding) -> String {
         Binding::Landed(_) => "a traversed source record",
         Binding::Positions(_) => "a block's returned records",
         Binding::LazyWalk(_) => "a deferred traversal",
+        Binding::Tuple(_) => "a combinator receipt",
+        Binding::Closure(_) => "a closure",
         Binding::Extracted { root: true, .. } => "an extract result",
         Binding::Extracted { root: false, .. } => "an extracted entity",
     };

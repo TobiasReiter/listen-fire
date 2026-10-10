@@ -23,6 +23,56 @@ use std::collections::BTreeMap;
 use movement_parser::ast;
 use serde_json::{Value as Json, json};
 
+/// The AST node at `path` in `file`, as the TypeScript holds it: the
+/// parser's JSON (its keys in the order the parser writes them, which is
+/// sorted) with the checker's stamps on it after (`stampsIn` writes keys no
+/// parser writes, so the TypeScript appends them).
+pub fn code_at(file: &File, path: &str) -> Option<crate::js::Js> {
+    let node = file.tree.pointer(path)?;
+    let mut code = crate::env::js_of_json(node);
+    for (at, stamp) in &file.stamps {
+        let Some(rest) = at.strip_prefix(path) else { continue };
+        if !(rest.is_empty() || rest.starts_with('/')) {
+            continue;
+        }
+        let steps: Vec<String> = rest.split('/').skip(1).map(|t| t.replace("~1", "/").replace("~0", "~")).collect();
+        let (key, value) = match stamp {
+            Stamp::SpreadFields(fields) => ("fields", crate::js::Js::array(fields.iter().map(|f| crate::js::Js::str(f.clone())).collect())),
+            Stamp::Copy(copy) => ("copy", crate::env::js_of_json(copy)),
+            Stamp::Reference => ("reference", crate::js::Js::Bool(true)),
+        };
+        code = stamped(&code, &steps, key, value);
+    }
+    Some(code)
+}
+
+/// `node` with `key: value` set on the object `steps` lead to.
+fn stamped(node: &crate::js::Js, steps: &[String], key: &str, value: crate::js::Js) -> crate::js::Js {
+    use crate::js::{Js, JsObject};
+    match (node, steps.split_first()) {
+        (Js::Object(object), None) => {
+            let mut copy = JsObject::clone_of(object);
+            copy.set(key.to_string(), value);
+            Js::object(copy)
+        }
+        (Js::Object(object), Some((step, rest))) => {
+            let mut copy = JsObject::clone_of(object);
+            if let Some(child) = object.get(step) {
+                copy.set(step.clone(), stamped(child, rest, key, value));
+            }
+            Js::object(copy)
+        }
+        (Js::Array(list), Some((step, rest))) => {
+            let mut items = list.items().clone();
+            if let Some(child) = step.parse::<usize>().ok().and_then(|i| items.get_mut(i)) {
+                *child = stamped(child, rest, key, value);
+            }
+            Js::array(items)
+        }
+        (other, _) => other.clone(),
+    }
+}
+
 /// One checker fact.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stamp {

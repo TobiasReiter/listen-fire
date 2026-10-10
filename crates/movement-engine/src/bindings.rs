@@ -51,12 +51,27 @@ pub enum Binding {
     /// `blockValue`), or a list of records a value holds read as the records
     /// it holds (`heldBinding`).
     Positions(Vec<Binding>),
+    /// A `race`'s or a `parallel`'s receipt (`kind: 'tuple'`): slot k is
+    /// what arm k returned, a null value where it returned nothing.
+    Tuple(Rc<Vec<Binding>>),
+    /// A function written in place (`kind: 'closure'`): its body as the
+    /// program holds it, the scope it was written in captured flat, and from
+    /// version 3 the name its body may call it by.
+    Closure(Rc<Closure>),
     /// A plain dict whose `kind` the TypeScript engine reads as a binding's
     /// (`bindingOf`: `kind in describeBinding`, which walks the prototype
     /// chain, so `toString` counts): to it the dict IS a binding of that
     /// kind, its other keys the binding's own (crate::record, the shaped
     /// reads).
     Shaped(Rc<JsObject>),
+}
+
+/// `{kind: 'closure', closure, captured, self?}`.
+#[derive(Debug)]
+pub struct Closure {
+    pub code: crate::flow::Code<movement_parser::ast::ClosureExpression>,
+    pub captured: Rc<Scope>,
+    pub self_name: Option<String>,
 }
 
 /// The identity of a binding object the TypeScript engine makes where this
@@ -92,6 +107,8 @@ impl Binding {
             (Binding::Landed(a), Binding::Landed(b)) => Rc::ptr_eq(a, b),
             (Binding::Extracted { id: a, .. }, Binding::Extracted { id: b, .. }) => a == b,
             (Binding::LazyWalk(a), Binding::LazyWalk(b)) => Rc::ptr_eq(a, b),
+            (Binding::Tuple(a), Binding::Tuple(b)) => Rc::ptr_eq(a, b),
+            (Binding::Closure(a), Binding::Closure(b)) => Rc::ptr_eq(a, b),
             // A block's returned records are one object only as the record
             // holding them is (the same allocation, above): two lists of the
             // same landings are two objects, as two `positions` bindings are.
@@ -171,6 +188,8 @@ impl Edge {
 #[derive(Debug)]
 pub struct DeferredWalk {
     pub head: movement_parser::ast::PathHead,
+    /// The head's AST path: a park writes the head as the program holds it.
+    pub head_path: String,
     pub captured: Rc<Scope>,
     /// The tail literal, and its AST path.
     pub mapping: Option<(movement_parser::ast::NodeLiteral, String)>,

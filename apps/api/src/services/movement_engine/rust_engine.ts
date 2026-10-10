@@ -8,8 +8,7 @@
 // to the run's `EngineHost` (rust_host.ts).
 //
 // Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`),
-// by this shim's input check on a resume (`rustResumeRefusal`: what the run is
-// handed, never what its program says), and then by the Rust engine
+// and then by the Rust engine
 // itself: its admission walks its own parse of the program before it asks for
 // anything (crates/movement-engine/src/admit.rs). What it refuses or declines
 // runs on the TypeScript engine. Each decision is logged once per run
@@ -33,6 +32,7 @@ import { pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { maxFileChars } from './extraction';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
+import type { CallbackBodyInput, SettleRaceInput } from 'engine-contracts';
 import type { RunContext } from './run_context';
 import { serve, type RouteContext } from './rust_host';
 import { rustEvalStats, rustRunStats } from './rust_stats';
@@ -104,18 +104,57 @@ export async function runSegmentInRust(
 
 /** A parked run resumed in the Rust engine: its result, or why the engine
  *  refused (its state reader decides) or declined it before touching an
- *  adapter. */
+ *  adapter. An answer to bind at the leaf crosses on the eval wire. */
 export async function resumeSegmentInRust(
   segment: RustSegment<ResumeMovementInput>,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
   const { input } = segment;
-  return segmentInRust(segment, { state: input.state, ...(input.reenter === true ? { reenter: true } : {}) }, engine);
+  return segmentInRust(
+    segment,
+    {
+      state: input.state,
+      ...(input.reenter === true ? { reenter: true } : {}),
+      ...(input.answer !== undefined && input.reenter !== true ? { answer: input.answer } : {}),
+      ...(input.deferRaceSettlement === true ? { deferRaceSettlement: true } : {}),
+    },
+    engine,
+  );
+}
+
+/** A race a batch resume deferred, settled in the Rust engine
+ *  (`settleRaceFrame`): `state` any completed branch's. */
+export async function settleSegmentInRust(
+  segment: RustSegment<SettleRaceInput & { host: RunMovementInput['host'] }>,
+  engine?: EngineProtocol,
+): Promise<{ ran: MovementRunResult } | { declined: string }> {
+  const { input } = segment;
+  return segmentInRust(segment, { state: input.state, settle: { frameAddress: input.frameAddress } }, engine);
+}
+
+/** A fired callback's body run in the Rust engine (`fireCallbackBody`):
+ *  `state` the callback's captured continuation. */
+export async function fireSegmentInRust(
+  segment: RustSegment<CallbackBodyInput & { host: RunMovementInput['host'] }>,
+  engine?: EngineProtocol,
+): Promise<{ ran: MovementRunResult } | { declined: string }> {
+  const { input } = segment;
+  return segmentInRust(segment, { state: input.state, fire: { values: input.values, callIndex: input.callIndex } }, engine);
+}
+
+/** What a segment resumes from, and how. */
+interface Resumption {
+  state: unknown;
+  reenter?: true;
+  answer?: unknown;
+  deferRaceSettlement?: true;
+  settle?: { frameAddress: string };
+  fire?: { values: Record<string, unknown>; callIndex: number };
 }
 
 async function segmentInRust(
   { input, context }: RustSegment,
-  resume: { state: unknown; reenter?: true } | undefined,
+  resume: Resumption | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
   // Read before the instance opens. An event, source or state that cannot
@@ -216,25 +255,6 @@ export function noteEngine(input: Pick<RunMovementInput, 'runId'>, engine: Engin
 export const ENGINE_CHOICE_TS = 'movement_engine_ts';
 
 /**
- * Why the Rust engine must not resume this run, read off its input alone:
- * a resume that answers into its leaf or defers a race's settlement. The
- * parked state itself is the Rust engine's to read
- * (crates/movement-engine/src/park.rs `resume_refusal`), and a run's pause
- * and suspensions (`limitPaused`, `suspendAt`, a cost cap) are its own.
- * Counted and logged as not admitted; undefined to route the resume.
- */
-export function rustResumeRefusal(
-  input: Pick<ResumeMovementInput, 'runId' | 'answer' | 'deferRaceSettlement'>,
-): string | undefined {
-  const reason =
-    input.answer !== undefined ? 'resume_answer'
-    : input.deferRaceSettlement === true ? 'resume_defers_race_settlement'
-    : undefined;
-  if (reason !== undefined) notAdmitted(input, reason);
-  return reason;
-}
-
-/**
  * Runs one segment to its result: starts it, serves every request it issues
  * from `input.host` concurrently, answers each as it settles, and finishes
  * the segment however the run ends.
@@ -324,7 +344,7 @@ class SettleQueue {
  *  resumed state, on the eval wire, so their objects keep their key order
  *  (a stored state's is the order it was stored in). Undefined for an input
  *  that cannot cross as itself. */
-function segmentInput(input: RunMovementInput, context: RunContext, resume: { state: unknown; reenter?: true } | undefined, wire: WireOut): unknown {
+function segmentInput(input: RunMovementInput, context: RunContext, resume: Resumption | undefined, wire: WireOut): unknown {
   // A dict in the event shaped like a binding crosses as the dict it is:
   // the engine reads it as `bindingOf` does (crates/movement-engine's
   // record module, pinned by tests/oracle/records.json).
@@ -332,11 +352,28 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume: { st
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
   const state = resume !== undefined ? new WireOut({ asData: true }).value(resume.state) : undefined;
   if (state === REFUSED) return undefined;
+  // The answer a step-past resume binds and a fired callback's values are
+  // data, as the event is.
+  const answer = resume?.answer !== undefined ? wire.valueAsData(resume.answer) : undefined;
+  if (answer === REFUSED) return undefined;
+  const values = resume?.fire !== undefined ? wire.valueAsData(resume.fire.values) : undefined;
+  if (values === REFUSED) return undefined;
+  const resumed =
+    resume === undefined
+      ? undefined
+      : {
+          state,
+          ...(resume.reenter === true ? { reenter: true } : {}),
+          ...(answer !== undefined ? { answer } : {}),
+          ...(resume.deferRaceSettlement === true ? { deferRaceSettlement: true } : {}),
+        };
   return plainJson(
     {
       entry: 'segment',
       ...(input.dryRun === true ? { dryRun: true } : {}),
-      ...(resume !== undefined ? { resume: { ...resume, state } } : {}),
+      ...(resumed !== undefined ? { resume: resumed } : {}),
+      ...(resume?.settle !== undefined ? { settle: resume.settle } : {}),
+      ...(resume?.fire !== undefined ? { fire: { values, callIndex: resume.fire.callIndex } } : {}),
       source: input.source,
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
@@ -345,6 +382,7 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume: { st
       event,
       // The segment the run host opened: every host request names it.
       segmentId: context.segmentId,
+      teamId: input.teamId,
       ...(input.credentialIds !== undefined ? { credentialIds: input.credentialIds } : {}),
       // The run's account as this segment starts (crates/movement-engine/src/ledger.rs).
       spend: {
@@ -423,7 +461,7 @@ function refusalOf(outcome: Record<string, unknown>): { refused: string; reasons
   return { refused, reasons: reasons.map((reason, i) => string(reason, `the Rust engine refusal reason ${i}`)) };
 }
 
-const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'extractionSites', 'parked', 'parkedAddress', 'cancelled']);
+const RESULT_KEYS: ReadonlySet<string> = new Set(['movementName', 'writes', 'extractionSites', 'parked', 'parkedAddress', 'cancelled', 'deferredRaceFrames']);
 
 function resultOf(value: unknown, trace: MovementRunResult['trace'], wire: WireOut): MovementRunResult {
   const result = record(value, 'the Rust engine result');
@@ -447,7 +485,16 @@ function resultOf(value: unknown, trace: MovementRunResult['trace'], wire: WireO
     trace,
     ...(result.parked === true ? { parked: true, parkedAddress: string(result.parkedAddress, 'the parked address') } : {}),
     ...(result.cancelled === true ? { cancelled: true } : {}),
+    ...(result.deferredRaceFrames !== undefined ? { deferredRaceFrames: deferredFrames(result.deferredRaceFrames) } : {}),
   };
+}
+
+/** The race frames a batch resume deferred, as addresses. */
+function deferredFrames(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((frame) => typeof frame === 'string')) {
+    throw new RustShimError('the Rust engine result deferredRaceFrames are addresses');
+  }
+  return value;
 }
 
 /** The extraction sites a result's provenance cites, by site id. */

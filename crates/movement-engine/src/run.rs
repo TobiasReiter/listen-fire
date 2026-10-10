@@ -49,7 +49,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use movement_parser::ast::{self, AwaitSource, ExprSlot, MovementDeclaration, ParamTypeRef, RValue, Statement};
+use movement_parser::ast::{self, ExprSlot, MovementDeclaration, ParamTypeRef, RValue, Statement};
 use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg};
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
@@ -94,6 +94,10 @@ pub struct SegmentInput {
     /// The segment the run host opened for this entry (`segment.open`):
     /// every host request names it.
     pub segment_id: String,
+    /// The team the run is for, which a log line the TypeScript engine
+    /// writes names (an await's lost wake).
+    #[serde(default)]
+    pub team_id: Option<String>,
     /// The credential ids the run's imports name, by credential name
     /// (`RunMovementInput.credentialIds`).
     #[serde(default)]
@@ -112,6 +116,14 @@ pub struct SegmentInput {
     /// Resume a parked run from its state (crate::park), rather than run it.
     #[serde(default)]
     pub resume: Option<crate::park::ResumeInput>,
+    /// With `resume`: run a fired callback's body against its captured
+    /// state (`fireCallbackBody`) rather than resume a leaf.
+    #[serde(default)]
+    pub fire: Option<CallbackFire>,
+    /// With `resume`: settle a race a batch resume deferred
+    /// (`settleRaceFrame`), any completed branch's state as `resume.state`.
+    #[serde(default)]
+    pub settle: Option<RaceSettlement>,
     /// The run is paused at its cost cap, and this segment was woken for one
     /// of its flows: the flow suspends before its next statement
     /// (`RunMovementInput.limitPaused`).
@@ -137,6 +149,22 @@ pub struct SegmentInput {
     /// environment.
     #[serde(default = "default_call_depth")]
     pub max_call_depth: usize,
+}
+
+/// A fired callback (`fireCallbackBody`): the call's values on the eval
+/// wire, and its index on the callback's ledger.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallbackFire {
+    pub values: Json,
+    pub call_index: usize,
+}
+
+/// A deferred race to settle (`settleRaceFrame`).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RaceSettlement {
+    pub frame_address: String,
 }
 
 /// call_depth.ts `DEFAULT_MAX_CALL_DEPTH`.
@@ -308,6 +336,10 @@ pub(crate) struct Source {
 
 pub use crate::address::Address;
 
+/// An adapter resolution one flow started, which every flow asking the
+/// same resolution awaits (run.ts `resolutions`).
+pub(crate) type Resolution = Rc<crate::flow::Shared<Result<Option<Json>, Failure>>>;
+
 pub(crate) struct Run<'a> {
     pub(crate) host: &'a Host,
     pub(crate) input: &'a SegmentInput,
@@ -359,9 +391,31 @@ pub(crate) struct Run<'a> {
     pub(crate) log_lines: RefCell<Vec<Json>>,
     /// The file's scope, which a callee's scope forks from.
     pub(crate) file_scope: RefCell<Option<Rc<Scope>>>,
-    /// Per statement running, at every depth, the calls it has made
-    /// (`StatementSite.calls.next`): the next call's index.
-    pub(crate) call_sites: RefCell<Vec<usize>>,
+    /// The statements the running flow is inside, at every depth, innermost
+    /// last (`statementSites`): each the site of the calls it makes.
+    pub(crate) call_sites: RefCell<Vec<Rc<crate::flow::Site>>>,
+    /// The body boundaries the running flow is inside (`boundaries`).
+    pub(crate) boundaries: RefCell<Vec<crate::flow::Boundary>>,
+    /// Where the running flow's next write falls in program order.
+    pub(crate) write_order: RefCell<crate::flow::WriteOrder>,
+    /// The effect locks the running flow holds, by name.
+    pub(crate) held_locks: RefCell<Vec<(String, crate::flow::LockMode)>>,
+    /// The running flow is one a `parallel`, a `race` or a collection op
+    /// started: its trace waits to join the flow that started it.
+    pub(crate) forked: std::cell::Cell<bool>,
+    /// The run's own locks, by name (effect_locks.ts `gates`).
+    pub(crate) gates: RefCell<Vec<(String, Rc<crate::flow::Gate>)>>,
+    /// Each write's key in program order, as `writes` holds them.
+    pub(crate) write_keys: RefCell<Vec<Vec<usize>>>,
+    /// This segment runs a fired callback's body, which cannot suspend.
+    pub(crate) firing_callback: std::cell::Cell<bool>,
+    /// The race frames a batch resume completed a branch into, deferred for
+    /// the host to settle once the batch is through (`deferredRaceFrames`).
+    pub(crate) deferred_race_frames: RefCell<Vec<String>>,
+    /// Each distinct resolution asked this segment, by its identity, as it
+    /// resolves (run.ts `resolutions`): two flows asking at once share one
+    /// request.
+    pub(crate) resolutions: RefCell<Vec<(String, Resolution)>>,
     /// The movements running, the dispatched one first (`callStack`).
     pub(crate) call_stack: RefCell<Vec<String>>,
     /// The movements the dispatched one calls, each with the parameters a
@@ -447,6 +501,15 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         log_lines: RefCell::default(),
         file_scope: RefCell::default(),
         call_sites: RefCell::default(),
+        boundaries: RefCell::default(),
+        write_order: RefCell::default(),
+        held_locks: RefCell::default(),
+        forked: std::cell::Cell::new(false),
+        gates: RefCell::default(),
+        write_keys: RefCell::default(),
+        resolutions: RefCell::default(),
+        firing_callback: std::cell::Cell::new(false),
+        deferred_race_frames: RefCell::default(),
         call_stack: RefCell::default(),
         called,
         wire,
@@ -538,10 +601,44 @@ impl Run<'_> {
         self.input.credential_ids.get(name).cloned()
     }
 
+    /// The program's AST at `path`, as a park writes it (crate::program
+    /// `code_at`).
+    pub(crate) fn program_code(&self, path: &str) -> Result<Js, Failure> {
+        program::code_at(&self.checked.root, path)
+            .ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("the program holds no node at {path}, which a park writes")))
+    }
+
+    /// `WriteLedger.append`: a write, link, unlink or delete on the firing
+    /// record, numbered as it happens (later reads cite it by that number),
+    /// its place in program order the running flow's next.
+    pub(crate) fn append_write(&self, record: Rc<WriteRecord>) {
+        let key = self.write_order.borrow_mut().key();
+        self.writes.borrow_mut().push(record);
+        self.write_keys.borrow_mut().push(key);
+    }
+
+    /// `WriteLedger.ordered`: the writes in program order — the writes of
+    /// concurrent flows by branch, at the place of their fork — every
+    /// citation of a write by number renumbered to match.
+    fn ordered_writes(&self) -> Vec<Js> {
+        let writes = self.writes.borrow();
+        let keys = self.write_keys.borrow();
+        let mut order: Vec<usize> = (0..writes.len()).collect();
+        order.sort_by(|a, b| crate::flow::compare_keys(&keys[*a], &keys[*b]));
+        if order.iter().enumerate().all(|(position, index)| position == *index) {
+            return writes.iter().map(|w| w.object.clone()).collect();
+        }
+        let mut renumbered = vec![0usize; writes.len()];
+        for (position, index) in order.iter().enumerate() {
+            renumbered[*index] = position;
+        }
+        order.iter().map(|index| renumber_citations(&writes[*index].object, &renumbered)).collect()
+    }
+
     /// `assembleResult`: the writes cross on the eval wire, as the records
     /// the TypeScript builds.
     fn result(&self, cancelled: bool, parked: Option<&str>) -> Json {
-        let writes: Vec<Js> = self.writes.borrow().iter().map(|w| w.object.clone()).collect();
+        let writes = self.ordered_writes();
         let mut result = json!({ "movementName": *self.movement_name.borrow(), "writes": self.wire.encode_result(&Js::array(writes)) });
         // Each extraction site the writes cite, once (`ProvenanceSummariser.sites`).
         let sites = self.extraction_sites.borrow();
@@ -560,6 +657,10 @@ impl Run<'_> {
         if cancelled {
             result["cancelled"] = json!(true);
         }
+        let deferred = self.deferred_race_frames.borrow();
+        if !deferred.is_empty() {
+            result["deferredRaceFrames"] = json!(*deferred);
+        }
         result
     }
 
@@ -568,7 +669,28 @@ impl Run<'_> {
         let path = format!("/statements/{index}/body");
         let ran = match &self.input.resume {
             None => self.body(&movement.body, &scope, &Address::default(), &path, 0).await.map(|_| ()),
-            Some(resume) => self.resume(resume, &movement, &scope, &path).await,
+            Some(resume) => {
+                // The state as it was stored, keys in their stored order (on
+                // the eval wire, as the event is).
+                let state = env::decode(&resume.state).map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the parked state does not read: {e}"))))?;
+                let leaf = match (&self.input.fire, &self.input.settle) {
+                    (Some(fire), _) => crate::resume::Leaf::FireCallback {
+                        values: self.wire.decode(&fire.values).map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the callback's values do not read: {e}"))))?,
+                        call_index: fire.call_index,
+                    },
+                    (None, Some(settle)) => crate::resume::Leaf::SettleRace { frame: settle.frame_address.clone() },
+                    (None, None) => {
+                        let answer = match (&resume.answer, resume.reenter) {
+                            (Some(answer), false) => Some(crate::resume::rematerialise_answer(
+                                self.wire.decode(answer).map_err(|e| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the answer does not read: {e}"))))?,
+                            )),
+                            _ => None,
+                        };
+                        crate::resume::Leaf::Continue { answer, reenter: resume.reenter }
+                    }
+                };
+                self.resume_along(&movement, &scope, &path, &state, leaf).await
+            }
         };
         let (cancelled, parked) = match ran {
             // Find-on-missing at the top scope: the body simply stops, its
@@ -584,6 +706,7 @@ impl Run<'_> {
         // the park sink's to settle.
         let cancelled = cancelled
             || (parked.is_none()
+                && self.input.settle.is_none()
                 && self.ask_bool(host::control::cancelled_now(self.segment())).await.map_err(|f| Stop::Failed(f, self.result(false, None)))?);
         Ok(self.result(cancelled, parked.as_deref()))
     }
@@ -829,13 +952,13 @@ impl Run<'_> {
     async fn seed(&self, instance: &InstanceBinding, type_ref: &ast::TypeRef) -> Result<(), Failure> {
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let resolved = self
-            .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
+            .resolve_adapter(&ResolveAdapter {
                 adapter_type: Some(Json::String(instance.adapter_slug.clone())),
                 credentials_id,
                 construction_args: None,
                 role: Role::Source,
                 dry_run: false,
-            }))
+            })
             .await?
             .unwrap_or(Json::Null);
         let handle = host::instance_of(&resolved).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("adapters.resolve answered {resolved}")))?;
@@ -899,7 +1022,23 @@ impl Run<'_> {
         path: &'s str,
         from: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Flow, Stop>> + 's>> {
+        self.body_from(statements, scope, address, path, from, Vec::new())
+    }
+
+    /// `interpretBody` entered at `from` (`BodyEntry`), that statement
+    /// handing back the calls it had finished before a park (`replay`)
+    /// instead of making them again.
+    pub(crate) fn body_from<'s>(
+        &'s self,
+        statements: &'s [Statement],
+        scope: &'s Rc<Scope>,
+        address: &'s Address,
+        path: &'s str,
+        from: usize,
+        replay: Vec<(usize, crate::flow::CallRecord)>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Flow, Stop>> + 's>> {
         Box::pin(async move {
+            let mut replay = Some(replay);
             for (index, statement) in statements.iter().enumerate().skip(from) {
                 let at = address.stmt(index);
                 // The cancel gate: a requested cancel stops the run at the
@@ -907,28 +1046,35 @@ impl Run<'_> {
                 if self.ask_bool(host::control::cancelled(self.segment())).await.map_err(Stop::Thrown)? {
                     return Err(Stop::Cancelled);
                 }
-                // A paused run (its cap met here or before this segment)
-                // stops each flow between statements; so does a `suspendAt`
-                // address.
-                self.suspend_before(&at, scope).await?;
                 // The statement is the site of the calls it makes.
-                self.call_sites.borrow_mut().push(0);
-                let ran = self.statement(statement, scope, &at, &format!("{path}/{index}")).await;
+                let site = crate::flow::Site::new(at.clone(), scope.clone(), replay.take().unwrap_or_default());
+                self.call_sites.borrow_mut().push(site);
+                let ran = self.statement_at(statement, scope, &at, &format!("{path}/{index}")).await;
                 self.call_sites.borrow_mut().pop();
-                let flow = match ran {
-                    // The host refuses a priced call once the run has spent
-                    // its cap: this statement was about to spend, so the run
-                    // suspends just before it.
-                    Err(Stop::Thrown(Failure::CapExceeded(cap))) => return Err(self.suspend_at_limit(cap, &at, scope).await),
-                    other => other?,
-                };
-                self.publish_trace().await.map_err(Stop::Thrown)?;
+                let flow = ran?;
+                // A flow a fork started keeps its trace until it joins.
+                if !self.forked.get() {
+                    self.publish_trace().await.map_err(Stop::Thrown)?;
+                }
                 if let Flow::Returned = flow {
                     return Ok(Flow::Returned);
                 }
             }
             Ok(Flow::FellThrough)
         })
+    }
+
+    /// One statement inside its site: a paused run (its cap met here or
+    /// before this segment) stops each flow before it, and so does a
+    /// `suspendAt` address; the host refusing a priced call once the run has
+    /// spent its cap means this statement was about to spend, so the flow
+    /// suspends just before it, its finished calls journalled.
+    async fn statement_at(&self, statement: &Statement, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
+        self.suspend_before(at, scope).await?;
+        match self.statement(statement, scope, at, path).await {
+            Err(Stop::Thrown(Failure::CapExceeded(cap))) => Err(self.suspend_at_limit(cap, at, scope).await),
+            other => other,
+        }
     }
 
     async fn statement(&self, statement: &Statement, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
@@ -957,13 +1103,15 @@ impl Run<'_> {
                 self.delete(&statement.name, scope).await?;
                 Ok(Flow::FellThrough)
             }
-            Statement::Await(statement) => match &statement.r#await.source {
-                AwaitSource::Sleep { duration, .. } => {
-                    self.sleep(duration, at, scope, None).await?;
-                    Ok(Flow::FellThrough)
-                }
-                _ => Err(Stop::Thrown(Failure::unreproduced("this await", "the Rust engine runs `await sleep(…)`"))),
-            },
+            Statement::Await(statement) => {
+                self.awaiting(&statement.r#await.source, None, scope, at, &format!("{path}/await/source")).await?;
+                Ok(Flow::FellThrough)
+            }
+            // Bare, the checker refuses it; still run, as the TypeScript runs it.
+            Statement::Combinator(statement) => {
+                self.combinator(&statement.combinator, None, scope, at, &format!("{path}/combinator")).await?;
+                Ok(Flow::FellThrough)
+            }
             // `return <value>`: the same right-hand side, bound into a slot
             // the grammar cannot spell, and the body ends.
             Statement::Return(ret) => {
@@ -985,14 +1133,13 @@ impl Run<'_> {
             }
             // A collection op run for its function's effects.
             Statement::Collection(statement) => {
-                self.collection(&statement.collection, None, scope, at, &format!("{path}/collection/fn")).await?;
+                self.collection(&statement.collection, None, scope, at, crate::collection::OpOrigin::Written(format!("{path}/collection"))).await?;
                 Ok(Flow::FellThrough)
             }
             Statement::Call(call) if let Some(reading) = self.call_reading(call, scope)? => {
                 match reading {
                     crate::collection::Reading::Collection(op) => {
-                        let index = call.args.len() - 1;
-                        self.collection(&op, None, scope, at, &format!("{path}/args/{index}")).await?;
+                        self.collection(&op, None, scope, at, crate::collection::OpOrigin::Call { call: call.clone(), path: path.to_string() }).await?;
                     }
                     crate::collection::Reading::Members(_) => {
                         return Err(Stop::Thrown(Failure::engine(
@@ -1055,13 +1202,12 @@ impl Run<'_> {
                 scope.declare(name, Binding::Extracted { emission, root: true, id: crate::bindings::Identity::new() });
             }
             RValue::Collection { collection } => {
-                self.collection(collection, Some(name), scope, at, &format!("{path}/value/collection/fn")).await?;
+                self.collection(collection, Some(name), scope, at, crate::collection::OpOrigin::Written(format!("{path}/value/collection"))).await?;
             }
             RValue::Members { members } => self.members(members, Some(name), scope)?,
             RValue::Call { call } if let Some(reading) = self.call_reading(call, scope)? => match reading {
                 crate::collection::Reading::Collection(op) => {
-                    let index = call.args.len() - 1;
-                    self.collection(&op, Some(name), scope, at, &format!("{path}/value/call/args/{index}")).await?;
+                    self.collection(&op, Some(name), scope, at, crate::collection::OpOrigin::Call { call: call.clone(), path: format!("{path}/value/call") }).await?;
                 }
                 crate::collection::Reading::Members(members) => self.members(&members, Some(name), scope)?,
             },
@@ -1098,16 +1244,19 @@ impl Run<'_> {
             }
             // Nothing runs here: every read of the name runs the walk.
             RValue::Lazy { lazy } => {
-                let walk = self.defer_walk(&lazy.head, lazy.mapping.as_ref(), scope, &format!("{path}/value/lazy/mapping"));
+                let walk = self.defer_walk(&lazy.head, lazy.mapping.as_ref(), scope, &format!("{path}/value/lazy"));
                 scope.declare(name, Binding::LazyWalk(walk));
             }
-            RValue::Await { r#await } => match &r#await.source {
-                AwaitSource::Sleep { duration, .. } => {
-                    self.sleep(duration, at, scope, Some(name)).await?;
-                    scope.declare(name, Binding::Value(env::ValueBinding { value: Js::Bool(true), trail: Some(Trail::default()), many: false }));
-                }
-                _ => return Err(Stop::Thrown(Failure::unreproduced("this await", "the Rust engine runs `await sleep(…)`"))),
-            },
+            RValue::Await { r#await } => self.awaiting(&r#await.source, Some(name), scope, at, &format!("{path}/value/await/source")).await?,
+            RValue::Combinator { combinator } => self.combinator(combinator, Some(name), scope, at, &format!("{path}/value/combinator")).await?,
+            RValue::Closure { closure } => {
+                let bound = self.closure_binding(closure, Some(name), scope, &format!("{path}/value/closure"));
+                scope.declare(name, bound);
+            }
+            RValue::Callback { callback } => {
+                let minted = self.mint_callback(callback, scope, at, &format!("{path}/value/callback")).await?;
+                scope.declare(name, minted);
+            }
             _ => {
                 let slot = self.value_slot(value, scope)?;
                 let bound = self.bind_slot_binding(slot, scope).await?;
@@ -1178,7 +1327,15 @@ impl Run<'_> {
     /// value it reads as.
     fn aliases(&self, binding: &Binding) -> bool {
         match binding {
-            Binding::Event | Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Node(_) | Binding::LazyWalk(_) | Binding::Positions(_) => true,
+            Binding::Event
+            | Binding::Handle(_)
+            | Binding::Extracted { .. }
+            | Binding::Landed(_)
+            | Binding::Node(_)
+            | Binding::LazyWalk(_)
+            | Binding::Positions(_)
+            | Binding::Tuple(_)
+            | Binding::Closure(_) => true,
             Binding::Shape(_) => self.version() >= 3,
             Binding::Value(_) | Binding::Instance(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque => false,
             // The switch's cases by kind; a kind it has none for falls out of
@@ -1502,7 +1659,7 @@ impl Run<'_> {
 
     /// `interpretSleep`: a rehearsal fast-forwards; a real run parks the flow
     /// on a timer, its scope chain serialized, and stops here.
-    async fn sleep(&self, duration: &ast::DurationLiteral, at: &Address, scope: &Rc<Scope>, presence: Option<&str>) -> Result<(), Stop> {
+    pub(crate) async fn sleep(&self, duration: &ast::DurationLiteral, at: &Address, scope: &Rc<Scope>, presence: Option<&str>) -> Result<(), Stop> {
         if self.input.dry_run {
             return Ok(());
         }
@@ -1585,6 +1742,33 @@ impl Run<'_> {
         self.log_lines.borrow_mut().push(json!({ "level": level, "message": message, "fields": fields }));
     }
 
+    /// `adapters.resolve`, one request per distinct resolution per segment
+    /// (`resolutionKey`: what it asks for, the construction args in any key
+    /// order): a flow asking what another is already asking awaits its
+    /// answer. A resolution that failed is not remembered.
+    pub(crate) async fn resolve_adapter(&self, resolution: &ResolveAdapter) -> Result<Option<Json>, Failure> {
+        let key = serde_json::to_string(&(
+            &resolution.adapter_type,
+            &resolution.credentials_id,
+            &resolution.construction_args,
+            resolution.role,
+            resolution.dry_run,
+        ))
+        .expect("a resolution is JSON");
+        let pending = self.resolutions.borrow().iter().find(|(k, _)| *k == key).map(|(_, shared)| shared.clone());
+        if let Some(shared) = pending {
+            return shared.wait().await;
+        }
+        let shared = Rc::new(crate::flow::Shared::default());
+        self.resolutions.borrow_mut().push((key.clone(), shared.clone()));
+        let answer = self.ask(host::adapters::resolve(self.segment(), resolution)).await;
+        if answer.is_err() {
+            self.resolutions.borrow_mut().retain(|(k, held)| !(*k == key && Rc::ptr_eq(held, &shared)));
+        }
+        shared.settle(answer.clone());
+        answer
+    }
+
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
         if !request.is_read() {
             self.effected.set(true);
@@ -1606,6 +1790,54 @@ impl Run<'_> {
     async fn ask_bool(&self, request: host::Request) -> Result<bool, Failure> {
         Ok(self.ask(request).await?.is_some_and(|v| v.as_bool() == Some(true)))
     }
+}
+
+/// A write record with every citation of a write by number the ledger
+/// holds renumbered (`WriteLedger.cite`): the record's own `origin`, and the
+/// summarised origins (`{kind: 'write', write}`) its provenance cites.
+fn renumber_citations(record: &Js, renumbered: &[usize]) -> Js {
+    fn renumbered_as(value: &Js, renumbered: &[usize]) -> Js {
+        match value {
+            Js::Number(n) if *n >= 0.0 && n.fract() == 0.0 && (*n as usize) < renumbered.len() => Js::Number(renumbered[*n as usize] as f64),
+            other => other.clone(),
+        }
+    }
+    fn citation(origin: &Js, key: &str, renumbered: &[usize]) -> Js {
+        let Js::Object(object) = origin else { return origin.clone() };
+        if !matches!(object.get("kind"), Some(Js::String(kind)) if kind == "write") {
+            return origin.clone();
+        }
+        let mut copy = JsObject::new();
+        for (k, v) in object.entries() {
+            copy.set(k.clone(), if k == key { renumbered_as(v, renumbered) } else { v.clone() });
+        }
+        Js::object(copy)
+    }
+    fn provenance(value: &Js, renumbered: &[usize]) -> Js {
+        match value {
+            Js::Object(object) if matches!(object.get("kind"), Some(Js::String(kind)) if kind == "write") => citation(value, "write", renumbered),
+            Js::Object(object) => {
+                let mut copy = JsObject::new();
+                for (k, v) in object.entries() {
+                    copy.set(k.clone(), provenance(v, renumbered));
+                }
+                Js::object(copy)
+            }
+            Js::Array(list) => Js::array(list.items().iter().map(|v| provenance(v, renumbered)).collect()),
+            other => other.clone(),
+        }
+    }
+    let Js::Object(object) = record else { return record.clone() };
+    let mut copy = JsObject::new();
+    for (k, v) in object.entries() {
+        let value = match k.as_str() {
+            "origin" => citation(v, "writeIndex", renumbered),
+            "provenance" => provenance(v, renumbered),
+            _ => v.clone(),
+        };
+        copy.set(k.clone(), value);
+    }
+    Js::object(copy)
 }
 
 /// `bindsManyValues`: a walk read for a field, or a second name for one.
@@ -2348,29 +2580,10 @@ mod tests {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
         let scope = |binding: Json| json!([{ "bindings": { "x": binding } }]);
         for (state, reason) in [
-            (json!({ "version": 1, "address": "s0", "journal": [{ "index": 0, "value": null, "next": 1 }] }), "resume_state_journal"),
-            (json!({ "version": 1, "address": "s0", "frames": [] }), "resume_state_frames"),
             (json!({ "version": 1, "address": "s0", "suspended": false }), "resume_state_suspended"),
-            (json!({ "version": 1, "address": "s0", "until": {} }), "resume_state_until"),
             (json!({ "version": 2, "address": "s0" }), "resume_state_version"),
-            (json!({ "version": 1, "address": "s1.i0.s0" }), "resume_state_address"),
-            (json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "extraction" })) }), "resume_state_kind:extraction"),
-            (
-                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "value", "value": 1, "provenance": { "origins": [{ "kind": "extraction" }] } })) }),
-                "resume_state_extraction_origin",
-            ),
-            (
-                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "value", "value": [{ "kind": "handle" }] })) }),
-                "resume_state_value_holds_record",
-            ),
-            (
-                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "nodePosition", "fields": {}, "fieldProvenance": {}, "edges": { "e": { "kind": "deferred" } } })) }),
-                "resume_state_deferred_edge",
-            ),
-            (
-                json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "positions", "landings": [{ "kind": "handle" }] })) }),
-                "resume_state_returned_records",
-            ),
+            (json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "blockMeta", "edges": [] })) }), "resume_state_kind:blockMeta"),
+            (json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "localShape", "declaration": {} })) }), "resume_state_kind:localShape"),
         ] {
             let input = json!({
                 "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
@@ -2401,9 +2614,9 @@ mod tests {
         assert_eq!(crate::park::resume_refusal(&wire(suspended)), None);
     }
 
-    /// The file scope is rebuilt from the program on resume, so a declared
-    /// shape there is the program's; anywhere else it is a local shape this
-    /// engine does not rebuild.
+    /// A declared shape travels by name and is re-resolved from the program's
+    /// file scope wherever the state holds it (serialize.ts writes a shape
+    /// declared in a body as `localShape`, which is refused).
     #[test]
     fn a_shape_is_resumed_in_the_file_scope_only() {
         let state = |file: Json, body: Json| {
@@ -2411,10 +2624,7 @@ mod tests {
         };
         let shape = json!({ "kind": "shape", "name": "Lead" });
         assert_eq!(crate::park::resume_refusal(&wire(state(json!({ "Lead": shape }), json!({})))), None);
-        assert_eq!(
-            crate::park::resume_refusal(&wire(state(json!({}), json!({ "Lead": shape })))).as_deref(),
-            Some("resume_state_kind:shape")
-        );
+        assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Lead": shape })))), None);
     }
 
     #[test]
@@ -2447,7 +2657,7 @@ mod tests {
             }
         };
         assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_RUNTIME"), "{done}");
-        assert_eq!(done["failed"]["error"]["message"], json!("a handle descriptor without its record"));
+        assert_eq!(done["failed"]["error"]["message"], json!("the parked state holds a handle descriptor without its record"));
     }
 
     #[test]

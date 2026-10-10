@@ -24,6 +24,8 @@ pub enum Family {
     LlmClient,
     LlmTransforms,
     ParkSink,
+    Park,
+    ParkCallbacks,
     ControlCancel,
     Locks,
     Trace,
@@ -43,6 +45,8 @@ const FAMILIES: &[Family] = &[
     Family::LlmClient,
     Family::LlmTransforms,
     Family::ParkSink,
+    Family::Park,
+    Family::ParkCallbacks,
     Family::ControlCancel,
     Family::Locks,
     Family::Trace,
@@ -64,6 +68,8 @@ impl Family {
             Family::LlmClient => "llm.client",
             Family::LlmTransforms => "llm.transforms",
             Family::ParkSink => "park.sink",
+            Family::Park => "park",
+            Family::ParkCallbacks => "park.callbacks",
             Family::ControlCancel => "control.cancel",
             Family::Locks => "locks",
             Family::Trace => "trace",
@@ -97,6 +103,8 @@ impl Request {
     pub fn is_read(&self) -> bool {
         match self.family {
             Family::Check | Family::Builtins | Family::Clock | Family::ControlCancel => true,
+            Family::ParkCallbacks => self.method == "calls",
+            Family::ParkSink => self.method == "collectBranchExports",
             Family::Adapters if self.method == "resolve" => true,
             Family::Adapters => matches!(
                 self.args.get("method").and_then(Json::as_str),
@@ -334,6 +342,89 @@ pub mod park {
             method: "commitSuspension".into(),
             args: in_segment(segment, json!({ "address": address, "state": state, "wire": true })),
         }
+    }
+
+    /// An await park: the leaf's state (on the eval wire) and the key a wake
+    /// names it by — the awaitable adapter's type, or the reserved callback
+    /// identity, and its correlation key.
+    pub fn commit_await_park(segment: &str, address: &str, state: Json, adapter_type: &str, correlation_key: &Json) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "commitAwaitPark".into(),
+            args: in_segment(segment, json!({ "address": address, "state": state, "adapterType": adapter_type, "correlationKey": correlation_key, "wire": true })),
+        }
+    }
+
+    /// A join frame's pending count: how many of its children parked.
+    pub fn record_join(segment: &str, frame_address: &str, parked_children: usize) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "recordJoin".into(),
+            args: in_segment(segment, json!({ "frameAddress": frame_address, "parkedChildren": parked_children })),
+        }
+    }
+
+    /// A finished branch's exports at its join frame (on the eval wire: the
+    /// descriptors keep their key order).
+    pub fn persist_branch_export(segment: &str, frame_address: &str, branch_address: &str, branch_index: i64, exports: Json) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "persistBranchExport".into(),
+            args: in_segment(
+                segment,
+                json!({ "frameAddress": frame_address, "branchAddress": branch_address, "branchIndex": branch_index, "exports": exports, "wire": true }),
+            ),
+        }
+    }
+
+    /// A resumed branch completed: its decrement of the frame, answered
+    /// `{closed}`.
+    pub fn decrement_join(segment: &str, frame_address: &str, branch_address: &str, leaf_address: &str) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "decrementJoin".into(),
+            args: in_segment(segment, json!({ "frameAddress": frame_address, "branchAddress": branch_address, "leafAddress": leaf_address })),
+        }
+    }
+
+    /// Every branch's exports at a frame, by branch index, answered on the
+    /// eval wire.
+    pub fn collect_branch_exports(segment: &str, frame_address: &str) -> Request {
+        Request {
+            family: Family::ParkSink,
+            method: "collectBranchExports".into(),
+            args: in_segment(segment, json!({ "frameAddress": frame_address, "wire": true })),
+        }
+    }
+
+    /// Every park at or below each prefix withdrawn (the race cascade).
+    pub fn cancel_subtrees(segment: &str, subtree_addresses: &[String], exclude_leaf: Option<&str>) -> Request {
+        let mut args = json!({ "subtreeAddresses": subtree_addresses });
+        if let Some(leaf) = exclude_leaf {
+            args["excludeLeaf"] = json!(leaf);
+        }
+        Request { family: Family::ParkSink, method: "cancelSubtrees".into(), args: in_segment(segment, args) }
+    }
+
+    /// "Resume whatever is parked on this key" (`park.wake`).
+    pub fn wake(segment: &str, adapter_type: &str, correlation_key: &Json) -> Request {
+        Request { family: Family::Park, method: "wake".into(), args: in_segment(segment, json!({ "adapterType": adapter_type, "correlationKey": correlation_key })) }
+    }
+
+    /// A callback minted: its address, fire-time parameters, captured state
+    /// (on the eval wire), whether it fires once, and when it expires;
+    /// answered `{id, url}`.
+    pub fn mint_callback(segment: &str, address: &str, params: Json, state: Json, single_use: bool, expires_at: Option<&str>) -> Request {
+        let mut args = json!({ "address": address, "params": params, "state": state, "singleUse": single_use, "wire": true });
+        if let Some(at) = expires_at {
+            args["expiresAt"] = json!(at);
+        }
+        Request { family: Family::ParkCallbacks, method: "mint".into(), args: in_segment(segment, args) }
+    }
+
+    /// A callback's call ledger, answered on the eval wire.
+    pub fn callback_calls(segment: &str, callback_id: &Json) -> Request {
+        Request { family: Family::ParkCallbacks, method: "calls".into(), args: in_segment(segment, json!({ "callbackId": callback_id, "wire": true })) }
     }
 
     /// The run is pausing at its cost cap: what it spent against the cap.

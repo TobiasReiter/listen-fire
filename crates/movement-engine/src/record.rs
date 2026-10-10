@@ -47,6 +47,8 @@ pub fn kind_of(binding: &Binding) -> String {
         Binding::Landed(_) => "sourcePosition",
         Binding::Positions(_) => "positions",
         Binding::LazyWalk(_) => "lazyWalk",
+        Binding::Tuple(_) => "tuple",
+        Binding::Closure(_) => "closure",
         Binding::Extracted { root: true, .. } => "extractRoot",
         Binding::Extracted { root: false, .. } => "extractPosition",
     };
@@ -191,7 +193,7 @@ fn nullish_to_null(value: Js) -> Js {
 pub fn is_position(binding: &Binding) -> bool {
     match binding {
         Binding::Event | Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Positions(_) | Binding::Node(_) | Binding::LazyWalk(_) => true,
-        Binding::Instance(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque => false,
+        Binding::Instance(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque | Binding::Tuple(_) | Binding::Closure(_) => false,
         Binding::Shaped(dict) => !matches!(shaped_kind(dict).as_str(), "instance" | "tuple" | "closure" | "value" | "shape" | "movement" | "plugin" | "opaque"),
     }
 }
@@ -203,7 +205,7 @@ pub fn is_one_record(binding: &Binding) -> bool {
     match binding {
         Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Node(_) => true,
         Binding::Event | Binding::Instance(_) | Binding::Positions(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::LazyWalk(_)
-        | Binding::Plugin(_) | Binding::Opaque => false,
+        | Binding::Plugin(_) | Binding::Opaque | Binding::Tuple(_) | Binding::Closure(_) => false,
         Binding::Shaped(dict) => !matches!(
             shaped_kind(dict).as_str(),
             "event" | "instance" | "blockMeta" | "positions" | "tuple" | "closure" | "value" | "shape" | "movement" | "lazyWalk" | "plugin" | "opaque"
@@ -434,7 +436,15 @@ pub fn fields_of(binding: &Binding) -> Result<JsObject, EvalError> {
                 Some("a system record has no field list in hand — build a dict of the fields you want, `{ name: r.name, … }`"),
             ));
         }
-        Binding::Positions(_) | Binding::LazyWalk(_) | Binding::Instance(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque => {
+        Binding::Positions(_)
+        | Binding::LazyWalk(_)
+        | Binding::Instance(_)
+        | Binding::Shape(_)
+        | Binding::Movement(_)
+        | Binding::Plugin(_)
+        | Binding::Opaque
+        | Binding::Tuple(_)
+        | Binding::Closure(_) => {
             return Err(unsupported(&format!("reading every field of {}", describe(binding)), None));
         }
         Binding::Shaped(dict) => return crate::record::shaped::fields(dict),

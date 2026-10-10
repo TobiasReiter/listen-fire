@@ -25,6 +25,7 @@ use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValu
 use crate::bindings::{Binding, Scope};
 use crate::env::{Trail, ValueBinding};
 use crate::js::{Js, JsObject};
+use crate::flow::Boundary;
 use crate::run::{Address, Failure, Flow, Run, Stop};
 use crate::trace::TraceEntry;
 
@@ -36,15 +37,152 @@ pub enum OnError {
     Ignore,
 }
 
+/// A collection op as a member frame keeps it: the op, and the object the
+/// TypeScript's park writes for it (`SerializedFrame.op`, its AST as the
+/// TypeScript holds it).
+#[derive(Debug)]
+pub(crate) struct OpCode {
+    pub op: CollectionOpExpression,
+    pub json: Js,
+}
+
 /// The function an op runs over its members.
-struct Function {
+pub(crate) struct Function {
     params: Vec<MovementParam>,
     body: Vec<Statement>,
     captured: Rc<Scope>,
     /// The body's AST path, where its statements' stamps are keyed.
     path: String,
-    /// A movement handed by name: from version 3 a call by that name.
+    /// A function handed by name: from version 3 a call by that name.
     named: Option<String>,
+    /// A closure handed by name: the closure, its body calling it by the
+    /// name of its own (`self`).
+    closure: Option<Rc<crate::bindings::Closure>>,
+    self_name: Option<String>,
+}
+
+impl Function {
+    pub(crate) fn captured_scope(&self) -> &Rc<Scope> {
+        &self.captured
+    }
+
+    pub(crate) fn body_statements(&self) -> &[Statement] {
+        &self.body
+    }
+
+    pub(crate) fn body_path(&self) -> &str {
+        &self.path
+    }
+
+    /// The name a function handed by name is called by.
+    pub(crate) fn named_call(&self) -> Option<&str> {
+        self.named.as_deref()
+    }
+
+    fn copy(&self) -> Function {
+        Function {
+            params: self.params.clone(),
+            body: self.body.clone(),
+            captured: self.captured.clone(),
+            path: self.path.clone(),
+            named: self.named.clone(),
+            closure: self.closure.clone(),
+            self_name: self.self_name.clone(),
+        }
+    }
+}
+
+impl CollectionRun {
+    /// The run, for its resume to fill in its members and start.
+    pub(crate) fn resumed_copy(&self) -> CollectionRun {
+        CollectionRun {
+            op: self.op.clone(),
+            on_error: self.on_error,
+            function: self.function.copy(),
+            address: self.address.clone(),
+            site: self.site.clone(),
+            index: self.index,
+            members: self.members.clone(),
+            source_trail: self.source_trail.clone(),
+            init: self.init.clone(),
+        }
+    }
+}
+
+/// `serializeMemberAnswer`: a finished member as its op's frame keeps it.
+pub(crate) fn member_answer_export(run: &Run<'_>, answer: Option<&Js>) -> Result<Js, Failure> {
+    Ok(match answer {
+        Some(value) => {
+            let value = Binding::Value(ValueBinding { value: value.clone(), trail: Some(Trail::default()), many: false });
+            crate::env::object_of(vec![("kept", Js::Bool(true)), ("answer", crate::park::serialize_alone(run, &value)?)])
+        }
+        None => crate::env::object_of(vec![("kept", Js::Bool(false))]),
+    })
+}
+
+/// `memberValue`: what a member's function returned, a record as itself; a
+/// function that returned nothing answers null for `MAP`.
+pub(crate) fn member_answer_in(op: CollectionOp, spelling: &str, flow: Flow, at: &Scope) -> Result<Js, Stop> {
+    let returned = match flow {
+        Flow::Returned => at.resolve_own(crate::run::RETURN_SLOT),
+        Flow::FellThrough => None,
+    };
+    match returned {
+        Some(Binding::Value(value)) => Ok(value.value),
+        Some(record) => Ok(crate::record::held(record)),
+        None if op == CollectionOp::Map => Ok(Js::Null),
+        None => Err(Stop::Thrown(Failure::engine(
+            "MOVENG_RUNTIME",
+            format!("the function for '{spelling}' returned nothing — the checker should have caught this"),
+        ))),
+    }
+}
+
+/// Where an op is written: as an op (its node's AST path), or as a call of
+/// one (version 3; the call and its AST path).
+pub(crate) enum OpOrigin {
+    Written(String),
+    Call { call: CallStatement, path: String },
+}
+
+impl OpOrigin {
+    /// The AST path of the op's function argument.
+    fn fn_path(&self, _expr: &CollectionOpExpression) -> String {
+        match self {
+            OpOrigin::Written(path) => format!("{path}/fn"),
+            OpOrigin::Call { call, path } => format!("{path}/args/{}", call.args.len() - 1),
+        }
+    }
+}
+
+/// One collection op being run (`CollectionRun`): whatever its members and
+/// its answer need, whether it started in this segment or is being finished
+/// on resume.
+pub(crate) struct CollectionRun {
+    pub op: Rc<OpCode>,
+    pub on_error: OnError,
+    pub function: Function,
+    /// The op's own address, its statement's `call k`: members are `iter i`
+    /// under it, and it is the join frame when members park.
+    pub address: Address,
+    /// The op as its statement's call: the statement its members'
+    /// boundaries name, and which call it is.
+    pub site: Option<Rc<crate::flow::Site>>,
+    pub index: usize,
+    pub members: Vec<Js>,
+    pub source_trail: Trail,
+    /// `REDUCE`'s starting value (null for the other ops).
+    pub init: Js,
+}
+
+/// `memberLeftOut`: the warning `onError: "warn"` leaves for a member it
+/// left out.
+pub(crate) fn member_left_out(spelling: &str, index: usize, count: Option<usize>, failure: &Failure) -> TraceEntry {
+    let of = count.map_or_else(String::new, |count| format!(" of {count}"));
+    TraceEntry::Warning {
+        code: "MOVENG_COLLECTION_MEMBER_FAILED".into(),
+        message: format!("'{spelling}' left out the member at index {index}{of}, because its function failed: {}", error_message(failure)),
+    }
 }
 
 /// What a version-3 call of a built-in reads as (`readCall`): the op, or
@@ -168,18 +306,32 @@ pub(crate) fn settings(config: Option<&ast::ExprSlot>) -> Result<(OnError, f64, 
 }
 
 impl Run<'_> {
-    /// `interpretCollectionOp`: the op opened as its statement's next call,
-    /// run, and its answer bound when it is.
-    pub(crate) async fn collection(&self, expr: &CollectionOpExpression, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address, fn_path: &str) -> Result<(), Stop> {
-        let index = self.begin_call();
-        let answer = self.run_collection(expr, scope, &at.call(index), fn_path).await?;
+    /// `interpretCollectionOp`: the op opened as its statement's next call
+    /// (handing back what it answered before a park, on a re-run), run, and
+    /// its answer bound when it is.
+    pub(crate) async fn collection(&self, expr: &CollectionOpExpression, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address, origin: OpOrigin) -> Result<(), Stop> {
+        let event = self.begin_call_event().await?;
+        let answer = match &event.replayed {
+            Some(replayed) => replayed.value.clone(),
+            None => {
+                let answer = self.run_collection(expr, scope, at, &origin, &event).await?;
+                self.finish_call(&event, Some(&answer));
+                Some(answer)
+            }
+        };
         if let Some(name) = binding_name {
-            scope.declare(name, answer);
+            let bound = answer.ok_or_else(|| {
+                Stop::Thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("'{}' returned nothing, so there is no value to bind — the checker should have caught this", spelling(expr.op)),
+                ))
+            })?;
+            scope.declare(name, bound);
         }
         Ok(())
     }
 
-    async fn run_collection(&self, expr: &CollectionOpExpression, scope: &Rc<Scope>, address: &Address, fn_path: &str) -> Result<Binding, Stop> {
+    async fn run_collection(&self, expr: &CollectionOpExpression, scope: &Rc<Scope>, at: &Address, origin: &OpOrigin, event: &crate::call::CallEvent) -> Result<Binding, Stop> {
         let spelling = spelling(expr.op);
         let source = self.evaluate_slot(&expr.source, scope).await?;
         let source_trail = self.trail_or_none(&source.prov, scope);
@@ -201,56 +353,184 @@ impl Run<'_> {
         if concurrency != 1.0 || initial != 1.0 {
             return Err(Stop::Thrown(Failure::unreproduced(&format!("'{spelling}' running more than one member at a time"), "the Rust engine runs a collection op's members one at a time")));
         }
-        let function = self.collection_function(&expr.r#fn, spelling, scope, fn_path)?;
-        // Each member's answer, by member index: kept, or left out.
-        let mut answers: Vec<Option<Js>> = Vec::with_capacity(members.len());
-        for (index, member) in members.iter().enumerate() {
-            let values = match expr.op {
-                CollectionOp::Reduce => vec![carried(&answers, &init), member.clone()],
-                _ => vec![member.clone()],
-            };
-            let at = function.captured.child();
-            for (position, param) in function.params.iter().enumerate() {
-                // `values[name] ?? null`.
-                let value = match values.get(position) {
-                    Some(value) if !matches!(value, Js::Undefined) => value.clone(),
-                    _ => Js::Null,
-                };
-                at.declare(param.name.clone(), crate::record::bind_value(value, Some(Trail::default()), false));
-            }
-            let named = function.named.as_deref().filter(|_| self.version() >= 3);
-            if let Some(name) = named {
-                self.enter_named_call(name)?;
-                self.call_stack.borrow_mut().push(name.to_string());
-            }
-            let ran = self.body(&function.body, &at, &address.iter(index), &function.path, 0).await;
-            if named.is_some() {
-                self.call_stack.borrow_mut().pop();
-            }
-            match ran {
-                Ok(flow) => answers.push(Some(self.member_answer(expr.op, spelling, flow, &at)?)),
-                Err(Stop::Thrown(failure)) if on_error != OnError::Error && is_member_failure(&failure) => {
-                    if on_error == OnError::Warn {
-                        self.trace(TraceEntry::Warning {
-                            code: "MOVENG_COLLECTION_MEMBER_FAILED".into(),
-                            message: format!(
-                                "'{spelling}' left out the member at index {index} of {}, because its function failed: {}",
-                                members.len(),
-                                error_message(&failure)
-                            ),
-                        });
-                    }
-                    answers.push(None);
+        let function = self.collection_function(&expr.r#fn, spelling, scope, &origin.fn_path(expr))?;
+        let run = CollectionRun {
+            op: Rc::new(OpCode { op: expr.clone(), json: self.op_json(expr, origin).map_err(Stop::Thrown)? }),
+            on_error,
+            function,
+            address: self.call_address(event, at),
+            site: event.site.clone(),
+            index: event.index,
+            members,
+            source_trail,
+            init,
+        };
+        let answers = vec![None; run.members.len()];
+        let indices: Vec<usize> = (0..run.members.len()).collect();
+        self.run_members(&run, &indices, answers).await
+    }
+
+    /// `runCollectionMembers` / `runMembers`, one member at a time: each in a
+    /// flow of its own (its trace spliced in as it finishes, its writes under
+    /// the op's fork by its index), inside its member boundary. A member that
+    /// parks stops the op's one slot: the members after it never start, and
+    /// the op parks as a join of its parked members, keeping what the others
+    /// answered. Under `onError: "warn"` or `"ignore"` a member whose function
+    /// fails is left out (`warn` traces why, after the member's own entries).
+    pub(crate) async fn run_members(&self, run: &CollectionRun, indices: &[usize], mut answers: Vec<Option<Option<Js>>>) -> Result<Binding, Stop> {
+        let spelling = spelling(run.op.op.op);
+        let fork = self.fork_writes();
+        let mut parked: Vec<usize> = Vec::new();
+        for &index in indices {
+            let state = self.open_flow(fork.branch(index));
+            let (outcome, mut state) = self.in_flow(state, self.member(run, index, &answers)).await;
+            let answer = match outcome {
+                Ok(value) => Some(value),
+                Err(Stop::Parked(_)) => {
+                    self.trace.extend(state.trace);
+                    parked.push(index);
+                    break;
                 }
-                Err(other) => return Err(other),
+                Err(Stop::Thrown(failure)) if run.on_error != OnError::Error && is_member_failure(&failure) => {
+                    if run.on_error == OnError::Warn {
+                        state.trace.push(member_left_out(spelling, index, Some(run.members.len()), &failure));
+                    }
+                    None
+                }
+                Err(other) => {
+                    self.trace.extend(state.trace);
+                    return Err(other);
+                }
+            };
+            self.trace.extend(state.trace);
+            answers[index] = Some(answer);
+        }
+        if !parked.is_empty() {
+            return Err(self.park_collection_op(run, &answers, parked.len()).await);
+        }
+        let flat: Vec<Option<Js>> = answers.into_iter().map(Option::flatten).collect();
+        self.collection_answer(run.op.op.op, spelling, &run.members, &flat, &run.init, run.source_trail.clone())
+    }
+
+    /// One member: its function's body in a scope of its own off what the
+    /// function captured, its parameters bound from the member (and for
+    /// `REDUCE` what the members before it carried), inside its boundary
+    /// and, for a function named, as a call by that name.
+    async fn member(&self, run: &CollectionRun, index: usize, answers: &[Option<Option<Js>>]) -> Result<Js, Stop> {
+        let member = run.members[index].clone();
+        let values = match run.op.op.op {
+            CollectionOp::Reduce => {
+                let before: Vec<Option<Js>> = answers[..index].iter().map(|a| a.clone().flatten()).collect();
+                vec![carried(&before, &run.init), member]
+            }
+            _ => vec![member],
+        };
+        let at = run.function.captured.child();
+        if let Some(name) = &run.function.self_name {
+            at.declare(name.clone(), Binding::Closure(run.function.closure.clone().expect("a function with a name of its own is a closure")));
+        }
+        for (position, param) in run.function.params.iter().enumerate() {
+            // `values[name] ?? null`.
+            let value = match values.get(position) {
+                Some(value) if !value.is_nullish() => value.clone(),
+                _ => Js::Null,
+            };
+            at.declare(param.name.clone(), crate::record::bind_value(value, Some(Trail::default()), false));
+        }
+        let address = run.address.iter(index);
+        let body = async {
+            let named = run.function.named.as_deref();
+            let flow = self.within_named_call(named, self.body(&run.function.body, &at, &address, &run.function.path, 0)).await?;
+            self.member_answer(run.op.op.op, spelling(run.op.op.op), flow, &at)
+        };
+        match &run.site {
+            Some(site) => {
+                let next = site.calls.borrow().next;
+                let boundary = Boundary::Member { site: site.clone(), index: run.index, next, member: index, op: run.op.clone() };
+                self.within_boundary(boundary, body).await
+            }
+            None => body.await,
+        }
+    }
+
+    /// `parkCollectionOp`: some members parked; the op is a pending join at
+    /// its own address, keeping what its resume needs (the members it reads,
+    /// `REDUCE`'s start, each finished member's answer) at that frame.
+    async fn park_collection_op(&self, run: &CollectionRun, answers: &[Option<Option<Js>>], parked: usize) -> Stop {
+        let frame = run.address.encode();
+        let kept = async {
+            if self.serves("park.sink.persistBranchExport") {
+                let source = Binding::Value(ValueBinding { value: Js::array(run.members.clone()), trail: Some(run.source_trail.clone()), many: false });
+                let init = Binding::Value(ValueBinding { value: run.init.clone(), trail: Some(Trail::default()), many: false });
+                let state = crate::env::object_of(vec![
+                    ("source", crate::park::serialize_alone(self, &source).map_err(Stop::Thrown)?),
+                    ("init", crate::park::serialize_alone(self, &init).map_err(Stop::Thrown)?),
+                ]);
+                self.persist_branch_export(&frame, &frame, -1, &state).await?;
+                for (index, answer) in answers.iter().enumerate() {
+                    let Some(answer) = answer else { continue };
+                    let exports = member_answer_export(self, answer.as_ref()).map_err(Stop::Thrown)?;
+                    self.persist_branch_export(&frame, &run.address.iter(index).encode(), index as i64, &exports).await?;
+                }
+            }
+            self.record_join(&frame, parked).await
+        };
+        match kept.await {
+            Ok(()) => Stop::Parked(frame),
+            Err(stop) => stop,
+        }
+    }
+
+    /// The op as a member frame keeps it (`SerializedFrame.op`): written as
+    /// an op, the program's node; read from a call (version 3), the object
+    /// `readCall` builds of the call's own pieces.
+    fn op_json(&self, expr: &CollectionOpExpression, origin: &OpOrigin) -> Result<Js, Failure> {
+        match origin {
+            OpOrigin::Written(path) => self.program_code(path),
+            OpOrigin::Call { call, path } => {
+                let value_at = |index: usize| -> Result<Js, Failure> {
+                    match &call.args[index] {
+                        CallArg::Call { .. } => self.program_code(&format!("{path}/args/{index}/call/expression")),
+                        _ => self.program_code(&format!("{path}/args/{index}/expr")),
+                    }
+                };
+                let op = match expr.op {
+                    CollectionOp::Map => "map",
+                    CollectionOp::Filter => "filter",
+                    CollectionOp::Reduce => "reduce",
+                    CollectionOp::Groupby => "groupby",
+                    CollectionOp::Keyby => "keyby",
+                };
+                let mut members = vec![("op", Js::str(op)), ("source", value_at(0)?)];
+                if expr.init.is_some() {
+                    members.push(("init", value_at(1)?));
+                }
+                if expr.config.is_some() {
+                    members.push(("config", value_at(1)?));
+                }
+                let last = call.args.len() - 1;
+                let function = match &expr.r#fn {
+                    ArmExpression::Closure { .. } => crate::env::object_of(vec![
+                        ("kind", Js::str("closure")),
+                        ("closure", self.program_code(&format!("{path}/args/{last}/closure"))?),
+                        ("span", self.program_code(&format!("{path}/args/{last}/span"))?),
+                    ]),
+                    ArmExpression::Ref { name, .. } => crate::env::object_of(vec![
+                        ("kind", Js::str("ref")),
+                        ("name", Js::str(name.clone())),
+                        ("span", self.program_code(&format!("{path}/args/{last}/expr/span"))?),
+                    ]),
+                };
+                members.push(("fn", function));
+                members.push(("span", self.program_code(&format!("{path}/span"))?));
+                Ok(crate::env::object_of(members))
             }
         }
-        self.collection_answer(expr.op, spelling, &members, &answers, &init, source_trail)
     }
 
     /// `collectionFunction`: a closure written in place, capturing the scope
     /// it is written in, or a movement by name, capturing the caller's.
-    fn collection_function(&self, function: &ArmExpression, spelling: &str, scope: &Rc<Scope>, fn_path: &str) -> Result<Function, Stop> {
+    pub(crate) fn collection_function(&self, function: &ArmExpression, spelling: &str, scope: &Rc<Scope>, fn_path: &str) -> Result<Function, Stop> {
         match function {
             ArmExpression::Closure { closure, .. } => Ok(Function {
                 params: closure.params.clone(),
@@ -258,8 +538,19 @@ impl Run<'_> {
                 captured: scope.capture(),
                 path: format!("{fn_path}/closure/body"),
                 named: None,
+                closure: None,
+                self_name: None,
             }),
             ArmExpression::Ref { name, .. } => match scope.resolve(name) {
+                Some(Binding::Closure(closure)) => Ok(Function {
+                    params: closure.code.ast.params.clone(),
+                    body: closure.code.ast.body.clone(),
+                    captured: closure.captured.clone(),
+                    path: format!("{}/body", closure.code.path),
+                    named: Some(name.clone()),
+                    self_name: closure.self_name.clone(),
+                    closure: Some(closure),
+                }),
                 Some(Binding::Movement(declared)) => {
                     let (declaration, declared_at) = self.declaration(&declared)?;
                     Ok(Function {
@@ -268,6 +559,8 @@ impl Run<'_> {
                         captured: scope.capture(),
                         path: format!("/statements/{declared_at}/body"),
                         named: Some(name.clone()),
+                        closure: None,
+                        self_name: None,
                     })
                 }
                 other => {
@@ -281,22 +574,8 @@ impl Run<'_> {
         }
     }
 
-    /// `memberValue`: what the member's function returned, a record as
-    /// itself; a function that returned nothing answers null for `MAP`.
     fn member_answer(&self, op: CollectionOp, spelling: &str, flow: Flow, at: &Scope) -> Result<Js, Stop> {
-        let returned = match flow {
-            Flow::Returned => at.resolve_own(crate::run::RETURN_SLOT),
-            Flow::FellThrough => None,
-        };
-        match returned {
-            Some(Binding::Value(value)) => Ok(value.value),
-            Some(record) => Ok(crate::record::held(record)),
-            None if op == CollectionOp::Map => Ok(Js::Null),
-            None => Err(Stop::Thrown(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("the function for '{spelling}' returned nothing — the checker should have caught this"),
-            ))),
-        }
+        member_answer_in(op, spelling, flow, at)
     }
 
     /// `collectionAnswer`: the op's value from every member's answer, in
@@ -375,7 +654,7 @@ impl Run<'_> {
     }
 
     /// `assertCallDepth` for a function handed to an op by name (version 3).
-    fn enter_named_call(&self, name: &str) -> Result<(), Stop> {
+    pub(crate) fn enter_named_call(&self, name: &str) -> Result<(), Stop> {
         let stack = self.call_stack.borrow();
         let limit = self.input.max_call_depth;
         if stack.len().saturating_sub(1) < limit {
@@ -427,7 +706,7 @@ fn carried(answers: &[Option<Js>], init: &Js) -> Js {
 /// passes through, and so does this engine's own refusal of a reading the
 /// TypeScript's member would have made (forgiving it would drop a member the
 /// TypeScript keeps).
-fn is_member_failure(failure: &Failure) -> bool {
+pub(crate) fn is_member_failure(failure: &Failure) -> bool {
     match failure {
         Failure::Engine { class: crate::eval::ErrorClass::Unreproduced, .. } => false,
         Failure::Engine { .. } => true,
