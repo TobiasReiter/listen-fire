@@ -16,9 +16,10 @@ Language version 4, **Luminous Owl**, arrives after v0.10.9. The release's [chan
 ## 1. How the pin moves
 
 - Language version 4 arrives: **Luminous Owl**. A new automation is written in it, and the deploy check moves an automation up to it when it validates cleanly there: no error and no move-up warning.
-- An automation with an error under Luminous Owl (4), or with a move-up warning, stays on its version. It shows the **Review** badge, and the automation page lists the diagnostics. Two warnings are move-up warnings, because they mark places where the same text now does something different:
+- An automation with an error under Luminous Owl (4), or with a move-up warning, stays on its version. It shows the **Review** badge, and the automation page lists the diagnostics. Three warnings are move-up warnings, because they mark places where the same text now does something different:
   - `MOV_MATCH_MISS_CONTINUES` on every bound match: a miss no longer ends the enclosing scope (see [section 2](#2-a-named-match-yields-a-handle-or-absent)).
   - `MOV_HANDLE_UPDATED_IN_PLACE` on a `write` off a write handle (see [section 6](#6-a-write-on-a-write-handle-updates-in-place)).
+  - `MOV_HANDLE_READ_FOUND` on a read, off a write handle, of a field that write did not set (see [section 5](#5-the-old-edge-what-a-write-found)).
 - A move-up warning fires whether or not the code was edited, so it holds the pin until you acknowledge it. Read each warning, edit what assumed the old behaviour, then upgrade with `upgradeAutomation` and acknowledge. An error cannot be acknowledged: repair it first.
 
 ## 2. A named match yields a handle or absent
@@ -81,7 +82,9 @@ if to != null {
 | Before | After |
 | --- | --- |
 | `h.created` | `NOT EXISTS(h-[:@old]->)`, or `FIRST(h-[:@old]->) == null` |
-| `h.committed` | `FIRST(h-[:@old]->) == h` (the same position only under `dry_run`), or drop the test where `dry_run` is a literal on the instance |
+| `h.committed` | `FIRST(h-[:@old]->) != h` (TRUE when the write landed: under `dry_run` a write that matched lands on the handle itself), or drop the test where `dry_run` is a literal on the instance |
+
+- A `dry_run` create has an empty `@old`, so for a created record `!= h` alone does not say the write landed. Written out in full, `NOT EXISTS(h-[:@old]->) OR FIRST(h-[:@old]->) != h` is TRUE for every create, live or rehearsed. Where `dry_run` is a literal on the instance, drop the test.
 
 - `committed` remains in the run log, which `inspectRun` shows.
 - Versions 1 to 3 keep both fields.
@@ -95,7 +98,8 @@ if to != null {
 | Created a record | nothing (empty) |
 | Matched an existing record | a snapshot: a distinct position, the values as they stood. It holds the fields the lookup fetched, plus every field this write set |
 | Matched and changed nothing | equal values, but still a distinct position |
-| Ran under `dry_run` | the handle itself |
+| Ran under `dry_run` and matched, an in-place `write org { … }` included | the handle itself |
+| Ran under `dry_run` and created | nothing (empty) |
 | Follows an earlier write to the same record | the previous handle |
 
 ```
@@ -110,7 +114,9 @@ if was != null AND was.Name != org.Name {
 - `EXISTS(org-[:@old]->)` after a second write is always `TRUE`, since the previous handle exists.
 - A write off a record found earlier (`x = write c { … }` on a traversal landing or a matched record) is a write handle too, and has `@old`.
 - `@old` on a match handle, a traversal landing or a local node is `MOV_OLD_EDGE_NOT_A_WRITE`. Any other `@name` is `MOV_ARTIFICIAL_EDGE_UNKNOWN`.
-- Under Quiet Heron (1), Bright Otter (2) and Steady Lynx (3) the edge does not exist: `@old` is `MOV_ARTIFICIAL_EDGE_UNKNOWN`.
+- Under Quiet Heron (1), Bright Otter (2) and Steady Lynx (3) the edge does not exist: `-[:@old]->` is the plain unknown edge, `MOV_TRAVERSE_UNKNOWN_EDGE`.
+- Under Luminous Owl (4), reading a field off a write handle that the write did not set with `:` reads the record as the write found it. Under versions 1 to 3 it read what the system handed back from the write, which was often nothing, and nothing when the write changed nothing. A field set with `?:` or `+:` counts as not set. Why: the handle names the record, so its fields are the record's.
+- `MOV_HANDLE_READ_FOUND` is a move-up warning on each such read, and holds the pin until acknowledged. If the code assumed the old reading (for example, an empty value meaning "the write did not touch it"), change it, then upgrade.
 
 ## 6. A write on a write handle updates in place
 
@@ -132,6 +138,7 @@ write org { Stage: "Customer" }
 | `MOV_ABSENT_REQUIRED` | [A named match yields a handle or absent](#2-a-named-match-yields-a-handle-or-absent) (new sites: a match handle used unguarded, and an absent end of a `link` or `unlink`) |
 | `MOV_ARTIFICIAL_EDGE_UNKNOWN` | [The old edge](#5-the-old-edge-what-a-write-found) |
 | `MOV_HANDLE_FIELD_RETIRED` | [A write handle has no created or committed](#4-a-write-handle-has-no-created-or-committed) |
+| `MOV_HANDLE_READ_FOUND` | [The old edge](#5-the-old-edge-what-a-write-found) (move-up warning) |
 | `MOV_HANDLE_UPDATED_IN_PLACE` | [A write on a write handle updates in place](#6-a-write-on-a-write-handle-updates-in-place) (move-up warning) |
 | `MOV_LINK_MATCH_BODY_RETIRED` | [Retired and refused forms](#3-retired-and-refused-forms) |
 | `MOV_MATCH_MISS_CONTINUES` | [A named match yields a handle or absent](#2-a-named-match-yields-a-handle-or-absent) (move-up warning) |

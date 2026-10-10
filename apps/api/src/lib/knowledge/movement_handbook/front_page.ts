@@ -63,7 +63,7 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'strings-and-names',
     title: 'Strings and names',
-    text: 'Strings are `"…"` or `\'…\'`, interpolating `${…}`. Backticks are not strings: they quote a name with spaces.',
+    text: 'Strings are `"…"` or `\'…\'`, interpolating `${…}`. Backticks are not strings: they quote a name with spaces. `+` only adds numbers.',
     example: { body: 'line = "From ${m.From}: ${m.`Plain Body`}"' },
   },
   {
@@ -99,7 +99,7 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'errors-and-return',
     title: 'Errors and return',
-    text: '`ERROR("reason")` fails the run; no `throw` or `try`.',
+    text: '`ERROR("reason")` fails the run; no `throw` or `try`. `return` always hands back a value.',
   },
   {
     anchor: 'immutable-values',
@@ -179,7 +179,7 @@ function renderConcept(entry: FrontEntry): string {
 export function renderFrontPage(): string {
   return [
     '## Writing automations: it is TypeScript, except…',
-    'An automation is a program run when an event arrives. Write TypeScript, except where this page says otherwise.',
+    'An automation is a program run when an event arrives.',
     '### ts-except',
     TS_EXCEPT.map(renderBullet).join('\n'),
     ...CONCEPTS.map(renderConcept),

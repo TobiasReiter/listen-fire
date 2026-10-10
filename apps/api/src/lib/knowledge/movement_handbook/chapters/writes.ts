@@ -42,7 +42,8 @@ changed = was != null AND was.\`Domains\` != company.\`Domains\`
 - A write off a record found earlier (\`x = write c { … }\` on a traversal's landing or a matched record) is a write handle too: \`x-[:@old]->\` carries the fields the walk fetched plus those written.
 - \`write org { … }\` updates the record \`org\` names, and \`org\` reads the new values afterwards; \`x = write org { … }\` names the same record as \`org\`. After a second write, \`org-[:@old]->\` is the handle as it stood before that write, with its own \`@old\`: \`prev = FIRST(org-[:@old]->)\`, then \`FIRST(prev-[:@old]->)\`, two steps because a hop off a call inside a formula does not parse.
 - So \`EXISTS(org-[:@old]->)\` after a second write is always true. To know whether a write created the record, read the walk right after that write, or walk the chain.
-- Under \`dry_run\` the walk lands on the handle itself (\`FIRST(org-[:@old]->) == org\`), since nothing is written.
+- Under \`dry_run\` every write that matched, an in-place \`write org { … }\` included, lands the walk on the handle itself (\`FIRST(org-[:@old]->) == org\`), since nothing is written; a dry-run create has an empty walk.
+- A field this write did not set with \`:\` reads off the handle as the record was found.
 - \`@\` is reserved for engine-made edges. \`created\` and \`committed\` are not fields of a handle; \`committed\` is a fact of the run log.
 
 ### set-if-empty
@@ -209,7 +210,7 @@ crm-[record:Companies WHERE \`Categories\` == "Lead"]-> {
 }
 \`\`\`
 
-\`write <alias> { … }\` updates the record the alias already stands on — traversed, or a handle from earlier in the run, which then reads the new values — and \`write m.k { … }\` updates the one a map's key holds, as \`x = m.k\` then \`write x { … }\` would. Nothing is left to resolve, so \`unique by\` is rejected, and there is no create to gate: set only the fields that change, and use \`link\`/\`unlink\` for connections. A target that can't update by id (an append-only channel, a drive that only creates files) is flagged at save.
+\`write <alias> { … }\` updates the record the alias already stands on — traversed, or a write's handle, which then reads the new values (a match's handle stays the record as found) — and \`write m.k { … }\` updates the one a map's key holds, as \`x = m.k\` then \`write x { … }\` would. Nothing is left to resolve, so \`unique by\` is rejected, and there is no create to gate: set only the fields that change, and use \`link\`/\`unlink\` for connections. A target that can't update by id (an append-only channel, a drive that only creates files) is flagged at save.
 
 ### removal
 
