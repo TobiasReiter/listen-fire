@@ -14,6 +14,7 @@ jest.mock('../../../logger', () => ({
 }));
 
 import { tenantIdOf } from 'engine-contracts';
+import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import {
   RecordedConversation,
   hostRecordingSchema,
@@ -129,7 +130,7 @@ describe('the recorder', () => {
     expect(hostRecordingSchema.safeParse(JSON.parse(JSON.stringify(recording))).success).toBe(true);
     expect(recording.entry).toBe('run');
     expect(recording.input).not.toHaveProperty('host');
-    expect(recording.input.languageVersion).toBe(3);
+    expect(recording.input.languageVersion).toBe(CURRENT_LANGUAGE_VERSION);
     expect(paths(recording)[0]).toBe('segment.open');
     expect(paths(recording).at(-1)).toBe('segment.close');
     const creates = recording.requests.filter(

@@ -317,6 +317,11 @@ interface Outcome {
 
 const noop = () => {};
 
+/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
+ *  the constructs whose meaning changed (admit.rs), so the two engines are
+ *  compared under the newest version both run. */
+const RUST_LANGUAGE_VERSION = 3;
+
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
@@ -341,6 +346,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   try {
     const run = runMovement({
       source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`,
+      languageVersion: RUST_LANGUAGE_VERSION,
       event: c.event ?? webhook({ subject: 'Seed', text: 'Late' }),
       teamId: TEAM_ID,
       catalog,
@@ -884,6 +890,7 @@ describe('the expression tail, on both engines', () => {
         const graph = fakeGraph();
         await runMovement({
           source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+          languageVersion: RUST_LANGUAGE_VERSION,
           event: webhook({ subject: 'Seed', text: 'Late' }),
           teamId: TEAM_ID,
           catalog,

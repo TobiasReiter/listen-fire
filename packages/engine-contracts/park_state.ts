@@ -84,7 +84,17 @@ export interface ExtractEmissionDescriptor {
 export type BindingDescriptor =
   | { kind: 'event' }
   | { kind: 'instance'; instance: InstanceIdentityDescriptor }
-  | { kind: 'handle'; handle: WriteRecord; targetType: string; graph: HandleGraphDescriptor }
+  | {
+      kind: 'handle';
+      handle: WriteRecord;
+      targetType: string;
+      graph: HandleGraphDescriptor;
+      /** The record before the handle's write (`-[:@old]->`, version 4 on),
+       *  itself a handle. A rehearsed write's `old` is the handle itself, which
+       *  JSON cannot nest, so it is said instead (`oldIsSelf`). */
+      old?: BindingDescriptor;
+      oldIsSelf?: true;
+    }
   | { kind: 'extractRoot'; emission: ExtractEmissionDescriptor }
   | { kind: 'extractPosition'; emission: ExtractEmissionDescriptor }
   | {

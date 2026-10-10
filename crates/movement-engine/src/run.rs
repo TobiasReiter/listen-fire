@@ -434,6 +434,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let version = input.language_version;
     // Admission first, on this engine's own parse: a program (or a parked
     // state) it does not run costs no catalog load, no check, no request.
+    if let Some(reason) = crate::admit::version_refusal(version) {
+        return Err(Stop::Refused(vec![reason]));
+    }
     let root = match program::parse(&input.source, version) {
         Ok(root) => root,
         Err(_) => return Err(unparsed(host, input).await),

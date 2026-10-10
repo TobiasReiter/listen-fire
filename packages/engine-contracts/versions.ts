@@ -1,4 +1,4 @@
-// The five contracts' versions, as one table. Each is an integer the contract's
+// The six contracts' versions, as one table. Each is an integer the contract's
 // doc under docs/contracts/ states, and a test holds each constant here equal
 // to its doc and the table equal to docs/contracts/README.md.
 //
@@ -35,6 +35,10 @@ export const HOST_FAMILIES_VERSION = 1;
 /** The host families versions this release serves. */
 export const SUPPORTED_HOST_FAMILIES_VERSIONS: ReadonlySet<number> = new Set([1]);
 
+/** What a system caller verifier sees and answers (docs/contracts/system-caller.md):
+ *  the in-process interface a host's system endpoints authenticate through. */
+export const SYSTEM_CALLER_VERSION = 1;
+
 export interface ContractStanding {
   current: number;
   supported: readonly number[];
@@ -61,6 +65,7 @@ export const CONTRACTS = {
     supported: [...SUPPORTED_LANGUAGE_VERSIONS],
     deprecated: [...DEPRECATED_LANGUAGE_VERSIONS],
   },
+  'system-caller': { current: SYSTEM_CALLER_VERSION, supported: [SYSTEM_CALLER_VERSION], deprecated: [] },
 } as const satisfies Record<string, ContractStanding>;
 
 /** Refuse a `segment.open` whose host families version this host does not

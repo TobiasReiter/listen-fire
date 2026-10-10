@@ -100,6 +100,7 @@ Measured 2026-10-07 (gzip -9):
 | extraction specs, prompts and the validator (chunk 6A, not yet run) | 2,185,406 | 623,115 |
 | the extraction keyword and plugin calls run whole (chunk 6A) | 2,423,062 | 694,914 |
 | folds, EXISTS, IS and a record named twice (chunk 6A Task 4) | 2,458,709 | 710,999 |
+| language version 4's changed constructs refused at admission (main merge 2) | 2,459,419 | 711,283 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -334,6 +335,7 @@ constructs this engine already runs are "The run" below.
 
 | reason | the construct | needs |
 |---|---|---|
+| `language_version_unsupported` | the run is pinned to a language version this release does not support (`SUPPORTED_LANGUAGE_VERSIONS`), refused by that name before the parse and before any construct's reason, so it is the only reason the run holds (the TypeScript engine refuses it with its own message) | nothing: an unsupported version is refused on either engine |
 | `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` | the file scope from the check's `link` (imported movements and shapes, `libraryShape`/`shapeChain`), calls into library movements |
 | `file_assignment` | a file-level binding that is neither an instance construction nor a value (a file-level `extract`, node, graph) | file-level evaluation of those right-hand sides |
 | `file_call` | a file-level construction or call spelled with a movement's or a plugin's name | `fileLevelCall`'s semantics (a call with no event) |
@@ -393,6 +395,10 @@ refused where it stands (`is_test_declared_record`).
 | `write_multi_hop`, `match_multi_hop` | a linked write or match that walks more (or less) than one edge | the TypeScript's error, or its multi-hop semantics |
 | `write_spread_path`, `node_spread`, `node_spread_path`, `node_spread_source` | `...m.k` in a write or a graph literal; a spread in a `node { … }` literal; a graph spread of a name that is not a value, a handle or a node | spreads of records and of map members |
 | `unique_by_without_key`, `unique_by_reads_beyond_candidate` | a `unique by` clause with no key (no bare field, parent or `field == value`); a conjunct that is not a pure predicate over the candidate | the TypeScript's post-filter for impure conjuncts |
+| `v4_match_absent` | under language version 4, any `match` (bound, a statement, a link's body): a miss binds absent and the block carries on, where this engine ends the scope | absent as a binding the scope carries on with |
+| `v4_old_edge` | under language version 4, a hop over an `@` edge (`-[:@old]->`, a block head's, a walk's, an `EXISTS`'s, a write's or a match's target): the record a write handle held before its write | the `@old` snapshot a write handle keeps |
+| `v4_write_in_place` | under language version 4, `write org { … }` on a write's handle: the handle moves on to the updated record in place, and its `@old` is the handle as it stood | a handle updated in place, seen by every scope holding it |
+| `v4_handle_read_as_found` | under language version 4, a write whose handle the program holds (`x = write …`), whatever its identity (`unique by`, the target's native constraints and an adapter's own matching rule all find a record, and admission cannot see the last two from the text); a write with `unique by`; or `write x { … }` on any other name (a hop alias, a node, a value holding a record): an update's handle reads the record as found for the fields the write did not send (`foundData`) and holds it as `@old` | the found record's data on the handle |
 
 **Nodes and graphs** (a reached body):
 
@@ -469,6 +475,21 @@ never resumes it wrong.
   (`builtins.function`, `builtins.compare`; the evaluator's `fallback`), or
   fails loudly ("Errors a run can meet mid-run" below).
 
+### Language version 4: the port list
+
+This engine runs language versions 1 to 3. Version 4 (Luminous Owl, main's
+d5bb93f794) changed what four constructs mean, and each is refused by name
+under `since(v, 4)` until it is ported (PLAN-07A), for a supported version
+only (an unsupported one is `language_version_unsupported` first); a version
+1 to 3 program is admitted exactly as before.
+
+| main's change | sha | refused as |
+|---|---|---|
+| a named match that finds nothing binds absent and the block carries on; a judge outage on a match leaves a `MOVENG_MATCH_JUDGE_UNAVAILABLE` warning | 26ed0b502f, 30e1acc55b | `v4_match_absent` |
+| `-[:@old]->` off a write handle: the record the write found, the handle itself under `dry_run`, the previous handle on a chained write | 1bd0d3aa10, 30e1acc55b | `v4_old_edge` |
+| `write org { … }` on a handle updates it in place | 1bd0d3aa10 | `v4_write_in_place` |
+| a handle reads the record as found (`foundData`) for a field its write did not set; a parent link carries only what the parent's own write got back | 1bd0d3aa10, ac7ac15ec8 | `v4_handle_read_as_found` |
+
 ### What admission cannot decide
 
 These depend on what a value holds, not on what the program says, and stay
@@ -502,6 +523,45 @@ mutation — the TypeScript engine throws the same.
 - **`GET /api/v1/system/engine-stats`** (system scope, like `/tg-runs`):
   `{engine, uptimeSeconds, since, runs, evaluator}`, this process's counters
   since it started.
+- **The admission dry run** (`rustRunStats.dryRun`, under `runs.dryRun` in
+  engine-stats): every run and resume the TypeScript engine runs because
+  `MOVEMENT_ENGINE` did not choose this engine is also put to this engine's
+  admission, without running it. The shim builds the segment input a real
+  run would, calls the start entry, and reads the first step: a `refused`
+  done is the verdict, and an admitted run's first step (`check.program`) is
+  never answered; the segment is finished there. So the dry run makes no
+  host call and changes nothing about the run, and a fault in it is counted
+  (`faults`) and logged at warn, never thrown. It counts `firings` (runs it
+  could ask about), `sampled` (runs it asked about), `admitted`, `first` (refused
+  runs by the reason named first, the one a real run is counted by), `all`
+  (refused runs by every reason named, once each: the engine's admission
+  names every reason it meets since chunk 7A's walk, so `all` counts the
+  same reasons `rustRunStats.allReasons` does for a routed run) and `byVersion` (the same, by the run's
+  pinned language version). It misses what admission cannot see: declines
+  after the check (`event_field_dated`) and mid-run hand-backs.
+  A rehearsal is not asked about. `MOVEMENT_ENGINE_DRY_RUN_EVERY=N` asks
+  about one firing in N (default 1, every firing; 0 turns it off; every
+  entry that runs movements refuses anything but a whole number at boot).
+  What one costs: the event and the catalog serialised onto the wire, a
+  fresh WASM instance, this engine's parse of the program and of its
+  plugins, and, for an admitted run, the catalog load. So every run the
+  TypeScript engine runs now also opens a WASM instance: memory and garbage
+  collection under load grow with the firing rate, and sampling is the
+  remedy. `pnpm dev:engine-dry-run-latency` measures it over the recorded
+  corpora (p50 about 0.9 ms, p95 about 2 ms, p99 about 4 ms on a laptop);
+  `dryRun.durationMs` in engine-stats is the same over this process's last
+  1,000 dry runs (timed by the host's clock, which the engine never reads).
+- **The daily roll-up**: each process holds its verdicts and, at most once a
+  minute after a drain pass, writes them into one `ops_event` row per day
+  (`detail.kind = "engine_admission_dry_run"`: tallies by version, refused
+  runs by reason and automation id, at most 100 automations named per
+  reason with the rest counted, at most 200 reasons with the rest as
+  `other`). Reasons, versions and opaque ids only. The admin ops views
+  leave these rows out. drain:once writes its own before it exits.
+  `pnpm engine:refusals --days N [--json]` sums the rows into the burn-down
+  in demand order: for each reason, the runs it blocked, how many
+  automations, and the five with the most runs; by first reason and by every
+  reason. The operator event store keeps 14 days, so N is at most 14.
 
 ## The run
 
@@ -1559,7 +1619,7 @@ runs is the conformance corpora run with `MOVEMENT_ENGINE=rust`.
 `scripts/build-movement-wasm.sh` if a crate changed:
 
 ```bash
-MOVEMENT_ENGINE=rust pnpm test:conformance:v2                       # the whole corpus: routing floors apply
+MOVEMENT_ENGINE=rust pnpm test:conformance:v2                       # the whole corpus (v1, v2, v3 alike): routing floors apply
 MOVEMENT_ENGINE=rust pnpm test:conformance:v2 --testPathPattern refs  # one file: no floor, every other check
 MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # per-file routed counts
 ```
@@ -1572,6 +1632,6 @@ admitted: {reason: count}` (by first reason, largest first), `Rust runs not
 admitted, every reason: {reason: count}` (each run counted under every
 reason it holds), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 392, v2 467). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 1058, v2 1360, v3 1916). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

@@ -80,7 +80,7 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'calls',
     title: 'Calls',
-    text: 'Arguments go data first, then one settings record, then a function. Write your own functions the same way.',
+    text: 'Arguments go data first, then one settings record, then a function.',
   },
   {
     anchor: 'no-loops',
@@ -91,9 +91,9 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'maybe-absent',
     title: 'Absent, not undefined',
-    text: 'No `undefined`, `??` or `?.`. What might not be there (`FIRST`, `ONLY`, `AT`, `extractOne`) is `T | absent`, refused where a value is required until narrowed: `if x == null { ERROR("…") }`, `EXISTS(x)`, `COALESCE(x, fallback)`, or `Field ?: x` in a write.',
+    text: 'No `undefined`, `??` or `?.`. What might not be there (`FIRST`, `ONLY`, `AT`, `extractOne`, a named `match`) is `T | absent`, refused where a value is required until narrowed: `if x == null { ERROR("…") }`, `EXISTS(x)`, `COALESCE(x, fallback)`, or `Field ?: x` in a write.',
     example: {
-      body: 'co = ONLY(crm-[c:Companies WHERE Name == m.Subject]->)\nif co == null { ERROR("no company ${m.Subject}") }\nwrite co-[:Notes]-> { Title: COALESCE(FIRST(m-[a:Attachments]->.Name), "none"), Content: m.Body }',
+      body: 'co = ONLY(crm-[c:Companies WHERE Name == m.Subject]->)\nif co == null { ERROR("no company ${m.Subject}") }\nseen = match crm-[:People]-> { unique by (Email), Email: m.From }\nif seen != null { link seen -[:Company]-> co }',
     },
   },
   {
@@ -104,7 +104,7 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'immutable-values',
     title: 'Only the graph changes',
-    text: 'Values never change (no `x.field = …`); build a record with `graph<Shape> { … }`. Systems change only through `write`, `link`, `unlink`, `delete`.',
+    text: 'Values never change (no `x.field = …`); build a record with `graph<Shape> { … }`. Systems change only via `write`, `link`, `unlink`, `delete`.',
     example: {
       program: 'node Lead {\n  Name: <text>\n}\nfunction `Lead Of`(m: <inbox-[:Email]->>) {\n  return graph<Lead> { Name: m.From }\n}',
     },
@@ -121,7 +121,7 @@ export const CONCEPTS: readonly FrontEntry[] = [
   {
     anchor: 'systems',
     title: 'Import, then construct',
-    text: 'Import a system from `adapters` and its connection from `credentials`, then construct it once. An email listen needs a `key`, the address mail is sent to.',
+    text: 'Import a system from `adapters` and its connection from `credentials`, then construct it once. An email listen needs a `key`, the address mail goes to.',
     example: {
       file: 'import { email, attio } from adapters\nimport { acme } from credentials\n\ninbox = email()\ncrm = attio(credentials: acme)\n\nfunction `Log Sender`(m: <inbox-[:Email]->>) {\n  write crm-[:People]-> { unique by (Email), Email: m.From, Name: m.From }\n}\n\nlisten to inbox { key: "senders" } fire `Log Sender`',
     },
@@ -129,12 +129,12 @@ export const CONCEPTS: readonly FrontEntry[] = [
   {
     anchor: 'graph-and-paths',
     title: 'Systems are graphs; paths are values',
-    text: '`crm-[:Companies]->` is a path to its records, and `-[c:Companies WHERE …]->` filters the hop. A `listen` line fires a function with the event\'s record as its one parameter.',
+    text: '`crm-[:Companies]->` is a path to its records; `-[c:Companies WHERE …]->` filters the hop. A `listen` line fires a function with the event\'s record as its one parameter.',
   },
   {
     anchor: 'identity',
     title: 'A write creates or updates, by identity',
-    text: '`unique by (…)` names the fields that make it the same record, so a repeat event updates rather than duplicates. Match a strong key first, then a fuzzy name as a second `unique by` line (lines are OR). A line missing its key is skipped; never skip the record. Write related records off the parent\'s handle.',
+    text: '`unique by (…)` names the fields that make it the same record, so a repeat updates. Match a strong key first, then a fuzzy name as a second `unique by` line (lines are OR). A line missing its key is skipped; never skip the record. Write related records off the parent\'s handle. `-[:@old]->` is the record a write found, empty when it created.',
     example: {
       body: 'co = write crm-[:Companies]-> { unique by (Name), Name: m.Subject }\nwrite co-[:Team]-> {\n  unique by (Email)\n  unique by (FUZZY Name)\n  Email: m.From\n  Name: m.From\n}',
     },
@@ -150,7 +150,7 @@ export const CONCEPTS: readonly FrontEntry[] = [
   {
     anchor: 'runs',
     title: 'Runs: effects, waiting, cost',
-    text: 'A run parks at an `await` (an approval, `sleep`) and resumes when it settles; `race` and `parallel` combine waits. A run pauses at its cost cap until resumed.',
+    text: 'A run parks at an `await` (an approval, `sleep`) and resumes when it settles; `race` and `parallel` combine waits. It pauses at its cost cap.',
     example: {
       body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = await race([\n  () => {\n    a = await FIRST(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n])\napproved = AT(r, 0) == TRUE',
     },
@@ -179,7 +179,7 @@ function renderConcept(entry: FrontEntry): string {
 export function renderFrontPage(): string {
   return [
     '## Writing automations: it is TypeScript, except…',
-    'An automation is a program run when an event arrives. Write it as TypeScript, except where this page says otherwise.',
+    'An automation is a program run when an event arrives.',
     '### ts-except',
     TS_EXCEPT.map(renderBullet).join('\n'),
     ...CONCEPTS.map(renderConcept),

@@ -16,6 +16,10 @@ export const HANDBOOK_POINTERS = {
   identity: 'front#identity',
   /** A system named before it is imported and constructed. */
   systems: 'front#systems',
+  /** A match whose miss is absent: name it and test the name. */
+  match: 'writes#match',
+  /** What a write did — created, matched, changed — asked of its `@old`. */
+  writeOutcome: 'writes#what-the-write-did',
 } as const;
 
 export type HandbookPointer = (typeof HANDBOOK_POINTERS)[keyof typeof HANDBOOK_POINTERS];
@@ -35,6 +39,13 @@ export const HANDBOOK_POINTER_BY_CODE: Readonly<Record<string, HandbookPointer>>
   MOV_UNIQUE_UNKNOWN_FIELD: HANDBOOK_POINTERS.identity,
   MOV_LINKED_HOP_RETIRED: HANDBOOK_POINTERS.identity,
   MOV_PARENT_READ_RETIRED: HANDBOOK_POINTERS.identity,
+  MOV_MATCH_UNNAMED: HANDBOOK_POINTERS.match,
+  MOV_MATCH_MISS_CONTINUES: HANDBOOK_POINTERS.match,
+  MOV_LINK_MATCH_BODY_RETIRED: HANDBOOK_POINTERS.match,
+  MOV_HANDLE_FIELD_RETIRED: HANDBOOK_POINTERS.writeOutcome,
+  MOV_HANDLE_READ_FOUND: HANDBOOK_POINTERS.writeOutcome,
+  MOV_OLD_EDGE_NOT_A_WRITE: HANDBOOK_POINTERS.writeOutcome,
+  MOV_ARTIFICIAL_EDGE_UNKNOWN: HANDBOOK_POINTERS.writeOutcome,
 };
 
 /** `diagnostic`, its message ending in the handbook pointer its code has (if any). */

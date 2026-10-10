@@ -119,9 +119,9 @@ Connecting records (write related records **along their edges**, never as flat r
 - \`write company-[:Notes]-> { … }\` — linked write off a parent handle.
 - \`write (a-[:agreements]->, b-[:agreements]->) { … }\` — one record under several parents; \`unique by (a, b)\`.
 - \`link champion -[:led]-> part\` — connect two records already bound.
-- \`p = match c-[:portfolio]-> { unique by (\`Name\`), Name: "Fund III" }\` — find by identity, never create or write; on a miss the scope ends quietly.
+- \`p = match c-[:portfolio]-> { unique by (\`Name\`), Name: "Fund III" }\` — find by identity, never create or write; the result is the record or absent, so test it (\`if p != null { … }\`) before reading it.
 - \`match crm-[c:Companies WHERE EXISTS(c-[:Team]->)]-> { … }\` — a \`WHERE\` on the target's final hop limits which existing records may be matched (\`write\` still creates when none is left).
-- \`p = link c -[:portfolio]-> { Name: "Fund III" }\` — \`match\` then \`link\`; a body with no \`unique by\` identifies by all its fields.
+- \`if p != null { link c -[:portfolio]-> p }\` — \`match\` first, then link the guarded record.
 - \`write record { Status: "Customer" }\` — in-place update of a held/traversed record (no \`unique by\`).
 - \`unlink a -[:related]-> b\` — sever an edge. \`delete stale\` — remove a record (only when removal is the automation's purpose).
 
@@ -163,7 +163,7 @@ x = IF EXISTS(d) THEN "\${d}" ELSE "" END   # narrows d present in THEN only
 Field ?: d                                 # '?:' takes a maybe-absent value, no guard needed
 \`\`\`
 
-\`FIRST\`/\`LAST\`/\`MIN\`/\`MAX\`/\`at\` over anything that can come up empty type \`T | absent\`, same as an \`await FIRST(…)\` on a landing a cancel can settle empty. Using such a value where a present one is required — a write or traversal target, a dot-plane field read, an ordered comparison (\`<\` \`<=\` \`>\` \`>=\`) — is refused until narrowed, naming the fix. \`==\`/\`!=\` against \`null\` is the presence test (loose: \`null\` and absent mean the same thing); against any other value a maybe-absent side needs no guard (absent is never equal to a present value), and a condition (\`if\`, \`IF … THEN\`, \`AND\`/\`OR\`/\`NOT\`) reads a missing boolean as false. Both sides must still match in kind. \`EXISTS(…)\` and \`ISNULL(…)\` take a bound name or a field read off one (\`EXISTS(x.\`Field\`)\`), and a proven field proves the record it came off.
+\`FIRST\`/\`LAST\`/\`MIN\`/\`MAX\`/\`at\` over anything that can come up empty, and a named \`match\` that found nothing, type \`T | absent\`, same as an \`await FIRST(…)\` on a landing a cancel can settle empty. Using such a value where a present one is required — a write or traversal target, a dot-plane field read, an ordered comparison (\`<\` \`<=\` \`>\` \`>=\`) — is refused until narrowed, naming the fix. \`==\`/\`!=\` against \`null\` is the presence test (loose: \`null\` and absent mean the same thing); against any other value a maybe-absent side needs no guard (absent is never equal to a present value), and a condition (\`if\`, \`IF … THEN\`, \`AND\`/\`OR\`/\`NOT\`) reads a missing boolean as false. Both sides must still match in kind. \`EXISTS(…)\` and \`ISNULL(…)\` take a bound name or a field read off one (\`EXISTS(x.\`Field\`)\`), and a proven field proves the record it came off.
 
 ### listeners
 
@@ -255,7 +255,7 @@ Content is a list (shared content first, record-specific content last, so repeat
 - **Leaving an unattended review with no timeout.** An \`await\` on its own waits forever; race it against \`() => { await sleep(2d) }\` so a default takes over when time runs out.
 - **Expecting one extraction per piece from a list.** \`extract(pieces, Shape)\` reads them all as a single job; \`MAP(pieces, (p) => extract([p], Shape))\` is the per-piece form.
 - **Verifying from the target system only.** The run record shows what was sent and why; read provenance before editing the automation.
-- **Using a maybe-absent value unguarded.** A write/traversal target, a dot-plane field read, or an ordered comparison off a \`FIRST\`/\`LAST\`/\`MIN\`/\`MAX\`/\`at\` result is refused until narrowed — guard with \`if x == null { ERROR(…) }\`, \`EXISTS(x)\`, or \`?:\` on the write field.
+- **Using a maybe-absent value unguarded.** A write/traversal target, a link end, a dot-plane field read, or an ordered comparison off a \`FIRST\`/\`LAST\`/\`MIN\`/\`MAX\`/\`at\` result or a named \`match\` is refused until narrowed — guard with \`if x == null { ERROR(…) }\` (or an \`else\` arm), \`EXISTS(x)\`, or \`?:\` on the write field.
 - **Binding a field just to test it.** \`EXISTS(x.\`Field\`)\` and \`ISNULL(x.\`Field\`)\` read the field directly; no intermediate binding.
 - **Writing a closure where an argument or field value goes.** \`(n) => { … }\` only parses in an assignment, a return, a MAP/FILTER/REDUCE slot, a race/parallel arm, or a callback's subject — bind it to a name there and pass the name instead.`,
 };

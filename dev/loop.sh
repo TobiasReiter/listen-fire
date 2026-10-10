@@ -34,6 +34,13 @@
 #               5 s (standing in for Cloud Scheduler). Log:
 #               .dev-loop/scheduler.log.
 #
+# The system endpoints' callers are controlled by $SYSTEM_AUTH_MODES, as on a
+# deployment (`api_key` by default). Naming `oidc` starts a fake OpenID Connect
+# issuer (`pnpm dev:fake-issuer`, log .dev-loop/fake-issuer.log) and points the
+# API's oidc settings at it; under push-tick the scheduler then ticks with a
+# token it mints there per tick instead of the API key. With `oidc` alone the
+# door notifier, which sends the API key, is turned off.
+#
 # Flags:
 #   --force-kill     If any of this profile's ports are already bound, kill
 #                    the holders and continue. Default is to abort.
@@ -134,6 +141,8 @@ export FAKE_CHANNELS_PORT="${FAKE_CHANNELS_PORT:-$((HARNESS_BASE + 1))}"
 # any single process, so an ephemeral port would leave the install pointing at a
 # dead socket (which is exactly what it used to do).
 export FAKE_REMOTE_ADAPTER_PORT="${FAKE_REMOTE_ADAPTER_PORT:-$((HARNESS_BASE + 2))}"
+# The fake OpenID Connect issuer, started only when SYSTEM_AUTH_MODES names oidc.
+export FAKE_ISSUER_PORT="${FAKE_ISSUER_PORT:-$((HARNESS_BASE + 3))}"
 # admin also runs under `pnpm -r --parallel dev`; keep it in this profile's
 # range (base+4 — default stays 3004) so an agent stack never collides with
 # the default stack's admin.
@@ -147,6 +156,7 @@ export WEB_BASE_URL="${WEB_BASE_URL:-http://localhost:$WEB_PORT}"
 export ADMIN_BASE_URL="${ADMIN_BASE_URL:-http://localhost:$ADMIN_PORT}"
 export FAKE_CHANNELS_URL="${FAKE_CHANNELS_URL:-http://localhost:$FAKE_CHANNELS_PORT}"
 export FAKE_REMOTE_ADAPTER_URL="${FAKE_REMOTE_ADAPTER_URL:-http://127.0.0.1:$FAKE_REMOTE_ADAPTER_PORT/}"
+export FAKE_ISSUER_URL="${FAKE_ISSUER_URL:-http://127.0.0.1:$FAKE_ISSUER_PORT}"
 # Frontend public-env hints (read at vite/next dev time, baked into the bundle).
 export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$API_BASE_URL}"
 export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-$API_BASE_URL}"
@@ -203,7 +213,25 @@ fi
 # above), so --force-kill can only ever touch this profile's own app-port
 # holders, never another stack's or another project's (e.g. an unrelated
 # sibling repo's `dev` compose project) containers.
-PORTS_TO_CHECK=("$PORT" "$WEB_PORT" "$FAKE_CHANNELS_PORT" "$FAKE_REMOTE_ADAPTER_PORT" "$ADMIN_PORT")
+PORTS_TO_CHECK=("$PORT" "$WEB_PORT" "$FAKE_CHANNELS_PORT" "$FAKE_REMOTE_ADAPTER_PORT" "$ADMIN_PORT" "$FAKE_ISSUER_PORT")
+
+# The loop's own background helpers (fake CRM, fake issuer, scheduler) each run
+# in a process group of their own, recorded here, so a stop takes down the
+# whole group — the subshell AND the node process it started — and a
+# --force-kill can sweep groups a loop that died without its trap left behind.
+HELPERS_FILE="$REPO_ROOT/.dev-loop/profiles/$PROFILE.helpers"
+kill_helper_groups() {
+  [ -f "$HELPERS_FILE" ] || return 0
+  while read -r pgid; do
+    [ -n "$pgid" ] && kill -TERM -- "-$pgid" 2>/dev/null || true
+  done < "$HELPERS_FILE"
+  rm -f "$HELPERS_FILE"
+}
+if [ "$FORCE_KILL" -eq 1 ] && [ -f "$HELPERS_FILE" ]; then
+  echo "[dev:loop] --force-kill: terminating the helper process groups a previous loop recorded: $(tr '\n' ' ' < "$HELPERS_FILE")"
+  kill_helper_groups
+  sleep 1
+fi
 COLLISIONS=()
 for p in "${PORTS_TO_CHECK[@]}"; do
   if lsof -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -300,6 +328,31 @@ if [ "$SHAPE" = "push-tick" ]; then
   echo "[dev:loop] AUTOMATIONS_DRAIN_MODE: external  AUTOMATIONS_TICK_URLS: $AUTOMATIONS_TICK_URLS"
 fi
 
+# The system endpoints' callers. With oidc named, the API trusts the fake
+# issuer, for tokens whose audience is the drain URL and whose subject is the
+# scheduler's. The door notifier sends the API key, so with oidc alone it has
+# nothing the API would accept, and is turned off (the boot refuses the pair).
+SYSTEM_AUTH_MODES="${SYSTEM_AUTH_MODES:-api_key}"
+export SYSTEM_AUTH_MODES
+case ",${SYSTEM_AUTH_MODES// /}," in
+  *,oidc,*) WITH_OIDC=1 ;;
+  *) WITH_OIDC=0 ;;
+esac
+case ",${SYSTEM_AUTH_MODES// /}," in
+  *,api_key,*) WITH_API_KEY=1 ;;
+  *) WITH_API_KEY=0 ;;
+esac
+if [ "$WITH_OIDC" -eq 1 ]; then
+  export SYSTEM_AUTH_OIDC_ISSUER="${SYSTEM_AUTH_OIDC_ISSUER:-$FAKE_ISSUER_URL}"
+  export SYSTEM_AUTH_OIDC_AUDIENCE="${SYSTEM_AUTH_OIDC_AUDIENCE:-$API_BASE_URL/api/v1/system/automations/drain}"
+  export SYSTEM_AUTH_OIDC_ALLOWED_SUBJECTS="${SYSTEM_AUTH_OIDC_ALLOWED_SUBJECTS:-dev-loop-scheduler@fake-issuer}"
+  if [ "$WITH_API_KEY" -eq 0 ] && [ -n "${AUTOMATIONS_TICK_URLS:-}" ]; then
+    unset AUTOMATIONS_TICK_URLS
+    echo "[dev:loop] AUTOMATIONS_TICK_URLS unset: the door notifier sends the API key, which oidc alone refuses"
+  fi
+fi
+echo "[dev:loop] SYSTEM_AUTH_MODES: $SYSTEM_AUTH_MODES${SYSTEM_AUTH_OIDC_ISSUER:+  issuer: $SYSTEM_AUTH_OIDC_ISSUER  audience: $SYSTEM_AUTH_OIDC_AUDIENCE}"
+
 echo "[dev:loop] API: $API_BASE_URL"
 echo "[dev:loop] WEB: $WEB_BASE_URL"
 echo "[dev:loop] FAKE_CHANNELS_URL: $FAKE_CHANNELS_URL"
@@ -383,19 +436,31 @@ pnpm --filter story-view bundle >/dev/null \
 # `pnpm -r --parallel dev` doesn't reach it — the loop starts it itself, and the
 # cleanup trap takes it down with the stack.
 FAKE_CRM_LOG="$LOG_DIR/fake-crm.log"
-( cd apps/api && pnpm run dev:fake-crm ) > "$FAKE_CRM_LOG" 2>&1 &
+mkdir -p "$(dirname "$HELPERS_FILE")"
+: > "$HELPERS_FILE"
+# Job control gives each background job its own process group (pgid = its pid).
+set -m
+( cd apps/api && exec pnpm run dev:fake-crm ) > "$FAKE_CRM_LOG" 2>&1 &
 FAKE_CRM_PID=$!
+set +m
+echo "$FAKE_CRM_PID" >> "$HELPERS_FILE"
 echo "[dev:loop] fake CRM (acme_crm): $FAKE_REMOTE_ADAPTER_URL (pid $FAKE_CRM_PID, log $FAKE_CRM_LOG)"
+
+FAKE_ISSUER_PID=""
+if [ "$WITH_OIDC" -eq 1 ]; then
+  FAKE_ISSUER_LOG="$LOG_DIR/fake-issuer.log"
+  set -m
+  ( cd apps/api && exec pnpm run dev:fake-issuer ) > "$FAKE_ISSUER_LOG" 2>&1 &
+  FAKE_ISSUER_PID=$!
+  set +m
+  echo "$FAKE_ISSUER_PID" >> "$HELPERS_FILE"
+  echo "[dev:loop] fake issuer: $FAKE_ISSUER_URL (pid $FAKE_ISSUER_PID, log $FAKE_ISSUER_LOG)"
+fi
 
 SCHEDULER_PID=""
 cleanup() {
   rm -f "$PROFILE_FILE"
-  if [ -n "${FAKE_CRM_PID:-}" ]; then
-    kill "$FAKE_CRM_PID" 2>/dev/null || true
-  fi
-  if [ -n "${SCHEDULER_PID:-}" ]; then
-    kill "$SCHEDULER_PID" 2>/dev/null || true
-  fi
+  kill_helper_groups
 }
 trap cleanup EXIT INT TERM
 
@@ -416,12 +481,22 @@ if [ "$SHAPE" = "push-tick" ]; then
   echo "[dev:loop] Minting the scheduler's system-scope key (dev-loop-scheduler)..."
   AUTOMATIONS_TICK_KEY="$( (cd apps/api && pnpm -s run dev:system-key) | tail -n 1)" || true
   case "$AUTOMATIONS_TICK_KEY" in
-    lf_*) export AUTOMATIONS_TICK_KEY ;;
+    lf_*) ;;
     *) echo "[dev:loop] minting the system-scope key failed (pnpm dev:system-key)"; exit 1 ;;
   esac
+  # With oidc alone the API would refuse the key, so neither the notifier nor
+  # the scheduler is handed it (the mint still provisioned the team).
+  if [ "$WITH_API_KEY" -eq 1 ]; then
+    export AUTOMATIONS_TICK_KEY
+  else
+    unset AUTOMATIONS_TICK_KEY
+  fi
   SCHEDULER_LOG="$LOG_DIR/scheduler.log"
+  set -m
   bash dev/scheduler.sh "$$" > "$SCHEDULER_LOG" 2>&1 &
   SCHEDULER_PID=$!
+  set +m
+  echo "$SCHEDULER_PID" >> "$HELPERS_FILE"
   echo "[dev:loop] scheduler: ticks $API_BASE_URL's drain every 5 s (pid $SCHEDULER_PID, log $SCHEDULER_LOG)"
 fi
 

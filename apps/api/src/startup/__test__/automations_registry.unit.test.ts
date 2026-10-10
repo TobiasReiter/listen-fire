@@ -234,6 +234,20 @@ describe('assertAutomationsDrainConfigured (the boot-time check)', () => {
     expect(check).toThrow(TICK_KEY_VAR);
   });
 
+  it('refuses tick settings when the system surface no longer takes API keys, since the notifier sends one', () => {
+    const tick = { AUTOMATIONS_DRAIN_MODE: 'external', [TICK_URLS_VAR]: 'http://a.test/drain', [TICK_KEY_VAR]: 'lf_key' };
+    const oidc = {
+      SYSTEM_AUTH_OIDC_ISSUER: 'https://accounts.google.com',
+      SYSTEM_AUTH_OIDC_AUDIENCE: 'http://a.test/drain',
+      SYSTEM_AUTH_OIDC_ALLOWED_SUBJECTS: 'scheduler@example.iam.gserviceaccount.com',
+    };
+    expect(() => assertAutomationsDrainConfigured({ ...tick, ...oidc, SYSTEM_AUTH_MODES: 'oidc' })).toThrow(
+      /SYSTEM_AUTH_MODES leaves api_key out/,
+    );
+    expect(() => assertAutomationsDrainConfigured({ ...tick, ...oidc, SYSTEM_AUTH_MODES: 'oidc,api_key' })).not.toThrow();
+    expect(() => assertAutomationsDrainConfigured({ AUTOMATIONS_DRAIN_MODE: 'external', ...oidc, SYSTEM_AUTH_MODES: 'oidc' })).not.toThrow();
+  });
+
   describe('over the product set', () => {
     afterEach(() => jest.restoreAllMocks());
 

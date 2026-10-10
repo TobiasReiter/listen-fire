@@ -101,6 +101,61 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       });
     });
 
+    describe("a handle's record before its write (`-[:@old]->`)", () => {
+      const graph = { kind: 'instance' as const, instance: { kind: 'instance' as const, name: 'crm', adapterSlug: 'attio' } };
+      const record = (domain: string): WriteRecord => ({
+        adapterType: 'attio',
+        recordType: 'company',
+        externalId: 'rec_123',
+        created: false,
+        committed: true,
+        writtenValues: { domain },
+        provenance: {},
+      });
+
+      it('the chain of snapshots survives a park', async () => {
+        const found: Extract<Binding, { kind: 'handle' }> = {
+          kind: 'handle',
+          handle: { ...record('old.example'), writtenValues: {}, resultData: { domain: 'old.example' }, snapshot: true },
+          targetType: 'company',
+          graph,
+        };
+        const first: Extract<Binding, { kind: 'handle' }> = {
+          kind: 'handle',
+          handle: { ...record('second.example'), old: found, snapshot: true },
+          targetType: 'company',
+          graph,
+        };
+        const binding: Binding = { kind: 'handle', handle: { ...record('third.example'), old: first }, targetType: 'company', graph };
+        const back = await roundTrip(binding);
+        expect(back).toMatchObject({
+          handle: {
+            writtenValues: { domain: 'third.example' },
+            old: {
+              handle: {
+                writtenValues: { domain: 'second.example' },
+                snapshot: true,
+                old: { handle: { resultData: { domain: 'old.example' }, snapshot: true } },
+              },
+            },
+          },
+        });
+      });
+
+      it("a rehearsed write's handle is its own @old, before and after a park", async () => {
+        const binding: Extract<Binding, { kind: 'handle' }> = {
+          kind: 'handle',
+          handle: record('new.example'),
+          targetType: 'company',
+          graph,
+        };
+        binding.handle.old = binding;
+        const back = await roundTrip(binding);
+        if (back.kind !== 'handle') throw new Error('expected a handle');
+        expect(back.handle.old).toBe(back);
+      });
+    });
+
     it('extractRoot / extractPosition (materialised emission, never re-run) round-trip', async () => {
       const emission: ExtractEmission = {
         nodeName: 'extract result',

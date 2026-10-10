@@ -1,5 +1,5 @@
 // Runs one test corpus with ./harvest.setup.cjs recording every expression
-// text it produces. HARVEST_CORPUS picks the corpus — `v1`, `v2` (the
+// text it produces. HARVEST_CORPUS picks the corpus — `v1`, `v2`, `v3` (the
 // conformance corpora, under their own language version) or `current` (this
 // package's own tests, under the current version); HARVEST_OUT names the JSON
 // lines file to append to. ./build_fixture.cjs folds the output into the
@@ -14,6 +14,7 @@ const PACKAGE = path.resolve(__dirname, '../../..');
 const CONFIGS = {
   v1: 'jest.conformance.v1.cjs',
   v2: 'jest.conformance.v2.cjs',
+  v3: 'jest.conformance.v3.cjs',
   current: 'jest.config.borrowed.cjs',
 };
 

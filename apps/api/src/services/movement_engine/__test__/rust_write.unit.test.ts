@@ -214,6 +214,11 @@ interface Outcome {
   limitPauses: RunLimitPause[];
 }
 
+/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
+ *  the constructs whose meaning changed (admit.rs), so the two engines are
+ *  compared under the newest version both run. */
+const RUST_LANGUAGE_VERSION = 3;
+
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
@@ -248,6 +253,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   };
   const input: RunMovementInput = {
     source: PRELUDE + c.source,
+    languageVersion: RUST_LANGUAGE_VERSION,
     event: c.event,
     teamId: TEAM_ID,
     catalog,

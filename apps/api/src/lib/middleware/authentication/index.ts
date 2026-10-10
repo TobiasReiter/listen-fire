@@ -67,8 +67,25 @@ function recordFirstMcpCall(req: Request, principal: Principal) {
   }).catch((e) => logger.warn('journey: first_mcp_call record failed', { error: e }));
 }
 
-function createAuthenticationHandler(options: { doors: readonly InboundDoor[] }): RequestHandler {
-  const { doors } = options;
+/** Requests whose refusal was deferred: they go on with no principal, to a
+ *  surface that authenticates them itself. */
+const deferredRequests = new WeakSet<Request>();
+
+/** Whether this request's refusal was deferred (the access gate lets it by). */
+function authenticationDeferred(req: Request): boolean {
+  return deferredRequests.has(req);
+}
+
+function createAuthenticationHandler(options: {
+  doors: readonly InboundDoor[];
+  /**
+   * A request this claims goes on, unauthenticated, when this funnel refuses
+   * it: the surface it reaches has callers of its own whose credentials the
+   * funnel does not know (the system surface's verifiers, services/system_auth).
+   */
+  defer?: (req: Request) => boolean;
+}): RequestHandler {
+  const { doors, defer } = options;
 
   const authenticate: RequestHandler = async (req, res, next) => {
     const door = doors.find((candidate) => candidate.matches(req));
@@ -85,6 +102,11 @@ function createAuthenticationHandler(options: { doors: readonly InboundDoor[] })
     }
 
     if (!outcome.ok) {
+      if (defer?.(req) === true) {
+        deferredRequests.add(req);
+        next();
+        return;
+      }
       res.status(outcome.status).send(outcome.body);
       return;
     }
@@ -115,4 +137,4 @@ function createAuthenticationHandler(options: { doors: readonly InboundDoor[] })
   };
 }
 
-export { createAuthenticationHandler };
+export { authenticationDeferred, createAuthenticationHandler };

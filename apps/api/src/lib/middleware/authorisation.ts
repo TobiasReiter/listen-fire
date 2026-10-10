@@ -1,6 +1,8 @@
 import { RequestHandler } from 'express';
 import { maybePrincipal } from 'principal';
 
+import { authenticationDeferred } from './authentication';
+
 // The access gate for the private surface.
 //
 // It used to re-read `core.user` and check `grantedAccessAt` — a second lookup
@@ -17,9 +19,11 @@ import { maybePrincipal } from 'principal';
 // exists precisely when a provider admitted this request, and which provider
 // that was is not this file's business. It stays as an explicit refusal rather
 // than being deleted because "the private surface requires an established
-// identity" is worth asserting where it is relied upon.
-const authorisationHandler: RequestHandler = (_req, res, next) => {
-  if (maybePrincipal() === undefined) {
+// identity" is worth asserting where it is relied upon. The one exception is a
+// request authentication deferred to a surface that authenticates its own
+// callers; that surface's gate is the assertion there.
+const authorisationHandler: RequestHandler = (req, res, next) => {
+  if (maybePrincipal() === undefined && !authenticationDeferred(req)) {
     res.status(403).send();
     return;
   }

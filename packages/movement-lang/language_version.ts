@@ -36,14 +36,19 @@ export const LANGUAGE_VERSIONS: readonly LanguageVersionInfo[] = [
     name: 'Steady Lynx',
     is: 'the language from v0.10.0: a list literal is a tuple — exact at a literal index, a list of its members\' union elsewhere',
   },
+  {
+    version: 4,
+    name: 'Luminous Owl',
+    is: 'the language from v0.11.0: a match yields absent on a miss, a write handle reaches its pre-write record through @old',
+  },
 ];
 
 /** What a movement saved today is pinned to, and what an entry point given no
  *  version compiles and runs under. */
-export const CURRENT_LANGUAGE_VERSION: LanguageVersion = 3;
+export const CURRENT_LANGUAGE_VERSION: LanguageVersion = 4;
 
 /** The versions this release parses, checks and runs. */
-export const SUPPORTED_LANGUAGE_VERSIONS: ReadonlySet<LanguageVersion> = new Set([1, 2, 3]);
+export const SUPPORTED_LANGUAGE_VERSIONS: ReadonlySet<LanguageVersion> = new Set([1, 2, 3, 4]);
 
 /** Supported versions that will be removed: they still run, with a warning. */
 export const DEPRECATED_LANGUAGE_VERSIONS: ReadonlySet<LanguageVersion> = new Set<LanguageVersion>();

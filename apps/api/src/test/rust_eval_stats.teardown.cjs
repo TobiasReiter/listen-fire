@@ -38,11 +38,18 @@ const path = require('node:path');
 // 2026-10-09) runs v1 1006, v2 1309 whole; the floors are those less a
 // margin of 2. Chunk 7A Task 4 (awaits, parallel and race, parks anywhere
 // and every park state resumed, 2026-10-10) runs v1 1060, v2 1363 whole;
-// the floors are those less a margin of 2. A floor
+// the floors are those less a margin of 2. On cloud-native the v3 corpus
+// came with the main merge that brought language version 4 (2026-10-10),
+// and that merge refuses a version-99 case by that name at admission
+// (language_version_unsupported) rather than running it to the check's
+// refusal. The forward merge of cloud-native into chunk 7A (2026-10-10)
+// runs v1 1060, v2 1362 (its version-99 case refused by that name), v3 1918
+// whole; the floors are those less a margin
+// of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 1058, v2: 1361 };
+const RAN_WHOLE_FLOOR = { v1: 1058, v2: 1360, v3: 1916 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
@@ -74,6 +81,7 @@ function corpusOf(projectConfig) {
   const match = (projectConfig?.testMatch ?? []).join(' ');
   if (match.includes('__conformance__/v1')) return 'v1';
   if (match.includes('__conformance__/v2')) return 'v2';
+  if (match.includes('__conformance__/v3')) return 'v3';
   return undefined;
 }
 
@@ -82,6 +90,9 @@ async function globalTeardown(globalConfig, projectConfig) {
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
   const runs = { routed: 0, admitted: 0, ranWhole: 0, shimFaults: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {} };
+  // The admission dry run asks only about runs MOVEMENT_ENGINE kept from
+  // Rust: under rust, it must have asked about none.
+  const dryRun = { firings: 0, sampled: 0 };
   const byFile = {};
   const refusedByFile = {};
   const add = (into, from) => {
@@ -104,6 +115,8 @@ async function globalTeardown(globalConfig, projectConfig) {
       if (Object.keys(stats.runs?.notAdmitted ?? {}).length > 0 && stats.file) add((refusedByFile[stats.file] ??= {}), stats.runs.notAdmitted);
       add(runs.declined, stats.runs?.declined);
       add(runs.hostCalls, stats.runs?.hostCalls);
+      dryRun.firings += stats.runs?.dryRun?.firings ?? 0;
+      dryRun.sampled += stats.runs?.dryRun?.sampled ?? 0;
     }
   }
   rmSync(dir, { recursive: true, force: true });
@@ -116,6 +129,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   console.log(`Rust runs not admitted: ${JSON.stringify(sorted(runs.notAdmitted))}`);
   // The same runs under every reason each holds: what the first reason hides.
   console.log(`Rust runs not admitted, every reason: ${JSON.stringify(sorted(runs.allReasons))}`);
+  console.log(`Admission dry runs (none under rust): ${JSON.stringify(dryRun)}`);
   // Which files' runs the Rust engine ran whole, for a report.
   if (process.env.MOVEMENT_RUST_RUNS_BY_FILE === '1') {
     console.log(`Rust runs by file: ${JSON.stringify(byFile)}`);

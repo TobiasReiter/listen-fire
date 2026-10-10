@@ -65,6 +65,11 @@ import {
 import { sentryScopeHandler } from './lib/middleware/sentry_scope';
 import { startup as startBackgroundProcesses } from './startup';
 import { assertAutomationsDrainConfigured } from './startup/automations';
+import {
+  assertSystemAuthConfigured,
+  defersToSystemCaller,
+  installSystemCallerVerifiers,
+} from './services/system_auth';
 import { startEventLoopWatchdogIfEnabled } from './services/event_loop_watchdog';
 import { linkTrpcWsServer, trpcRouter } from './interfaces/trpc';
 import { webhookSyncRouter } from './interfaces/rest/webhookSync';
@@ -127,6 +132,11 @@ assertEngineChoiceConfigured();
 // reverse), is a deployment that believes its work drains when it does not.
 // Checked only where automations is mounted (the gate is inside).
 assertAutomationsDrainConfigured();
+
+// A system caller mode named without its settings (an oidc issuer, audience or
+// allow-list) is a deployment whose scheduler believes it is authenticated when
+// every tick is refused.
+assertSystemAuthConfigured();
 
 // A search rate set to something that is not a positive whole number is a
 // deployment that believes its Bright Data searches are paced when they are not.
@@ -245,9 +255,14 @@ async function main() {
   // identity only) how to log into it. Ahead of the auth funnel because the
   // static provider refuses an anonymous request whatever its path.
   app.use('/api/public', preAuthRouter);
+  // The system surface's callers: the configured verifiers, asked by its
+  // router. A refused request to it goes on to them when one of them is not the
+  // API key, whose credentials this funnel cannot read.
+  installSystemCallerVerifiers();
   app.use(
     createAuthenticationHandler({
       doors: [inboundEmailDoor, resendInboundDoor, mailgunEventDoor],
+      defer: defersToSystemCaller,
     }),
   );
   app.use('/api/public', publicRouter);

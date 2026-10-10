@@ -391,8 +391,11 @@ export type MatchTarget = Extract<WriteTarget, { kind: 'linked' | 'tuple' }>;
  * `existing = match crm-[:companies]-> { unique by (FUZZY \`name\`), name: n }`
  * — the identity half of a write, on its own: resolve candidates by the
  * `unique by` clauses (OR across clauses) and arbitrate, then bind the record
- * found. It never creates and never writes. On a miss the ENCLOSING SCOPE ends
- * quietly, so inside the scope the handle is always a real record.
+ * found. It never creates and never writes. What a miss does depends on the
+ * program's language version: since 4 the name is absent (`T | absent`, as
+ * FIRST's is) and the block carries on, so the author tests it; before 4 the
+ * ENCLOSING SCOPE ended quietly, so inside the scope the handle was always a
+ * real record.
  *
  * The body's fields are ASSERTIONS — the values identity compares against and
  * the judge reads — so they take `:` only; there is nothing to fill or append.
@@ -404,8 +407,10 @@ export interface MatchExpression {
   span: Span;
 }
 
-/** A match used as a statement: a gate — the rest of the scope runs only when
- *  the record exists. */
+/** A match used as a statement. Before language version 4, a gate — the rest
+ *  of the scope runs only when the record exists. Since 4 the checker refuses
+ *  it (a miss no longer ends anything, so it decides nothing); it still parses
+ *  for programs pinned earlier. */
 export interface MatchStatement {
   kind: 'match';
   match: MatchExpression;

@@ -82,6 +82,7 @@ import {
   FILE_FUNCTION_ID,
   INTERPRETED_FUNCTION_IDS,
   isWalkProjection,
+  OLD_EDGE,
   POSITION_SENTINEL,
   READ_FUNCTION_ID,
   readChunkSpec,
@@ -160,9 +161,9 @@ import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import { applyMovementFunction } from './builtins';
 import { engineChoice, evalInRust } from './rust_engine';
 import { neverAsAny } from '../../lib/utils/types';
-import type { LocalLandingShape, WriteRecord } from 'engine-contracts';
+import type { LocalLandingShape, WriteRecord as RecordedWrite } from 'engine-contracts';
 
-export type { LocalLandingShape, WriteRecord };
+export type { LocalLandingShape };
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 // The error type lives in the dependency-free `./errors` module (so the
@@ -181,8 +182,110 @@ export function unsupported(construct: string, detail?: string): MovementEngineE
 
 // ── The runtime value model ─────────────────────────────────────────────────
 
-// `WriteRecord` and `LocalLandingShape` are the contract's (`engine-contracts`):
-// a write handle parks with its record, and a landing with its shape.
+// `LocalLandingShape` and the recorded write are the contract's
+// (`engine-contracts`): a write handle parks with its record, and a landing
+// with its shape.
+
+/**
+ * A recorded write as the engine holds it: the contract's record, plus the
+ * record as it stood before the write — what `-[:@old]->` lands on.
+ */
+export interface WriteRecord extends RecordedWrite {
+  /**
+   * The record as it stood before this write, which `-[:@old]->` lands on.
+   * Absent when the write created the record — there was nothing before it.
+   * A write that found a record holds a snapshot of it as found; a rehearsed
+   * one holds its own handle (nothing changed, so before IS after); a write
+   * through a handle (`write org { … }`) holds that handle as it stood, whose
+   * own `old` keeps the chain. A handle-read surface like `resultData`, never
+   * part of the persisted firing record; a park carries it (serialize.ts).
+   */
+  old?: Extract<Binding, { kind: 'handle' }>;
+}
+
+/**
+ * A snapshot of the record a handle names, as it stands now: the handle a
+ * later write through it reaches with `-[:@old]->`. Its own `old` is kept so
+ * the chain walks; a handle that was its own `old` (a rehearsed write) stays
+ * its own in the snapshot.
+ */
+export function snapshotOfHandle(
+  binding: Extract<Binding, { kind: 'handle' }>,
+): Extract<Binding, { kind: 'handle' }> {
+  const { writtenValues, resultData } = binding.handle;
+  // The value bags are copied, not shared: the live handle is the earlier
+  // write's firing record, and a refresh through this snapshot must not
+  // rewrite what that write logged.
+  const snapshot: Extract<Binding, { kind: 'handle' }> = {
+    ...binding,
+    handle: {
+      ...binding.handle,
+      writtenValues: { ...writtenValues },
+      ...(resultData !== undefined ? { resultData: { ...resultData } } : {}),
+      snapshot: true,
+    },
+  };
+  if (binding.handle.old === binding) snapshot.handle.old = snapshot;
+  return snapshot;
+}
+
+/**
+ * A snapshot of a record a write FOUND, before the write touched it: what the
+ * engine already held of it (`data` — the identity candidate's fields, a
+ * landing's fetched data) under what it read back just before writing.
+ */
+export function snapshotOfRecord(input: {
+  adapterType: string;
+  recordType: string;
+  externalId: string;
+  data: Record<string, unknown>;
+  targetType: string;
+  graph: HandleGraph;
+}): Extract<Binding, { kind: 'handle' }> {
+  return {
+    kind: 'handle',
+    handle: {
+      adapterType: input.adapterType,
+      recordType: input.recordType,
+      externalId: input.externalId,
+      created: false,
+      committed: false,
+      writtenValues: {},
+      resultData: input.data,
+      provenance: {},
+      snapshot: true,
+    },
+    targetType: input.targetType,
+    graph: input.graph,
+  };
+}
+
+/** Is this hop `-[:@old]->`, which the engine answers from the handle itself
+ *  and never asks an adapter about (no system has the edge)? */
+function isOldEdge(step: { type: string; edgeTypeId?: string }): boolean {
+  return step.type === 'edge' && step.edgeTypeId === OLD_EDGE;
+}
+
+/** Where `-[:@old]->` lands from a write handle: the record before the write,
+ *  or nowhere when the write created it. */
+function oldEdgeLandings(binding: Extract<Binding, { kind: 'handle' }>): Binding[] {
+  return binding.handle.old !== undefined ? [binding.handle.old] : [];
+}
+
+/** Whether a hop chain starts with `-[:@old]->`. */
+export function startsWithOldEdge(steps: ReadonlyArray<{ type: string; edgeTypeId?: string }>): boolean {
+  return steps.length > 0 && isOldEdge(steps[0]);
+}
+
+/**
+ * Whether an expression walk off this binding starts with `-[:@old]->` — the
+ * hop itself (`org-[:@old]->`) or the first hop of a lifted EXISTS
+ * (`EXISTS(org-[:@old]->)`).
+ */
+function walkStartsWithOldEdge(expr: Extract<Expression, { type: 'traverse' }>): boolean {
+  if (expr.steps.length > 0) return isOldEdge(expr.steps[0]);
+  return expr.expression.type === 'exists' && startsWithOldEdge(expr.expression.steps);
+}
 
 /**
  * Whether a run-log entry is an EFFECT on a system — everything but a
@@ -533,7 +636,9 @@ function recordAddress(binding: Binding): string | undefined {
       : undefined;
   }
   if (binding.kind === 'handle') {
-    return `${binding.handle.adapterType}:${binding.handle.externalId}`;
+    return binding.handle.snapshot
+      ? undefined
+      : `${binding.handle.adapterType}:${binding.handle.externalId}`;
   }
   return undefined;
 }
@@ -2345,6 +2450,17 @@ async function traverseFrom(
     }
 
     case 'handle': {
+      // `-[:@old]->` is answered from the handle itself; past it, the walk goes
+      // on from the record it landed on, as any walk off a landing does.
+      if (walkStartsWithOldEdge(expr)) {
+        const existsTerminal = existsTerminalOf(expr, name, { allowSteps: true });
+        if (existsTerminal && expr.steps.length === 0) {
+          return evaluateExists(existsTerminal, [binding], ctx);
+        }
+        const reached = await walkMetaSteps([binding], expr.steps, name, ctx);
+        if (existsTerminal) return evaluateExists(existsTerminal, reached, ctx);
+        return readLandings(expr, reached, { name, what: 'a write handle', ctx });
+      }
       // `EXISTS(co-[:notes]->)` arrives as an exists TERMINAL with no steps of
       // its own (the bridge lifts the path into it), so it walks too.
       if (expr.steps.length > 0 || expr.expression.type === 'exists') {
@@ -2917,6 +3033,7 @@ async function stepExistsCursor(
         await settledAll(cursor.landings.map((landing) => stepExistsCursor(landing, step, ctx)))
       ).flat();
     case 'handle': {
+      if (isOldEdge(step)) return oldEdgeLandings(cursor);
       // A written or matched record IS a record in its graph: the hop is that
       // graph's hop from it, the same seam a hopped read off the handle takes.
       const record = await handleRecord(cursor, describeBinding.handle, ctx);
@@ -3559,6 +3676,21 @@ async function walkMetaSteps(
       reached.push(...(await resolveDeferred(binding.walk, steps, ctx, name)));
       continue;
     }
+    // `-[:@old]->` lands on the record the handle holds as it stood before its
+    // write; no system has the edge, so it never reaches an adapter.
+    if (binding.kind === 'handle' && isOldEdge(step)) {
+      const kept: Binding[] = [];
+      for (const landed of oldEdgeLandings(binding)) {
+        if (
+          step.expressionFilter === undefined
+          || (await hopFilterKeeps({ step, filter: step.expressionFilter, landed, ctx }))
+        ) {
+          kept.push(landed);
+        }
+      }
+      reached.push(...(await walkMetaSteps(kept, rest, name, ctx)));
+      continue;
+    }
     // A landing that is a RECORD in a graph (a block's returned records, a
     // record held on the value plane) walks the rest of the chain in that
     // graph, through the one adapter walker — its WHERE / ORDER BY / LIMIT
@@ -3900,7 +4032,10 @@ export function recordFields(binding: Binding): Record<string, unknown> {
     case 'handle':
       return {
         ...binding.handle.writtenValues,
-        ...omitKeys(binding.handle.resultData, binding.handle.writtenValues),
+        ...omitKeys(
+          { ...binding.handle.foundData, ...binding.handle.resultData },
+          binding.handle.writtenValues,
+        ),
       };
     case 'resource':
       return { ...((binding.resource.data as Record<string, unknown> | undefined) ?? {}) };
@@ -4050,7 +4185,8 @@ function readHandleField(handle: WriteRecord, field: string): unknown {
   if (field === 'created') return handle.created;
   if (field === 'committed') return handle.committed;
   if (field in handle.writtenValues) return handle.writtenValues[field] ?? null;
-  return handle.resultData?.[field] ?? null;
+  if (handle.resultData !== undefined && field in handle.resultData) return handle.resultData[field] ?? null;
+  return handle.foundData?.[field] ?? null;
 }
 
 // ── Operator semantics (mirrored from engine/expression.ts) ────────────────

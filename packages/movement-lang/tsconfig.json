@@ -5,7 +5,10 @@
     "module": "commonjs",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // Compiling is `tsconfig.build.json`'s job and lands in dist/. A bare tsc here
+    // would write .js beside every .ts, and jest then resolves those instead of the sources.
+    "noEmit": true
   },
-  "exclude": ["node_modules", "jest.config.ts", "**/__test__/**", "__conformance__", "conformance"]
+  "exclude": ["node_modules", "dist", "jest.config.ts", "**/__test__/**", "__conformance__", "conformance"]
 }

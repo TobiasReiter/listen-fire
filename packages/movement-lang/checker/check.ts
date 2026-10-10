@@ -321,6 +321,7 @@ import {
   widenTuples,
   unifyValueTypes,
   WriteTargetRef,
+  type TypingReporter,
 } from './typing';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
@@ -630,6 +631,26 @@ export const DiagnosticCodes = {
    *  target with no identity rules of its own. It could only ever find
    *  "some record of this type". */
   MATCH_NO_IDENTITY: 'MOV_MATCH_NO_IDENTITY',
+  /** Since language version 4: a `match` statement whose record nobody names.
+   *  A miss no longer ends the scope — it is absent — so an unnamed match
+   *  decides nothing; the only way to act on what it found is to name it and
+   *  test the name. Under 3 the unnamed form was a gate, and still is. */
+  MATCH_UNNAMED: 'MOV_MATCH_UNNAMED',
+  /** Since language version 4: `link a -[:e]-> { … }`, a link that finds its
+   *  record in its own body. Its miss used to end the scope; with a
+   *  miss now absent there is nothing to link, so the find and the link are
+   *  written apart (match, test `!= null`, link). The parser and the engine
+   *  keep the form for programs pinned before 4. */
+  LINK_MATCH_BODY_RETIRED: 'MOV_LINK_MATCH_BODY_RETIRED',
+  /** Warning, upgrade only: a bound match in a program moving up across 4.
+   *  Before 4 a miss ended the scope; from 4 the name is absent and the block
+   *  carries on, so whatever followed now runs on a miss too. */
+  MATCH_MISS_CONTINUES: 'MOV_MATCH_MISS_CONTINUES',
+  /** Warning, upgrade only: `write org { … }` on a handle a write returned, in
+   *  a program moving up across 4. Before 4 the alias kept the values of its
+   *  own write; from 4 it reads as the updated record below the line. The type
+   *  is the same either way — what changed is what it holds. */
+  HANDLE_UPDATED_IN_PLACE: 'MOV_HANDLE_UPDATED_IN_PLACE',
   /** `unique by (…)` on a target that decides record identity itself and does
    *  not accept author-defined uniqueness (the adapter declared
    *  `uniquenessAuthorable: false` — e.g. Affinity, whose org/person matching
@@ -1372,16 +1393,33 @@ function readableMatchRoot(position: PositionSchema | undefined): WritableRootSc
   };
 }
 
+/** `handle`, carrying the fields `write`'s body set outright (plain `:`) — a
+ *  `?:` fill or a `+:` append leaves what the record held in play. */
+function withSetFields(handle: PositionTypeRef | undefined, write: WriteExpression): PositionTypeRef | undefined {
+  if (handle?.kind !== 'handle' || handle.written !== true) return handle;
+  const setFields = new Set(write.fields.filter(field => field.semantics === undefined).map(field => field.name));
+  return { ...handle, setFields };
+}
+
 /**
  * The handle a `match` binds: the record, without the write-outcome facts. A
- * write's handle answers "what happened" (`created`, `committed`) as well as
- * "which record"; a match only ever answers the second, so the first is not
- * part of its type rather than a flag that is always false.
+ * write's handle answers "what happened" (`created`, `committed` before
+ * language version 4; its `-[:@old]->` since) as well as "which record"; a
+ * match only ever answers the second, so the first is not part of its type
+ * rather than a flag that is always false.
  */
-function foundHandle(handle: PositionTypeRef | undefined): PositionTypeRef | undefined {
+function foundHandle(
+  handle: PositionTypeRef | undefined,
+  languageVersion: LanguageVersion,
+): PositionTypeRef | undefined {
   if (handle?.kind !== 'handle') return handle;
+  const { written: _written, ...found } = handle;
+  // Before 4 the host projected the two onto every write shape, so a match
+  // inherited them and they are stripped. From 4 nothing projects them: a
+  // `created` the shape still declares is the record's own field.
+  if (since(languageVersion, 4)) return found;
   const { created: _created, committed: _committed, ...resultShape } = handle.resultShape;
-  return { ...handle, resultShape };
+  return { ...found, resultShape };
 }
 
 function recordedTargetOf(handle: PositionTypeRef | undefined): RecordedTarget | undefined {
@@ -3453,12 +3491,30 @@ class Checker {
     return resolution.symbol.bindingPlane === 'scalar' ? resolution.symbol.fieldType : undefined;
   }
 
+  /** A diagnostic the expression walker raised, at the severity it asked for. */
+  private reportTyped(code: string, message: string, at: Span, severity: Parameters<TypingReporter>[3]): void {
+    switch (severity) {
+      case 'info':
+        return this.reportInfo(code, message, at);
+      case 'warning':
+        return this.reportWarning(code, message, at);
+      case 'upgrade':
+        return this.reportUpgradeWarning(code, message, at);
+      case 'error':
+      case undefined:
+        return this.report(code, message, at);
+      default:
+        return neverAsAny(severity);
+    }
+  }
+
   /** A typed expression walker rooted at `scope` that REPORTS and nothing else
    *  — for a walk the program never runs, where a read effect or a recorded
    *  path would claim something happened. */
   private reportingTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
@@ -3469,12 +3525,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
-      report: (code, message, at, severity) =>
-        severity === 'info'
-          ? this.reportInfo(code, message, at)
-          : severity === 'warning'
-            ? this.reportWarning(code, message, at)
-            : this.report(code, message, at),
+      report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
     });
   }
@@ -3483,6 +3534,7 @@ class Checker {
   private slotTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
@@ -3493,12 +3545,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
-      report: (code, message, at, severity) =>
-        severity === 'info'
-          ? this.reportInfo(code, message, at)
-          : severity === 'warning'
-            ? this.reportWarning(code, message, at)
-            : this.report(code, message, at),
+      report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
       onEffect: (effect) => this.absorbExpressionEffect(effect),
       onWatchableRead: (edge) => this.polledWatchableEdges?.add(edge),
@@ -4412,6 +4459,15 @@ class Checker {
         return;
       case 'match':
         this.checkMatch(statement.match, scope);
+        // The body is checked even though the form is refused, so its own
+        // faults surface in the same pass.
+        if (since(this.languageVersion, 4)) {
+          this.report(
+            DiagnosticCodes.MATCH_UNNAMED,
+            `'match … { }' on its own gates nothing since ${describeLanguageVersion(4)}: a miss is absent, not the end of the scope. Bind it and test the name — \`existing = match … { … }\` then \`if existing != null { … }\``,
+            statement.span,
+          );
+        }
         return;
       case 'call': {
         // A call is read once its callee is resolved: a function runs; `MAP`
@@ -4454,6 +4510,10 @@ class Checker {
         // runtime's (the inverse of the bare-handle `link`).
         this.resolveName(statement.from, statement.span, scope);
         this.resolveName(statement.to, statement.span, scope);
+        this.reportAbsentEdgeEnd(
+          { verb: 'unlink', from: statement.from, edge: statement.edge, to: statement.to, span: statement.span },
+          scope,
+        );
         this.checkBareLinkEdge(
           { from: statement.from, edge: statement.edge, span: statement.span, verb: 'unlink' },
           scope,
@@ -4784,7 +4844,12 @@ class Checker {
       }
       case 'match': {
         const handle = this.checkMatch(value.match, scope, { binding: name });
-        symbol = { ...symbol, ...(handle ? { posType: handle } : {}), bindingPlane: 'node' };
+        // Since 4 a miss binds absent rather than ending the scope — the same
+        // node-plane `T | absent` FIRST yields, so the guards that narrow
+        // FIRST narrow this.
+        const bound: PositionTypeRef | undefined =
+          handle !== undefined && since(this.languageVersion, 4) ? { kind: 'maybeEmpty', of: handle } : handle;
+        symbol = { ...symbol, ...(bound ? { posType: bound } : {}), bindingPlane: 'node' };
         break;
       }
       case 'link': {
@@ -7340,9 +7405,19 @@ class Checker {
     return {
       ...handle,
       ...(minted ? { position: position! } : {}),
-      resultShape: variant.resultShape,
+      resultShape: handle.written === true ? this.writeResultShape(variant.resultShape) : variant.resultShape,
       ...(variant.edges !== undefined ? { edges: variant.edges } : {}),
     };
+  }
+
+  /**
+   * What a write's handle reads, given the record's own result shape. Before 4
+   * that included the write-outcome facts `created` / `committed`; the host no
+   * longer projects them, so this conditional — which a future cleanup deletes
+   * — is the only place they live. The record's own fields win a shared name.
+   */
+  private writeResultShape(shape: Record<string, FieldType>): Record<string, FieldType> {
+    return before(this.languageVersion, 4) ? { created: 'boolean', committed: 'boolean', ...shape } : shape;
   }
 
   /**
@@ -7545,6 +7620,8 @@ class Checker {
     let declaredTarget = false;
     /** The write form's parent paths (linked / tuple) — required-edge satisfaction. */
     const parents: Array<{ type?: string; edge: string }> = [];
+    /** `write <alias> { … }` — an update of a record already in hand. */
+    let positionWrite = false;
 
     if (write.target.kind === 'linked') {
       const linked = this.checkLinkedPath(
@@ -7585,6 +7662,25 @@ class Checker {
       rootDescription = position.description;
       local = position.local === true;
       declaredTarget = position.declared === true;
+      positionWrite = true;
+      // Nothing is rebound: the alias keeps its type (a write constrains its
+      // body by that type already), so the only change across 4 is what the
+      // alias holds at run time. Naming the write changes nothing about that —
+      // the new name is the same record — so both forms are told.
+      const alias = pathRootName(write.target);
+      if (
+        alias !== undefined &&
+        handle?.kind === 'handle' &&
+        handle.written === true &&
+        this.upgradeCrosses(4)
+      ) {
+        const named = options?.binding !== undefined ? ` ('${options.binding}' names the same record)` : '';
+        this.reportUpgradeWarning(
+          DiagnosticCodes.HANDLE_UPDATED_IN_PLACE,
+          `since ${describeLanguageVersion(4)} '${alias}' reads as the updated record below this line${named}; before, it kept the values of its own write`,
+          write.target.span,
+        );
+      }
     }
 
     // A DISCRIMINATED write shape (the write-side dual of read narrowing): the
@@ -7611,6 +7707,7 @@ class Checker {
     // handle are both in hand, and carried on the handle so `await a-[:Response]->`
     // steps onto the specialized position.
     handle = this.applyGenericLandings(handle, write, root, rootDescription);
+    if (!positionWrite) handle = withSetFields(handle, write);
 
     // The write's own effect: whichever graph the handle lands in. An ask is a
     // write like any other — its adapter is the one it is addressed to. A write
@@ -7774,7 +7871,40 @@ class Checker {
         write.target.span,
       );
     }
-    return handle;
+    return positionWrite && !local ? this.positionWriteResult(handle, root) : handle;
+  }
+
+  /**
+   * What `x = write c { … }` hands back when `c` is a record FOUND rather than
+   * written — a traversal landing, or a match's handle. Since 4 the write is
+   * the record's latest version, with `c` as it stood before as its
+   * `-[:@old]->` — a handle a write produced, standing on `c`'s own type. The
+   * alias `c` keeps its own type (a landing's reads were always live; a found
+   * handle is still the record as found). Before 4 the result was `c`'s type
+   * itself, which is why this returns early there — and so the write-outcome
+   * fields a pinned program reads are never in question here.
+   */
+  private positionWriteResult(
+    target: PositionTypeRef | undefined,
+    root: WritableRootSchema | undefined,
+  ): PositionTypeRef | undefined {
+    if (before(this.languageVersion, 4)) return target;
+    // The result vouches for none of the fields the body set: what a later
+    // read off it holds is the record as found, whichever write set it.
+    if (target?.kind === 'handle') {
+      const { setFields: _setFields, ...rest } = target;
+      return { ...rest, written: true };
+    }
+    if (target?.kind !== 'position') return target;
+    const properties = positionSchemaOfRef(target)?.properties ?? {};
+    return {
+      kind: 'handle',
+      instance: target.instance,
+      position: target.position,
+      resultShape: root?.resultShape ?? properties,
+      ...(root?.edges !== undefined ? { edges: root.edges } : {}),
+      written: true,
+    };
   }
 
   /**
@@ -8118,8 +8248,10 @@ class Checker {
    *
    * The handle stands on the record FOUND: its result shape is the record's,
    * without `created` / `committed` — those are facts about a write's
-   * outcome, and a match has no outcome to report beyond the record itself
-   * (a miss ends the scope, so no handle exists to ask).
+   * outcome, and a match has no outcome to report beyond the record itself.
+   * A miss: since language version 4 the bound name is that record OR absent
+   * (the binding site wraps it), and the block carries on; before 4 the miss
+   * ended the scope, so no handle existed to ask.
    */
   private checkMatch(
     match: MatchExpression,
@@ -8237,7 +8369,14 @@ class Checker {
         subject: `'${field.name}' on ${rootDescription}`,
       });
     }
-    return foundHandle(handle);
+    if (options?.binding !== undefined && this.upgradeCrosses(4)) {
+      this.reportUpgradeWarning(
+        DiagnosticCodes.MATCH_MISS_CONTINUES,
+        `since ${describeLanguageVersion(4)} a 'match' that finds nothing no longer ends the scope: '${options.binding}' is absent and the block carries on — guard what depends on it with \`if ${options.binding} != null { … }\``,
+        match.span,
+      );
+    }
+    return foundHandle(handle, this.languageVersion);
   }
 
   /**
@@ -8728,11 +8867,14 @@ class Checker {
     // was already rejected above, rather than inheriting one from its target).
     // The link-vs-create distinction is PARKED: an edge that can only link
     // over-promises create and fails loudly at run time.
+    const resultShape = root?.resultShape ?? instance.schema.positions[written]?.properties ?? {};
     const handle: PositionTypeRef = {
       kind: 'handle',
       instance,
       ...(instance.schema.positions[written] ? { position: written } : {}),
-      resultShape: root?.resultShape ?? instance.schema.positions[written]?.properties ?? {},
+      resultShape: input.purpose === 'write' ? this.writeResultShape(resultShape) : resultShape,
+      // A write produced this handle, which is what gives it an `@old`.
+      ...(input.purpose === 'write' ? { written: true as const } : {}),
       // The write shape's relationship table, so a handle to a writable-only
       // type (no minted position) can still traverse its edges — `await
       // a-[:Response]->` off an ask's `Check`. When a position IS minted the
@@ -8986,8 +9128,21 @@ class Checker {
   private checkLink(link: LinkExpression, scope: Scope, binding?: string): PositionTypeRef | undefined {
     const fromSymbol = this.resolveName(link.from, link.span, scope);
     const fromType = fromSymbol !== undefined ? this.symbolPositionType(fromSymbol) : undefined;
+    // The body form only ever worked because a miss ended the scope; since 4 a
+    // miss is absent, which this form has no way to test before it links. The
+    // body is still checked and the link still recorded (as an unnamed match's
+    // body is), so its own faults surface and the story keeps the edge.
+    const retiredBody = link.to.kind === 'match' && since(this.languageVersion, 4);
+    this.reportAbsentEdgeEnd(
+      { verb: 'link', from: link.from, edge: link.edge, ...(link.to.kind === 'handle' ? { to: link.to.name } : {}), span: link.span },
+      scope,
+    );
     if (fromType?.kind === 'local') {
       if (link.to.kind === 'match') {
+        if (retiredBody) {
+          this.reportLinkBodyRetired(link, link.to.match.span);
+          return undefined;
+        }
         this.report(
           DiagnosticCodes.NODE_LINK_BODY,
           `'${link.from}' is ${fromType.label} this run built, so a body here would find among what '${link.edge}' already holds — anything it found is linked already. To pick one of them out, 'match ${link.from}-[:${link.edge}]-> { … }'; to link a record you hold, 'link ${link.from} -[:${link.edge}]-> <name>'`,
@@ -9001,7 +9156,8 @@ class Checker {
     const found =
       link.to.kind === 'match'
         ? this.checkMatch(link.to.match, scope, {
-            ...(binding !== undefined ? { binding } : {}),
+            // A refused form binds nothing, so no move-up warning about its name.
+            ...(binding !== undefined && !retiredBody ? { binding } : {}),
             impliedIdentity: link.to.impliedIdentity,
           })
         : undefined;
@@ -9023,7 +9179,47 @@ class Checker {
           ? { kind: 'handle', name: link.to.name }
           : { kind: 'match', span: link.to.match.span },
     });
+    if (retiredBody && link.to.kind === 'match') {
+      this.reportLinkBodyRetired(link, link.to.match.span);
+      return undefined;
+    }
     return found;
+  }
+
+  private reportLinkBodyRetired(link: LinkExpression, span: Span): void {
+    this.report(
+      DiagnosticCodes.LINK_MATCH_BODY_RETIRED,
+      `a 'link' no longer finds its record in its own body since ${describeLanguageVersion(4)}: find it first and test it — \`to = match … { … }\` then \`if to != null { link ${link.from} -[:${link.edge}]-> to }\``,
+      span,
+    );
+  }
+
+  /**
+   * Since 4: the two ends of a link or unlink are required, as a write's parent
+   * is — a match handle may be absent now, and an edge to or from nothing can't
+   * be made or severed, so the end needs the same test first (`T | absent`
+   * passed where `T` is required). Only the first absent end is reported.
+   */
+  private reportAbsentEdgeEnd(
+    input: { verb: 'link' | 'unlink'; from: string; edge: string; to?: string; span: Span },
+    scope: Scope,
+  ): void {
+    if (!since(this.languageVersion, 4)) return;
+    const typeOf = (name: string): PositionTypeRef | undefined => {
+      const resolution = scope.resolve(name);
+      return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
+    };
+    const ends = [input.from, ...(input.to !== undefined ? [input.to] : [])];
+    for (const name of ends) {
+      const type = typeOf(name);
+      if (type?.kind !== 'maybeEmpty') continue;
+      this.report(
+        DiagnosticCodes.ABSENT_REQUIRED,
+        `'${name}' is ${describePosition(type.of)} that may not be there, so this ${input.verb} can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: 'if ${name} != null { ${input.verb} ${input.from} -[:${input.edge}]-> ${input.to ?? '…'} }'.`,
+        input.span,
+      );
+      return;
+    }
   }
 
   /**
@@ -10683,7 +10879,7 @@ class Checker {
       const terminating = terminates(arm.body, exits);
       armTerminates.push(terminating);
       if (allPriorTerminate && terminating) {
-        this.narrowConditionNegation(arm.condition, scope, statement.span.end);
+        this.narrowConditionNegation(arm.condition, scope, { visibleFrom: statement.span.end });
       }
       allPriorTerminate = allPriorTerminate && terminating;
     }
@@ -10692,6 +10888,12 @@ class Checker {
       this.recordFrame('branch', statement.elseArm.span, elseScope);
       if (recorded) recorded.otherwise = { span: statement.elseArm.span, scope: elseScope };
       this.declareEliminated(ruledOut, scope, elseScope);
+      // Reaching the `else` proves every arm's condition false, so what each
+      // falsity proves present holds inside it — TypeScript's else-arm
+      // narrowing of `if (x == null) { … } else { x.f }`. Only widens what is
+      // accepted, so no version gate. Resolved through the else scope so the
+      // arms' proofs compose.
+      for (const arm of statement.arms) this.narrowConditionNegation(arm.condition, elseScope);
       this.checkStatementList(statement.elseArm.body, elseScope);
       // The other direction of the guard clause, TypeScript's
       // `if (x != null) { … } else { return }`: when the `else` and every arm
@@ -10798,23 +11000,22 @@ class Checker {
     }
   }
 
-  /** The guard-clause narrowing: an arm that always fails declares its
-   *  condition's negation into the ENCLOSING scope, for the statements after
-   *  the `if`. A conjunction proves nothing when false (only that one of its
-   *  conjuncts is), so only a plain expression condition contributes.
-   *  `guardEnd` is where that narrowing starts to hold — the end of the `if`
-   *  statement, since only its continuation is proved. */
-  private narrowConditionNegation(slot: ExprSlot, scope: Scope, guardEnd: Loc): void {
+  /** A condition's negation, declared into `scope`: what its FALSITY proves
+   *  present. Two callers: the guard clause (an arm that always fails narrows
+   *  the ENCLOSING scope from `visibleFrom`, the end of the `if`, since only its
+   *  continuation is proved) and the `else` arm (its whole scope). A
+   *  conjunction proves nothing when false (only that one of its conjuncts
+   *  is), so only a plain expression condition contributes. */
+  private narrowConditionNegation(slot: ExprSlot, scope: Scope, options: { visibleFrom?: Loc } = {}): void {
     let condition: MovementCondition;
     try {
       condition = conditionOfSlot(slot);
     } catch {
       return; // the parse failure is reported by the arm's own check
     }
+    // A top-level conjunction's falsity proves none of its conjuncts false.
     if (condition.kind !== 'expr') return;
-    this.narrowNegatedPresence(condition.expr, scope, scope, slot.span, {
-      visibleFrom: guardEnd,
-    });
+    this.narrowNegatedPresence(condition.expr, scope, scope, slot.span, options);
   }
 
   /** The guard clause's other direction: the condition of the one arm that
@@ -13074,7 +13275,7 @@ class Checker {
     scope: Scope,
     narrowInto: Scope,
     span: Span,
-    options: { visibleFrom: Loc },
+    options: { visibleFrom?: Loc },
   ): void {
     const typing = this.silentTyping(scope, span);
     this.declarePresence(

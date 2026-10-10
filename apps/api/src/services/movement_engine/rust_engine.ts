@@ -35,7 +35,16 @@ import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, ty
 import type { CallbackBodyInput, SettleRaceInput } from 'engine-contracts';
 import type { RunContext } from './run_context';
 import { serve, type RouteContext } from './rust_host';
-import { rustEvalStats, rustRunStats } from './rust_stats';
+import {
+  currentDryRunClock,
+  emptyAdmissionTally,
+  holdAdmissionVerdict,
+  recordDryRunDuration,
+  recordRunEngine,
+  rustEvalStats,
+  rustRunStats,
+  tallyVerdict,
+} from './rust_stats';
 import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
 
 export { RustShimError, plainJson } from './rust_wire';
@@ -79,10 +88,45 @@ export function engineChoice(env: Record<string, string | undefined> = process.e
   throw new Error(`MOVEMENT_ENGINE is "${value}": it must be "rust" or "ts"`);
 }
 
-/** For a process's boot: a bad `MOVEMENT_ENGINE` fails startup rather than
- *  every run. */
+/** What happens to a run `MOVEMENT_ENGINE=rust` routes and the Rust engine
+ *  refuses or declines: `ts` runs it on the TypeScript engine, `none` fails
+ *  it with the reason (the setting to run with once nothing is refused, so a
+ *  refusal is an error and not a silent slow path). */
+export type EngineFallback = 'ts' | 'none';
+
+/** The one place `MOVEMENT_ENGINE_FALLBACK` is read. Unset is `ts`. */
+export function engineFallback(env: Record<string, string | undefined> = process.env): EngineFallback {
+  const value = env.MOVEMENT_ENGINE_FALLBACK;
+  if (value === undefined || value === '' || value === 'ts') return 'ts';
+  if (value === 'none') return 'none';
+  throw new Error(`MOVEMENT_ENGINE_FALLBACK is "${value}": it must be "ts" or "none"`);
+}
+
+/** For a process's boot: a bad `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`
+ *  or `MOVEMENT_ENGINE_DRY_RUN_EVERY` fails startup rather than every run (or,
+ *  for the dry run, every dry run, silently). */
 export function assertEngineChoiceConfigured(env: Record<string, string | undefined> = process.env): void {
-  engineChoice(env);
+  const choice = engineChoice(env);
+  // No fallback with no Rust engine would fail every run, whatever its program.
+  if (engineFallback(env) === 'none' && choice !== 'rust') {
+    throw new Error('MOVEMENT_ENGINE_FALLBACK is "none", which fails every run the Rust engine refuses: it needs MOVEMENT_ENGINE=rust');
+  }
+  admissionDryRunEvery(env);
+}
+
+/** The error a refused run fails with under `MOVEMENT_ENGINE_FALLBACK=none`. */
+function refusedWithoutFallback(reason: string): MovementEngineError {
+  return new MovementEngineError(
+    'MOVENG_UNSUPPORTED',
+    `the Rust engine does not run this movement (${reason}), and MOVEMENT_ENGINE_FALLBACK=none leaves no other engine to run it`,
+    { reason },
+  );
+}
+
+/** What a run the Rust engine did not take does next: the TypeScript engine
+ *  runs it (`undefined`), or the run fails (`fallback=none`). */
+export function refusalOutcome(reason: string): MovementEngineError | undefined {
+  return engineFallback() === 'none' ? refusedWithoutFallback(reason) : undefined;
 }
 
 /** What a segment in the Rust engine runs: the run's input and the segment
@@ -109,17 +153,17 @@ export async function resumeSegmentInRust(
   segment: RustSegment<ResumeMovementInput>,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  const { input } = segment;
-  return segmentInRust(
-    segment,
-    {
-      state: input.state,
-      ...(input.reenter === true ? { reenter: true } : {}),
-      ...(input.answer !== undefined && input.reenter !== true ? { answer: input.answer } : {}),
-      ...(input.deferRaceSettlement === true ? { deferRaceSettlement: true } : {}),
-    },
-    engine,
-  );
+  return segmentInRust(segment, resumptionOf(segment.input), engine);
+}
+
+/** What a parked run's resume hands the engine. */
+function resumptionOf(input: ResumeMovementInput): Resumption {
+  return {
+    state: input.state,
+    ...(input.reenter === true ? { reenter: true } : {}),
+    ...(input.answer !== undefined && input.reenter !== true ? { answer: input.answer } : {}),
+    ...(input.deferRaceSettlement === true ? { deferRaceSettlement: true } : {}),
+  };
 }
 
 /** A race a batch resume deferred, settled in the Rust engine
@@ -195,7 +239,7 @@ async function segmentInRust(
   rustRunStats.admitted += 1;
   if ('declined' in outcome) {
     rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
-    noteEngine(input, 'ts', outcome.declined);
+    noteEngine(input, engineFallback() === 'none' ? 'rust' : 'ts', outcome.declined);
     return outcome;
   }
   rustRunStats.ranWhole += 1;
@@ -233,7 +277,7 @@ const ADMITTED = 'admitted';
 function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string, reasons: readonly string[] = [reason]): { declined: string } {
   rustRunStats.notAdmitted[reason] = (rustRunStats.notAdmitted[reason] ?? 0) + 1;
   for (const each of new Set(reasons)) rustRunStats.allReasons[each] = (rustRunStats.allReasons[each] ?? 0) + 1;
-  noteEngine(input, 'ts', reason);
+  noteEngine(input, engineFallback() === 'none' ? 'rust' : 'ts', reason);
   return { declined: reason };
 }
 
@@ -245,14 +289,122 @@ function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string, rea
  * was not chosen. At info under `MOVEMENT_ENGINE=rust`, where it is the
  * evidence of what the Rust engine takes; at debug otherwise.
  */
-export function noteEngine(input: Pick<RunMovementInput, 'runId'>, engine: EngineChoice, reason: string): void {
+export function noteEngine(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, engine: EngineChoice, reason: string): void {
   const line = `movement engine: engine=${engine} run=${input.runId ?? '-'} reason=${reason}`;
   if (reason === ENGINE_CHOICE_TS) logger.debug(line);
   else logger.info(line);
+  // A run `MOVEMENT_ENGINE` did not route is recorded with the dry run's
+  // verdict instead (`recordTypeScriptRun`).
+  if (reason !== ENGINE_CHOICE_TS) recordEngine(input, engine, reason);
+}
+
+function recordEngine(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, engine: EngineChoice, reason: string | null): void {
+  // A rehearsal has no run row.
+  if (input.runId !== undefined && input.dryRun !== true) recordRunEngine({ runId: input.runId, engine, reason });
+}
+
+/** A run `MOVEMENT_ENGINE` kept on the TypeScript engine, with the first
+ *  reason the Rust engine's admission gave for it, or `admitted` when it
+ *  would take it (undefined reasons: the dry run was not asked or faulted,
+ *  recorded as no reason). */
+export function recordTypeScriptRun(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, reasons: string[] | undefined): void {
+  recordEngine(input, 'ts', reasons === undefined ? null : (reasons[0] ?? ADMITTED));
 }
 
 /** Why the TypeScript engine runs a run that `MOVEMENT_ENGINE` did not route. */
 export const ENGINE_CHOICE_TS = 'movement_engine_ts';
+
+/**
+// ── The admission dry run ─────────────────────────────────────────────────────
+
+/**
+ * What the Rust engine's admission says of a run the TypeScript engine is
+ * about to run, counted (`rustRunStats.dryRun`) and held for the host to
+ * persist (`holdAdmissionVerdict`), without running it in Rust. Never throws
+ * and never changes the run: a dry run that cannot reach a verdict is
+ * counted as a fault and nothing else.
+ */
+export function dryAdmitRun(segment: RustSegment, engine?: EngineProtocol): string[] | undefined {
+  return dryAdmit(segment, undefined, engine);
+}
+
+/** `dryAdmitRun` for a parked run the TypeScript engine resumes: the
+ *  resume the Rust engine would be handed (`resumeSegmentInRust`). */
+export function dryAdmitResume(segment: RustSegment<ResumeMovementInput>, engine?: EngineProtocol): string[] | undefined {
+  return dryAdmit(segment, resumptionOf(segment.input), engine);
+}
+
+/** Whether a dry run asks about one firing in this many: 1 asks about
+ *  every firing, 0 about none. Unset is 1. */
+export function admissionDryRunEvery(env: Record<string, string | undefined> = process.env): number {
+  const value = env.MOVEMENT_ENGINE_DRY_RUN_EVERY;
+  if (value === undefined || value.trim() === '') return 1;
+  const every = Number(value);
+  if (!Number.isInteger(every) || every < 0) {
+    throw new Error(`MOVEMENT_ENGINE_DRY_RUN_EVERY is "${value}": it must be a whole number, 0 to turn the dry run off`);
+  }
+  return every;
+}
+
+function dryAdmit(
+  { input, context }: RustSegment,
+  resume: Resumption | undefined,
+  engine: EngineProtocol | undefined,
+): string[] | undefined {
+  // A rehearsal is an author trying a program, not a firing: it is not
+  // demand to burn down.
+  if (input.dryRun === true) return undefined;
+  const stats = rustRunStats.dryRun;
+  try {
+    const every = admissionDryRunEvery();
+    stats.firings += 1;
+    if (every === 0 || (stats.firings - 1) % every !== 0) return undefined;
+    const clock = currentDryRunClock();
+    const startedAt = clock?.();
+    const reasons = admissionReasons({ input, context }, resume, engine);
+    if (clock !== undefined && startedAt !== undefined) recordDryRunDuration(clock() - startedAt);
+    const languageVersion = context.languageVersion;
+    tallyVerdict(stats, reasons);
+    tallyVerdict((stats.byVersion[String(languageVersion)] ??= emptyAdmissionTally()), reasons);
+    if (input.runId !== undefined) holdAdmissionVerdict({ runId: input.runId, languageVersion, reasons });
+    return reasons;
+  } catch (error) {
+    stats.faults += 1;
+    logger.warn(`movement engine: admission dry run fault run=${input.runId ?? '-'}: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
+/**
+ * Every reason the Rust engine would refuse the run for, first first; none
+ * when it would start it. The shim's own input check first, as a real run
+ * meets it; then the engine's start entry, whose admission is pure over
+ * its parse and the input: a refusal is its `done`, and an admitted run's
+ * first step is the `check.program` request, which is never answered — the
+ * segment is finished there, so nothing reaches the host.
+ */
+function admissionReasons(
+  { input, context }: RustSegment,
+  resume: Resumption | undefined,
+  engine: EngineProtocol | undefined,
+): string[] {
+  const start = segmentInput(input, context, resume, new WireOut({ whole: true }));
+  if (start === undefined) return [EVENT_DOES_NOT_CROSS];
+  const segment = engine ?? openWasmEngine();
+  try {
+    const step = segment.start(start);
+    if ('pending' in step) return [];
+    const done = record(step.done, 'the dry run start');
+    if (!('refused' in done)) {
+      throw new RustShimError(`the Rust engine's start ended with ${Object.keys(done).join(', ') || 'nothing'}, neither a request nor a refusal`);
+    }
+    // Every reason the engine's admission walk met, the first first: what
+    // `rustRunStats.allReasons` counts for a routed run.
+    return refusalOf(done).reasons;
+  } finally {
+    segment.finish();
+  }
+}
 
 /**
  * Runs one segment to its result: starts it, serves every request it issues

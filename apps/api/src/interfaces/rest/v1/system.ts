@@ -14,11 +14,13 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
-import { engineChoice } from '../../../services/movement_engine/rust_engine';
-import { rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
-import { requireScope } from './require_scope';
-
-const SYSTEM_SCOPE = 'system';
+import { engineChoice, engineFallback } from '../../../services/movement_engine/rust_engine';
+import { dryRunDurationSummary, rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
+import {
+  requireSystemAction,
+  requireSystemCaller,
+  requireTenantCaller,
+} from '../../../services/system_auth';
 
 function internalError(res: Parameters<RequestHandler>[1], err: unknown) {
   const traceId = randomUUID();
@@ -256,31 +258,42 @@ const drainAutomationsHandler: RequestHandler = async (req, res) => {
 /** What the movement engines did in THIS process since it started: which
  *  engine `MOVEMENT_ENGINE` chose, and the Rust engine's counters (why each
  *  run it did not run went to the TypeScript engine, by reason; what it ran,
- *  declined and asked its host; what the evaluator switch answered). The
+ *  declined and asked its host; what the evaluator switch answered; and, in
+ *  `runs.dryRun`, what its admission would have refused each run the
+ *  TypeScript engine ran for, by first and every reason and by version). The
  *  counters are per process and start at zero with it, so each instance
  *  answers for itself, over its uptime. */
 const engineStatsHandler: RequestHandler = (_req, res) => {
   const uptimeSeconds = Math.round(process.uptime());
   return res.status(200).json({
     engine: engineChoice(),
+    fallback: engineFallback(),
     uptimeSeconds,
     since: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
-    runs: rustRunStats,
+    // The recent dry runs' cost rides with their counts.
+    runs: { ...rustRunStats, dryRun: { ...rustRunStats.dryRun, durationMs: dryRunDurationSummary() } },
     evaluator: rustEvalStats,
   });
 };
 
 const systemRouter: ReturnType<typeof Router> = Router();
 
-systemRouter.use(requireScope(SYSTEM_SCOPE));
+// Who may call these routes is the system caller verifiers' question
+// (services/system_auth): the `system` API key by default.
+systemRouter.use(requireSystemCaller());
 
-systemRouter.get('/tg-runs', route(listTgRunsHandler));
-systemRouter.get('/tg-runs/:id', route(getTgRunHandler));
+// The run listings and the system agent act in the tenant of the key's owner.
+const tenant = requireTenantCaller();
+
+systemRouter.get('/tg-runs', tenant, route(listTgRunsHandler));
+systemRouter.get('/tg-runs/:id', tenant, route(getTgRunHandler));
 systemRouter.get('/engine-stats', route(engineStatsHandler));
-systemRouter.post('/conversations', route(startConversationHandler));
-systemRouter.post('/conversations/:id/messages', route(sendMessageHandler));
+systemRouter.post('/conversations', tenant, route(startConversationHandler));
+systemRouter.post('/conversations/:id/messages', tenant, route(sendMessageHandler));
 // `system` is mounted on every installation, so the route gates itself the way
 // index.ts gates the automations routers: absent, not refused, without the unit.
-if (mounts('automations')) systemRouter.post('/automations/drain', route(drainAutomationsHandler));
+if (mounts('automations')) {
+  systemRouter.post('/automations/drain', requireSystemAction('drain'), route(drainAutomationsHandler));
+}
 
 export { systemRouter };

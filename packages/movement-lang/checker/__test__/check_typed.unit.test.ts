@@ -348,12 +348,10 @@ const hubspotSchema: InstanceSchema = {
   writableRoots: {
     company: {
       fields: { name: 'text', domain: 'text', city: 'text', nickname: 'text' },
-      // As the adapter projection declares every write shape: the write-event
-      // facts ride the result beside the record's own fields.
+      // As the adapter projection declares every write shape: the record's own
+      // fields; the checker adds the retired write-event facts before 4.
       resultShape: {
         externalId: 'text',
-        created: 'boolean',
-        committed: 'boolean',
         name: 'text',
         domain: 'text',
         city: 'text',
@@ -1787,7 +1785,7 @@ describe('the instance-param door (MOV_WRITE_TARGET_NOT_GRAPH)', () => {
   it('a meta-typed parameter as a match root errors', () => {
     expect(
       codes(
-        `${PRELUDE}\nmovement publish(root: <crm>) {\n  match root-[:companies]-> { unique by (\`name\`), name: "Acme" }\n}`,
+        `${PRELUDE}\nmovement publish(root: <crm>) {\n  found = match root-[:companies]-> { unique by (\`name\`), name: "Acme" }\n}`,
       ),
     ).toEqual([C.WRITE_TARGET_NOT_GRAPH]);
   });
@@ -3207,7 +3205,7 @@ describe('FUZZY uniqueness modifier', () => {
         'inbox = email(credentials: dealflow_inbox)',
         'reg   = registry(credentials: public_registry)',
         'movement main(msg: <inbox-[:message]->>) {',
-        `  match reg-[:entities]-> { unique by (${clause}), Name: msg.\`subject\`, \`Legal Name\`: msg.\`subject\`, City: "Berlin" }`,
+        `  found = match reg-[:entities]-> { unique by (${clause}), Name: msg.\`subject\`, \`Legal Name\`: msg.\`subject\`, City: "Berlin" }`,
         '}',
       ].join('\n');
 
@@ -3301,30 +3299,41 @@ describe('bind against an unupdatable target (WRITE_BIND_NO_UPDATE)', () => {
 // ── match — the identity half of a write, on its own ──
 
 describe('match', () => {
-  it('a clean match binds the FOUND handle, usable downstream', () => {
+  // Since 4 the handle is the record found OR absent; a write off it is not a
+  // traversal block (nothing says it might not happen), so it needs the test.
+  it('a clean match binds the FOUND handle, usable downstream once tested', () => {
     expectClean(
       inMovement(
         [
           '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
           '  fr = match co-[:rounds]-> { unique by (`stage`), stage: "Seed" }',
-          '  write fr-[:participants]-> {',
-          '    unique by (fr AND `investor_name`)',
-          '    investor_name: msg.`subject`',
+          '  if fr != null {',
+          '    write fr-[:participants]-> {',
+          '      unique by (fr AND `investor_name`)',
+          '      investor_name: msg.`subject`',
+          '    }',
           '  }',
         ].join('\n'),
       ),
     );
   });
 
-  it('an unbound match is a plain statement (a gate)', () => {
-    expectClean(
-      inMovement(
-        [
-          '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
-          '  match co-[:rounds]-> { unique by (`stage`), stage: "Seed" }',
-        ].join('\n'),
-      ),
+  describe('an unbound match', () => {
+    const source = inMovement(
+      [
+        '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+        '  match co-[:rounds]-> { unique by (`stage`), stage: "Seed" }',
+      ].join('\n'),
     );
+    it('is a plain statement (a gate) before language version 4', () => {
+      const found = checkProgram(parseProgram(source), catalog, { languageVersion: 3 }).filter(
+        (d) => (d.severity ?? 'error') === 'error',
+      );
+      expect(found.map((d) => `${d.code}: ${d.message}`)).toEqual([]);
+    });
+    it('is MOV_MATCH_UNNAMED since 4: a miss no longer ends the scope, so it gates nothing', () => {
+      expect(codes(source)).toEqual([C.MATCH_UNNAMED]);
+    });
   });
 
   it('matches over a root collection, with two OR-ed clauses', () => {
@@ -3336,21 +3345,23 @@ describe('match', () => {
           '    unique by (`domains`)',
           '    name: msg.`subject`',
           '  }',
-          '  write co-[:rounds]-> { stage: co.name }',
+          '  if co != null {',
+          '    write co-[:rounds]-> { stage: co.name }',
+          '  }',
         ].join('\n'),
       ),
     );
   });
 
   it('MOV_MATCH_NO_IDENTITY when neither the author nor the target says what identifies the record', () => {
-    const found = check(inMovement('  match graph-[:companies]-> { name: msg.`subject` }'));
+    const found = check(inMovement('  found = match graph-[:companies]-> { name: msg.`subject` }'));
     expect(found.map((d) => d.code)).toEqual([C.MATCH_NO_IDENTITY]);
     expect(found[0].message).toContain("add 'unique by (…)'");
   });
 
   it("a target that decides identity itself needs no 'unique by' — and refuses one", () => {
-    expectClean(inMovement('  match aff-[:organizations]-> { name: msg.`subject` }'));
-    expect(codes(inMovement('  match aff-[:organizations]-> { unique by (`name`), name: msg.`subject` }'))).toEqual([
+    expectClean(inMovement('  found = match aff-[:organizations]-> { name: msg.`subject` }'));
+    expect(codes(inMovement('  found = match aff-[:organizations]-> { unique by (`name`), name: msg.`subject` }'))).toEqual([
       C.UNIQUE_NOT_AUTHORABLE,
     ]);
   });
@@ -3362,7 +3373,7 @@ describe('match', () => {
       'inbox = email(credentials: dealflow_inbox)',
       'crm2  = hubspot(credentials: acme_hubspot)',
       'movement main(msg: <inbox-[:message]->>) {',
-      '  match crm2-[:companies]-> { domain: msg.`subject` }',
+      '  found = match crm2-[:companies]-> { domain: msg.`subject` }',
       '}',
     ].join('\n');
     expectClean(source);
@@ -3372,7 +3383,7 @@ describe('match', () => {
     const source = inMovement(
       [
         '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
-        '  match co-[:rounds]-> { unique by (FUZZY `stage`), stage: "Seed" }',
+        '  found = match co-[:rounds]-> { unique by (FUZZY `stage`), stage: "Seed" }',
       ].join('\n'),
     );
     expect(codes(source)).toEqual([C.UNIQUE_FUZZY_UNSUPPORTED]);
@@ -3382,7 +3393,7 @@ describe('match', () => {
     const source = inMovement(
       [
         '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
-        '  match co-[:rounds]-> { unique by (`ghost`), ghost: "Seed" }',
+        '  found = match co-[:rounds]-> { unique by (`ghost`), ghost: "Seed" }',
       ].join('\n'),
     );
     const found = check(source);
@@ -3392,7 +3403,7 @@ describe('match', () => {
 
   it('skips the create gates: a required field may be left out', () => {
     // `person` requires `name` on CREATE; a match creates nothing.
-    expectClean(inMovement('  match graph-[:people]-> { unique by (`company`), company: "Acme" }'));
+    expectClean(inMovement('  found = match graph-[:people]-> { unique by (`company`), company: "Acme" }'));
     expect(codes(inMovement('  write graph-[:people]-> { unique by (`company`), company: "Acme" }'))).toContain(
       C.WRITE_MISSING_REQUIRED_FIELD,
     );
@@ -3406,11 +3417,11 @@ describe('match', () => {
           `  ${verb} co-[:attachments]-> { unique by (\`name\`), name: "deck.pdf" }`,
         ].join('\n'),
       );
-    expectClean(body('match'));
+    expectClean(body('found = match'));
     expect(codes(body('write'))).toContain(C.WRITE_READ_ONLY_EDGE);
   });
 
-  it("the handle is the record: 'created' / 'committed' are a write's, not a match's", () => {
+  it("'created' / 'committed' were a write's, never a match's — and are retired from the write's handle under 4", () => {
     const read = (verb: string, field: string) =>
       [
         'import { email, hubspot } from adapters',
@@ -3419,14 +3430,19 @@ describe('match', () => {
         'crm2  = hubspot(credentials: acme_hubspot)',
         'movement main(msg: <inbox-[:message]->>) {',
         `  co = ${verb} crm2-[:companies]-> { domain: msg.\`subject\` }`,
-        `  write crm2-[:companies]-> { domain: "x", name: co.${field} }`,
+        `  if co != null { write crm2-[:companies]-> { domain: "x", name: co.${field} } }`,
         '}',
       ].join('\n');
+    const under = (version: number, source: string) =>
+      checkProgram(parseProgram(source), catalog, { languageVersion: version }).filter(d => (d.severity ?? 'error') === 'error');
     for (const field of ['created', 'committed']) {
-      expectClean(read('write', field));
-      const found = check(read('match', field));
-      expect(found.map((d) => d.code)).toEqual([C.UNKNOWN_PROPERTY]);
-      expect(found[0].message).toContain(`no field '${field}'`);
+      expect(under(3, read('write', field)).map((d) => d.code)).toEqual([]);
+      expect(under(4, read('write', field)).map((d) => d.code)).toEqual([C.HANDLE_FIELD_RETIRED]);
+      for (const version of [3, 4]) {
+        const found = under(version, read('match', field));
+        expect(found.map((d) => d.code)).toEqual([C.UNKNOWN_PROPERTY]);
+        expect(found[0].message).toContain(`no field '${field}'`);
+      }
     }
     expectClean(read('match', 'name'));
   });
@@ -3435,7 +3451,7 @@ describe('match', () => {
     const source = inMovement(
       [
         '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
-        '  match co-[:ghost_edge]-> { unique by (`stage`), stage: "Seed" }',
+        '  found = match co-[:ghost_edge]-> { unique by (`stage`), stage: "Seed" }',
       ].join('\n'),
     );
     const found = check(source);
@@ -3445,7 +3461,7 @@ describe('match', () => {
 
   it('MOV_LINKED_NEEDS_TYPE for a match over a polymorphic edge; the explicit type is clean', () => {
     const co = '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }';
-    expect(codes(inMovement([co, '  match co-[:related]-> { unique by (`name`), name: "Acme" }'].join('\n')))).toEqual([
+    expect(codes(inMovement([co, '  found = match co-[:related]-> { unique by (`name`), name: "Acme" }'].join('\n')))).toEqual([
       C.LINKED_NEEDS_TYPE,
     ]);
     expectClean(inMovement([co, '  p = match co-[:related]-><person> { unique by (`name`), name: "Ada" }'].join('\n')));
@@ -3473,9 +3489,18 @@ describe('link statements', () => {
   // A body after the arrow is a match body: `x = link p-[:E]-> { … }` is
   // `x = match p-[:E]-> { … }` then `link p -[:E]-> x`, checked as exactly that.
   const CO = '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }';
+  // The body form is retired since language version 4 (MOV_LINK_MATCH_BODY_RETIRED,
+  // match_absent.unit.test.ts), so its rules are those of a program pinned
+  // before it.
+  const pinned = { languageVersion: 3 };
+  const checkPinned = (source: string): Diagnostic[] =>
+    checkProgram(parseProgram(source), catalog, pinned).filter(d => (d.severity ?? 'error') === 'error');
+  const codesPinned = (source: string): string[] => checkPinned(source).map(d => d.code);
+  const expectCleanPinned = (source: string): void =>
+    expect(checkPinned(source).map(d => `${d.code}: ${d.message}`)).toEqual([]);
 
   it('a bound body with a FUZZY unique by binds the FOUND handle, usable downstream', () => {
-    expectClean(
+    expectCleanPinned(
       inMovement(
         [
           CO,
@@ -3487,45 +3512,45 @@ describe('link statements', () => {
   });
 
   it('an unbound body is a plain statement', () => {
-    expectClean(inMovement([CO, '  link co -[:related]-><company> { unique by (`name`), name: "Acme" }'].join('\n')));
+    expectCleanPinned(inMovement([CO, '  link co -[:related]-><company> { unique by (`name`), name: "Acme" }'].join('\n')));
   });
 
   it('a body with no unique by identifies by all of its fields — never MOV_MATCH_NO_IDENTITY', () => {
     const fr = '  fr = write co-[:rounds]-> { stage: "Seed" }';
-    expectClean(inMovement([CO, fr, '  f = link co -[:rounds]-> { stage: "Seed" }', '  write f-[:participants]-> { investor_name: "x" }'].join('\n')));
+    expectCleanPinned(inMovement([CO, fr, '  f = link co -[:rounds]-> { stage: "Seed" }', '  write f-[:participants]-> { investor_name: "x" }'].join('\n')));
     // The same body spelled as `match` has said nothing about identity.
-    expect(codes(inMovement([CO, '  match co-[:rounds]-> { stage: "Seed" }'].join('\n')))).toEqual([C.MATCH_NO_IDENTITY]);
+    expect(codesPinned(inMovement([CO, '  found = match co-[:rounds]-> { stage: "Seed" }'].join('\n')))).toEqual([C.MATCH_NO_IDENTITY]);
   });
 
   it('an empty body has nothing to identify the record by', () => {
-    expect(codes(inMovement([CO, '  link co -[:rounds]-> {}'].join('\n')))).toEqual([C.MATCH_NO_IDENTITY]);
+    expect(codesPinned(inMovement([CO, '  link co -[:rounds]-> {}'].join('\n')))).toEqual([C.MATCH_NO_IDENTITY]);
   });
 
   it('checks the body as a match: FUZZY where the target cannot, fields the found type lacks', () => {
-    expect(codes(inMovement([CO, '  link co -[:rounds]-> { unique by (FUZZY `stage`), stage: "Seed" }'].join('\n')))).toEqual([
+    expect(codesPinned(inMovement([CO, '  link co -[:rounds]-> { unique by (FUZZY `stage`), stage: "Seed" }'].join('\n')))).toEqual([
       C.UNIQUE_FUZZY_UNSUPPORTED,
     ]);
-    const found = check(inMovement([CO, '  link co -[:rounds]-> { ghost: "Seed" }'].join('\n')));
+    const found = checkPinned(inMovement([CO, '  link co -[:rounds]-> { ghost: "Seed" }'].join('\n')));
     expect(found.map((d) => d.code)).toEqual([C.WRITE_UNKNOWN_FIELD]);
     expect(found[0].message).toContain("a match's fields are fields of the record it finds");
   });
 
   it('the found handle is a match handle: no created / committed', () => {
-    const found = check(
+    const found = checkPinned(
       inMovement([CO, '  p = link co -[:related]-><company> { name: "Acme" }', '  write p-[:rounds]-> { stage: p.created }'].join('\n')),
     );
     expect(found.map((d) => d.code)).toEqual([C.UNKNOWN_PROPERTY]);
   });
 
   it('a polymorphic edge needs the type named, as a match does', () => {
-    expect(codes(inMovement([CO, '  link co -[:related]-> { name: "Acme" }'].join('\n')))).toEqual([C.LINKED_NEEDS_TYPE]);
+    expect(codesPinned(inMovement([CO, '  link co -[:related]-> { name: "Acme" }'].join('\n')))).toEqual([C.LINKED_NEEDS_TYPE]);
   });
 
   it('notes a read (the match) and a write (the edge) of the graph', () => {
     const { recording } = checkProgramWithLink(
       parseProgram(inMovement('  co = match graph-[:companies]-> { unique by (`name`), name: "x" }\n  link co -[:related]-><company> { name: "Acme" }')),
       catalog,
-      { recordAnalysis: true },
+      { recordAnalysis: true, ...pinned },
     );
     const main = recording?.frames.find((frame) => frame.kind === 'file')?.scope.symbols.get('main');
     if (main === undefined) throw new Error("'main' is not declared");
@@ -3571,7 +3596,7 @@ describe('link statements', () => {
         '}',
       ].join('\n');
     const errors = (source: string) =>
-      checkProgram(parseProgram(source), listsCatalog).filter((d) => (d.severity ?? 'error') === 'error');
+      checkProgram(parseProgram(source), listsCatalog, pinned).filter((d) => (d.severity ?? 'error') === 'error');
 
     it('takes the body as its lookup, with no unique by to refuse', () => {
       expect(errors(inLists('  link entry -[:Owners]-> { `Full name`: msg.`subject` }')).map((d) => d.code)).toEqual([]);
@@ -3585,7 +3610,7 @@ describe('link statements', () => {
   });
 
   it('refuses a body from a node this run built: what it finds is linked already', () => {
-    const found = check(
+    const found = checkPinned(
       inMovement(
         [
           '  sent = node { messages: [] }',
@@ -3618,12 +3643,12 @@ describe('link statements', () => {
     });
 
     it('refuses a link body too — the match finds, the link still joins', () => {
-      const found = check(withRecords('  link co -[:entries]-> { stage: "Seed" }'));
+      const found = checkPinned(withRecords('  link co -[:entries]-> { stage: "Seed" }'));
       expect(found.map(d => d.code)).toEqual([C.LINK_UNSUPPORTED_EDGE]);
     });
 
     it('a match along it is clean — a match joins nothing', () => {
-      expectClean(withRecords('  match co-[:entries]-> { unique by (`stage`), stage: "Seed" }'));
+      expectClean(withRecords('  found = match co-[:entries]-> { unique by (`stage`), stage: "Seed" }'));
     });
 
     it('refuses unlink — a relationship it cannot make, it cannot sever', () => {

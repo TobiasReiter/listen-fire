@@ -99,6 +99,7 @@ const PURE_FILES = [
 /** Host implementations that still live in this directory: they wire the
  *  engine to Postgres, the work queue and the run recorder. */
 const HOST_SIDE_FILES = [
+  'admission_rollup.ts',
   'await_description.ts',
   'await_resume.ts',
   'await_wake.ts',
@@ -111,6 +112,7 @@ const HOST_SIDE_FILES = [
   'lease_fence.ts',
   'limit_pause.ts',
   'park_sink.ts',
+  'run_engine_record.ts',
   'run_lease.ts',
   'single_flight.ts',
   'test_host.ts',
@@ -1432,7 +1434,8 @@ describe('every family crosses as JSON', () => {
         '  co = match crm-[:companies]-> { unique by (`name`)',
         '    name: "Acme"',
         '  }',
-        '  write crm-[:notes]-> bind co { title: m.`subject` }',
+        // Since version 4 a match may find nothing, so the bind is guarded.
+        '  if co != null { write crm-[:notes]-> bind co { title: m.`subject` } }',
       ],
       {
         crm: fakeCrm({

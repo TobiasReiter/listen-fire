@@ -73,6 +73,15 @@ export function blockingDiagnostics(diagnostics: AuthoringDiagnostic[]): Authori
   return diagnostics.filter((d) => d.severity === 'error' || d.upgrade === true);
 }
 
+/** What `upgradeMovement` refuses outright. A move-up warning is not here: the
+ *  deploy check holds the pin on it (nothing advances behind the author's
+ *  back), but it fires on every use of a construct whose meaning changed
+ *  whether or not the author edits, so the explicit upgrade lets the author
+ *  acknowledge it, or the pin could never move. */
+function hardErrors(diagnostics: AuthoringDiagnostic[]): AuthoringDiagnostic[] {
+  return diagnostics.filter((d) => d.severity === 'error');
+}
+
 /** The warnings under the newer version that do NOT block the move — shown
  *  beside the outcome so nothing is hidden, never stored as upgrade
  *  diagnostics. */
@@ -575,7 +584,7 @@ export async function upgradeMovement(input: {
   );
   const diagnostics = blockingDiagnostics(validation.diagnostics);
   await recordUpgradeCheck({ id: movement.id, diagnostics, checkedAgainst: to });
-  if (diagnostics.length > 0) return { status: 'blocked', ...base, diagnostics };
+  if (hardErrors(diagnostics).length > 0) return { status: 'blocked', ...base, diagnostics };
   if (validation.gaps.length > 0) return { status: 'unverified', ...base, diagnostics };
   if (!input.acknowledge) return { status: 'needs_acknowledgement', ...base, diagnostics };
 

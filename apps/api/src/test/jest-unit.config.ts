@@ -33,4 +33,10 @@ export default {
   preset: 'ts-jest',
   transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }] },
   testEnvironment: 'node',
+
+  // Sources before compiled output. The preset's default order tries `.js`
+  // first, so a compiled copy beside a source (a package compiled in place)
+  // would shadow it and any `jest.mock` of the source path would miss.
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'cjs', 'jsx', 'json', 'node'],
+  setupFilesAfterEnv: ['<rootDir>/src/test/movement_lang_source.setup.ts'],
 };
