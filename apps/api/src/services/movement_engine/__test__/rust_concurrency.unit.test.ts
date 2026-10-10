@@ -673,7 +673,7 @@ describe('binding kinds parked and resumed across the engines', () => {
   // Each binds a name of one kind, parks with it in scope, and reads it
   // after: both engines write the kind key for key, and each engine's state
   // resumes on both to the same writes and trace.
-  for (const [kind, body, ledger] of [
+  const cases: Array<[string, string[], Record<string, CallbackCall[]> | undefined]> = [
     ['sourcePosition', ['  x = FIRST(graph-[n:note ORDER BY `body`]->)', '  await sleep(1h)', '  write graph-[:note]-> { payload: { b: x.`body` } }'], undefined],
     ['positions', ['  xs = graph-[n:note]-> {', '    return n', '  }', '  await sleep(1h)', '  count = COUNT(xs)', '  write graph-[:note]-> { payload: { n: count } }'], undefined],
     ['recordValue', ['  x = FIRST(graph-[n:note ORDER BY `body`]->)', '  l = [x, x]', '  await sleep(1h)', '  y = FIRST(l)', '  write graph-[:note]-> { payload: { b: y.`body`, n: COUNT(l) } }'], undefined],
@@ -682,7 +682,8 @@ describe('binding kinds parked and resumed across the engines', () => {
       ['  cb = callback((note: <text>) => { write graph-[:note]-> { body: note } })', '  c = await FIRST(cb-[:Called]->)', '  await sleep(1h)', '  write graph-[:note]-> { payload: { b: c.note } }'],
       { cb_1: [{ at: '2026-10-05T10:00:00.000Z', values: { note: 'yes' } }] },
     ],
-  ] as const) {
+  ];
+  for (const [kind, body, ledger] of cases) {
     it(`parks a ${kind} and resumes it`, async () => {
       const source = program(body.join('\n'));
       const c: Case = { source, ...(ledger !== undefined ? { ledger } : {}) };
