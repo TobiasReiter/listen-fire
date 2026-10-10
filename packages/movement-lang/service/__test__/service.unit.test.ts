@@ -775,6 +775,25 @@ movement m(msg: <inbox-[:message]->>) {
     expect(labels(result)).toContain('price');
   });
 
+  it('offers no `link` at rvalue start — a bound link only ever took a body, retired since version 4', () => {
+    const result = completionsAt(`${HEADER}
+movement m(msg: <inbox-[:message]->>) {
+  total = ¦
+}
+`);
+    expect(labels(result)).toEqual(expect.arrayContaining(['write', 'match']));
+    expect(labels(result)).not.toContain('link');
+  });
+
+  it('describes the statement `link` in its current form: match first, test it, then link', () => {
+    const result = completionsAt(`${HEADER}
+movement m(msg: <inbox-[:message]->>) {
+  ¦
+}
+`);
+    expect(result.items.find(i => i.label === 'link')?.detail).toContain('!= null');
+  });
+
   it('does NOT offer a scalar binding at statement start', () => {
     const result = completionsAt(`${HEADER}
 movement m(msg: <inbox-[:message]->>) {

@@ -4478,6 +4478,10 @@ class Checker {
         // runtime's (the inverse of the bare-handle `link`).
         this.resolveName(statement.from, statement.span, scope);
         this.resolveName(statement.to, statement.span, scope);
+        this.reportAbsentEdgeEnd(
+          { verb: 'unlink', from: statement.from, edge: statement.edge, to: statement.to, span: statement.span },
+          scope,
+        );
         this.checkBareLinkEdge(
           { from: statement.from, edge: statement.edge, span: statement.span, verb: 'unlink' },
           scope,
@@ -9025,39 +9029,20 @@ class Checker {
     const fromSymbol = this.resolveName(link.from, link.span, scope);
     const fromType = fromSymbol !== undefined ? this.symbolPositionType(fromSymbol) : undefined;
     // The body form only ever worked because a miss ended the scope; since 4 a
-    // miss is absent, which this form has no way to test before it links.
-    if (link.to.kind === 'match' && since(this.languageVersion, 4)) {
-      this.report(
-        DiagnosticCodes.LINK_MATCH_BODY_RETIRED,
-        `a 'link' no longer finds its record in its own body since ${describeLanguageVersion(4)}: find it first and test it — \`to = match … { … }\` then \`if to != null { link ${link.from} -[:${link.edge}]-> to }\``,
-        link.to.match.span,
-      );
-      return undefined;
-    }
-    // A link's two ends are required, as a write's parent is: since 4 a match
-    // handle may be absent, and a link onto nothing can't happen — so it needs
-    // the same test first (`T | absent` passed where `T` is required).
-    if (since(this.languageVersion, 4)) {
-      const toName = link.to.kind === 'handle' ? link.to.name : undefined;
-      const toResolution = toName !== undefined ? scope.resolve(toName) : undefined;
-      const toType =
-        toResolution?.kind === 'found' ? this.symbolPositionType(toResolution.symbol) : undefined;
-      const absentEnd =
-        fromType?.kind === 'maybeEmpty'
-          ? { name: link.from, type: fromType }
-          : toName !== undefined && toType?.kind === 'maybeEmpty'
-            ? { name: toName, type: toType }
-            : undefined;
-      if (absentEnd !== undefined) {
-        this.report(
-          DiagnosticCodes.ABSENT_REQUIRED,
-          `'${absentEnd.name}' is ${describePosition(absentEnd.type.of)} that may not be there, so this link can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: 'if ${absentEnd.name} != null { link ${link.from} -[:${link.edge}]-> ${toName ?? '…'} }'.`,
-          link.span,
-        );
-      }
-    }
+    // miss is absent, which this form has no way to test before it links. The
+    // body is still checked and the link still recorded (as an unnamed match's
+    // body is), so its own faults surface and the story keeps the edge.
+    const retiredBody = link.to.kind === 'match' && since(this.languageVersion, 4);
+    this.reportAbsentEdgeEnd(
+      { verb: 'link', from: link.from, edge: link.edge, ...(link.to.kind === 'handle' ? { to: link.to.name } : {}), span: link.span },
+      scope,
+    );
     if (fromType?.kind === 'local') {
       if (link.to.kind === 'match') {
+        if (retiredBody) {
+          this.reportLinkBodyRetired(link, link.to.match.span);
+          return undefined;
+        }
         this.report(
           DiagnosticCodes.NODE_LINK_BODY,
           `'${link.from}' is ${fromType.label} this run built, so a body here would find among what '${link.edge}' already holds — anything it found is linked already. To pick one of them out, 'match ${link.from}-[:${link.edge}]-> { … }'; to link a record you hold, 'link ${link.from} -[:${link.edge}]-> <name>'`,
@@ -9071,7 +9056,8 @@ class Checker {
     const found =
       link.to.kind === 'match'
         ? this.checkMatch(link.to.match, scope, {
-            ...(binding !== undefined ? { binding } : {}),
+            // A refused form binds nothing, so no move-up warning about its name.
+            ...(binding !== undefined && !retiredBody ? { binding } : {}),
             impliedIdentity: link.to.impliedIdentity,
           })
         : undefined;
@@ -9093,7 +9079,47 @@ class Checker {
           ? { kind: 'handle', name: link.to.name }
           : { kind: 'match', span: link.to.match.span },
     });
+    if (retiredBody && link.to.kind === 'match') {
+      this.reportLinkBodyRetired(link, link.to.match.span);
+      return undefined;
+    }
     return found;
+  }
+
+  private reportLinkBodyRetired(link: LinkExpression, span: Span): void {
+    this.report(
+      DiagnosticCodes.LINK_MATCH_BODY_RETIRED,
+      `a 'link' no longer finds its record in its own body since ${describeLanguageVersion(4)}: find it first and test it — \`to = match … { … }\` then \`if to != null { link ${link.from} -[:${link.edge}]-> to }\``,
+      span,
+    );
+  }
+
+  /**
+   * Since 4: the two ends of a link or unlink are required, as a write's parent
+   * is — a match handle may be absent now, and an edge to or from nothing can't
+   * be made or severed, so the end needs the same test first (`T | absent`
+   * passed where `T` is required). Only the first absent end is reported.
+   */
+  private reportAbsentEdgeEnd(
+    input: { verb: 'link' | 'unlink'; from: string; edge: string; to?: string; span: Span },
+    scope: Scope,
+  ): void {
+    if (!since(this.languageVersion, 4)) return;
+    const typeOf = (name: string): PositionTypeRef | undefined => {
+      const resolution = scope.resolve(name);
+      return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
+    };
+    const ends = [input.from, ...(input.to !== undefined ? [input.to] : [])];
+    for (const name of ends) {
+      const type = typeOf(name);
+      if (type?.kind !== 'maybeEmpty') continue;
+      this.report(
+        DiagnosticCodes.ABSENT_REQUIRED,
+        `'${name}' is ${describePosition(type.of)} that may not be there, so this ${input.verb} can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: 'if ${name} != null { ${input.verb} ${input.from} -[:${input.edge}]-> ${input.to ?? '…'} }'.`,
+        input.span,
+      );
+      return;
+    }
   }
 
   /**

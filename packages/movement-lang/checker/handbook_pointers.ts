@@ -39,6 +39,7 @@ export const HANDBOOK_POINTER_BY_CODE: Readonly<Record<string, HandbookPointer>>
   MOV_PARENT_READ_RETIRED: HANDBOOK_POINTERS.identity,
   MOV_MATCH_UNNAMED: HANDBOOK_POINTERS.match,
   MOV_MATCH_MISS_CONTINUES: HANDBOOK_POINTERS.match,
+  MOV_LINK_MATCH_BODY_RETIRED: HANDBOOK_POINTERS.match,
 };
 
 /** `diagnostic`, its message ending in the handbook pointer its code has (if any). */

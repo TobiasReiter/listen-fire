@@ -322,6 +322,40 @@ describe('a match under language version 4', () => {
     it('under 3, unguarded, is clean (the handle was never absent)', () => {
       expect(errors(3, [...FOUND, LINK].join('\n'))).toEqual([]);
     });
+    it('under 4 an EXISTS guard narrows it clean', () => {
+      expect(errors(4, [...FOUND, '  if EXISTS(fr) {', `  ${LINK}`, '  }'].join('\n'))).toEqual([]);
+    });
+    // The rule is structural: what is refused is a link end that may be absent,
+    // whatever made it so — a FIRST is the same `T | absent` a match now is.
+    it('an unguarded FIRST(…) at a link is refused under 4 and clean under 3', () => {
+      const body = [
+        '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+        '  other = write graph-[:companies]-> { unique by (`name`), name: "Other" }',
+        '  fr = FIRST(co-[r:rounds ORDER BY `stage`]->)',
+        '  link other -[:rounds]-> fr',
+      ].join('\n');
+      expect(errors(4, body)).toEqual([C.ABSENT_REQUIRED]);
+      expect(errors(3, body)).toEqual([]);
+    });
+  });
+
+  describe('an unlink of a match handle', () => {
+    const FOUND = [
+      '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+      '  fr = match graph-[:funding_round]-> { unique by (`stage`), stage: "Seed" }',
+    ];
+    const UNLINK = '  unlink co -[:rounds]-> fr';
+    it('under 4, unguarded, is MOV_ABSENT_REQUIRED naming the guard', () => {
+      const d = under(4, [...FOUND, UNLINK].join('\n'));
+      expect(d.map((x) => x.code)).toEqual([C.ABSENT_REQUIRED]);
+      expect(d[0].message).toContain('if fr != null { unlink co -[:rounds]-> fr }');
+    });
+    it('under 4, tested first, is clean', () => {
+      expect(errors(4, [...FOUND, '  if fr != null {', `  ${UNLINK}`, '  }'].join('\n'))).toEqual([]);
+    });
+    it('under 3, unguarded, is clean', () => {
+      expect(errors(3, [...FOUND, UNLINK].join('\n'))).toEqual([]);
+    });
   });
   it('crossing 4 every bound match carries the upgrade warning; validating under 4 without upgradingFrom does not', () => {
     const crossing = checkProgram(parseProgram(inMovement(NAMED.join('\n'))), catalog, { languageVersion: 4, upgradingFrom: 3 });
