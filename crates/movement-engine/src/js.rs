@@ -297,13 +297,11 @@ impl Js {
             Js::Bool(b) => b.to_string(),
             Js::Number(n) => number_to_string(*n),
             Js::String(s) => s.clone(),
-            // Array.prototype.join: a null or undefined member is empty.
-            Js::Array(array) => array
-                .items()
-                .iter()
-                .map(|item| if item.is_nullish() { String::new() } else { item.to_js_string() })
-                .collect::<Vec<_>>()
-                .join(","),
+            // Array.prototype.join: a null or undefined member is empty, and a
+            // list already being joined (a cycle) is empty too.
+            Js::Array(array) => joining(Rc::as_ptr(array).cast(), String::new, || {
+                array.items().iter().map(|item| if item.is_nullish() { String::new() } else { item.to_js_string() }).collect::<Vec<_>>().join(",")
+            }),
             Js::Object(_) | Js::Record(_) => "[object Object]".into(),
             Js::Function(function) => function.source_text(),
         }
@@ -315,13 +313,14 @@ impl Js {
     /// own `toString` is no function cannot be made text (`TypeError`).
     pub fn to_text(&self) -> Result<String, Thrown> {
         match self {
-            Js::Array(array) => {
-                let mut parts = Vec::with_capacity(array.items().len());
-                for item in array.items().iter() {
+            Js::Array(array) => joining(Rc::as_ptr(array).cast(), || Ok(String::new()), || {
+                let items = array.items().clone();
+                let mut parts = Vec::with_capacity(items.len());
+                for item in &items {
                     parts.push(if item.is_nullish() { String::new() } else { item.to_text()? });
                 }
                 Ok(parts.join(","))
-            }
+            }),
             Js::Object(object) => object_to_primitive(object, 0)?.to_text(),
             other => Ok(other.to_js_string()),
         }
@@ -384,9 +383,30 @@ fn array_up_chain(object: &Rc<JsObject>) -> bool {
     }
 }
 
+thread_local! {
+    /// V8's join stack: the lists (and list-like objects) being joined now.
+    static JOINING: std::cell::RefCell<Vec<*const ()>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `join` of the object at `address`: what `cycle` makes when it is already
+/// being joined further up (V8 answers the empty text), else `join`'s.
+fn joining<T>(address: *const (), cycle: impl FnOnce() -> T, join: impl FnOnce() -> T) -> T {
+    if JOINING.with(|stack| stack.borrow().contains(&address)) {
+        return cycle();
+    }
+    JOINING.with(|stack| stack.borrow_mut().push(address));
+    let out = join();
+    JOINING.with(|stack| stack.borrow_mut().pop());
+    out
+}
+
 /// `Array.prototype.join.call(object, ",")`: `this.length` members read
 /// through the chain, an absent one empty.
 fn join_of(object: &Rc<JsObject>) -> Result<String, Thrown> {
+    joining(Rc::as_ptr(object).cast(), || Ok(String::new()), || join_members(object))
+}
+
+fn join_members(object: &Rc<JsObject>) -> Result<String, Thrown> {
     let length = object_property(object, "length").to_number();
     let length = if length.is_nan() || length <= 0.0 { 0 } else { length.min(1e7) as usize };
     let mut parts = Vec::with_capacity(length);
@@ -672,6 +692,11 @@ pub fn json_quote(s: &str) -> String {
 /// data (no `undefined`, no non-finite numbers). `indent` 0 is the compact
 /// form.
 pub fn json_stringify(value: &Js, indent: usize) -> String {
+    // A value that holds itself: `safeStringify`'s fallback, its text (the
+    // prompt's writers are the ones a user's value reaches).
+    if circular(value).is_some() {
+        return value.to_js_string();
+    }
     let mut out = String::new();
     let mut held = None;
     write_json(value, indent, 0, &mut out, &mut held);
@@ -683,6 +708,7 @@ pub fn json_stringify(value: &Js, indent: usize) -> String {
 /// the TypeScript's `JSON.stringify` would (its read seam, its computed
 /// schema, its `Map`s are the TypeScript engine's).
 pub fn try_json_stringify(value: &Js, indent: usize) -> Result<String, String> {
+    let value = &acyclic(value);
     let mut out = String::new();
     let mut held = None;
     write_json(value, indent, 0, &mut out, &mut held);
@@ -716,6 +742,11 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
                 object.set("landings".into(), landings);
                 write_json(&Js::object(object), indent, depth, out, held);
             }
+            // The backstop: admission refuses each route it knows by which a
+            // record this engine cannot write reaches a writer (by name:
+            // `plugin_arg_record`, `builtin_arg_record`, …), and the checked
+            // writers (`try_json_stringify`) refuse one. One that still
+            // arrives here writes `{}`, never a binding object of its own.
             other => {
                 held.get_or_insert_with(|| crate::record::kind_of(other));
                 out.push_str("{}");
@@ -768,6 +799,22 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unwritable_record_writes_the_backstop() {
+        let instance = crate::bindings::InstanceBinding {
+            name: "inbox".into(),
+            adapter_slug: "email".into(),
+            credential_name: None,
+            construction_config: Vec::new(),
+            schema: None,
+        };
+        let record = Js::Record(Rc::new(crate::bindings::Binding::Instance(Rc::new(instance))));
+        let held = Js::array(vec![record.clone()]);
+        assert_eq!(json_stringify(&held, 0), "[{}]");
+        assert_eq!(try_json_stringify(&held, 0), Err("instance".to_string()));
+        assert_eq!(crate::env::json_of_js(&crate::env::json_round_trip(&record)), serde_json::json!({}));
+    }
 
     #[test]
     fn number_to_string_matches_javascript() {
@@ -897,4 +944,102 @@ mod tests {
         assert_eq!(json_stringify(&value, 2), "[\n  1,\n  {\n    \"k\": \"a\\\"\\u0001\"\n  },\n  [],\n  {}\n]");
         assert_eq!(json_stringify(&value, 0), "[1,{\"k\":\"a\\\"\\u0001\"},[],{}]");
     }
+}
+
+/// `JSON.stringify`'s TypeError for a value that holds itself (V8's text,
+/// the path from the object the circle starts at to the key that closes
+/// it), or `None` for a value that does not: every walker of a value's
+/// lists and maps asks first, since a GROUPBY filing can make one.
+pub fn circular(value: &Js) -> Option<String> {
+    let mut stack: Vec<(*const (), &'static str, String)> = Vec::new();
+    find_circle(value, &mut stack)
+}
+
+fn constructor_of(value: &Js) -> &'static str {
+    match value {
+        Js::Array(_) => "Array",
+        Js::Object(object) => match &object.proto {
+            Some(proto @ (Js::Array(_) | Js::Object(_))) => constructor_of(proto),
+            _ => "Object",
+        },
+        _ => "Object",
+    }
+}
+
+fn find_circle(value: &Js, stack: &mut Vec<(*const (), &'static str, String)>) -> Option<String> {
+    let (address, members): (*const (), Vec<(String, Js)>) = match value {
+        Js::Array(list) => (Rc::as_ptr(list).cast(), list.items().iter().enumerate().map(|(i, item)| (format!("index {i}"), item.clone())).collect()),
+        Js::Object(object) => (Rc::as_ptr(object).cast(), object.entries().iter().map(|(k, item)| (format!("property '{k}'"), item.clone())).collect()),
+        _ => return None,
+    };
+    stack.push((address, constructor_of(value), String::new()));
+    for (key, member) in members {
+        let child = match &member {
+            Js::Array(list) => Some(Rc::as_ptr(list).cast::<()>()),
+            Js::Object(object) => Some(Rc::as_ptr(object).cast::<()>()),
+            _ => None,
+        };
+        if let Some(child) = child
+            && let Some(start) = stack.iter().position(|(a, _, _)| *a == child)
+        {
+            let mut lines = vec!["Converting circular structure to JSON".to_string(), format!("    --> starting at object with constructor '{}'", stack[start].1)];
+            // Each step from the start to the object whose key closes it.
+            let steps: Vec<String> = (start + 1..stack.len()).map(|j| format!("    |     {} -> object with constructor '{}'", stack[j - 1].2, stack[j].1)).collect();
+            if steps.len() > 3 {
+                lines.extend(steps[..2].iter().cloned());
+                lines.push("    |     ...".into());
+                lines.push(steps[steps.len() - 1].clone());
+            } else {
+                lines.extend(steps);
+            }
+            lines.push(format!("    --- {key} closes the circle"));
+            return Some(lines.join("\n"));
+        }
+        if let Some(top) = stack.last_mut() {
+            top.2 = key;
+        }
+        if let Some(found) = find_circle(&member, stack) {
+            return Some(found);
+        }
+    }
+    stack.pop();
+    None
+}
+
+/// `value` with each edge that closes a circle cut (`null` in its place): what
+/// a walker that cannot fail reads, where the TypeScript would have thrown —
+/// a backstop no checked program the engine runs is known to reach.
+pub fn acyclic(value: &Js) -> Js {
+    fn copy(value: &Js, stack: &mut Vec<*const ()>) -> Js {
+        let address: *const () = match value {
+            Js::Array(list) => Rc::as_ptr(list).cast(),
+            Js::Object(object) => Rc::as_ptr(object).cast(),
+            other => return other.clone(),
+        };
+        if stack.contains(&address) {
+            return Js::Null;
+        }
+        stack.push(address);
+        let out = match value {
+            Js::Array(list) => Js::array(list.items().iter().map(|item| copy(item, stack)).collect()),
+            Js::Object(object) => {
+                let mut out = JsObject::new();
+                for (key, item) in object.entries() {
+                    out.set(key.clone(), copy(item, stack));
+                }
+                out.proto = object.proto.clone();
+                Js::object(out)
+            }
+            _ => unreachable!("matched above"),
+        };
+        stack.pop();
+        out
+    }
+    copy(value, &mut Vec::new())
+}
+
+/// What a walker the TypeScript recurses through without a guard throws on
+/// a value that holds itself.
+pub fn stack_overflow() -> Thrown {
+    Thrown { class: "RangeError", message: "Maximum call stack size exceeded".into() }
 }

@@ -765,8 +765,14 @@ there answers `Array.prototype`'s names (`["f", "Array#<name>"]`), a record
 there makes the answer that record to `bindingOf` (the KEYBY case), and a
 filing onto a list the prototype holds pushes onto that very list (lists
 are shared and mutable, `JsArray::push`). A walk a dict carries runs from
-its captured pairs, and the hops past a kept walk held in a value walk on
-from its landings. A
+its captured pairs. The hops past a kept walk run inside it
+(`resolveHeadIterations(walk.head, env, extraSteps)`): in the scope it
+captured, so a WHERE there reads the names as they were when the walk was
+kept, and breadth first across its origins, hop by hop, as the TypeScript
+asks. A list that holds itself joins as V8 joins it (the repeated list is
+empty text), fails `JSON.stringify` with V8's TypeError and a park with
+the RangeError the TypeScript's recursive writer ends in, crosses the eval
+wire as shared references, and compares by identity first. A
 collection op's `onError` never forgives this engine's own refusal
 (`ErrorClass::Unreproduced`). MAP, FILTER,
 REDUCE, GROUPBY, KEYBY and MEMBERS run one member at a time
@@ -776,16 +782,22 @@ descriptor and refuses a function (MOVENG_PARK_NONSERIALIZABLE). On the
 eval wire a built-in crosses as `["f", name]` and `Object.prototype` as
 `["p"]`; the event's binding object crosses as `{kind: 'event'}`. A request
 holding any other record is never made (`HeldRecord`, per request).
-Pinned by tests/oracle/records.json: 3,612 whole programs — 3,600 from 34
-body templates under versions 1 to 3, seed 20261010, and 4 written out (12 cases) for
-`onError` and held walks — run on the TypeScript engine against an adapter
+Pinned by tests/oracle/records.json: 3,753 cases — 1,200 programs from 36
+body templates, 4 written out for `onError` and held walks, and 68 directed
+ones (17 dicts a walk or instance reading meets, each under 4 bodies), each
+under versions 1 to 3 where the checker passes it, seed 20261010 — run on
+the TypeScript engine against an adapter
 that answers walks (`items`, `subs`, two records named `__proto__`) and
 writes. The generated dicts include instances with non-text slugs, schemas
 of their own and non-map configs, walks with captured pairs, text where
-records belong, and `kind: "__proto__"`; GROUPBY and KEYBY answers are read
-by member. The Rust engine ends each as the TypeScript did (0 differ; the
-programs `AT`-ing a record by a name are refused at admission,
-`at_record_key`).
+records belong, and `kind: "__proto__"`; the templates include lists a
+GROUPBY filing makes hold themselves, and hops past a kept walk whose WHERE
+reads names declared after it; the directed dicts carry the walk and
+instance shapes the TypeScript reads without refusing. GROUPBY and KEYBY answers are read
+by member. The Rust engine ends each as the TypeScript did (0 differ; 147 are
+refused at admission: the programs `AT`-ing a record by a name,
+`at_record_key`, and those walking straight off a `lazy` binding,
+`traversal_root`).
 
 ### Expressions that walk, fold, test and name records
 
@@ -1071,19 +1083,21 @@ fails); none produces a different answer.
 - A record held in a value reaching a host request admission did not
   foresee: MOVENG_UNSUPPORTED before the request is made (a backstop;
   admission refuses each route it knows, by name).
-- A dict shaped like an `instance` whose schema is no instance schema (one
-  `positions` and `collections` do not make, or whose entries the read
-  wrapper's types do not read), read through its graph: MOVENG_UNSUPPORTED.
-  Its slug, credential name and construction config are read as the
-  TypeScript reads them, whatever they are (the host's lookup is by the
-  slug's text).
-- A walk a dict holds as data (`lazyWalk`, a deferred edge) with a mapping,
-  rooted at an expression, naming a captured binding by no text, or whose
-  hops are no text: MOVENG_UNSUPPORTED. Its captured pairs and a head rooted
-  at a name are run as the TypeScript runs them.
-- A block head a walk's captured scope roots at a dict shaped like a
-  synthesised node, a kept walk, a meta-node or a callback:
-  MOVENG_UNSUPPORTED.
+- A dict shaped like an `instance` whose own schema holds a `collections`
+  table the read wrapper's types do not read, or is `null`, read through its
+  graph: MOVENG_UNSUPPORTED. One with no `collections` at all fails as the
+  TypeScript does, with the read wrapper's TypeError after its collection
+  scan. Its slug, credential name and construction config are read as the
+  TypeScript reads them, whatever they are, and the host is asked for the
+  slug as the dict holds it.
+- A walk a dict holds as data (`lazyWalk`, a deferred edge) whose mapping
+  has entries to build, rooted at an expression with source text, or rooted
+  at a name that is no text: MOVENG_UNSUPPORTED. Every other walk a dict
+  holds runs as the TypeScript runs it: a captured pair keyed by no text is
+  one no name reads, a later pair replaces an earlier one, hops that are no
+  text are probed as their text, and a head rooted at a dict shaped like a
+  synthesised node, a kept walk, a meta-node or a callback walks that kind's
+  plane.
 - Parking a value whose message or data would print a record's binding
   object other than the event's or a block's returned records' (its read
   seam, its computed schema): MOVENG_UNSUPPORTED.

@@ -110,7 +110,9 @@ impl Instance {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveAdapter {
-    pub adapter_type: String,
+    /// The instance's slug as the binding holds it (a dict's may be no
+    /// text, and the TypeScript hands the host what it holds).
+    pub adapter_type: Json,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credentials_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -485,7 +487,7 @@ mod tests {
     fn builders_write_the_shapes_the_host_contract_names() {
         let resolve = adapters::resolve(
             "g1",
-            &ResolveAdapter { adapter_type: "attio".into(), credentials_id: None, construction_args: None, role: Role::Target, dry_run: false },
+            &ResolveAdapter { adapter_type: Json::from("attio"), credentials_id: None, construction_args: None, role: Role::Target, dry_run: false },
         );
         assert_eq!((resolve.family.as_str(), resolve.method.as_str()), ("adapters", "resolve"));
         assert_eq!(resolve.args, json!({ "segmentId": "g1", "adapterType": "attio", "role": "target" }));

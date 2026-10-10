@@ -360,6 +360,9 @@ pub fn object_of(entries: Vec<(&str, Js)>) -> Js {
 /// `undefined` members dropped (null in a list), non-finite numbers null,
 /// `-0` 0. `undefined` itself stays `undefined`.
 pub fn json_round_trip(value: &Js) -> Js {
+    if crate::js::circular(value).is_some() {
+        return json_round_trip(&crate::js::acyclic(value));
+    }
     match value {
         Js::Number(n) if !n.is_finite() => Js::Null,
         Js::Number(n) if *n == 0.0 => Js::Number(0.0),
@@ -395,6 +398,13 @@ pub fn json_round_trip(value: &Js) -> Js {
 /// A value as `JSON.parse(JSON.stringify(value))` hands it back: `undefined`
 /// members dropped (null in a list), non-finite numbers null, `-0` 0.
 pub fn json_of_js(value: &Js) -> Json {
+    if crate::js::circular(value).is_some() {
+        return json_of_js(&crate::js::acyclic(value));
+    }
+    json_of_tree(value)
+}
+
+fn json_of_tree(value: &Js) -> Json {
     match value {
         Js::Undefined | Js::Null | Js::Function(_) => Json::Null,
         // Read down to its fields wherever one is written out.
@@ -405,12 +415,12 @@ pub fn json_of_js(value: &Js) -> Json {
         Js::Number(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => json!(*n as i64),
         Js::Number(n) => json!(n),
         Js::String(s) => json!(s),
-        Js::Array(list) => Json::Array(list.items().iter().map(json_of_js).collect()),
+        Js::Array(list) => Json::Array(list.items().iter().map(json_of_tree).collect()),
         Js::Object(object) => {
             let mut map = Map::new();
             for (k, v) in object.entries() {
                 if !matches!(v, Js::Undefined | Js::Function(_)) {
-                    map.insert(k.clone(), json_of_js(v));
+                    map.insert(k.clone(), json_of_tree(v));
                 }
             }
             Json::Object(map)

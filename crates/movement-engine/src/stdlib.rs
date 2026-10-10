@@ -691,6 +691,11 @@ fn to_stable_json(value: &Js) -> Js {
 
 fn text_serialise(value: &Js, format: &Js) -> Result<Js, EvalError> {
     match format {
+        // `toStableJson` recurses through a value that holds itself until
+        // V8's stack runs out.
+        Js::String(f) if f == "JSON" && js::circular(value).is_some() => {
+            Err(EvalError::Thrown { class: crate::eval::ErrorClass::RangeError, message: js::stack_overflow().message })
+        }
         Js::String(f) if f == "JSON" => Ok(Js::String(js::json_stringify(&to_stable_json(value), 2))),
         // `JSON.stringify(format)`, which is `undefined` for `undefined`.
         Js::Undefined => Err(EvalError::error("TEXT.SERIALISE: unknown format undefined".to_string())),

@@ -532,7 +532,7 @@ impl Run<'_> {
         }
         let resolved = self
             .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
-                adapter_type: instance.adapter_slug.clone(),
+                adapter_type: Json::String(instance.adapter_slug.clone()),
                 credentials_id,
                 construction_args: (!construction_args.is_empty()).then_some(construction_args),
                 role: Role::Target,
@@ -1496,6 +1496,11 @@ fn to_field_array(value: &Js) -> Vec<Js> {
 pub fn deep_equal(a: &Js, b: &Js) -> bool {
     if js::strict_equals(a, b) {
         return true;
+    }
+    // A value that holds itself is compared with its circles cut (a
+    // backstop: the TypeScript would recurse until its stack ran out).
+    if js::circular(a).is_some() || js::circular(b).is_some() {
+        return deep_equal(&js::acyclic(a), &js::acyclic(b));
     }
     match (a, b) {
         (Js::Null, _) | (_, Js::Null) => false,

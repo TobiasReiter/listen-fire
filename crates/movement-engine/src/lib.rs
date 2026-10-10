@@ -11,6 +11,10 @@
 //! (apps/api/src/services/movement_engine/rust_engine.ts drives it). JavaScript's value
 //! semantics are `js`'s, and values cross on `env`'s wire.
 
+// A list's cells are a `RefCell`; a borrow held across an await would let a
+// concurrent member's push panic.
+#![deny(clippy::await_holding_refcell_ref)]
+
 pub mod abi;
 pub mod address;
 pub mod admit;

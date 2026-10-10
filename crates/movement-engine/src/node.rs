@@ -165,9 +165,16 @@ impl Run<'_> {
     /// the scope it captured; each iteration's aliases and landing (a mapped
     /// walk's landings are its tail's nodes, and bind no alias).
     pub(crate) fn run_deferred<'s>(&'s self, walk: &'s DeferredWalk) -> Iterations<'s> {
+        self.run_deferred_past(walk, &[])
+    }
+
+    /// `runDeferredWalk(walk, extraSteps)`: the hops past the walk continue
+    /// it, in the scope it captured; past a mapping they are hops on the
+    /// mapped nodes' arrow plane.
+    pub(crate) fn run_deferred_past<'s>(&'s self, walk: &'s DeferredWalk, extra: &'s [movement_parser::lowering::expression::TraversalStep]) -> Iterations<'s> {
         Box::pin(async move {
+            let Some((mapping, path)) = &walk.mapping else { return self.head_iterations_past(&walk.head, &walk.captured, extra).await };
             let iterations = self.head_iterations(&walk.head, &walk.captured).await?;
-            let Some((mapping, path)) = &walk.mapping else { return Ok(iterations) };
             let mut mapped = Vec::with_capacity(iterations.len());
             for (aliases, _) in iterations {
                 let item = walk.captured.child();
@@ -176,7 +183,11 @@ impl Run<'_> {
                 }
                 mapped.push((Vec::new(), Binding::Node(self.synthesise_node(mapping, &item, path).await?)));
             }
-            Ok(mapped)
+            if extra.is_empty() {
+                return Ok(mapped);
+            }
+            let span = crate::env::js_of_serialized(&walk.head.span);
+            self.walk_node_plane(mapped, extra, &walk.captured, &span).await
         })
     }
 

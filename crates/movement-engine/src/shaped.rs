@@ -107,8 +107,8 @@ impl Run<'_> {
     /// `instanceSourceRead` of an `instance` dict: its adapter resolved as
     /// the TypeScript resolves it — `credentialName` truthy names the
     /// credential, `Object.entries(constructionConfig ?? {})` each value
-    /// unquoted (`raw.trim()`), the slug as it is (the host's lookup is by
-    /// its text) — and the dict's own schema, where it has one, the read's.
+    /// unquoted (`raw.trim()`), the slug as it is (the host is asked for the
+    /// value itself) — and the dict's own schema, where it has one, the read's.
     pub(crate) async fn shaped_instance_read(&self, instance: &Js) -> Result<Rc<Read>, Failure> {
         let credential = get(instance, "credentialName").map_err(eval)?;
         let config = get(instance, "constructionConfig").map_err(eval)?;
@@ -128,20 +128,37 @@ impl Run<'_> {
         }
         let slug = get(instance, "adapterSlug").map_err(eval)?;
         let name = get(instance, "name").map_err(eval)?;
+        let mut schema_fault = None;
         let schema = match get(instance, "schema").map_err(eval)? {
             Js::Undefined => None,
-            schema => Some(lenient_schema(&schema).ok_or_else(|| {
-                Failure::unreproduced("reading through a value shaped like a constructed adapter instance whose schema is no instance schema", "the TypeScript engine reads its graph's types off whatever the dict holds")
-            })?),
+            schema => match lenient_schema(&schema) {
+                Some(schema) => Some(schema),
+                // No `collections` table to index: the read wrapper's
+                // TypeError, where its collection scan reads it.
+                None if !schema.is_nullish() && get(&schema, "collections").map_err(eval)?.is_nullish() => {
+                    schema_fault = Some(get(&schema, "collections").map_err(eval)?);
+                    None
+                }
+                None => {
+                    return Err(Failure::unreproduced(
+                        "reading through a value shaped like a constructed adapter instance whose schema is no instance schema",
+                        "the TypeScript engine reads its graph's types off whatever the dict holds",
+                    ));
+                }
+            },
         };
         let credential_name = credential.truthy().then(|| credential.to_js_string());
         let binding = InstanceBinding { name: name.to_js_string(), adapter_slug: slug.to_js_string(), credential_name, construction_config, schema };
         // The adapter is the one resolved for the slug, credential and
         // config; the read names this dict's instance (`instanceName`).
-        let read = self.instance_read(&binding).await?;
+        let read = self.instance_read_as(&binding, crate::env::json_of_js(&slug)).await?;
         let mut named = (*read).clone();
         named.instance_name = name.to_js_string();
         named.instance_label = name;
+        if schema_fault.is_some() {
+            named.schema = None;
+            named.schema_fault = schema_fault;
+        }
         Ok(Rc::new(named))
     }
 }

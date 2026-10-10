@@ -194,6 +194,7 @@ pub fn segment_for_datum(datum: &Js) -> Segment {
         };
         return Segment { classification, content: content.clone() };
     }
+    // `safeStringify`: `JSON.stringify`, else (a value holding itself) its text.
     Segment { classification: "FRAGMENT".into(), content: js::json_stringify(datum, 0) }
 }
 

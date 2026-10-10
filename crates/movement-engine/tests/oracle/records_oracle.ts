@@ -190,7 +190,7 @@ function payload(rand: Rand): Record<string, unknown> {
 /** A body over `v` (the dict) and `w` (the list), ending in an `ERROR` that
  *  says what it read. */
 function body(rand: Rand): { template: number; text: string } {
-  const template = Math.floor(rand() * 34);
+  const template = Math.floor(rand() * 36);
   return { template, text: bodyOf(template, rand) };
 }
 
@@ -281,6 +281,25 @@ function bodyOf(template: number, rand: Rand): string {
         `y = g.${pick(rand, ['push', 'join', 'length', '`0`', 'a'])}`,
         'ERROR("${COUNT(g)} ${IF y == null THEN "absent" ELSE "present" END}")',
       );
+    // A filing onto a list the prototype holds: the lists hold themselves.
+    case 34:
+      return lines(
+        'a = [1]',
+        'b = [a, a]',
+        'g = GROUPBY([a, b], (x) => {',
+        '    return IF COUNT(x) == 1 THEN "__proto__" ELSE "0" END',
+        '  })',
+        `ERROR("${pick(rand, ['${COUNT(a)}', '${a}', '${b}', '${a == b}', '${JOIN(a, ",")}', '${COUNT(g)}'])}")`,
+      );
+    // Hops past a kept walk, their WHERE over names declared after it.
+    case 35: {
+      const cap = 'cap = 1';
+      const lazy = pick(rand, ['files = lazy msg-[a:items]->', 'files = lazy msg-[a:items ORDER BY `rank` LIMIT 2]->']);
+      const order = pick(rand, [[cap, lazy], [lazy, cap], [lazy, cap, 'a = 7']]);
+      const root = pick(rand, ['files', 'held']);
+      const where = pick(rand, ['', ' WHERE s.`rank` < cap', ' WHERE a == 7', ' WHERE s.`rank` == 0']);
+      return lines(...order, 'held = [files]', `n = COUNT(${root}-[s:subs${where}]->)`, 'ERROR("${n}")');
+    }
     default:
       return lines(`x = v.${f(k1)}`, `ERROR("\${x.${f(k2)}}")`);
   }
@@ -345,11 +364,47 @@ const PINNED: Array<{ text: string; data: Record<string, unknown> }> = [
   },
 ];
 
+/** Each walk or instance a dict holds whose reading the TypeScript does not
+ *  refuse: a kept walk's mapping, captured pairs keyed by no text or bound
+ *  twice, hops that are no text, an expression root, a captured scope that
+ *  roots the head at a node, a kept walk, a meta-node or a callback, and
+ *  instances whose own schema is no instance schema. */
+const EVENT = { kind: 'event' };
+const ITEMS = { root: { kind: 'name', name: 'e' }, hopsRaw: '-[:items]->' };
+const DIRECTED_DICTS: Array<Record<string, unknown>> = [
+  { kind: 'lazyWalk', walk: { captured: [['e', EVENT]], mapping: {}, head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', EVENT]], mapping: null, head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [[5, EVENT], ['e', EVENT]], head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', EVENT], ['e', 0]], head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: { root: { kind: 'name', name: 'e' }, hopsRaw: 5 } } },
+  { kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: { root: { kind: 'name', name: 'e' }, hopsRaw: '-[a:items]->-[b:subs]->' } } },
+  { kind: 'lazyWalk', walk: { captured: [['e', EVENT]], head: { root: { kind: 'expr', expr: { type: 'alias_ref', name: 'e' } }, hopsRaw: '-[:items]->' } } },
+  { kind: 'lazyWalk', walk: { captured: [[5, EVENT]], head: { hopsRaw: '-[:items]->' } } },
+  { kind: 'lazyWalk', walk: { captured: [['e', { kind: 'nodePosition', edges: {} }]], head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', { kind: 'nodePosition', edges: { items: { kind: 'landed', landings: [EVENT] } } }]], head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', { kind: 'lazyWalk', walk: { captured: [['f', EVENT]], head: { root: { kind: 'name', name: 'f' }, hopsRaw: '-[:items]->' } } }]], head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', { kind: 'lazyWalk', walk: { captured: {} } }]], head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', { kind: 'blockMeta', edges: {} }]], head: ITEMS } },
+  { kind: 'lazyWalk', walk: { captured: [['e', { kind: 'callback', callbackId: 'c1' }]], head: ITEMS } },
+  { kind: 'instance', name: 'inbox', adapterSlug: 'email', credentialName: 'inbox_cred', schema: 'x' },
+  { kind: 'instance', name: 'inbox', adapterSlug: 'email', credentialName: 'inbox_cred', schema: { positions: {} } },
+  { kind: 'instance', name: 'inbox', adapterSlug: 5, credentialName: 'inbox_cred' },
+];
+/** The reads each directed dict meets: walked on, walked, forgiven, and as a
+ *  block's head. */
+const DIRECTED_BODIES = [
+  '  n = COUNT(v-[:subs]->)\n  ERROR("${n}")',
+  '  n = COUNT(v-[:items]->)\n  ERROR("${n}")',
+  '  ys = MAP([1, 2], { onError: "ignore" }, (i) => {\n    return COUNT(v-[:subs]->)\n  })\n  ERROR("${COUNT(ys)}")',
+  '  xs = v-[s:subs]-> {\n    return s\n  }\n  ERROR("${COUNT(xs)}")',
+];
+
 export async function writeRecordsOracle(rand: Rand, write: (name: string, text: string) => void): Promise<void> {
   const cases: unknown[] = [];
   const counts = { tried: 0, refused: 0 };
   const generated = Array.from({ length: 1200 }, () => ({ ...body(rand), data: payload(rand) }));
-  const all = [...generated, ...PINNED.map((p) => ({ template: -1, text: p.text, data: p.data }))];
+  const directed = DIRECTED_DICTS.flatMap((meta) => DIRECTED_BODIES.map((text) => ({ template: -2, text, data: { subject: 'Acme', meta, more: [] } })));
+  const all = [...generated, ...PINNED.map((p) => ({ template: -1, text: p.text, data: p.data })), ...directed];
   for (const { template, text, data } of all) {
     const source = RECORDS_PRELUDE.replace('BODY', text);
     for (const version of [1, 2, 3] as LanguageVersion[]) {

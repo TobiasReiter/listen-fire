@@ -807,7 +807,7 @@ impl Run<'_> {
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let resolved = self
             .ask(host::adapters::resolve(self.segment(), &ResolveAdapter {
-                adapter_type: instance.adapter_slug.clone(),
+                adapter_type: Json::String(instance.adapter_slug.clone()),
                 credentials_id,
                 construction_args: None,
                 role: Role::Source,

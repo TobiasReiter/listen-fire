@@ -302,7 +302,7 @@ impl Run<'_> {
                 // The read IS the walk; hops past it continue it
                 // (`resolveDeferred(binding.walk, expr.steps)`).
                 Binding::LazyWalk(walk) => {
-                    let reached = self.deferred_landings(&walk, steps, name, scope, span).await?;
+                    let reached = self.deferred_landings(&walk, steps).await?;
                     if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
                         let found = self.exists(hops, where_, reached, scope, span).await?;
                         return Ok(Evaluated { value: Js::Bool(found), prov: none() });
@@ -430,7 +430,7 @@ impl Run<'_> {
                     // A lazy binding IS the walk: the whole remaining chain,
                     // this hop included, continues from it.
                     Binding::LazyWalk(walk) => {
-                        reached.extend(self.deferred_landings(walk, steps, name, scope, span).await?);
+                        reached.extend(self.deferred_landings(walk, steps).await?);
                         continue;
                     }
                     Binding::Landed(landed) => {
@@ -463,11 +463,12 @@ impl Run<'_> {
                                     "narrow the entry's own traversal instead — the WHERE belongs on the hop the node's edge is built from",
                                 ));
                             }
-                            reached.extend(self.deferred_landings(&walk, rest, name, scope, span).await?);
+                            reached.extend(self.deferred_landings(&walk, rest).await?);
                             continue;
                         }
                         let mut kept = Vec::new();
-                        for landed in node.borrow().landings(&step.edge_type_id) {
+                        let landings = node.borrow().landings(&step.edge_type_id);
+                        for landed in landings {
                             if self.hop_keeps_binding(step, &landed, scope, span).await? {
                                 kept.push(landed);
                             }
@@ -520,7 +521,7 @@ impl Run<'_> {
         let eval = |e| Failure::of_eval(e, "");
         let kind = record::kind_of(binding);
         let graph = match kind.as_str() {
-            "lazyWalk" => return self.shaped_walk(&record::get(this, "walk").map_err(eval)?, steps, name, scope, span).await,
+            "lazyWalk" => return self.shaped_walk(&record::get(this, "walk").map_err(eval)?, steps).await,
             "sourcePosition" => Some(self.shaped_source_record(this)?),
             "handle" => Some(self.shaped_handle_record(this, name).await?),
             _ => None,
@@ -553,7 +554,7 @@ impl Run<'_> {
                         "narrow the entry's own traversal instead — the WHERE belongs on the hop the node's edge is built from",
                     ));
                 }
-                return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, rest, name, scope, span).await;
+                return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, rest).await;
             }
             let landings = if edge.is_nullish() { Js::Undefined } else { record::get(&edge, "landings").map_err(eval)? };
             let landings = match landings {
@@ -590,15 +591,10 @@ impl Run<'_> {
         }
     }
 
-    /// `runDeferredWalk(walk, extraSteps)`: the walk's landings, the hops past
-    /// it walked on from each (`resolveHeadIterations` with the steps
-    /// appended; past a mapped walk, `walkNodePlane`).
-    async fn deferred_landings(&self, walk: &crate::bindings::DeferredWalk, steps: &[TraversalStep], name: &str, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
-        let landings: Vec<Binding> = self.run_deferred(walk).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect();
-        if steps.is_empty() {
-            return Ok(landings);
-        }
-        self.walk_meta(landings, steps, name, scope, span).await
+    /// `runDeferredWalk(walk, extraSteps)`: the walk's landings, the hops
+    /// past it walked inside it, in the scope it captured.
+    async fn deferred_landings(&self, walk: &crate::bindings::DeferredWalk, steps: &[TraversalStep]) -> Result<Vec<Binding>, Failure> {
+        Ok(self.run_deferred_past(walk, steps).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect())
     }
 
     /// `hopFilterKeeps` over a record in hand: the hop's WHERE, its alias
@@ -794,7 +790,7 @@ impl Run<'_> {
             "nodePosition" => {
                 let edge = record::get(&record::get(this, "edges").map_err(eval)?, &step.edge_type_id).map_err(eval)?;
                 if !edge.is_nullish() && matches!(record::get(&edge, "kind").map_err(eval)?, Js::String(k) if k == "deferred") {
-                    return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, &[], &step.edge_type_id, scope, span).await;
+                    return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, &[]).await;
                 }
                 let landings = if edge.is_nullish() { Js::Undefined } else { record::get(&edge, "landings").map_err(eval)? };
                 return self.raw_landings(if landings.is_nullish() { Js::array(Vec::new()) } else { landings }, "(intermediate value)");
@@ -837,11 +833,18 @@ impl Run<'_> {
         }
     }
 
-    /// `runDeferredWalk` of a dict's `walk`: a fresh scope of its `captured`
-    /// pairs (`for (const [name, binding] of walk.captured)`), then its head
-    /// resolved there, the hops past it walked on from each landing.
-    pub(crate) async fn shaped_walk(&self, walk: &Js, steps: &[TraversalStep], name: &str, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
-        let eval = |e| Failure::of_eval(e, "");
+    /// `runDeferredWalk` of a dict's `walk`, its landings.
+    pub(crate) async fn shaped_walk(&self, walk: &Js, steps: &[TraversalStep]) -> Result<Vec<Binding>, Failure> {
+        Ok(self.shaped_walk_iterations(walk, steps).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect())
+    }
+
+    /// `runDeferredWalk(walk, extraSteps)` of a dict's `walk`: a fresh scope
+    /// of its `captured` pairs (`for (const [name, binding] of
+    /// walk.captured)`), then its head resolved there with the hops past it
+    /// appended, as `resolveHeadIterations` reads the head.
+    pub(crate) async fn shaped_walk_iterations(&self, walk: &Js, extra: &[TraversalStep]) -> Result<crate::traverse::Paths, crate::run::Stop> {
+        use crate::run::Stop;
+        let eval = |e| Stop::Thrown(Failure::of_eval(e, ""));
         let captured = record::get(walk, "captured").map_err(eval)?;
         let pairs: Vec<Js> = match &captured {
             Js::Array(list) => list.items().clone(),
@@ -859,45 +862,85 @@ impl Run<'_> {
                 }
                 _ => return Err(eval(record::type_error(".for is not iterable"))),
             };
-            // `env.declare(name, binding)`: a `Map` keyed by the name as it is.
-            let Js::String(key) = key else {
-                return Err(Failure::unreproduced("a walk's captured scope naming a binding by no text", "the TypeScript engine keys its scope by the value itself"));
-            };
+            // `env.declare(name, binding)`: a `Map` keyed by the value as it
+            // is, so a key that is no text is one no name ever reads.
+            let Js::String(key) = key else { continue };
+            // The later pair wins; one bound to nothing reads as not in scope.
+            declared.retain(|(k, _)| *k != key);
             let binding = match held {
-                // A name bound to nothing reads as not in scope.
                 held if !held.truthy() => continue,
                 Js::Object(dict) => Binding::Shaped(dict),
                 Js::Record(record) => (*record).clone(),
                 _ => Binding::Shaped(Rc::new(crate::js::JsObject::new())),
             };
-            declared.retain(|(k, _)| *k != key);
             declared.push((key, binding));
         }
         for (key, binding) in declared {
             at.declare(key, binding);
         }
-        if !matches!(record::get(walk, "mapping").map_err(eval)?, Js::Undefined) {
-            return Err(Failure::unreproduced("a walk a value holds as data with a mapping", "the TypeScript engine builds the nodes the data writes"));
-        }
+        let mapping = record::get(walk, "mapping").map_err(eval)?;
+        let mapped = !matches!(mapping, Js::Undefined);
+        // `probePathHead`: the root's spelling, then the hops as a template
+        // literal writes them.
         let head = record::get(walk, "head").map_err(eval)?;
         let root = record::get(&head, "root").map_err(eval)?;
-        let Js::String(hops_raw) = record::get(&head, "hopsRaw").map_err(eval)? else {
-            return Err(Failure::unreproduced("a walk a value holds as data whose hops are no text", "the TypeScript engine parses whatever the data holds"));
-        };
-        let root = match &root {
-            Js::Undefined => None,
-            root => match (record::get(root, "kind").map_err(eval)?, record::get(root, "name").map_err(eval)?) {
-                (Js::String(kind), Js::String(name)) if kind == "name" => Some(movement_parser::ast::PathRoot::Name { name }),
-                _ => return Err(Failure::unreproduced("a walk a value holds as data rooted at an expression", "the TypeScript engine evaluates the expression the data writes")),
+        enum Root {
+            Name(String),
+            Expression(Js),
+        }
+        let (probe_root, root) = match &root {
+            Js::Undefined => (String::new(), None),
+            root => match record::get(root, "kind").map_err(eval)? {
+                Js::String(kind) if kind == "name" => match record::get(root, "name").map_err(eval)? {
+                    Js::String(name) => (crate::write::spell_name(&name), Some(Root::Name(name))),
+                    _ => return Err(Stop::Thrown(Failure::unreproduced("a walk a value holds as data rooted at a name that is no text", "the TypeScript engine spells whatever the data holds"))),
+                },
+                _ => ("__movement_expression_root__".to_string(), Some(Root::Expression(record::get(root, "expr").map_err(eval)?))),
             },
         };
+        let hops_raw = record::get(&head, "hopsRaw").map_err(eval)?.to_js_string();
+        let steps = crate::traverse::head_probe(&probe_root, &hops_raw, if mapped { &[] } else { extra }).map_err(Stop::Thrown)?;
+        let Some(root) = root else {
+            return Err(Stop::Thrown(Failure::unsupported("rootless block heads (relative traversal)", "root the head at a named binding")));
+        };
+        let (binding, root) = match root {
+            Root::Name(name) => (at.resolve(&name), crate::write::spell_name(&name)),
+            // `bindSlotValue(root.expr)` reads the slot's source text first.
+            Root::Expression(expr) => {
+                let raw = record::get(&expr, "raw").map_err(eval)?;
+                return Err(if raw.is_nullish() {
+                    eval(record::type_error(&format!("Cannot read properties of {} (reading 'trim')", raw.to_js_string())))
+                } else {
+                    Stop::Thrown(Failure::unreproduced("a walk a value holds as data rooted at an expression", "the TypeScript engine evaluates the expression the data writes"))
+                });
+            }
+        };
+        let binding = binding
+            .ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{root}' is not in scope — the checker should have caught this"))))?;
         let origin = movement_parser::ast::Loc { line: 0, col: 0 };
-        let head = movement_parser::ast::PathHead { root, hops_raw, span: movement_parser::ast::Span { start: origin, end: origin } };
-        let landings: Vec<Binding> = self.head_iterations(&head, &at).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect();
-        if steps.is_empty() {
-            return Ok(landings);
+        let span = crate::env::js_of_serialized(&movement_parser::ast::Span { start: origin, end: origin });
+        let iterations = self.head_iterations_from(binding, &root, steps.as_deref(), &at, &span).await?;
+        if !mapped || iterations.is_empty() {
+            return Ok(iterations);
         }
-        self.walk_meta(landings, steps, name, scope, span).await
+        // `mapIterations` → `synthesiseNode(mapping, …)`, which reads the
+        // literal's `graph`, then iterates its entries.
+        if !matches!(record::get(&mapping, "graph").map_err(eval)?, Js::Undefined) {
+            return Err(Stop::Thrown(Failure::unreproduced("a walk a value holds as data with a mapping that builds a graph", "the TypeScript engine builds the graph the data writes")));
+        }
+        Err(match record::get(&mapping, "entries").map_err(eval)? {
+            Js::Array(_) | Js::String(_) => Stop::Thrown(Failure::unreproduced("a walk a value holds as data with a mapping", "the TypeScript engine builds the nodes the data writes")),
+            _ => eval(record::type_error("literal.entries is not iterable")),
+        })
+    }
+
+    /// `for (const landing of edge.landings)`: what a landed edge a dict
+    /// holds hands the walk, a TypeError where it is not iterable.
+    pub(crate) fn iterated_landings(&self, landings: Js) -> Result<Vec<Binding>, Failure> {
+        match landings {
+            Js::Array(_) | Js::String(_) => self.raw_landings(landings, ""),
+            other => Err(Failure::of_eval(record::type_error(&format!("{} is not iterable (cannot read property Symbol(Symbol.iterator))", typed(&other))), "")),
+        }
     }
 
     /// What a dict's `landings` hands a walk as its records: each member as
@@ -1079,7 +1122,7 @@ impl Run<'_> {
                 }
                 // `resolveDeferred` runs the walk: its captured scope first.
                 "lazyWalk" => {
-                    let reached = self.shaped_walk(&record::get(&this, "walk").map_err(eval)?, steps, name, scope, span).await?;
+                    let reached = self.shaped_walk(&record::get(&this, "walk").map_err(eval)?, steps).await?;
                     if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
                         let found = self.exists(hops, where_, reached, scope, span).await?;
                         return Ok(Evaluated { value: Js::Bool(found), prov: none() });
@@ -1279,7 +1322,7 @@ fn shaped_callback_field(this: &Js, field: &str) -> Result<Js, crate::eval::Eval
 }
 
 /// `<variable>.edges.get(…)` on a dict, whose `edges` is no `Map`.
-fn edges_get(this: &Js, variable: &str) -> crate::eval::EvalError {
+pub(crate) fn edges_get(this: &Js, variable: &str) -> crate::eval::EvalError {
     match record::get(this, "edges") {
         Err(error) => error,
         Ok(edges) if edges.is_nullish() => record::type_error(&format!("Cannot read properties of {} (reading 'get')", edges.to_js_string())),

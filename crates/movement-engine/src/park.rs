@@ -164,6 +164,11 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             ("targetType", Js::str(handle.target_type.clone())),
             ("graph", object_of(vec![kind("instance"), ("instance", identity(&handle.graph))])),
         ]),
+        // `holdsRecords` recurses through a value that holds itself until
+        // V8's stack runs out: the park fails as the TypeScript's does.
+        Binding::Value(value) if crate::js::circular(&value.value).is_some() => {
+            return Err(Failure::Engine { class: crate::eval::ErrorClass::RangeError, message: crate::js::stack_overflow().message });
+        }
         // A value that holds a record anywhere is written down to its
         // records (`serializeValue`).
         Binding::Value(value) if crate::record::holds_records(&value.value) => {
@@ -349,6 +354,9 @@ fn serialize_shaped(run: &Run<'_>, dict: &Rc<JsObject>, park: &mut ParkWriter) -
         "resource" => object_of(vec![kind("resource"), ("resource", at("resource")?)]),
         "value" => {
             let value = at("value")?;
+            if crate::js::circular(&value).is_some() {
+                return Err(Failure::Engine { class: crate::eval::ErrorClass::RangeError, message: crate::js::stack_overflow().message });
+            }
             let provenance = at("provenance")?;
             let many = matches!(at("many")?, Js::Bool(true));
             let mut out = if crate::record::holds_records(&value) {
@@ -1074,6 +1082,7 @@ mod tests {
             instance_name: "kg".into(),
             instance_label: Js::str("kg"),
             schema: None,
+            schema_fault: None,
             start_surface_type: None,
             incoming: false,
             edge_properties: false,

@@ -138,6 +138,9 @@ pub fn bind_value(value: Js, trail: Option<crate::env::Trail>, many: bool) -> Bi
 /// through its lists and maps; a park writes a value holding one as the
 /// recursive `recordValue` descriptor, and everything else as data.
 pub fn holds_records(value: &Js) -> bool {
+    if js::circular(value).is_some() {
+        return holds_records(&js::acyclic(value));
+    }
     binding_of(value).is_some()
         || match value {
             Js::Array(list) => list.items().iter().any(holds_records),
@@ -452,6 +455,12 @@ pub fn project_object(object: &JsObject, field: &str) -> Js {
 /// data — its fields, and one key per edge it carries holding what landed
 /// there as a list.
 pub fn plain_value_of(value: &Js) -> Result<Js, EvalError> {
+    // `plainValueOf` recurses through a list that holds itself until V8's
+    // stack runs out.
+    if js::circular(value).is_some() {
+        let thrown = js::stack_overflow();
+        return Err(EvalError::Thrown { class: ErrorClass::RangeError, message: thrown.message });
+    }
     plain_value(value, &mut Vec::new())
 }
 
