@@ -44,6 +44,7 @@ export const HANDBOOK_POINTER_BY_CODE: Readonly<Record<string, HandbookPointer>>
   MOV_LINK_MATCH_BODY_RETIRED: HANDBOOK_POINTERS.match,
   MOV_HANDLE_FIELD_RETIRED: HANDBOOK_POINTERS.writeOutcome,
   MOV_OLD_EDGE_NOT_A_WRITE: HANDBOOK_POINTERS.writeOutcome,
+  MOV_ARTIFICIAL_EDGE_UNKNOWN: HANDBOOK_POINTERS.writeOutcome,
 };
 
 /** `diagnostic`, its message ending in the handbook pointer its code has (if any). */
