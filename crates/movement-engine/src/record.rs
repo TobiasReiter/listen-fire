@@ -56,7 +56,9 @@ pub fn kind_of(binding: &Binding) -> String {
 fn shaped_kind(dict: &JsObject) -> String {
     match dict.get("kind") {
         Some(Js::String(kind)) => kind.clone(),
-        _ => unreachable!("a shaped binding has a text kind"),
+        // A walk's member the TypeScript switches on by `kind` without
+        // asking `bindingOf`: a kind that is no text names nothing.
+        _ => "undefined".into(),
     }
 }
 
@@ -137,7 +139,7 @@ pub fn holds_records(value: &Js) -> bool {
     binding_of(value).is_some()
         || match value {
             Js::Array(list) => list.items.iter().any(holds_records),
-            Js::Object(dict) => dict.entries().iter().any(|(_, item)| holds_records(item)),
+            Js::Object(dict) if dict.proto.is_none() => dict.entries().iter().any(|(_, item)| holds_records(item)),
             _ => false,
         }
 }

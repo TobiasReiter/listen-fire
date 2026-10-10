@@ -92,11 +92,38 @@ pub fn prototype_member(name: &str, of: &Rc<JsObject>) -> Js {
 /// `object[key]` on a plain object: its own entry, else what its prototype
 /// holds under that name, else `undefined`.
 pub fn object_property(object: &Rc<JsObject>, key: &str) -> Js {
-    match object.get(key) {
-        Some(value) => value.clone(),
-        None if is_object_prototype_name(key) => prototype_member(key, object),
-        None => Js::Undefined,
+    match (object.get(key), &object.proto) {
+        (Some(value), _) => value.clone(),
+        (None, Some(proto)) if key == "__proto__" => proto.clone(),
+        (None, Some(proto)) => inherited(proto, key),
+        (None, None) if is_object_prototype_name(key) => prototype_member(key, object),
+        (None, None) => Js::Undefined,
     }
+}
+
+/// `object[key]` found on the prototype `proto` an object was given: a
+/// list's member or length, an object's (and so on up its chain), a
+/// record's own key, else `Object.prototype`'s member.
+pub(crate) fn inherited(proto: &Js, key: &str) -> Js {
+    let base = || if is_object_prototype_name(key) { prototype_member(key, &OBJECT_PROTOTYPE.with(Rc::clone)) } else { Js::Undefined };
+    match proto {
+        Js::Object(object) => object_property(object, key),
+        Js::Array(list) if key == "length" => Js::Number(list.items.len() as f64),
+        Js::Array(list) => match array_index(key).and_then(|i| list.items.get(i as usize)) {
+            Some(item) => item.clone(),
+            None => base(),
+        },
+        Js::Record(record) => match crate::record::own_property(record, key) {
+            Ok(Js::Null) | Err(_) => base(),
+            Ok(found) => found,
+        },
+        _ => base(),
+    }
+}
+
+/// `isDictValue`: a plain keyed object, its prototype `Object.prototype`.
+pub fn is_dict(value: &Js) -> bool {
+    matches!(value, Js::Object(object) if object.proto.is_none())
 }
 
 /// `object[key]` on a plain object that is not `Object.prototype` itself.
@@ -122,6 +149,10 @@ pub struct JsArray {
 pub struct JsObject {
     entries: Vec<(String, Js)>,
     pub origin: Option<u32>,
+    /// What `object.__proto__ = …` made its prototype (a GROUPBY or KEYBY
+    /// filing a member under the key `__proto__`); `None` is
+    /// `Object.prototype`. An object with one is no dict (`isDictValue`).
+    pub proto: Option<Js>,
 }
 
 impl JsObject {
@@ -135,7 +166,7 @@ impl JsObject {
 
     /// A fresh object with `other`'s own entries (`{...other}`).
     pub fn clone_of(other: &JsObject) -> JsObject {
-        JsObject { entries: other.entries.clone(), origin: None }
+        JsObject { entries: other.entries.clone(), origin: None, proto: None }
     }
 
     pub fn get(&self, key: &str) -> Option<&Js> {
@@ -291,6 +322,11 @@ impl Thrown {
 /// `toLocaleString` makes of `this.toString()`: one that calls itself runs
 /// out of stack, as V8's does.
 fn object_to_primitive(object: &Rc<JsObject>, depth: usize) -> Result<Js, Thrown> {
+    // A list up the prototype chain answers `toString` with
+    // `Array.prototype.toString`: a join over `this`.
+    if array_up_chain(object) {
+        return join_of(object).map(Js::String);
+    }
     for name in ["toString", "valueOf"] {
         let Js::Function(method) = object_property(object, name) else { continue };
         if let Some(primitive) = call_on(method, object, depth)? {
@@ -298,6 +334,31 @@ fn object_to_primitive(object: &Rc<JsObject>, depth: usize) -> Result<Js, Thrown
         }
     }
     Err(Thrown::type_error("Cannot convert object to primitive value"))
+}
+
+/// Whether `toString` reaches a list's before any object owns one.
+fn array_up_chain(object: &Rc<JsObject>) -> bool {
+    if object.get("toString").is_some() {
+        return false;
+    }
+    match &object.proto {
+        Some(Js::Array(_)) => true,
+        Some(Js::Object(proto)) => array_up_chain(proto),
+        _ => false,
+    }
+}
+
+/// `Array.prototype.join.call(object, ",")`: `this.length` members read
+/// through the chain, an absent one empty.
+fn join_of(object: &Rc<JsObject>) -> Result<String, Thrown> {
+    let length = object_property(object, "length").to_number();
+    let length = if length.is_nan() || length <= 0.0 { 0 } else { length.min(1e7) as usize };
+    let mut parts = Vec::with_capacity(length);
+    for i in 0..length {
+        let item = object_property(object, &i.to_string());
+        parts.push(if item.is_nullish() { String::new() } else { item.to_text()? });
+    }
+    Ok(parts.join(","))
 }
 
 /// A built-in called with `this` the object and no argument: the primitive

@@ -295,7 +295,7 @@ console.log(`regex.json: ${regexCases.length} cases`);
 (async () => {
   await writeOrderLimitOracle(mulberry32(5));
   await writeExtractionOracle(mulberry32(20261009));
-  await writeRecordsOracle(mulberry32(20261010), wire, (name, text) => writeFileSync(path.join(__dirname, name), text));
+  await writeRecordsOracle(mulberry32(20261010), (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;

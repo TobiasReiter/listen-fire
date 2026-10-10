@@ -293,6 +293,13 @@ export class WireOut {
           if (!Array.isArray(entry) || typeof entry[0] !== 'string') throw new RustShimError('a wire entry is [key, value]');
           object[entry[0]] = this.read(entry[1], made);
         }
+        // `["o", id, entries, prototype]`: what a GROUPBY or KEYBY filing
+        // under `__proto__` made the object's prototype.
+        if (wire.length > 3) {
+          const proto = this.read(wire[3], made);
+          if (typeof proto !== 'object' && typeof proto !== 'function') throw new RustShimError('a wire prototype is an object');
+          Object.setPrototypeOf(object, proto);
+        }
         return object;
       }
       default:

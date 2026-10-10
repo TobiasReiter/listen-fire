@@ -311,9 +311,20 @@ impl Encoder<'_> {
             },
             Js::Object(object) => match object.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
-                None => self.shared(Rc::as_ptr(object) as usize, |this| {
-                    json!(object.entries().iter().map(|(k, v)| json!([k, this.value(v)])).collect::<Vec<_>>())
-                }, "o"),
+                None => {
+                    let mut written = self.shared(Rc::as_ptr(object) as usize, |this| {
+                        json!(object.entries().iter().map(|(k, v)| json!([k, this.value(v)])).collect::<Vec<_>>())
+                    }, "o");
+                    // A prototype a filing gave it, which the host's object
+                    // is given too: `["o", id, entries, prototype]`.
+                    if let (Some(proto), Some(items)) = (&object.proto, written.as_array_mut())
+                        && items.first() == Some(&json!("o"))
+                    {
+                        let proto = self.value(proto);
+                        items.push(proto);
+                    }
+                    written
+                }
             },
         }
     }

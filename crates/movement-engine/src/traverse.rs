@@ -421,6 +421,9 @@ impl Run<'_> {
                             let binding = Binding::Value(crate::env::ValueBinding { value, trail: None, many: false });
                             self.head_iterations_from(binding, root, step, scope, span).await
                         }
+                        // No checked program reaches here: a dict comes only from
+                        // `json`, and the checker refuses a head rooted at json
+                        // (MOV_HEAD_NOT_A_POSITION).
                         kind if crate::record::BINDING_KINDS.contains(&kind) => Err(Stop::Thrown(Failure::unreproduced(
                             &format!("a block head rooted at '{root}', a value shaped like {}", crate::record::describe_kind(kind)),
                             "a dict whose `kind` names a binding's is a record to the TypeScript engine",

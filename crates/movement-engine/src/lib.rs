@@ -37,6 +37,7 @@ pub mod park;
 pub mod plugin;
 pub mod program;
 pub mod reading;
+mod shaped;
 pub mod record;
 pub mod run;
 pub mod stdlib;

@@ -323,9 +323,23 @@ impl Run<'_> {
                             format!("'{spelling}' files each member under a text key, and this one answered {what} — the checker should have caught this"),
                         )));
                     };
-                    // `filed['__proto__'] = …` sets the answer's prototype.
+                    // `filed['__proto__']` is the answer's prototype: reading it
+                    // finds `Object.prototype` (or what a filing put there), and
+                    // assigning it sets the prototype — to a member that is an
+                    // object, and to nothing for one that is not.
                     if key == "__proto__" {
-                        return Err(Stop::Thrown(Failure::unreproduced(&format!("'{spelling}' filing a member under the key '__proto__'"), "it sets the answer's prototype")));
+                        if op == CollectionOp::Keyby {
+                            if matches!(member, Js::Object(_) | Js::Array(_) | Js::Record(_) | Js::Function(_)) {
+                                filed.proto = Some(member.clone());
+                            }
+                            continue;
+                        }
+                        let group = match &filed.proto {
+                            Some(Js::Array(list)) => list.items.iter().cloned().chain(std::iter::once(member.clone())).collect(),
+                            _ => vec![member.clone()],
+                        };
+                        filed.proto = Some(Js::array(group));
+                        continue;
                     }
                     if op == CollectionOp::Keyby {
                         if filed.get(key).is_some() {
@@ -343,7 +357,18 @@ impl Run<'_> {
                             items.push(member.clone());
                             items
                         }
-                        _ => vec![member.clone()],
+                        Some(_) => vec![member.clone()],
+                        // A key the answer does not own reads through its
+                        // prototype: a list found there is pushed to in place.
+                        None => match filed.proto.as_ref().map(|proto| crate::js::inherited(proto, key)) {
+                            Some(Js::Array(_)) => {
+                                return Err(Stop::Thrown(Failure::unreproduced(
+                                    &format!("'{spelling}' filing a member under '{key}', which the answer's prototype holds as a list"),
+                                    "the TypeScript engine pushes it onto that list",
+                                )));
+                            }
+                            _ => vec![member.clone()],
+                        },
                     };
                     filed.set(key.clone(), Js::array(group));
                 }

@@ -2365,6 +2365,13 @@ impl Names<'_> {
             if !self.values.contains(&spread.source) && !copied(&spread.source) {
                 return refuse("node_spread_source");
             }
+            // A map spread into a graph files a nested map (or a list of
+            // them) as a child (`asMapList`), and the TypeScript takes a
+            // record's binding object for a map too: its internals would
+            // become the child's fields.
+            if self.values.contains(&spread.source) && matches!(self.holder(&spread.source), Holder::Map { .. } | Holder::List | Holder::Other) {
+                return refuse("node_spread_record");
+            }
         }
         for entry in &literal.entries {
             match entry {
@@ -2527,7 +2534,18 @@ impl Names<'_> {
             Expression::Static { .. } => Ok(()),
             Expression::At { expression, index } => {
                 self.walk(expression, scoped)?;
-                self.walk(index, scoped)
+                self.walk(index, scoped)?;
+                // `AT` over a record reads the binding object's own keys
+                // (`isDictValue`): its internals, past the few this engine
+                // holds as the TypeScript holds them.
+                let holder = |name: &str| self.holder(name);
+                let record = holds_record(expression, &holder, scoped) && matches!(value_holder(expression, &holder), Holder::Record | Holder::Other);
+                let plain = match index.as_ref() {
+                    Expression::Static { value: StaticValue::String(key) } => !INTERNAL_KEYS.contains(&key.as_str()),
+                    Expression::Static { value: StaticValue::Number(_) } => true,
+                    _ => false,
+                };
+                if record && !plain { refuse("at_record_key") } else { Ok(()) }
             }
             Expression::List { elements } => elements.iter().try_for_each(|element| match element {
                 ListElement::Expression(e) => self.walk(e, scoped),
@@ -2869,6 +2887,10 @@ fn field_read(terminal: &Expression) -> bool {
         _ => false,
     }
 }
+
+/// The keys of a binding object that hold the TypeScript engine's own
+/// currency (a read seam, provenance objects, `Map`s): `AT` hands them out.
+const INTERNAL_KEYS: [&str; 12] = ["provenance", "graph", "read", "fields", "fieldProvenance", "edges", "emission", "walk", "constructionConfig", "schema", "declaration", "fileEnv"];
 
 /// The built-ins whose reading this engine may hand back to the TypeScript
 /// member (`builtins.function`) on what their arguments hold: a date V8
@@ -3534,6 +3556,27 @@ mod tests {
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  found = extract from [co] {\n    name: \"the company\"\n  }", "extract_from_record"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
+        }
+    }
+
+    /// `AT` over a record reads the binding object's own keys, and a map
+    /// spread into a graph files a record it holds as a child map
+    /// (`asMapList`): where either would hand out the TypeScript engine's
+    /// own currency, the program is refused by name.
+    #[test]
+    fn refuses_a_reading_of_a_binding_objects_internals_by_name() {
+        for body in [
+            "  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  a = AT(top, \"kind\")\n  b = AT(rows, 0)\n  held = { k: \"v\" }\n  c = AT(held, \"k\")",
+            "  held = { k: \"v\" }\n  g = graph { ...held }",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
+        }
+        for (body, reason) in [
+            ("  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  a = AT(top, \"read\")", "at_record_key"),
+            ("  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  key = \"kind\"\n  a = AT(top, key)", "at_record_key"),
+            ("  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }\n  g = graph { ...held }", "node_spread_record"),
+        ] {
+            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
     }
 
