@@ -543,7 +543,6 @@ fn null_value() -> Binding {
     Binding::Value(ValueBinding { value: Js::Null, trail: Some(Trail::default()), many: false })
 }
 
-
 /// `untilConditionMet`: identity against true, with a stringified fallback
 /// for sources that hand booleans back as `"true"`, never against a node.
 fn until_met(value: &Js) -> bool {

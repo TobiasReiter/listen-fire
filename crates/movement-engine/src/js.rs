@@ -809,11 +809,9 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
         // (`try_json_stringify`), and written as `{}` for the writers no
         // record reaches (admission keeps them from a `from` datum; the rest
         // read one down to its fields first).
-        Js::Record(record) => match record.as_ref() {
-            data if crate::record::data_object(data).is_some() => {
-                write_json(&crate::record::data_object(data).expect("tested"), indent, depth, out, held);
-            }
-            crate::bindings::Binding::Positions(landings) => {
+        Js::Record(record) => match (crate::record::data_object(record), record.as_ref()) {
+            (Some(data), _) => write_json(&data, indent, depth, out, held),
+            (None, crate::bindings::Binding::Positions(landings)) => {
                 let landings = Js::array(landings.iter().cloned().map(crate::record::held).collect());
                 let mut object = JsObject::new();
                 object.set("kind".into(), Js::str("positions"));
@@ -825,7 +823,7 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
             // `plugin_arg_record`, `builtin_arg_record`, …), and the checked
             // writers (`try_json_stringify`) refuse one. One that still
             // arrives here writes `{}`, never a binding object of its own.
-            other => {
+            (None, other) => {
                 held.get_or_insert_with(|| crate::record::kind_of(other));
                 out.push_str("{}");
             }

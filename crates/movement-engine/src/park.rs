@@ -300,7 +300,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             }
             let from_source = run.source.borrow().as_ref().is_some_and(|source| Rc::ptr_eq(&source.read, &landed.read));
             if !from_source {
-                descriptor.push(("read", object_of(vec![("instanceName", landed.read.instance_label.clone())])));
+                descriptor.push(("read", object_of(vec![("instanceName", Js::str(landed.read.instance_name.clone()))])));
             }
             object_of(descriptor)
         }
@@ -762,9 +762,7 @@ mod tests {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },
             adapter_type: "graph".into(),
             instance_name: "kg".into(),
-            instance_label: Js::str("kg"),
             schema: None,
-            schema_fault: None,
             start_surface_type: None,
             incoming: false,
             edge_properties: false,

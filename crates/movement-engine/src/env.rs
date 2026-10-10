@@ -259,8 +259,9 @@ pub fn encode_plain(value: &Js) -> Json {
 /// back-reference only within it), so answers decode in whatever order the
 /// engine reads them and an object re-sent after a mutation reads as it now
 /// is; one re-sent unchanged, under the id it was first sent under, decodes
-/// as the very object held. Answers are data, as the event is: a dict shaped
-/// like a binding is one `bindingOf` reads where a value is bound. A request hands a sent one back as itself (`["i", id]`), so an object
+/// as the very object held. Answers are data, as the event is, whatever keys
+/// they carry: only `["x", id]` names a record (one this wire handed out). A
+/// request hands a sent one back as itself (`["i", id]`), so an object
 /// an adapter answered reaches the next host call as that very object, as it
 /// does in the TypeScript engine; anything this engine built is written out.
 #[derive(Default)]
@@ -357,30 +358,32 @@ impl Encoder<'_> {
             // `Object.prototype[name]`).
             Js::Function(function) => json!(["f", function.0]),
             Js::Object(object) if crate::js::is_object_prototype(object) => json!(["p"]),
-            // A record whose binding object is data crosses tagged, by its
-            // number, with that data for the host to build it from; any
-            // other never crosses: a request holding one is never made
-            // (`HeldRecord`), and the shim refuses its tag in a result.
-            Js::Record(record) if crate::record::data_object(record).is_some() => {
-                let records = match self.records.as_deref_mut() {
-                    Some(records) => records,
-                    None => &mut self.own_records,
-                };
-                let id = match records.iter().position(|held| Rc::ptr_eq(held, record)) {
-                    Some(id) => id,
-                    None => {
-                        records.push(record.clone());
-                        records.len() - 1
-                    }
-                };
-                let descriptor = crate::record::data_object(record).expect("tested");
-                json!(["x", id, self.value(&descriptor)])
-            }
-            Js::Record(record) => {
-                let kind = crate::record::kind_of(record);
-                self.record.get_or_insert(kind.clone());
-                json!(["x", kind])
-            }
+            // The event and a callback, the records the shim rebuilds, cross
+            // tagged, by their number, with their data for the host to build
+            // them from; any other never crosses: a request holding one is
+            // never made (`HeldRecord`, which names it), and the shim refuses
+            // its tag in a result.
+            Js::Record(record) => match (record.as_ref(), crate::record::data_object(record)) {
+                (crate::bindings::Binding::Event | crate::bindings::Binding::Callback(_), Some(descriptor)) => {
+                    let records = match self.records.as_deref_mut() {
+                        Some(records) => records,
+                        None => &mut self.own_records,
+                    };
+                    let id = match records.iter().position(|held| Rc::ptr_eq(held, record)) {
+                        Some(id) => id,
+                        None => {
+                            records.push(record.clone());
+                            records.len() - 1
+                        }
+                    };
+                    json!(["x", id, self.value(&descriptor)])
+                }
+                _ => {
+                    let kind = crate::record::kind_of(record);
+                    self.record.get_or_insert(kind.clone());
+                    json!(["x", kind])
+                }
+            },
             Js::Array(_) | Js::Object(_) if self.sent_as(value).is_some() => json!(["i", self.sent_as(value)]),
             Js::Array(array) => match array.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
@@ -456,13 +459,13 @@ pub fn json_round_trip(value: &Js) -> Js {
         }
         // The binding object's JSON, where this engine writes it as the
         // TypeScript does (`try_json_stringify` names the rest).
-        Js::Record(record) => match record.as_ref() {
-            data if crate::record::data_object(data).is_some() => json_round_trip(&crate::record::data_object(data).expect("tested")),
-            crate::bindings::Binding::Positions(landings) => object_of(vec![
+        Js::Record(record) => match (crate::record::data_object(record), record.as_ref()) {
+            (Some(data), _) => json_round_trip(&data),
+            (None, crate::bindings::Binding::Positions(landings)) => object_of(vec![
                 ("kind", Js::str("positions")),
                 ("landings", json_round_trip(&Js::array(landings.iter().cloned().map(crate::record::held).collect()))),
             ]),
-            _ => Js::object(JsObject::new()),
+            (None, _) => Js::object(JsObject::new()),
         },
         other => other.clone(),
     }
@@ -483,11 +486,9 @@ fn json_of_tree(value: &Js) -> Json {
         // A callback's, a shape position's or a resource's binding object
         // is data, written as it is; any other record is read down to its
         // fields wherever one is written out.
-        Js::Record(record) => match record.as_ref() {
-            crate::bindings::Binding::Callback(_) | crate::bindings::Binding::ShapePosition(_) | crate::bindings::Binding::Resource(_) => {
-                json_of_tree(&crate::record::data_object(record).expect("data"))
-            }
-            _ => Json::Object(Map::new()),
+        Js::Record(record) => match (record.as_ref(), crate::record::data_object(record)) {
+            (crate::bindings::Binding::Event, _) | (_, None) => Json::Object(Map::new()),
+            (_, Some(data)) => json_of_tree(&data),
         },
         Js::Bool(b) => json!(b),
         Js::Number(n) if !n.is_finite() => Json::Null,

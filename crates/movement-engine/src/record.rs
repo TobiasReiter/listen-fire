@@ -95,8 +95,9 @@ pub fn held(binding: Binding) -> Js {
 
 /// The binding object a record IS to the TypeScript engine, for the kinds
 /// whose object holds data only (the event, a callback, a shape position, a
-/// resource): what a JSON writer prints and the descriptor a host is handed
-/// (`["x", id, descriptor]` on the segment's wire). None for a kind whose
+/// resource): what a JSON writer prints, and, for the event and a callback,
+/// the descriptor a host is handed (`["x", id, descriptor]` on the
+/// segment's wire). None for a kind whose
 /// object holds what only an engine has (a read seam, a schema, code).
 pub fn data_object(binding: &Binding) -> Option<Js> {
     let kind = ("kind", Js::str(kind_of(binding)));
@@ -113,27 +114,6 @@ pub fn data_object(binding: &Binding) -> Option<Js> {
         Binding::Resource(resource) => vec![kind, ("resource", (**resource).clone())],
         _ => return None,
     }))
-}
-
-/// A record from the data object `data_object` wrote: the very kinds it
-/// writes, none other.
-pub fn of_data_object(object: &Js) -> Option<Binding> {
-    let at = |key: &str| match object {
-        Js::Object(o) => o.get(key).cloned().unwrap_or(Js::Undefined),
-        _ => Js::Undefined,
-    };
-    Some(match at("kind") {
-        Js::String(kind) if kind == "event" => Binding::Event,
-        Js::String(kind) if kind == "callback" => Binding::Callback(Rc::new(crate::bindings::Callback { callback_id: at("callbackId"), url: at("url"), params: at("params") })),
-        Js::String(kind) if kind == "shapePosition" => Binding::ShapePosition(Rc::new(crate::bindings::ShapePosition {
-            shape: at("shape"),
-            node: at("node"),
-            fields: at("fields"),
-            field_provenance: at("fieldProvenance"),
-        })),
-        Js::String(kind) if kind == "resource" => Binding::Resource(Rc::new(at("resource"))),
-        _ => return None,
-    })
 }
 
 /// `bindValue`: a record binds as the record it is, anything else on the

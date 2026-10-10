@@ -459,7 +459,7 @@ impl Run<'_> {
                 let mut next = Vec::new();
                 for cursor in &cursors {
                     let gate = match cursor {
-                        Binding::Landed(landed) => crate::traverse::member_gate(step, &landed.position, &landed.read)?.map(|g| (g, landed.read.clone())),
+                        Binding::Landed(landed) => crate::traverse::member_gate(step, &landed.position, &landed.read).map(|g| (g, landed.read.clone())),
                         _ => None,
                     };
                     let mut kept = Vec::new();

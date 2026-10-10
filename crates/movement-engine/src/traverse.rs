@@ -72,13 +72,9 @@ pub struct Read {
     pub instance: Instance,
     /// The live adapter's own `adapterType`.
     pub adapter_type: String,
+    /// The instance's name, which a read's origins cite.
     pub instance_name: String,
-    /// The `instanceName` a read's origins cite, as the binding holds it (a
-    /// dict's may be no text).
-    pub instance_label: Js,
     pub schema: Option<InstanceSchema>,
-    /// An instance dict's own schema that holds no `collections` table.
-    pub schema_fault: Option<SchemaFault>,
     /// The movement parameter's declared position, which names a typeless
     /// event root (the event's source only).
     pub start_surface_type: Option<String>,
@@ -95,18 +91,6 @@ pub struct Read {
     pub raw: bool,
 }
 
-/// An instance dict's own schema with no `collections` table, as the reads
-/// through it meet it.
-#[derive(Debug, Clone)]
-pub struct SchemaFault {
-    /// What its `collections` reads as, which the read wrapper indexes after
-    /// a collection scan (`schema?.collections[read.fieldId]`).
-    pub collections: Js,
-    /// The schema itself, which a hop's member gate reads where it names
-    /// selected members (`hopSelection`).
-    pub schema: Js,
-}
-
 impl Read {
     /// What `adapters.resolve` answered, as a read.
     pub fn of_resolved(resolved: &Json, instance: Instance, binding: &InstanceBinding, start_surface_type: Option<String>) -> Read {
@@ -117,9 +101,7 @@ impl Read {
             adapter_type: resolved.get("adapterType").and_then(Json::as_str).unwrap_or(&binding.adapter_slug).to_string(),
             instance,
             instance_name: binding.name.clone(),
-            instance_label: Js::str(binding.name.clone()),
             schema: binding.schema.clone(),
-            schema_fault: None,
             start_surface_type,
             incoming: flag("incoming"),
             edge_properties: flag("edgeProperties"),
@@ -335,116 +317,8 @@ pub(crate) struct MemberGate {
 
 /// `hopMemberGate`: a record of another member than the one a WHERE
 /// narrowed the hop to is not a match.
-pub(crate) fn member_gate(step: &EdgeStep, origin: &Js, read: &Read) -> Result<Option<MemberGate>, Failure> {
-    let Some(filter) = step.expression_filter.as_deref() else { return Ok(None) };
-    if let Some(fault) = &read.schema_fault {
-        return faulted_selection(fault, filter, step, origin).map(|()| None);
-    }
-    Ok(selection(filter, step, origin, read))
-}
-
-/// `hopSelection` over an instance dict's own schema with no `collections`,
-/// read off the data: a gate only where the schema's `selectedMembers` holds
-/// an entry for the hop's declared target and WHERE.
-fn faulted_selection(fault: &SchemaFault, filter: &Expression, step: &EdgeStep, origin: &Js) -> Result<(), Failure> {
-    let selected = fault.get(&fault.schema, "selectedMembers")?;
-    if matches!(selected, Js::Undefined) {
-        return Ok(());
-    }
-    let edge = &step.edge_type_id;
-    let declared = match record_type(origin) {
-        Some(from) => match fault.get(&fault.get(&fault.schema, "positions")?, &from)? {
-            position if position.is_nullish() => Js::Undefined,
-            position => match fault.get(&fault.get(&position, "edges")?, edge)? {
-                found if found.is_nullish() => Js::Undefined,
-                found => fault.get(&found, "target")?,
-            },
-        },
-        None => Js::Undefined,
-    };
-    let declared = match declared {
-        declared if declared.is_nullish() => {
-            if fault.collections.is_nullish() {
-                return Err(fault_type_error(&format!("Cannot read properties of {} (reading '{edge}')", fault.collections.to_js_string())));
-            }
-            return Ok(());
-        }
-        Js::String(declared) => declared,
-        _ => return Err(refused_gate()),
-    };
-    let filter = serde_json::to_value(filter).expect("an expression is JSON");
-    let key = movement_parser::catalog::helpers::refinement_key(&declared, &filter);
-    match fault.get(&selected, &key)? {
-        Js::Undefined => Ok(()),
-        _ => Err(refused_gate()),
-    }
-}
-
-fn refused_gate() -> Failure {
-    Failure::unreproduced(
-        "a WHERE narrowing a hop to a member through a value shaped like a constructed adapter instance whose schema has no collections",
-        "the TypeScript engine stamps the members off whatever the dict holds",
-    )
-}
-
-fn fault_type_error(message: &str) -> Failure {
-    Failure::of_eval(crate::record::type_error(message), "")
-}
-
-impl SchemaFault {
-    fn get(&self, value: &Js, key: &str) -> Result<Js, Failure> {
-        crate::record::get(value, key).map_err(|e| Failure::of_eval(e, ""))
-    }
-
-    /// `stampedPositionName`: the record's own type where the schema's
-    /// positions name it.
-    fn stamped(&self, position: &Js) -> Result<Option<String>, Failure> {
-        let Some(concrete) = record_type(position) else { return Ok(None) };
-        let named = self.get(&self.get(&self.schema, "positions")?, &concrete)?;
-        Ok((!matches!(named, Js::Undefined)).then_some(concrete))
-    }
-
-    /// The read wrapper's `landedSurfaceType`, read off the data.
-    fn landed_surface(&self, from: Option<&str>, edge: &str, direction: EdgeDirection) -> Result<Option<String>, Failure> {
-        let Some(from) = from else { return Ok(None) };
-        let positions = self.get(&self.schema, "positions")?;
-        match direction {
-            EdgeDirection::Outgoing => {
-                let position = self.get(&positions, from)?;
-                if position.is_nullish() {
-                    return Ok(None);
-                }
-                let found = self.get(&self.get(&position, "edges")?, edge)?;
-                if found.is_nullish() {
-                    return Ok(None);
-                }
-                match self.get(&found, "target")? {
-                    Js::Undefined => Ok(None),
-                    Js::String(target) => {
-                        let unions = self.get(&self.schema, "unions")?;
-                        let union = if unions.is_nullish() { Js::Undefined } else { self.get(&unions, &target)? };
-                        Ok(matches!(union, Js::Undefined).then_some(target))
-                    }
-                    _ => Err(Failure::unreproduced("a hop through a value shaped like a constructed adapter instance whose schema names a target by no text", "")),
-                }
-            }
-            EdgeDirection::Incoming => {
-                if positions.is_nullish() {
-                    return Err(fault_type_error("Cannot convert undefined or null to object"));
-                }
-                let Js::Object(positions) = positions else {
-                    return Err(Failure::unreproduced("a hop through a value shaped like a constructed adapter instance whose schema's positions are no dict", ""));
-                };
-                for (name, position) in positions.entries() {
-                    let found = self.get(&self.get(position, "edges")?, edge)?;
-                    if !found.is_nullish() && crate::js::strict_equals(&self.get(&found, "target")?, &Js::str(from)) {
-                        return Ok(Some(name.clone()));
-                    }
-                }
-                Ok(None)
-            }
-        }
-    }
+pub(crate) fn member_gate(step: &EdgeStep, origin: &Js, read: &Read) -> Option<MemberGate> {
+    selection(step.expression_filter.as_deref()?, step, origin, read)
 }
 
 fn selection(filter: &Expression, step: &EdgeStep, origin: &Js, read: &Read) -> Option<MemberGate> {
@@ -840,13 +714,7 @@ impl Run<'_> {
     /// `instanceSourceRead`: the instance resolved as a source, once per
     /// (adapter, credential, construction arguments).
     pub(crate) async fn instance_read(&self, instance: &InstanceBinding) -> Result<Rc<Read>, Failure> {
-        self.instance_read_as(instance, Some(Json::String(instance.adapter_slug.clone()))).await
-    }
-
-    /// `instanceSourceRead` asking the host for `adapter_type`, the slug as
-    /// the binding holds it; cached by its text, as the TypeScript's key is
-    /// a template literal.
-    pub(crate) async fn instance_read_as(&self, instance: &InstanceBinding, adapter_type: Option<Json>) -> Result<Rc<Read>, Failure> {
+        let adapter_type = instance.adapter_slug.clone();
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let construction_args: std::collections::BTreeMap<String, String> = instance
             .construction_config
@@ -901,7 +769,7 @@ impl Run<'_> {
     /// when it is a member the hop is about and its WHERE holds.
     async fn fetch(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, how: Fetch<'_>, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Rc<Landed>>, Failure> {
         let Fetch { pushdown, paged } = how;
-        let gate = member_gate(step, start, read)?;
+        let gate = member_gate(step, start, read);
         let mut args = vec![("fieldId", Js::str(step.edge_type_id.clone())), ("direction", Js::str(direction_text(step.direction)))];
         args.extend(pushdown.iter().map(|(k, v)| (k.as_str(), v.clone())));
         let mut kept = Vec::new();
@@ -966,31 +834,10 @@ impl Run<'_> {
             (from, landed_surface_type(schema, surface.as_deref(), &step.edge_type_id, step.direction))
         };
         let related = self.call_adapter_at(&read.instance, "getRelated", &from, args).await?;
-        if let Some(fault) = &read.schema_fault {
-            return self.faulted_related(fault, start, step, read, &related);
-        }
         let mut items = Vec::new();
         for item in list_items(&related)? {
             let position = get(&item, "position");
             let natural = stamped_position_name(schema, &position).or_else(|| landed_type.clone());
-            items.push((restamp(&position, natural.as_deref(), &read.adapter_type), item));
-        }
-        Ok(items)
-    }
-
-    /// The read wrapper's stamping over an instance dict's own schema with no
-    /// `collections`: a collection scan indexes the table it lacks; a hop off
-    /// a record reads only its positions and unions.
-    fn faulted_related(&self, fault: &SchemaFault, start: &Js, step: &EdgeStep, read: &Read, related: &Js) -> Result<Vec<(Js, Js)>, Failure> {
-        if record_type(start).as_deref() == Some("meta") {
-            return Err(fault_type_error(&format!("Cannot read properties of {} (reading '{}')", fault.collections.to_js_string(), step.edge_type_id)));
-        }
-        let surface = record_type(start).or_else(|| read.start_surface_type.clone());
-        let landed = fault.landed_surface(surface.as_deref(), &step.edge_type_id, step.direction)?;
-        let mut items = Vec::new();
-        for item in list_items(related)? {
-            let position = get(&item, "position");
-            let natural = fault.stamped(&position)?.or_else(|| landed.clone());
             items.push((restamp(&position, natural.as_deref(), &read.adapter_type), item));
         }
         Ok(items)
@@ -1317,7 +1164,7 @@ impl Run<'_> {
         }
         let mut entries = vec![
             ("kind", Js::str("source_field")),
-            ("instance", read.instance_label.clone()),
+            ("instance", Js::str(read.instance_name.clone())),
             ("adapterType", Js::str(read.adapter_type.clone())),
         ];
         if stable && let Some(record_type) = record_type(&landed.position) {

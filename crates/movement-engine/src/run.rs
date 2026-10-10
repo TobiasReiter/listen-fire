@@ -950,7 +950,7 @@ impl Run<'_> {
         let credentials_id = instance.credential_name.as_deref().and_then(|name| self.credential_id(name));
         let resolved = self
             .resolve_adapter(&ResolveAdapter {
-                adapter_type: Some(Json::String(instance.adapter_slug.clone())),
+                adapter_type: instance.adapter_slug.clone(),
                 credentials_id,
                 construction_args: None,
                 role: Role::Source,

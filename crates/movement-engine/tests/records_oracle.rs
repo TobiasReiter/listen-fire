@@ -5,11 +5,12 @@
 //! readings are the ones a checked program can make of a value it cannot
 //! type: `Object.prototype`'s names and ordinary ones read off dicts,
 //! present and absent; picked, held, walked on, tested, sorted. (The
-//! cases whose payload held a dict whose `kind` names a binding kind or a
-//! prototype name, which the TypeScript engine on this branch still takes
-//! for records, were deleted by chunk 7A Task 4b: data is never an engine
-//! object. They come back, regenerated from the fixed TypeScript engine,
-//! when main's fix merges forward.) Records the run itself holds — walked,
+//! cases whose outcome turns on the TypeScript engine on this branch taking
+//! a dict for a record by its shape — a payload dict whose `kind` names a
+//! binding kind or a prototype name, read by the program; a KEYBY answer
+//! whose prototype a filing made a record — were deleted by chunk 7A Task
+//! 4b: data is never an engine object. They come back, regenerated from the
+//! fixed TypeScript engine, when main's fix merges forward.) Records the run itself holds — walked,
 //! picked, returned by a block, written, built as nodes — are compared,
 //! spread, walked on, sorted, grouped and read by key. Every language
 //! version.

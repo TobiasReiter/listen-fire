@@ -533,7 +533,7 @@ impl Run<'_> {
         }
         let resolved = self
             .resolve_adapter(&ResolveAdapter {
-                adapter_type: Some(Json::String(instance.adapter_slug.clone())),
+                adapter_type: instance.adapter_slug.clone(),
                 credentials_id,
                 construction_args: (!construction_args.is_empty()).then_some(construction_args),
                 role: Role::Target,

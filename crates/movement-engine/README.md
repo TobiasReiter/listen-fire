@@ -827,15 +827,22 @@ eval wire a built-in crosses as `["f", name]` and `Object.prototype` as
 shape position, a resource) crosses to the host as `["x", id, descriptor]`
 and back as `["x", id]`, and every object the host sends is data. A request
 holding any other record is never made (`HeldRecord`, per request).
-Pinned by tests/oracle/records.json: 213 cases, seed 20261010, run on the
+Pinned by tests/oracle/records.json: 1,458 cases, seed 20261010, run on the
 TypeScript engine against an adapter that answers walks (`items`, `subs`,
 two records named `__proto__`) and writes; the Rust engine ends each as the
-TypeScript did (0 differ; 3 are refused at admission, `traversal_root`).
-The generator's other 4,269 cases (of 4,482) held a dict whose `kind` names
-a binding kind or an `Object.prototype` name, which the TypeScript engine on
-this branch still takes for a record; chunk 7A Task 4b deleted them (data
-is never an engine object, on this engine already), and they are to be
-regenerated from the fixed TypeScript engine when main's fix merges forward.
+TypeScript did (0 differ; 147 are refused at admission: `AT` of a record by
+a name, `at_record_key`, and walks straight off a `lazy` binding,
+`traversal_root`). Of the generator's 4,482 cases, chunk 7A Task 4b deleted
+the 3,024 whose outcome turns on the TypeScript engine on this branch
+classifying records by shape: 3,000 whose program reads the payload-bound
+names and whose payload holds a dict whose `kind` names a binding kind or an
+`Object.prototype` name, and 24 where a KEYBY filing under `__proto__` gives
+the answer a record for its prototype, which that engine then takes for the
+record (here the answer stays a dict). The cases kept whose payload carries
+such a dict never read it: their programs name none of `v`, `w`, `meta`,
+`more`, park nothing, and the TypeScript run of each program ended the same
+under every payload. The deleted cases are to be regenerated from the fixed
+TypeScript engine when main's fix merges forward.
 
 ### Expressions that walk, fold, test and name records
 
@@ -1338,7 +1345,7 @@ Sizes are estimates (XS, S, M, L).
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
 | 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | mirrored (chunk 7A Task 5): the shim passes the deployment's number as written; the text is cut where `slice` truncates it and the marker and the trace's `chars` print the number itself (`first 2.5 of …`) | oracle file_bound.json (seed 20261012, tests/tail_oracle.rs) | done |
-| 11 | records held in values, `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` the only record, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run". The structural binding emulation (a dict whose `kind` names a binding's read as that binding, `Binding::Shaped`) is deleted (chunk 7A Task 4b): data is never an engine object | oracle records.json (213 whole programs, seed 20261010, tests/records_oracle.rs: the 4,269 whose payload impersonated a binding deleted, to be regenerated from the fixed TypeScript engine when main's fix merges forward) | done |
+| 11 | records held in values, `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` the only record, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run". The structural binding emulation (a dict whose `kind` names a binding's read as that binding, `Binding::Shaped`) is deleted (chunk 7A Task 4b): data is never an engine object | oracle records.json (1,458 whole programs, seed 20261010, tests/records_oracle.rs: the 3,024 that turn on the TypeScript engine's shape classification deleted, to be regenerated from the fixed TypeScript engine when main's fix merges forward) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |
