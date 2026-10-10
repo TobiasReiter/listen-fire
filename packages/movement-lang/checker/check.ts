@@ -7595,6 +7595,8 @@ class Checker {
     let declaredTarget = false;
     /** The write form's parent paths (linked / tuple) — required-edge satisfaction. */
     const parents: Array<{ type?: string; edge: string }> = [];
+    /** `write <alias> { … }` — an update of a record already in hand. */
+    let positionWrite = false;
 
     if (write.target.kind === 'linked') {
       const linked = this.checkLinkedPath(
@@ -7635,21 +7637,22 @@ class Checker {
       rootDescription = position.description;
       local = position.local === true;
       declaredTarget = position.declared === true;
+      positionWrite = true;
       // Nothing is rebound: the alias keeps its type (a write constrains its
       // body by that type already), so the only change across 4 is what the
-      // alias holds at run time — said where the program moves up, at the
-      // write nobody named, since a named one's reader reads the new name.
+      // alias holds at run time. Naming the write changes nothing about that —
+      // the new name is the same record — so both forms are told.
       const alias = pathRootName(write.target);
       if (
-        options?.binding === undefined &&
         alias !== undefined &&
         handle?.kind === 'handle' &&
         handle.written === true &&
         this.upgradeCrosses(4)
       ) {
+        const named = options?.binding !== undefined ? ` ('${options.binding}' names the same record)` : '';
         this.reportUpgradeWarning(
           DiagnosticCodes.HANDLE_UPDATED_IN_PLACE,
-          `since ${describeLanguageVersion(4)} '${alias}' reads as the updated record below this line; before, it kept the values of its own write`,
+          `since ${describeLanguageVersion(4)} '${alias}' reads as the updated record below this line${named}; before, it kept the values of its own write`,
           write.target.span,
         );
       }
@@ -7842,7 +7845,30 @@ class Checker {
         write.target.span,
       );
     }
-    return handle;
+    return positionWrite && !local ? this.positionWriteResult(handle, root) : handle;
+  }
+
+  /**
+   * What `x = write c { … }` hands back when `c` is a traversal landing. Since
+   * 4 the write is the record's latest version, with the landing as it stood
+   * before as its `-[:@old]->` — a handle a write produced, standing on the
+   * landing's own type. The alias `c` keeps its position type: its reads were
+   * always live. Before 4 the result was the landing's type itself.
+   */
+  private positionWriteResult(
+    target: PositionTypeRef | undefined,
+    root: WritableRootSchema | undefined,
+  ): PositionTypeRef | undefined {
+    if (target?.kind !== 'position' || before(this.languageVersion, 4)) return target;
+    const properties = positionSchemaOfRef(target)?.properties ?? {};
+    return {
+      kind: 'handle',
+      instance: target.instance,
+      position: target.position,
+      resultShape: this.writeResultShape(root?.resultShape ?? properties),
+      ...(root?.edges !== undefined ? { edges: root.edges } : {}),
+      written: true,
+    };
   }
 
   /**

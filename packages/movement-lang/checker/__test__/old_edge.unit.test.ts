@@ -145,15 +145,36 @@ describe('created / committed', () => {
 });
 
 describe('an in-place write on a write handle', () => {
-  it('crossing 4 an unnamed write <alias> { … } on a write handle carries MOV_HANDLE_UPDATED_IN_PLACE; a named one does not', () => {
+  it('crossing 4 a write <alias> { … } on a write handle carries MOV_HANDLE_UPDATED_IN_PLACE, named or not — the alias is updated either way', () => {
     const src = inMovement([ORG, '  write org { Name: "Acme Ltd" }'].join('\n'));
     const d = checkProgram(parseProgram(src), catalog, { languageVersion: 4, upgradingFrom: 3 });
-    expect(d.find((x) => x.code === C.HANDLE_UPDATED_IN_PLACE)?.upgrade).toBe(true);
-    const named = checkProgram(parseProgram(inMovement([ORG, '  org2 = write org { Name: "Acme Ltd" }'].join('\n'))), catalog, { languageVersion: 4, upgradingFrom: 3 });
-    expect(named.some((x) => x.code === C.HANDLE_UPDATED_IN_PLACE)).toBe(false);
+    const unnamed = d.find((x) => x.code === C.HANDLE_UPDATED_IN_PLACE);
+    expect(unnamed?.upgrade).toBe(true);
+    expect(unnamed?.message).toContain("'org' reads as the updated record below this line");
+    const named = checkProgram(parseProgram(inMovement([ORG, '  org2 = write org { Name: "Acme Ltd" }'].join('\n'))), catalog, { languageVersion: 4, upgradingFrom: 3 })
+      .find((x) => x.code === C.HANDLE_UPDATED_IN_PLACE);
+    expect(named?.upgrade).toBe(true);
+    expect(named?.message).toContain("'org' reads as the updated record below this line");
+    expect(named?.message).toContain("'org2' names the same record");
   });
   it('under 4 without an upgrade, the in-place write is clean and carries no warning', () => {
     const d = checkProgram(parseProgram(inMovement([ORG, '  write org { Name: "Acme Ltd" }'].join('\n'))), catalog, { languageVersion: 4 });
     expect(d.filter((x) => x.severity !== 'info').map((x) => x.code)).toEqual([]);
+  });
+});
+
+describe('a write off a traversal landing', () => {
+  const LANDING = '  c = FIRST(crm-[x:companies ORDER BY `Name`]->)';
+  const body = (read: string) =>
+    [LANDING, '  if c != null {', '    w = write c { Name: "Acme Ltd" }', `    ${read}`, '  }'].join('\n');
+  it('under 4 the named result is a written handle of the landing\'s type: @old types, fields read', () => {
+    expect(errors(4, body('n = COUNT(w-[:@old]->)'))).toEqual([]);
+    expect(errors(4, body('write crm-[:notes]-> { title: w.`Name` }'))).toEqual([]);
+  });
+  it('under 4 the landing alias itself keeps its position type: c-[:@old]-> is still refused', () => {
+    expect(errors(4, body('n = COUNT(c-[:@old]->)'))).toEqual([C.OLD_EDGE_NOT_A_WRITE]);
+  });
+  it('under 3 the result is the landing type, as before: @old is the plain unknown edge', () => {
+    expect(errors(3, body('n = COUNT(w-[:@old]->)'))).toEqual([C.TRAVERSE_UNKNOWN_EDGE]);
   });
 });
