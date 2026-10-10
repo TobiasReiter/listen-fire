@@ -330,8 +330,10 @@ describe('edges — the record graph', () => {
   it('a link body projects as its two statements: the find, then the link onto what it found', () => {
     const TWO = 'lead = match c-[:Owner]-> { unique by (`Name`) Name: "sam" }\n  link c -[:Owner]-> lead';
     expect(SOURCE).toContain(TWO);
-    const project = (source: string) => {
-      const result = storyOf({ source, catalog, name: 'Deal intake' });
+    // The body form is retired since language version 4, so its projection is
+    // the story of a program pinned before it.
+    const project = (source: string, languageVersion?: number) => {
+      const result = storyOf({ source, catalog, name: 'Deal intake', ...(languageVersion !== undefined ? { languageVersion } : {}) });
       if (!result.ok) throw new Error(`expected a story, got ${result.reason}`);
       const ir = result.story;
       const found = ir.records.filter((r) => r.action === 'find');
@@ -350,9 +352,9 @@ describe('edges — the record graph', () => {
       order: ['match', 'link'],
       link: ['Owner'],
     });
-    expect(project(SOURCE.replace(TWO, 'lead = link c -[:Owner]-> { unique by (`Name`) Name: "sam" }'))).toEqual(twoStatements);
+    expect(project(SOURCE.replace(TWO, 'lead = link c -[:Owner]-> { unique by (`Name`) Name: "sam" }'), 3)).toEqual(twoStatements);
     // Unbound, with no unique by: the body's fields are its identity.
-    expect(project(SOURCE.replace(TWO, 'link c -[:Owner]-> { Name: "sam" }'))).toEqual({
+    expect(project(SOURCE.replace(TWO, 'link c -[:Owner]-> { Name: "sam" }'), 3)).toEqual({
       find: { binding: undefined, fields: '"sam"', uniqueBy: ['Name'] },
       order: ['match', 'link'],
       link: ['Owner'],

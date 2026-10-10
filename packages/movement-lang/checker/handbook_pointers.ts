@@ -16,6 +16,8 @@ export const HANDBOOK_POINTERS = {
   identity: 'front#identity',
   /** A system named before it is imported and constructed. */
   systems: 'front#systems',
+  /** A match whose miss is absent: name it and test the name. */
+  match: 'writes#match',
 } as const;
 
 export type HandbookPointer = (typeof HANDBOOK_POINTERS)[keyof typeof HANDBOOK_POINTERS];
@@ -35,6 +37,8 @@ export const HANDBOOK_POINTER_BY_CODE: Readonly<Record<string, HandbookPointer>>
   MOV_UNIQUE_UNKNOWN_FIELD: HANDBOOK_POINTERS.identity,
   MOV_LINKED_HOP_RETIRED: HANDBOOK_POINTERS.identity,
   MOV_PARENT_READ_RETIRED: HANDBOOK_POINTERS.identity,
+  MOV_MATCH_UNNAMED: HANDBOOK_POINTERS.match,
+  MOV_MATCH_MISS_CONTINUES: HANDBOOK_POINTERS.match,
 };
 
 /** `diagnostic`, its message ending in the handbook pointer its code has (if any). */

@@ -630,6 +630,21 @@ export const DiagnosticCodes = {
    *  target with no identity rules of its own. It could only ever find
    *  "some record of this type". */
   MATCH_NO_IDENTITY: 'MOV_MATCH_NO_IDENTITY',
+  /** Since language version 4: a `match` statement whose record nobody names.
+   *  A miss no longer ends the scope — it is absent — so an unnamed match
+   *  decides nothing; the only way to act on what it found is to name it and
+   *  test the name. Under 3 the unnamed form was a gate, and still is. */
+  MATCH_UNNAMED: 'MOV_MATCH_UNNAMED',
+  /** Since language version 4: `link a -[:e]-> { … }`, a link that finds its
+   *  record in its own body. Its miss used to end the scope; with a
+   *  miss now absent there is nothing to link, so the find and the link are
+   *  written apart (match, test `!= null`, link). The parser and the engine
+   *  keep the form for programs pinned before 4. */
+  LINK_MATCH_BODY_RETIRED: 'MOV_LINK_MATCH_BODY_RETIRED',
+  /** Warning, upgrade only: a bound match in a program moving up across 4.
+   *  Before 4 a miss ended the scope; from 4 the name is absent and the block
+   *  carries on, so whatever followed now runs on a miss too. */
+  MATCH_MISS_CONTINUES: 'MOV_MATCH_MISS_CONTINUES',
   /** `unique by (…)` on a target that decides record identity itself and does
    *  not accept author-defined uniqueness (the adapter declared
    *  `uniquenessAuthorable: false` — e.g. Affinity, whose org/person matching
@@ -4412,6 +4427,15 @@ class Checker {
         return;
       case 'match':
         this.checkMatch(statement.match, scope);
+        // The body is checked even though the form is refused, so its own
+        // faults surface in the same pass.
+        if (since(this.languageVersion, 4)) {
+          this.report(
+            DiagnosticCodes.MATCH_UNNAMED,
+            `'match … { }' on its own gates nothing since ${describeLanguageVersion(4)}: a miss is absent, not the end of the scope. Bind it and test the name — \`existing = match … { … }\` then \`if existing != null { … }\``,
+            statement.span,
+          );
+        }
         return;
       case 'call': {
         // A call is read once its callee is resolved: a function runs; `MAP`
@@ -4784,7 +4808,12 @@ class Checker {
       }
       case 'match': {
         const handle = this.checkMatch(value.match, scope, { binding: name });
-        symbol = { ...symbol, ...(handle ? { posType: handle } : {}), bindingPlane: 'node' };
+        // Since 4 a miss binds absent rather than ending the scope — the same
+        // node-plane `T | absent` FIRST yields, so the guards that narrow
+        // FIRST narrow this.
+        const bound: PositionTypeRef | undefined =
+          handle !== undefined && since(this.languageVersion, 4) ? { kind: 'maybeEmpty', of: handle } : handle;
+        symbol = { ...symbol, ...(bound ? { posType: bound } : {}), bindingPlane: 'node' };
         break;
       }
       case 'link': {
@@ -8118,8 +8147,10 @@ class Checker {
    *
    * The handle stands on the record FOUND: its result shape is the record's,
    * without `created` / `committed` — those are facts about a write's
-   * outcome, and a match has no outcome to report beyond the record itself
-   * (a miss ends the scope, so no handle exists to ask).
+   * outcome, and a match has no outcome to report beyond the record itself.
+   * A miss: since language version 4 the bound name is that record OR absent
+   * (the binding site wraps it), and the block carries on; before 4 the miss
+   * ended the scope, so no handle existed to ask.
    */
   private checkMatch(
     match: MatchExpression,
@@ -8236,6 +8267,13 @@ class Checker {
         targetType,
         subject: `'${field.name}' on ${rootDescription}`,
       });
+    }
+    if (options?.binding !== undefined && this.upgradeCrosses(4)) {
+      this.reportUpgradeWarning(
+        DiagnosticCodes.MATCH_MISS_CONTINUES,
+        `since ${describeLanguageVersion(4)} a 'match' that finds nothing no longer ends the scope: '${options.binding}' is absent and the block carries on — guard what depends on it with \`if ${options.binding} != null { … }\``,
+        match.span,
+      );
     }
     return foundHandle(handle);
   }
@@ -8986,6 +9024,16 @@ class Checker {
   private checkLink(link: LinkExpression, scope: Scope, binding?: string): PositionTypeRef | undefined {
     const fromSymbol = this.resolveName(link.from, link.span, scope);
     const fromType = fromSymbol !== undefined ? this.symbolPositionType(fromSymbol) : undefined;
+    // The body form only ever worked because a miss ended the scope; since 4 a
+    // miss is absent, which this form has no way to test before it links.
+    if (link.to.kind === 'match' && since(this.languageVersion, 4)) {
+      this.report(
+        DiagnosticCodes.LINK_MATCH_BODY_RETIRED,
+        `a 'link' no longer finds its record in its own body since ${describeLanguageVersion(4)}: find it first and test it — \`to = match … { … }\` then \`if to != null { link ${link.from} -[:${link.edge}]-> to }\``,
+        link.to.match.span,
+      );
+      return undefined;
+    }
     if (fromType?.kind === 'local') {
       if (link.to.kind === 'match') {
         this.report(

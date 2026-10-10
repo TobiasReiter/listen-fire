@@ -513,7 +513,7 @@ describe('name resolution', () => {
         inMovement(
           [
             '  co = write crm-[:company]-> { name: msg.`subject` }',
-            '  match co-[:portfolio]-> { unique by (`name`), name: ghost.`name` }',
+            '  found = match co-[:portfolio]-> { unique by (`name`), name: ghost.`name` }',
           ].join('\n'),
         ),
       ),
