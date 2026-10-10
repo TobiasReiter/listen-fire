@@ -62,12 +62,6 @@ jest.mock('../../knowledge_pipeline/facts', () => ({
   extractFactsForResource: jest.fn(async () => []),
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runMovement } from '../run';
 import type {
   LlmCallInput,
@@ -75,13 +69,14 @@ import type {
   LlmClient,
 } from '../../translation_graph/engine/batched_extraction';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { containerAssociation, type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000041');
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: true, edgeProperties: true }, resources: true };
@@ -133,7 +128,7 @@ function makeFakeAdapter(adapterType: string): { adapter: Adapter; creates: Reco
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
 });
 
@@ -196,13 +191,17 @@ async function run(body: string[]): Promise<unknown[]> {
     event: webhookEvent({ text: 'Acme raised a seed.' }),
     teamId: TEAM_ID,
     catalog,
-    llm,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return email.adapter;
-      if (adapterType === 'attio') return attio.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return email.adapter;
+          if (adapterType === 'attio') return attio.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+      llm: { client: llm },
+    }),
   });
   return attio.creates.map((w) => w.fields.name);
 }

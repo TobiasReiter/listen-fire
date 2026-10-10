@@ -17,7 +17,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -31,14 +31,16 @@ import {
   makeStablePosition,
   positionRecordId,
 } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { credentialIdsFor, makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000020' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000020');
 const KG = 'kg';
 
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return {
@@ -149,7 +151,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] }, kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -187,9 +189,11 @@ async function run(source: string, kg: ReturnType<typeof makeGraphFake>) {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }),
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
+    }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { result, writes };
 }
@@ -531,14 +535,18 @@ listen to runs {} fire cheapest
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: () => 'cred-1',
-      resolveAdapter: makeResolver({
-        manual: manualAdapter,
-        attio: crm.adapter,
-        [KG]: kg.adapter,
+      credentialIds: credentialIdsFor(catalog, () => 'cred-1'),
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: {
+          resolve: makeResolver({
+            manual: manualAdapter,
+            attio: crm.adapter,
+            [KG]: kg.adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     // 'keep' rows by name asc: Acme first; LIMIT 1 → exactly one value.
     expect(writes).toEqual([
@@ -585,9 +593,11 @@ listen to runs {} fire unsnooze
       event,
       teamId: TEAM_ID,
       catalog,
-      resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }),
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
+      }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     expect(writes.map((w) => w.fields?.text)).toEqual(['Acme', 'Globex', 'Hooli', 'Umbrella']);
   });

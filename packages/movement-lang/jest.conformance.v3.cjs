@@ -1,7 +1,9 @@
 // Language version 3's conformance corpus: the movement-lang tests as they
-// stood at b3078e0053 (v0.10.9, the last commit before version 4), verbatim
-// under `__conformance__/v3/`, run against the current code under language
-// version 3. A failure is a version-3 behaviour the current code no longer
+// stood before version 4 — on this branch, main's b3078e0053 (v0.10.9) tests as
+// cloud-native carried them onto the Rust parser (35cd3a3ea8, the last commit
+// before the merge that brought version 4; three files differ from main's),
+// verbatim under `__conformance__/v3/`, run against the current code under
+// language version 3. A failure is a version-3 behaviour the current code no longer
 // preserves. The corpus files are never edited; a test that asserted a
 // since-refactored internal shape is listed in `__conformance__/v3/triage.cjs`.
 // Run via `pnpm test:conformance:v3` in this package.

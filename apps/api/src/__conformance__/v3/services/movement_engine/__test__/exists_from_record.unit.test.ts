@@ -13,7 +13,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -25,12 +25,14 @@ import type {
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, positionRecordId } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };
@@ -122,7 +124,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -159,15 +161,19 @@ listen to runs {} fire probe
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return graph.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return graph.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     // A write handle needs the record the graph really created (its id is what
     // the hop walks from), so those cases run live against the fake.
     dryRun: options.live !== true,
-    writeSink: (w) => writes.push(w),
   });
   const written = options.live === true ? graph.created : writes;
   return written.filter((w) => w.recordType === 'note').map((w) => w.fields?.text);

@@ -79,18 +79,12 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runMovement, resumeMovement } from '../run';
 import type { ParkSink } from '../run';
-import type { CallbackSink } from '../callback_sink';
+import type { CallbackSink } from '../host';
 import type { ParkedScopeState } from '../serialize';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   RESOURCES_REFERENCE_FIELD_ID,
   type Adapter,
@@ -101,9 +95,10 @@ import type { FileRef } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000020' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000020');
 
 // ── Fake adapters ────────────────────────────────────────────────────────────
 
@@ -220,7 +215,7 @@ function webhookEvent(adapterType: string, payload: Record<string, unknown>): Tr
 
 // ── Catalog / fixtures ───────────────────────────────────────────────────────
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     team_drive: { adapters: ['dropbox'] },
@@ -255,7 +250,6 @@ function makeFakeCallbackSink() {
     async calls() {
       return [];
     },
-    async correlateAwait() {},
   } as unknown as CallbackSink;
   return { sink, mints };
 }
@@ -276,14 +270,20 @@ function run(source: string, payload: Record<string, unknown>, adapters: RunAdap
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      email: adapters.email,
-      ...(adapters.attio ? { attio: adapters.attio } : {}),
-      ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      adapters: {
+        resolve: makeResolver({
+          email: adapters.email,
+          ...(adapters.attio ? { attio: adapters.attio } : {}),
+          ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+        }),
+      },
+      park: {
+        ...(adapters.callbacks ? { callbacks: adapters.callbacks.sink } : {}),
+        ...(adapters.parkSink ? { sink: adapters.parkSink } : {}),
+      },
     }),
-    ...(adapters.callbacks ? { callbackSink: adapters.callbacks.sink } : {}),
-    ...(adapters.parkSink ? { parkSink: adapters.parkSink } : {}),
   });
 }
 
@@ -300,11 +300,15 @@ function resume(
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      email: adapters.email,
-      ...(adapters.attio ? { attio: adapters.attio } : {}),
-      ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      adapters: {
+        resolve: makeResolver({
+          email: adapters.email,
+          ...(adapters.attio ? { attio: adapters.attio } : {}),
+          ...(adapters.dropbox ? { dropbox: adapters.dropbox } : {}),
+        }),
+      },
     }),
     state,
   });
@@ -529,9 +533,6 @@ describe('values ride through untouched', () => {
       __brand: 'FileRef',
       name: 'pitch.pdf',
       contentType: 'application/pdf',
-      retrieve: async () => {
-        throw new Error('test: the synthesis must never pull the bytes');
-      },
     } as unknown as FileRef;
 
     const email = makeFakeAdapter('email', {
@@ -643,9 +644,6 @@ describe('the files-through-a-call gap, closed', () => {
         __brand: 'FileRef',
         name,
         contentType: 'application/pdf',
-        retrieve: async () => {
-          throw new Error('test: the pass-through must never pull the bytes');
-        },
       } as unknown as FileRef,
     };
   }
@@ -1151,9 +1149,6 @@ describe('the design example, end to end', () => {
         __brand: 'FileRef',
         name,
         contentType: 'application/pdf',
-        retrieve: async () => {
-          throw new Error('test: per-item synthesis must never pull the bytes');
-        },
       } as unknown as FileRef,
     };
   }

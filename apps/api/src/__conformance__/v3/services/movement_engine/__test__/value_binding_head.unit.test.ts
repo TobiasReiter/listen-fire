@@ -88,13 +88,7 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import type {
   LlmCallInput,
@@ -107,9 +101,10 @@ import type {
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000030' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000030');
 
 // ── Fake adapters ───────────────────────────────────────────────────────────
 
@@ -236,7 +231,7 @@ const attioSchema: InstanceSchema = {
   },
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: {
       constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
@@ -276,11 +271,15 @@ function run(
     event: webhookEvent({ subject: 'Deals', text: opts.text ?? '' }),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({
-      email: makeFakeAdapter('email').adapter,
-      attio: opts.attio,
+    host: makeTestHost({
+      adapters: {
+        resolve: makeResolver({
+          email: makeFakeAdapter('email').adapter,
+          attio: opts.attio,
+        }),
+      },
+      llm: { ...(opts.llm ? { client: opts.llm } : {}) },
     }),
-    ...(opts.llm ? { llm: opts.llm } : {}),
   });
 }
 

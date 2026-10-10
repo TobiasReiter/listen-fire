@@ -19,7 +19,7 @@ import { parseTraversalPath, refinementKey, scanInstanceChains } from 'movement-
 import type { InstanceSchema } from 'movement-lang';
 import { refineInstanceSchema } from '../../translation_graph/movement/refinements';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -34,14 +34,16 @@ import {
   makeStablePosition,
   positionRecordId,
 } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 const KG = 'kg';
 
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 /** A polymorphic member is ADDRESSED by one name and LANDS records of another.
  *  The meta walk files an Affinity list under its bare name (`Portfolio`) and
@@ -234,7 +236,7 @@ async function runWith(input: {
   fake: { adapter: Adapter };
   body: string;
 }) {
-  const catalog = staticCatalogFromManifests({
+  const catalog = staticCatalogSnapshot({
     credentials: { kg_cred: { adapters: [KG] } },
     instanceSchemas: { [KG]: input.schema },
   });
@@ -245,13 +247,17 @@ async function runWith(input: {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return input.fake.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return input.fake.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { run, writes };
 }

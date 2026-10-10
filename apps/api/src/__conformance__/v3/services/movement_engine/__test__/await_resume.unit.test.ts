@@ -115,8 +115,16 @@ jest.mock('../join_pending', () => ({
   runHasPendingJoins: (...a: unknown[]) => runHasPendingJoinsMock(...a),
   clearJoins: (...a: unknown[]) => clearJoinsMock(...a),
 }));
-jest.mock('../../translation_graph/adapters/ask/await_store', () => ({
-  loadResolvableAskAwaits: (...a: unknown[]) => loadResolvableAskAwaitsMock(...a),
+// The record-backed awaits a run host keeps, as the adapter registry serves
+// them: one keeper here, standing in for the ask unit's.
+jest.mock('../../translation_graph/adapters/packages', () => ({
+  awaitKeepers: () => [
+    {
+      adapterType: 'ask',
+      loadResolvable: (...a: unknown[]) => loadResolvableAskAwaitsMock(...a),
+      abandon: jest.fn(async () => {}),
+    },
+  ],
 }));
 jest.mock('../../translation_graph/adapters/await_correlation', () => ({
   dropAwaitCorrelation: (...a: unknown[]) => dropAwaitCorrelationMock(...a),
@@ -133,7 +141,36 @@ jest.mock('../../translation_graph/triggers/types', () => ({
   triggerEventSchema: { parse: (x: unknown) => x },
 }));
 
-import { resumeAwaitsForCorrelation } from '../await_resume';
+// The run's lease and its leaf claims, in memory: `leaseHeldElsewhere` is
+// another process stepping the run.
+let leaseHeldElsewhere = false;
+jest.mock('../run_lease', () => ({
+  withRunLease: async (_runId: string, fn: () => Promise<unknown>) =>
+    leaseHeldElsewhere ? { kind: 'busy' } : { kind: 'held', value: await fn() },
+  claimParkedLeaf: async ({ address }: { address: string }) =>
+    livePark.has(address) ? { state: { address } } : null,
+  finishResumedLeaf: async (_runId: string, address: string) => {
+    deletedAddresses.push(address);
+    livePark.delete(address);
+  },
+}));
+
+// The work table, in memory: what the drain claims, completes and releases.
+const claimDueWorkMock = jest.fn();
+const completeWorkMock = jest.fn();
+const releaseWorkMock = jest.fn();
+const deferWorkMock = jest.fn();
+jest.mock('../../work/store', () => ({
+  claimDueWork: (...a: unknown[]) => claimDueWorkMock(...a),
+  completeWork: (...a: unknown[]) => completeWorkMock(...a),
+  releaseWork: (...a: unknown[]) => releaseWorkMock(...a),
+  deferWork: (...a: unknown[]) => deferWorkMock(...a),
+  heartbeatWork: jest.fn(async () => true),
+  enqueueWork: jest.fn(),
+}));
+
+import { registerAwaitWork, resumeAwaitsForCorrelation } from '../await_resume';
+import { drainWork, resetWorkHandlersForTests } from '../../work/drain';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 
@@ -160,6 +197,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   livePark.clear();
   deletedAddresses.length = 0;
+  leaseHeldElsewhere = false;
   sweepDeleted = false;
   // The correlation lookup yields one park (the WHERE-narrowed await leaf).
   loadCorrelatedParksMock.mockResolvedValue([{ runId: RUN, teamId: TEAM, address: LEAF }]);
@@ -255,5 +293,108 @@ describe('await-resume driver — the language version a resume runs under', () 
     expect(resumeMovementFiringMock).toHaveBeenCalledWith(
       expect.objectContaining({ pinnedSource: 'PINNED SOURCE', pinnedLanguageVersion: 1 }),
     );
+  });
+});
+
+describe('await-resume driver — a failing resume is retried by the work table', () => {
+  it('a throwing resume releases its wake row for a backoff retry instead of completing it', async () => {
+    resetWorkHandlersForTests();
+    registerAwaitWork();
+    const claimedAt = new Date('2001-01-01T00:00:00.000Z');
+    claimDueWorkMock.mockResolvedValueOnce([
+      {
+        id: 'w-1',
+        teamId: TEAM,
+        kind: 'wake_await',
+        key: 'wake_await:k',
+        payload: { adapterType: 'slack', teamId: TEAM, correlationKey: 'C123:1700000000.000100' },
+        dueAt: claimedAt,
+        intervalMs: null,
+        attempts: 1,
+        deferrals: 0,
+        leaseOwner: 'me',
+        leaseUntil: claimedAt,
+        leaseToken: 'token-1',
+        updatedAt: claimedAt,
+      },
+    ]);
+    // A transient fault mid-resume (the database went away).
+    resumeMovementFiringMock.mockRejectedValue(new Error('connection reset'));
+
+    const result = await drainWork({ owner: 'me', heartbeatMs: false });
+
+    expect(loggerErrorMock).toHaveBeenCalledWith('[AwaitResume] run resume failed', expect.anything());
+    expect(result).toMatchObject({ claimed: 1, failed: 1 });
+    expect(completeWorkMock).not.toHaveBeenCalled();
+    expect(releaseWorkMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'w-1', leaseToken: 'token-1' }));
+    // The park is untouched for the retry to find.
+    expect(livePark.has(LEAF)).toBe(true);
+    expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('await-resume driver — a wake racing the park', () => {
+  // The park sink writes the parked row before the correlation (park_sink.unit),
+  // so a wake that finds the correlation always finds the park beside it.
+  it('a correlation with its parked row beside it resumes the run, and keeps the correlation until the leaf resolves', async () => {
+    resumeMovementFiringMock.mockResolvedValue(reparked(LEAF));
+
+    await fireCandidate();
+
+    expect(resumeMovementFiringMock).toHaveBeenCalledTimes(1);
+    expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();
+    expect(livePark.has(LEAF)).toBe(true);
+  });
+
+  it('a correlation with no parked row is dropped as already drained — why the park must come first', async () => {
+    livePark.clear();
+
+    await fireCandidate();
+
+    expect(resumeMovementFiringMock).not.toHaveBeenCalled();
+    expect(dropAwaitCorrelationMock).toHaveBeenCalledWith({ runId: RUN, address: LEAF });
+  });
+});
+
+describe('await-resume driver — a run another process is stepping', () => {
+  it('defers the wake row a few seconds, resumes nothing, and completes nothing', async () => {
+    resetWorkHandlersForTests();
+    registerAwaitWork();
+    livePark.add(LEAF);
+    leaseHeldElsewhere = true;
+    const claimedAt = new Date('2001-01-01T00:00:00.000Z');
+    claimDueWorkMock.mockResolvedValueOnce([
+      {
+        id: 'w-2',
+        teamId: TEAM,
+        kind: 'wake_await',
+        key: 'wake_await:k2',
+        payload: { adapterType: 'slack', teamId: TEAM, correlationKey: 'C123:1700000000.000100' },
+        dueAt: claimedAt,
+        intervalMs: null,
+        attempts: 1,
+        deferrals: 0,
+        leaseOwner: 'me',
+        leaseUntil: claimedAt,
+        leaseToken: 'token-2',
+        updatedAt: claimedAt,
+      },
+    ]);
+    const before = Date.now();
+
+    const result = await drainWork({ owner: 'me', heartbeatMs: false });
+
+    expect(result).toMatchObject({ claimed: 1, deferred: 1, failed: 0 });
+    expect(resumeMovementFiringMock).not.toHaveBeenCalled();
+    expect(completeWorkMock).not.toHaveBeenCalled();
+    expect(releaseWorkMock).not.toHaveBeenCalled();
+    const deferred = deferWorkMock.mock.calls[0]?.[0] as { id: string; dueAt: Date };
+    expect(deferred.id).toBe('w-2');
+    // The first deferral: two seconds on.
+    expect(deferred.dueAt.getTime()).toBeGreaterThanOrEqual(before + 2_000);
+    expect(deferred.dueAt.getTime()).toBeLessThan(before + 3_000);
+    // The leaf and its correlation are left for the retry.
+    expect(livePark.has(LEAF)).toBe(true);
+    expect(dropAwaitCorrelationMock).not.toHaveBeenCalled();
   });
 });

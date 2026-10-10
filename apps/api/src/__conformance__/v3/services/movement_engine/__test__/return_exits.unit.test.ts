@@ -21,13 +21,14 @@ jest.mock('../../logger', () => ({
 
 import { resumeMovement, runMovement, type ParkSink } from '../run';
 import type { ParkedScopeState } from '../serialize';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000078' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000078');
 
 function makeFakeAdapter(adapterType: string) {
   const creates: Array<Record<string, unknown>> = [];
@@ -68,7 +69,7 @@ function makeFakeAdapter(adapterType: string) {
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 
@@ -129,10 +130,14 @@ function harness(source: string) {
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-      adapterType === 'email' ? email.adapter : attio.adapter,
-    parkSink: parks.sink,
+    credentialIds: credentialIdsFor(catalog, (name: string) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email.adapter : attio.adapter,
+      },
+      park: { sink: parks.sink },
+    }),
     dryRun: false,
   });
   return {

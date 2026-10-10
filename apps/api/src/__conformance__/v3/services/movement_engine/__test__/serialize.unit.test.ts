@@ -1,12 +1,10 @@
 // Scope serialize / rehydrate round-trips (async user interaction §4.1).
 //
 // For each binding bucket: serialize → JSON stringify/parse → rehydrate yields an
-// equivalent binding MODULO live refs (the adapter is re-resolved, a FileRef's
-// retrieve() rebound, the instance schema re-fetched — none of those survive the
-// wire, by design). The rehydration context is mocked, with one real-ish path
-// (the document-store FileRef reviver wired to a stub store).
-
-import { Readable } from 'node:stream';
+// equivalent binding MODULO live refs (the adapter is re-resolved, the instance
+// schema re-fetched — neither survives the wire, by design). A FileRef is a
+// descriptor: data, so it parks and comes back as it stands. The rehydration
+// context is mocked.
 
 import type { FileRef, Resource } from '../../translation_graph/adapter';
 import type { SourcePosition } from '../../translation_graph/types';
@@ -22,7 +20,6 @@ import {
   serializeBinding,
   serializeScopeChain,
   type BindingDescriptor,
-  type FileRefDescriptor,
   type RehydrationContext,
 } from '../serialize';
 import { MovementEngineError } from '../errors';
@@ -45,14 +42,6 @@ function makeCtx(overrides: Partial<RehydrationContext> = {}): RehydrationContex
       schema: { types: {} } as never,
     }),
     resolveSourceRead: async () => sourceRead,
-    reviveFileRef: (d: FileRefDescriptor): FileRef => ({
-      __brand: 'FileRef',
-      ...(d.name !== undefined ? { name: d.name } : {}),
-      ...(d.contentType !== undefined ? { contentType: d.contentType } : {}),
-      ...(d.size !== undefined ? { size: d.size } : {}),
-      ...(d.source !== undefined ? { source: d.source } : {}),
-      retrieve: async () => ({ stream: Readable.from(Buffer.from('revived')), contentType: d.contentType }),
-    }),
     resolveCodeRef: (name) => ({ kind: 'value', value: `code-ref:${name}` }),
     ...overrides,
   };
@@ -118,7 +107,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
         fields: { amount: 1000 },
         provenance: {},
         // Layer-5 source resources ride the emission; the FILE resource's
-        // `fileRef` closure is stripped on the wire and revived on rehydrate.
+        // `fileRef` is a descriptor and rides as it stands.
         resources: [
           {
             type: 'FILE',
@@ -126,10 +115,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
             fileRef: {
               __brand: 'FileRef',
               name: 'deck.pdf',
-              retrieve: async () => {
-                throw new Error('not called in this test');
-              },
-              source: { ownerAdapterType: 'dropbox', handle: 'h-deck' },
+              source: { adapterType: 'dropbox', credentialId: 'cred-dbx-1', handle: 'h-deck' },
             },
             data: { name: 'deck.pdf', type: 'FILE' },
           },
@@ -156,10 +142,13 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       expect(out.emission.fields).toEqual({ amount: 1000 });
       const kids = out.emission.children.get('company');
       expect(kids?.[0].fields).toEqual({ name: 'Acme' });
-      // The source FILE resource survives — its fileRef is revived to a live
-      // closure through the seam (Bucket 2).
+      // The source FILE resource survives, its descriptor whole.
       expect(out.emission.resources[0].name).toBe('deck.pdf');
-      expect(typeof out.emission.resources[0].fileRef?.retrieve).toBe('function');
+      expect(out.emission.resources[0].fileRef).toEqual({
+        __brand: 'FileRef',
+        name: 'deck.pdf',
+        source: { adapterType: 'dropbox', credentialId: 'cred-dbx-1', handle: 'h-deck' },
+      });
     });
 
     it('sourcePosition data half (position + edgeProperties) round-trips', async () => {
@@ -234,30 +223,31 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       expect(typeof out.read?.edgeFieldId).toBe('function');
     });
 
-    it("resource's FileRef has its retrieve() rebound (closure does not survive the wire)", async () => {
-      let originalCalled = false;
+    it("a resource's FileRef comes back as the same descriptor", async () => {
       const fileRef: FileRef = {
         __brand: 'FileRef',
         name: 'deck.pdf',
         contentType: 'application/pdf',
         size: 10,
-        retrieve: async () => {
-          originalCalled = true;
-          return { stream: Readable.from(Buffer.from('orig')) };
-        },
-        source: { ownerAdapterType: 'document-store', handle: 'doc://abc' },
+        source: { store: 'document', objectUri: 'doc://abc' },
       };
       const resource: Resource = { type: 'FILE', name: 'deck.pdf', fileRef };
       const out = await roundTrip({ kind: 'resource', resource });
-      expect(out.kind).toBe('resource');
       if (out.kind !== 'resource') throw new Error('unreachable');
-      const revived = out.resource.fileRef;
-      expect(revived?.name).toBe('deck.pdf');
-      expect(revived?.source).toEqual({ ownerAdapterType: 'document-store', handle: 'doc://abc' });
-      // It's a FRESH retrieve() (the reviver's), not the original closure.
-      expect(typeof revived?.retrieve).toBe('function');
-      await revived?.retrieve?.();
-      expect(originalCalled).toBe(false);
+      expect(out.resource.fileRef).toEqual(fileRef);
+    });
+
+    it("a resource parked before descriptors kept the brand gets it back, its source as it parked", async () => {
+      const parked = JSON.parse(
+        '{"kind":"resource","resource":{"type":"FILE","name":"deck.pdf","fileRef":{"name":"deck.pdf","source":{"ownerAdapterType":"document-store","handle":"doc://abc"}}}}',
+      ) as BindingDescriptor;
+      const out = await rehydrateBinding(parked, makeCtx());
+      if (out.kind !== 'resource') throw new Error('unreachable');
+      expect(out.resource.fileRef).toEqual({
+        __brand: 'FileRef',
+        name: 'deck.pdf',
+        source: { ownerAdapterType: 'document-store', handle: 'doc://abc' },
+      });
     });
   });
 
@@ -791,43 +781,19 @@ describe('a value that holds files', () => {
     __brand: 'FileRef',
     name: 'memo.pdf',
     contentType: 'application/pdf',
-    retrieve: async () => ({ stream: Readable.from(Buffer.from('original')) }),
-    source: { ownerAdapterType: 'email', handle: 'att-key-1' },
+    source: { adapterType: 'email', handle: 'att-key-1' },
   });
 
-  async function bytesOf(ref: unknown): Promise<string> {
-    if (typeof ref !== 'object' || ref === null || !('retrieve' in ref) || typeof ref.retrieve !== 'function') {
-      throw new Error('test: not a readable file');
-    }
-    const { stream } = await (ref as Required<Pick<FileRef, 'retrieve'>>).retrieve();
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk as Buffer));
-    return Buffer.concat(chunks).toString('utf8');
-  }
-
-  it('parks each file in its wire form — handle, no channel — and gives the channel back on resume', async () => {
+  it('parks each file as its descriptor and gives the same descriptor back on resume', async () => {
     const binding: Binding = { kind: 'value', value: ['the body', attachment()] };
     const descriptor = serializeBinding(binding);
-    expect(descriptor).toEqual({
-      kind: 'value',
-      value: [
-        'the body',
-        {
-          __brand: 'FileRef',
-          name: 'memo.pdf',
-          contentType: 'application/pdf',
-          source: { ownerAdapterType: 'email', handle: 'att-key-1' },
-        },
-      ],
-    });
+    expect(descriptor).toEqual({ kind: 'value', value: ['the body', attachment()] });
     const wired = JSON.parse(JSON.stringify(descriptor)) as BindingDescriptor;
     const out = await rehydrateBinding(wired, makeCtx());
-    if (out.kind !== 'value' || !Array.isArray(out.value)) throw new Error('unreachable');
-    expect(out.value[0]).toBe('the body');
-    expect(await bytesOf(out.value[1])).toBe('revived');
+    expect(out).toEqual(binding);
   });
 
-  it('a file beside records, and a file in a synthesised record, both come back readable', async () => {
+  it('a file beside records, and a file in a synthesised record, both come back whole', async () => {
     const binding: Binding = {
       kind: 'value',
       value: [
@@ -838,7 +804,7 @@ describe('a value that holds files', () => {
     expect(serializeBinding(binding).kind).toBe('recordValue');
     const out = await roundTrip(binding);
     if (out.kind !== 'value' || !Array.isArray(out.value)) throw new Error('unreachable');
-    expect(await bytesOf(out.value[1])).toBe('revived');
+    expect(out.value[1]).toEqual(attachment());
 
     const node: Binding = {
       kind: 'nodePosition',
@@ -849,10 +815,10 @@ describe('a value that holds files', () => {
     };
     const back = await roundTrip(node);
     if (back.kind !== 'nodePosition') throw new Error('unreachable');
-    expect(await bytesOf(back.fields.deck)).toBe('revived');
+    expect(back.fields.deck).toEqual(attachment());
   });
 
-  it('any other closure inside a value is refused at park, not dropped in silence', () => {
+  it('a closure inside a value is refused at park, not dropped in silence', () => {
     const binding: Binding = { kind: 'value', value: { name: 'x', compute: () => 1 } };
     expect(() => serializeBinding(binding)).toThrow(/'compute' is a function/);
   });

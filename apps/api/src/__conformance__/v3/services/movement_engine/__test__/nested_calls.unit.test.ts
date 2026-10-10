@@ -7,17 +7,19 @@
 
 import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000047' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000047');
 const KG = 'kg';
 
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };
@@ -67,7 +69,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -112,11 +114,15 @@ listen to runs {} fire recap
     teamId: TEAM_ID,
     catalog,
     movementName: 'recap',
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return kg.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     dryRun: false,
     ...(options.languageVersion !== undefined ? { languageVersion: options.languageVersion } : {}),
   });
@@ -242,8 +248,12 @@ listen to runs {} fire recap
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-          adapterType === 'manual' ? manualAdapter : kg.adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: ({ adapterType }: { adapterType: string }) =>
+              adapterType === 'manual' ? manualAdapter : kg.adapter,
+          },
+        }),
         dryRun: false,
         languageVersion: 2,
       }),
@@ -265,8 +275,12 @@ listen to runs {} fire RECAP
       teamId: TEAM_ID,
       catalog,
       movementName: 'RECAP',
-      resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-        adapterType === 'manual' ? manualAdapter : kg.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: ({ adapterType }: { adapterType: string }) =>
+            adapterType === 'manual' ? manualAdapter : kg.adapter,
+        },
+      }),
       dryRun: false,
     });
     expect(bodies(kg.creates)).toEqual(['ran']);
@@ -335,8 +349,12 @@ listen to runs {} fire recap
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-          adapterType === 'manual' ? manualAdapter : kg.adapter,
+        host: makeTestHost({
+          adapters: {
+            resolve: ({ adapterType }: { adapterType: string }) =>
+              adapterType === 'manual' ? manualAdapter : kg.adapter,
+          },
+        }),
         dryRun: false,
         languageVersion: 2,
       }),

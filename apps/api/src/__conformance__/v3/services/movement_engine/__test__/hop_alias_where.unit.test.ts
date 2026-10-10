@@ -9,7 +9,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type { Adapter, GetRelatedInput, RelatedResult } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
@@ -18,13 +18,15 @@ import {
   makeStablePosition,
   positionRecordId,
 } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000031');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 const schema: InstanceSchema = {
   positions: {
@@ -118,17 +120,21 @@ listen to runs {} fire sweep
     source,
     event: manualEvent(),
     teamId: TEAM_ID,
-    catalog: staticCatalogFromManifests({
+    catalog: staticCatalogSnapshot({
       credentials: { kg_cred: { adapters: [KG] } },
       instanceSchemas: { [KG]: schema },
     }),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return fake;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return fake;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return writes.map((w) => w.fields?.text);
 }

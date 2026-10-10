@@ -88,16 +88,10 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
   resolveActingUser: jest.fn(async () => null),
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import type { Catalog, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressDisplay, eventAddressKey } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import {
   makeStablePosition,
   positionData,
@@ -105,9 +99,10 @@ import {
 import type { Adapter, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const COMPANIES_OBJECT_ID = 'obj-companies';
 const PERSON_OBJECT_ID = 'obj-person';
 
@@ -162,13 +157,13 @@ const baseCatalog = staticCatalogFromManifests({
     acme_slack: { adapters: ['slack'] },
   },
 });
-const catalog: Catalog = {
+const catalog = snapshotOverManifests({
   ...baseCatalog,
   instantiate(name, args) {
     if (name === 'attio') return ATTIO_SCHEMA;
     return baseCatalog.instantiate(name, args);
   },
-};
+});
 
 interface RecordedWrite {
   recordType: string;
@@ -375,12 +370,16 @@ async function runProgram(input: { source: string; movementName: string; event: 
     event: input.event,
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: () => 'cred-1',
-    resolveAdapter: ({ adapterType }) => {
-      if (adapterType === 'attio') return source;
-      if (adapterType === 'slack') return target.adapter;
-      throw new Error(`test: no fake for '${adapterType}'`);
-    },
+    credentialIds: credentialIdsFor(catalog, () => 'cred-1'),
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }) => {
+          if (adapterType === 'attio') return source;
+          if (adapterType === 'slack') return target.adapter;
+          throw new Error(`test: no fake for '${adapterType}'`);
+        },
+      },
+    }),
   });
   return { result, creates: target.creates };
 }

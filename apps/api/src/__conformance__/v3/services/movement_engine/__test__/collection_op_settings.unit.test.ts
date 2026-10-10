@@ -76,17 +76,12 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
-import { runMovement } from '../run';
+import { runFailureCause, runMovement } from '../run';
+import { RunLeaseLost } from '../errors';
 import type { MovementTransformInvoker } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -94,11 +89,11 @@ import {
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { positionData } from '../../translation_graph/types';
+import { tenantIdOf } from 'engine-contracts';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000051' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000051');
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: true, edgeProperties: true }, resources: true };
@@ -160,7 +155,7 @@ function makeFakeAdapter(adapterType: string, latencyMs = 0) {
   return { adapter, creates, updates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 
@@ -188,7 +183,6 @@ function delayedInvoker(fail: ReadonlySet<string> = new Set()) {
   let inFlight = 0;
   let maxInFlight = 0;
   const invoker: MovementTransformInvoker = {
-    declaredOutput: (plugin) => realOutput(plugin),
     async invoke({ config }) {
       const url = String(config.url);
       inFlight += 1;
@@ -212,11 +206,6 @@ function delayedInvoker(fail: ReadonlySet<string> = new Set()) {
   };
 }
 
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
-}
-
 function webhookEvent(): TriggerEvent {
   return {
     pipelineInputId: 'pi-collection-settings',
@@ -235,10 +224,14 @@ async function run(source: string, invoker: MovementTransformInvoker, latencyMs 
     event: webhookEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined),
-    resolveAdapter: ({ adapterType }: { adapterType: string }) =>
-      adapterType === 'email' ? email.adapter : attio.adapter,
-    transformInvoker: invoker,
+    credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email.adapter : attio.adapter,
+      },
+      llm: { transforms: invoker },
+    }),
   });
   return { result, attio };
 }
@@ -389,6 +382,20 @@ describe('onError: what a member whose function failed does', () => {
     expect(attio.creates[0]?.fields.summary).toBe('a,b,c,e');
   });
 
+  it('a lost run lease inside a member is never forgiven: it stops the run, as a cancel does', async () => {
+    for (const onError of ['ignore', 'warn']) {
+      const invoker: MovementTransformInvoker = {
+        async invoke({ config }) {
+          // The host found the run is another instance's now.
+          if (String(config.url) === 'c') throw new RunLeaseLost('run-1');
+          return { text: `got-${String(config.url)}` };
+        },
+      };
+      const failed = await run(mapMovement(`{ onError: "${onError}" }`), invoker).catch((error: unknown) => error);
+      expect(runFailureCause(failed)).toBeInstanceOf(RunLeaseLost);
+    }
+  });
+
   it('FILTER drops a member whose predicate failed', async () => {
     const plugin = delayedInvoker(FAIL_C);
     const { attio } = await run(
@@ -459,5 +466,113 @@ describe('members writing the same record take turns', () => {
     );
     expect(plugin.maxInFlight()).toBe(3);
     expect(attio.creates[0]?.fields.summary).toBe('got-a,got-b,got-c,got-d,got-e');
+  });
+});
+
+describe('what concurrent members leave behind does not depend on which finished first', () => {
+  const WRITING = [
+    'movement intake(m: <inbox-[:message]->>) {',
+    `  MAP(${MEMBERS}, { concurrency: 5 }, (u) => {`,
+    '    page = fetch_url(url: u)',
+    '    co = write crm-[:companies]-> { name: u, summary: COALESCE(page, "none") }',
+    '    write crm-[:people]-> { name: co.`name` }',
+    '  })',
+    '}',
+  ].join('\n');
+
+  async function runCounting(source: string, invoker: MovementTransformInvoker) {
+    const email = makeFakeAdapter('email');
+    const attio = makeFakeAdapter('attio');
+    const host = makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) =>
+          adapterType === 'email' ? email.adapter : attio.adapter,
+      },
+      llm: { transforms: invoker },
+    });
+    const resolutions: string[] = [];
+    const counted = {
+      ...host,
+      adapters: {
+        ...host.adapters,
+        resolve: (input: Parameters<typeof host.adapters.resolve>[0]) => {
+          resolutions.push(`${input.adapterType} as ${input.role}`);
+          return host.adapters.resolve(input);
+        },
+      },
+    };
+    const result = await runMovement({
+      source: PRELUDE + source,
+      movementName: 'intake',
+      event: webhookEvent(),
+      teamId: TEAM_ID,
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
+      host: counted,
+    });
+    return { result, attio, resolutions };
+  }
+
+  it('the writes are in program order, member by member, and each citation names its write there', async () => {
+    const plugin = delayedInvoker();
+    const { result, attio } = await runCounting(WRITING, plugin.invoker);
+    // The members' writes LANDED out of member order …
+    expect(attio.creates.filter((c) => c.recordType === 'company').map((c) => c.fields.name)).not.toEqual([
+      'a', 'b', 'c', 'd', 'e',
+    ]);
+    // … and the ledger reads as the members would have run one after another.
+    expect(result.writes.map((w) => `${w.recordType} ${String(w.writtenValues.name)}`)).toEqual(
+      ['a', 'b', 'c', 'd', 'e'].flatMap((u) => [`company ${u}`, `person ${u}`]),
+    );
+    result.writes.forEach((write, index) => {
+      if (write.recordType === 'company') {
+        expect(write.origin?.writeIndex).toBe(index);
+      } else {
+        // The person's name came off the company its member wrote just before.
+        expect(write.provenance.name).toEqual([expect.objectContaining({ kind: 'write', write: index - 1 })]);
+      }
+    });
+  });
+
+  it('a resolution that failed is asked again by the next member, not remembered', async () => {
+    const email = makeFakeAdapter('email');
+    const attio = makeFakeAdapter('attio');
+    let attioResolutions = 0;
+    const result = await runMovement({
+      source:
+        PRELUDE +
+        [
+          'movement intake(m: <inbox-[:message]->>) {',
+          `  MAP(${MEMBERS}, { onError: "ignore" }, (u) => {`,
+          '    write crm-[:companies]-> { name: u }',
+          '  })',
+          '}',
+        ].join('\n'),
+      movementName: 'intake',
+      event: webhookEvent(),
+      teamId: TEAM_ID,
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => (name === 'acme_main' ? 'cred-attio-1' : undefined)),
+      host: makeTestHost({
+        adapters: {
+          resolve: ({ adapterType }: { adapterType: string }) => {
+            if (adapterType === 'email') return email.adapter;
+            attioResolutions += 1;
+            if (attioResolutions === 1) throw new Error('attio is down');
+            return attio.adapter;
+          },
+        },
+      }),
+    });
+    // The first member's resolution failed and it was left out; the second
+    // asked again, and every later member shared that one.
+    expect(attioResolutions).toBe(2);
+    expect(result.writes.map((w) => w.writtenValues.name)).toEqual(['b', 'c', 'd', 'e']);
+  });
+
+  it('members resolving the same instance at once share one resolution', async () => {
+    const { resolutions } = await runCounting(WRITING, delayedInvoker().invoker);
+    expect(resolutions.filter((r) => r === 'attio as target')).toHaveLength(1);
+    expect(new Set(resolutions).size).toBe(resolutions.length);
   });
 });

@@ -10,7 +10,7 @@
 
 import type { InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type {
   Adapter,
   RuntimeCapabilities,
@@ -24,14 +24,16 @@ import {
   makeStablePosition,
   positionRecordId,
 } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000031');
 const KG = 'kg';
 
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return {
@@ -110,7 +112,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] }, kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -139,7 +141,9 @@ async function run(source: string, kg: ReturnType<typeof makeKgFake>) {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }),
+    host: makeTestHost({
+      adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
+    }),
     dryRun: false,
   });
 }

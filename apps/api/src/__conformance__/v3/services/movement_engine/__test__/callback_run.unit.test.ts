@@ -17,19 +17,21 @@
 import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { CallbackSink } from '../callback_sink';
-import type { CallbackCall } from '../callback_store';
+import { tenantIdOf } from 'engine-contracts';
+import type { CallbackSink } from '../host';
+import type { CallbackCall } from 'engine-contracts';
 import type { ParkedScopeState } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { snapshotOverManifests, staticCatalogFromManifests, staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { runMovement, fireCallbackBody, type ParkSink } from '../run';
+import { makeTestHost, TEST_HOST_NOW } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000041');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };
@@ -78,7 +80,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -109,9 +111,8 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
     params: Array<{ name: string; type: string }>;
     state: ParkedScopeState;
     singleUse: boolean;
-    expiresAt?: Date;
+    expiresAt?: string;
   }> = [];
-  const correlations: Array<{ callbackId: string; address: string }> = [];
   let n = 0;
   const sink: CallbackSink = {
     async mint(input) {
@@ -119,29 +120,36 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
       mints.push({ id, ...input });
       return { id, url: `https://api.test/api/cb/${id}` };
     },
-    async calls(callbackId) {
+    async calls({ callbackId }) {
       return ledger[callbackId] ?? [];
     },
-    async correlateAwait(input) {
-      correlations.push(input);
-    },
   };
-  return { sink, mints, correlations, ledger };
+  return { sink, mints, ledger };
 }
 
 /** A fake park sink: records the await parks (the only kind these tests hit). */
 function makeFakeParkSink() {
-  const awaitParks: Array<{ address: string; state: ParkedScopeState }> = [];
+  const awaitParks: Array<{
+    address: string;
+    state: ParkedScopeState;
+    adapterType: string;
+    correlationKey: string;
+  }> = [];
   const sink = {
     async recordJoin() {},
     async commitTimerPark() {},
     async commitAwaitPark(input: {
       address: string;
       state: unknown;
-      correlate: (runId: string) => Promise<void>;
+      adapterType: string;
+      correlationKey: string;
     }) {
-      await input.correlate('run-1');
-      awaitParks.push({ address: input.address, state: input.state as ParkedScopeState });
+      awaitParks.push({
+        address: input.address,
+        state: input.state as ParkedScopeState,
+        adapterType: input.adapterType,
+        correlationKey: input.correlationKey,
+      });
     },
     async decrementJoin() {
       return { closed: false };
@@ -172,9 +180,13 @@ function movementRun(args: {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: args.kg.adapter }),
-    callbackSink: args.callbacks.sink,
-    ...(args.parks !== undefined ? { parkSink: args.parks.sink } : {}),
+    host: makeTestHost({
+      adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: args.kg.adapter }) },
+      park: {
+        callbacks: args.callbacks.sink,
+        ...(args.parks !== undefined ? { sink: args.parks.sink } : {}),
+      },
+    }),
     dryRun: false,
   });
 }
@@ -234,10 +246,9 @@ listen to runs {} fire m
 
     expect(callbacks.mints.map((m) => m.singleUse)).toEqual([true, false]);
     expect(callbacks.mints[0].expiresAt).toBeUndefined();
-    // 2d out, give or take the test's own clock.
-    const ttl = callbacks.mints[1].expiresAt!.getTime() - Date.now();
-    expect(ttl).toBeGreaterThan(47 * 60 * 60 * 1000);
-    expect(ttl).toBeLessThan(49 * 60 * 60 * 1000);
+    // 2d out from the host's now (the test host's clock is fixed).
+    const ttl = new Date(callbacks.mints[1].expiresAt!).getTime() - Date.parse(TEST_HOST_NOW);
+    expect(ttl).toBe(48 * 60 * 60 * 1000);
   });
 
   it('records the fire-time signature in DECLARATION order', async () => {
@@ -284,7 +295,9 @@ listen to runs {} fire m
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }),
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter }) },
+        }),
         dryRun: false,
       }),
     ).rejects.toThrow(/callback/i);
@@ -366,7 +379,7 @@ listen to runs {} fire m
     expect(result.parked).toBe(true);
     // The await is stmt1 (the callback mint is stmt0).
     expect(parks.awaitParks.map((p) => p.address)).toEqual(['s1']);
-    expect(callbacks.correlations).toEqual([{ callbackId: 'cb_fake1', address: 's1' }]);
+    expect(parks.awaitParks.map((p) => [p.adapterType, p.correlationKey])).toEqual([['callback', 'cb_fake1']]);
     // Nothing past the await ran.
     expect(kg.creates).toHaveLength(0);
   });
@@ -411,9 +424,10 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }),
-      callbackSink: callbacks.sink,
-      parkSink: parks.sink,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
+        park: { callbacks: callbacks.sink, sink: parks.sink },
+      }),
       // The stored state, JSON round-tripped exactly as the DB would.
       state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
       values,
@@ -460,9 +474,10 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }),
-      callbackSink: callbacks.sink,
-      parkSink: parks.sink,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
+        park: { callbacks: callbacks.sink, sink: parks.sink },
+      }),
       state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
       values: {},
       callIndex: 0,
@@ -492,9 +507,10 @@ listen to runs {} fire m
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }),
-        callbackSink: callbacks.sink,
-        parkSink: parks.sink,
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
+          park: { callbacks: callbacks.sink, sink: parks.sink },
+        }),
         state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
         values: {},
         callIndex: 0,
@@ -596,11 +612,11 @@ describe('a callback body that ANSWERS a request', () => {
     credentials: { kg_cred: { adapters: ['kg'] } },
     instanceSchemas: { kg: kgSchema },
   });
-  const askCatalog = {
+  const askCatalog = snapshotOverManifests({
     ...base,
     instantiate: (name: string, args?: Record<string, unknown>) =>
       name === ASK ? askSchema : base.instantiate(name, args as never),
-  };
+  });
 
   const SOURCE = `import { manual, ask, kg } from adapters
 import { kg_cred } from credentials
@@ -626,8 +642,12 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog: askCatalog,
-      resolveAdapter: makeResolver({ manual: manualAdapter, [KG]: kg.adapter, [ASK]: ask.adapter }),
-      callbackSink: callbacks.sink,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ manual: manualAdapter, [KG]: kg.adapter, [ASK]: ask.adapter }),
+        },
+        park: { callbacks: callbacks.sink },
+      }),
       dryRun: false,
     });
     expect(minted.parked).toBeFalsy();
@@ -640,12 +660,16 @@ listen to runs {} fire m
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog: askCatalog,
-      resolveAdapter: makeResolver({
-        manual: manualAdapter,
-        [KG]: makeKgFake().adapter,
-        [ASK]: fireAsk.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            manual: manualAdapter,
+            [KG]: makeKgFake().adapter,
+            [ASK]: fireAsk.adapter,
+          }),
+        },
+        park: { callbacks: callbacks.sink },
       }),
-      callbackSink: callbacks.sink,
       state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
       values: {},
       callIndex: 0,

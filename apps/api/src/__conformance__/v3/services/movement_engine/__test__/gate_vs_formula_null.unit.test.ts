@@ -10,7 +10,7 @@
 
 import { Environment, evalMovementExpr } from '../expression';
 import type { ExtractEmission } from '../extraction';
-import { parseMovementCondition, parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseMovementCondition, parseMovementExpression } from 'movement-lang';
 
 function emission(fields: Record<string, unknown>): ExtractEmission {
   return {
@@ -40,12 +40,12 @@ async function gate(raw: string, env: Environment): Promise<boolean> {
   if (condition.kind !== 'expr') {
     throw new Error(`expected a plain expression condition, got '${condition.kind}'`);
   }
-  return Boolean((await evalMovementExpr(condition.expr, { env })).value);
+  return Boolean((await evalMovementExpr(condition.expr, { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value);
 }
 
 /** The formula path: the same text as a field EXPRESSION. */
 async function formula(raw: string, env: Environment): Promise<unknown> {
-  return (await evalMovementExpr(parseMovementExpression(raw), { env })).value;
+  return (await evalMovementExpr(parseMovementExpression(raw), { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
 }
 
 const GATE = 'f.`name` != NULL';

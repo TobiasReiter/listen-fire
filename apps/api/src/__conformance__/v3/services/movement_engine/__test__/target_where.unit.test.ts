@@ -72,12 +72,6 @@ jest.mock('../../knowledge_pipeline/facts', () => ({
   extractFactsForResource: jest.fn(async () => []),
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 // The ONE judge — mocked at the LLM seam, so the real arbitration (the
 // short-circuits, the exactness rule) still runs and only the decision is
 // injected.
@@ -89,9 +83,10 @@ jest.mock('../../../lib/prompts/execute', () => ({
 
 import { execute } from '../../../lib/prompts/execute';
 import { runMovement } from '../run';
+import { meteredArbitration } from '../../translation_graph/engine/entity_match';
 
 import type { InstanceSchema } from 'movement-lang';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -100,9 +95,10 @@ import {
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 const mockExecute = execute as jest.MockedFunction<typeof execute>;
 
 /** The judge's reply shape ({match_index, confidence, reasoning}). */
@@ -210,7 +206,7 @@ const crmSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
   instanceSchemas: { attio: crmSchema },
 });
@@ -247,12 +243,18 @@ function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return adapters.email;
-      if (adapterType === 'attio') return adapters.attio;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      // The host's judge, over the mocked prompt.
+      llm: { arbitrateEntities: meteredArbitration },
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return adapters.email;
+          if (adapterType === 'attio') return adapters.attio;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
   });
 }
 

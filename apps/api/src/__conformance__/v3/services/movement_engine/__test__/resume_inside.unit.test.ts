@@ -3,7 +3,7 @@
 // expression, and a `parallel` / `race` arm (literal or built at run time).
 //
 // Two kinds of park drive it:
-//   · an ENGINE suspension (`suspendWhen` → `suspendFlow`): the flow parks just
+//   · an ENGINE suspension (`suspendAt` → `suspendFlow`): the flow parks just
 //     before a statement — or just before one of the calls a statement makes —
 //     and resume re-runs that statement, replaying the calls it had finished;
 //   · an AUTHORED wait (`await sleep(…)`, `await FIRST(cb-[:Called]->)`),
@@ -20,25 +20,26 @@
 import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { CallbackSink } from '../callback_sink';
-import type { CallbackCall } from '../callback_store';
+import { tenantIdOf } from 'engine-contracts';
+import type { CallbackSink } from '../host';
+import type { CallbackCall } from 'engine-contracts';
 import type { ParkedScopeState } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   resumeMovement,
   runMovement,
   type MovementRunResult,
   type ParkSink,
-  type SuspensionPoint,
 } from '../run';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000077' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000077');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };
@@ -87,7 +88,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -132,7 +133,7 @@ function makeParkSink() {
   };
   const sink: ParkSink = {
     async recordJoin(input) {
-      recorded.push(input);
+      recorded.push({ frameAddress: input.frameAddress, parkedChildren: input.parkedChildren });
       const existing = joins.get(input.frameAddress);
       joins.set(input.frameAddress, {
         pending: input.parkedChildren,
@@ -144,7 +145,6 @@ function makeParkSink() {
       keep('timer', input.address, input.state);
     },
     async commitAwaitPark(input) {
-      await input.correlate('run-1');
       keep('await', input.address, input.state);
     },
     async commitSuspension(input) {
@@ -196,10 +196,9 @@ function makeCallbackSink() {
       const id = `cb_${++n}`;
       return { id, url: `https://api.test/api/cb/${id}` };
     },
-    async calls(callbackId) {
+    async calls({ callbackId }) {
       return ledger[callbackId] ?? [];
     },
-    async correlateAwait() {},
   };
   return { sink, ledger };
 }
@@ -210,20 +209,27 @@ interface Harness {
   callbacks?: ReturnType<typeof makeCallbackSink>;
 }
 
-function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>) {
+function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>, suspendAt?: string[]) {
   return {
     source: h.source,
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
     movementName: 'recap',
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return kg.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
-    parkSink: h.parks.sink,
-    ...(h.callbacks !== undefined ? { callbackSink: h.callbacks.sink } : {}),
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+      park: {
+        sink: h.parks.sink,
+        ...(h.callbacks !== undefined ? { callbacks: h.callbacks.sink } : {}),
+      },
+    }),
+    ...(suspendAt !== undefined ? { suspendAt } : {}),
     dryRun: false,
   };
 }
@@ -231,16 +237,8 @@ function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>) {
 /** Run until it parks, suspending (once each) at the given points. */
 async function start(h: Harness, suspendAt: string[] = []) {
   const kg = makeKgFake();
-  const pending = new Set(suspendAt);
-  const points: SuspensionPoint[] = [];
-  const result = await runMovement({
-    ...runInput(h, kg),
-    suspendWhen: (point) => {
-      points.push(point);
-      return pending.delete(point.address);
-    },
-  });
-  return { result, kg, points };
+  const result = await runMovement(runInput(h, kg, suspendAt));
+  return { result, kg };
 }
 
 /** Resume the leaf parked at `address` — re-entering it, as an await / a

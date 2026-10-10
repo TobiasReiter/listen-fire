@@ -89,12 +89,6 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
   resolveActingUser: jest.fn(async () => null),
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 // The PDF boundary: file_render's REAL code runs (escaping, page
 // driving, FileRef minting); only Chromium is stubbed. `page.pdf`
 // returns bytes derived from the html `setContent` received, so the
@@ -115,7 +109,7 @@ jest.mock('../../playwright', () => ({
 }));
 
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -126,16 +120,20 @@ import type {
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { Readable } from 'node:stream';
 import { services } from '../../../adapters/registry';
+import { makeTestHost } from '../test_host';
+import { streamFileRef } from '../../translation_graph/engine/files/retrieve';
+import { renderFileArtifact } from '../../translation_graph/movement/file_render';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
 // FILE() now persists its bytes to the document store on creation (the artifact
 // becomes a durable, source-backed FileRef — async user interaction §4.1), so
 // the run needs a document store. An in-memory one keeps the test hermetic; the
-// FileRef's retrieve() reads back through it, exactly as production does.
+// FileRef's bytes are read back through it, exactly as production does.
 const docStore = new Map<string, { bytes: Buffer; contentType?: string }>();
 beforeAll(() => {
   let n = 0;
@@ -246,7 +244,7 @@ function webhookEvent(adapterType: string, payload: Record<string, unknown>): Tr
 
 // ── Catalog / fixture ────────────────────────────────────────────────────────
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dev_slack: { adapters: ['slack'] },
     acme_drive: { adapters: ['affinity'] }, // no thin schema → untyped target (checker silent)
@@ -301,20 +299,25 @@ async function runDigest(artifactType: 'pdf' | 'text') {
     event: EVENT,
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: makeResolver({
-      slack: slackWithFiles(),
-      affinity: makeFakeAdapter('affinity').adapter,
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      writeSink: (w) => captured.push(w),
+      adapters: {
+        resolve: makeResolver({
+          slack: slackWithFiles(),
+          affinity: makeFakeAdapter('affinity').adapter,
+        }),
+      },
+      files: { render: renderFileArtifact },
     }),
     dryRun: true,
-    writeSink: (w) => captured.push(w),
   });
   return { captured, result };
 }
 
 async function refBytes(ref: FileRef): Promise<Buffer> {
-  expect(typeof ref.retrieve).toBe('function');
-  const { stream } = await ref.retrieve!();
+  expect(ref.source).toMatchObject({ store: 'document' });
+  const { stream } = await streamFileRef(ref, { teamId: teamOfTenant(TEAM_ID) });
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks);
@@ -345,7 +348,7 @@ describe('FILE(digest, "pdf") + namespaced stdlib fields through runMovement', (
       name: 'movement-artifact.pdf',
       contentType: 'application/pdf',
     });
-    expect(typeof ref.retrieve).toBe('function');
+    expect(ref.source).toMatchObject({ store: 'document' });
     expect(ref.size).toBeGreaterThan(0);
 
     // The rendered bytes (the seam's real path; Chromium stubbed at the
@@ -420,10 +423,14 @@ describe('unknown stdlib members fail checking with the family inventory', () =>
         event: EVENT,
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          slack: slackWithFiles(),
-          affinity: makeFakeAdapter('affinity').adapter,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              slack: slackWithFiles(),
+              affinity: makeFakeAdapter('affinity').adapter,
+            }),
+          },
         }),
         dryRun: true,
       }),
@@ -461,9 +468,13 @@ describe('DATE.TODAY / DATETIME.AT through runMovement', () => {
       event: EVENT,
       teamId: TEAM_ID,
       catalog,
-      firedAt,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ slack: slackWithFiles(), affinity: affinity.adapter }),
+      firedAt: firedAt.toISOString(),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ slack: slackWithFiles(), affinity: affinity.adapter }),
+        },
+      }),
     });
     return affinity.creates[0].fields;
   }

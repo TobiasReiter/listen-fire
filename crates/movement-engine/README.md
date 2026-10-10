@@ -1284,7 +1284,7 @@ runs is the conformance corpora run with `MOVEMENT_ENGINE=rust`.
 `scripts/build-movement-wasm.sh` if a crate changed:
 
 ```bash
-MOVEMENT_ENGINE=rust pnpm test:conformance:v2                       # the whole corpus: routing floors apply
+MOVEMENT_ENGINE=rust pnpm test:conformance:v2                       # the whole corpus (v1, v2, v3 alike): routing floors apply
 MOVEMENT_ENGINE=rust pnpm test:conformance:v2 --testPathPattern refs  # one file: no floor, every other check
 MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # per-file routed counts
 ```
@@ -1295,6 +1295,6 @@ runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
 segments admission refused too; admitted does not) and `Rust runs not
 admitted: {reason: count}` (largest first), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 287, v2 350). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 287, v2 350, v3 379). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

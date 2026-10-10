@@ -4,6 +4,9 @@
 // the current version 3 puts the whole verbatim corpus under 3 without
 // touching a fixture.
 const path = require('path');
+const { assertSourcesResolve } = require('./source_tripwire.cjs');
+
+assertSourcesResolve(require.resolve);
 
 const LANGUAGE_VERSION = path.resolve(__dirname, '../language_version.ts');
 

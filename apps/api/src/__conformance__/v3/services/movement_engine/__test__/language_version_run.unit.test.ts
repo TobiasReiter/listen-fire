@@ -1,25 +1,34 @@
 // The language-version pin through the REAL interpreter and the authoring
 // gate:
 //
-//   1. a run compiles and executes under its pin, and the pin is the run
-//      context every adapter call sees (`currentLanguageVersion()`);
+//   1. a run compiles and executes under its pin, and the pin is what every
+//      adapter call sees off the host segment the run opened
+//      (`currentLanguageVersion()`);
 //   2. a pin this release does not support is refused — before the source is
 //      read, naming the version and the fix, never run as the current one;
 //   3. a deprecated pin runs, with a warning on the run's own trace;
-//   4. validation (`diagnoseMovementSource`) honours the same pin.
+//   4. validation (`diagnoseMovementSource`) honours the same pin — the
+//      engine's dry interpretability scan included.
 
-import { CURRENT_LANGUAGE_VERSION, type InstanceSchema, type LanguageRelease } from 'movement-lang';
+import {
+  CURRENT_LANGUAGE_VERSION,
+  fromCatalogSnapshot,
+  type InstanceSchema,
+  type LanguageRelease,
+} from 'movement-lang';
 import { runMovement } from '../run';
-import { currentLanguageVersion } from '../run_scope';
+import { currentLanguageVersion, hostSegments, segmentScopedCalls } from '../../translation_graph/segment_scope';
 import { MovementEngineError } from '../errors';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { diagnoseMovementSource } from '../../translation_graph/movement/authoring';
 import type { Adapter, RuntimeCapabilities, UpdateInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 // A release other than this one, so the deprecated path is reachable while
 // this release deprecates nothing. Only the ENGINE's view is redirected; the
@@ -34,9 +43,9 @@ jest.mock('movement-lang', () => {
   };
 });
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000041');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: false, edgeProperties: false }, resources: false };
@@ -95,7 +104,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -129,11 +138,18 @@ function run(kg: ReturnType<typeof makeKgFake>, languageVersion?: number) {
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return kg.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    // The production host's segment scope, around the test's adapters.
+    host: makeTestHost({
+      segment: hostSegments,
+      adapters: {
+        ...segmentScopedCalls,
+        resolve: ({ adapterType }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     dryRun: false,
   });
 }
@@ -191,17 +207,48 @@ describe('a run honours its language version pin', () => {
 
 describe('validation honours the pin', () => {
   it('a supported pin validates the text as usual', () => {
-    const validation = diagnoseMovementSource(SOURCE, { catalog, languageVersion: 1 });
+    const validation = diagnoseMovementSource(SOURCE, { catalog: fromCatalogSnapshot(catalog), languageVersion: 1 });
     expect(validation.ok).toBe(true);
     expect(validation.firedMovements).toEqual(['reopen']);
   });
 
   it('an unsupported pin is the whole verdict — not a parse of the text under another version', () => {
     const validation = diagnoseMovementSource('this is not a movement {', {
-      catalog,
+      catalog: fromCatalogSnapshot(catalog),
       languageVersion: 99,
     });
     expect(validation.ok).toBe(false);
     expect(validation.diagnostics.map((d) => d.code)).toEqual(['MOV_LANGUAGE_VERSION_UNSUPPORTED']);
+  });
+
+  it('the engine gate scans under the pin: a v1 movement is refused what v1 cannot run, under the v3 release', () => {
+    // A call written in another letter case reaches the file's function from
+    // version 3; under version 1 it names a function the engine does not know.
+    const source = `import { manual, kg } from adapters
+import { kg_cred } from credentials
+runs = manual()
+graph = kg(credentials: kg_cred)
+movement label(x: <text>) {
+  return x
+}
+movement reopen(go: <runs-[:Invocation]->>) {
+  graph-[c:company]-> {
+    if Label("Open") == "Open" {
+      write c { status: "Open" }
+    }
+  }
+}
+listen to runs {} fire reopen
+`;
+    const engineGate = (languageVersion: number) => {
+      const { diagnostics } = diagnoseMovementSource(source, { catalog: fromCatalogSnapshot(catalog), languageVersion });
+      // An unparsed source scans clean; this one parses under both.
+      expect(diagnostics.map((d) => d.code)).not.toContain('MOV_PARSE');
+      return diagnostics.filter((d) => d.code === 'MOV_ENGINE_UNSUPPORTED').map((d) => d.message);
+    };
+    expect(engineGate(3)).toEqual([]);
+    expect(engineGate(1)).toEqual([
+      'the engine does not support non-built-in function calls (LABEL()) yet — remove it to save this file live',
+    ]);
   });
 });

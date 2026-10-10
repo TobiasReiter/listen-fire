@@ -90,13 +90,7 @@ jest.mock('../../../lib/anthropic', () => ({
   })),
   MAX_CHAT_CONTINUATIONS: 5,
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
-import type { Catalog } from 'movement-lang';
+import { catalogSnapshotOf, type Catalog } from 'movement-lang';
 import { runMovement } from '../run';
 import { MovementEngineError } from '../expression';
 import type {
@@ -120,9 +114,10 @@ import {
 import { containerAssociation } from '../../translation_graph/adapter';
 import { instanceSchemaFromDescriptors } from '../../translation_graph/movement/schema_projection';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const KG_ADAPTER_TYPE = 'kg';
 
 // ── The introspection fixtures (same projections as catalog.unit.test) ──────
@@ -309,7 +304,7 @@ const schemasBySlug = {
   [KG_ADAPTER_TYPE]: kgProjection.schema,
 };
 
-const teamLikeCatalog: Catalog = {
+const teamLikeLiveCatalog: Catalog = {
   adapter(name) {
     if (!(name in schemasBySlug)) return undefined;
     return {
@@ -333,6 +328,11 @@ const teamLikeCatalog: Catalog = {
     return schemasBySlug[adapter as keyof typeof schemasBySlug];
   },
 };
+const TEAM_LIKE_NAMES = {
+  adapters: Object.keys(schemasBySlug),
+  credentials: ['dev_loop_attio', 'dev_loop_slack'],
+};
+const teamLikeCatalog = catalogSnapshotOf(teamLikeLiveCatalog, TEAM_LIKE_NAMES);
 
 const CREDENTIAL_IDS: Record<string, string> = {
   dev_loop_attio: 'cred-attio-1',
@@ -601,11 +601,15 @@ describe('the engine passes natural names; the adapter translates internally', (
       event,
       teamId: TEAM_ID,
       catalog: teamLikeCatalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolveAdapter({
-        email: email.adapter,
-        attio: attio.adapter,
-        slack: slack.adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolveAdapter({
+            email: email.adapter,
+            attio: attio.adapter,
+            slack: slack.adapter,
+          }),
+        },
       }),
     });
 
@@ -692,9 +696,13 @@ describe('kg targets cross the boundary as natural ontology names', () => {
       event,
       teamId: TEAM_ID,
       catalog: teamLikeCatalog,
-      resolveAdapter: makeResolveAdapter({
-        email: email.adapter,
-        [KG_ADAPTER_TYPE]: kg.adapter,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolveAdapter({
+            email: email.adapter,
+            [KG_ADAPTER_TYPE]: kg.adapter,
+          }),
+        },
       }),
     });
 
@@ -776,16 +784,23 @@ describe('drift throws loudly (Decision #4)', () => {
         teamId: TEAM_ID,
         // No `Ghost Type` in the graph's schema, but keep the rest so the
         // checker doesn't reject the whole program for an unrelated reason.
-        catalog: {
-          ...teamLikeCatalog,
-          instantiate: (adapter) =>
-            adapter === KG_ADAPTER_TYPE
-              ? undefined
-              : schemasBySlug[adapter as keyof typeof schemasBySlug],
-        },
-        resolveAdapter: makeResolveAdapter({
-          email: email.adapter,
-          [KG_ADAPTER_TYPE]: kg.adapter,
+        catalog: catalogSnapshotOf(
+          {
+            ...teamLikeLiveCatalog,
+            instantiate: (adapter) =>
+              adapter === KG_ADAPTER_TYPE
+                ? undefined
+                : schemasBySlug[adapter as keyof typeof schemasBySlug],
+          },
+          TEAM_LIKE_NAMES,
+        ),
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolveAdapter({
+              email: email.adapter,
+              [KG_ADAPTER_TYPE]: kg.adapter,
+            }),
+          },
         }),
       }),
     ).rejects.toThrow(/known type|drift/i);

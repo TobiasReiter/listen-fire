@@ -5,7 +5,6 @@
 
 import { parseProgram } from '../parse';
 import { parseExpression } from '../expression/parse_expression';
-import { callStyleIfMessage } from '../scan';
 
 const REWRITE = /IF is written 'IF … THEN … ELSE … END', not called like a function — write 'IF m\.Body == "a" THEN "b" ELSE "c" END'/;
 
@@ -32,11 +31,11 @@ describe('IF called like a function', () => {
   });
 
   it('names the form when the argument count is not three', () => {
-    expect(callStyleIfMessage('IF(a, b)', 2)).toMatch(/write 'IF <condition> THEN <value> ELSE <otherwise> END'/);
+    expect(() => parseExpression('IF(a, b)')).toThrow(/write 'IF <condition> THEN <value> ELSE <otherwise> END'/);
   });
 
   it('leaves a parenthesised condition alone', () => {
-    expect(callStyleIfMessage('IF (a OR b) THEN 1 ELSE 2 END', 3)).toBeUndefined();
+    expect(parseExpression('IF (a OR b) THEN 1 ELSE 2 END').kind).toBe('if');
     expect(parse('  x = IF (m.Body == "a" OR m.Body == "b") THEN "b" ELSE "c" END')).not.toThrow();
     expect(() => parseExpression('IF (a, b) THEN 1 ELSE 2 END')).toThrow(/not called like a function/);
   });

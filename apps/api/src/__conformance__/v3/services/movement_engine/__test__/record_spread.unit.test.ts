@@ -82,13 +82,7 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import {
   type ExtractCallLlmInput,
@@ -103,9 +97,10 @@ import {
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000053' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000053');
 
 function fakeAdapter(adapterType: string): Adapter {
   let n = 0;
@@ -163,7 +158,7 @@ const crmSchema: InstanceSchema = {
   },
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: crmSchema },
@@ -195,7 +190,7 @@ const DECK: FileRef = {
   name: 'deck.pdf',
   contentType: 'application/pdf',
   size: 1234,
-  source: { ownerAdapterType: 'email', handle: 'attachment-1' },
+  source: { adapterType: 'email', handle: 'attachment-1' },
 };
 
 function event(): TriggerEvent {
@@ -238,11 +233,15 @@ async function run(body: string[], replies: Reply[]) {
     event: event(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }) => fakeAdapter(adapterType),
-    extractCallLlm: llm.client,
-    resolveFileText: async (): Promise<FileTextResolution> => ({ text: 'ACME DECK: we build infra.', rawTextId: 'rt-1' }),
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: { resolve: ({ adapterType }) => fakeAdapter(adapterType) },
+      llm: { extractCall: llm.client },
+      files: {
+        resolveFileText: async (): Promise<FileTextResolution> => ({ text: 'ACME DECK: we build infra.', rawTextId: 'rt-1' }),
+      },
+    }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { calls: llm.calls, writes, result };
 }

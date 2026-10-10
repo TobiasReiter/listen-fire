@@ -12,7 +12,7 @@ jest.mock('../../logger', () => ({
 }));
 
 import type { ExprSlot, Span } from 'movement-lang';
-import { parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 import {
   Environment,
   evalMovementExpr,
@@ -32,7 +32,7 @@ function fileRef(over: Partial<FileRef> = {}): FileRef {
     name: 'deck.pdf',
     contentType: 'application/pdf',
     size: 1234,
-    source: { ownerAdapterType: 'email', handle: 'attachment-1' },
+    source: { adapterType: 'email', handle: 'attachment-1' },
     ...over,
   };
 }
@@ -50,6 +50,7 @@ async function evaluate(
   env.declare('attachment', { kind: 'value', value: opts.attachment ?? null });
   return evalMovementExpr(parseMovementExpression(text), {
     env,
+    languageVersion: CURRENT_LANGUAGE_VERSION,
     ...(opts.resolveFileText ? { resolveFileText: opts.resolveFileText } : {}),
     ...(opts.trace ? { trace: opts.trace } : {}),
   });
@@ -209,6 +210,7 @@ describe('extract from [READ(f)]', () => {
     const runtime: ExtractRuntime = {
       llm,
       transformInvoker: { async invoke() { return {}; } },
+      plugins: {},
       evalSlot: (s: ExprSlot) => evaluate(s.raw, { attachment: fileRef(), resolveFileText }),
       resolveFileText,
     };

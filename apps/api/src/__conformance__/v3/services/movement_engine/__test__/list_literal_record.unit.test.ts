@@ -79,21 +79,16 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000077' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000077');
 
 function fakeAdapter(adapterType: string): Adapter {
   let n = 0;
@@ -141,7 +136,7 @@ const crmSchema: InstanceSchema = {
   writableRoots: { company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } } },
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
     attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: crmSchema },
@@ -194,9 +189,11 @@ async function run(body: string[]) {
     event: event(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }) => fakeAdapter(adapterType),
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: { resolve: ({ adapterType }) => fakeAdapter(adapterType) },
+    }),
     dryRun: true,
-    writeSink: (w) => writes.push(w),
   });
   return { writes, result };
 }

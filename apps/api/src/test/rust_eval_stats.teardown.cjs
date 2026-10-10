@@ -26,11 +26,13 @@ const path = require('node:path');
 // extraction keyword and plugin calls run in Rust, 2026-10-09) runs v1 223,
 // v2 268 whole; the floors are those less a margin of 2. Chunk 6A Task 4
 // (folds, EXISTS, IS tests and a record named twice, 2026-10-09) runs v1 289,
-// v2 352 whole; the floors are those less a margin of 2. A floor
+// v2 352 whole; the floors are those less a margin of 2. The v3 corpus came
+// with the main merge that brought language version 4 (2026-10-10): it runs
+// 381 whole, and its floor is that less the margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 287, v2: 350 };
+const RAN_WHOLE_FLOOR = { v1: 287, v2: 350, v3: 379 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
@@ -62,6 +64,7 @@ function corpusOf(projectConfig) {
   const match = (projectConfig?.testMatch ?? []).join(' ');
   if (match.includes('__conformance__/v1')) return 'v1';
   if (match.includes('__conformance__/v2')) return 'v2';
+  if (match.includes('__conformance__/v3')) return 'v3';
   return undefined;
 }
 

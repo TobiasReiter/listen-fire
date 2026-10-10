@@ -90,22 +90,17 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
   resolveActingUser: jest.fn(async () => null),
 }));
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import type { Catalog, InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { positionData } from '../../translation_graph/types';
 import type { Adapter, ParentLink, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000011' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000011');
 const MESSAGE = 'Slack Message';
 const TS = '1752700000.000100';
 
@@ -143,13 +138,13 @@ const CHAT_SCHEMA: InstanceSchema = {
 const baseCatalog = staticCatalogFromManifests({
   credentials: { acme_slack: { adapters: ['slack'] } },
 });
-const catalog: Catalog = {
+const catalog = snapshotOverManifests({
   ...baseCatalog,
   instantiate(name, args) {
     if (name === 'slack') return CHAT_SCHEMA;
     return baseCatalog.instantiate(name, args);
   },
-};
+});
 
 interface RecordedWrite {
   recordType: string;
@@ -254,11 +249,15 @@ async function run(event: TriggerEvent) {
     event,
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: () => 'cred-1',
-    resolveAdapter: ({ adapterType }) => {
-      if (adapterType === 'slack') return chat.adapter;
-      throw new Error(`test: no fake for '${adapterType}'`);
-    },
+    credentialIds: credentialIdsFor(catalog, () => 'cred-1'),
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }) => {
+          if (adapterType === 'slack') return chat.adapter;
+          throw new Error(`test: no fake for '${adapterType}'`);
+        },
+      },
+    }),
   });
   return { result, creates: chat.creates };
 }

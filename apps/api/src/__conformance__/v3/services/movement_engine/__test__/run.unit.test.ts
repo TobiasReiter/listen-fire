@@ -123,38 +123,8 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-// Acting-user arbitration (`@user_*` meta keys). The REAL chain walks
-// team-user tables; this mock keeps the seam honest — it still consumes
-// the adapter-parsed candidates the engine passes through
-// `getCandidates`, so the test proves the source-adapter wiring.
-jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
-  resolveActingUser: jest.fn(
-    async (input: {
-      getCandidates: () => Promise<
-        Array<{ identity: { email?: string; identifier: string; name?: string } }>
-      >;
-    }) => {
-      const first = (await input.getCandidates())[0];
-      if (!first) return null;
-      return {
-        id: 'user-1',
-        email: first.identity.email ?? first.identity.identifier,
-        name: first.identity.name ?? null,
-      };
-    },
-  ),
-}));
-
-// Adapter resolution + composition — every test injects its own
-// resolver, and no fixture has a generic_reference target.
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import type { InstanceSchema } from 'movement-lang';
-import { mockCatalog, parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import {
   MovementRunFailed,
@@ -167,13 +137,14 @@ import {
   rehydrateBinding,
   serializeBinding,
   type BindingDescriptor,
+  type InstanceIdentityDescriptor,
   type ParkedScopeState,
   type RehydrationContext,
 } from '../serialize';
 import { createSingleFlight } from '../single_flight';
 import type { Binding, SourceRead } from '../expression';
 import { Environment, MovementEngineError, evalMovementExpr } from '../expression';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -185,9 +156,13 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { LlmClient } from '../../translation_graph/engine/batched_extraction';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf, type ActingPrincipal } from 'engine-contracts';
+import type { EngineHost } from '../host';
+import { credentialIdsFor, makeTestHost, TEST_HOST_NOW } from '../test_host';
+import type { ActingUserLookup } from '../host_kit';
+import type { ActingUser } from '../../translation_graph/adapter';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
 // ── Fake adapters (per-action-target.unit.test.ts pattern) ──────────────────
 
@@ -324,7 +299,7 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: {
     dev_slack: { adapters: ['slack'] },
     acme_main: { adapters: ['attio'] },
@@ -355,7 +330,7 @@ const MILESTONE_CREDENTIAL_IDS: Record<string, string> = {
   acme_affinity: 'cred-affinity-1',
 };
 
-const milestoneCatalog = staticCatalogFromManifests({
+const milestoneCatalog = staticCatalogSnapshot({
   credentials: {
     dealflow_inbox: { adapters: ['email'] },
     acme_main: { adapters: ['attio'] },
@@ -416,10 +391,14 @@ describe('§I dealflow_intake: runMovement across three systems', () => {
       event,
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver(milestoneFakes()),
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
+        adapters: {
+          resolve: makeResolver(milestoneFakes()),
+        },
+      }),
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
 
     expect(runResult.movementName).toBe('dealflow_intake');
@@ -506,14 +485,18 @@ describe('AI(): runMovement through the LlmClient seam', () => {
       event,
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
+        llm: { client: movementLlm },
       }),
-      llm: movementLlm,
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
 
     expect(movementWrites).toEqual([
@@ -566,12 +549,16 @@ describe('AI(): runMovement through the LlmClient seam', () => {
       event,
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+          }),
+        },
+        llm: { client: movementLlm },
       }),
-      llm: movementLlm,
     });
 
     expect(movementLlmPrompts).toEqual(['normalise the company name']);
@@ -628,14 +615,18 @@ describe('AI(): runMovement through the LlmClient seam', () => {
       event,
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: () => {},
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
+        llm: { client: tierLlm },
       }),
-      llm: tierLlm,
       dryRun: true,
-      writeSink: () => {},
     });
 
     const byPrompt = new Map(calls.map(({ prompt, ...settings }) => [prompt, settings]));
@@ -684,12 +675,16 @@ describe('AI(): runMovement through the LlmClient seam', () => {
         event,
         teamId: TEAM_ID,
         catalog: milestoneCatalog,
-        resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          email: makeFakeAdapter('email').adapter,
-          attio: attio.adapter,
+        credentialIds: MILESTONE_CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              email: makeFakeAdapter('email').adapter,
+              attio: attio.adapter,
+            }),
+          },
+          llm: { client: { call: async () => ({ parsedJson }) } },
         }),
-        llm: { call: async () => ({ parsedJson }) },
       });
       return attio.creates;
     };
@@ -751,12 +746,16 @@ describe('AI(): runMovement through the LlmClient seam', () => {
       event: webhookEvent('email', { subject: 'hi', sender: 'a@b.c' }),
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+          }),
+        },
+        llm: { client: { call: async () => ({ parsedJson: { value: null, has_value: false } }) } },
       }),
-      llm: { call: async () => ({ parsedJson: { value: null, has_value: false } }) },
     });
 
     expect(attio.creates).toEqual([]);
@@ -814,10 +813,14 @@ describe('value bindings — field reads', () => {
       }),
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: attio.adapter,
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: attio.adapter,
+          }),
+        },
       }),
     });
 
@@ -858,13 +861,17 @@ describe('IS — runtime type tests', () => {
       event,
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     return writes;
   }
@@ -954,10 +961,14 @@ describe('IS — runtime type tests', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: makeFakeAdapter('attio').adapter, slack: walking }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: {
+          resolve: makeResolver({ attio: makeFakeAdapter('attio').adapter, slack: walking }),
+        },
+      }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     // Each landed record takes ITS OWN arm — and only its own.
     expect(writes.map((w) => w.fields)).toEqual([
@@ -999,10 +1010,14 @@ describe('IS — runtime type tests', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: makeFakeAdapter('attio').adapter, slack: walking }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: {
+          resolve: makeResolver({ attio: makeFakeAdapter('attio').adapter, slack: walking }),
+        },
+      }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     expect(writes).toEqual([]);
   });
@@ -1121,8 +1136,10 @@ describe('unique by — entity resolution through the shared arbitration split',
         event: webhookEvent('slack', { user: 'U123', text }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: { resolve: resolveAdapter },
+        }),
       });
 
     // The firing record carries each written field's summarised trail
@@ -1212,8 +1229,10 @@ describe('unique by — entity resolution through the shared arbitration split',
       event: webhookEvent('slack', { user: 'U123', text: 'Acme, Inc.' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: { resolve: resolveAdapter },
+      }),
     });
 
     expect(captured).toEqual({ any: [{ all: [{ field: 'text', fuzzy: true }] }] });
@@ -1249,8 +1268,12 @@ describe('program order — later writes read earlier handles env-side', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+        },
+      }),
     });
 
     // Program order: company first, message second, handle values piped.
@@ -1286,10 +1309,18 @@ describe('MovementRunFailed — a failing write does not erase what already land
     '}',
   ].join('\n');
 
-  it('rethrows the write failure with the partial ledger, message and stack intact', async () => {
+  it('rethrows the write failure with the partial ledger, message, name, detail and stack intact', async () => {
     const attio = makeFakeAdapter('attio');
     const slack = makeFakeAdapter('slack');
-    const boom = new Error('slack: 422 Unprocessable Entity');
+    class SlackApiError extends Error {
+      readonly status = 422;
+      readonly code = 'invalid_blocks';
+      constructor(message: string) {
+        super(message);
+        this.name = 'SlackApiError';
+      }
+    }
+    const boom = new SlackApiError('slack: 422 Unprocessable Entity');
     slack.adapter.createRecord = async () => {
       throw boom;
     };
@@ -1299,16 +1330,28 @@ describe('MovementRunFailed — a failing write does not erase what already land
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+        },
+      }),
     }).catch((e: unknown) => e);
 
     if (!(failure instanceof MovementRunFailed)) throw failure;
     // Transparent wrapper: the log line and the run's failure reason must
     // read exactly as they did before the ledger rode out with the error.
     expect(failure.message).toBe('slack: 422 Unprocessable Entity');
-    expect(failure.cause).toBe(boom);
-    expect(failure.stack).toBe(boom.stack);
+    // The adapter's error stays on the host; what crosses is its message, its
+    // name and its particulars, and the engine raises those as the run's cause.
+    const cause = failure.cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect(cause).toMatchObject({
+      message: boom.message,
+      name: 'SlackApiError',
+      detail: { status: 422, code: 'invalid_blocks' },
+    });
+    expect(failure.stack).toBe(cause instanceof Error ? cause.stack : undefined);
     // The first write really landed — it must survive into the run record.
     expect(failure.partial.writes.map((w) => [w.adapterType, w.recordType])).toEqual([
       ['attio', 'company'],
@@ -1330,8 +1373,12 @@ describe('MovementRunFailed — a failing write does not erase what already land
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: attio.adapter, slack: makeFakeAdapter('slack').adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: attio.adapter, slack: makeFakeAdapter('slack').adapter }),
+        },
+      }),
     }).catch((e: unknown) => e);
 
     if (!(failure instanceof MovementRunFailed)) throw failure;
@@ -1368,13 +1415,17 @@ describe('if — expression conditions', () => {
       event: webhookEvent('slack', { user: 'U123', text }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     return writes;
   }
@@ -1426,13 +1477,17 @@ describe('function calls — COALESCE and the built-in pure set', () => {
       event: webhookEvent('slack', payload),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     return writes;
   }
@@ -1461,13 +1516,17 @@ describe('function calls — COALESCE and the built-in pure set', () => {
         event: webhookEvent('slack', { user: 'U123', text: 'x' }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          writeSink: () => {},
+          adapters: {
+            resolve: makeResolver({
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
         }),
         dryRun: true,
-        writeSink: () => {},
       }),
     ).rejects.toThrow(/MOVENG_UNSUPPORTED.*DOMAIN_OF/);
   });
@@ -1535,10 +1594,14 @@ describe('adapter field functions — resolved against the WRITE TARGET adapter 
       event: webhookEvent('slack', { user: 'acme.dev', text: 'big deal' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: fake.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: fake.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
 
@@ -1573,10 +1636,14 @@ describe('adapter field functions — resolved against the WRITE TARGET adapter 
         event: webhookEvent('slack', { user: 'acme.dev', text: 'big deal' }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          attio: fake.adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              attio: fake.adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
         }),
       }),
     ).rejects.toThrow(/MOVENG_UNSUPPORTED.*DOMAIN_OF/);
@@ -1616,6 +1683,16 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
     return fake;
   }
 
+  // Acting-user arbitration is the host's. The REAL chain walks team-user
+  // tables; this one still consumes the adapter-parsed candidates the engine
+  // passes through `getCandidates`, so the test proves the source-adapter
+  // wiring.
+  const candidateDrivenActingUser = async ({ getCandidates }: ActingUserLookup): Promise<ActingUser | null> => {
+    const first = (await getCandidates())[0];
+    if (!first) return null;
+    return { id: 'user-1', email: first.identity.email ?? first.identity.identifier, name: first.identity.name ?? null };
+  };
+
   it('resolves time, actor, and acting-user keys through the same sources as the frozen engine', async () => {
     const slack = actorAwareSlack();
     const attio = makeFakeAdapter('attio');
@@ -1624,15 +1701,20 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+        },
+        lookup: { resolveActingUser: candidateDrivenActingUser },
+      }),
     });
 
     expect(attio.creates).toHaveLength(1);
     const fields = attio.creates[0].fields;
     expect(fields.name).toBe('U123');
-    // @user_* — candidates parsed by the source adapter, arbitrated by
-    // resolveActingUser (mocked at the module seam, candidate-driven).
+    // @user_* — candidates parsed by the source adapter, arbitrated by the
+    // host's acting-user lookup.
     expect(fields.domains).toBe('amy@acme.dev');
     // @actor_* — the source adapter's pure-parse extractActor;
     // @current_date — the universal time key, no context needed.
@@ -1644,6 +1726,41 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
     expect(result.writes[0].provenance.domains).toEqual([{ kind: 'meta', key: 'user_email' }]);
   });
 
+  it('the acting user is a principal: its id and display answer @user_id and @user_name, and @user_email only a host with an email', async () => {
+    const PRINCIPAL = [
+      PRELUDE,
+      '',
+      'movement stamp(msg: <inbox-[:message]->>) {',
+      '  write crm-[:companies]-> {',
+      '    unique by (`name`)',
+      '    name:    msg.`user`',
+      '    summary: "id=${@user_id} name=${@user_name} email=${COALESCE(@user_email, "none")}"',
+      '  }',
+      '}',
+    ].join('\n');
+    const summaryWith = async (answer: ActingPrincipal | null): Promise<unknown> => {
+      const attio = makeFakeAdapter('attio');
+      const inner = makeTestHost({
+        adapters: { resolve: makeResolver({ attio: attio.adapter, slack: actorAwareSlack().adapter }) },
+      });
+      await runMovement({
+        source: PRINCIPAL,
+        event: webhookEvent('slack', { user: 'U123' }),
+        teamId: TEAM_ID,
+        catalog,
+        credentialIds: CREDENTIAL_IDS,
+        host: { ...inner, lookup: { resolveActingUser: async () => answer } },
+      });
+      return attio.creates[0]?.fields.summary;
+    };
+    // A host without emails: the reference and its display, nothing more.
+    expect(await summaryWith({ principal: { id: 'p-7', display: 'Amy' } })).toBe('id=p-7 name=Amy email=none');
+    // A host whose principals have one supplies it.
+    expect(await summaryWith({ principal: { id: 'p-7' }, email: 'amy@acme.dev' })).toBe(
+      'id=p-7 name= email=amy@acme.dev',
+    );
+  });
+
   it('user/actor keys collapse to null when the source adapter has no actor surface', async () => {
     const attio = makeFakeAdapter('attio');
     const result = await runMovement({
@@ -1651,10 +1768,14 @@ describe('meta values — @current_date / @actor_* / @user_* resolve from the di
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
     expect(result.writes).toHaveLength(1);
@@ -1698,11 +1819,15 @@ describe('the run clock is pinned to the firing instant', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      ...(firedAt !== undefined ? { firedAt } : {}),
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      ...(firedAt !== undefined ? { firedAt: firedAt.toISOString() } : {}),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
     return String(attio.creates[0].fields.summary);
@@ -1745,7 +1870,7 @@ describe('array indexing — the `at` expression node, frozen semantics mirrored
       expression: { type: 'alias_ref', name: 'xs' },
       index: { type: 'static', value: index },
     };
-    return (await evalMovementExpr(expr, { env })).value;
+    return (await evalMovementExpr(expr, { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
   }
 
   it('indexes forward and backward, nulls out of range and non-integer indexes, scalar acts as a one-element list', async () => {
@@ -1770,7 +1895,7 @@ describe('array indexing — the `at` expression node, frozen semantics mirrored
 describe('bare coercers — DATE() / DATETIME() / NUMBER() built-ins', () => {
   async function evalCoercer(text: string): Promise<unknown> {
     const expr = parseMovementExpression(text);
-    return (await evalMovementExpr(expr, { env: new Environment() })).value;
+    return (await evalMovementExpr(expr, { env: new Environment(), languageVersion: CURRENT_LANGUAGE_VERSION })).value;
   }
 
   it('DATE() truncates a readable instant to a midnight-UTC calendar day', async () => {
@@ -1797,6 +1922,7 @@ describe('bare coercers — DATE() / DATETIME() / NUMBER() built-ins', () => {
   it('the bare coercers carry transformed provenance (a pure transform)', async () => {
     const result = await evalMovementExpr(parseMovementExpression('NUMBER("42")'), {
       env: new Environment(),
+      languageVersion: CURRENT_LANGUAGE_VERSION,
     });
     expect(result.value).toBe(42);
     expect(result.provenance).toBeDefined();
@@ -1821,10 +1947,14 @@ describe('dispatch arity — a multi-parameter movement cannot be the entry', ()
         event: webhookEvent('slack', { user: 'U123' }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          attio: makeFakeAdapter('attio').adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
         }),
       }),
     ).rejects.toThrow(/MOVENG_RUNTIME.*'pair' takes 2 parameters/);
@@ -1908,8 +2038,12 @@ describe('parallel — env fork + join', () => {
       event: webhookEvent('slack', { user: 'U123', text: 'hello' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+        },
+      }),
     });
 
     // Both arms' writes landed (the barrier proves overlap), and the statement
@@ -1977,8 +2111,12 @@ describe('parallel — env fork + join', () => {
       event: webhookEvent('slack', { user: 'U9' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+        },
+      }),
     });
 
     // Each arm read the ENCLOSING scope's pre-combinator handle (`co`)…
@@ -2005,10 +2143,14 @@ describe('unsupported constructs raise MOVENG_UNSUPPORTED naming the construct',
       event: webhookEvent('slack', { user: 'U123', text: 'hello' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       dryRun: true,
     });
@@ -2064,7 +2206,9 @@ describe('unsupported constructs raise MOVENG_UNSUPPORTED naming the construct',
         event: webhookEvent('slack', { user: 'U123' }),
         teamId: TEAM_ID,
         catalog,
-        resolveAdapter: makeResolver({}),
+        host: makeTestHost({
+          adapters: { resolve: makeResolver({}) },
+        }),
       }),
     ).rejects.toThrow(pattern);
   }
@@ -2103,10 +2247,14 @@ describe('adapter-target linked writes — parent link forwarded to the adapter'
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
 
@@ -2152,10 +2300,14 @@ describe('adapter-target linked writes — parent link forwarded to the adapter'
       },
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        slack: slack.adapter,
-        attio: makeFakeAdapter('attio').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            slack: slack.adapter,
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
       }),
     });
 
@@ -2179,10 +2331,14 @@ describe('adapter-target linked writes — parent link forwarded to the adapter'
         event: webhookEvent('slack', { channel: 'C1', text: 'original' }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          slack: makeFakeAdapter('slack').adapter,
-          attio: makeFakeAdapter('attio').adapter,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              slack: makeFakeAdapter('slack').adapter,
+              attio: makeFakeAdapter('attio').adapter,
+            }),
+          },
         }),
       }),
     ).rejects.toThrow(/durable record id/);
@@ -2242,10 +2398,14 @@ describe('a native constraint naming a parent edge routes the second write to up
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
 
@@ -2275,10 +2435,14 @@ describe('a native constraint naming a parent edge routes the second write to up
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
 
@@ -2333,10 +2497,14 @@ describe('standalone edge statements — adapter linkRecords', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
 
@@ -2389,10 +2557,14 @@ describe('standalone edge statements — adapter linkRecords', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
     expect(await rejectionCause(promise)).toBeInstanceOf(MovementEngineError);
@@ -2408,10 +2580,14 @@ describe('standalone edge statements — adapter linkRecords', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
     expect(await rejectionCause(promise)).toBeInstanceOf(MovementEngineError);
@@ -2430,13 +2606,17 @@ describe('standalone edge statements — adapter linkRecords', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => captured.push(w),
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => captured.push(w),
     });
 
     expect(linkCalls).toHaveLength(0);
@@ -2502,12 +2682,17 @@ describe("'?:' set-if-empty fields — written only when the target's current va
       event: webhookEvent('slack', { user: 'Acme', text: 'a fresh summary' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        ...(opts.writeSink !== undefined ? { writeSink: opts.writeSink } : {}),
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
-      ...opts,
+      ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
     });
   }
 
@@ -2603,8 +2788,12 @@ describe("'+:' / '+?:' append operators — merge the new value into the current
       event: webhookEvent('slack', { user: 'Acme', text: 'new.com' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: attio.adapter, slack: makeFakeAdapter('slack').adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: attio.adapter, slack: makeFakeAdapter('slack').adapter }),
+        },
+      }),
     });
 
   it("'+:' appends the new value onto the current list", async () => {
@@ -2710,8 +2899,12 @@ describe('a matched child with nothing of its own to change still attaches to it
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio, slack: makeFakeAdapter('slack').adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio, slack: makeFakeAdapter('slack').adapter }),
+        },
+      }),
     });
 
   it('calls the adapter with an empty field set and the parent link, and reads `attach`', async () => {
@@ -2836,12 +3029,17 @@ describe('unlink statements — adapter unlinkRecords', () => {
       event: webhookEvent('slack', { user: 'U123' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        ...(opts.writeSink !== undefined ? { writeSink: opts.writeSink } : {}),
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
-      ...opts,
+      ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
     });
   }
 
@@ -2940,12 +3138,17 @@ describe('delete statements — adapter deleteRecord', () => {
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        ...(opts.writeSink !== undefined ? { writeSink: opts.writeSink } : {}),
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
-      ...opts,
+      ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
     });
   }
 
@@ -3052,8 +3255,12 @@ describe('event schema-edge block heads — positions stream via the source adap
       }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+        },
+      }),
     });
 
     expect(slack.relatedCalls).toEqual([{ fieldId: 'files', direction: 'outgoing' }]);
@@ -3085,8 +3292,12 @@ describe('event schema-edge block heads — positions stream via the source adap
       event: webhookEvent('slack', { user: 'U1', files: [] }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+        },
+      }),
     });
     expect(attio.creates).toEqual([]);
   });
@@ -3123,8 +3334,12 @@ describe('event schema-edge block heads — positions stream via the source adap
       }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+        },
+      }),
     });
     expect(attio.creates).toEqual([
       { recordType: 'company', fields: { name: 'deck.pdf', summary: 'U1' } },
@@ -3205,8 +3420,12 @@ describe('a block that returns records — the binding is walked like any positi
       event: webhookEvent('slack', { user: 'U1', files }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ slack: slack.adapter, attio: attio.adapter }),
+        },
+      }),
     });
     return { slack, attio };
   }
@@ -3280,13 +3499,17 @@ describe('EXISTS — adapter-edge quantifiers gate writes', () => {
       event: webhookEvent('slack', payload),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        slack: slackWithFiles(),
-        attio: makeFakeAdapter('attio').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => writes.push(w),
+        adapters: {
+          resolve: makeResolver({
+            slack: slackWithFiles(),
+            attio: makeFakeAdapter('attio').adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => writes.push(w),
     });
     return writes;
   }
@@ -3395,8 +3618,10 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver(adapters),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver(adapters) },
+      }),
     });
   }
 
@@ -3613,8 +3838,12 @@ describe('match — find, arbitrate, bind the FOUND handle; link it with link', 
       }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ slack: slackSource.adapter, attio: fake.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ slack: slackSource.adapter, attio: fake.adapter }),
+        },
+      }),
     });
 
     // Iterations 1 and 3 ran to completion; iteration 2 wrote its
@@ -3679,7 +3908,7 @@ describe('a discriminated write hands back a handle of the variant it named', ()
     },
   };
 
-  const listCatalog = staticCatalogFromManifests({
+  const listCatalog = staticCatalogSnapshot({
     credentials: {
       dev_slack: { adapters: ['slack'] },
       acme_main: { adapters: ['attio'] },
@@ -3723,8 +3952,10 @@ describe('a discriminated write hands back a handle of the variant it named', ()
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog: listCatalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver(adapters),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: { resolve: makeResolver(adapters) },
+      }),
       ...(dryRun ? { dryRun: true } : {}),
     });
 
@@ -3778,10 +4009,14 @@ describe("the 'edge' statement keyword is retired (absorbed by link)", () => {
       event: webhookEvent('slack', { user: 'U1' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
     expect(await rejectionCause(promise)).toBeInstanceOf(MovementEngineError);
@@ -3828,10 +4063,14 @@ describe('tuple-path multi-parent writes — adapter targets', () => {
       event: webhookEvent('slack', { user: 'U1' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: attio.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: attio.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
     });
 
@@ -3874,10 +4113,14 @@ describe('tuple-path multi-parent writes — adapter targets', () => {
         event: webhookEvent('slack', { user: 'U1' }),
         teamId: TEAM_ID,
         catalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({
-          attio: attio.adapter,
-          slack: makeFakeAdapter('slack').adapter,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              attio: attio.adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
         }),
       }),
     ).resolves.toMatchObject({ movementName: 'm' });
@@ -3893,12 +4136,12 @@ describe('tuple-path multi-parent writes — adapter targets', () => {
 function makeFakeParkSink(_opts: { created?: boolean } = {}): {
   sink: ParkSink;
   joins: Array<{ frameAddress: string; parkedChildren: number }>;
-  timerParks: Array<{ address: string; state: unknown; wakeAt: Date }>;
+  timerParks: Array<{ address: string; state: unknown; wakeAt: string }>;
   awaitParks: Array<{ address: string; state: unknown }>;
   cancelled: string[];
 } {
   const joins: Array<{ frameAddress: string; parkedChildren: number }> = [];
-  const timerParks: Array<{ address: string; state: unknown; wakeAt: Date }> = [];
+  const timerParks: Array<{ address: string; state: unknown; wakeAt: string }> = [];
   const awaitParks: Array<{ address: string; state: unknown }> = [];
   const cancelled: string[] = [];
 
@@ -3920,11 +4163,10 @@ function makeFakeParkSink(_opts: { created?: boolean } = {}): {
       timerParks.push({ address: input.address, state: input.state, wakeAt: input.wakeAt });
     },
     async commitAwaitPark(input) {
-      await input.correlate('test-run');
       awaitParks.push({ address: input.address, state: input.state });
     },
     async recordJoin(input) {
-      joins.push(input);
+      joins.push({ frameAddress: input.frameAddress, parkedChildren: input.parkedChildren });
       // Seed the in-memory join state for decrementJoin.
       joinState.set(input.frameAddress, {
         pending: input.parkedChildren,
@@ -4040,30 +4282,31 @@ describe('sleep — durable timer park', () => {
     const { sink, timerParks } = makeFakeParkSink();
     const crm = makeFakeAdapter('attio');
 
-    const before = Date.now();
     const result = await runMovement({
       source: SLEEP_THEN_WRITE,
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: crm.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: crm.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        park: { sink: sink },
       }),
-      parkSink: sink,
     });
-    const after = Date.now();
 
     // The branch froze at the sleep — the run is parked.
     expect(result.parked).toBe(true);
     expect(timerParks).toHaveLength(1);
     expect(timerParks[0].address).toBe('s0');
 
-    // wake_at is now + 30s, bounded by the wall-clock window of the call.
-    const wakeMs = timerParks[0].wakeAt.getTime();
-    expect(wakeMs).toBeGreaterThanOrEqual(before + 30_000);
-    expect(wakeMs).toBeLessThanOrEqual(after + 30_000);
+    // wake_at is the host's now + 30s (the test host's clock is fixed).
+    const wakeMs = new Date(timerParks[0].wakeAt).getTime();
+    expect(wakeMs).toBe(Date.parse(TEST_HOST_NOW) + 30_000);
 
     // The serialized scope chain rides along, keyed at the sleep's address.
     const state = JSON.parse(JSON.stringify(timerParks[0].state)) as ParkedScopeState;
@@ -4084,14 +4327,18 @@ describe('sleep — durable timer park', () => {
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => captured.push(w),
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        park: { sink: sink },
       }),
-      parkSink: sink,
       dryRun: true,
-      writeSink: (w) => captured.push(w),
     });
 
     expect(result.parked).toBeUndefined();
@@ -4112,12 +4359,16 @@ describe('sleep — durable timer park', () => {
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: crm0.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: crm0.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
+        park: { sink: sink },
       }),
-      parkSink: sink,
     });
     expect(parkResult.parked).toBe(true);
     // The write after the sleep never ran at park time.
@@ -4133,10 +4384,14 @@ describe('sleep — durable timer park', () => {
       event: webhookEvent('slack', { user: 'Acme' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: crm1.adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: crm1.adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       state,
     });
@@ -4147,6 +4402,93 @@ describe('sleep — durable timer park', () => {
     // was injected at the sleep leaf).
     expect(crm1.creates.map((c) => c.fields.name)).toEqual(['After: Acme']);
     expect(result.writes.map((w) => w.recordType)).toEqual(['company']);
+  });
+
+  // The catalog snapshot holds the instances the pinned source constructs. A
+  // parked scope naming any other must fail the resume by name — never come
+  // back as an untyped instance that runs on as if nothing were wrong.
+  describe('a parked instance the catalog snapshot does not hold', () => {
+    async function parkedStateWith(instance: InstanceIdentityDescriptor): Promise<ParkedScopeState> {
+      const { sink, timerParks } = makeFakeParkSink();
+      await runMovement({
+        source: SLEEP_THEN_WRITE,
+        event: webhookEvent('slack', { user: 'Acme' }),
+        teamId: TEAM_ID,
+        catalog,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+          park: { sink: sink },
+        }),
+      });
+      const state = JSON.parse(JSON.stringify(timerParks[0].state)) as ParkedScopeState;
+      state.scopeChain[state.scopeChain.length - 1].bindings.held = { kind: 'instance', instance };
+      return state;
+    }
+
+    function resume(state: ParkedScopeState): ReturnType<typeof resumeMovement> {
+      return resumeMovement({
+        source: SLEEP_THEN_WRITE,
+        event: webhookEvent('slack', { user: 'Acme' }),
+        teamId: TEAM_ID,
+        catalog,
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({
+              attio: makeFakeAdapter('attio').adapter,
+              slack: makeFakeAdapter('slack').adapter,
+            }),
+          },
+        }),
+        state,
+      });
+    }
+
+    it('fails the resume, naming the instance', async () => {
+      const state = await parkedStateWith({
+        name: 'held',
+        adapterSlug: 'attio',
+        credentialName: 'retired_main',
+      });
+      const failure = await rejectionCause(resume(state));
+      expect(failure).toBeInstanceOf(MovementEngineError);
+      expect(failure).toMatchObject({
+        code: 'MOVENG_RUNTIME',
+        message: 'MOVENG_RUNTIME: instance attio(credentials: retired_main) is not in the catalog snapshot',
+      });
+    });
+
+    it('fails the resume when the adapter is no longer installed', async () => {
+      const state = await parkedStateWith({ name: 'held', adapterSlug: 'retired_crm' });
+      const failure = await rejectionCause(resume(state));
+      expect(failure).toBeInstanceOf(MovementEngineError);
+      expect(failure).toMatchObject({
+        code: 'MOVENG_RUNTIME',
+        message: 'MOVENG_RUNTIME: instance retired_crm() is not in the catalog snapshot',
+      });
+    });
+
+    it('fails the resume when the credential now serves another adapter', async () => {
+      const state = await parkedStateWith({ name: 'held', adapterSlug: 'attio', credentialName: 'dev_slack' });
+      const failure = await rejectionCause(resume(state));
+      expect(failure).toBeInstanceOf(MovementEngineError);
+      expect(failure).toMatchObject({
+        code: 'MOVENG_RUNTIME',
+        message: 'MOVENG_RUNTIME: instance attio(credentials: dev_slack) is not in the catalog snapshot',
+      });
+    });
+
+    it('resumes as before when the snapshot holds it', async () => {
+      const state = await parkedStateWith({ name: 'held', adapterSlug: 'attio', credentialName: 'acme_main' });
+      const result = await resume(state);
+      expect(result.writes.map((w) => w.recordType)).toEqual(['company']);
+    });
   });
 });
 
@@ -4159,7 +4501,7 @@ describe('sleep — durable timer park', () => {
 describe('runMovement — direct backtick credential arg (run-path)', () => {
   // A catalog with a credential that MUST be backtick-quoted because its name
   // contains a hyphen (an identifier-unsafe character).
-  const backtickCatalog = staticCatalogFromManifests({
+  const backtickCatalog = staticCatalogSnapshot({
     credentials: {
       'Dev-loop Attio': { adapters: ['attio'] },
     },
@@ -4208,12 +4550,16 @@ describe('runMovement — direct backtick credential arg (run-path)', () => {
       event: companyEvent,
       teamId: TEAM_ID,
       catalog: backtickCatalog,
-      resolveCredentialId: (name) => BACKTICK_CRED_IDS[name],
-      resolveAdapter: ({ adapterType, credentialsId }) => {
-        capturedCredIds.push(credentialsId);
-        if (adapterType !== 'attio') throw new Error(`unexpected adapter ${adapterType}`);
-        return crm.adapter;
-      },
+      credentialIds: BACKTICK_CRED_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: ({ adapterType, credentialsId }) => {
+            capturedCredIds.push(credentialsId);
+            if (adapterType !== 'attio') throw new Error(`unexpected adapter ${adapterType}`);
+            return crm.adapter;
+          },
+        },
+      }),
       dryRun: true,
     });
 
@@ -4233,12 +4579,16 @@ describe('runMovement — direct backtick credential arg (run-path)', () => {
       event: companyEvent,
       teamId: TEAM_ID,
       catalog: backtickCatalog,
-      resolveCredentialId: (name) => BACKTICK_CRED_IDS[name],
-      resolveAdapter: ({ adapterType, credentialsId }) => {
-        directCredIds.push(credentialsId);
-        if (adapterType !== 'attio') throw new Error(`unexpected adapter ${adapterType}`);
-        return crm.adapter;
-      },
+      credentialIds: BACKTICK_CRED_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: ({ adapterType, credentialsId }) => {
+            directCredIds.push(credentialsId);
+            if (adapterType !== 'attio') throw new Error(`unexpected adapter ${adapterType}`);
+            return crm.adapter;
+          },
+        },
+      }),
       dryRun: true,
     });
 
@@ -4247,12 +4597,16 @@ describe('runMovement — direct backtick credential arg (run-path)', () => {
       event: companyEvent,
       teamId: TEAM_ID,
       catalog: backtickCatalog,
-      resolveCredentialId: (name) => BACKTICK_CRED_IDS[name],
-      resolveAdapter: ({ adapterType, credentialsId }) => {
-        aliasedCredIds.push(credentialsId);
-        if (adapterType !== 'attio') throw new Error(`unexpected adapter ${adapterType}`);
-        return crm.adapter;
-      },
+      credentialIds: BACKTICK_CRED_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: ({ adapterType, credentialsId }) => {
+            aliasedCredIds.push(credentialsId);
+            if (adapterType !== 'attio') throw new Error(`unexpected adapter ${adapterType}`);
+            return crm.adapter;
+          },
+        },
+      }),
       dryRun: true,
     });
 
@@ -4456,9 +4810,13 @@ describe('await race — park and resume', () => {
       event: webhookEvent('slack', EVENT),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: crm.adapter, slack: slackWithFanoutFiles() }),
-      parkSink: sink,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: crm.adapter, slack: slackWithFanoutFiles() }),
+        },
+        park: { sink: sink },
+      }),
     });
 
     expect(result.parked).toBe(true);
@@ -4477,9 +4835,13 @@ describe('await race — park and resume', () => {
       event: webhookEvent('slack', EVENT),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: crm0.adapter, slack: slackWithFanoutFiles() }),
-      parkSink: sink,
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: crm0.adapter, slack: slackWithFanoutFiles() }),
+        },
+        park: { sink: sink },
+      }),
     });
 
     // Resume the FIRST arm — its scope rehydrates, its write runs, and
@@ -4493,10 +4855,14 @@ describe('await race — park and resume', () => {
       event: webhookEvent('slack', EVENT),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: crm1.adapter, slack: slackWithFanoutFiles() }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: crm1.adapter, slack: slackWithFanoutFiles() }),
+        },
+        park: { sink: sink },
+      }),
       state: winnerState,
-      parkSink: sink,
     });
 
     expect(result.parked).toBeUndefined();
@@ -4514,12 +4880,16 @@ describe('await race — park and resume', () => {
       event: webhookEvent('slack', EVENT),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: slackWithFanoutFiles(),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: slackWithFanoutFiles(),
+          }),
+        },
+        park: { sink: sink },
       }),
-      parkSink: sink,
     });
     const winnerState = JSON.parse(
       JSON.stringify(timerParks.find((t) => t.address === 's0.b0.s0')!.state),
@@ -4529,13 +4899,17 @@ describe('await race — park and resume', () => {
       event: webhookEvent('slack', EVENT),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        attio: makeFakeAdapter('attio').adapter,
-        slack: slackWithFanoutFiles(),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({
+            attio: makeFakeAdapter('attio').adapter,
+            slack: slackWithFanoutFiles(),
+          }),
+        },
+        park: { sink: sink },
       }),
       state: winnerState,
-      parkSink: sink,
     });
 
     // The loser's park row is gone, so the driver that would have woken it has
@@ -4584,14 +4958,18 @@ describe('race — synchronous completion builds a progressive receipt', () => {
       event: webhookEvent('email', { subject: 'Acme Corp', text: 'acme.dev' }),
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
 
     const companyId = result.writes[0].externalId;
@@ -4640,14 +5018,18 @@ describe('race — synchronous completion builds a progressive receipt', () => {
       event: webhookEvent('email', { subject: 'x', text: 'y' }),
       teamId: TEAM_ID,
       catalog: milestoneCatalog,
-      resolveCredentialId: (name) => MILESTONE_CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({
-        email: makeFakeAdapter('email').adapter,
-        attio: makeFakeAdapter('attio').adapter,
-        slack: makeFakeAdapter('slack').adapter,
+      credentialIds: MILESTONE_CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
+        adapters: {
+          resolve: makeResolver({
+            email: makeFakeAdapter('email').adapter,
+            attio: makeFakeAdapter('attio').adapter,
+            slack: makeFakeAdapter('slack').adapter,
+          }),
+        },
       }),
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
 
     // BOTH arms' writes landed (two company creates), and BOTH slots reached
@@ -4698,7 +5080,6 @@ describe('await landing — the bound sourcePosition round-trips via the FILE-SC
         schema: {} as never,
       }),
       resolveSourceRead: fileScopedResolveSourceRead(fileScope),
-      reviveFileRef: (d) => ({ __brand: 'FileRef', ...d, retrieve: async () => ({ stream: {} as never }) }),
       resolveCodeRef: (name) => ({ kind: 'opaque', what: name }),
     };
   }
@@ -4955,7 +5336,7 @@ describe('json write fields carry structured values through to the adapter', () 
     },
   };
 
-  const docsCatalog = mockCatalog({
+  const docsCatalog = mockCatalogSnapshot({
     adapters: {
       docs: {
         constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
@@ -5005,8 +5386,12 @@ describe('json write fields carry structured values through to the adapter', () 
       event: webhookEvent('docs', { Title: 'Acme' }),
       teamId: TEAM_ID,
       catalog: docsCatalog,
-      resolveCredentialId: () => 'cred-docs-1',
-      resolveAdapter: makeResolver({ docs: docs.adapter }),
+      credentialIds: credentialIdsFor(docsCatalog, () => 'cred-docs-1'),
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ docs: docs.adapter }),
+        },
+      }),
     });
     expect(docs.creates).toHaveLength(1);
     return docs.creates[0].fields;

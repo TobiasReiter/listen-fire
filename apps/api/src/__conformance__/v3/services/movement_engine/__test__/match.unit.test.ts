@@ -71,26 +71,19 @@ jest.mock('../../knowledge_pipeline/facts', () => ({
   extractFactsForResource: jest.fn(async () => []),
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
-// The ONE judge — mocked at the LLM seam, so the real arbitration (the
-// short-circuits, the exactness rule) still runs and only the decision is
-// injected.
+// The judge is the host's (`host.llm.arbitrateEntities`, mocked below); the
+// engine's own rules (the short-circuits, the exactness rule) still run. The
+// prompt layer is stubbed so nothing below the host is ever reached.
 jest.mock('../../../lib/prompts/execute', () => ({
   execute: jest.fn(),
   parseJsonReply: jest.fn(),
   flattenMessages: jest.fn(),
 }));
 
-import { execute } from '../../../lib/prompts/execute';
 import { runMovement } from '../run';
 
 import type { InstanceSchema } from 'movement-lang';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
@@ -99,14 +92,13 @@ import {
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import type { ArbitrateEntities } from '../host';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000021' as TeamId;
-const mockExecute = execute as jest.MockedFunction<typeof execute>;
-
-/** The judge's reply shape ({match_index, confidence, reasoning}). */
-const judged = (match_index: number | null, confidence = 0.9) =>
-  ({ match_index, confidence, reasoning: 'test' }) as never;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
+/** The host's judge: the candidate index it picks, or null to decline. */
+const arbitrateEntities = jest.fn<ReturnType<ArbitrateEntities>, Parameters<ArbitrateEntities>>();
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: true, edgeProperties: true }, resources: true };
@@ -180,7 +172,7 @@ const crmSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
   instanceSchemas: { attio: crmSchema },
 });
@@ -243,12 +235,17 @@ function run(body: string[], adapters: { email: Adapter; attio: Adapter }) {
     event: webhookEvent({}),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return adapters.email;
-      if (adapterType === 'attio') return adapters.attio;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      llm: { arbitrateEntities },
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return adapters.email;
+          if (adapterType === 'attio') return adapters.attio;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
   });
 }
 
@@ -259,7 +256,7 @@ const ACME: ExternalRecordRef = {
 };
 
 beforeEach(() => {
-  mockExecute.mockReset();
+  arbitrateEntities.mockReset();
 });
 
 describe('a match against a system', () => {
@@ -271,12 +268,13 @@ describe('a match against a system', () => {
   ];
 
   it('a lone fuzzy hit goes to the judge; accepted, the handle is the record and the block runs', async () => {
-    mockExecute.mockResolvedValue(judged(0));
+    arbitrateEntities.mockResolvedValue({ index: 0 });
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio', { company: [ACME] });
     const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter });
 
-    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(arbitrateEntities).toHaveBeenCalledTimes(1);
+    expect(arbitrateEntities.mock.calls[0][0]).toMatchObject({ candidates: [ACME] });
     // Nothing about the company was created or sent; the note read it.
     expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'already there' } }]);
     expect(result.writes.map((w) => [w.kind ?? 'write', w.externalId, w.created, w.committed])).toEqual([
@@ -286,12 +284,12 @@ describe('a match against a system', () => {
   });
 
   it('the judge declining is a miss: the scope ends, nothing is written', async () => {
-    mockExecute.mockResolvedValue(judged(null));
+    arbitrateEntities.mockResolvedValue({ index: null });
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio', { company: [ACME] });
     const result = await run(FUZZY_MATCH, { email: email.adapter, attio: attio.adapter });
 
-    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(arbitrateEntities).toHaveBeenCalledTimes(1);
     expect(attio.creates).toEqual([]);
     expect(result.writes).toEqual([]);
   });
@@ -306,7 +304,7 @@ describe('a match against a system', () => {
       ],
       { email: email.adapter, attio: attio.adapter },
     );
-    expect(mockExecute).not.toHaveBeenCalled();
+    expect(arbitrateEntities).not.toHaveBeenCalled();
     expect(attio.creates).toEqual([{ recordType: 'note', fields: { title: 'already there' } }]);
   });
 

@@ -90,15 +90,12 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import type { Catalog, InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import {
+  snapshotOverManifests,
+  staticCatalogFromManifests,
+} from '../../translation_graph/movement/catalog';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -115,16 +112,18 @@ import {
   makeStablePosition,
   positionData,
 } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeTestHost } from '../test_host';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const KG = 'kg';
 
 // The manual channel's REAL adapter — credential-free and stateless, so
 // the fixture uses it directly (the event payload is its whole surface).
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 // ── Fakes ───────────────────────────────────────────────────────────────────
 
@@ -315,10 +314,11 @@ const kgSchema: InstanceSchema = {
   },
 };
 
-const catalog = staticCatalogFromManifests({
+const manifestCatalog = staticCatalogFromManifests({
   credentials: { acme_main: { adapters: ['attio'] } },
   instanceSchemas: { kg: kgSchema },
 });
+const catalog = snapshotOverManifests(manifestCatalog);
 
 // The real attio company schema (captured reality, `staticCatalogFromManifests`'s
 // thin instance schema) has no date field, and the fix for the UnsnoozeActions
@@ -326,10 +326,10 @@ const catalog = staticCatalogFromManifests({
 // against `@current_date` — never edit the captured schema to manufacture one.
 // This derives a TEST-LOCAL extension instead: the real schema, plus one
 // honestly-dated `founded` field on `company`.
-const datedCompanyCatalog: Catalog = {
-  ...catalog,
+const datedCompanyCatalog = snapshotOverManifests({
+  ...manifestCatalog,
   instantiate: (adapter, args) => {
-    const schema = catalog.instantiate(adapter, args);
+    const schema = manifestCatalog.instantiate(adapter, args);
     if (adapter !== 'attio' || schema === undefined) return schema;
     return {
       ...schema,
@@ -342,7 +342,7 @@ const datedCompanyCatalog: Catalog = {
       },
     };
   },
-};
+});
 
 const CREDENTIAL_IDS: Record<string, string> = { acme_main: 'cred-attio-1' };
 
@@ -399,10 +399,14 @@ describe('meta-rooted backfill: runMovement over the collection fan-out', () => 
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: sourceA.adapter, manual: manualAdapter, [KG]: makeFakeKg().adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        writeSink: (w) => movementWrites.push(w),
+        adapters: {
+          resolve: makeResolver({ attio: sourceA.adapter, manual: manualAdapter, [KG]: makeFakeKg().adapter }),
+        },
+      }),
       dryRun: true,
-      writeSink: (w) => movementWrites.push(w),
     });
     expect(runResult.movementName).toBe('backfill');
     // The seed is the source instance's META position; the collection
@@ -437,8 +441,12 @@ describe('backfill live run — per-position isolation (no implicit bridge, 3b)'
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+        },
+      }),
     });
 
     // Per-position isolation: one create per collection record, each
@@ -497,8 +505,12 @@ describe('backfill live run — per-position isolation (no implicit bridge, 3b)'
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+        },
+      }),
     });
 
     // Matched by `unique by (name)` → update, no duplicate create…
@@ -526,8 +538,12 @@ describe('backfill streaming — the engine prefers iterateRelated', () => {
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+        },
+      }),
     });
     expect(source.iterateCalls).toBe(1);
     expect(kg.creates).toHaveLength(2);
@@ -574,8 +590,12 @@ describe('a local `=` binding resolves inside a hop WHERE', () => {
       event: manualEvent(),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+        },
+      }),
     });
     // `threshold` == "Globex": only Globex survives the hop WHERE. Read as a
     // field, BOTH rows would drop (getFieldValue('threshold') → undefined).
@@ -622,8 +642,12 @@ describe('a local `=` binding resolves inside a hop WHERE', () => {
         event: manualEvent(),
         teamId: TEAM_ID,
         catalog: datedCompanyCatalog,
-        resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-        resolveAdapter: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+        credentialIds: CREDENTIAL_IDS,
+        host: makeTestHost({
+          adapters: {
+            resolve: makeResolver({ attio: source.adapter, manual: manualAdapter, [KG]: kg.adapter }),
+          },
+        }),
       }),
     ).resolves.toBeDefined();
   });

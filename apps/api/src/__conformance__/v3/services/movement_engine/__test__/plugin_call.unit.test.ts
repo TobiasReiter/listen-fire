@@ -77,28 +77,22 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import { runMovement } from '../run';
 import type { MovementTransformInvoker, TransformInvocationResult } from '../extraction';
 import type { MovementTraceEntry } from '../expression';
 
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
   type Adapter,
   type RuntimeCapabilities,
 } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type TransformOutputShape } from '../../translation_graph/types';
-import { getTransform } from '../../translation_graph/engine/transforms/registry';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { positionData } from '../../translation_graph/types';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000031' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000031');
 
 function permissiveCaps(): RuntimeCapabilities {
   return { traversal: { incoming: true, edgeProperties: true }, resources: true };
@@ -150,7 +144,7 @@ function makeFakeAdapter(adapterType: string): { adapter: Adapter; creates: Reco
   return { adapter, creates };
 }
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] } },
 });
 
@@ -181,21 +175,12 @@ function stubInvoker(
 ): { invoker: MovementTransformInvoker; calls: Recorded[] } {
   const calls: Recorded[] = [];
   const invoker: MovementTransformInvoker = {
-    declaredOutput: (plugin) => realOutput(plugin),
     async invoke({ plugin, config }) {
       calls.push({ plugin, config });
       return answers[plugin] ?? {};
     },
   };
   return { invoker, calls };
-}
-
-/** The plugin's REAL declared output, off the registry the catalog itself
- *  reads. Stubbing it would let this test agree with itself about a shape the
- *  checker never typed. */
-function realOutput(plugin: string): TransformOutputShape | undefined {
-  const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
-  return impl?.signature.output;
 }
 
 function run(source: string, invoker: MovementTransformInvoker, adapters: {
@@ -208,13 +193,17 @@ function run(source: string, invoker: MovementTransformInvoker, adapters: {
     event: webhookEvent({ subject: 'Acme', text: 'https://acme.example' }),
     teamId: TEAM_ID,
     catalog,
-    resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      const found = adapterType === 'email' ? adapters.email : adapters.attio;
-      if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);
-      return found;
-    },
-    transformInvoker: invoker,
+    credentialIds: CREDENTIAL_IDS,
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          const found = adapterType === 'email' ? adapters.email : adapters.attio;
+          if (!found) throw new Error(`test: no fake adapter for '${adapterType}'`);
+          return found;
+        },
+      },
+      llm: { transforms: invoker },
+    }),
   });
 }
 
@@ -361,8 +350,7 @@ describe('a plugin called plainly hands back its declared list of RECORDS', () =
     __brand: 'FileRef' as const,
     name: 'deck.pdf',
     contentType: 'application/pdf',
-    source: { ownerAdapterType: 'document-store', handle: 's3://bucket/abc/deck.pdf' },
-    retrieve: async () => ({ stream: {} as never, contentType: 'application/pdf' }),
+    source: { store: 'document' as const, objectUri: 's3://bucket/abc/deck.pdf' },
   };
 
   // The first record read field by field: its link, its text, and whether it
@@ -533,7 +521,6 @@ describe("a call written in place as a plugin's argument is the value it compute
     const attio = makeFakeAdapter('attio');
     const calls: Recorded[] = [];
     const invoker: MovementTransformInvoker = {
-      declaredOutput: (plugin) => realOutput(plugin),
       async invoke({ plugin, config }) {
         calls.push({ plugin, config });
         return { text: calls.length === 1 ? 'https://acme.example/about' : 'About Acme.' };

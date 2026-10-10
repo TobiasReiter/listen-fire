@@ -79,16 +79,10 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-jest.mock('../../translation_graph/adapters/resolve', () => ({
-  resolveAdapter: jest.fn(() => {
-    throw new Error('test: resolveAdapter must not be called — tests inject a resolver');
-  }),
-}));
-
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from '../run';
 import type {
   LlmCallInput,
@@ -98,9 +92,11 @@ import type { FileTextResolution } from '../extraction';
 import type { Adapter, FileRef } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { positionData } from '../../translation_graph/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import type { Priced, Scoped } from '../host';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000052' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000052');
 const FIXTURE = path.join(__dirname, '__fixtures__', 'extract_keyword_prompts.json');
 
 function emailAdapter(): Adapter {
@@ -144,7 +140,7 @@ const emailSchema: InstanceSchema = {
   writableRoots: {},
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
   },
@@ -196,7 +192,7 @@ const DECK: FileRef = {
   name: 'deck.pdf',
   contentType: 'application/pdf',
   size: 1234,
-  source: { ownerAdapterType: 'email', handle: 'attachment-1' },
+  source: { adapterType: 'email', handle: 'attachment-1' },
 };
 
 function event(): TriggerEvent {
@@ -215,8 +211,11 @@ function event(): TriggerEvent {
 async function promptsOf(lines: string[]): Promise<LlmCallInput[]> {
   const calls: LlmCallInput[] = [];
   const llm = {
-    async call(input: LlmCallInput): Promise<LlmCallResult> {
-      calls.push(input);
+    async call(input: Priced<Scoped<LlmCallInput>>): Promise<LlmCallResult> {
+      // What the model is sent: the run's budget and its segment ride the
+      // host call, not the prompt.
+      const { budget: _budget, segmentId: _segmentId, ...prompt } = input;
+      calls.push(prompt);
       const key = /`(x:[^`]+)`/.exec(input.system)?.[1] ?? 'missing';
       return { parsedJson: { [key]: [] } };
     },
@@ -226,11 +225,15 @@ async function promptsOf(lines: string[]): Promise<LlmCallInput[]> {
     event: event(),
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: () => emailAdapter(),
-    llm,
-    resolveFileText: async (): Promise<FileTextResolution> => ({
-      text: 'ACME DECK\nWe build infra tooling. Raising $5M.',
-      rawTextId: 'rt-1',
+    host: makeTestHost({
+      adapters: { resolve: () => emailAdapter() },
+      llm: { client: llm },
+      files: {
+        resolveFileText: async (): Promise<FileTextResolution> => ({
+          text: 'ACME DECK\nWe build infra tooling. Raising $5M.',
+          rawTextId: 'rt-1',
+        }),
+      },
     }),
     dryRun: true,
   });
