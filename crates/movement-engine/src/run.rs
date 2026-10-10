@@ -140,9 +140,10 @@ pub struct SegmentInput {
     pub serves: Vec<String>,
     /// How much of one source file's text an extraction prompt takes
     /// (extraction.ts `maxFileChars`, a deployment's `EXTRACTION_FILE_CHARS`):
-    /// the shim reads it, so the engine reads no environment.
+    /// the shim reads it, so the engine reads no environment. The number as
+    /// the deployment wrote it, a fraction included (positive and finite).
     #[serde(default = "default_file_chars")]
-    pub extraction_file_chars: usize,
+    pub extraction_file_chars: f64,
     /// How many named calls deep one run may nest from version 3
     /// (call_depth.ts `maxCallDepth`, a deployment's
     /// `MOVEMENT_MAX_CALL_DEPTH`): the shim reads it, so the engine reads no
@@ -172,8 +173,8 @@ fn default_call_depth() -> usize {
     32
 }
 
-fn default_file_chars() -> usize {
-    50_000
+fn default_file_chars() -> f64 {
+    50_000.0
 }
 
 /// The snapshot's plugins alone, read before the rest of it loads.

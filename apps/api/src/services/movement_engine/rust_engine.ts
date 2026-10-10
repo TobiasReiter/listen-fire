@@ -401,9 +401,9 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume: Resu
       // host object (a park sink's, `canSuspend`).
       serves: servedHostMethods(input.host),
       // How much of a source file an extraction prompt takes: the
-      // deployment's, read here so the engine reads no environment; whole
-      // characters, as the engine counts them.
-      extractionFileChars: Math.floor(maxFileChars()),
+      // deployment's, read here so the engine reads no environment; the
+      // number as written, a fraction included, which the marker prints.
+      extractionFileChars: maxFileChars(),
       // How many named calls deep the run may nest (version 3): the
       // deployment's, read here for the same reason.
       maxCallDepth: maxCallDepth(),

@@ -1322,7 +1322,7 @@ Sizes are estimates (XS, S, M, L).
 | 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | follows 9 |
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
 | 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
-| 10 | a fractional `EXTRACTION_FILE_CHARS` | floored by the shim | the raw number passed, cut at its truncation, printed with ryu-js number text | XS |
+| 10 | a fractional `EXTRACTION_FILE_CHARS` | mirrored (chunk 7A Task 5): the shim passes the deployment's number as written; the text is cut where `slice` truncates it and the marker and the trace's `chars` print the number itself (`first 2.5 of …`) | oracle file_bound.json (seed 20261012, tests/tail_oracle.rs) | done |
 | 11 | records held in values (binding-shaped dicts: `bindingOf` walks the prototype chain), `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` and `Binding::Shaped`, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run" | oracle records.json (3,612 whole programs, seed 20261010, tests/records_oracle.rs) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
@@ -1428,10 +1428,11 @@ mirror replaces that plan):
     string cannot hold a lone surrogate, so this engine never splits the
     pair and drops it whole; JavaScript's `slice` keeps the high half.
     Specified as: a cut never splits a pair.
-  - a fractional `EXTRACTION_FILE_CHARS`: the shim floors it before this
-    engine sees it, so the truncation marker prints the whole number
-    ("first 2 of …"); the TypeScript's marker prints the fraction ("first
-    2.5 of …"). Specified as: the bound is a whole number of characters.
+  - a fractional `EXTRACTION_FILE_CHARS` (mirrored, row 10): the
+    TypeScript compares the text's length with the number as written, cuts
+    at `slice`'s truncation of it, and prints it in the marker ("first 2.5
+    of …"); this engine takes the same number from the shim and does the
+    same.
 
 ### Known divergences
 

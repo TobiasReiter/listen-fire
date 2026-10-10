@@ -11,6 +11,7 @@
 pub mod emission;
 pub mod prompt;
 pub(crate) mod resources;
+pub use resources::bound_text;
 pub(crate) mod run;
 pub mod spec;
 pub mod validate;

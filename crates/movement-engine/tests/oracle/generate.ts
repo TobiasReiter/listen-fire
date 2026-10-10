@@ -18,7 +18,8 @@
 //     TypeScript engine (./records_oracle.ts);
 //   - parallel.json: `parallel` and `race` programs run on the TypeScript
 //     engine, their requests in order and their writes in ledger order
-//     (./parallel_oracle.ts).
+//     (./parallel_oracle.ts);
+//   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts).
 // Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
 // read local time (an offset-less date-time is local to `new Date`), so the
 // process runs in UTC wherever it is started.
@@ -54,6 +55,7 @@ import { writeExtractionOracle } from './extraction_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
 import { writeParallelOracle } from './parallel_oracle';
 import { writeRecordsOracle } from './records_oracle';
+import { writeTailOracles } from './tail_oracle';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
 function wire(value: unknown): unknown {
@@ -301,6 +303,7 @@ console.log(`regex.json: ${regexCases.length} cases`);
   await writeExtractionOracle(mulberry32(20261009));
   await writeRecordsOracle(mulberry32(20261010), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeParallelOracle(mulberry32(20261011), (name, text) => writeFileSync(path.join(__dirname, name), text));
+  await writeTailOracles(mulberry32, (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;

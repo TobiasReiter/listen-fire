@@ -153,14 +153,18 @@ pub(crate) fn plugin_file_resources(result: &PluginResult, language_version: u32
 }
 
 /// The file's text bounded for the prompt (`boundFileText`): past the
-/// ceiling a prefix, the model told it was handed one.
-fn bound_text(text: &str, ceiling: usize) -> (String, usize, Option<usize>) {
+/// ceiling a prefix, the model told it was handed one. The ceiling is the
+/// deployment's number as written, a fraction included: the text is cut
+/// where `slice` truncates it, and the marker and the count print the number
+/// itself (`first 2.5 of …`), as the TypeScript's template prints it.
+pub fn bound_text(text: &str, ceiling: f64) -> (String, f64, Option<usize>) {
     let length = js::utf16_len(text);
-    if length <= ceiling {
-        return (text.to_string(), length, None);
+    if length as f64 <= ceiling {
+        return (text.to_string(), length as f64, None);
     }
-    let head: String = utf16_prefix(text, ceiling);
-    (format!("{head}\n[… truncated: first {ceiling} of {length} characters]"), ceiling, Some(length))
+    let head: String = utf16_prefix(text, ceiling.trunc() as usize);
+    let marker = js::number_to_string(ceiling);
+    (format!("{head}\n[… truncated: first {marker} of {length} characters]"), ceiling, Some(length))
 }
 
 /// `text.slice(0, units)`, in UTF-16 units.
@@ -341,7 +345,7 @@ impl Materializer<'_, '_> {
             if let Js::String(name) = member(file, "name") {
                 fields.insert("name".into(), json!(name));
             }
-            fields.insert("chars".into(), json!(ceiling));
+            fields.insert("chars".into(), env::json_of_js(&Js::Number(ceiling)));
             fields.insert("of".into(), json!(of));
             self.run.log("warn", "[movement:extract] truncating a source file for the prompt", fields);
         }
@@ -366,7 +370,7 @@ impl Materializer<'_, '_> {
             traced.push(("unreadable", unreadable.clone()));
             present(&mut traced, "detail", member(&result, "detail"));
         } else if let Some((_, chars, truncated_from)) = &bounded {
-            traced.push(("chars", Js::Number(*chars as f64)));
+            traced.push(("chars", Js::Number(*chars)));
             if let Some(from) = truncated_from {
                 traced.push(("truncatedFrom", Js::Number(*from as f64)));
             }
@@ -390,9 +394,11 @@ mod tests {
 
     #[test]
     fn a_long_file_is_bounded_and_says_so() {
-        assert_eq!(bound_text("abc", 5), ("abc".to_string(), 3, None));
-        let (content, chars, from) = bound_text("abcdef", 4);
-        assert_eq!((content.as_str(), chars, from), ("abcd\n[… truncated: first 4 of 6 characters]", 4, Some(6)));
+        assert_eq!(bound_text("abc", 5.0), ("abc".to_string(), 3.0, None));
+        let (content, chars, from) = bound_text("abcdef", 4.0);
+        assert_eq!((content.as_str(), chars, from), ("abcd\n[… truncated: first 4 of 6 characters]", 4.0, Some(6)));
+        let (content, chars, from) = bound_text("abcdef", 2.5);
+        assert_eq!((content.as_str(), chars, from), ("ab\n[… truncated: first 2.5 of 6 characters]", 2.5, Some(6)));
     }
 
     #[test]
