@@ -98,7 +98,7 @@ impl PluginResult {
             _ => None,
         };
         let records = match member("records") {
-            Js::Array(list) => list.items.clone(),
+            Js::Array(list) => list.items().clone(),
             _ => Vec::new(),
         };
         let outcome = match member("outcome") {
@@ -530,7 +530,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
         };
         let entities = match &read.value {
             Js::Object(object) => match object.get(&region.site_id) {
-                Some(Js::Array(list)) => list.items.clone(),
+                Some(Js::Array(list)) => list.items().clone(),
                 _ => Vec::new(),
             },
             _ => Vec::new(),
@@ -971,7 +971,7 @@ const UNREADABLE_REPLY: &str = "the reply held a key or a text this engine canno
 /// The members of a host's answer the shim could not carry on the eval wire.
 pub(crate) fn uncarried(answer: &Js) -> Vec<String> {
     match crate::unique::get(answer, "uncarried") {
-        Js::Array(list) => list.items.iter().map(Js::to_js_string).collect(),
+        Js::Array(list) => list.items().iter().map(Js::to_js_string).collect(),
         _ => Vec::new(),
     }
 }
@@ -1125,7 +1125,7 @@ fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, Js)>) -> Op
     }
     let keys: Vec<String> = match &reply.parsed_json {
         Js::Object(object) => object.entries().iter().map(|(k, _)| k.clone()).collect(),
-        Js::Array(list) => (0..list.items.len()).map(|i| i.to_string()).collect(),
+        Js::Array(list) => (0..list.items().len()).map(|i| i.to_string()).collect(),
         _ => Vec::new(),
     };
     let body = match focus {
@@ -1152,8 +1152,8 @@ fn offending_entity(reply: &Js, path: &[PathKey]) -> Option<(String, Js)> {
     let mut walked: Vec<String> = Vec::new();
     for step in path {
         let next = match (&node, step) {
-            (Js::Array(list), PathKey::Index(i)) => list.items.get(*i).cloned(),
-            (Js::Array(list), PathKey::Key(key)) => key.parse::<usize>().ok().and_then(|i| list.items.get(i).cloned()),
+            (Js::Array(list), PathKey::Index(i)) => list.items().get(*i).cloned(),
+            (Js::Array(list), PathKey::Key(key)) => key.parse::<usize>().ok().and_then(|i| list.items().get(i).cloned()),
             (Js::Object(object), PathKey::Key(key)) => object.get(key).cloned(),
             (Js::Object(object), PathKey::Index(i)) => object.get(&i.to_string()).cloned(),
             _ => None,

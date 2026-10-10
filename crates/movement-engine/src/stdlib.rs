@@ -73,7 +73,7 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
         "upper" => text_or_null(str::to_uppercase),
         "length" => match &a {
             Js::Undefined | Js::Null => Js::Number(0.0),
-            Js::Array(list) => Js::Number(list.items.len() as f64),
+            Js::Array(list) => Js::Number(list.items().len() as f64),
             other => Js::Number(js::utf16_len(&other.to_js_string()) as f64),
         },
         "abs" => Js::Number(a.to_number().abs()),
@@ -93,7 +93,7 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
             for v in args {
                 match v {
                     Js::Undefined | Js::Null => {}
-                    Js::Array(list) => flat.extend(list.items.iter().filter(|x| !x.is_nullish()).cloned()),
+                    Js::Array(list) => flat.extend(list.items().iter().filter(|x| !x.is_nullish()).cloned()),
                     other => flat.push(other.clone()),
                 }
             }
@@ -669,7 +669,7 @@ fn to_stable_json(value: &Js) -> Js {
         Js::Record(_) => Js::object(JsObject::new()),
         Js::Bool(_) | Js::String(_) => value.clone(),
         Js::Number(n) => if n.is_finite() { Js::Number(*n + 0.0) } else { Js::Null },
-        Js::Array(list) => Js::array(list.items.iter().map(to_stable_json).collect()),
+        Js::Array(list) => Js::array(list.items().iter().map(to_stable_json).collect()),
         Js::Object(object) => {
             let mut out = JsObject::new();
             if matches!(object.get("__brand"), Some(Js::String(brand)) if brand == "FileRef") {
@@ -1059,13 +1059,13 @@ mod tests {
         assert_eq!(text(call("tostring", vec![Js::Number(1e21)])), "1e+21");
         assert_eq!(text(call("tostring", vec![Js::array(vec![Js::Number(1.0), Js::Null])])), "1,");
         let Js::Array(parts) = call("split", vec![s(" a, ,b ,"), Js::Null]) else { panic!("a list") };
-        assert_eq!(parts.items.iter().map(|p| text(p.clone())).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(parts.items().iter().map(|p| text(p.clone())).collect::<Vec<_>>(), ["a", "b"]);
         let Js::Array(chars) = call("split", vec![s("ab c"), s("")]) else { panic!("a list") };
-        assert_eq!(chars.items.len(), 3);
+        assert_eq!(chars.items().len(), 3);
         let Js::Array(flat) = call("multi", vec![Js::Number(1.0), Js::Null, Js::array(vec![Js::Number(2.0), Js::Undefined])]) else {
             panic!("a list")
         };
-        assert_eq!(flat.items.len(), 2);
+        assert_eq!(flat.items().len(), 2);
         assert!(matches!(call("isnull", vec![]), Js::Bool(true)));
     }
 }

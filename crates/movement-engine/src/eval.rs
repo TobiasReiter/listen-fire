@@ -335,7 +335,7 @@ impl<'a> Evaluator<'a> {
                                     format!("'...' splices a list's members into a list, and this value is {what}"),
                                 ));
                             };
-                            values.extend(list.items.iter().cloned());
+                            values.extend(list.items().iter().cloned());
                             provs.push(evaluated.prov);
                         }
                     }
@@ -507,7 +507,7 @@ impl<'a> Evaluator<'a> {
                     )));
                 }
                 let present = match &value.value {
-                    Js::Array(list) => !list.items.is_empty(),
+                    Js::Array(list) => !list.items().is_empty(),
                     other => !other.is_nullish(),
                 };
                 return Ok(Evaluated { value: Js::Bool(present), prov: Prov::Built(transformed) });
@@ -582,7 +582,7 @@ impl<'a> Evaluator<'a> {
         let evaluated = self.eval(inner).await?;
         let values: Vec<Js> = match &evaluated.value {
             Js::Undefined | Js::Null => Vec::new(),
-            Js::Array(list) => list.items.clone(),
+            Js::Array(list) => list.items().clone(),
             other => vec![other.clone()],
         };
         if fn_ == AggregationFunction::Sort {

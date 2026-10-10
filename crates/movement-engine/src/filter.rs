@@ -27,11 +27,11 @@ pub fn compare_to_null(op: FilterOperator, value: &Js) -> bool {
 pub fn compare_values(left: &Js, op: FilterOperator, right: &Js) -> Result<bool, EvalError> {
     Ok(match op {
         FilterOperator::Eq => match (left, right) {
-            (Js::Array(a), Js::Array(b)) => set_equals(&a.items, &b.items),
+            (Js::Array(a), Js::Array(b)) => set_equals(&a.items(), &b.items()),
             _ => js::strict_equals(left, right),
         },
         FilterOperator::Neq => match (left, right) {
-            (Js::Array(a), Js::Array(b)) => !set_equals(&a.items, &b.items),
+            (Js::Array(a), Js::Array(b)) => !set_equals(&a.items(), &b.items()),
             _ => !js::strict_equals(left, right),
         },
         FilterOperator::Gt => relational_order(left, right)?.is_some_and(|c| c > 0.0),
@@ -40,12 +40,12 @@ pub fn compare_values(left: &Js, op: FilterOperator, right: &Js) -> Result<bool,
         FilterOperator::Lte => relational_order(left, right)?.is_some_and(|c| c <= 0.0),
         FilterOperator::Exists => !left.is_nullish(),
         FilterOperator::In => match right {
-            Js::Array(list) => list.items.iter().any(|item| js::same_value_zero(item, left)),
+            Js::Array(list) => list.items().iter().any(|item| js::same_value_zero(item, left)),
             _ => false,
         },
         FilterOperator::Contains => match (left, right) {
             (Js::String(l), Js::String(r)) => l.contains(r.as_str()),
-            (Js::Array(list), _) => list.items.iter().any(|item| js::same_value_zero(item, right)),
+            (Js::Array(list), _) => list.items().iter().any(|item| js::same_value_zero(item, right)),
             _ => false,
         },
         FilterOperator::Within => return Err(EvalError::Fallback("WITHIN reads the wall clock".into())),
@@ -164,7 +164,7 @@ async fn predicate_in_place<'p>(expr: &'p Expression, read: &'p dyn Fn(&str) -> 
                 match element {
                     ListElement::Expression(e) => items.push(eval(e).await?),
                     ListElement::Spread(spread) => match eval(&spread.expression).await? {
-                        Js::Array(list) => items.extend(list.items.iter().cloned()),
+                        Js::Array(list) => items.extend(list.items().iter().cloned()),
                         other => {
                             let what = if other.is_nullish() { "null" } else { other.type_of() };
                             return Err(EvalError::error(format!("'...' spreads a list into a list, and this value is {what}")));
@@ -358,9 +358,9 @@ pub fn at_index(value: &Js, index: f64) -> Js {
     }
     match value {
         Js::Array(list) => {
-            let len = list.items.len() as f64;
+            let len = list.items().len() as f64;
             let resolved = if index < 0.0 { len + index } else { index };
-            if resolved < 0.0 || resolved >= len { Js::Null } else { list.items[resolved as usize].clone() }
+            if resolved < 0.0 || resolved >= len { Js::Null } else { list.items()[resolved as usize].clone() }
         }
         Js::Undefined | Js::Null => Js::Null,
         other => if index == 0.0 || index == -1.0 { other.clone() } else { Js::Null },

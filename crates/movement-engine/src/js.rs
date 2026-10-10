@@ -52,10 +52,19 @@ pub fn is_object_prototype_name(name: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeFunction(pub &'static str);
 
+/// `Array.prototype`'s methods (Node 22), named `Array#<name>` so a list's
+/// `toString` is not `Object.prototype`'s: what an object whose prototype a
+/// filing made a list reads under those names.
+pub const ARRAY_PROTOTYPE_NAMES: [&str; 39] = ["Array#constructor", "Array#at", "Array#concat", "Array#copyWithin", "Array#fill", "Array#find", "Array#findIndex", "Array#findLast", "Array#findLastIndex", "Array#lastIndexOf", "Array#pop", "Array#push", "Array#reverse", "Array#shift", "Array#unshift", "Array#slice", "Array#sort", "Array#splice", "Array#includes", "Array#indexOf", "Array#join", "Array#keys", "Array#entries", "Array#values", "Array#forEach", "Array#filter", "Array#flat", "Array#flatMap", "Array#map", "Array#every", "Array#some", "Array#reduce", "Array#reduceRight", "Array#toReversed", "Array#toSorted", "Array#toSpliced", "Array#with", "Array#toLocaleString", "Array#toString"];
+
 impl NativeFunction {
     /// `Function.prototype.toString` of a built-in.
     pub fn source_text(self) -> String {
-        format!("function {}() {{ [native code] }}", self.0)
+        let name = match self.0 {
+            "Array#constructor" => "Array",
+            name => name.strip_prefix("Array#").unwrap_or(name),
+        };
+        format!("function {name}() {{ [native code] }}")
     }
 }
 
@@ -108,10 +117,13 @@ pub(crate) fn inherited(proto: &Js, key: &str) -> Js {
     let base = || if is_object_prototype_name(key) { prototype_member(key, &OBJECT_PROTOTYPE.with(Rc::clone)) } else { Js::Undefined };
     match proto {
         Js::Object(object) => object_property(object, key),
-        Js::Array(list) if key == "length" => Js::Number(list.items.len() as f64),
-        Js::Array(list) => match array_index(key).and_then(|i| list.items.get(i as usize)) {
-            Some(item) => item.clone(),
-            None => base(),
+        Js::Array(list) if key == "length" => Js::Number(list.items().len() as f64),
+        Js::Array(list) => match array_index(key).and_then(|i| list.items().get(i as usize).cloned()) {
+            Some(item) => item,
+            None => match ARRAY_PROTOTYPE_NAMES.iter().find(|n| n.strip_prefix("Array#") == Some(key)) {
+                Some(name) => Js::Function(NativeFunction(name)),
+                None => base(),
+            },
         },
         Js::Record(record) => match crate::record::own_property(record, key) {
             Ok(Js::Null) | Err(_) => base(),
@@ -128,6 +140,12 @@ pub fn is_dict(value: &Js) -> bool {
 
 /// `object[key]` on a plain object that is not `Object.prototype` itself.
 pub fn plain_property(object: &JsObject, key: &str) -> Js {
+    match (object.get(key), &object.proto) {
+        (Some(value), _) => return value.clone(),
+        (None, Some(proto)) if key == "__proto__" => return proto.clone(),
+        (None, Some(proto)) => return inherited(proto, key),
+        (None, None) => {}
+    }
     match object.get(key) {
         Some(value) => value.clone(),
         None if key == "__proto__" => object_prototype(),
@@ -138,9 +156,27 @@ pub fn plain_property(object: &JsObject, key: &str) -> Js {
 
 #[derive(Debug, Default)]
 pub struct JsArray {
-    pub items: Vec<Js>,
+    /// Its members; a GROUPBY filing pushes onto a list its answer's
+    /// prototype holds, as JavaScript's `push` does, so every holder sees it.
+    cells: std::cell::RefCell<Vec<Js>>,
     /// The caller's id for this array, when it came from the caller.
     pub origin: Option<u32>,
+}
+
+impl JsArray {
+    pub fn new(items: Vec<Js>) -> JsArray {
+        JsArray { cells: std::cell::RefCell::new(items), origin: None }
+    }
+
+    /// Its members as they are now.
+    pub fn items(&self) -> std::cell::Ref<'_, Vec<Js>> {
+        self.cells.borrow()
+    }
+
+    /// `list.push(item)`.
+    pub fn push(&self, item: Js) {
+        self.cells.borrow_mut().push(item);
+    }
 }
 
 /// A plain object: own keys in JavaScript's order (array-index keys
@@ -219,7 +255,7 @@ impl Js {
     }
 
     pub fn array(items: Vec<Js>) -> Js {
-        Js::Array(Rc::new(JsArray { items, origin: None }))
+        Js::Array(Rc::new(JsArray::new(items)))
     }
 
     pub fn object(object: JsObject) -> Js {
@@ -263,7 +299,7 @@ impl Js {
             Js::String(s) => s.clone(),
             // Array.prototype.join: a null or undefined member is empty.
             Js::Array(array) => array
-                .items
+                .items()
                 .iter()
                 .map(|item| if item.is_nullish() { String::new() } else { item.to_js_string() })
                 .collect::<Vec<_>>()
@@ -280,8 +316,8 @@ impl Js {
     pub fn to_text(&self) -> Result<String, Thrown> {
         match self {
             Js::Array(array) => {
-                let mut parts = Vec::with_capacity(array.items.len());
-                for item in &array.items {
+                let mut parts = Vec::with_capacity(array.items().len());
+                for item in array.items().iter() {
                     parts.push(if item.is_nullish() { String::new() } else { item.to_text()? });
                 }
                 Ok(parts.join(","))
@@ -637,11 +673,26 @@ pub fn json_quote(s: &str) -> String {
 /// form.
 pub fn json_stringify(value: &Js, indent: usize) -> String {
     let mut out = String::new();
-    write_json(value, indent, 0, &mut out);
+    let mut held = None;
+    write_json(value, indent, 0, &mut out, &mut held);
     out
 }
 
-fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String) {
+/// `json_stringify` of a value that may hold a record: the text, or the kind
+/// of the first record whose binding object this engine cannot write out as
+/// the TypeScript's `JSON.stringify` would (its read seam, its computed
+/// schema, its `Map`s are the TypeScript engine's).
+pub fn try_json_stringify(value: &Js, indent: usize) -> Result<String, String> {
+    let mut out = String::new();
+    let mut held = None;
+    write_json(value, indent, 0, &mut out, &mut held);
+    match held {
+        Some(kind) => Err(kind),
+        None => Ok(out),
+    }
+}
+
+fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &mut Option<String>) {
     let newline = |out: &mut String, depth: usize| {
         if indent > 0 {
             out.push('\n');
@@ -651,29 +702,40 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String) {
     match value {
         Js::Undefined | Js::Null | Js::Function(_) => out.push_str("null"),
         // `JSON.stringify` of the binding object: the event's is
-        // `{kind: 'event'}`. Admission keeps every other record from the one
-        // writer that meets a record as itself (a `from` datum,
-        // `extract_from_record`); the rest read one down to its fields first
-        // (TEXT.SERIALISE's `plainValueOf`, an extraction's context).
+        // `{kind: 'event'}`, a block's returned records the list of theirs.
+        // Any other's holds what only the TypeScript engine has; the first
+        // met is named (`try_json_stringify`), and written as `{}` for the
+        // writers no record reaches (admission keeps them from a `from`
+        // datum; the rest read one down to its fields first).
         Js::Record(record) => match record.as_ref() {
             crate::bindings::Binding::Event => out.push_str(r#"{"kind":"event"}"#),
-            other => unreachable!("admission keeps a record of kind {} from the JSON a prompt writes", crate::record::kind_of(other)),
+            crate::bindings::Binding::Positions(landings) => {
+                let landings = Js::array(landings.iter().cloned().map(crate::record::held).collect());
+                let mut object = JsObject::new();
+                object.set("kind".into(), Js::str("positions"));
+                object.set("landings".into(), landings);
+                write_json(&Js::object(object), indent, depth, out, held);
+            }
+            other => {
+                held.get_or_insert_with(|| crate::record::kind_of(other));
+                out.push_str("{}");
+            }
         },
         Js::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Js::Number(n) => out.push_str(&if n.is_finite() { number_to_string(*n) } else { "null".into() }),
         Js::String(s) => out.push_str(&json_quote(s)),
         Js::Array(array) => {
-            if array.items.is_empty() {
+            if array.items().is_empty() {
                 out.push_str("[]");
                 return;
             }
             out.push('[');
-            for (i, item) in array.items.iter().enumerate() {
+            for (i, item) in array.items().iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
                 newline(out, depth + 1);
-                write_json(item, indent, depth + 1, out);
+                write_json(item, indent, depth + 1, out, held);
             }
             newline(out, depth);
             out.push(']');
@@ -695,7 +757,7 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String) {
                 if indent > 0 {
                     out.push(' ');
                 }
-                write_json(item, indent, depth + 1, out);
+                write_json(item, indent, depth + 1, out, held);
             }
             newline(out, depth);
             out.push('}');

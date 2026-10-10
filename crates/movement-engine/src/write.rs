@@ -553,7 +553,7 @@ impl Run<'_> {
     pub(crate) async fn write_fields(&self, lines: &[Line], adapter: &TargetAdapter, record_type: &str, scope: &Rc<Scope>) -> Result<Fields, Stop> {
         let descriptor = self.store_call(&adapter, "describe", env::object_of(vec![("typeId", Js::str(record_type))])).await.map_err(thrown)?;
         let described: Vec<Js> = match unique::get(&descriptor, "fields") {
-            Js::Array(list) => list.items.clone(),
+            Js::Array(list) => list.items().clone(),
             _ => Vec::new(),
         };
         let mut fields = JsObject::new();
@@ -727,7 +727,7 @@ impl Run<'_> {
         search.set("constraints".into(), constraints.clone());
         let found = self.store_call(&target.adapter, "resolveEntity", Js::object(search)).await.map_err(thrown)?;
         Ok(match unique::get(&found, "candidates") {
-            Js::Array(list) => list.items.clone(),
+            Js::Array(list) => list.items().clone(),
             _ => Vec::new(),
         })
     }
@@ -1087,7 +1087,7 @@ impl Run<'_> {
         let satisfied: Vec<String> = parent_links.iter().map(|p| unique::get(p, "edgeName").to_js_string()).collect();
         let is_root = target.parents.is_empty();
         let described: Vec<Js> = match unique::get(&fields.descriptor, "fields") {
-            Js::Array(list) => list.items.clone(),
+            Js::Array(list) => list.items().clone(),
             _ => Vec::new(),
         };
         let missing: Vec<String> = described
@@ -1458,7 +1458,7 @@ fn coerce_for_cardinality(value: Js, field: Option<&Js>) -> Js {
             if field.is_some_and(|f| matches!(unique::get(f, "kind"), Js::String(k) if k == "json")) {
                 return value.clone();
             }
-            Js::str(list.items.iter().filter(|v| !v.is_nullish()).map(Js::to_js_string).collect::<Vec<_>>().join(", "))
+            Js::str(list.items().iter().filter(|v| !v.is_nullish()).map(Js::to_js_string).collect::<Vec<_>>().join(", "))
         }
         _ => value,
     }
@@ -1469,7 +1469,7 @@ fn is_empty_write_value(value: &Js) -> bool {
     match value {
         Js::Undefined | Js::Null => true,
         Js::String(s) => s.is_empty(),
-        Js::Array(list) => list.items.is_empty(),
+        Js::Array(list) => list.items().is_empty(),
         _ => false,
     }
 }
@@ -1478,7 +1478,7 @@ fn is_empty_write_value(value: &Js) -> bool {
 fn is_empty_field_value(value: &Js) -> bool {
     match value {
         Js::Undefined | Js::Null => true,
-        Js::Array(list) => list.items.is_empty(),
+        Js::Array(list) => list.items().is_empty(),
         _ => false,
     }
 }
@@ -1487,7 +1487,7 @@ fn is_empty_field_value(value: &Js) -> bool {
 fn to_field_array(value: &Js) -> Vec<Js> {
     match value {
         Js::Undefined | Js::Null => Vec::new(),
-        Js::Array(list) => list.items.clone(),
+        Js::Array(list) => list.items().clone(),
         other => vec![other.clone()],
     }
 }
@@ -1499,7 +1499,7 @@ pub fn deep_equal(a: &Js, b: &Js) -> bool {
     }
     match (a, b) {
         (Js::Null, _) | (_, Js::Null) => false,
-        (Js::Array(x), Js::Array(y)) => x.items.len() == y.items.len() && x.items.iter().zip(&y.items).all(|(p, q)| deep_equal(p, q)),
+        (Js::Array(x), Js::Array(y)) => x.items().len() == y.items().len() && x.items().iter().zip(y.items().iter()).all(|(p, q)| deep_equal(p, q)),
         (Js::Object(x), Js::Object(y)) => {
             x.entries().len() == y.entries().len()
                 && x.entries().iter().all(|(k, v)| deep_equal(v, y.get(k).unwrap_or(&Js::Undefined)))

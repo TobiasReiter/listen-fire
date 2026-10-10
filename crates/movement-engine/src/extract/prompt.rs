@@ -214,7 +214,7 @@ pub fn plugin_segments(text: Option<&str>, data: Option<&Js>) -> Vec<Segment> {
 fn has_keys(value: &Js) -> bool {
     match value {
         Js::Object(object) => !object.entries().is_empty(),
-        Js::Array(list) => !list.items.is_empty(),
+        Js::Array(list) => !list.items().is_empty(),
         Js::String(s) => !s.is_empty(),
         _ => false,
     }

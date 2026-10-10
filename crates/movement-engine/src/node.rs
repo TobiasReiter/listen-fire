@@ -356,7 +356,7 @@ impl Run<'_> {
         match bound {
             Binding::Value(value) => {
                 let held = match &value.value {
-                    Js::Array(list) => list.items.clone(),
+                    Js::Array(list) => list.items().clone(),
                     other => vec![other.clone()],
                 };
                 let mut records = Vec::new();
@@ -676,7 +676,7 @@ fn as_map_list(value: &Js) -> Option<Vec<JsObject>> {
     };
     match value {
         Js::Object(_) if crate::js::is_dict(value) => dict(value).map(|o| vec![o]),
-        Js::Array(list) if !list.items.is_empty() && list.items.iter().all(crate::js::is_dict) => list.items.iter().map(dict).collect(),
+        Js::Array(list) if !list.items().is_empty() && list.items().iter().all(crate::js::is_dict) => list.items().iter().map(dict).collect(),
         _ => None,
     }
 }

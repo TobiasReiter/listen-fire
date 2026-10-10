@@ -67,12 +67,15 @@ const MAX_RELATED_PAGES: usize = 10_000;
 /// A graph a walk reads through (expression.ts `SourceRead`): the instance,
 /// what the read wrapper needs to name its positions, and what the instance
 /// said it can do.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Read {
     pub instance: Instance,
     /// The live adapter's own `adapterType`.
     pub adapter_type: String,
     pub instance_name: String,
+    /// The `instanceName` a read's origins cite, as the binding holds it (a
+    /// dict's may be no text).
+    pub instance_label: Js,
     pub schema: Option<InstanceSchema>,
     /// The movement parameter's declared position, which names a typeless
     /// event root (the event's source only).
@@ -96,6 +99,7 @@ impl Read {
             adapter_type: resolved.get("adapterType").and_then(Json::as_str).unwrap_or(&binding.adapter_slug).to_string(),
             instance,
             instance_name: binding.name.clone(),
+            instance_label: Js::str(binding.name.clone()),
             schema: binding.schema.clone(),
             start_surface_type,
             incoming: flag("incoming"),
@@ -145,7 +149,12 @@ fn unstable_position(adapter_type: Js, record_type: Js, data: Js) -> Js {
 
 /// `makeMetaPosition`: the schema root of an adapter.
 pub(crate) fn meta_position(adapter_slug: &str) -> Js {
-    unstable_position(Js::str(adapter_slug), Js::str("meta"), Js::Undefined)
+    meta_position_of(Js::str(adapter_slug))
+}
+
+/// `makeMetaPosition` of a slug as a binding holds it.
+pub(crate) fn meta_position_of(adapter_slug: Js) -> Js {
+    unstable_position(adapter_slug, Js::str("meta"), Js::Undefined)
 }
 
 /// The read wrapper's `restamp`: the position under a natural type, its
@@ -266,7 +275,7 @@ fn direction_text(direction: EdgeDirection) -> &'static str {
 
 fn list_items(value: &Js) -> Result<Vec<Js>, Failure> {
     match value {
-        Js::Array(list) => Ok(list.items.clone()),
+        Js::Array(list) => Ok(list.items().clone()),
         other => Err(Failure::engine("MOVENG_RUNTIME", format!("a traversal answered {} where a list of records was due", other.type_of()))),
     }
 }
@@ -393,7 +402,7 @@ impl Run<'_> {
                 Binding::Value(value) => {
                     let list = matches!(value.value, Js::Array(_));
                     let members = match &value.value {
-                        Js::Array(items) => items.items.clone(),
+                        Js::Array(items) => items.items().clone(),
                         other => vec![other.clone()],
                     };
                     let mut iterations = Vec::new();
@@ -421,12 +430,67 @@ impl Run<'_> {
                             let binding = Binding::Value(crate::env::ValueBinding { value, trail: None, many: false });
                             self.head_iterations_from(binding, root, step, scope, span).await
                         }
-                        // No checked program reaches here: a dict comes only from
-                        // `json`, and the checker refuses a head rooted at json
-                        // (MOV_HEAD_NOT_A_POSITION).
-                        kind if crate::record::BINDING_KINDS.contains(&kind) => Err(Stop::Thrown(Failure::unreproduced(
+                        // A dict a walk's captured scope holds (`runDeferredWalk`):
+                        // each kind's case of `headIterationsFrom`.
+                        "sourcePosition" | "handle" | "instance" => {
+                            let this = Js::Object(dict.clone());
+                            let thrown = |f: Failure| Stop::Thrown(f);
+                            let (start, read) = match kind.as_str() {
+                                "sourcePosition" => self.shaped_source_record(&this).map_err(thrown)?,
+                                "instance" => {
+                                    let read = self.shaped_instance_read(&this).await.map_err(thrown)?;
+                                    let slug = crate::record::get(&this, "adapterSlug").map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?;
+                                    (meta_position_of(slug), crate::shaped::GraphRead::Live(read))
+                                }
+                                _ => {
+                                    let handle = crate::record::get(&this, "handle").map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?;
+                                    if matches!(crate::record::get(&handle, "externalId"), Ok(Js::Undefined)) {
+                                        return Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a handle binding)"), "")));
+                                    }
+                                    self.shaped_handle_record(&this, root).await.map_err(thrown)?
+                                }
+                            };
+                            let read = match read {
+                                crate::shaped::GraphRead::Live(read) => read,
+                                crate::shaped::GraphRead::Foreign(read) => {
+                                    return Err(Stop::Thrown(Failure::of_eval(crate::shaped::foreign_call(&read, "read", "runtimeCapabilities"), "")));
+                                }
+                            };
+                            crate::shaped::wrapper_reads(&start, read.start_surface_type.as_deref()).map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?;
+                            let landings = self.walk(&start, step, read, scope, span).await.map_err(Stop::Thrown)?;
+                            Ok(aliased(landings.into_iter().map(Binding::Landed).collect()))
+                        }
+                        // `for (const landing of rootBinding.landings)`, each the
+                        // root of the same hop.
+                        "positions" => {
+                            let landings = crate::record::get(&Js::Object(dict.clone()), "landings").map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?;
+                            let roots = self.raw_landings(landings, "rootBinding.landings").map_err(Stop::Thrown)?;
+                            let mut iterations = Vec::new();
+                            for landing in roots {
+                                iterations.extend(self.head_iterations_from(landing, root, step, scope, span).await?);
+                            }
+                            Ok(iterations)
+                        }
+                        "extractRoot" | "extractPosition" => {
+                            if step.expression_filter.is_some() {
+                                return Err(Stop::Thrown(Failure::unsupported("WHERE filters on extract-result block heads", "")));
+                            }
+                            let emission = crate::record::get(&Js::Object(dict.clone()), "emission").map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?;
+                            let children = crate::record::get(&emission, "children").map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?;
+                            Err(Stop::Thrown(Failure::of_eval(
+                                if children.is_nullish() {
+                                    crate::record::type_error(&format!("Cannot read properties of {} (reading 'get')", children.to_js_string()))
+                                } else {
+                                    crate::record::type_error("path.emission.children.get is not a function")
+                                },
+                                "",
+                            )))
+                        }
+                        // The planes the TypeScript walks for these (a node's edges,
+                        // a kept walk's run, a meta-node's `Map`, a callback's sink).
+                        kind @ ("nodePosition" | "lazyWalk" | "blockMeta" | "callback") => Err(Stop::Thrown(Failure::unreproduced(
                             &format!("a block head rooted at '{root}', a value shaped like {}", crate::record::describe_kind(kind)),
-                            "a dict whose `kind` names a binding's is a record to the TypeScript engine",
+                            "the TypeScript engine walks the planes it would hold for that kind",
                         ))),
                         kind => Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a {kind} binding)"), ""))),
                     }
@@ -955,7 +1019,7 @@ impl Run<'_> {
         }
         let mut entries = vec![
             ("kind", Js::str("source_field")),
-            ("instance", Js::str(read.instance_name.clone())),
+            ("instance", read.instance_label.clone()),
             ("adapterType", Js::str(read.adapter_type.clone())),
         ];
         if stable && let Some(record_type) = record_type(&landed.position) {

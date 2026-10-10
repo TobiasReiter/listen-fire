@@ -109,6 +109,11 @@ const OBJECT_PROTOTYPE_BUILTINS: ReadonlyMap<string, unknown> = new Map<string, 
   ...Object.getOwnPropertyNames(Object.prototype)
     .filter((name) => name !== 'constructor' && name !== '__proto__')
     .map((name): [string, unknown] => [name, Reflect.get(Object.prototype, name)]),
+  // A list's methods, `Array#<name>`: what an object whose prototype a
+  // GROUPBY filing made a list reads under those names.
+  ...Object.getOwnPropertyNames(Array.prototype)
+    .filter((name) => typeof Reflect.get(Array.prototype, name) === 'function')
+    .map((name): [string, unknown] => [`Array#${name}`, Reflect.get(Array.prototype, name)]),
 ]);
 
 function builtinName(value: unknown): ['f', string] | undefined {

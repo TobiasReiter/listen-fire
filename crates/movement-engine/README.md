@@ -760,7 +760,13 @@ reads the binding's, a member of its lists switched on by its `kind`. A
 GROUPBY or KEYBY filing a member under `__proto__` sets the answer's
 prototype (`JsObject::proto`): reads go through it, a list there makes
 the answer's text a join, the answer is no dict (`isDictValue`), and the
-eval wire carries the prototype (`["o", id, entries, prototype]`). A
+eval wire carries the prototype (`["o", id, entries, prototype]`); a list
+there answers `Array.prototype`'s names (`["f", "Array#<name>"]`), a record
+there makes the answer that record to `bindingOf` (the KEYBY case), and a
+filing onto a list the prototype holds pushes onto that very list (lists
+are shared and mutable, `JsArray::push`). A walk a dict carries runs from
+its captured pairs, and the hops past a kept walk held in a value walk on
+from its landings. A
 collection op's `onError` never forgives this engine's own refusal
 (`ErrorClass::Unreproduced`). MAP, FILTER,
 REDUCE, GROUPBY, KEYBY and MEMBERS run one member at a time
@@ -770,11 +776,16 @@ descriptor and refuses a function (MOVENG_PARK_NONSERIALIZABLE). On the
 eval wire a built-in crosses as `["f", name]` and `Object.prototype` as
 `["p"]`; the event's binding object crosses as `{kind: 'event'}`. A request
 holding any other record is never made (`HeldRecord`, per request).
-Pinned by tests/oracle/records.json: 3,597 whole programs from 33 body
-templates under versions 1 to 3, seed 20261010, run on the TypeScript
-engine against an adapter that answers walks (`items`, `subs`, two
-records filed under `__proto__`) and writes; the Rust engine ends each as
-the TypeScript did (0 differ; 123 refused at admission, `at_record_key`).
+Pinned by tests/oracle/records.json: 3,612 whole programs — 3,600 from 34
+body templates under versions 1 to 3, seed 20261010, and 4 written out (12 cases) for
+`onError` and held walks — run on the TypeScript engine against an adapter
+that answers walks (`items`, `subs`, two records named `__proto__`) and
+writes. The generated dicts include instances with non-text slugs, schemas
+of their own and non-map configs, walks with captured pairs, text where
+records belong, and `kind: "__proto__"`; GROUPBY and KEYBY answers are read
+by member. The Rust engine ends each as the TypeScript did (0 differ; the
+programs `AT`-ing a record by a name are refused at admission,
+`at_record_key`).
 
 ### Expressions that walk, fold, test and name records
 
@@ -1060,21 +1071,22 @@ fails); none produces a different answer.
 - A record held in a value reaching a host request admission did not
   foresee: MOVENG_UNSUPPORTED before the request is made (a backstop;
   admission refuses each route it knows, by name).
-- A dict shaped like an `instance` whose slug is not text, or that carries
-  a schema of its own, or a construction config that is not a map of
-  texts, read through its graph: MOVENG_UNSUPPORTED. The TypeScript asks
-  its host to resolve an adapter outside the host contract. (An instance's
-  non-text name reaches a read's origins as its text.)
-- A dict's walk (`lazyWalk`, a deferred edge) whose `captured` scope is a
-  list or a text, or a dict's `landings` that is a non-empty text: the
-  TypeScript walks the members as entries; MOVENG_UNSUPPORTED here. Its
-  other shapes fail with the TypeScript's TypeError.
-- A GROUPBY whose answer's prototype (a list, from a member filed under
-  `__proto__`) holds a list under another key filed: MOVENG_UNSUPPORTED;
-  the TypeScript pushes onto that list. A method name of `Array.prototype`
-  read off such an answer reads as absent.
-- Parking a value whose record sits inside an object given a prototype:
-  MOVENG_UNSUPPORTED; the TypeScript writes the binding object's keys.
+- A dict shaped like an `instance` whose schema is no instance schema (one
+  `positions` and `collections` do not make, or whose entries the read
+  wrapper's types do not read), read through its graph: MOVENG_UNSUPPORTED.
+  Its slug, credential name and construction config are read as the
+  TypeScript reads them, whatever they are (the host's lookup is by the
+  slug's text).
+- A walk a dict holds as data (`lazyWalk`, a deferred edge) with a mapping,
+  rooted at an expression, naming a captured binding by no text, or whose
+  hops are no text: MOVENG_UNSUPPORTED. Its captured pairs and a head rooted
+  at a name are run as the TypeScript runs them.
+- A block head a walk's captured scope roots at a dict shaped like a
+  synthesised node, a kept walk, a meta-node or a callback:
+  MOVENG_UNSUPPORTED.
+- Parking a value whose message or data would print a record's binding
+  object other than the event's or a block's returned records' (its read
+  seam, its computed schema): MOVENG_UNSUPPORTED.
 - A hop's ORDER BY over more than 64 records whose keys mix numbers with
   other kinds, or a `SORT` over more than 64 such members:
   MOVENG_UNSUPPORTED ("Transition artefacts to mirror" below). TypeScript orders them by
@@ -1249,7 +1261,7 @@ Sizes are estimates (XS, S, M, L).
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
 | 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | floored by the shim | the raw number passed, cut at its truncation, printed with ryu-js number text | XS |
-| 11 | records held in values (binding-shaped dicts: `bindingOf` walks the prototype chain), `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` and `Binding::Shaped`, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run" | oracle records.json (3,597 whole programs, seed 20261010, tests/records_oracle.rs) | done |
+| 11 | records held in values (binding-shaped dicts: `bindingOf` walks the prototype chain), `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` and `Binding::Shaped`, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run" | oracle records.json (3,612 whole programs, seed 20261010, tests/records_oracle.rs) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |

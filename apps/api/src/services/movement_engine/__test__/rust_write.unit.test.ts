@@ -910,6 +910,21 @@ describe('parks in the Rust engine', () => {
     '}',
   ].join('\n');
 
+  it('parks a dict holding a handle, shaped like returned records, with the state the TypeScript engine writes', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  co = write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }',
+      '  held = { kind: "positions", landings: [co] }',
+      '  await sleep(1h)',
+      '  write crm-[:companies]-> { name: "after" }',
+      '}',
+    ].join('\n');
+    const { ts, rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    expect(rust.parks).toHaveLength(1);
+    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
+    expect(JSON.stringify(rust.parks[0]?.state)).toContain('"kind":"handle"');
+  });
+
   it('parks at a sleep with the state the TypeScript engine writes', async () => {
     const { ts, rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });

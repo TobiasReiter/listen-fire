@@ -198,7 +198,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             }
             let from_source = run.source.borrow().as_ref().is_some_and(|source| Rc::ptr_eq(&source.read, &landed.read));
             if !from_source {
-                descriptor.push(("read", object_of(vec![("instanceName", Js::str(landed.read.instance_name.clone()))])));
+                descriptor.push(("read", object_of(vec![("instanceName", landed.read.instance_label.clone())])));
             }
             object_of(descriptor)
         }
@@ -229,7 +229,14 @@ fn serialize_shaped(run: &Run<'_>, dict: &Rc<JsObject>, park: &mut ParkWriter) -
     let at = |key: &str| get(&this, key).map_err(eval);
     let kind = |k: &str| ("kind", Js::str(k));
     let not_iterable = |what: &str| eval(type_error(&format!("{what} is not iterable")));
-    let unhandled = |value: &Js| Failure::engine("MOVENG_PARK_NONSERIALIZABLE", format!("unhandled binding kind in scope serialisation: {}", crate::js::json_stringify(value, 0)));
+    // `assertNever`'s message carries `JSON.stringify` of what it met.
+    let unhandled = |value: &Js| match crate::js::try_json_stringify(value, 0) {
+        Ok(text) => Failure::engine("MOVENG_PARK_NONSERIALIZABLE", format!("unhandled binding kind in scope serialisation: {text}")),
+        Err(kind) => Failure::unreproduced(
+            &format!("parking a value whose message would print a record's binding object ({})", crate::record::describe_kind(&kind)),
+            "the TypeScript engine writes its read seam and schema into the message",
+        ),
+    };
     let instance_identity = |instance: &Js| -> Result<Js, Failure> {
         let mut out = vec![("name", get(instance, "name").map_err(eval)?), ("adapterSlug", get(instance, "adapterSlug").map_err(eval)?)];
         let credential = get(instance, "credentialName").map_err(eval)?;
@@ -258,10 +265,12 @@ fn serialize_shaped(run: &Run<'_>, dict: &Rc<JsObject>, park: &mut ParkWriter) -
                 type_error(&format!("{what}.map is not a function"))
             }));
         };
-        let mut out = Vec::with_capacity(list.items.len());
-        for member in &list.items {
+        let mut out = Vec::with_capacity(list.items().len());
+        for member in list.items().iter() {
             out.push(match member {
                 Js::Object(dict) => serialize_shaped(run, dict, park)?,
+                // A record the run holds: `serializeBinding` of the binding itself.
+                Js::Record(record) => serialize_binding(run, "", record, park)?,
                 Js::Undefined | Js::Null => return Err(eval(type_error(&format!("Cannot read properties of {} (reading 'kind')", member.to_js_string())))),
                 other => return Err(unhandled(other)),
             });
@@ -389,7 +398,7 @@ fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<J
     let file = matches!(value, Js::Object(object) if matches!(object.get("__brand"), Some(Js::String(brand)) if brand == "FileRef"));
     Ok(match value {
         Js::Array(list) if !file => {
-            let of = list.items.iter().map(|item| serialize_value(run, item, park)).collect::<Result<Vec<_>, _>>()?;
+            let of = list.items().iter().map(|item| serialize_value(run, item, park)).collect::<Result<Vec<_>, _>>()?;
             object_of(vec![("kind", Js::str("list")), ("of", Js::array(of))])
         }
         Js::Object(dict) if !file => {
@@ -410,24 +419,17 @@ fn json_serializable(value: &Js, at: &str) -> Result<Js, Failure> {
     fn function_key(value: &Js, key: &str) -> Option<String> {
         match value {
             Js::Function(_) => Some(key.to_string()),
-            Js::Array(list) => list.items.iter().enumerate().find_map(|(i, item)| function_key(item, &i.to_string())),
+            Js::Array(list) => list.items().iter().enumerate().find_map(|(i, item)| function_key(item, &i.to_string())),
             Js::Object(object) => object.entries().iter().find_map(|(k, item)| function_key(item, k)),
             _ => None,
         }
     }
     // A record left in a value no `holdsRecords` walk reaches (under an
-    // object a GROUPBY gave a prototype): the TypeScript writes the binding
-    // object's own keys as data.
-    fn record_inside(value: &Js) -> bool {
-        match value {
-            Js::Record(record) => !matches!(record.as_ref(), crate::bindings::Binding::Event),
-            Js::Array(list) => list.items.iter().any(record_inside),
-            Js::Object(object) => object.entries().iter().any(|(_, item)| record_inside(item)),
-            _ => false,
-        }
-    }
-    if record_inside(value) {
-        return Err(Failure::unreproduced(&format!("{at}: parking a record as the data of its binding object"), "the TypeScript engine writes the binding object's own keys"));
+    // object a filing gave a prototype): the TypeScript writes its binding
+    // object's own keys as data — the event's, a block's returned records',
+    // as this does; any other holds what only the TypeScript engine has.
+    if let Err(kind) = crate::js::try_json_stringify(value, 0) {
+        return Err(Failure::unreproduced(&format!("{at}: parking a record ({}) as the data of its binding object", crate::record::describe_kind(&kind)), "the TypeScript engine writes its read seam and schema"));
     }
     if let Some(key) = function_key(value, "") {
         return Err(Failure::engine(
@@ -510,7 +512,7 @@ pub fn resume_refusal(state: &Json) -> Option<String> {
         }
     }
     // A journal of calls to replay is a call this engine would have to run.
-    if at(&state, "journal").is_some_and(|journal| !matches!(journal, Js::Array(list) if list.items.is_empty())) {
+    if at(&state, "journal").is_some_and(|journal| !matches!(journal, Js::Array(list) if list.items().is_empty())) {
         return Some("resume_state_journal".into());
     }
     if at(&state, "suspended").is_some_and(|suspended| !matches!(suspended, Js::Bool(true))) {
@@ -815,7 +817,7 @@ impl Run<'_> {
                     }
                     let mut landings = Vec::new();
                     for landing in items(at(landed, "landings")) {
-                        landings.push(self.rehydrate(landing, park)?);
+                        landings.push(self.rehydrate(&landing, park)?);
                     }
                     edges.push((edge.clone(), Edge { landings, shape: landing_shape_of(landed), deferred: None }));
                 }
@@ -826,7 +828,7 @@ impl Run<'_> {
             Some("positions") => {
                 let mut landings = Vec::new();
                 for landing in items(at(descriptor, "landings")) {
-                    landings.push(self.rehydrate(landing, park)?);
+                    landings.push(self.rehydrate(&landing, park)?);
                 }
                 Ok(Binding::Positions(landings))
             }
@@ -914,10 +916,10 @@ fn text(value: Option<&Js>) -> Option<&str> {
     }
 }
 
-fn items(value: Option<&Js>) -> &[Js] {
+fn items(value: Option<&Js>) -> Vec<Js> {
     match value {
-        Some(Js::Array(list)) => &list.items,
-        _ => &[],
+        Some(Js::Array(list)) => list.items().clone(),
+        _ => Vec::new(),
     }
 }
 
@@ -1070,6 +1072,7 @@ mod tests {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },
             adapter_type: "graph".into(),
             instance_name: "kg".into(),
+            instance_label: Js::str("kg"),
             schema: None,
             start_surface_type: None,
             incoming: false,

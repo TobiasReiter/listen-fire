@@ -141,7 +141,9 @@ impl Decoder {
                         let id = id()?;
                         let items = tagged.get(2).and_then(Json::as_array).ok_or("a wire list without items")?;
                         let items = items.iter().map(|item| self.value(item)).collect::<Result<_, _>>()?;
-                        let value = Js::Array(Rc::new(JsArray { items, origin: Some(id as u32) }));
+                        let mut array = JsArray::new(items);
+                        array.origin = Some(id as u32);
+                        let value = Js::Array(Rc::new(array));
                         self.seen.insert(id, value.clone());
                         value
                     }
@@ -163,7 +165,11 @@ impl Decoder {
                     "r" => self.seen.get(&id()?).cloned().ok_or("a wire reference to nothing seen")?,
                     "f" => match tagged.get(1).and_then(Json::as_str) {
                         Some("Object") => Js::Function(crate::js::NativeFunction("Object")),
-                        Some(name) => match crate::js::OBJECT_PROTOTYPE_NAMES.iter().find(|n| **n == name && !matches!(name, "constructor" | "__proto__")) {
+                        Some(name) => match crate::js::OBJECT_PROTOTYPE_NAMES
+                            .iter()
+                            .find(|n| **n == name && !matches!(name, "constructor" | "__proto__"))
+                            .or_else(|| crate::js::ARRAY_PROTOTYPE_NAMES.iter().find(|n| **n == name))
+                        {
                             Some(name) => Js::Function(crate::js::NativeFunction(name)),
                             None => return Err(format!("the wire names no built-in: {json}")),
                         },
@@ -306,7 +312,7 @@ impl Encoder<'_> {
             Js::Array(array) => match array.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
                 None => self.shared(Rc::as_ptr(array) as usize, |this| {
-                    json!(array.items.iter().map(|item| this.value(item)).collect::<Vec<_>>())
+                    json!(array.items().iter().map(|item| this.value(item)).collect::<Vec<_>>())
                 }, "l"),
             },
             Js::Object(object) => match object.origin.filter(|_| !self.plain) {
@@ -361,7 +367,7 @@ pub fn json_round_trip(value: &Js) -> Js {
         // in an object, and `undefined` alone.
         Js::Function(_) => Js::Undefined,
         Js::Array(list) => Js::array(
-            list.items.iter().map(|item| if matches!(item, Js::Undefined | Js::Function(_)) { Js::Null } else { json_round_trip(item) }).collect(),
+            list.items().iter().map(|item| if matches!(item, Js::Undefined | Js::Function(_)) { Js::Null } else { json_round_trip(item) }).collect(),
         ),
         Js::Object(object) => {
             let mut copy = JsObject::new();
@@ -372,6 +378,16 @@ pub fn json_round_trip(value: &Js) -> Js {
             }
             Js::object(copy)
         }
+        // The binding object's JSON, where this engine writes it as the
+        // TypeScript does (`try_json_stringify` names the rest).
+        Js::Record(record) => match record.as_ref() {
+            crate::bindings::Binding::Event => object_of(vec![("kind", Js::str("event"))]),
+            crate::bindings::Binding::Positions(landings) => object_of(vec![
+                ("kind", Js::str("positions")),
+                ("landings", json_round_trip(&Js::array(landings.iter().cloned().map(crate::record::held).collect()))),
+            ]),
+            _ => Js::object(JsObject::new()),
+        },
         other => other.clone(),
     }
 }
@@ -389,7 +405,7 @@ pub fn json_of_js(value: &Js) -> Json {
         Js::Number(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => json!(*n as i64),
         Js::Number(n) => json!(n),
         Js::String(s) => json!(s),
-        Js::Array(list) => Json::Array(list.items.iter().map(json_of_js).collect()),
+        Js::Array(list) => Json::Array(list.items().iter().map(json_of_js).collect()),
         Js::Object(object) => {
             let mut map = Map::new();
             for (k, v) in object.entries() {
@@ -529,7 +545,7 @@ mod tests {
         let x = &envelope.env.resolve("x").unwrap().value;
         let y = envelope.env.resolve("y").unwrap();
         let Js::Array(list) = &y.value else { panic!("y is a list") };
-        assert!(strict_equals(&list.items[0], x));
+        assert!(strict_equals(&list.items()[0], x));
         assert!(y.many);
         assert_eq!(envelope.env.resolve("x").unwrap().trail, Some(Trail { origins: vec![0], direct: Some(0) }));
         assert_eq!(encode(x), json!(["i", 0]));

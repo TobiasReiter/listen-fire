@@ -161,7 +161,7 @@ pub(crate) fn project<'s>(raw: &JsObject, site: &Region<'s>, site_ref: &dyn Fn(&
     let mut children = Vec::new();
     for child in &site.children {
         let records = match raw.get(&child.spec.name) {
-            Some(Js::Array(list)) => list.items.clone(),
+            Some(Js::Array(list)) => list.items().clone(),
             None | Some(Js::Undefined | Js::Null) => Vec::new(),
             Some(other) => vec![other.clone()],
         };
@@ -188,7 +188,7 @@ pub(crate) fn absent_if_blank(value: &Js) -> Js {
         Js::Undefined => Js::Null,
         Js::String(text) if js::trim(text).is_empty() => Js::Null,
         Js::Array(list) => {
-            let kept: Vec<Js> = list.items.iter().map(absent_if_blank).filter(|v| !matches!(v, Js::Null)).collect();
+            let kept: Vec<Js> = list.items().iter().map(absent_if_blank).filter(|v| !matches!(v, Js::Null)).collect();
             if kept.is_empty() { Js::Null } else { Js::array(kept) }
         }
         other => other.clone(),

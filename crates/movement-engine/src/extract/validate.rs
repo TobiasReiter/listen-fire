@@ -94,7 +94,7 @@ pub fn envelope_example(region: &Region<'_>) -> String {
 pub fn unanswered_detail(region: &Region<'_>, answered: &Js, issues: &[Issue]) -> String {
     let keys: Vec<String> = match answered {
         Js::Object(object) => object.entries().iter().map(|(k, _)| k.clone()).collect(),
-        Js::Array(list) => (0..list.items.len()).map(|i| i.to_string()).collect(),
+        Js::Array(list) => (0..list.items().len()).map(|i| i.to_string()).collect(),
         _ => Vec::new(),
     };
     if keys.contains(&region.site_id) {
@@ -169,7 +169,7 @@ fn region_records(region: &Region<'_>, value: &Js) -> Option<Js> {
         return Some(Js::array(vec![value.clone()]));
     }
     match value {
-        Js::Array(list) if !list.items.is_empty() && list.items.iter().all(|item| declared_record(region, item)) => Some(value.clone()),
+        Js::Array(list) if !list.items().is_empty() && list.items().iter().all(|item| declared_record(region, item)) => Some(value.clone()),
         _ => None,
     }
 }
@@ -271,7 +271,7 @@ impl Parse {
             self.expected("array", value);
             return Js::Undefined;
         };
-        let items = list.items.iter().enumerate().map(|(i, item)| self.at(PathKey::Index(i), |p| p.entity(site, item))).collect();
+        let items = list.items().iter().enumerate().map(|(i, item)| self.at(PathKey::Index(i), |p| p.entity(site, item))).collect();
         Js::array(items)
     }
 
@@ -447,11 +447,11 @@ impl Parse {
             return Js::Undefined;
         };
         let Some((options, open)) = options else {
-            let items = list.items.iter().enumerate().map(|(i, item)| self.at(PathKey::Index(i), |p| p.value(Some(element), item, ctx))).collect();
+            let items = list.items().iter().enumerate().map(|(i, item)| self.at(PathKey::Index(i), |p| p.value(Some(element), item, ctx))).collect();
             return Js::array(items);
         };
         let mut kept = Vec::new();
-        for item in &list.items {
+        for item in list.items().iter() {
             if matches!(item, Js::String(s) if js::trim(s).is_empty()) {
                 continue;
             }
@@ -529,7 +529,7 @@ fn string_leaves(value: &Js, depth: usize, into: &mut Vec<String>) {
             }
         }
         _ if depth == 0 => {}
-        Js::Array(list) => list.items.iter().for_each(|item| string_leaves(item, depth - 1, into)),
+        Js::Array(list) => list.items().iter().for_each(|item| string_leaves(item, depth - 1, into)),
         Js::Object(object) => object.entries().iter().for_each(|(_, item)| string_leaves(item, depth - 1, into)),
         _ => {}
     }

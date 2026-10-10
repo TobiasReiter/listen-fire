@@ -500,6 +500,12 @@ describe('a whole run in the Rust engine', () => {
       [movement('  found = extract "careful" from [msg.`text`] {\n    name: "a"\n  }'), 'extract_tier'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }'), 'block_head_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
+      // A record the TypeScript would hand its host as the binding object,
+      // or whose internals a reading would hand out.
+      [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = DATE.FORMAT(top, "YYYY")'), 'builtin_arg_record'],
+      [movement('  co = write crm-[:companies]-> { name: "a" }\n  write crm-[:companies]-> { name: co }'), 'write_field_record'],
+      [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  key = "kind"\n  a = AT(top, key)'), 'at_record_key'],
+      [movement('  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }'), 'node_spread_record'],
     ] as const) {
       resetRustRunStats();
       const { outcome, resolved } = await segmentOf(source);
@@ -508,6 +514,10 @@ describe('a whole run in the Rust engine', () => {
       expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
       expect(rustRunStats.declined).toEqual({});
       expect(rustRunStats.hostCalls).toEqual({});
+      // The run itself is the TypeScript engine's, whichever engine is asked.
+      const [ts, rust] = [await runOn('ts', { source, event: webhook({ subject: 'Acme' }) }), await runOn('rust', { source, event: webhook({ subject: 'Acme' }) })];
+      expect('error' in rust ? String(rust.error) : JSON.stringify(rust.result)).toBe('error' in ts ? String(ts.error) : JSON.stringify(ts.result));
+      expect(rust.calls).toEqual(ts.calls);
     }
     // A refused run counts once under its first reason, and once under
     // each reason it holds: the walk goes on past the first.

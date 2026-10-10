@@ -54,8 +54,9 @@ pub fn kind_of(binding: &Binding) -> String {
 }
 
 fn shaped_kind(dict: &JsObject) -> String {
-    match dict.get("kind") {
-        Some(Js::String(kind)) => kind.clone(),
+    // `binding.kind`, through the prototype a filing gave the dict.
+    match &js::plain_property(dict, "kind") {
+        Js::String(kind) => kind.clone(),
         // A walk's member the TypeScript switches on by `kind` without
         // asking `bindingOf`: a kind that is no text names nothing.
         _ => "undefined".into(),
@@ -110,7 +111,8 @@ pub fn binding_of(value: &Js) -> Option<Binding> {
 /// A dict whose `kind` is text that `describeBinding` holds, its prototype's
 /// names included.
 pub fn is_shaped(dict: &JsObject) -> bool {
-    matches!(dict.get("kind"), Some(Js::String(kind)) if BINDING_KINDS.contains(&kind.as_str()) || js::is_object_prototype_name(kind))
+    // `value.kind in describeBinding` reads `kind` up the prototype chain.
+    matches!(js::plain_property(dict, "kind"), Js::String(kind) if BINDING_KINDS.contains(&kind.as_str()) || js::is_object_prototype_name(&kind))
 }
 
 /// A record as the value a list, a map or a collection op holds it as: the
@@ -138,7 +140,7 @@ pub fn bind_value(value: Js, trail: Option<crate::env::Trail>, many: bool) -> Bi
 pub fn holds_records(value: &Js) -> bool {
     binding_of(value).is_some()
         || match value {
-            Js::Array(list) => list.items.iter().any(holds_records),
+            Js::Array(list) => list.items().iter().any(holds_records),
             Js::Object(dict) if dict.proto.is_none() => dict.entries().iter().any(|(_, item)| holds_records(item)),
             _ => false,
         }
@@ -148,10 +150,10 @@ pub fn holds_records(value: &Js) -> bool {
 /// records as their landings.
 pub fn held_binding(value: &Js) -> Option<Binding> {
     let Js::Array(list) = value else { return binding_of(value) };
-    if list.items.is_empty() {
+    if list.items().is_empty() {
         return None;
     }
-    list.items.iter().map(binding_of).collect::<Option<Vec<_>>>().map(Binding::Positions)
+    list.items().iter().map(binding_of).collect::<Option<Vec<_>>>().map(Binding::Positions)
 }
 
 /// `heldRecords`: the record(s) a value binding holds, as the binding a walk
@@ -345,8 +347,8 @@ pub fn get(value: &Js, key: &str) -> Result<Js, EvalError> {
             Js::Null if !matches!(key, "kind") => Ok(Js::Undefined),
             found => Ok(found),
         },
-        Js::Array(list) if key == "length" => Ok(Js::Number(list.items.len() as f64)),
-        Js::Array(list) => Ok(key.parse::<usize>().ok().and_then(|i| list.items.get(i).cloned()).unwrap_or(Js::Undefined)),
+        Js::Array(list) if key == "length" => Ok(Js::Number(list.items().len() as f64)),
+        Js::Array(list) => Ok(key.parse::<usize>().ok().and_then(|i| list.items().get(i).cloned()).unwrap_or(Js::Undefined)),
         Js::String(text) if key == "length" => Ok(Js::Number(js::utf16_len(text) as f64)),
         _ => Ok(Js::Undefined),
     }
@@ -458,7 +460,7 @@ fn plain_value(value: &Js, path: &mut Vec<Binding>) -> Result<Js, EvalError> {
         return plain_record(&record, path);
     }
     match value {
-        Js::Array(list) => Ok(Js::array(list.items.iter().map(|item| plain_value(item, path)).collect::<Result<_, _>>()?)),
+        Js::Array(list) => Ok(Js::array(list.items().iter().map(|item| plain_value(item, path)).collect::<Result<_, _>>()?)),
         Js::Object(dict) => {
             let mut out = JsObject::new();
             for (key, item) in dict.entries() {
@@ -562,7 +564,7 @@ pub mod shaped {
                     return Err(super::type_error("binding.fieldOrder.map is not a function"));
                 };
                 let values = get(&this, "fields")?;
-                for field in &order.items {
+                for field in order.items().iter() {
                     let key = field.to_js_string();
                     let value = get(&values, &key)?;
                     fields.set(key, if value.is_nullish() { Js::Null } else { value });

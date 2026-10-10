@@ -105,38 +105,72 @@ impl Run<'_> {
     }
 
     /// `instanceSourceRead` of an `instance` dict: its adapter resolved as
-    /// the TypeScript resolves it, from the dict's slug, credential name and
-    /// construction config. A dict that would put into the host request what
-    /// the host contract does not take (a slug or a name that is not text, a
-    /// config that is not a map of texts) or that carries a schema of its
-    /// own is this engine's refusal.
+    /// the TypeScript resolves it — `credentialName` truthy names the
+    /// credential, `Object.entries(constructionConfig ?? {})` each value
+    /// unquoted (`raw.trim()`), the slug as it is (the host's lookup is by
+    /// its text) — and the dict's own schema, where it has one, the read's.
     pub(crate) async fn shaped_instance_read(&self, instance: &Js) -> Result<Rc<Read>, Failure> {
         let credential = get(instance, "credentialName").map_err(eval)?;
         let config = get(instance, "constructionConfig").map_err(eval)?;
+        let mut construction_config = Vec::new();
+        for (key, raw) in object_entries(&config) {
+            if key == "dry_run" {
+                continue;
+            }
+            let Js::String(raw) = raw else {
+                return Err(eval(if raw.is_nullish() {
+                    type_error(&format!("Cannot read properties of {} (reading 'trim')", raw.to_js_string()))
+                } else {
+                    type_error("raw.trim is not a function")
+                }));
+            };
+            construction_config.push((key, raw));
+        }
         let slug = get(instance, "adapterSlug").map_err(eval)?;
         let name = get(instance, "name").map_err(eval)?;
-        let schema = get(instance, "schema").map_err(eval)?;
-        let beyond = |what: &str| Failure::unreproduced(&format!("reading through a value shaped like a constructed adapter instance whose {what}"), "the TypeScript engine asks its host for an adapter outside the host contract");
-        let Js::String(slug) = slug else { return Err(beyond("adapter slug is not text")) };
-        // Only what a read's origins cite (`instanceName`).
-        let name = name.to_js_string();
-        if !schema.is_nullish() {
-            return Err(beyond("schema is its own"));
-        }
-        let construction_config = match config {
-            Js::Undefined | Js::Null => Vec::new(),
-            Js::Object(entries) => {
-                let mut out = Vec::new();
-                for (key, value) in entries.entries() {
-                    let Js::String(value) = value else { return Err(beyond("construction config is not a map of texts")) };
-                    out.push((key.clone(), value.clone()));
-                }
-                out
-            }
-            _ => return Err(beyond("construction config is not a map of texts")),
+        let schema = match get(instance, "schema").map_err(eval)? {
+            Js::Undefined => None,
+            schema => Some(lenient_schema(&schema).ok_or_else(|| {
+                Failure::unreproduced("reading through a value shaped like a constructed adapter instance whose schema is no instance schema", "the TypeScript engine reads its graph's types off whatever the dict holds")
+            })?),
         };
         let credential_name = credential.truthy().then(|| credential.to_js_string());
-        let binding = InstanceBinding { name, adapter_slug: slug, credential_name, construction_config, schema: None };
-        self.instance_read(&binding).await
+        let binding = InstanceBinding { name: name.to_js_string(), adapter_slug: slug.to_js_string(), credential_name, construction_config, schema };
+        // The adapter is the one resolved for the slug, credential and
+        // config; the read names this dict's instance (`instanceName`).
+        let read = self.instance_read(&binding).await?;
+        let mut named = (*read).clone();
+        named.instance_name = name.to_js_string();
+        named.instance_label = name;
+        Ok(Rc::new(named))
     }
+}
+
+/// `Object.entries(value ?? {})`: a dict's own keys, a list's or a text's
+/// indices; nothing for anything else.
+fn object_entries(value: &Js) -> Vec<(String, Js)> {
+    match value {
+        Js::Object(object) => object.entries().to_vec(),
+        Js::Array(list) => list.items().iter().enumerate().map(|(i, item)| (i.to_string(), item.clone())).collect(),
+        Js::String(text) => text.encode_utf16().enumerate().map(|(i, unit)| (i.to_string(), Js::String(String::from_utf16_lossy(&[unit])))).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A dict's schema as the read wrapper reads it: its `positions` and
+/// `collections` (and the optional tables); the keys it does not read are
+/// not asked for.
+fn lenient_schema(schema: &Js) -> Option<movement_parser::catalog::types::InstanceSchema> {
+    let Js::Object(object) = schema else { return None };
+    let mut json = match crate::env::json_of_js(&Js::Object(object.clone())) {
+        serde_json::Value::Object(map) => map,
+        _ => return None,
+    };
+    if !json.get("positions").is_some_and(serde_json::Value::is_object) || !json.get("collections").is_some_and(serde_json::Value::is_object) {
+        return None;
+    }
+    json.entry("writableRoots").or_insert_with(|| serde_json::json!({}));
+    let known = ["positions", "collections", "unions", "unionDisplayNames", "writableRoots", "createShapes", "supportsInPlaceUpdate", "edgesCarryProperties", "refinements", "selectedMembers"];
+    json.retain(|key, _| known.contains(&key.as_str()));
+    serde_json::from_value(serde_json::Value::Object(json)).ok()
 }

@@ -853,7 +853,7 @@ impl Run<'_> {
         };
         let entries = Some(listed);
         let named = match entries {
-            Some(Js::Array(list)) => list.items.iter().find_map(|entry| {
+            Some(Js::Array(list)) => list.items().iter().find_map(|entry| {
                 let Js::Object(entry) = entry else { return None };
                 matches!(entry.get("typeId"), Some(Js::String(id)) if id == root).then(|| match entry.get("displayName") {
                     Some(Js::Undefined | Js::Null) | None => None,
@@ -1455,7 +1455,7 @@ impl Run<'_> {
             // The slot is reserved before the data sources are summarised.
             self.extraction_sites.borrow_mut().push((site_id.clone(), Js::Null));
             let sources: Vec<Js> = match crate::unique::get(&site, "dataSources") {
-                Js::Array(list) => list.items.iter().map(|o| self.summarised(o)).collect(),
+                Js::Array(list) => list.items().iter().map(|o| self.summarised(o)).collect(),
                 _ => Vec::new(),
             };
             let summary = env::object_of(vec![
@@ -1512,7 +1512,7 @@ impl Run<'_> {
     pub(crate) fn trace_miss_in(&self, instance_name: &str, data: &Js, field: &str) {
         let keys: Vec<String> = match data {
             Js::Object(object) => object.entries().iter().map(|(k, _)| k.clone()).collect(),
-            Js::Array(list) => (0..list.items.len()).map(|i| i.to_string()).collect(),
+            Js::Array(list) => (0..list.items().len()).map(|i| i.to_string()).collect(),
             _ => return,
         };
         // `field in data`: own keys, and the prototype's.
@@ -2233,7 +2233,8 @@ mod tests {
         let file = &state["scopeChain"][0]["bindings"];
         // In the order declared (the JSON above sorts its keys).
         let Some(Js::Array(chain)) = (match &decoded { Js::Object(o) => o.get("scopeChain"), _ => None }) else { panic!("a chain") };
-        let Some(Js::Object(bindings)) = (match &chain.items[0] { Js::Object(o) => o.get("bindings"), _ => None }) else { panic!("bindings") };
+        let first = chain.items()[0].clone();
+        let Some(Js::Object(bindings)) = (match &first { Js::Object(o) => o.get("bindings"), _ => None }) else { panic!("bindings") };
         let kinds: Vec<(&str, String)> = bindings.entries().iter().map(|(name, b)| (name.as_str(), env::json_of_js(b)["kind"].as_str().unwrap_or_default().to_string())).collect();
         let kinds: Vec<(&str, &str)> = kinds.iter().map(|(n, k)| (*n, k.as_str())).collect();
         assert_eq!(
@@ -2288,7 +2289,7 @@ mod tests {
         let entry = &entries[0];
         // In the TypeScript's key order, the members `extractRegion` writes.
         let Js::Array(wired) = env::decode(&seen[9].args["entries"]).unwrap() else { panic!("a list") };
-        let Js::Object(first) = &wired.items[0] else { panic!("an entry") };
+        let Js::Object(first) = &wired.items()[0] else { panic!("an entry") };
         assert_eq!(
             first.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
             ["kind", "node", "inputChars", "inputs", "emissions", "model", "durationMs", "reply", "empty", "dropped", "entities"]
@@ -2475,7 +2476,7 @@ mod tests {
         );
         let writes = env::decode(&done["result"]["writes"]).unwrap();
         let Js::Array(writes) = writes else { panic!("a list of writes") };
-        let record = crate::env::json_of_js(&writes.items[0]);
+        let record = crate::env::json_of_js(&writes.items()[0]);
         assert_eq!(record["externalId"], json!("co-1"));
         assert_eq!(record["bindingName"], json!("co"));
         assert_eq!(record["origin"], json!({ "kind": "write", "writeIndex": 0, "externalId": "co-1" }));

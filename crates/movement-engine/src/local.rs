@@ -290,7 +290,7 @@ impl Run<'_> {
                     let external_id = get("externalId");
                     if let Some(reference) = edge.reference_at(&external_id) {
                         let fields: Vec<String> = match get("fieldIds") {
-                            Js::Array(list) => list.items.iter().map(Js::to_js_string).collect(),
+                            Js::Array(list) => list.items().iter().map(Js::to_js_string).collect(),
                             _ => Vec::new(),
                         };
                         return self.reference_fields(&reference, &fields).await;
@@ -653,7 +653,7 @@ fn landing_edges(shape: Option<&LandingShape>) -> Vec<(String, Edge)> {
 pub fn normalise_identity_value(value: &Js) -> String {
     let flat = match value {
         Js::Undefined | Js::Null => return String::new(),
-        Js::Array(list) => list.items.iter().filter(|v| !v.is_nullish()).map(Js::to_js_string).collect::<Vec<_>>().join(" "),
+        Js::Array(list) => list.items().iter().filter(|v| !v.is_nullish()).map(Js::to_js_string).collect::<Vec<_>>().join(" "),
         other => other.to_js_string(),
     };
     let lowered = js::trim(&flat).to_lowercase();

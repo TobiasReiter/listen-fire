@@ -59,15 +59,16 @@ keeps serving the old parser until it is restarted.
 
 ## Size budget
 
-Current (2026-10-09, gzip -9): the parser's artifact is 1,187,381 bytes raw,
-323,236 gzipped; the engine's (this crate included) 2,459,062 raw, 711,122
-gzipped. CI measures each committed `.wasm` gzipped (`movement-wasm.yml`,
+Current (2026-10-10, gzip -9): the parser's artifact is 1,187,381 bytes raw,
+323,236 gzipped; the engine's (this crate included) about 2.8 MB raw, 830 KB
+gzipped (the engine's warning line moved from 800 KB to 1 MB with records
+held as values, CHANGELOG). CI measures each committed `.wasm` gzipped (`movement-wasm.yml`,
 "Size budgets"), printing raw and gzipped sizes either way:
 
 | artifact | who downloads it | warns above | fails above |
 |---|---|---|---|
 | `movement_parser.wasm` | every browser | 400 KB (409,600 bytes) | 600 KB (614,400 bytes) |
-| `movement.wasm` | the API only | 800 KB (819,200 bytes) | 1 MB (1,048,576 bytes) |
+| `movement.wasm` | the API only | 1 MB (1,048,576 bytes) | 1.5 MB (1,572,864 bytes) |
 
 Policy: if the parser's budget is approached, the checker port replaces serde
 derives with hand readers, as the lowering already did.

@@ -190,7 +190,7 @@ impl Run<'_> {
                 format!("'{spelling}' reads a collection of values and got {got} — the checker should have caught this"),
             )));
         };
-        let members = list.items.clone();
+        let members = list.items().clone();
         let init = match (&expr.init, expr.op) {
             (Some(init), CollectionOp::Reduce) => self.evaluate_slot(init, scope).await?.value,
             _ => Js::Null,
@@ -334,11 +334,10 @@ impl Run<'_> {
                             }
                             continue;
                         }
-                        let group = match &filed.proto {
-                            Some(Js::Array(list)) => list.items.iter().cloned().chain(std::iter::once(member.clone())).collect(),
-                            _ => vec![member.clone()],
-                        };
-                        filed.proto = Some(Js::array(group));
+                        match &filed.proto {
+                            Some(Js::Array(list)) => list.push(member.clone()),
+                            _ => filed.proto = Some(Js::array(vec![member.clone()])),
+                        }
                         continue;
                     }
                     if op == CollectionOp::Keyby {
@@ -353,7 +352,7 @@ impl Run<'_> {
                     }
                     let group = match filed.get(key) {
                         Some(Js::Array(group)) => {
-                            let mut items = group.items.clone();
+                            let mut items = group.items().clone();
                             items.push(member.clone());
                             items
                         }
@@ -361,11 +360,9 @@ impl Run<'_> {
                         // A key the answer does not own reads through its
                         // prototype: a list found there is pushed to in place.
                         None => match filed.proto.as_ref().map(|proto| crate::js::inherited(proto, key)) {
-                            Some(Js::Array(_)) => {
-                                return Err(Stop::Thrown(Failure::unreproduced(
-                                    &format!("'{spelling}' filing a member under '{key}', which the answer's prototype holds as a list"),
-                                    "the TypeScript engine pushes it onto that list",
-                                )));
+                            Some(Js::Array(list)) => {
+                                list.push(member.clone());
+                                continue;
                             }
                             _ => vec![member.clone()],
                         },

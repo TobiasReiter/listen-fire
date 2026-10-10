@@ -277,7 +277,7 @@ impl Materializer<'_, '_> {
             }
             let flat = match &evaluated.value {
                 Js::Undefined | Js::Null => Vec::new(),
-                Js::Array(list) => list.items.clone(),
+                Js::Array(list) => list.items().clone(),
                 other => vec![other.clone()],
             };
             for datum in flat {

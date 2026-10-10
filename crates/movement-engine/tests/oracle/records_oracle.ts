@@ -87,7 +87,7 @@ const KINDS = [
 /** Ordinary keys, and the ones a binding kind's own reads take. */
 const ORDINARY = [
   'name', 'a', 'kind', 'value', 'fields', 'fieldOrder', 'fieldProvenance', 'handle', 'emission', 'resource', 'callbackId', 'url', 'edges', 'landings',
-  'position', 'adapterSlug', 'credentialName', 'constructionConfig', 'targetType', 'graph', 'walk', 'slots', 'read', 'edgeProperties',
+  'position', 'adapterSlug', 'credentialName', 'constructionConfig', 'targetType', 'graph', 'walk', 'slots', 'read', 'edgeProperties', 'schema',
 ];
 
 /** What a read off the value names: an ordinary key or one of
@@ -113,9 +113,6 @@ function dict(rand: Rand, depth: number): Record<string, unknown> {
   // `__proto__` as a VALUE: a string under `kind`, which `in` finds.
   else if (roll < 0.7) out.kind = pick(rand, PROTOTYPE);
   else if (roll < 0.8) out.kind = 'thing';
-  // An instance's slug is text, as the host contract takes it (the engine
-  // refuses, by name, to ask for one that is not).
-  if (out.kind === 'instance') out.adapterSlug = pick(rand, ['email', 'nope']);
   const keys = 1 + Math.floor(rand() * 4);
   for (let i = 0; i < keys; i++) {
     const key = pick(rand, [...ORDINARY, ...PROTOTYPE.filter((p) => p !== '__proto__')]);
@@ -144,19 +141,32 @@ function member(rand: Rand, key: string, depth: number): unknown {
       return { data: { a: scalar(rand) }, name: 'r.pdf' };
     case 'landings':
     case 'slots':
-      return rand() < 0.7 ? [dict(rand, depth + 1)] : [[dict(rand, depth + 1)], scalar(rand)];
+      return pick(rand, [() => [dict(rand, depth + 1)], () => [[dict(rand, depth + 1)], scalar(rand)], () => 'ab', () => [null], () => ({ a: 1 })])();
     case 'adapterSlug':
-      return pick(rand, ['email', 'nope']);
+      return pick(rand, ['email', 'nope', 5, true, null]);
     case 'credentialName':
-      return pick(rand, ['inbox_cred', 'missing']);
+      return pick(rand, ['inbox_cred', 'missing', 0, 7]);
     case 'constructionConfig':
-      return { base: 'b1' };
+      return pick(rand, [{ base: 'b1' }, { base: '"q"' }, 5, 'ab', ['x'], { k: 5 }, null]);
+    case 'schema':
+      return pick(rand, [
+        { positions: {}, collections: {} },
+        { positions: { item: { properties: { name: 'text' }, edges: { subs: { target: 'item' } } } }, collections: {}, writableRoots: {} },
+        'x',
+      ]);
     case 'targetType':
       return pick(rand, ['item', 'message']);
     case 'graph':
       return { instance: { kind: 'instance', name: 'inbox', adapterSlug: 'email', credentialName: 'inbox_cred' } };
-    case 'walk':
-      return rand() < 0.5 ? { captured: {}, head: { hopsRaw: '-[:items]->' } } : { captured: { x: 1 } };
+    case 'walk': {
+      const head = pick(rand, [
+        { root: { kind: 'name', name: 'e' }, hopsRaw: '-[a:items]->', span: { start: 0, end: 0 } },
+        { root: { kind: 'name', name: 'gone' }, hopsRaw: '-[a:items]->' },
+        { hopsRaw: '-[:items]->' },
+      ]);
+      const captured = pick(rand, [{}, { x: 1 }, [['e', { kind: 'event' }]], [['e', { kind: 'sourcePosition', position: { adapterType: 'email', recordType: 'item', identity: { kind: 'stable', recordId: 'p1', data: { name: 'x' } } } }]], [], [['e']], 'ab', [5], [['e', 'v']]]);
+      return { head, captured };
+    }
     case 'read':
       return { instanceName: 'inbox' };
     case 'edgeProperties':
@@ -180,7 +190,7 @@ function payload(rand: Rand): Record<string, unknown> {
 /** A body over `v` (the dict) and `w` (the list), ending in an `ERROR` that
  *  says what it read. */
 function body(rand: Rand): { template: number; text: string } {
-  const template = Math.floor(rand() * 33);
+  const template = Math.floor(rand() * 34);
   return { template, text: bodyOf(template, rand) };
 }
 
@@ -254,7 +264,8 @@ function bodyOf(template: number, rand: Rand): string {
         '    return IF e.rank > 2 THEN "__proto__" ELSE e.name END',
         '  })',
         `y = AT(${pick(rand, ['g', 'k'])}, "${pick(rand, ['__proto__', 'a', 'b', 'length'])}")`,
-        'ERROR("${COUNT(g)} ${COUNT(k)} ${IF y == null THEN "absent" ELSE "present" END}")',
+        `z = ${pick(rand, ['g', 'k'])}.${pick(rand, ['push', 'join', 'a', 'b', 'rank', 'length', '`__proto__`', 'toString', 'name'])}`,
+        'ERROR("${COUNT(g)} ${COUNT(k)} ${IF y == null THEN "absent" ELSE "present" END} ${IF z == null THEN "absent" ELSE "present" END}")',
       );
     case 29:
       return lines('x = FIRST(msg-[i:items ORDER BY `name`]->)', `key = "${pick(rand, ['kind', 'position', 'read', 'edgeProperties', 'name', 'identity'])}"`, 'y = AT(x, key)', 'ERROR("${IF y == null THEN "absent" ELSE "present" END}")');
@@ -262,6 +273,14 @@ function bodyOf(template: number, rand: Rand): string {
       return lines('x = FIRST(w)', `y = x.${f(k1)}`, 'xs = [x]', 'z = FIRST(xs)', `q = z.${f(k2)}`, 'ERROR("${IF y == null THEN "absent" ELSE "present" END} ${IF q == null THEN "absent" ELSE "present" END}")');
     case 31:
       return lines('xs = msg-[c:items ORDER BY `name`]-> {', '    return c', '  }', 'all = MAP(xs, (r) => {', '    return r', '  })', 'f = FIRST(all)', 'ERROR("${COUNT(all)} ${f == FIRST(xs)} ${f.name}")');
+    case 33:
+      return lines(
+        `g = GROUPBY(${pick(rand, ['[[1], [2, 3]]', '[[1], [2, 3], [4]]', '[[2, 3], [1]]'])}, (x) => {`,
+        '    return IF COUNT(x) == 1 THEN "__proto__" ELSE "0" END',
+        '  })',
+        `y = g.${pick(rand, ['push', 'join', 'length', '`0`', 'a'])}`,
+        'ERROR("${COUNT(g)} ${IF y == null THEN "absent" ELSE "present" END}")',
+      );
     default:
       return lines(`x = v.${f(k1)}`, `ERROR("\${x.${f(k2)}}")`);
   }
@@ -304,12 +323,34 @@ function ending(error: unknown): unknown {
   return { class: 'thrown', message: String(cause) };
 }
 
+/** Cases written out, each with its reason: where the TypeScript forgives a
+ *  member's failure under `onError` and where it walks on past a held walk,
+ *  the engines must fail (or not) alike. */
+const PINNED: Array<{ text: string; data: Record<string, unknown> }> = [
+  // A kept walk held in a list, walked on past: the TypeScript walks on.
+  { text: '  files = lazy msg-[a:items]->\n  held = [files]\n  n = COUNT(held-[:subs]->)\n  ERROR("${n}")', data: { subject: 'Acme', meta: {}, more: [] } },
+  {
+    text: '  files = lazy msg-[a:items]->\n  held = [files]\n  ys = MAP([1], { onError: "ignore" }, (i) => {\n    return COUNT(held-[:subs]->)\n  })\n  ERROR("${COUNT(ys)}")',
+    data: { subject: 'Acme', meta: {}, more: [] },
+  },
+  // A text where records belong: the TypeScript fails each member, and
+  // forgives it.
+  {
+    text: '  ys = MAP([1, 2], { onError: "ignore" }, (i) => {\n    return COUNT(v-[:items]->)\n  })\n  ERROR("${COUNT(ys)}")',
+    data: { subject: 'Acme', meta: { kind: 'positions', landings: 'ab' }, more: [] },
+  },
+  {
+    text: '  ys = MAP([1, 2], { onError: "ignore" }, (i) => {\n    return COUNT(v-[:items]->)\n  })\n  ERROR("${COUNT(ys)}")',
+    data: { subject: 'Acme', meta: { kind: 'lazyWalk', walk: { captured: {} } }, more: [] },
+  },
+];
+
 export async function writeRecordsOracle(rand: Rand, write: (name: string, text: string) => void): Promise<void> {
   const cases: unknown[] = [];
   const counts = { tried: 0, refused: 0 };
-  for (let i = 0; i < 1200; i++) {
-    const { template, text } = body(rand);
-    const data = payload(rand);
+  const generated = Array.from({ length: 1200 }, () => ({ ...body(rand), data: payload(rand) }));
+  const all = [...generated, ...PINNED.map((p) => ({ template: -1, text: p.text, data: p.data }))];
+  for (const { template, text, data } of all) {
     const source = RECORDS_PRELUDE.replace('BODY', text);
     for (const version of [1, 2, 3] as LanguageVersion[]) {
       counts.tried += 1;

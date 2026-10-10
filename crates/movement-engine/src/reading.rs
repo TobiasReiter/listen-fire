@@ -111,7 +111,7 @@ impl Run<'_> {
                 record::type_error(&format!("binding.{key}.{method} is not a function"))
             }));
         };
-        let members = items.items.iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
+        let members = items.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
         let value = if kind == "positions" {
             list.clone()
         } else {
@@ -215,7 +215,7 @@ impl Run<'_> {
                             return Err(Failure::of_eval(record::type_error(&format!("binding.{key}.flatMap is not a function")), ""));
                         };
                         let mut origins = Vec::new();
-                        for member in &list.items {
+                        for member in list.items().iter() {
                             if member.is_nullish() {
                                 return Err(Failure::of_eval(record::type_error(&format!("Cannot read properties of {} (reading 'kind')", member.to_js_string())), ""));
                             }
@@ -299,11 +299,10 @@ impl Run<'_> {
                     let field = direct_field(expr, name, "a synthesised node")?;
                     crate::node::node_field(&node.borrow(), field).map_err(|e| Failure::of_eval(e, ""))
                 }
+                // The read IS the walk; hops past it continue it
+                // (`resolveDeferred(binding.walk, expr.steps)`).
                 Binding::LazyWalk(walk) => {
-                    if !steps.is_empty() {
-                        return Err(unsupported(&format!("hops past the deferred traversal bound to '{name}'")));
-                    }
-                    let reached: Vec<Binding> = self.run_deferred(&walk).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect();
+                    let reached = self.deferred_landings(&walk, steps, name, scope, span).await?;
                     if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
                         let found = self.exists(hops, where_, reached, scope, span).await?;
                         return Ok(Evaluated { value: Js::Bool(found), prov: none() });
@@ -428,7 +427,12 @@ impl Run<'_> {
                     continue;
                 }
                 match &binding {
-                    Binding::LazyWalk(_) => return Err(unsupported(&format!("hops past the deferred traversal bound to '{name}'"))),
+                    // A lazy binding IS the walk: the whole remaining chain,
+                    // this hop included, continues from it.
+                    Binding::LazyWalk(walk) => {
+                        reached.extend(self.deferred_landings(walk, steps, name, scope, span).await?);
+                        continue;
+                    }
                     Binding::Landed(landed) => {
                         let walked = self.walk_adapter(&landed.position, &landed.read, steps, name, scope, span).await?;
                         reached.extend(walked.into_iter().map(Binding::Landed));
@@ -459,10 +463,7 @@ impl Run<'_> {
                                     "narrow the entry's own traversal instead — the WHERE belongs on the hop the node's edge is built from",
                                 ));
                             }
-                            if !rest.is_empty() {
-                                return Err(unsupported(&format!("hops past the deferred traversal bound to '{name}'")));
-                            }
-                            reached.extend(self.run_deferred(&walk).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l));
+                            reached.extend(self.deferred_landings(&walk, rest, name, scope, span).await?);
                             continue;
                         }
                         let mut kept = Vec::new();
@@ -519,7 +520,7 @@ impl Run<'_> {
         let eval = |e| Failure::of_eval(e, "");
         let kind = record::kind_of(binding);
         let graph = match kind.as_str() {
-            "lazyWalk" => return Err(self.shaped_walk(&record::get(this, "walk").map_err(eval)?)),
+            "lazyWalk" => return self.shaped_walk(&record::get(this, "walk").map_err(eval)?, steps, name, scope, span).await,
             "sourcePosition" => Some(self.shaped_source_record(this)?),
             "handle" => Some(self.shaped_handle_record(this, name).await?),
             _ => None,
@@ -552,7 +553,7 @@ impl Run<'_> {
                         "narrow the entry's own traversal instead — the WHERE belongs on the hop the node's edge is built from",
                     ));
                 }
-                return Err(self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?));
+                return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, rest, name, scope, span).await;
             }
             let landings = if edge.is_nullish() { Js::Undefined } else { record::get(&edge, "landings").map_err(eval)? };
             let landings = match landings {
@@ -587,6 +588,17 @@ impl Run<'_> {
             }
             _ => Err(unsupported(&format!("traversing '{}' from {} inside a meta-node read", step.edge_type_id, record::describe(binding)))),
         }
+    }
+
+    /// `runDeferredWalk(walk, extraSteps)`: the walk's landings, the hops past
+    /// it walked on from each (`resolveHeadIterations` with the steps
+    /// appended; past a mapped walk, `walkNodePlane`).
+    async fn deferred_landings(&self, walk: &crate::bindings::DeferredWalk, steps: &[TraversalStep], name: &str, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
+        let landings: Vec<Binding> = self.run_deferred(walk).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect();
+        if steps.is_empty() {
+            return Ok(landings);
+        }
+        self.walk_meta(landings, steps, name, scope, span).await
     }
 
     /// `hopFilterKeeps` over a record in hand: the hop's WHERE, its alias
@@ -782,7 +794,7 @@ impl Run<'_> {
             "nodePosition" => {
                 let edge = record::get(&record::get(this, "edges").map_err(eval)?, &step.edge_type_id).map_err(eval)?;
                 if !edge.is_nullish() && matches!(record::get(&edge, "kind").map_err(eval)?, Js::String(k) if k == "deferred") {
-                    return Err(self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?));
+                    return self.shaped_walk(&record::get(&edge, "walk").map_err(eval)?, &[], &step.edge_type_id, scope, span).await;
                 }
                 let landings = if edge.is_nullish() { Js::Undefined } else { record::get(&edge, "landings").map_err(eval)? };
                 return self.raw_landings(if landings.is_nullish() { Js::array(Vec::new()) } else { landings }, "(intermediate value)");
@@ -796,7 +808,7 @@ impl Run<'_> {
                         record::type_error("cursor.landings.map is not a function")
                     }));
                 };
-                let cursors = list.items.iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
+                let cursors = list.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
                 let hops: Vec<_> = cursors.iter().map(|landing| self.step_cursor(landing, step, scope, span)).collect();
                 let mut reached = Vec::new();
                 for result in join_all(hops).await {
@@ -825,25 +837,77 @@ impl Run<'_> {
         }
     }
 
-    /// `runDeferredWalk` of a dict's `walk`: its `captured` scope, which data
-    /// cannot make a `Map`, is iterated first.
-    pub(crate) fn shaped_walk(&self, walk: &Js) -> Failure {
+    /// `runDeferredWalk` of a dict's `walk`: a fresh scope of its `captured`
+    /// pairs (`for (const [name, binding] of walk.captured)`), then its head
+    /// resolved there, the hops past it walked on from each landing.
+    pub(crate) async fn shaped_walk(&self, walk: &Js, steps: &[TraversalStep], name: &str, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
         let eval = |e| Failure::of_eval(e, "");
-        match record::get(walk, "captured") {
-            Err(error) => eval(error),
-            Ok(Js::Array(_) | Js::String(_)) => Failure::unreproduced("running a walk a value holds as data", "the TypeScript engine resolves a block head the data writes"),
-            Ok(_) => eval(record::type_error("walk.captured is not iterable")),
+        let captured = record::get(walk, "captured").map_err(eval)?;
+        let pairs: Vec<Js> = match &captured {
+            Js::Array(list) => list.items().clone(),
+            Js::String(text) => text.chars().map(|c| Js::String(c.to_string())).collect(),
+            _ => return Err(eval(record::type_error("walk.captured is not iterable"))),
+        };
+        let at = Scope::root();
+        let mut declared: Vec<(String, Binding)> = Vec::new();
+        for pair in pairs {
+            let (key, held) = match &pair {
+                Js::Array(list) => (list.items().first().cloned().unwrap_or(Js::Undefined), list.items().get(1).cloned().unwrap_or(Js::Undefined)),
+                Js::String(text) => {
+                    let mut chars = text.chars().map(|c| Js::String(c.to_string()));
+                    (chars.next().unwrap_or(Js::Undefined), chars.next().unwrap_or(Js::Undefined))
+                }
+                _ => return Err(eval(record::type_error(".for is not iterable"))),
+            };
+            // `env.declare(name, binding)`: a `Map` keyed by the name as it is.
+            let Js::String(key) = key else {
+                return Err(Failure::unreproduced("a walk's captured scope naming a binding by no text", "the TypeScript engine keys its scope by the value itself"));
+            };
+            let binding = match held {
+                // A name bound to nothing reads as not in scope.
+                held if !held.truthy() => continue,
+                Js::Object(dict) => Binding::Shaped(dict),
+                Js::Record(record) => (*record).clone(),
+                _ => Binding::Shaped(Rc::new(crate::js::JsObject::new())),
+            };
+            declared.retain(|(k, _)| *k != key);
+            declared.push((key, binding));
         }
+        for (key, binding) in declared {
+            at.declare(key, binding);
+        }
+        if !matches!(record::get(walk, "mapping").map_err(eval)?, Js::Undefined) {
+            return Err(Failure::unreproduced("a walk a value holds as data with a mapping", "the TypeScript engine builds the nodes the data writes"));
+        }
+        let head = record::get(walk, "head").map_err(eval)?;
+        let root = record::get(&head, "root").map_err(eval)?;
+        let Js::String(hops_raw) = record::get(&head, "hopsRaw").map_err(eval)? else {
+            return Err(Failure::unreproduced("a walk a value holds as data whose hops are no text", "the TypeScript engine parses whatever the data holds"));
+        };
+        let root = match &root {
+            Js::Undefined => None,
+            root => match (record::get(root, "kind").map_err(eval)?, record::get(root, "name").map_err(eval)?) {
+                (Js::String(kind), Js::String(name)) if kind == "name" => Some(movement_parser::ast::PathRoot::Name { name }),
+                _ => return Err(Failure::unreproduced("a walk a value holds as data rooted at an expression", "the TypeScript engine evaluates the expression the data writes")),
+            },
+        };
+        let origin = movement_parser::ast::Loc { line: 0, col: 0 };
+        let head = movement_parser::ast::PathHead { root, hops_raw, span: movement_parser::ast::Span { start: origin, end: origin } };
+        let landings: Vec<Binding> = self.head_iterations(&head, &at).await.map_err(crate::write::failure_of)?.into_iter().map(|(_, l)| l).collect();
+        if steps.is_empty() {
+            return Ok(landings);
+        }
+        self.walk_meta(landings, steps, name, scope, span).await
     }
 
     /// What a dict's `landings` hands a walk as its records: each member as
     /// the TypeScript reads it, by its `kind`.
-    fn raw_landings(&self, landings: Js, variable: &str) -> Result<Vec<Binding>, Failure> {
+    pub(crate) fn raw_landings(&self, landings: Js, variable: &str) -> Result<Vec<Binding>, Failure> {
         let eval = |e| Failure::of_eval(e, "");
         match &landings {
-            Js::Array(list) => list.items.iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval),
-            Js::String(text) if text.is_empty() => Ok(Vec::new()),
-            Js::String(_) => Err(Failure::unreproduced("walking the characters of a text a value holds as records", "the TypeScript engine iterates them")),
+            Js::Array(list) => list.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval),
+            // A text iterates as its characters, each a cursor of no `kind`.
+            Js::String(text) => Ok(text.chars().map(|_| Binding::Shaped(Rc::new(crate::js::JsObject::new()))).collect()),
             _ => Err(eval(record::type_error(&format!("{variable} is not iterable")))),
         }
     }
@@ -927,7 +991,7 @@ impl Run<'_> {
                             &format!("traverse a collection — {name}-[x:…]->"),
                         ));
                     }
-                    let start = crate::traverse::meta_position(&slug.to_js_string());
+                    let start = crate::traverse::meta_position_of(slug);
                     self.read_graph(expr, name, &format!("the '{name}' graph"), start, crate::shaped::GraphRead::Live(read?), scope, span).await
                 }
                 "handle" if !in_hand => {
@@ -1014,7 +1078,14 @@ impl Run<'_> {
                     self.read_from(expr, name, value, scope, span).await
                 }
                 // `resolveDeferred` runs the walk: its captured scope first.
-                "lazyWalk" => Err(self.shaped_walk(&record::get(&this, "walk").map_err(eval)?)),
+                "lazyWalk" => {
+                    let reached = self.shaped_walk(&record::get(&this, "walk").map_err(eval)?, steps, name, scope, span).await?;
+                    if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
+                        let found = self.exists(hops, where_, reached, scope, span).await?;
+                        return Ok(Evaluated { value: Js::Bool(found), prov: none() });
+                    }
+                    self.read_landings(expr, reached, name, "a deferred traversal").await
+                }
                 // `walkMetaSteps(binding.landings, steps)`: no hops hand back
                 // the landings as they are.
                 "positions" => {
@@ -1033,7 +1104,7 @@ impl Run<'_> {
                             // `cursors.length > 0`, then each cursor scoped for the WHERE.
                             match &landings {
                                 Js::Array(_) | Js::String(_) if where_.is_none() => {
-                                    return Ok(Evaluated { value: Js::Bool(!matches!(&landings, Js::Array(l) if l.items.is_empty()) && !matches!(&landings, Js::String(t) if t.is_empty())), prov: none() });
+                                    return Ok(Evaluated { value: Js::Bool(!matches!(&landings, Js::Array(l) if l.items().is_empty()) && !matches!(&landings, Js::String(t) if t.is_empty())), prov: none() });
                                 }
                                 Js::Undefined | Js::Null => return Err(eval(record::type_error(&format!("Cannot read properties of {} (reading 'length')", landings.to_js_string())))),
                                 Js::Array(_) | Js::String(_) => self.raw_landings(landings, "cursors")?,
@@ -1056,7 +1127,7 @@ impl Run<'_> {
                                 record::type_error("landed.map is not a function")
                             }));
                         };
-                        let members = list.items.iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
+                        let members = list.items().iter().map(raw_cursor).collect::<Result<Vec<_>, _>>().map_err(eval)?;
                         return self.read_landings(expr, members, name, "a block's returned records").await;
                     }
                     let members = self.raw_landings(landings, "landed")?;
@@ -1086,8 +1157,8 @@ impl Run<'_> {
             // `binding.landings.map(…)`, each member read by its `kind`.
             "positions" => match record::get(&this, "landings").map_err(eval)? {
                 Js::Array(list) => {
-                    let mut reads = Vec::with_capacity(list.items.len());
-                    for member in &list.items {
+                    let mut reads = Vec::with_capacity(list.items().len());
+                    for member in list.items().iter() {
                         reads.push(self.read_binding_field(&raw_cursor(member).map_err(eval)?, field, name)?);
                     }
                     Ok(self.collapse(reads))
@@ -1186,7 +1257,7 @@ impl Run<'_> {
     fn trail_of_provenance(&self, provenance: &Js) -> Trail {
         let Js::Object(object) = provenance else { return Trail::default() };
         let origins = match object.get("origins") {
-            Some(Js::Array(list)) => list.items.iter().map(|o| self.intern_origin(o.clone())).collect(),
+            Some(Js::Array(list)) => list.items().iter().map(|o| self.intern_origin(o.clone())).collect(),
             _ => Vec::new(),
         };
         let direct = match object.get("direct") {
@@ -1222,7 +1293,7 @@ fn js_in(value: &Js, key: &str) -> Result<bool, crate::eval::EvalError> {
     match value {
         Js::Object(object) => Ok(object.get(key).is_some() || crate::js::is_object_prototype_name(key)),
         Js::Record(record) => Ok(key == "kind" || !matches!(record::own_property(record, key)?, Js::Null) || crate::js::is_object_prototype_name(key)),
-        Js::Array(list) => Ok(key == "length" || key.parse::<usize>().is_ok_and(|i| i < list.items.len())),
+        Js::Array(list) => Ok(key == "length" || key.parse::<usize>().is_ok_and(|i| i < list.items().len())),
         Js::Function(_) => Ok(matches!(key, "length" | "name" | "prototype")),
         other => Err(record::type_error(&format!("Cannot use 'in' operator to search for '{key}' in {}", other.to_js_string()))),
     }

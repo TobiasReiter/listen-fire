@@ -202,7 +202,7 @@ pub fn static_of(expr: &Expression) -> Option<Js> {
 /// The branches of a constraints value.
 pub fn branches(constraints: &Js) -> Vec<Js> {
     match get(constraints, "any") {
-        Js::Array(list) => list.items.clone(),
+        Js::Array(list) => list.items().clone(),
         _ => Vec::new(),
     }
 }
@@ -210,7 +210,7 @@ pub fn branches(constraints: &Js) -> Vec<Js> {
 /// One branch's entries.
 pub fn entries(branch: &Js) -> Vec<Js> {
     match get(branch, "all") {
-        Js::Array(list) => list.items.clone(),
+        Js::Array(list) => list.items().clone(),
         _ => Vec::new(),
     }
 }
@@ -275,7 +275,7 @@ fn values_match(asserted: &Js, candidate: &Js, version: u32) -> bool {
     }
     let target = asserted.to_js_string().to_lowercase();
     let pool = match candidate {
-        Js::Array(list) => list.items.clone(),
+        Js::Array(list) => list.items().clone(),
         other => vec![other.clone()],
     };
     pool.iter().any(|v| !v.is_nullish() && v.to_js_string().to_lowercase() == target)

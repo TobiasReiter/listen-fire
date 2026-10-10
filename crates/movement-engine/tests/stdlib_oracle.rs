@@ -43,7 +43,7 @@ fn shape(json: &Json) -> Json {
 /// written out, not referred to by id.
 fn plain(value: &Js) -> Json {
     match value {
-        Js::Array(list) => json!(["l", 0, list.items.iter().map(plain).collect::<Vec<_>>()]),
+        Js::Array(list) => json!(["l", 0, list.items().iter().map(plain).collect::<Vec<_>>()]),
         Js::Object(object) => json!(["o", 0, object.entries().iter().map(|(k, v)| json!([k, plain(v)])).collect::<Vec<_>>()]),
         scalar => encode(scalar),
     }
