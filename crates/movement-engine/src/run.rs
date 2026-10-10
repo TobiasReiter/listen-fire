@@ -2282,25 +2282,20 @@ mod tests {
 
     const SLEEPS: &str = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
 
-    /// A member's failure that is this engine's own refusal — a reading the
-    /// TypeScript's member would have made — is never forgiven by
-    /// `onError`: dropping the member would answer what the TypeScript does
-    /// not. The run fails, naming it.
+    /// An extraction declaring a `__proto__` field is refused at admission
+    /// by name, wherever it sits (a member of an `onError` fan) and whatever
+    /// effect comes before it: nothing of the run happens here, so it never
+    /// fails mid-run where the TypeScript carries on.
     #[test]
-    fn on_error_never_forgives_this_engines_own_refusal() {
-        // An extraction declaring a `__proto__` field, which this engine
-        // reads but does not store as the TypeScript does.
+    fn an_extraction_declaring_a_proto_field_is_refused_before_anything_happens() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  ys = MAP([1, 2], { onError: \"ignore\" }, (x) => {\n    d = extract from [msg.`subject`] {\n      __proto__: \"p\"\n    }\n    return d\n  })\n  return ys\n}".to_string();
-        // Met before any effect, the refusal hands the run to the
-        // TypeScript engine; after one (the gate's trace handed over), it
-        // fails the run.
-        let (done, _) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
-        assert_eq!(done, json!({ "declined": "unreproduced" }));
-        let source = source.replace("  ys = MAP", "  if 1 == 1 {\n    g = 1\n  }\n  ys = MAP");
-        let (done, _) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
-        let error = done.get("thrown").or_else(|| done.get("failed").map(|f| &f["error"])).unwrap_or_else(|| panic!("the run fails: {done}"));
-        assert_eq!(error["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
-        assert!(error["message"].as_str().is_some_and(|m| m.starts_with("an extraction field or node named `__proto__`")), "{done}");
+        let refused = json!({ "refused": "extract_proto_field", "reasons": ["extract_proto_field"] });
+        for before in ["", "  if 1 == 1 {\n    g = 1\n  }\n"] {
+            let source = source.replace("  ys = MAP", &format!("{before}  ys = MAP"));
+            let (done, seen) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
+            assert_eq!(done, refused, "{before}");
+            assert!(seen.is_empty(), "asked {seen:?}");
+        }
     }
 
     /// The engine reads no clock: a sleep asks the host's `clock.now` and

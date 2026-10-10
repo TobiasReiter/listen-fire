@@ -12,8 +12,12 @@
 //! end. There is no step budget: a pattern V8 runs slowly runs slowly here
 //! too. The pattern is compiled to a flat program and run on an explicit
 //! backtracking stack, so neither a long text nor deep nesting costs native
-//! stack. The one thing handed back is nesting past `MAX_NESTING`, where
-//! V8's own parser overflows a stack whose size this engine cannot know.
+//! stack. The one thing handed back (to the TypeScript built-in, so the
+//! answer is TypeScript's) is nesting past `MAX_NESTING`: V8 overflows its
+//! stack on capturing groups nested somewhere between 8,000 and 10,000
+//! deep, at a depth set by the stack it runs on, which this engine cannot
+//! know (non-capturing groups it parses far deeper; they are handed back
+//! past the same depth all the same).
 
 const MAX_NESTING: usize = 1000;
 
@@ -1091,7 +1095,7 @@ impl Machine {
             }
             // Backtrack to the latest choice.
             loop {
-                let Some(choice) = self.choices.pop() else { return None };
+                let choice = self.choices.pop()?;
                 match choice {
                     Choice::At { pc: to, pos: at, trail } => {
                         self.unwind(trail);

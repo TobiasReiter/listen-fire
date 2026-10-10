@@ -103,6 +103,8 @@ pub fn prototype_member(name: &str, of: &Rc<JsObject>) -> Js {
 pub fn object_property(object: &Rc<JsObject>, key: &str) -> Js {
     match (object.get(key), &object.proto) {
         (Some(value), _) => value.clone(),
+        // `Object.create(null)` inherits no `__proto__` accessor.
+        (None, Some(Js::Null)) => Js::Undefined,
         (None, Some(proto)) if key == "__proto__" => proto.clone(),
         (None, Some(proto)) => inherited(proto, key),
         (None, None) if is_object_prototype_name(key) => prototype_member(key, object),
@@ -144,6 +146,8 @@ pub fn is_dict(value: &Js) -> bool {
 pub fn plain_property(object: &JsObject, key: &str) -> Js {
     match (object.get(key), &object.proto) {
         (Some(value), _) => return value.clone(),
+        // `Object.create(null)` inherits no `__proto__` accessor.
+        (None, Some(Js::Null)) => return Js::Undefined,
         (None, Some(proto)) if key == "__proto__" => return proto.clone(),
         (None, Some(proto)) => return inherited(proto, key),
         (None, None) => {}
@@ -869,6 +873,24 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reply's `"__proto__": null` leaves a record with no prototype at
+    /// all: nothing is inherited, `__proto__` included (`undefined`, as
+    /// `Object.create(null).__proto__` is), while `Object.prototype` is
+    /// still found through an ordinary object.
+    #[test]
+    fn a_record_with_a_null_prototype_inherits_nothing() {
+        let mut record = JsObject::new();
+        record.assign("__proto__".into(), Js::Null);
+        assert!(matches!(record.proto, Some(Js::Null)));
+        for key in ["__proto__", "constructor", "toString", "x"] {
+            assert!(matches!(plain_property(&record, key), Js::Undefined), "{key}");
+        }
+        let held = Rc::new(record);
+        assert!(matches!(object_property(&held, "__proto__"), Js::Undefined));
+        assert!(matches!(object_property(&held, "toString"), Js::Undefined));
+        assert!(matches!(plain_property(&JsObject::new(), "toString"), Js::Function(_)));
+    }
 
     #[test]
     fn an_unwritable_record_writes_the_backstop() {

@@ -278,6 +278,16 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     }
   });
 
+  it('refuses an extraction declaring a field or node named __proto__ at admission, wherever it sits, so both engines answer as the TypeScript does', async () => {
+    const extract = (indent: string) =>
+      [`${indent}d = extract from [msg.\`text\`] {`, `${indent}  __proto__: "p"`, `${indent}  name: "n"`, `${indent}}`].join('\n');
+    const fan = ['  ys = MAP([1, 2], { onError: "ignore" }, (x) => {', extract('    '), '    return d', '  })', '  return ys'].join('\n');
+    const reply = { 'x:extract_result#1': [{ __proto__: wrap(3), name: wrap('Acme') }] };
+    for (const body of [`${extract('  ')}\n  return d`, fan, `  if 1 == 1 {\n    g = 1\n  }\n${fan}`]) {
+      await agree({ source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, replies: [reply, reply, reply] }, { refused: 'extract_proto_field' });
+    }
+  });
+
   it('suspends before a plugin call a suspendAt names, as the TypeScript engine does: it never invokes the plugin', async () => {
     const source = 'import { fetch_url } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n  page = fetch_url(url: msg.`text`)\n}';
     // With a sink that can suspend: the run parks before the call.

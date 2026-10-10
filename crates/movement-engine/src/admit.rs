@@ -2213,9 +2213,19 @@ impl Names<'_> {
                 }
             }
             for field in &stage.fields {
+                if field.name == "__proto__" {
+                    return refuse(PROTO_FIELD);
+                }
                 self.slot(&field.description)?;
             }
             for child in &stage.children {
+                let name = match child {
+                    ast::ExtractNode::Inline(child) => &child.name,
+                    ast::ExtractNode::Declared(child) => &child.name,
+                };
+                if name == "__proto__" {
+                    return refuse(PROTO_FIELD);
+                }
                 match child {
                     ast::ExtractNode::Inline(child) => {
                         self.slot(&child.description)?;
@@ -2233,17 +2243,21 @@ impl Names<'_> {
         Ok(())
     }
 
-    /// A declared shape's words, at every depth.
+    /// A declared shape's words, at every depth, and its names: a field or
+    /// node named `__proto__` is refused as an extraction's own is.
     fn shape_words(&self, shape: &ast::ShapeNode) -> Admitted {
         if let Some(words) = &shape.description {
             self.slot(words)?;
         }
         for field in &shape.fields {
+            if field.name == "__proto__" {
+                return refuse(PROTO_FIELD);
+            }
             if let Some(words) = &field.description {
                 self.slot(words)?;
             }
         }
-        shape.children.iter().try_for_each(|child| self.shape_words(child))
+        shape.children.iter().try_for_each(|child| if child.name == "__proto__" { refuse(PROTO_FIELD) } else { self.shape_words(child) })
     }
 
     /// A name bound to anything but a value: read bare, the TypeScript
@@ -2951,6 +2965,15 @@ fn field_read(terminal: &Expression) -> bool {
 /// currency (a read seam, provenance objects, `Map`s): `AT` hands them out.
 const INTERNAL_KEYS: [&str; 12] = ["provenance", "graph", "read", "fields", "fieldProvenance", "edges", "emission", "walk", "constructionConfig", "schema", "declaration", "fileEnv"];
 
+/// A field or node an extraction (or a shape it declares nodes by) names
+/// `__proto__`. Every such name is program text. The TypeScript reads the
+/// reply as zod does (mirrored, crate::extract::validate), then stores the
+/// field as the entity's prototype: the entity never holds it as a field,
+/// its context's prototype is set from the reply's `__proto__.value` (an
+/// object) or lost (`null`), its provenance's likewise. Not reproduced, so
+/// refused; to become a checker diagnostic.
+const PROTO_FIELD: &str = "extract_proto_field";
+
 /// The built-ins whose reading this engine may hand back to the TypeScript
 /// member (`builtins.function`) on what their arguments hold: a date V8
 /// reads its own way, a regex nested past what V8's stack allows, astral
@@ -3143,6 +3166,8 @@ mod tests {
             ("  x = TEXT.CHUNKS(msg.`subject`)", "expression_does_not_lower"),
             ("  x = msg.`subject` WITHIN \"7d\"", "within_compare"),
             ("  x = { __proto__: 1 }", "proto_key"),
+            ("  d = extract from [msg.`subject`] {\n    __proto__: \"p\"\n  }", "extract_proto_field"),
+            ("  d = extract from [msg.`subject`] {\n    node __proto__: \"n\" {\n      a: \"a\"\n    }\n  }", "extract_proto_field"),
             ("  x = 1\n  x = write crm-[:companies]-> { name: \"a\" }", "name_rebound"),
             ("  inbox = 1", "name_shadowed"),
             ("  msg = 1", "name_shadowed"),
@@ -3402,6 +3427,7 @@ mod tests {
     fn refuses_what_the_file_says_it_does_not_run() {
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
         assert_eq!(file(&format!("import {{ x }} from \"./lib.mov\"\n{movement}")).as_deref(), Some("import_from_file"));
+        assert_eq!(file(&format!("node Entry {{\n  __proto__: <text>\n}}\n{movement}")).as_deref(), Some("extract_proto_field"));
         assert_eq!(file(&format!("{PRELUDE}r = extract from [\"a\"] {{\n  node n: \"n\" {{ a: \"a\" }}\n}}\n{movement}")).as_deref(), Some("file_assignment"));
         assert_eq!(file(&format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\n{movement}")).as_deref(), Some("movement_value_param"));
         assert_eq!(file(&format!("{PRELUDE}{movement}")), None);

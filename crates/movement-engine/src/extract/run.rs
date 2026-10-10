@@ -318,13 +318,6 @@ struct Reply {
     continuations: f64,
 }
 
-/// Whether any stage of the tree declares a field or a node `__proto__`.
-fn declares_proto(spec: &spec::NodeSpec) -> bool {
-    spec.stages.iter().any(|stage| {
-        stage.fields.iter().any(|f| f.name == "__proto__") || stage.children.iter().any(|c| c.name == "__proto__" || declares_proto(c))
-    })
-}
-
 impl Run<'_> {
     /// `x = extract from […] { tree }`: the spec built for this firing, the
     /// tree materialised, and the emitted entities hung off the extract's
@@ -335,16 +328,6 @@ impl Run<'_> {
             SpecError::Runtime(message) => thrown(Failure::engine("MOVENG_RUNTIME", message)),
             SpecError::Firing(stop) => stop,
         })?;
-        if declares_proto(&spec) {
-            // What the TypeScript does past the reply's read: the entity's
-            // context and provenance assign `__proto__`, setting their
-            // prototypes, and every later read of the field goes through
-            // them. The read itself is mirrored (crate::extract::validate).
-            return Err(thrown(Failure::unreproduced(
-                "an extraction field or node named `__proto__`",
-                "rename it: past the reply's read the TypeScript stores it as the entity's prototype, which this engine does not reproduce",
-            )));
-        }
         let mark = self.trace.len();
         let materializer = Materializer {
             run: self,

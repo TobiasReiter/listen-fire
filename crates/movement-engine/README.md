@@ -215,7 +215,7 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `new Date(text)` | the ISO forms V8's spec parser reads (`YYYY-MM-DD`, `…THH:mm[:ss[.f…]]` with `Z`/`±HH:mm`; day 31 rolls over, `24:00`, three fraction digits kept); a text with no digit is Invalid; anything else (V8's legacy parser, a date-time without offset = local time) goes back to TypeScript | `js_date::tests::reads_the_iso_forms_as_v8_does`, `js_date::tests::leaves_what_only_v8_can_read_unknown` |
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
 | `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) | `js_date::tests::iso_strings_outside_four_digit_years`, `js_date::tests::time_clip_bounds_and_truncates`, `tests::coalesce_short_circuits_from_version_three` |
-| regexes (TEXT.REGEX_EXTRACT) | V8's whole flagless dialect, compiled to a flat program run on an explicit backtracking stack over UTF-16 units: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators; lookahead and lookbehind (right to left, its captures and backreferences too), named groups and `\k<name>`, Annex B's octal, `\c` and identity escapes, a class escape at a range's end, quantified lookaheads. No step budget (a pattern V8 runs slowly runs slowly here). Invalid patterns are null, as `new RegExp` throws. Groups nested past 1,000 levels go back to TypeScript: V8 itself overflows its stack somewhere past 5,000, at a depth set by the stack it runs on | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them` (7,209 seeded cases) |
+| regexes (TEXT.REGEX_EXTRACT) | V8's whole flagless dialect, compiled to a flat program run on an explicit backtracking stack over UTF-16 units: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators; lookahead and lookbehind (right to left, its captures and backreferences too), named groups and `\k<name>`, Annex B's octal, `\c` and identity escapes, a class escape at a range's end, quantified lookaheads. No step budget (a pattern V8 runs slowly runs slowly here). Invalid patterns are null, as `new RegExp` throws. Groups nested past 1,000 levels go back to the TypeScript built-in, so the answer is TypeScript's: V8 overflows its stack on CAPTURING groups nested somewhere between 8,000 and 10,000 deep, at a depth set by the stack it runs on (`(?:` it parses 50,000 deep; handed back past 1,000 all the same) | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them` (7,209 seeded cases) |
 | `URL` (URL.HOST) | `new URL` itself, asked of the environment (`url_parse`); only the TypeScript's own pre-reading (trim, the assumed `http://`, opaque uris) is written here | `stdlib::tests::url_host_as_whatwg_reads_it`, `oracle::…` (`url.host`) |
 | `normalize("NFKD")` (TEXT.SLUG) | asked of the environment (`normalize`) | `stdlib::tests::text_members`, `oracle::…` (`text.slug`) |
 | `Intl.DateTimeFormat` (DATE.TODAY, DATETIME.AT) | the zone's wall reading asked of the environment (`tz_convert`); `instantAtZonedWallTime`'s search over those readings written out, `Date.UTC`'s 19xx years included | `stdlib::tests::datetime_at_names_the_instant_on_the_zones_wall_clock`, `oracle::…` (`date.today`, `datetime.at`) |
@@ -422,6 +422,7 @@ refused where it stands (`is_test_declared_record`).
 | `function:<id>` | a function the evaluator does not run, by its lowered id (`chunks`, `domain_of`, `file`, …) | the built-ins `CHUNKS`, `DOMAIN_OF`, `FILE`, … |
 | `within_compare` | `WITHIN` | WITHIN against the pinned instant |
 | `static_number`, `proto_key` | a numeric literal JSON cannot carry (`Infinity`, `-0`); a `__proto__` key written in an object literal | wire support for those values (the transition artefacts' strings and keys rows) |
+| `extract_proto_field` | an extraction field or node named `__proto__`, inline or in a node declaration (all program text) | a checker diagnostic (a later task): past the reply's read the TypeScript stores it as the entity's prototype (row 5) |
 | `condition_does_not_lower`, `expression_does_not_lower` | a slot that does not lower (the checker's miss) | lowering coverage, or the slot handed to the check |
 
 A hop's WHERE and ORDER BY key, and a write's or a match's target WHERE, are
@@ -1150,11 +1151,6 @@ TypeScript engine runs the segment, having seen only reads.
 - Parking a value whose message or data would print a record's binding
   object other than the event's or a block's returned records' (its read
   seam, its computed schema): MOVENG_UNSUPPORTED.
-- An extraction whose tree declares a field or a node named `__proto__`
-  (inline, from a node declaration, or borrowed from a live schema): past
-  the reply's read the TypeScript stores it as the entity's prototype
-  (row 5). MOVENG_UNSUPPORTED naming it, once the spec is built for the
-  firing.
 - `x IS <Decl>` of a node whose landing under a declared edge is a system's
   record (a handle, a landed record): MOVENG_UNSUPPORTED, as that landing's
   structure is its system's types. Admission lets no such node reach an
@@ -1314,12 +1310,12 @@ Sizes are estimates (XS, S, M, L).
 
 | # | the artefact | here today | the mirror | size |
 |---|---|---|---|---|
-| 1 | the regex dialect | mirrored (chunk 7A Task 5): `js_regex` made complete and kept (lookbehind, named groups and `\k<name>`, Annex B's octal and `\c` escapes, a class escape at a range end, quantified lookaheads), with no budget, on an explicit stack so neither long texts nor nesting cost native stack; a group name spelled in ID_Start/ID_Continue read off Node (src/letter_number.rs). Residual: nesting past 1,000 levels hands back, where V8's own limit depends on its stack | oracle regex.json, 7,209 cases (the 4,009 new from seed 8), none handed back | done |
+| 1 | the regex dialect | mirrored (chunk 7A Task 5): `js_regex` made complete and kept (lookbehind, named groups and `\k<name>`, Annex B's octal and `\c` escapes, a class escape at a range end, quantified lookaheads), with no budget, on an explicit stack so neither long texts nor nesting cost native stack; a group name spelled in ID_Start/ID_Continue read off Node (src/letter_number.rs). Residual: nesting past 1,000 levels hands back to the TypeScript built-in, since V8's own limit for capturing groups (between 8,000 and 10,000) depends on its stack | oracle regex.json, 7,209 cases (the 4,009 new from seed 8), none handed back | done |
 | 2 | date parsing | ISO texts only; V8's legacy forms handed back, including under every `<` between two texts with a digit (filter.rs) and ORDER BY | V8's legacy parser ported (dateparser.cc: keyword tables, parenthesised comments, zone names, two-digit years), fuzzed against Node; an ISO date-time without offset read in a local zone that becomes a run input | L |
 | 3 | Unicode case mapping | mirrored (chunk 7A Task 5): Node 22.20's ICU 77.1 (Unicode 16), its tables generated into src/case_mapping.rs by tests/oracle/case_mapping.ts, the final sigma's cased and ignorable neighbours probed through `toLowerCase` itself; regenerate when the pinned Node moves | oracle case_mapping.json (4,000 seeded texts, seed 20261013, tests/tail_oracle.rs) | done |
 | 3a | the local edge's word split (`/[^\p{L}\p{N}]+/u`, FUZZY candidates) | src/letter_number.rs, generated from Node 22.20 (Unicode 16) by tests/oracle/letter_number.ts | regenerated with row 3's data whenever the pinned Node moves; the language's own Unicode version once one is named | XS |
 | 4 | ORDER BY and `SORT` over mixed key kinds | mirrored (chunk 7A Task 5): V8's ArrayTimSort ported step for step (crate::order_limit: the minimum run, runs found and reversed, binary insertion, the pending-run invariants, `merge_lo`/`merge_hi` with galloping and the shared `minGallop`, the early exits an inconsistent comparator takes), so keys mixing numbers with texts land where JavaScript lands them at every length; the 64-record refusal is gone | oracle mixed_sort.json (400 seeded key lists, 1 to 2,000 keys, seed 20261014, tests/tail_oracle.rs; the stable merge it replaces got 317 of them wrong) | done |
-| 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | mirrored (chunk 7A Task 5) in crate::extract::validate: a declared key read through the reply's prototype (js.rs's one `Object.prototype` name table), a key handed on written with `object[key] = value` (`__proto__` sets the prototype), a declared `__proto__` no key of the shape; the emitted entity's fields read through that prototype. An extraction DECLARING a field or node `__proto__` is refused mid-run (`unreproduced`, below) | oracle extraction.json, every program 0 reply pinned to TypeScript's verdict unfiltered (tests/extraction_pin.rs) | done |
+| 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | mirrored (chunk 7A Task 5) in crate::extract::validate: a declared key read through the reply's prototype (js.rs's one `Object.prototype` name table), a key handed on written with `object[key] = value` (`__proto__` sets the prototype), a declared `__proto__` no key of the shape; the emitted entity's fields read through that prototype. An extraction DECLARING a field or node `__proto__` (inline, or in a node declaration it names: every such name is program text; a live schema lends only a field's type) is refused at admission, `extract_proto_field`: past the read the TypeScript's entity never holds it as a field, its context's prototype is set from the reply's `__proto__.value` (an object) or lost (`null`), and its provenance's likewise, which is not reproduced. The refusal is to become a checker diagnostic (a later task) | oracle extraction.json, every program 0 reply pinned to TypeScript's verdict unfiltered (tests/extraction_pin.rs) | done |
 | 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | 0 |
 | 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | follows 9 |
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
@@ -1378,9 +1374,11 @@ mirror replaces that plan):
     crate::extract::validate does each of these, and the oracle pins every
     such reply to TypeScript's verdict as it stands. Past the read, the
     TypeScript stores a declared `__proto__` field as its entity's
-    prototype too (`context[field.name] = …`, `provenance[field.name] =
-    …`); that is not reproduced, so an extraction declaring one fails
-    instead (see "Errors a run can meet mid-run"). A reply's own
+    prototype too: the entity never holds it as a field, its context's
+    prototype is set from the reply's `__proto__.value` (an object) or lost
+    (`null`), and its provenance's likewise. That is not reproduced, so an
+    extraction declaring one is refused at admission (`extract_proto_field`;
+    the name is program text, so a checker diagnostic will replace it). A reply's own
     `__proto__` key still never reaches this engine over the eval wire
     (row 7).
   - a reply number above the double range (past ±1.8e308): `JSON.parse`
