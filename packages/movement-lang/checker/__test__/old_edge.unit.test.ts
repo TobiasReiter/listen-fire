@@ -190,3 +190,30 @@ describe('a write off a found record', () => {
     expect(errors(4, body('n = COUNT(ex-[:@old]->)'))).toEqual([C.OLD_EDGE_NOT_A_WRITE]);
   });
 });
+
+describe('a field the write did not set, read off its handle', () => {
+  const crossing = (body: string) =>
+    checkProgram(parseProgram(inMovement(body)), catalog, { languageVersion: 4, upgradingFrom: 3 })
+      .filter((d) => d.code === C.HANDLE_READ_FOUND);
+  const SET_NAME = '  org = write crm-[:companies]-> { unique by (`Name`), Name: "Acme" }';
+  const read = (field: string) => `  seen = org.${field}`;
+  it('crossing 4 reading an unset field is a move-up warning naming the field and the handle', () => {
+    const d = crossing([SET_NAME, read('Domains')].join('\n'));
+    expect(d).toHaveLength(1);
+    expect(d[0].upgrade).toBe(true);
+    expect(d[0].severity).toBe('warning');
+    expect(d[0].message).toContain("'Domains' on 'org' reads the record as the write found it");
+  });
+  it('crossing 4 reading a field the body set with plain `:` is silent', () => {
+    expect(crossing([SET_NAME, '  write crm-[:notes]-> { title: org.`Name` }'].join('\n'))).toEqual([]);
+  });
+  it('crossing 4 a `?:` fill does not count as set', () => {
+    const fill = '  org = write crm-[:companies]-> { unique by (`Name`), Name: "Acme", Domains ?: ["acme.com"] }';
+    expect(crossing([fill, read('Domains')].join('\n'))).toHaveLength(1);
+  });
+  it('no warning under 4 without a move up, nor under 3', () => {
+    const src = inMovement([SET_NAME, read('Domains')].join('\n'));
+    expect(checkProgram(parseProgram(src), catalog, { languageVersion: 4 }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
+    expect(checkProgram(parseProgram(src), catalog, { languageVersion: 3 }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
+  });
+});

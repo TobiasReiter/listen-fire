@@ -321,6 +321,7 @@ import {
   widenTuples,
   unifyValueTypes,
   WriteTargetRef,
+  type TypingReporter,
 } from './typing';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
@@ -1390,6 +1391,14 @@ function readableMatchRoot(position: PositionSchema | undefined): WritableRootSc
     fields: position.properties,
     resultShape: { externalId: 'text', url: 'text', ...position.properties },
   };
+}
+
+/** `handle`, carrying the fields `write`'s body set outright (plain `:`) — a
+ *  `?:` fill or a `+:` append leaves what the record held in play. */
+function withSetFields(handle: PositionTypeRef | undefined, write: WriteExpression): PositionTypeRef | undefined {
+  if (handle?.kind !== 'handle' || handle.written !== true) return handle;
+  const setFields = new Set(write.fields.filter(field => field.semantics === undefined).map(field => field.name));
+  return { ...handle, setFields };
 }
 
 /**
@@ -3482,12 +3491,30 @@ class Checker {
     return resolution.symbol.bindingPlane === 'scalar' ? resolution.symbol.fieldType : undefined;
   }
 
+  /** A diagnostic the expression walker raised, at the severity it asked for. */
+  private reportTyped(code: string, message: string, at: Span, severity: Parameters<TypingReporter>[3]): void {
+    switch (severity) {
+      case 'info':
+        return this.reportInfo(code, message, at);
+      case 'warning':
+        return this.reportWarning(code, message, at);
+      case 'upgrade':
+        return this.reportUpgradeWarning(code, message, at);
+      case 'error':
+      case undefined:
+        return this.report(code, message, at);
+      default:
+        return neverAsAny(severity);
+    }
+  }
+
   /** A typed expression walker rooted at `scope` that REPORTS and nothing else
    *  — for a walk the program never runs, where a read effect or a recorded
    *  path would claim something happened. */
   private reportingTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
@@ -3498,12 +3525,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
-      report: (code, message, at, severity) =>
-        severity === 'info'
-          ? this.reportInfo(code, message, at)
-          : severity === 'warning'
-            ? this.reportWarning(code, message, at)
-            : this.report(code, message, at),
+      report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
     });
   }
@@ -3512,6 +3534,7 @@ class Checker {
   private slotTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
@@ -3522,12 +3545,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
-      report: (code, message, at, severity) =>
-        severity === 'info'
-          ? this.reportInfo(code, message, at)
-          : severity === 'warning'
-            ? this.reportWarning(code, message, at)
-            : this.report(code, message, at),
+      report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
       onEffect: (effect) => this.absorbExpressionEffect(effect),
       onWatchableRead: (edge) => this.polledWatchableEdges?.add(edge),
@@ -7689,6 +7707,7 @@ class Checker {
     // handle are both in hand, and carried on the handle so `await a-[:Response]->`
     // steps onto the specialized position.
     handle = this.applyGenericLandings(handle, write, root, rootDescription);
+    if (!positionWrite) handle = withSetFields(handle, write);
 
     // The write's own effect: whichever graph the handle lands in. An ask is a
     // write like any other — its adapter is the one it is addressed to. A write
@@ -7870,7 +7889,12 @@ class Checker {
     root: WritableRootSchema | undefined,
   ): PositionTypeRef | undefined {
     if (before(this.languageVersion, 4)) return target;
-    if (target?.kind === 'handle') return target.written === true ? target : { ...target, written: true };
+    // The result vouches for none of the fields the body set: what a later
+    // read off it holds is the record as found, whichever write set it.
+    if (target?.kind === 'handle') {
+      const { setFields: _setFields, ...rest } = target;
+      return { ...rest, written: true };
+    }
     if (target?.kind !== 'position') return target;
     const properties = positionSchemaOfRef(target)?.properties ?? {};
     return {

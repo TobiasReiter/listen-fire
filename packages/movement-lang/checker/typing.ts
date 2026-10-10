@@ -49,7 +49,7 @@ import {
 import { builtinParamAt, describeBuiltin, lookupBuiltin, type Builtin } from './standard_library';
 import { extractCallNestedMessage } from './calls';
 import { neverAsAny } from '../never';
-import { before, describeLanguageVersion, since, type LanguageVersion } from '../language_version';
+import { before, changedBetween, describeLanguageVersion, since, type LanguageVersion } from '../language_version';
 import { Span } from '../parser/ast';
 import {
   describeFieldType,
@@ -167,6 +167,11 @@ export const TypedDiagnosticCodes = {
    *  old record ⇒ the write created it. Before 4 the handle carried them, and a
    *  program pinned there still reads them. */
   HANDLE_FIELD_RETIRED: 'MOV_HANDLE_FIELD_RETIRED',
+  /** Warning, upgrade only: a field a write's body did not set, read off that
+   *  write's handle, in a program moving up across 4. Before 4 it read what
+   *  the adapter handed back from the write (often nothing, and nothing on a
+   *  no-op); from 4 it reads the record as the write found it. */
+  HANDLE_READ_FOUND: 'MOV_HANDLE_READ_FOUND',
   /** A read or traversal through a handle NOTHING HAS DESCRIBED
    *  (`PositionSchema.undescribed`) — an unnarrowed event's `record` edge
    *  landing on the meta type, a type no describe answered for.
@@ -726,7 +731,14 @@ export type PositionTypeRef =
    *  compared and never parsed. It is what gives the handle an `-[:@old]->`
    *  (the record as it stood before that write) since language version 4; a
    *  match's or a link's found handle is the record as it already stood, so it
-   *  has none (`foundHandle` drops the flag). */
+   *  has none (`foundHandle` drops the flag).
+   *
+   *  `setFields`: the fields THIS write's body set outright (plain `:`) — a
+   *  construction-site fact like `genericLandings`. Since language version 4 a
+   *  read of any other field reads the record as the write found it; before,
+   *  it read what the adapter handed back. Absent ⇒ the body set nothing this
+   *  handle can vouch for (an in-place write's result), so every read is one
+   *  whose meaning moved. */
   | {
       kind: 'handle';
       instance: InstanceRef;
@@ -735,6 +747,7 @@ export type PositionTypeRef =
       edges?: Record<string, EdgeSchema>;
       genericLandings?: Record<string, string>;
       written?: true;
+      setFields?: ReadonlySet<string>;
     }
   /** A position in an extract result graph (the root binding or a traversed
    *  node). `present` holds the fields a guard in scope has proven present —
@@ -3441,7 +3454,9 @@ export function narrowPresentNode(position: PositionTypeRef): PositionTypeRef | 
 // ── The typed expression walker ──
 
 export interface TypingReporter {
-  (code: string, message: string, span: Span, severity?: 'error' | 'info' | 'warning'): void;
+  /** `'upgrade'`: a warning for a construct whose meaning changed across the
+   *  move up the check is for (`upgradingFrom`). */
+  (code: string, message: string, span: Span, severity?: 'error' | 'info' | 'warning' | 'upgrade'): void;
 }
 
 /**
@@ -3606,6 +3621,9 @@ export class ExpressionTyping {
       /** The compile context's language version — what this walker's
        *  `since`/`before` conditionals read. */
       languageVersion: LanguageVersion;
+      /** The version a move up starts from, when this check is for one — what
+       *  the walker's upgrade warnings read. */
+      upgradingFrom?: LanguageVersion;
       /** Statement-scope resolution: bound name → its position type (undefined = untyped/unknown). */
       resolveRoot: (name: string) => PositionTypeRef | undefined;
       /** Statement-scope resolution of the SCALAR plane: bound name → the value
@@ -3686,8 +3704,31 @@ export class ExpressionTyping {
     },
   ) {}
 
-  private report(code: string, message: string, severity?: 'error' | 'info' | 'warning'): void {
+  private report(code: string, message: string, severity?: 'error' | 'info' | 'warning' | 'upgrade'): void {
     this.options.report(code, message, this.options.span, severity);
+  }
+
+  /** This walk is for a move up across the change version `n` made. */
+  private upgradeCrosses(n: LanguageVersion): boolean {
+    const from = this.options.upgradingFrom;
+    return from !== undefined && changedBetween(from, this.options.languageVersion, n);
+  }
+
+  /**
+   * `org.Domains` off a write's handle, where the write's body did not set
+   * `Domains` outright, in a program moving up across 4. The type is the same
+   * either way; what changed is the value — the record as found rather than
+   * the adapter's write result — so nothing else would tell the author.
+   */
+  private reportHandleReadFound(root: string, position: PositionTypeRef | undefined, propertyId: string): void {
+    if (position?.kind !== 'handle' || position.written !== true) return;
+    if (position.setFields?.has(propertyId) === true) return;
+    if (!this.upgradeCrosses(4)) return;
+    this.report(
+      TypedDiagnosticCodes.HANDLE_READ_FOUND,
+      `since ${describeLanguageVersion(4)} '${propertyId}' on '${root}' reads the record as the write found it; before, it read what the system handed back from the write (often nothing). If the program assumed the old reading, change it, then upgrade.`,
+      'upgrade',
+    );
   }
 
   /** Hands the walk just finished to the recorder, if anyone asked for one. A
@@ -4012,6 +4053,9 @@ export class ExpressionTyping {
       const position = this.walkSteps(start, expr.steps);
       this.rememberOrdering(expr, position);
       this.recordWalked(expr);
+      if (expr.aliasRoot !== undefined && expr.steps.length === 0) {
+        this.reportHandleReadFound(expr.aliasRoot, position, expr.expression.propertyTypeId);
+      }
       return this.readProperty(position, expr.expression.propertyTypeId, writeTarget);
     }
     return this.inferExactAt(expr, undefined);
@@ -4074,6 +4118,9 @@ export class ExpressionTyping {
         // says what it is.
         if (expr.steps.length > 0 && isPositionTerminal(expr.expression)) {
           return listOf(recordOf(destination), this.lastOrdering);
+        }
+        if (expr.aliasRoot !== undefined && expr.steps.length === 0 && expr.expression.type === 'property') {
+          this.reportHandleReadFound(expr.aliasRoot, destination, expr.expression.propertyTypeId);
         }
         return this.inferAt(expr.expression, destination);
       }
