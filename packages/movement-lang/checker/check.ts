@@ -10779,7 +10779,7 @@ class Checker {
       const terminating = terminates(arm.body, exits);
       armTerminates.push(terminating);
       if (allPriorTerminate && terminating) {
-        this.narrowConditionNegation(arm.condition, scope, statement.span.end);
+        this.narrowConditionNegation(arm.condition, scope, { visibleFrom: statement.span.end });
       }
       allPriorTerminate = allPriorTerminate && terminating;
     }
@@ -10788,6 +10788,12 @@ class Checker {
       this.recordFrame('branch', statement.elseArm.span, elseScope);
       if (recorded) recorded.otherwise = { span: statement.elseArm.span, scope: elseScope };
       this.declareEliminated(ruledOut, scope, elseScope);
+      // Reaching the `else` proves every arm's condition false, so what each
+      // falsity proves present holds inside it — TypeScript's else-arm
+      // narrowing of `if (x == null) { … } else { x.f }`. Only widens what is
+      // accepted, so no version gate. Resolved through the else scope so the
+      // arms' proofs compose.
+      for (const arm of statement.arms) this.narrowConditionNegation(arm.condition, elseScope);
       this.checkStatementList(statement.elseArm.body, elseScope);
       // The other direction of the guard clause, TypeScript's
       // `if (x != null) { … } else { return }`: when the `else` and every arm
@@ -10894,23 +10900,22 @@ class Checker {
     }
   }
 
-  /** The guard-clause narrowing: an arm that always fails declares its
-   *  condition's negation into the ENCLOSING scope, for the statements after
-   *  the `if`. A conjunction proves nothing when false (only that one of its
-   *  conjuncts is), so only a plain expression condition contributes.
-   *  `guardEnd` is where that narrowing starts to hold — the end of the `if`
-   *  statement, since only its continuation is proved. */
-  private narrowConditionNegation(slot: ExprSlot, scope: Scope, guardEnd: Loc): void {
+  /** A condition's negation, declared into `scope`: what its FALSITY proves
+   *  present. Two callers: the guard clause (an arm that always fails narrows
+   *  the ENCLOSING scope from `visibleFrom`, the end of the `if`, since only its
+   *  continuation is proved) and the `else` arm (its whole scope). A
+   *  conjunction proves nothing when false (only that one of its conjuncts
+   *  is), so only a plain expression condition contributes. */
+  private narrowConditionNegation(slot: ExprSlot, scope: Scope, options: { visibleFrom?: Loc } = {}): void {
     let condition: MovementCondition;
     try {
       condition = conditionOfSlot(slot);
     } catch {
       return; // the parse failure is reported by the arm's own check
     }
+    // A top-level conjunction's falsity proves none of its conjuncts false.
     if (condition.kind !== 'expr') return;
-    this.narrowNegatedPresence(condition.expr, scope, scope, slot.span, {
-      visibleFrom: guardEnd,
-    });
+    this.narrowNegatedPresence(condition.expr, scope, scope, slot.span, options);
   }
 
   /** The guard clause's other direction: the condition of the one arm that
@@ -13170,7 +13175,7 @@ class Checker {
     scope: Scope,
     narrowInto: Scope,
     span: Span,
-    options: { visibleFrom: Loc },
+    options: { visibleFrom?: Loc },
   ): void {
     const typing = this.silentTyping(scope, span);
     this.declarePresence(

@@ -339,6 +339,62 @@ describe('a match under language version 4', () => {
     });
   });
 
+  // Reaching the `else` proves the condition false, so what that falsity
+  // proves present holds inside it — TypeScript's else-arm narrowing. This
+  // only accepts more programs, so it holds under every version.
+  describe('the else arm of a null test', () => {
+    const PAIR = [
+      '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+      '  fr = match graph-[:funding_round]-> { unique by (`stage`), stage: "Seed" }',
+      '  other = match graph-[:companies]-> { unique by (`name`), name: "Other" }',
+    ];
+    it('sees the found record present: the named-match pattern is clean under 4 and 3', () => {
+      const body = [
+        ...NAMED,
+        '  if existing == null {',
+        '  } else {',
+        '    write crm-[:companies]-> { name: existing.name }',
+        '  }',
+      ].join('\n');
+      expect(errors(4, body)).toEqual([]);
+      expect(errors(3, body)).toEqual([]);
+    });
+    it('narrows a link end', () => {
+      expect(errors(4, [...PAIR, '  if fr == null {', '  } else {', '    link co -[:rounds]-> fr', '  }'].join('\n'))).toEqual([]);
+    });
+    it('narrows a FIRST value and a field read off a FIRST record', () => {
+      expect(
+        errors(4, [
+          '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+          '  v = FIRST(co.domains)',
+          '  if v == null {',
+          '  } else {',
+          '    write graph-[:companies]-> { unique by (`name`), name: v }',
+          '  }',
+        ].join('\n')),
+      ).toEqual([]);
+      expect(
+        errors(4, [
+          '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+          '  r = FIRST(co-[x:rounds ORDER BY `stage`]->)',
+          '  if r.stage == null {',
+          '  } else {',
+          '    write graph-[:companies]-> { unique by (`name`), name: r.stage }',
+          '  }',
+        ].join('\n')),
+      ).toEqual([]);
+    });
+    it('of an OR narrows both sides; of an AND narrows neither', () => {
+      const withCondition = (condition: string) =>
+        [...PAIR, `  if ${condition} {`, '  } else {', '    link other -[:rounds]-> fr', '  }'].join('\n');
+      expect(errors(4, withCondition('fr == null OR other == null'))).toEqual([]);
+      expect(errors(4, withCondition('fr == null AND other == null'))).toEqual([C.ABSENT_REQUIRED]);
+    });
+    it('keeps the guard clause working: a failing arm narrows what follows', () => {
+      expect(errors(4, [...PAIR, '  if fr == null { ERROR("no round") }', '  link co -[:rounds]-> fr'].join('\n'))).toEqual([]);
+    });
+  });
+
   describe('an unlink of a match handle', () => {
     const FOUND = [
       '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
