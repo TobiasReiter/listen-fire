@@ -1168,7 +1168,8 @@ describe('unique by — entity resolution through the shared arbitration split',
         provenance: expectedProvenance,
         // Since version 4 the handle on a found record reads that record (the
         // values the write did not send), and `@old` is the record as found.
-        resultData: { name: 'U123', summary: 'first message' },
+        resultData: {},
+        foundData: { name: 'U123', summary: 'first message' },
         origin: { kind: 'write', writeIndex: 0, externalId: 'ext-attio-1' },
         old: expect.objectContaining({
           kind: 'handle',
