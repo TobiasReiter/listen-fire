@@ -12,12 +12,13 @@ import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from '../../translation_graph/adapter';
+import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 import type { CallbackSink } from '../host';
 import type { MovementTraceEntry } from '../expression';
 import { makeTestHost } from '../test_host';
-import { resumeMovement, runMovement, type MovementRunResult, type ParkSink } from '../run';
+import { fireCallbackBody, resumeMovement, runMovement, settleRaceFrame, type MovementRunResult, type ParkSink } from '../run';
 import { resetRustEvalStats, resetRustRunStats, rustRunStats } from '../rust_stats';
 import type { ParkedScopeState } from '../serialize';
 
@@ -70,8 +71,10 @@ function makeKgFake() {
     listEntryPoints: async () => [],
     describe: async () => null,
     resolveEntity: async () => ({ candidates: [] }),
-    getFieldValue: async () => null,
-    getRelated: async () => [],
+    getFieldValue: async ({ position, fieldId }) => (positionData(position) as Record<string, unknown> | undefined)?.[fieldId] ?? null,
+    // Two notes under the instance, for a block to walk.
+    getRelated: async ({ fieldId }) =>
+      fieldId === 'note' ? ['a', 'b'].map((body) => ({ position: makeUnstablePosition({ adapterType: KG, recordType: 'note', data: { body } }) })) : [],
     async createRecord(write) {
       creates.push(write);
       return { adapterType: KG, externalId: `note-${creates.length}`, data: {} };
@@ -91,10 +94,14 @@ type Events = Array<[string, string]>;
 /** An in-memory park sink with the durable join semantics the real one has
  *  (join_pending.ts): a frame's pending count, one decrement per branch, the
  *  closer identified, every branch's export kept by frame. */
-function makeSink(events: Events) {
-  const joins = new Map<string, { pending: number; closedBy: string | null; decremented: Set<string> }>();
-  const exports = new Map<string, Map<string, { branchIndex: number; exports: unknown }>>();
-  const parks = new Map<string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }>();
+function makeSink(events: Events, seed?: SinkRows) {
+  // As the sink's rows are stored: JSON, read back.
+  const stored = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+  const joins: SinkRows['joins'] = new Map(
+    [...(seed?.joins ?? [])].map(([frame, row]) => [frame, { pending: row.pending, closedBy: row.closedBy, decremented: new Set(row.decremented) }]),
+  );
+  const exports: SinkRows['exports'] = new Map([...(seed?.exports ?? [])].map(([frame, rows]) => [frame, new Map([...rows].map(([b, row]) => [b, stored(row)]))]));
+  const parks: SinkRows['parks'] = new Map([...(seed?.parks ?? [])].map(([address, park]) => [address, stored(park)]));
   const note = (method: string, input: unknown) => {
     const { segmentId: _segment, ...rest } = input as Record<string, unknown>;
     events.push([method, JSON.stringify(rest)]);
@@ -153,13 +160,21 @@ function makeSink(events: Events) {
   return { sink, parks, joins, exports };
 }
 
+/** What a park sink holds between segments. */
+interface SinkRows {
+  joins: Map<string, { pending: number; closedBy: string | null; decremented: Set<string> }>;
+  exports: Map<string, Map<string, { branchIndex: number; exports: unknown }>>;
+  parks: Map<string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }>;
+}
+
 /** A callback store: a ledger the test fills, as a platform's fire would. */
-function makeCallbacks(events: Events, ledger: Record<string, CallbackCall[]>) {
+function makeCallbacks(events: Events, ledger: Record<string, CallbackCall[]>, minted: ParkedScopeState[]) {
   let n = 0;
   const sink: CallbackSink = {
     async mint(input) {
       const { segmentId: _segment, ...rest } = input as typeof input & { segmentId: string };
       events.push(['mint', JSON.stringify(rest)]);
+      minted.push(JSON.parse(JSON.stringify(input.state)) as ParkedScopeState);
       const id = `cb_${++n}`;
       return { id, url: `https://api.test/api/cb/${id}` };
     },
@@ -178,9 +193,15 @@ interface Case {
   /** Resume this state rather than run. */
   resume?: ParkedScopeState;
   reenter?: boolean;
-  /** The sink's frames and exports, as an earlier segment left them. */
-  sink?: ReturnType<typeof makeSink>;
+  /** The sink's rows, as an earlier segment left them. */
+  rows?: SinkRows;
   dryRun?: boolean;
+  suspendAt?: string[];
+  deferRaceSettlement?: boolean;
+  /** Settle this race frame from `resume` (`settleRaceFrame`). */
+  settle?: string;
+  /** Fire `resume`, a callback's state, with these values (`fireCallbackBody`). */
+  fire?: { values: Record<string, unknown>; callIndex: number };
 }
 
 interface Outcome {
@@ -191,7 +212,10 @@ interface Outcome {
   events: Events;
   wakes: unknown[];
   bodies: unknown[];
-  parks: Map<string, { kind: string; state: ParkedScopeState }>;
+  parks: SinkRows['parks'];
+  rows: SinkRows;
+  /** The state each minted callback captured. */
+  minted: ParkedScopeState[];
 }
 
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
@@ -199,7 +223,8 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   process.env.MOVEMENT_ENGINE = engine;
   const kg = makeKgFake();
   const events: Events = [];
-  const sink = c.sink ?? makeSink(events);
+  const sink = makeSink(events, c.rows);
+  const minted: ParkedScopeState[] = [];
   const trace: MovementTraceEntry[] = [];
   const appends: MovementTraceEntry[][] = [];
   const wakes: unknown[] = [];
@@ -211,6 +236,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     movementName: 'recap',
     firedAt: '2026-10-05T09:00:00.000Z',
     ...(c.dryRun === true ? { dryRun: true } : {}),
+    ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
     host: makeTestHost({
       adapters: {
         resolve: ({ adapterType }: { adapterType: unknown }) => {
@@ -219,18 +245,26 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
           throw new Error(`test: no fake adapter for '${String(adapterType)}'`);
         },
       },
-      park: { sink: sink.sink, callbacks: makeCallbacks(events, c.ledger ?? {}) },
+      park: { sink: sink.sink, callbacks: makeCallbacks(events, c.ledger ?? {}, minted) },
       trace,
       traceAppends: appends,
       wakes: wakes as never[],
     }),
   };
-  const world = () => ({ trace, appends, events, wakes, bodies: kg.creates.map((w) => w.fields), parks: sink.parks });
+  const world = () => ({ trace, appends, events, wakes, bodies: kg.creates.map((w) => w.fields), parks: sink.parks, rows: sink, minted });
+  const enter = () => {
+    if (c.resume === undefined) return runMovement(input);
+    const resumed = { ...input, state: c.resume };
+    if (c.settle !== undefined) return settleRaceFrame({ ...resumed, frameAddress: c.settle });
+    if (c.fire !== undefined) return fireCallbackBody({ ...resumed, ...c.fire });
+    return resumeMovement({
+      ...resumed,
+      ...(c.reenter === true ? { reenter: true } : {}),
+      ...(c.deferRaceSettlement === true ? { deferRaceSettlement: true } : {}),
+    });
+  };
   try {
-    const result =
-      c.resume !== undefined
-        ? await resumeMovement({ ...input, state: c.resume, ...(c.reenter === true ? { reenter: true } : {}) })
-        : await runMovement(input);
+    const result = await enter();
     return { result, ...world() };
   } catch (error) {
     return { error: String(error), ...world() };
@@ -247,6 +281,7 @@ async function agree(c: Case) {
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', c);
+  if (rustRunStats.ranWhole !== 1) expect({ ts: ts.error, rust: rust.error, stats: rustRunStats }).toEqual({});
   expect({ notAdmitted: rustRunStats.notAdmitted, declined: rustRunStats.declined, ranWhole: rustRunStats.ranWhole }).toEqual({
     notAdmitted: {},
     declined: {},
@@ -438,5 +473,130 @@ describe('until and callbacks in the Rust engine', () => {
       source: program('  cb = callback()\n  c = await FIRST(cb-[:Called]->)\n  write graph-[:note]-> { body: "continued" }'),
     });
     expect(rust.result?.parkedAddress).toBe('s1');
+  });
+});
+
+/** The one park a segment left at `address` (or its only one). */
+function parkAt(o: Outcome, address?: string): ParkedScopeState {
+  const entries = [...o.parks.entries()];
+  const found = address !== undefined ? o.parks.get(address) : entries.length === 1 ? entries[0]?.[1] : undefined;
+  if (found === undefined) throw new Error(`test: no park at ${address ?? '(the only one)'} among ${entries.map(([a]) => a).join(', ')}`);
+  return found.state;
+}
+
+/** A case parked on both engines, which agree (every state key for key,
+ *  as the sink received it); then each engine's states resumed on both,
+ *  step by step, each step from the sink rows the step before left. */
+async function parkThenResume(c: Case, steps: Array<(previous: Outcome) => Case>) {
+  const parked = await agree(c);
+  expect(JSON.stringify([...parked.rust.parks.entries()])).toBe(JSON.stringify([...parked.ts.parks.entries()]));
+  const last: Outcome[] = [];
+  for (const origin of [parked.ts, parked.rust]) {
+    let previous = origin;
+    for (const step of steps) {
+      const next = step(previous);
+      ({ ts: previous } = await agree({ ...next, rows: next.rows ?? previous.rows }));
+    }
+    last.push(previous);
+  }
+  return { parked, last };
+}
+
+describe('parks resumed across the engines', () => {
+  it('resumes a block’s parked iterations, the last closing the join', async () => {
+    const source = program(
+      ['  graph-[n:note]-> {', '    await sleep(1h)', '    write graph-[:note]-> { body: "after ${n.`body`}" }', '  }', '  write graph-[:note]-> { body: "done" }'].join('\n'),
+    );
+    const { parked, last } = await parkThenResume({ source }, [
+      (p) => ({ source, resume: parkAt(p, 's0.i0.s0') }),
+      (p) => ({ source, resume: parkAt(p, 's0.i1.s0') }),
+    ]);
+    expect(parked.ts.events.map(([method]) => method)).toContain('recordJoin');
+    for (const o of last) expect(bodies(o)).toEqual(['after b', 'done']);
+  });
+
+  it('resumes a park inside a callee through its call frame', async () => {
+    const callee = 'movement wait(t: <text>) {\n  await sleep(1h)\n  write graph-[:note]-> { body: t }\n}\n';
+    const source = program('  wait(t: "hi")\n  write graph-[:note]-> { body: "after" }', callee);
+    const { last } = await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p) })]);
+    for (const o of last) expect(bodies(o)).toEqual(['hi', 'after']);
+  });
+
+  it('resumes a collection op’s parked members, in member order', async () => {
+    const source = program(
+      ['  xs = MAP(["a", "b"], (v) => {', '    await sleep(1h)', '    write graph-[:note]-> { body: "member" }', '    return UPPER(v)', '  })', '  write graph-[:note]-> { body: "done" }'].join('\n'),
+    );
+    const parked = await agree({ source });
+    const addresses = [...parked.ts.parks.keys()];
+    expect(addresses.length).toBeGreaterThan(0);
+    await parkThenResume({ source }, addresses.map((address) => (p: Outcome) => ({ source, resume: parkAt(p, address) })));
+  });
+
+  it('resumes a parallel’s parked arm, closing the join with the finished arm’s slot', async () => {
+    const source = program(
+      ['  r = await parallel([', '    () => { return "now" },', '    () => {', '      await sleep(1h)', '      return "later"', '    },', '  ])', '  write graph-[:note]-> { payload: { r: r } }'].join('\n'),
+    );
+    const { last } = await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p) })]);
+    for (const o of last) expect(o.events.map(([method]) => method)).toContain('collectBranchExports');
+  });
+
+  const RACE = program(
+    ['  r = await race([', '    () => {', '      await sleep(30d)', '      return "a"', '    },', '    () => { await sleep(1d) },', '  ])', '  write graph-[:note]-> { payload: { r: r } }'].join('\n'),
+  );
+
+  it('settles a race on the arm that woke, cancelling the other', async () => {
+    const parked = await agree({ source: RACE });
+    const [first] = [...parked.ts.parks.keys()];
+    const { last } = await parkThenResume({ source: RACE }, [(p) => ({ source: RACE, resume: parkAt(p, first) })]);
+    for (const o of last) expect(o.events.map(([method]) => method)).toContain('cancelSubtrees');
+  });
+
+  it('defers a race’s settlement under a batch resume, then settles it once', async () => {
+    const parked = await agree({ source: RACE });
+    const [first] = [...parked.ts.parks.keys()];
+    await parkThenResume({ source: RACE }, [
+      (p) => ({ source: RACE, resume: parkAt(p, first), deferRaceSettlement: true }),
+      (p) => ({ source: RACE, resume: parkAt(p, first), settle: 's0' }),
+    ]);
+  });
+
+  it('re-enters an until that still does not hold, and parks it again', async () => {
+    const source = program('  subject = "wait"\n  ready = () => {\n    return subject == "go"\n  }\n  await until(ready, every: 2h)\n  write graph-[:note]-> { body: subject }');
+    await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p), reenter: true })]);
+  });
+
+  it('re-enters an await on a callback once it has been called', async () => {
+    const source = program('  cb = callback()\n  c = await FIRST(cb-[:Called]->)\n  write graph-[:note]-> { body: "continued" }');
+    const ledger = { cb_1: [{ at: '2026-10-05T10:00:00.000Z', values: {} }] };
+    const { last } = await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p), reenter: true, ledger })]);
+    for (const o of last) expect(bodies(o)).toEqual(['continued']);
+  });
+
+  it('runs a fired callback’s body from the state it captured', async () => {
+    const source = program(['  greeting = "hello"', '  cb = callback((note: <text>) => { write graph-[:note]-> { body: "${greeting}: ${note}" } })'].join('\n'));
+    const minted = await agree({ source });
+    expect(JSON.stringify(minted.rust.minted)).toBe(JSON.stringify(minted.ts.minted));
+    for (const origin of [minted.ts, minted.rust]) {
+      const [state] = origin.minted;
+      if (state === undefined) throw new Error('test: nothing minted');
+      const { rust } = await agree({ source, resume: state, fire: { values: { note: 'yes' }, callIndex: 0 } });
+      expect(bodies(rust)).toEqual(['hello: yes']);
+    }
+  });
+
+  it('suspends inside a callee past its statement’s first call: the call frame keeps that call, and the re-entry replays it', async () => {
+    const make = 'movement mk(t: <text>) {\n  write graph-[:note]-> { body: t }\n  return UPPER(t)\n}\n';
+    const source = program('  x = mk(t: mk(t: "a"))\n  write graph-[:note]-> { body: "end" }', make);
+    const { parked, last } = await parkThenResume({ source, suspendAt: ['s0.c0.s1'] }, [(p) => ({ source, resume: parkAt(p), reenter: true })]);
+    const [frame] = parkAt(parked.ts).frames ?? [];
+    expect(frame).toMatchObject({ kind: 'call', journal: [{ index: 1 }] });
+    // Both callees wrote before the suspension; the re-entry writes nothing again.
+    expect(bodies(parked.ts)).toEqual(['a', 'A']);
+    for (const o of last) expect(bodies(o)).toEqual(['end']);
+  });
+
+  it('suspends inside a block’s iteration, and re-enters it there', async () => {
+    const source = program(['  graph-[n:note]-> {', '    write graph-[:note]-> { body: n.`body` }', '  }', '  write graph-[:note]-> { body: "done" }'].join('\n'));
+    await parkThenResume({ source, suspendAt: ['s0.i1.s0'] }, [(p) => ({ source, resume: parkAt(p), reenter: true })]);
   });
 });

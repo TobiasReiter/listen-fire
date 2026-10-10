@@ -25,7 +25,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | module | what |
 |---|---|
 | `executor` | a single-threaded async runtime: the segment is one future; a `HostCall` future registers its request and yields; `join_all` keeps several in flight; `map_concurrent` runs a fan at most so many at a time (fans.ts `mapConcurrent`) |
-| `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `llm.client`, `llm.transforms`, `park.sink`, `control.cancel`, `locks`, `trace`, `clock`, `files`, `ids`), plus the engine's own (`check`, `builtins`, `log`); every host request names the segment |
+| `host` | one request builder per host call, each family spelled as host.ts's `HOST_FAMILIES` spells it (`adapters`, `llm`, `llm.client`, `llm.transforms`, `park`, `park.sink`, `park.callbacks`, `control.cancel`, `locks`, `trace`, `clock`, `files`, `ids`), plus the engine's own (`check`, `builtins`, `log`); every host request names the segment |
 | `ledger` | the run's spend account for one segment: the budget a priced call is sent, the cost each answers charged, the cap met (`exceeded`) once a budget refusal is charged, a priced plugin refused before the host is asked once the cap is spent (`plugin_refusal`), the charges handed back with `done` |
 | `admit` | admission: the allow-list walk over this engine's own parse of the file and the movements the entry reaches, before the check; every stable reason a refusal holds (below) |
 | `abi` | the C ABI: `engine_start`, `engine_answer`, `engine_finish`, `eval_expression` |
@@ -43,7 +43,12 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `node` | node and graph literals: value entries, nested nodes, declared edges with their landing shapes, traversal entries, reference entries and record copies (the checker's stamps) |
 | `local` | the engine as a run-built node's adapter (local_edge_adapter.ts): the store over an edge's landings, its candidate block, the writes, matches, position writes and links into it |
 | `letter_number` | `/[\p{L}\p{N}]/u`'s code points, as Node reads them (generated) |
-| `park` | `ParkedScopeState` v1 written and read as serialize.ts writes and reads it |
+| `park` | `ParkedScopeState` v1 written as serialize.ts writes it (one `ParkWriter` across scopes, frames and journal), the suspension points, and the resume admission |
+| `resume` | `resumeAlongAddress`: a state's spine descended (`if` arms, iterations, branches, call and member frames), the leaf bound or re-entered, each enclosing body finished, joins closed and races settled through the host; `settleRaceFrame` and `fireCallbackBody`; every descriptor kind rehydrated |
+| `code` | the program's code a state names (a closure, a kept walk's head and mapping), found again in the re-parsed program by its span |
+| `flow` | a flow's own state (its trace buffer, ledger slot, call sites, lock holds), swapped in on each poll; shared futures several flows await (an adapter's resolution) |
+| `combinator` | `parallel` and `race`: arms as flows joined on the executor, the write ledger spliced in arm order, a race's winner and its losers cancelled, arms that park joined through their frame |
+| `awaits` | `await` of a landing, an `until`, a callback (`park.callbacks.mint`, its `called` edge), and the park each writes |
 | `bindings` | what a name in a run is bound to, the lexical scopes (in declaration order), the source `Position` |
 | `trace` | the `MovementTraceEntry` kinds a run appends (`warning`, `gate`, `field_miss`, `block`, `extraction`, `plugin`), and the per-flow buffer they wait in until their statement ends |
 | `program` | the pinned source parsed, joined with the `check.program` host call's answer: diagnostics, the import link, the checker's stamps by AST path; the declarations (`Declarations`: the root's and each library's shapes and `type`s, each shape with the file that wrote it, and the plugin imports, by local name) |
@@ -244,12 +249,12 @@ answered nothing.
 Whether this engine runs a program whole is decided in three places, in
 this order, and the program is parsed once, here:
 
-1. **The shim's input checks** (rust_engine.ts: an event that cannot cross
-   the eval wire; `rustResumeRefusal` for a resume), on what the run is
-   handed, before a segment opens.
+1. **The shim's input checks** (rust_engine.ts: an event, source or parked
+   state that cannot cross the eval wire), on what the run is handed,
+   before a segment opens.
 2. **This engine's admission** (`admit.rs`, and `park::resume_refusal` for a
-   resume), on its own parse and the input (a plugin call's declared output
-   is read off the input's catalog snapshot, its `plugins` alone), before
+   resume), on its own parse (a plugin call's declared output is read off
+   the input's catalog snapshot, its `plugins` alone), before
    the catalog loads, before `check.program`, before any request: a refused
    run costs one parse and one walk, and no host call
    (`rustRunStats.hostCalls` stays `{}`).
@@ -364,13 +369,8 @@ refused where it stands (`is_test_declared_record`).
 | reason | the construct | needs |
 |---|---|---|
 | `statement:call`, `movement_call`, `function_call` | a call statement of anything but a movement or a plugin (a built-in's or a collection op's); a call of a movement whose value is not one kind on every path, or whose kind is left open by a recursion; a bound call of a name the program binds that is not a movement, or of any non-movement callee before version 3 | the remaining call forms (a collection op as a statement, closures as callees) |
-| `call_park` | an `await sleep(…)` inside a movement a call enters | call frames in the park state: a park inside a callee resumes through them (run.ts ~:2834) |
-| `rvalue:closure`, `rvalue:lazy`, `rvalue:inlineBlock`, `expression_closure` | closures and lazy walks as values; a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), run by the TypeScript as a call bound first (from version 3) | closure and lazy-walk binding kinds, with the call frames above |
-| `statement:combinator`, `rvalue:combinator` | `parallel`, `race` | spawned arms in the executor, the in-run lock gate table (FIFO, shared or exclusive), a write-ordering ledger (write_ledger.ts), arm traces spliced in order, frames and joins in park state, race settlement (losers cancelled) |
-| `await_not_sleep` | an `await` of anything but `sleep(…)` (parallel, race, until, a callback, a landing) | the same, and the await kinds' park states |
-| `block_park` | an `await sleep(…)` in a block's body: an iteration that parks is joined by the fan-out's frame | fan-out frames that join parked iterations |
+| `rvalue:closure`, `rvalue:lazy`, `rvalue:inlineBlock`, `expression_closure` | closures and lazy walks as values; a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), run by the TypeScript as a call bound first (from version 3) | closure and lazy-walk binding kinds as values (a closure a combinator or a callback holds already parks and resumes) |
 | `statement:collection`, `rvalue:collection` | MAP, FILTER, … whose config asks a concurrency or an initial batch other than 1 (members run one at a time here) | bounded fan-out (fans.ts `mapConcurrent`): members run concurrently, their requests interleaved as the TypeScript's are |
-| `rvalue:callback` | a callback | `park.callbacks.*`, a callback binding kind, and the callback body's entry ("Entries never routed" below) |
 | `statement:refresh` | `refresh` | its semantics (no corpus case runs one) |
 | `rvalue:extractCall` | the version-3 `extract(…)` call form | its prompt blocks, `llm.extractCall.call`, site ids `xc:<shape>#<n>` |
 | `rvalue:<kind>` | any other right-hand side, by its AST `kind`; for `return`, also `extract`, `write`, `match` and `link`, and in a block's iteration `node` and a record | a returned record binding (a return value that is a record, as a call's value already is) |
@@ -429,41 +429,27 @@ target): a bare name (`property`, `edge_property`) is the record's field
 (or a value the body binds of that name), and the rest is the expression
 walk above.
 
-**The input** (admission; `admit::input_refusal`, over the reached
-movements, before anything is asked):
-
-| reason | what the input would make the run do | needs |
-|---|---|---|
-| `cost_cap_inside_block` | a capped run with a priced step in a block's body (a write, a match or a link that matches, an extraction, a plugin's call): the cap can be met at any of them | suspension inside fan-out iterations, joined by the fan-out's frame |
-| `cost_cap_inside_call` | a capped run with a priced step inside a callee, or a call with a write or a call among its arguments: the cap met inside a callee suspends through a call frame, and met past one of its statement's calls, with that call in the statement's journal | call frames in the park state, and the statement's call journal |
-| `lazy_park` | a run that may park (an `await sleep(…)` outside a rehearsal, a cost cap, a `suspendAt`, a paused run) holding a kept walk (`x = lazy …`, a `lazy` node entry) | a kept walk in the park state (`serializeDeferredWalk`: its head, tail and captured scope) |
-| `suspend_at_inside_block` | a `suspendAt` address with an `i` step | the same |
-| `suspend_at_call` | a `suspendAt` address with a `c` step (before a statement's k-th call) | a call journal to run a statement again by |
-
-**A parked state** (admission; `park::resume_refusal`). A run the TypeScript
-engine parked must resume here, so each is a port too:
+**A parked state** (admission; `park::resume_refusal`). A state either
+engine parked resumes here, its frames, joins, journal, `until` and every
+binding kind included; only these are refused:
 
 | reason | the state | needs |
 |---|---|---|
 | `resume_state_does_not_read` | it does not read off the wire | — |
 | `resume_state_version` | a version other than 1 | — |
-| `resume_state_frames`, `resume_state_until` | frames, an `until` | frames and joins (parallel and race arms, `b` branches, `keepArmCount`, `recordJoin`), `until` |
-| `resume_state_journal` | a journal with a call in it | the call journal |
 | `resume_state_suspended` | a `suspended` other than `true` | — |
-| `resume_state_address` | an address stepping into anything but `if` arms (`^s\d+(\.b\d+\.s\d+)*$`) | `i` and `c` steps and parallel branches |
-| `resume_state_kind:<kind>` | a binding of a kind this engine does not rebuild (`extractRoot`, `extractPosition`, `sourcePosition`, `shapePosition`, `lazyWalk`, `callback`, `resource`, `recordValue`, `localShape`, a `shape` outside the file scope, `tuple`, `closure`, `blockMeta`); this engine writes an extraction's emission into a park as the TypeScript does, but does not read one back | each kind's rehydration (serialize.ts `rehydrate`) |
-| `resume_state_returned_records` | a bound block's returned records | positions with landings |
-| `resume_state_extraction_origin` | an extraction among a binding's origins | extraction provenance on resume |
-| `resume_state_value_holds_record` | a value binding holding a record (a binding-shaped dict) | the record model held as a value |
-| `resume_state_deferred_edge` | a node's edge that is deferred (a `lazy` entry's) | a kept walk rehydrated (`rehydrateDeferredWalk`) |
+| `resume_state_kind:blockMeta`, `resume_state_kind:localShape` | a block's meta edges bound as a name; a shape declared in a body (serialize.ts writes both, and no corpus run parks holding either) | their rehydration (serialize.ts `rehydrate`) |
+
+A state that reads but is malformed for its kind (a `handle` without its
+record, a closure whose span names no closure in the re-parsed program)
+fails the resume loudly (MOVENG_RUNTIME, "the parked state holds …"),
+never resumes it wrong.
 
 **The shim's input checks** (`notAdmitted`, one reason each):
 
 | reason | the input | needs |
 |---|---|---|
 | `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or any non-plain prototype, a shared open reference, an array hole, an own `__proto__` key, a lone surrogate) | a `Date`, a lone surrogate and a `__proto__` key on the wire (the transition artefacts' surrogate and prototype rows) |
-| `resume_answer` | a resume that answers into its leaf (an ask) | the answer's binding rematerialised (`rematerialiseAnswer`) |
-| `resume_defers_race_settlement` | a resume that defers a race's settlement | the race settlement entry |
 
 **After the check** (`declined`):
 
@@ -480,9 +466,6 @@ engine parked must resume here, so each is a port too:
   standard library for a reading this engine does not reproduce
   (`builtins.function`, `builtins.compare`; the evaluator's `fallback`), or
   fails loudly ("Errors a run can meet mid-run" below).
-- **Entries never routed.** `settleRaceFrame` (a race settled after a batch
-  resume) and `fireCallbackBody` (a callback's body) have no entry here:
-  every race settlement and callback body runs on TypeScript.
 
 ### What admission cannot decide
 
@@ -993,29 +976,62 @@ LIMIT are not read, as `walkNodePlane` does not read them).
 
 ### Parks
 
-`park.rs` writes `ParkedScopeState` version 1 for a `sleep` (and `x = await
-sleep(…)`, its `presenceBind`): the scope chain root first, each scope's own
-bindings in declaration order, as `serializeBinding` writes the kinds this
-engine binds (`event`, `instance`, `opaque`, `movement`, `value` as its JSON
-round trip with its origins, `handle` as its record, `nodePosition` /
-`nodeRef` numbered as one park's table numbers them, and a picked record as
-`sourcePosition`: its position, and `read: {instanceName}` unless it was read
-off the event's source). States cross on the eval wire both ways
-(the park's `state`, the resume's `input.resume.state`), so every object keeps
-its key order: a resumed value is the one stored, key for key, as the
-TypeScript's is. A resume
-(`input.resume = {state, reenter?}`) re-layers the movement's scope, descends
-the `if` arms the address names, steps past (or re-enters) the leaf, and
-finishes each enclosing body. A state either engine wrote resumes on either;
-admission refuses anything else (frames, a journal with calls in it, `until`,
-other binding kinds, extraction origins: `resume_state_*` above), and the
-TypeScript engine resumes it.
+`park.rs` writes `ParkedScopeState` version 1, and `resume.rs` reads it,
+as serialize.ts and run.ts do, so a run parked by either engine resumes on
+either (the both-engine tests write a state on each and compare the strings
+byte for byte). One state is written for the whole run: the leaf's address
+and binding (`presenceBind`, `until`), the scope chain root first, each
+scope's own bindings in declaration order, then the frames, innermost last
+(a call's site with its finished calls and the callee's scope, a collection
+op's member, a combinator arm's join), with nodes and kept walks numbered
+once across all of it, as one `serializeBinding` pass numbers them. Code a
+state carries (a closure's body, a kept walk's head and mapping) is found
+again in the re-parsed program by its span (`code.rs`): the pin makes the
+re-parse the same tree. States cross on the eval wire both ways, so every
+object keeps its key order.
+
+A resume (`input.resume = {state, reenter?, answer?,
+deferRaceSettlement?}`) descends the state's spine as `resumeAlongAddress`
+does: `if` arms, block iterations and combinator branches by the address,
+calls and members by the frames. It binds the answer (a `Correct` answer
+rematerialised as an extraction), steps past or re-enters the leaf (a
+re-entered statement replays its journalled calls), then finishes each
+enclosing body. A branch that finishes closes its join through the host
+(`persistBranchExport`, `decrementJoin`, `collectBranchExports`); the last
+one runs the combinator's continuation, and a race's winner cancels its
+losers' parks, inline or once per batch (`input.settle`, run.ts
+`settleRaceFrame`). A fired callback's body runs from its captured state
+(`input.fire`, `fireCallbackBody`).
+
+**Awaits and arms.** A `parallel` or `race` runs its arms as flows on the
+one executor: each keeps its own trace buffer and its slot in the write
+ledger, spliced and renumbered in arm order when the combinator returns.
+Effects take the in-run locks run.ts takes (a shared lock per type and key
+set, exclusive per record and edge, FIFO in arrival order). An arm that
+parks writes its state and its join; the arms that finish persist their
+exports. A callback mints its row (`park.callbacks.mint`) and binds
+`{kind: 'callback', …}`; awaiting it, a landing (`resolveAwait`,
+`commitAwaitPark`) or an `until` parks as the TypeScript does.
+
+tests/oracle/parallel.json holds this to the TypeScript: 387 seeded
+programs (seed 20261011, written by generate.ts) of two to four arms, some
+nested, that write notes, write notes `unique by` a key two arms share, and
+count notes. The Rust test's host answers, of what this engine has in
+flight, the request the TypeScript asked next, so a case passes only if
+this engine can ask in the TypeScript's interleaving; each arm's requests,
+every request, the writes in ledger order with the ids their creates were
+minted, and the ending must match. 351 follow the TypeScript's order
+throughout. In 36, two arms race to one key's in-run gate and the other
+wins here: the arms are concurrent (no happens-before between them), and
+which reaches the gate first turns on how many microtasks each of the
+TypeScript's layers takes between two requests, which this engine does not
+reproduce. The test allows a different order only there, where another
+arm's keyed write holds the key the TypeScript's next request waits for.
 
 A suspension (run.ts `suspendFlow`) writes `{version: 1, address,
-bindingName: null, suspended: true, journal: [], scopeChain}` for the flow at
-a statement's boundary; its journal is empty: a statement this engine runs
-makes at most one call (a plugin's), and a suspension at its cap is taken
-before that call answers. The flow suspends:
+bindingName: null, suspended: true, journal, scopeChain, frames?}` for the
+flow at a statement's boundary, the journal the calls its statement had
+finished. The flow suspends:
 
 - **at its cost cap.** The engine refuses a priced plugin itself, before
   `llm.transforms.invoke`, once the run's own figures meet the cap (as
@@ -1026,16 +1042,17 @@ before that call answers. The flow suspends:
   from `capBaselineMicrodollars`); otherwise the statement fails with the
   host's message. So the call that crosses the cap is kept, and the run
   pauses at the next priced call, just before its statement, as run.ts
-  `suspendAtLimit` does. The first time, the run is marked paused
+  `suspendAtLimit` does, inside a block, a member or a callee as at the top.
+  The first time, the run is marked paused
   (`commitLimitPause`, where the host serves it) and says so on its trace
   (`RUN_PAUSED_COST_CAP`); a sink that cannot suspend is not paused, and the
   run fails with `RunCostCapExceeded`.
 - **before each statement of a paused run** (`limitPaused` in the input: a
   flow woken while its run's pause holds). A sink that cannot suspend lets
   the flow run on.
-- **at a `suspendAt` address**, once each. A sink that cannot suspend fails
-  the run (`MOVENG_RUNTIME`). An address before a call (`… .c k`) is
-  refused at admission (`suspend_at_call`).
+- **at a `suspendAt` address**, once each, before a statement or before its
+  k-th call (`… .c k`). A sink that cannot suspend fails the run
+  (`MOVENG_RUNTIME`).
 
 Whether the sink can suspend, or park a timer, is read off the input's
 `serves` (the methods the host serves, as the recorder lists them), as
@@ -1056,7 +1073,7 @@ statement runs again, from the run's spend with the cap counted afresh
   `CONCAT` of twenty event fields is twenty reads and one walk. Its literals
   are minted in the run's origin table as the walk reaches them. A walk
   waits on one read at a time, but it is an ordinary future: walks joined
-  (parallel arms, later) have their reads in flight together. A unique by
+  (parallel arms) have their reads in flight together. A unique by
   narrowing's predicate (crate::filter) awaits the comparator the same way.
 - `adapters.call` with `wire: true` carries its arguments and its answer on
   the eval wire (below): an event payload's key order (a `field_miss` lists

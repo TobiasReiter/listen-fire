@@ -445,13 +445,6 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
     let crate::admit::Admission { mut reasons, called } =
         crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
-    let admitted_input = crate::admit::Input {
-        capped: input.spend.cap_microdollars.is_some(),
-        suspend_at: &input.suspend_at,
-        limit_paused: input.limit_paused,
-        dry_run: input.dry_run,
-    };
-    reasons.extend(crate::admit::input_refusal(&root.program, &movements, entry, &admitted_input));
     if let Some(resume) = &input.resume {
         reasons.extend(crate::park::resume_refusal(&resume.state));
     }

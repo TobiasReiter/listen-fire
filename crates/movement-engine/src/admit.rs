@@ -443,28 +443,6 @@ fn walks<'p>(callees: &'p Callees<'p>, movements: &[&'p ast::MovementDeclaration
     walks
 }
 
-/// Why this engine does not run `program` with this input, or `None`.
-/// Every input it is handed it now runs: a cap met or a `suspendAt` reached
-/// inside a block's iteration, a collection op's member or a callee
-/// suspends there, joined by the fan-out's frame or resumed through its call
-/// frames, the statement's finished calls journalled; a park holding a kept
-/// walk writes the walk (`serializeDeferredWalk`).
-pub fn input_refusal(_program: &ast::Program, _movements: &[&ast::MovementDeclaration], _entry: Option<&ast::MovementDeclaration>, _input: &Input<'_>) -> Option<String> {
-    None
-}
-
-/// What of a segment's input admission reads.
-#[derive(Clone, Copy)]
-pub struct Input<'a> {
-    /// The run has a cost cap.
-    pub capped: bool,
-    pub suspend_at: &'a [String],
-    pub limit_paused: bool,
-    /// A rehearsal: a `sleep` fast-forwards.
-    pub dry_run: bool,
-}
-
-
 /// Whether a movement keeps a walk anywhere: `x = lazy …`, or a `lazy`
 /// entry in a node literal however deep. A body a construct admission
 /// refuses where it stands (a combinator's arms, a callback's, a closure's)
@@ -3051,12 +3029,6 @@ mod tests {
         refusals(program, &reachable(program, None, language_version), entry, language_version, catalog).reasons.into_iter().next()
     }
 
-    fn input_refusal(program: &ast::Program, capped: bool, suspend_at: &[String]) -> Option<String> {
-        let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
-        let input = Input { capped, suspend_at, limit_paused: false, dry_run: false };
-        super::input_refusal(program, &reachable(program, None, 3), entry_of(&declared, None, 3), &input)
-    }
-
     const PRELUDE: &str = "import { email, attio } from adapters\nimport { dealflow_inbox, acme_main } from credentials\ninbox = email(credentials: dealflow_inbox)\ncrm = attio(credentials: acme_main)\n";
 
     fn refused(body: &str) -> Option<String> {
@@ -3364,27 +3336,14 @@ mod tests {
         let wait = "movement wait(e: <inbox-[:message]->>) {\n  if e.`subject` == \"a\" {\n    await sleep(1h)\n  }\n}\n";
         assert_eq!(reasons(wait, "  wait(e: msg)"), Vec::<String>::new());
         assert_eq!(reasons(wait, "  await sleep(1h)"), Vec::<String>::new(), "an uncalled movement is walked as before");
-        // A capped run with a priced step inside a callee, or a call with a
-        // write among its arguments; a kept walk where the run can park.
-        let parsed = |helpers: &str, body: &str| movement_parser::stmt::parse_program(&program(helpers, body), 3, false).expect("parses");
-        let capped = |program: &ast::Program, input: Input<'_>| {
-            let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
-            super::input_refusal(program, &reachable(program, Some("m"), 3), entry_of(&declared, Some("m"), 3), &input)
-        };
-        let input = |capped: bool| Input { capped, suspend_at: &[], limit_paused: false, dry_run: false };
+        // A cap met inside a callee, a kept walk held across a park, in a
+        // body, a node literal or a call's node argument: each parks
+        // (Chunk 7A Task 4), so none is refused.
         let save = "movement save(n: <Note>) {\n  write crm-[:companies]-> { unique by (`name`) name: n.`title` }\n}\n";
-        let called = parsed(save, "  save(n: node { title: \"t\" })");
-        assert_eq!(capped(&called, input(true)), None, "a cap met inside a callee parks in its frames");
-        assert_eq!(capped(&called, input(false)), None);
-        let written = parsed(shout, "  r = shout(t: \"a\")\n  write crm-[:notes]-> { body: r }");
-        assert_eq!(capped(&written, input(true)), None, "a callee that spends nothing, called with values");
-        let lazy = parsed("", "  files = lazy msg-[a:attachments]->\n  await sleep(1h)");
-        assert_eq!(capped(&lazy, input(false)), None, "a kept walk parks with its head and mapping");
-        assert_eq!(capped(&lazy, Input { dry_run: true, ..input(false) }), None, "a rehearsal fast-forwards its sleep");
-        let entry = parsed("", "  n = node { title: \"t\", files: lazy msg-[a:attachments]-> }\n  await sleep(1h)");
-        assert_eq!(capped(&entry, input(false)), None, "a lazy entry in a node literal");
-        let argument = parsed(save, "  save(n: node { title: \"t\", files: lazy msg-[a:attachments]-> })\n  await sleep(1h)");
-        assert_eq!(capped(&argument, input(false)), None, "a lazy entry in a call's node argument");
+        assert_eq!(reasons(save, "  save(n: node { title: \"t\" })"), Vec::<String>::new());
+        assert_eq!(reasons("", "  files = lazy msg-[a:attachments]->\n  await sleep(1h)"), Vec::<String>::new());
+        assert_eq!(reasons("", "  n = node { title: \"t\", files: lazy msg-[a:attachments]-> }\n  await sleep(1h)"), Vec::<String>::new());
+        assert_eq!(reasons(save, "  save(n: node { title: \"t\", files: lazy msg-[a:attachments]-> })\n  await sleep(1h)"), Vec::<String>::new());
         // From version 3 a call's name bound exactly to something else (the
         // file's `crm` instance) names that, not a movement in another case.
         let shadowed = "movement CRM(t: <text>) {\n  x = 1\n}\n";
@@ -3435,29 +3394,6 @@ mod tests {
             "  n = 1\n  if n == 1 {\n    n = 2\n  }",
         ] {
             assert_eq!(refused(body).as_deref(), Some("name_rebound"), "{body}");
-        }
-    }
-
-    /// Chunk 7A Task 4: what the input makes the run do — a cap met or a
-    /// `suspendAt` reached inside a block's iteration, a member or a callee,
-    /// a park holding a kept walk — refuses nothing: each suspends where it
-    /// is and resumes through its join or its frames.
-    #[test]
-    fn admits_every_input_it_is_handed() {
-        let program = |body: &str| {
-            let source = format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
-            movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses")
-        };
-        for body in [
-            "  crm-[c:companies]-> {\n    if c.`name` != \"\" {\n      write crm-[:notes]-> { body: c.`name` }\n    }\n  }",
-            "  crm-[c:companies]-> {\n    x = match crm-[:funds]-> { unique by (`name`), name: c.`name` }\n  }",
-            "  crm-[c:companies]-> {\n    fetch_url(url: c.`name`)\n  }",
-            "  page = fetch_url(url: msg.`text`)",
-            "  files = lazy msg-[a:attachments]->\n  await sleep(1h)",
-        ] {
-            let parsed = program(body);
-            assert_eq!(input_refusal(&parsed, true, &[]), None, "{body}");
-            assert_eq!(input_refusal(&parsed, false, &["s1.i0.s0".into(), "s0.c0".into()]), None, "{body}");
         }
     }
 

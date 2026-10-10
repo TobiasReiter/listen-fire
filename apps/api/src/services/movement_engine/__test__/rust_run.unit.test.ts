@@ -414,6 +414,34 @@ describe('a whole run in the Rust engine', () => {
           'a walk a value holds as data rooted at an expression is not supported by the movement engine yet',
         );
       });
+
+      it('after a callback is minted (an effect: the host keeps its row), fails the run naming the construct', async () => {
+        const minted: unknown[] = [];
+        const c: Case = {
+          // Minted before `v` is bound: the state it captures holds no walk.
+          source: ['movement m(msg: <inbox-[:message]->>) {', '  cb = callback()', '  v = msg.`meta`', '  ERROR("${COUNT(v-[:deals]->)}")', '}'].join('\n'),
+          event: webhook({ meta: expressionRooted, subject: 'Acme' }),
+          host: () => ({
+            ...host(),
+            park: {
+              callbacks: {
+                mint: async (input) => {
+                  minted.push(input.address);
+                  return { id: 'cb_1', url: 'https://api.test/api/cb/cb_1' };
+                },
+                calls: async () => [],
+              },
+            },
+          }),
+        };
+        resetRustRunStats();
+        const rust = await runOn('rust', c);
+        expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, declined: {} });
+        expect(minted).toEqual(['s0']);
+        expect(String(runFailureCause('error' in rust ? rust.error : undefined))).toContain(
+          'a walk a value holds as data rooted at an expression is not supported by the movement engine yet',
+        );
+      });
     });
 
     it('walks on past a landing whose answer holds a shaped value it never reads', async () => {
@@ -593,13 +621,9 @@ describe('a whole run in the Rust engine', () => {
       [movement('  inbox = 1'), 'name_shadowed'],
       [movement('  x = 1\n  x = write crm-[:companies]-> { name: "a" }'), 'name_rebound'],
       [movement('  crm-[c:companies]-> {\n    x = 1\n  }\n  c = 1'), 'name_rebound'],
-      [movement('  crm-[c:companies]-> {\n    await sleep(1h)\n  }'), 'block_park'],
-      [movement('  x = await inbox-[:message]->'), 'await_not_sleep'],
       // A call whose value is not one kind on every path; a call of a name that is no function.
       [`movement pick(e: <inbox-[:message]->>) {\n  if e.\`subject\` == "a" {\n    return node { a: 1 }\n  }\n  return 1\n}\n${movement('  r = pick(e: msg)')}`, 'movement_call'],
       [movement('  x = 1\n  r = x(2)'), 'function_call'],
-      // A park inside a callee resumes through a call frame.
-      [`movement wait(e: <inbox-[:message]->>) {\n  await sleep(1h)\n}\n${movement('  wait(e: msg)')}`, 'call_park'],
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
       // A collection op that runs members at once (chunk 7A Task 3 runs them one at a time).
       [movement('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'), 'rvalue:collection'],
@@ -622,8 +646,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  x = found-[c:co WHERE c.`name` == "x"]->.`name`'), 'walk_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  if EXISTS(found-[c:co ORDER BY `name`]->) {\n    x = 1\n  }'), 'exists_extract_hop'],
       // A head over a run-built node walks one hop.
-      // A park holding a kept walk (this engine writes none).
-      [movement('  files = lazy msg-[a:files]->\n  await sleep(1h)'), 'lazy_park'],
       [`node Co { name: <text>\n  node founder { first: <text> } }\n${movement('  d = node { cos: <Co> }\n  d-[c:cos]->-[f:founder]-> {\n    x = 1\n  }')}`, 'block_multi_hop'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],

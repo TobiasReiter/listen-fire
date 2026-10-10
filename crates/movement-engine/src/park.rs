@@ -2,35 +2,30 @@
 //! written and read exactly as the TypeScript engine writes and reads it, so
 //! a run parked by either engine resumes on either.
 //!
-//! - **Park** (`sleep`): the leaf's address, `bindingName` (and
-//!   `presenceBind` for `x = await sleep(…)`), and the scope chain root
-//!   first — the file scope, the movement's, one per `if` arm descended —
-//!   each scope's own bindings in declaration order, as `serializeBinding`
-//!   writes them for the kinds this engine holds: `event`, `instance`,
-//!   `opaque`, `movement`, `value` (its JSON round trip and its trail's
-//!   origins) and `handle` (the write record itself, its type and graph).
+//! - **Park** (any await: `sleep`, `until`, a callback's landing, a
+//!   combinator; and a suspension): one state for the whole run, written in
+//!   the order serialize.ts writes it (`ParkWriter` numbers nodes and walks
+//!   across the scope chain, the frames and the journal together): the
+//!   leaf's address, `bindingName` (`presenceBind`, `until`), the scope
+//!   chain root first, then `frames` innermost last — a call's (its site,
+//!   finished calls, the callee's scope), a collection op's member, a
+//!   combinator arm's (its join, `keepArmCount`).
 //! - **Suspension** (run.ts `suspendFlow`): the flow stops just before a
 //!   statement, its state `suspended`, with a `journal` of the calls the
-//!   statement had finished — always empty here: admission refuses a capped
-//!   run where a statement could meet the cap past one of its calls
-//!   (`cost_cap_inside_call`), and a `suspendAt` before a call. A flow suspends when the run meets its cost cap (the statement
-//!   about to spend: `suspendAtLimit`, which first marks the run paused,
-//!   `commitLimitPause`, and says so on the trace), at each statement of a
-//!   run already paused (`limitPaused`), and at a `suspendAt` address. A
+//!   statement had finished. A flow suspends when the run meets its cost cap
+//!   (`suspendAtLimit`, which first marks the run paused, `commitLimitPause`),
+//!   at each statement of a run already paused (`limitPaused`), and at a
+//!   `suspendAt` address (before a statement, or before its k-th call). A
 //!   host whose sink cannot suspend (it serves no `commitSuspension`, read
 //!   off `SegmentInput::serves`) is asked nothing, and the run goes on (a
 //!   pause), fails on its cap, or fails for want of a park (`suspendAt`), as
 //!   the TypeScript does.
-//! - **Resume** (`resumeAlongAddress`): the movement's scope re-layered from
-//!   the chain's second entry, each `if` arm on the address descended with
-//!   its scope rehydrated, the leaf stepped past (or re-entered: a
-//!   suspension's operator resume), then each enclosing body finished from
-//!   the statement after its container.
+//! - **Resume** is `resume.rs` (`resumeAlongAddress`).
 //!
-//! A state holding anything else (frames, a journal with calls in it, an
-//! `until`, a binding of another kind) is not this engine's to resume:
-//! `resume_refusal` refuses it, before the run asks its host for anything,
-//! and the shim resumes it on the TypeScript engine.
+//! `resume_refusal` refuses only a state that does not read, another
+//! version, a malformed `suspended`, and the two binding kinds this engine
+//! does not rebuild (`blockMeta`, `localShape`), before the run asks its
+//! host for anything; the shim then resumes it on the TypeScript engine.
 
 use std::cell::RefCell;
 use std::rc::Rc;

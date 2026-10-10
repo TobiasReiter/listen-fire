@@ -245,11 +245,6 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     for (const [c, reason] of [
       [{ source: movement('  page = fetch_url(msg.`text`)') }, 'plugin_call_form'],
       [{ source: movement('  found = find_files(q: msg.`text`)') }, 'plugin_call:records'],
-      [{ source: movement('  page = fetch_url(url: msg.`text`)'), spend: { suspendAt: ['s0.c0'] } }, 'suspend_at_call'],
-      [
-        { source: movement('  inbox-[e:message]-> {\n    d = extract from [e.`text`] {\n      name: "a"\n    }\n  }'), spend: { costCapMicrodollars: 1000 } },
-        'cost_cap_inside_block',
-      ],
       [{ source: movement('  d = extract "careful" from [msg.`text`] {\n    name: "a"\n  }') }, 'extract_tier'],
     ] as const) {
       resetRustRunStats();

@@ -36,11 +36,13 @@ const path = require('node:path');
 // those less a margin of 2. Chunk 7A Task 3 (records held as values,
 // collection ops and the writes, links and walks over any record,
 // 2026-10-09) runs v1 1006, v2 1309 whole; the floors are those less a
-// margin of 2. A floor
+// margin of 2. Chunk 7A Task 4 (awaits, parallel and race, parks anywhere
+// and every park state resumed, 2026-10-10) runs v1 1060, v2 1363 whole;
+// the floors are those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 1004, v2: 1307 };
+const RAN_WHOLE_FLOOR = { v1: 1058, v2: 1361 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

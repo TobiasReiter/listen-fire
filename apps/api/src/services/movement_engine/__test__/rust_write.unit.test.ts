@@ -1106,17 +1106,15 @@ describe('parks in the Rust engine', () => {
 
   it('leaves to the TypeScript engine a state it does not resume, refused before it asks its host anything', async () => {
     const event = webhook({ subject: 'Acme' });
+    // A block's meta edges bound as a name: the one kind besides a body's
+    // own shape (the crate's tests) this engine does not rebuild.
     const state: ParkedScopeState = {
       version: 1,
       address: 's2.b0.s0',
       bindingName: null,
-      scopeChain: [],
-      journal: [{ index: 0, value: null, next: 1 }],
+      scopeChain: [{ bindings: {} }, { bindings: { x: { kind: 'blockMeta', edges: {} } } }],
     };
-    for (const [resume, reason] of [
-      [state, 'resume_state_journal'],
-      [{ ...state, journal: undefined, address: 's1.i0.s0' }, 'resume_state_address'],
-    ] as const) {
+    for (const [resume, reason] of [[state, 'resume_state_kind:blockMeta']] as const) {
       resetRustRunStats();
       await runOn('rust', { source: PARKS, event, resume });
       expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
@@ -1190,16 +1188,13 @@ describe('the cost cap in the Rust engine', () => {
     expect(rustRunStats.hostCalls).toMatchObject({ 'park.sink.commitLimitPause': 1, 'park.sink.commitSuspension': 1 });
   });
 
-  it('leaves to the TypeScript engine, before it asks its host anything, a capped run that could suspend inside a call or holding a kept walk', async () => {
+  it('runs a capped run that could suspend inside a call or holding a kept walk as the TypeScript engine runs it', async () => {
     const callee = ['movement save(t: <text>) {', '  write crm-[:companies]-> { unique by (`name`) name: t }', '}'].join('\n');
-    for (const [c, reason] of [
-      [{ source: `${callee}\n${['movement m(msg: <inbox-[:message]->>) {', '  save(t: msg.`subject`)', '}'].join('\n')}`, movementName: 'm', costCapMicrodollars: 1_000 }, 'cost_cap_inside_call'],
-      [{ source: ['movement m(msg: <inbox-[:message]->>) {', '  cos = lazy crm-[c:companies]->', '  write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }', '}'].join('\n'), costCapMicrodollars: 1_000 }, 'lazy_park'],
-    ] as const) {
-      resetRustRunStats();
-      await runOn('rust', { ...c, event: webhook({ subject: 'Acme' }) });
-      expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
-      expect(rustRunStats.hostCalls).toEqual({});
+    for (const c of [
+      { source: `${callee}\n${['movement m(msg: <inbox-[:message]->>) {', '  save(t: msg.`subject`)', '}'].join('\n')}`, movementName: 'm', costCapMicrodollars: 1_000 },
+      { source: ['movement m(msg: <inbox-[:message]->>) {', '  cos = lazy crm-[c:companies]->', '  write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }', '}'].join('\n'), costCapMicrodollars: 1_000 },
+    ]) {
+      await agree({ ...c, event: webhook({ subject: 'Acme' }) });
     }
   });
 

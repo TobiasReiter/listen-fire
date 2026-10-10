@@ -538,15 +538,12 @@ describe('traversal blocks in the Rust engine', () => {
     expect(written(rust)).toEqual(['co: Globex', 'late: Initech', 'co: Umbrella', 'done']);
   });
 
-  it('leaves to the TypeScript engine, before it asks its host anything, a run that could suspend inside a block', async () => {
-    for (const [c, reason] of [
-      [{ body: NOTE_PER_COMPANY('company'), costCapMicrodollars: 1_000 }, 'cost_cap_inside_block'],
-      [{ body: NOTE_PER_COMPANY('company'), suspendAt: ['s0.i1.s0'] }, 'suspend_at_inside_block'],
-    ] as const) {
-      resetRustRunStats();
-      await runOn('rust', c);
-      expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
-      expect(rustRunStats.hostCalls).toEqual({});
+  it('suspends inside a block where the TypeScript engine suspends: a capped run and a suspendAt address', async () => {
+    for (const c of [
+      { body: NOTE_PER_COMPANY('company'), costCapMicrodollars: 1_000 },
+      { body: NOTE_PER_COMPANY('company'), suspendAt: ['s0.i1.s0'] },
+    ]) {
+      await agree(c);
     }
   });
 
