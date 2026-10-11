@@ -611,6 +611,12 @@ describe('parks resumed across the engines', () => {
         return { source: RACE, resume: parkAt(p, first), settle: 's0' };
       },
     ]);
+    // The TypeScript engine's settlement is put to the dry run, by its route.
+    resetRustRunStats();
+    await runOn('ts', { source: RACE, resume: parkAt(parked.ts, first), deferRaceSettlement: true });
+    await runOn('ts', { source: RACE, resume: parkAt(parked.ts, first), settle: 's0' });
+    expect(rustRunStats.dryRun.byRoute.resume.sampled).toBe(1);
+    expect(rustRunStats.dryRun.byRoute.settle.sampled).toBe(1);
     // Settled once: the loser cancelled, the continuation run.
     for (const o of last) {
       expect(o.events.filter(([method]) => method === 'cancelSubtrees')).toHaveLength(1);
@@ -640,6 +646,13 @@ describe('parks resumed across the engines', () => {
       const { rust } = await agree({ source, resume: state, fire: { values: { note: 'yes' }, callIndex: 0 } });
       expect(bodies(rust)).toEqual(['hello: yes']);
     }
+    // The TypeScript engine's firing is put to the dry run, by its route.
+    const [state] = minted.ts.minted;
+    if (state === undefined) throw new Error('test: nothing minted');
+    resetRustRunStats();
+    await runOn('ts', { source, resume: state, fire: { values: { note: 'yes' }, callIndex: 0 } });
+    expect(rustRunStats.dryRun.byRoute.fire).toMatchObject({ sampled: 1, admitted: 1 });
+    expect(rustRunStats.dryRun.byRoute.settle.sampled).toBe(0);
   });
 
   it('suspends inside a callee past its statement’s first call: the call frame keeps that call, and the re-entry replays it', async () => {

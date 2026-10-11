@@ -45,6 +45,7 @@ import {
   rustEvalStats,
   rustRunStats,
   tallyVerdict,
+  type DryRunRoute,
 } from './rust_stats';
 import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
 
@@ -340,13 +341,13 @@ export const ENGINE_CHOICE_TS = 'movement_engine_ts';
  * counted as a fault and nothing else.
  */
 export function dryAdmitRun(segment: RustSegment, engine?: EngineProtocol): string[] | undefined {
-  return dryAdmit(segment, undefined, engine);
+  return dryAdmit(segment, undefined, engine, 'run');
 }
 
 /** `dryAdmitRun` for a parked run the TypeScript engine resumes: the
  *  resume the Rust engine would be handed (`resumeSegmentInRust`). */
 export function dryAdmitResume(segment: RustSegment<ResumeMovementInput>, engine?: EngineProtocol): string[] | undefined {
-  return dryAdmit(segment, resumptionOf(segment.input), engine);
+  return dryAdmit(segment, resumptionOf(segment.input), engine, 'resume');
 }
 
 /** `dryAdmitRun` for a deferred race the TypeScript engine settles: the
@@ -355,7 +356,7 @@ export function dryAdmitSettle(
   segment: RustSegment<SettleRaceInput & { host: RunMovementInput['host'] }>,
   engine?: EngineProtocol,
 ): string[] | undefined {
-  return dryAdmit(segment, settlementOf(segment.input), engine);
+  return dryAdmit(segment, settlementOf(segment.input), engine, 'settle');
 }
 
 /** `dryAdmitRun` for a callback's body the TypeScript engine runs: the
@@ -364,7 +365,7 @@ export function dryAdmitFire(
   segment: RustSegment<CallbackBodyInput & { host: RunMovementInput['host'] }>,
   engine?: EngineProtocol,
 ): string[] | undefined {
-  return dryAdmit(segment, firingOf(segment.input), engine);
+  return dryAdmit(segment, firingOf(segment.input), engine, 'fire');
 }
 
 /** Whether a dry run asks about one firing in this many: 1 asks about
@@ -383,6 +384,7 @@ function dryAdmit(
   { input, context }: RustSegment,
   resume: Resumption | undefined,
   engine: EngineProtocol | undefined,
+  route: DryRunRoute,
 ): string[] | undefined {
   // A rehearsal is an author trying a program, not a firing: it is not
   // demand to burn down.
@@ -399,6 +401,7 @@ function dryAdmit(
     const languageVersion = context.languageVersion;
     tallyVerdict(stats, reasons);
     tallyVerdict((stats.byVersion[String(languageVersion)] ??= emptyAdmissionTally()), reasons);
+    tallyVerdict(stats.byRoute[route], reasons);
     if (input.runId !== undefined) holdAdmissionVerdict({ runId: input.runId, languageVersion, reasons });
     return reasons;
   } catch (error) {
@@ -452,14 +455,20 @@ function admissionReasons(
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Omit<RouteContext, 'hostErrors' | 'positions' | 'wire'> & {
+  input: Omit<RouteContext, 'hostErrors' | 'positions' | 'wire' | 'checked'> & {
     /** The errors host calls failed with, by the `ref` their answers carry. */
     hostErrors?: unknown[];
     /** The segment's wire, when its input went out on it. */
     wire?: WireOut;
   },
 ): Promise<unknown> {
-  const context: RouteContext = { ...input, hostErrors: input.hostErrors ?? [], positions: new Map(), wire: input.wire ?? new WireOut({ whole: true }) };
+  const context: RouteContext = {
+    ...input,
+    hostErrors: input.hostErrors ?? [],
+    positions: new Map(),
+    wire: input.wire ?? new WireOut({ whole: true }),
+    checked: new Map(),
+  };
   // A settle queue: each request in flight, as it settles, joins the queue
   // and wakes the one waiter. An answer costs O(1) however many requests are
   // in flight (a race over every one of them per answer was O(n) each).
@@ -477,10 +486,23 @@ export async function driveEngine(
         );
       }
       if (inFlight === 0) throw new RustShimError('the Rust engine is waiting with no request in flight');
-      const next = await settled.next();
-      inFlight -= 1;
-      if ('failure' in next) throw next.failure;
-      step = engine.answer(next.id, next.answer);
+      // Every answer already settled is handed over before any request it
+      // leads to is served: the TypeScript engine runs each continuation an
+      // answer wakes before the host is asked anything further, so flows
+      // woken together ask together (crates/movement-engine/README.md,
+      // "Concurrent flows").
+      const pending: HostRequest[] = [];
+      let next: Settled | undefined = await settled.next();
+      while (next !== undefined) {
+        inFlight -= 1;
+        if ('failure' in next) throw next.failure;
+        step = engine.answer(next.id, next.answer);
+        if ('done' in step) break;
+        pending.push(...step.pending);
+        next = settled.ready();
+      }
+      if ('done' in step) return step.done;
+      step = { pending };
     }
   } catch (error) {
     // The segment is ending (a shim fault, or the engine's own throw): every
@@ -506,6 +528,18 @@ class SettleQueue {
     const wake = this.waiter;
     this.waiter = undefined;
     wake?.();
+  }
+
+  /** The next settled item when one is already waiting, without waiting. */
+  ready(): Settled | undefined {
+    if (this.head === this.items.length) return undefined;
+    const item = this.items[this.head];
+    this.head += 1;
+    if (this.head === this.items.length) {
+      this.items.length = 0;
+      this.head = 0;
+    }
+    return item;
   }
 
   async next(): Promise<Settled> {

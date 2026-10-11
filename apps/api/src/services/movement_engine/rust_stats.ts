@@ -118,20 +118,32 @@ export interface AdmissionTally {
  * - `faults`: dry runs that ended in no verdict (the run itself is never
  *   touched by one);
  * - `byVersion`: the same tally, by the language version the run is
- *   pinned to.
+ *   pinned to;
+ * - `byRoute`: the same tally, by the route the TypeScript engine ran it
+ *   by — a first firing, a resume, a race's settlement, a callback's firing.
  */
 export interface DryRunStats extends AdmissionTally {
   firings: number;
   faults: number;
   byVersion: Record<string, AdmissionTally>;
+  byRoute: Record<DryRunRoute, AdmissionTally>;
 }
+
+/** The routes a run the TypeScript engine runs comes by. */
+export type DryRunRoute = 'run' | 'resume' | 'settle' | 'fire';
 
 export function emptyAdmissionTally(): AdmissionTally {
   return { sampled: 0, admitted: 0, first: {}, all: {} };
 }
 
 function emptyDryRunStats(): DryRunStats {
-  return { firings: 0, faults: 0, ...emptyAdmissionTally(), byVersion: {} };
+  return {
+    firings: 0,
+    faults: 0,
+    ...emptyAdmissionTally(),
+    byVersion: {},
+    byRoute: { run: emptyAdmissionTally(), resume: emptyAdmissionTally(), settle: emptyAdmissionTally(), fire: emptyAdmissionTally() },
+  };
 }
 
 /** How many distinct reasons a tally keeps by name; past it, a new reason

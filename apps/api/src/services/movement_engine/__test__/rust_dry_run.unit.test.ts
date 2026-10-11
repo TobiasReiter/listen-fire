@@ -175,7 +175,7 @@ describe('the admission dry run, through the real artifact', () => {
     expect(refused.asked).toEqual([]);
     expect(admitted.asked).toEqual([]);
     const tally = { sampled: 2, admitted: 1, first: { expression_closure: 1 }, all: { expression_closure: 1 } };
-    expect(rustRunStats.dryRun).toEqual({ firings: 2, faults: 0, ...tally, byVersion: { '3': tally } });
+    expect(rustRunStats.dryRun).toEqual({ firings: 2, faults: 0, ...tally, byVersion: { '3': tally }, byRoute: { run: tally, resume: { sampled: 0, admitted: 0, first: {}, all: {} }, settle: { sampled: 0, admitted: 0, first: {}, all: {} }, fire: { sampled: 0, admitted: 0, first: {}, all: {} } } });
     expect(admissionVerdicts).toEqual([
       { runId: 'run-refused', languageVersion: 3, reasons: ['expression_closure'] },
       { runId: 'run-admitted', languageVersion: 3, reasons: [] },
@@ -271,7 +271,7 @@ describe('a run the TypeScript engine runs', () => {
   it('is never asked about under MOVEMENT_ENGINE=rust: an admitted run moves no dry run counter', async () => {
     await underEngine('rust', () => runMovement(inputOf(ADMITTED, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
     expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1 });
-    expect(rustRunStats.dryRun).toEqual({ firings: 0, sampled: 0, admitted: 0, faults: 0, first: {}, all: {}, byVersion: {} });
+    expect(rustRunStats.dryRun).toEqual({ firings: 0, sampled: 0, admitted: 0, faults: 0, first: {}, all: {}, byVersion: {}, byRoute: { run: { sampled: 0, admitted: 0, first: {}, all: {} }, resume: { sampled: 0, admitted: 0, first: {}, all: {} }, settle: { sampled: 0, admitted: 0, first: {}, all: {} }, fire: { sampled: 0, admitted: 0, first: {}, all: {} } } });
     expect(admissionVerdicts).toEqual([]);
   });
 
