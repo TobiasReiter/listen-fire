@@ -25,12 +25,18 @@ const crmSchema: InstanceSchema = {
       properties: { name: 'text', logo: 'file' },
       edges: { notes: { target: 'note', writable: true } },
     },
-    note: { properties: { title: 'text', company: 'json', upload: 'file' }, edges: {} },
+    note: {
+      properties: { title: 'text', company: 'json', upload: 'file', uploads: { kind: 'list', of: 'file' }, pages: 'number' },
+      edges: {},
+    },
   },
   collections: { companies: { target: 'company' }, notes: { target: 'note' } },
   writableRoots: {
     company: { fields: { name: 'text', logo: 'file' }, resultShape: { externalId: 'text', name: 'text' } },
-    note: { fields: { title: 'text', company: 'json', upload: 'file' }, resultShape: { externalId: 'text' } },
+    note: {
+      fields: { title: 'text', company: 'json', upload: 'file', uploads: { kind: 'list', of: 'file' }, pages: 'number' },
+      resultShape: { externalId: 'text' },
+    },
   },
 };
 
@@ -65,6 +71,13 @@ const catalog = mockCatalog({
       output: { kind: 'value', type: 'text' },
     },
     relay: { args: ['data'], requiredArgs: ['data'], effects: { ai: true }, output: { kind: 'value', type: 'text' } },
+    tag: {
+      args: ['label'],
+      argTypes: { label: 'text' },
+      requiredArgs: ['label'],
+      effects: { ai: true },
+      output: { kind: 'value', type: 'text' },
+    },
     ocr: {
       args: ['doc'],
       argTypes: { doc: 'file' },
@@ -78,7 +91,7 @@ const catalog = mockCatalog({
 const PRELUDE = [
   'import { attio, ledger } from adapters',
   'import { crm_cred, ledger_cred } from credentials',
-  'import { summarise, relay, ocr } from plugins',
+  'import { summarise, relay, tag, ocr } from plugins',
   '',
   'crm = attio(credentials: crm_cred)',
   'l = ledger(credentials: ledger_cred)',
@@ -113,8 +126,18 @@ describe.each(VERSIONS)('under language version %i, a file inside a field\'s val
     refused(note('f'), "'company' on crm.note is json, and this is file — a file, not a value.");
   });
 
-  it('straight into a text field — a file goes only to a field that holds files', () => {
-    refused(['  write crm-[:notes]-> { title: f }'], "'title' on crm.note is text, and this is file — a file, not a value.");
+  it('straight into a text field, with its text — present — offered in its place', () => {
+    refused(['  write crm-[:notes]-> { title: f }'], "'title' on crm.note is text, and this is file — a file, not a value. A file goes only into a field that holds files; put its text in its place ('title: COALESCE(READ(f), \"\")').");
+  });
+
+  it('the offered text, in its place, is written', () => {
+    expect(errorsUnder(version, ['  write crm-[:notes]-> { title: COALESCE(READ(f), "") }'])).toEqual([]);
+  });
+
+  it('into a number field: what the expression produces, as for any mismatch', () => {
+    const errors = errorsUnder(version, ['  write crm-[:notes]-> { title: "hello", pages: f }']);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    expect(errors[0]!.message).toBe("'pages' on crm.note is number, but this expression produces file");
   });
 
   it('under a map key, with its text offered in its place', () => {
@@ -172,6 +195,68 @@ describe.each(VERSIONS)('under language version %i, a file inside a field\'s val
 
   it('its text in its place is a value, and is written', () => {
     expect(errorsUnder(version, note('{ a: READ(f) }'))).toEqual([]);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, a file field takes a file and never a record', version => {
+  // A target takes its own kind of engine object only: a file in one arm must
+  // not hide a record in the other.
+  const ORG = '  org = write crm-[:companies]-> { name: "Acme Inc." }';
+  const refusedRecord = (body: string[], where: string): void => {
+    const errors = errorsUnder(version, [ORG, ...body]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain('a record, not a value');
+  };
+
+  it('a record in the ELSE arm, a file in the THEN', () => {
+    refusedRecord(['  write crm-[:notes]-> { title: "hello", upload: IF 1 > 0 THEN f ELSE org END }'], "'upload' on crm.note is file, and this may be ");
+  });
+
+  it('a record in the THEN arm, a file in the ELSE', () => {
+    refusedRecord(['  write crm-[:notes]-> { title: "hello", upload: IF 1 > 0 THEN org ELSE f END }'], "'upload' on crm.note is file, and this may be ");
+  });
+
+  it('lists of each, one per arm', () => {
+    refusedRecord(['  write crm-[:notes]-> { title: "hello", uploads: IF 1 > 0 THEN [f] ELSE [org] END }'], "and 'uploads[0]' may be ");
+  });
+
+  it('a record as a list member, with the path', () => {
+    refusedRecord(['  write crm-[:notes]-> { title: "hello", uploads: [org] }'], "and 'uploads[0]' is ");
+  });
+
+  it('spreads of a list of files and a list of records', () => {
+    // From version 3 the mixed list is refused in its own right as well.
+    const errors = errorsUnder(version, [ORG, '  fl = [f]', '  ol = [org]', '  write crm-[:notes]-> { title: "hello", uploads: [...fl, ...ol] }']);
+    expect(errors.map(d => d.code)).toEqual(version >= 3 ? ['MOV_LIST_MIXED', 'MOV_WRITE_FIELD_TYPE'] : ['MOV_WRITE_FIELD_TYPE']);
+    const field = errors.find(d => d.code === 'MOV_WRITE_FIELD_TYPE')!;
+    expect(field.message).toContain("and 'uploads[…]' is ");
+    expect(field.message).toContain('a record, not a value');
+  });
+
+  it('a list of files, spread, is still files', () => {
+    expect(errorsUnder(version, ['  fl = [f]', '  write crm-[:notes]-> { title: "hello", uploads: [...fl, f] }'])).toEqual([]);
+  });
+});
+
+describe('a spread of a file is refused once, for what it is', () => {
+  it.each(VERSIONS.filter(v => v >= 2))('under language version %i', version => {
+    expect(errorsUnder(version, note('{ ...f }')).map(d => d.code)).toEqual(['MOV_MAP_SPREAD_NOT_KEYED']);
+  });
+});
+
+describe.each(VERSIONS)('KNOWN GAP: under language version %i, a file the field rule does not reach', version => {
+  // Accepted on main and here; follow-ups. A plugin argument typed other than
+  // structured data is held to no rule for a file (a text one is handed the
+  // file's descriptor; a file one, a dict holding the file), and a file joined
+  // into a text renders as "[object Object]".
+  it.each([
+    ['a text-typed plugin argument, the file itself', '  s = tag(label: f)'],
+    ['a text-typed plugin argument, a dict holding it', '  s = tag(label: { a: f })'],
+    ['a file-typed plugin argument, a dict holding it', '  s = ocr(doc: { a: f })'],
+    ['a file joined into a text', '  write crm-[:notes]-> { title: "x${f}" }'],
+  ])('%s: accepted today', (_label, use) => {
+    expect(errorsUnder(version, [use])).toEqual([]);
   });
 });
 

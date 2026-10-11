@@ -2519,7 +2519,7 @@ export function fieldTypeCompatible(value: FieldType, target: FieldType): boolea
   // takes none of it. Asked of the value as written, ahead of widening: a
   // tuple whose slots disagree widens to a list nobody can type, which says
   // nothing about the record in one slot.
-  if (handleWithin(value) !== undefined && handleWithin(target) === undefined) return false;
+  if (handleRefusedBy(value, target) !== undefined) return false;
   const written = widenTuplesBy(value, 'shared');
   if (written === undefined) return true;
   // Absence is a require-present concern (checked separately at the write site),
@@ -2678,6 +2678,50 @@ export interface HeldHandle {
 
 const MEMBER: HeldStep = { kind: 'member' };
 
+/** Which engine object a held one is. */
+export type HandleKind = 'record' | 'file';
+
+export function handleKind(held: HeldHandle): HandleKind {
+  return held.handle === 'file' ? 'file' : 'record';
+}
+
+/**
+ * Where a walk for a held engine object stands: the steps taken from the
+ * value so far, and the kinds the TARGET takes, which the walk passes over —
+ * a file field takes a file, never a record, so a file in one arm of a
+ * conditional must not hide a record in the other.
+ */
+export interface HeldWalk {
+  steps: HeldStep[];
+  accepts: ReadonlySet<HandleKind>;
+}
+
+const NOTHING_ACCEPTED: ReadonlySet<HandleKind> = new Set();
+
+/** A walk from the value itself, for a target that takes these kinds. */
+export function heldWalk(accepts: ReadonlySet<HandleKind> = NOTHING_ACCEPTED): HeldWalk {
+  return { steps: [], accepts };
+}
+
+function into(walk: HeldWalk, step: HeldStep): HeldWalk {
+  return { ...walk, steps: [...walk.steps, step] };
+}
+
+/** The kinds of engine object a target type takes — those it holds anywhere,
+ *  asked of the one walk: what a walk that passes over files still finds is a
+ *  record, and the other way about. */
+export function handleKindsTaken(target: FieldType | undefined): ReadonlySet<HandleKind> {
+  const kinds = new Set<HandleKind>();
+  if (handleWithin(target, heldWalk(new Set(['file']))) !== undefined) kinds.add('record');
+  if (handleWithin(target, heldWalk(new Set(['record']))) !== undefined) kinds.add('file');
+  return kinds;
+}
+
+/** The first engine object `value` holds that `target` does not take. */
+export function handleRefusedBy(value: FieldType | undefined, target: FieldType | undefined): HeldHandle | undefined {
+  return handleWithin(value, heldWalk(handleKindsTaken(target)));
+}
+
 function keyStep(key: string): HeldStep {
   return { kind: 'key', key };
 }
@@ -2707,27 +2751,27 @@ export function spellHeldSteps(steps: readonly HeldStep[]): string {
  * is data, so a value holding one anywhere is not data either: `json` is what
  * serialises, and a handle does not, however deep it sits.
  */
-export function handleWithin(type: FieldType | undefined, steps: HeldStep[] = []): HeldHandle | undefined {
+export function handleWithin(type: FieldType | undefined, walk: HeldWalk = heldWalk()): HeldHandle | undefined {
   if (type === undefined) return undefined;
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
     case 'record':
-      return { steps, handle: variant, may: false };
+      return walk.accepts.has('record') ? undefined : { steps: walk.steps, handle: variant, may: false };
     case 'file':
-      return { steps, handle: 'file', may: false };
+      return walk.accepts.has('file') ? undefined : { steps: walk.steps, handle: 'file', may: false };
     case 'list':
     case 'tuple':
-      return handleAmongMembers(variant, steps, index => ({ kind: 'slot', index }));
+      return handleAmongMembers(variant, walk, index => ({ kind: 'slot', index }));
     case 'dict': {
       for (const [key, value] of Object.entries(variant.shape ?? {})) {
-        const held = handleWithin(value ?? undefined, [...steps, keyStep(key)]);
+        const held = handleWithin(value ?? undefined, into(walk, keyStep(key)));
         if (held !== undefined) return held;
       }
-      return handleWithin(variant.of, [...steps, MEMBER]);
+      return handleWithin(variant.of, into(walk, MEMBER));
     }
     case 'union': {
       for (const member of variant.of) {
-        const held = handleWithin(member, steps);
+        const held = handleWithin(member, walk);
         if (held !== undefined) return { ...held, may: true };
       }
       return undefined;
@@ -2749,29 +2793,29 @@ export function handleWithin(type: FieldType | undefined, steps: HeldStep[] = []
 
 /**
  * The first engine object among a collection's MEMBERS — a list's element, a tuple's
- * slots and run — each member at `[...steps, stepFor(slot)]`. A spread into a
+ * slots and run — each member one `stepFor(slot)` further into the walk. A spread into a
  * list literal splices members, so it asks with every slot unnumbered.
  */
 export function handleAmongMembers(
   type: FieldType | undefined,
-  steps: HeldStep[],
+  walk: HeldWalk,
   stepFor: (slot: number) => HeldStep,
 ): HeldHandle | undefined {
   if (type === undefined) return undefined;
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
     case 'list':
-      return handleWithin(variant.of, [...steps, MEMBER]);
+      return handleWithin(variant.of, into(walk, MEMBER));
     case 'tuple': {
       for (const [index, slot] of variant.of.entries()) {
-        const held = handleWithin(slot ?? undefined, [...steps, stepFor(index)]);
+        const held = handleWithin(slot ?? undefined, into(walk, stepFor(index)));
         if (held !== undefined) return held;
       }
-      return handleWithin(variant.rest?.of ?? undefined, [...steps, MEMBER]);
+      return handleWithin(variant.rest?.of ?? undefined, into(walk, MEMBER));
     }
     case 'union': {
       for (const member of variant.of) {
-        const held = handleAmongMembers(member, steps, stepFor);
+        const held = handleAmongMembers(member, walk, stepFor);
         if (held !== undefined) return { ...held, may: true };
       }
       return undefined;
@@ -2799,21 +2843,21 @@ export function handleAmongMembers(
  * under their own names (values, so spreading a record is legal), a map's
  * keys under theirs — and, for a union, whichever member it turns out to be.
  */
-export function handleSpreadOf(type: FieldType | undefined, steps: HeldStep[]): HeldHandle | undefined {
+export function handleSpreadOf(type: FieldType | undefined, walk: HeldWalk): HeldHandle | undefined {
   if (type === undefined) return undefined;
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
     case 'record': {
       if (variant.position === undefined) return undefined;
       for (const [field, fieldType] of Object.entries(recordFieldTypes(variant.position) ?? {})) {
-        const held = handleWithin(fieldType ?? undefined, [...steps, keyStep(field)]);
+        const held = handleWithin(fieldType ?? undefined, into(walk, keyStep(field)));
         if (held !== undefined) return held;
       }
       return undefined;
     }
     case 'union': {
       for (const member of variant.of) {
-        const held = handleSpreadOf(member, steps);
+        const held = handleSpreadOf(member, walk);
         if (held !== undefined) return { ...held, may: true };
       }
       return undefined;
@@ -2826,12 +2870,15 @@ export function handleSpreadOf(type: FieldType | undefined, steps: HeldStep[]): 
     case 'boolean':
     case 'date':
     case 'datetime':
-    case 'file':
     case 'json':
     case 'absent':
     case 'enum':
     case 'maybeAbsent':
-      return handleWithin(type, steps);
+      return handleWithin(type, walk);
+    // A spread of a file copies no keys at all — the spread is refused for
+    // that (MOV_MAP_SPREAD_NOT_KEYED); the map built holds no file.
+    case 'file':
+      return undefined;
     default:
       return neverAsAny(variant);
   }
@@ -3016,7 +3063,7 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
   if (fieldTypeEquals(source, target)) return true;
   // A record or a file held anywhere inside a value, where the target holds
   // none — the write rule's own (`fieldTypeCompatible`), asked before a tuple widens.
-  if (handleWithin(source) !== undefined && handleWithin(target) === undefined) return false;
+  if (handleRefusedBy(source, target) !== undefined) return false;
   // TypeScript's union rules: a union reads as X when every member it may be
   // does, and X reads as a union when it reads as some member.
   if (isUnionType(source)) return source.of.every(member => fieldAssignable(member, target));
@@ -4297,13 +4344,13 @@ export class ExpressionTyping {
    * record copies its FIELDS, which are values. Asked after `infer` walked
    * the expression.
    */
-  handleHeldBy(expr: Expression, steps: HeldStep[] = []): HeldHandle | undefined {
+  handleHeldBy(expr: Expression, walk: HeldWalk = heldWalk()): HeldHandle | undefined {
     switch (expr.type) {
       case 'object':
         for (const member of expr.entries) {
           const held = isObjectSpread(member)
-            ? this.handleSpreadBy(member.expression, steps)
-            : this.handleHeldBy(member.value, [...steps, keyStep(member.key)]);
+            ? this.handleSpreadBy(member.expression, walk)
+            : this.handleHeldBy(member.value, into(walk, keyStep(member.key)));
           if (held !== undefined) return held;
         }
         return undefined;
@@ -4314,33 +4361,33 @@ export class ExpressionTyping {
         for (const [index, element] of expr.elements.entries()) {
           if (element.type === 'spread') {
             numbered = false;
-            const held = handleAmongMembers(this.exactTypes.get(element.expression), steps, () => MEMBER);
+            const held = handleAmongMembers(this.exactTypes.get(element.expression), walk, () => MEMBER);
             if (held !== undefined) return held;
             continue;
           }
-          const held = this.handleHeldBy(element, [...steps, numbered ? { kind: 'slot', index } : MEMBER]);
+          const held = this.handleHeldBy(element, into(walk, numbered ? { kind: 'slot', index } : MEMBER));
           if (held !== undefined) return held;
         }
         return undefined;
       }
       case 'conditional': {
-        const held = this.handleHeldBy(expr.then, steps) ?? this.handleHeldBy(expr.else, steps);
+        const held = this.handleHeldBy(expr.then, walk) ?? this.handleHeldBy(expr.else, walk);
         return held !== undefined ? { ...held, may: true } : undefined;
       }
       default:
-        return handleWithin(this.exactTypes.get(expr), steps);
+        return handleWithin(this.exactTypes.get(expr), walk);
     }
   }
 
   /** What `...x` copies into a map literal, for `handleHeldBy`: a record's
    *  fields under their own names, or a map's keys under theirs — whichever
    *  arm of a conditional it turns out to be. */
-  private handleSpreadBy(expr: Expression, steps: HeldStep[]): HeldHandle | undefined {
+  private handleSpreadBy(expr: Expression, walk: HeldWalk): HeldHandle | undefined {
     if (expr.type === 'conditional') {
-      const held = this.handleSpreadBy(expr.then, steps) ?? this.handleSpreadBy(expr.else, steps);
+      const held = this.handleSpreadBy(expr.then, walk) ?? this.handleSpreadBy(expr.else, walk);
       return held !== undefined ? { ...held, may: true } : undefined;
     }
-    return handleSpreadOf(this.exactTypes.get(expr), steps);
+    return handleSpreadOf(this.exactTypes.get(expr), walk);
   }
 
   private typeExactAt(expr: Expression, position: PositionTypeRef | undefined): FieldType | undefined {
