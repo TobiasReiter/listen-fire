@@ -20,11 +20,8 @@
 import {
   applyStdlib,
   declaredTypesIn,
-  inheritDeclaration,
-  inheritSchema,
   languageVersionDiagnostic,
   schemaSurface,
-  shapeToSchema,
   stdlibFunctionById,
   surfaceMisfit,
   type CatalogSnapshot,
@@ -42,6 +39,7 @@ import { logger } from '../logger';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
 import { hasCapability, isModelName } from '../../lib/models/registry';
+import { foldedShape } from './declared_shape';
 import { EFFORTS, type Effort, type TierModel } from './ai_tiers';
 import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
@@ -81,6 +79,10 @@ export interface RouteContext {
    *  answer) by the id the wire gave it, so a request naming one hands the
    *  host that very object, as the TypeScript engine does. */
   wire: WireOut;
+  /** The programs `check.compatible` checked this segment, by source and
+   *  pin: the segment's own catalog is what they were checked against, so
+   *  nothing a check settled reaches another run, or another tenant. */
+  checked: Map<string, Program>;
 }
 
 type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
@@ -143,14 +145,12 @@ const ROUTES: Record<string, Route> = {
   async 'check.compatible'(request, context) {
     const languageVersion = request.languageVersion;
     if (typeof languageVersion !== 'number') throw new RustShimError('check.compatible languageVersion must be a number');
-    const program = checkedProgram(string(request.source, 'check.compatible source'), context.catalog, languageVersion);
+    const program = checkedProgram(context, string(request.source, 'check.compatible source'), languageVersion);
     const declaration = string(request.declaration, 'check.compatible declaration');
     const recordType = string(request.recordType, 'check.compatible recordType');
     const schema = request.schema;
-    if (typeof schema !== 'object' || schema === null || typeof Reflect.get(schema, 'positions') !== 'object') {
-      throw new RustShimError('check.compatible schema is an instance schema');
-    }
-    const supplied = schemaSurface(schema as InstanceSchema, recordType);
+    if (!isInstanceSchemaShaped(schema)) throw new RustShimError('check.compatible schema is an instance schema');
+    const supplied = schemaSurface(schema, recordType);
     if (supplied === undefined) return { undescribed: true };
     const required = declaredSchema(program, declaration);
     return { fits: surfaceMisfit(supplied, { schema: required.schema, position: required.declaration.name }) === undefined };
@@ -164,7 +164,6 @@ const ROUTES: Record<string, Route> = {
     const constructionArgs = optionalStringRecord(request.constructionArgs, 'adapters.resolve constructionArgs');
     if (request.dryRun !== undefined && request.dryRun !== true) throw new RustShimError('adapters.resolve dryRun is true or absent');
     return host.adapters.resolve({
-      segmentId: segmentOf(request),
       // As the dict holds it (absent where it holds none): the host keys its
       // registry by it, as TypeScript's in-process resolution does.
       adapterType: request.adapterType,
@@ -172,6 +171,7 @@ const ROUTES: Record<string, Route> = {
       ...(constructionArgs !== undefined ? { constructionArgs } : {}),
       role,
       ...(request.dryRun === true ? { dryRun: true } : {}),
+      segmentId: segmentOf(request),
     });
   },
   /** `{result}` or `{error}`, as data. A host error is held here as the very
@@ -211,12 +211,12 @@ const ROUTES: Record<string, Route> = {
     const languageVersion = request.languageVersion;
     if (typeof languageVersion !== 'number') throw new RustShimError('llm.arbitrateEntities languageVersion is a number');
     const answer = await host.llm.arbitrateEntities({
-      segmentId: segmentOf(request),
       asserted,
       candidates,
       recordType: string(request.recordType, 'llm.arbitrateEntities recordType'),
       constraints,
       languageVersion,
+      segmentId: segmentOf(request),
       budget: budgetOf(request.budget),
     });
     // Charged to the run's account as the answer passes, so what the host
@@ -243,13 +243,13 @@ const ROUTES: Record<string, Route> = {
       throw new RustShimError('llm.client.call maxTokens is an integer');
     }
     const answer = await host.llm.client.call({
-      segmentId: segmentOf(request),
       system: string(request.system, 'llm.client.call system'),
       userMessage: string(request.userMessage, 'llm.client.call userMessage'),
       label: string(request.label, 'llm.client.call label'),
       model: extractionModel(request.model),
       ...(effort !== undefined ? { effort } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
+      segmentId: segmentOf(request),
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
@@ -291,10 +291,10 @@ const ROUTES: Record<string, Route> = {
   async 'llm.transforms.invoke'(request, { host, context, wire }) {
     if (request.wire !== true) throw new RustShimError('llm.transforms.invoke carries its values on the eval wire');
     const answer = await host.llm.transforms.invoke({
-      segmentId: segmentOf(request),
       plugin: string(request.plugin, 'llm.transforms.invoke plugin'),
       config: wiredRecord(wire, request.config, 'llm.transforms.invoke config'),
       extractedContext: wiredRecord(wire, request.extractedContext, 'llm.transforms.invoke extractedContext'),
+      segmentId: segmentOf(request),
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
@@ -305,7 +305,7 @@ const ROUTES: Record<string, Route> = {
     if (request.wire !== true) throw new RustShimError('files.resolveFileText carries its file on the eval wire');
     const file = wire.read(request.file);
     if (!isFileRef(file)) throw new RustShimError('files.resolveFileText file is a FileRef');
-    const answer = await host.files.resolveFileText({ segmentId: segmentOf(request), file, budget: budgetOf(request.budget) });
+    const answer = await host.files.resolveFileText({ file, segmentId: segmentOf(request), budget: budgetOf(request.budget) });
     context.ledger.charge(answer.cost);
     return new Plain(wired(wire, answer, 'files.resolveFileText', ['text', 'rawTextId', 'detail']));
   },
@@ -334,7 +334,7 @@ const ROUTES: Record<string, Route> = {
   async 'files.render'(request, { host, wire }) {
     const type = request.type;
     if (type !== 'pdf' && type !== 'text') throw new RustShimError('files.render type is "pdf" or "text"');
-    const ref = await host.files.render({ segmentId: segmentOf(request), content: string(request.content, 'files.render content'), type });
+    const ref = await host.files.render({ content: string(request.content, 'files.render content'), type, segmentId: segmentOf(request) });
     const value = wire.value(ref);
     if (value === REFUSED) throw new RustShimError('files.render answered a descriptor the eval wire cannot carry as itself');
     return new Plain(value);
@@ -360,11 +360,11 @@ const ROUTES: Record<string, Route> = {
     if (sink?.commitTimerPark === undefined) throw notServed('park.sink.commitTimerPark');
     if (request.wire !== true) throw new RustShimError('park.sink.commitTimerPark carries its state on the eval wire');
     await sink.commitTimerPark({
-      segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitTimerPark address'),
       // On the eval wire: the state's objects in the order the engine wrote them.
       state: wire.read(request.state),
       wakeAt: instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt'),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },
@@ -375,9 +375,9 @@ const ROUTES: Record<string, Route> = {
     if (sink?.commitSuspension === undefined) throw notServed('park.sink.commitSuspension');
     if (request.wire !== true) throw new RustShimError('park.sink.commitSuspension carries its state on the eval wire');
     await sink.commitSuspension({
-      segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitSuspension address'),
       state: wire.read(request.state),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },
@@ -404,11 +404,11 @@ const ROUTES: Record<string, Route> = {
     if (sink?.commitAwaitPark === undefined) throw notServed('park.sink.commitAwaitPark');
     if (request.wire !== true) throw new RustShimError('park.sink.commitAwaitPark carries its state on the eval wire');
     await sink.commitAwaitPark({
-      segmentId: segmentOf(request),
       address: string(request.address, 'park.sink.commitAwaitPark address'),
       state: wire.read(request.state),
       adapterType: string(request.adapterType, 'park.sink.commitAwaitPark adapterType'),
       correlationKey: string(request.correlationKey, 'park.sink.commitAwaitPark correlationKey'),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },
@@ -417,9 +417,9 @@ const ROUTES: Record<string, Route> = {
     const sink = host.park.sink;
     if (sink?.recordJoin === undefined) throw notServed('park.sink.recordJoin');
     await sink.recordJoin({
-      segmentId: segmentOf(request),
       frameAddress: string(request.frameAddress, 'park.sink.recordJoin frameAddress'),
       parkedChildren: count(request.parkedChildren, 'park.sink.recordJoin parkedChildren'),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },
@@ -431,11 +431,11 @@ const ROUTES: Record<string, Route> = {
     const branchIndex = request.branchIndex;
     if (typeof branchIndex !== 'number' || !Number.isInteger(branchIndex)) throw new RustShimError('park.sink.persistBranchExport branchIndex is an integer');
     await sink.persistBranchExport({
-      segmentId: segmentOf(request),
       frameAddress: string(request.frameAddress, 'park.sink.persistBranchExport frameAddress'),
       branchAddress: string(request.branchAddress, 'park.sink.persistBranchExport branchAddress'),
       branchIndex,
       exports: wire.read(request.exports),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },
@@ -444,10 +444,10 @@ const ROUTES: Record<string, Route> = {
     const sink = host.park.sink;
     if (sink?.decrementJoin === undefined) throw notServed('park.sink.decrementJoin');
     const { closed } = await sink.decrementJoin({
-      segmentId: segmentOf(request),
       frameAddress: string(request.frameAddress, 'park.sink.decrementJoin frameAddress'),
       branchAddress: string(request.branchAddress, 'park.sink.decrementJoin branchAddress'),
       leafAddress: string(request.leafAddress, 'park.sink.decrementJoin leafAddress'),
+      segmentId: segmentOf(request),
     });
     return { closed: closed === true };
   },
@@ -457,8 +457,8 @@ const ROUTES: Record<string, Route> = {
     const sink = host.park.sink;
     if (sink?.collectBranchExports === undefined) throw notServed('park.sink.collectBranchExports');
     const rows = await sink.collectBranchExports({
-      segmentId: segmentOf(request),
       frameAddress: string(request.frameAddress, 'park.sink.collectBranchExports frameAddress'),
+      segmentId: segmentOf(request),
     });
     const value = wire.value(rows);
     if (value === REFUSED) throw new RustShimError('park.sink.collectBranchExports answered exports the eval wire cannot carry as themselves');
@@ -474,18 +474,18 @@ const ROUTES: Record<string, Route> = {
     }
     const excludeLeaf = optionalString(request.excludeLeaf, 'park.sink.cancelSubtrees excludeLeaf');
     await sink.cancelSubtrees({
-      segmentId: segmentOf(request),
       subtreeAddresses: subtrees,
       ...(excludeLeaf !== undefined ? { excludeLeaf } : {}),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },
   /** "Resume whatever is parked on this key." */
   async 'park.wake'(request, { host }) {
     await host.park.wake({
-      segmentId: segmentOf(request),
       adapterType: string(request.adapterType, 'park.wake adapterType'),
       correlationKey: string(request.correlationKey, 'park.wake correlationKey'),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },
@@ -502,12 +502,12 @@ const ROUTES: Record<string, Route> = {
     const state = wire.read(request.state);
     if (!isParkedState(state)) throw new RustShimError('park.callbacks.mint state is a parked state');
     return callbacks.mint({
-      segmentId: segmentOf(request),
       address: string(request.address, 'park.callbacks.mint address'),
       params,
       state,
       singleUse: request.singleUse,
       ...(expiresAt !== undefined ? { expiresAt } : {}),
+      segmentId: segmentOf(request),
     });
   },
   /** A callback's live call ledger, as data on the eval wire. */
@@ -515,8 +515,8 @@ const ROUTES: Record<string, Route> = {
     const callbacks = host.park.callbacks;
     if (callbacks === undefined) throw notServed('park.callbacks.calls');
     const calls = await callbacks.calls({
-      segmentId: segmentOf(request),
       callbackId: string(request.callbackId, 'park.callbacks.calls callbackId'),
+      segmentId: segmentOf(request),
     });
     const value = wire.value(calls);
     if (value === REFUSED) throw new RustShimError('park.callbacks.calls answered calls the eval wire cannot carry as themselves');
@@ -611,13 +611,26 @@ export function shimRoutePaths(): string[] {
 
 /** The segment a forwarded request names (`serve` has held it to the one
  *  the run host opened). */
-/** The last program `check.compatible` checked: one run asks about one. */
-let lastChecked: { key: string; program: Program } | undefined;
-
-function checkedProgram(source: string, catalog: CatalogSnapshot, languageVersion: number): Program {
+/** The program `check.compatible` asks about, checked once per segment
+ *  against the segment's own catalog (`RouteContext.checked`). */
+export function checkedProgram(context: Pick<RouteContext, 'catalog' | 'checked'>, source: string, languageVersion: number): Program {
   const key = JSON.stringify([source, languageVersion]);
-  if (lastChecked?.key !== key) lastChecked = { key, program: checkPinned({ source, catalog, languageVersion }).program };
-  return lastChecked.program;
+  let program = context.checked.get(key);
+  if (program === undefined) {
+    program = checkPinned({ source, catalog: context.catalog, languageVersion }).program;
+    context.checked.set(key, program);
+  }
+  return program;
+}
+
+/** An instance schema as the engine hands one back. It is the schema the
+ *  engine read off this segment's own catalog snapshot (the record type's
+ *  instance), so the shim holds it to the shape `schemaSurface` reads — its
+ *  positions and collections maps — rather than to every member. */
+function isInstanceSchemaShaped(value: unknown): value is InstanceSchema {
+  if (typeof value !== 'object' || value === null) return false;
+  const isMap = (member: unknown) => typeof member === 'object' && member !== null && !Array.isArray(member);
+  return isMap(Reflect.get(value, 'positions')) && isMap(Reflect.get(value, 'collections'));
 }
 
 /** A file's node declaration as the tree it stands for, every `extends`
@@ -632,18 +645,7 @@ function declaredSchema(program: Program, name: string): { declaration: ShapeDec
   }
   if (chain.length === 0) throw new RustShimError(`check.compatible: '${name}' is not a node declaration of the file`);
   const types = declaredTypesIn(program);
-  let resolved: { declaration: ShapeDeclaration; schema: InstanceSchema } | undefined;
-  for (const link of chain.reverse()) {
-    const own = shapeToSchema(link, (type) => types.get(type));
-    resolved =
-      resolved === undefined
-        ? { declaration: link, schema: own }
-        : {
-            declaration: inheritDeclaration(link, resolved.declaration),
-            schema: inheritSchema(own, link.name, { name: resolved.declaration.name, schema: resolved.schema }),
-          };
-  }
-  return resolved!;
+  return foldedShape(chain.map((declaration) => ({ declaration, types: (type: string) => types.get(type) })));
 }
 
 function segmentOf(request: Record<string, unknown>): string {

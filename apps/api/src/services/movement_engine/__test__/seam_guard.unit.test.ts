@@ -73,6 +73,7 @@ const PURE_FILES = [
   'ai_tiers.ts',
   'builtins.ts',
   'call_depth.ts',
+  'declared_shape.ts',
   'effect_locks.ts',
   'errors.ts',
   'expression.ts',

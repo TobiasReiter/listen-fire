@@ -115,9 +115,6 @@ import {
   schemaSurface,
   declaredTypesIn,
   expandWriteSpreads,
-  inheritDeclaration,
-  inheritSchema,
-  shapeToSchema,
   surfaceMisfit,
   readCall,
   resolveCallee,
@@ -209,6 +206,7 @@ import type {
   WriteResult,
 } from '../translation_graph/adapter';
 import { fileHandle, updateRecordSucceeded } from '../translation_graph/adapter';
+import { foldedShape } from './declared_shape';
 import type { AdapterResolution, BindingEndpoint, CallbackSink, EngineHost } from './host';
 import { hostAdapter, isAdapterCallCeilingReached } from './host_adapter';
 import { applicableRequiredFields } from '../translation_graph/required_fields';
@@ -4201,22 +4199,12 @@ class Interpreter {
    * structure it was checked against.
    */
   private resolvedShape(shape: ShapeBinding): { declaration: ShapeDeclaration; schema: InstanceSchema } {
-    let resolved: { declaration: ShapeDeclaration; schema: InstanceSchema } | undefined;
-    for (const link of this.shapeChain(shape).reverse()) {
-      const types = this.shapeTypes(link);
-      const own = shapeToSchema(link.declaration, (name) => types.get(name));
-      resolved =
-        resolved === undefined
-          ? { declaration: link.declaration, schema: own }
-          : {
-              declaration: inheritDeclaration(link.declaration, resolved.declaration),
-              schema: inheritSchema(own, link.declaration.name, {
-                name: resolved.declaration.name,
-                schema: resolved.schema,
-              }),
-            };
-    }
-    return resolved!;
+    return foldedShape(
+      this.shapeChain(shape).map((link) => {
+        const types = this.shapeTypes(link);
+        return { declaration: link.declaration, types: (name: string) => types.get(name) };
+      }),
+    );
   }
 
   /** What an extraction taking `shape` as its node reads: each declaration in
