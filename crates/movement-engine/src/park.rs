@@ -737,6 +737,8 @@ mod tests {
             import_originals: RefCell::default(),
             source: RefCell::default(),
             source_instance: RefCell::default(),
+            acting_user: RefCell::default(),
+            actor: RefCell::default(),
             origins: RefCell::default(),
             misses: RefCell::default(),
             trace: crate::trace::FlowTrace::default(),

@@ -2288,11 +2288,17 @@ impl Names<'_> {
     /// A function name nothing in the program or the standard library
     /// answers (`DOMAIN_OF`): a function the write field advertises, or the
     /// TypeScript's own MOVENG_UNSUPPORTED naming it, both run here. A
-    /// namespaced member, `FILE`, `READ`, `CHUNKS`, `extract`, and a name
-    /// the program binds or declares (in any letter case: a call written in
-    /// place, which the TypeScript runs first) stay refused by name.
+    /// namespaced member, a name the standard library knows otherwise
+    /// (`lookupBuiltin`: `FILE`, `READ`, `CHUNKS`, a collection op, `extract`
+    /// …), and a name the program binds or declares (in any letter case: a
+    /// call written in place, which the TypeScript runs first) stay refused
+    /// by name.
     fn integration_function(&self, id: &str) -> bool {
-        const OWN: [&str; 5] = ["file", "read", "chunks", "extract", "extractone"];
+        const OWN: [&str; 30] = [
+            "map", "filter", "reduce", "groupby", "keyby", "members", "extract", "extractone", "file", "read", "chunks", "ai", "llm_agg",
+            "kg_exists", "kg_value", "extract_value", "first", "last", "only", "count", "sum", "avg", "min", "max", "join", "collect", "at",
+            "sort", "concat", "exists",
+        ];
         let lowered = crate::js::to_lower_case(id);
         !id.contains('.')
             && !OWN.contains(&lowered.as_str())
