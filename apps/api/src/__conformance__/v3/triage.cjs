@@ -18,5 +18,5 @@ exports.triage = [
   { file: UNSUPPORTED_SITES, test: 'a checker cover names diagnostic codes the checker really has', reason: SOURCE_SCAN },
   { file: 'services/movement_engine/__test__/serialize.unit.test.ts', test: "a MAP's answer of extract roots comes back as extract roots, children and all", reason: HAND_BUILT_RECORD_IN_VALUE },
   { file: 'services/movement_engine/__test__/serialize.unit.test.ts', test: "a GROUPBY's dict of records keeps each group's records", reason: HAND_BUILT_RECORD_IN_VALUE },
-  { file: 'services/movement_engine/__test__/serialize.unit.test.ts', test: 'a file beside records, and a file in a synthesised record, both come back readable', reason: HAND_BUILT_RECORD_IN_VALUE },
+  { file: 'services/movement_engine/__test__/serialize.unit.test.ts', test: 'a file beside records, and a file in a synthesised record, both come back whole', reason: HAND_BUILT_RECORD_IN_VALUE },
 ];
