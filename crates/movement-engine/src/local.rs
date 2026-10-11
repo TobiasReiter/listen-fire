@@ -333,8 +333,8 @@ impl Run<'_> {
             return Ok(real.clone());
         }
         let alias = format!("{} landing", edge.edge_name);
-        let (target, external_id) = self.position_target_of(&alias, Some(landing.clone()), &edge.scope, "update").await.map_err(crate::write::failure_of)?;
-        let graph = target.graph.expect("a position write target is a system's");
+        let crate::write::PositionTarget { target, graph, external_id } =
+            self.position_target_of(&alias, Some(landing.clone()), &edge.scope, "update").await.map_err(crate::write::failure_of)?;
         let real = RealRecord { adapter: target.adapter, record_type: target.record_type, graph, external_id };
         edge.real.borrow_mut().push((landing.clone(), real.clone()));
         Ok(real)
@@ -396,7 +396,7 @@ impl Run<'_> {
         let resolve_record = overlaid(&fields.fields, &identity.overlay);
         let locks = unique::identity_lock_requests(LOCAL_ADAPTER_TYPE, &edge_name, &constraints, &resolve_record, &fields.fields, self.version());
         let record = self
-            .with_locks(locks, self.find_then_write(&target, &fields, &resolve_record, &constraints, &identity.narrowings, &[], scope, false))
+            .with_locks(locks, self.find_then_write(&target, &fields, &resolve_record, &constraints, &identity.narrowings, &[], scope))
             .await?
             .record;
         let edge = store.local_edge().expect("the store is the edge's");
@@ -414,7 +414,10 @@ impl Run<'_> {
             row.set("externalId".into(), real.external_id.clone());
             row.set("committed".into(), Js::Bool(!real.adapter.dry));
             let destination = Target::bare(real.adapter.clone(), real.record_type.clone(), real.graph.clone());
-            self.record_write(crate::write::Written::plain(Js::object(row)), None, scope, &destination, &fields.provenance, None);
+            self.record_write(
+                crate::write::Written::plain(Js::object(row)),
+                crate::write::Recorded { binding_name: None, scope, target: &destination, provenance: &fields.provenance, into: None },
+            );
             if let Some(name) = binding_name {
                 scope.declare(name, landing.clone());
             }

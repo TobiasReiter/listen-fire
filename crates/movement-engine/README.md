@@ -101,7 +101,14 @@ Measured 2026-10-07 (gzip -9):
 | the extraction keyword and plugin calls run whole (chunk 6A) | 2,423,062 | 694,914 |
 | folds, EXISTS, IS and a record named twice (chunk 6A Task 4) | 2,458,709 | 710,999 |
 | language version 4's changed constructs refused at admission (main merge 2) | 2,459,419 | 711,283 |
-| language version 4's changed constructs run (PLAN-07A Task 4c) | 3,044,244 | 912,912 |
+| admission walks what the entry reaches, every reason named (PLAN-07A Task 1) | 2,461,388 | 712,055 |
+| calls to helper movements, run-built graphs, lazy walks (PLAN-07A Task 2) | 2,585,141 | 758,389 |
+| records held as values, mirrored (PLAN-07A Task 3, its fix rounds) | 2,972,633 | 872,415 |
+| awaits, parallel and race, every park state resumed (PLAN-07A Task 4) | 3,214,223 | 953,565 |
+| case mapping, prototype keys, regex completion, TimSort (PLAN-07A Task 5) | 3,253,385 | 966,528 |
+| the forward merge of cloud-native (main merge 2's refusals in) | 3,254,071 | 966,867 |
+| host data never read as an engine object (PLAN-07A Task 4b) | 3,031,573 | 908,024 |
+| language version 4's changed constructs run (PLAN-07A Task 4c) | 3,044,472 | 912,975 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -1363,6 +1370,7 @@ Sizes are estimates (XS, S, M, L).
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | — |
 | 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`), and an object the host sends again UNCHANGED, under the id it was first sent under, decodes as the one object already held; an object the host MUTATES between two answers decodes fresh the second time, where the TypeScript holds the one object (see "Known divergences") | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | — |
+| 16 | two names for one write handle across a park | both engines alike: a park writes each name's handle on its own (serialize.ts keeps shared identity for nodes, `nodeRef`, not for handles), so after a resume `x = write org { … }` leaves `x` and `org` two handles, and a later in-place `write org { … }` (version 4) is not seen through `x` | a ruling for Henry: a handle reference in the park state (as `nodeRef` is for nodes), a park-state change both engines would make | S |
 
 #### The rows in detail
 

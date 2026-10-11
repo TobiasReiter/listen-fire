@@ -1194,6 +1194,21 @@ describe('unique by — entity resolution through the shared arbitration split',
         origin: { kind: 'write', writeIndex: 0, externalId: 'ext-attio-1' },
       },
     ]);
+    // The TypeScript engine holds it on its own write record: a snapshot of
+    // the record as found. (The Rust engine holds it on the handle.)
+    if (process.env.MOVEMENT_ENGINE !== 'rust') {
+      expect(second.writes[0]?.old).toEqual(
+        expect.objectContaining({
+          kind: 'handle',
+          handle: expect.objectContaining({
+            externalId: 'ext-attio-1',
+            snapshot: true,
+            writtenValues: {},
+            resultData: { name: 'U123', summary: 'first message' },
+          }),
+        }),
+      );
+    }
     // No duplicate — the second run updated the first run's record.
     expect(attio.creates).toHaveLength(1);
     expect(attio.updates).toEqual([

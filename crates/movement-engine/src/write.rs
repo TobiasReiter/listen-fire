@@ -102,6 +102,17 @@ impl Written {
     }
 }
 
+/// Where a write's firing record lands (`recordWrite`'s input beside the
+/// record): the name it binds, the scope it binds in, its destination, each
+/// written field's trail, and the handle it moves on in place, if any.
+pub(crate) struct Recorded<'r> {
+    pub(crate) binding_name: Option<&'r str>,
+    pub(crate) scope: &'r Scope,
+    pub(crate) target: &'r Target,
+    pub(crate) provenance: &'r [(String, Option<Trail>)],
+    pub(crate) into: Option<&'r Rc<Handle>>,
+}
+
 /// What the engine held of a record before a write updated it (an identity
 /// candidate's fields, a landing's fetched data, a handle's values) and the
 /// binding a handle on it stands on (run.ts `PriorRecord`). Overlaid with
@@ -197,6 +208,15 @@ impl Target {
     pub(crate) fn bare(adapter: Rc<TargetAdapter>, record_type: String, graph: Rc<InstanceBinding>) -> Target {
         Target { adapter, record_type, graph: Some(graph), parents: Vec::new(), handle_type: None, where_: Vec::new() }
     }
+}
+
+/// `resolvePositionWriteTarget`'s answer: the update's destination, the
+/// system the record is in (always one: a position write names a record a
+/// system holds), and the record's id.
+pub(crate) struct PositionTarget {
+    pub(crate) target: Target,
+    pub(crate) graph: Rc<InstanceBinding>,
+    pub(crate) external_id: Js,
 }
 
 /// Which statement a target is resolved for: its messages name it.
@@ -299,9 +319,9 @@ impl Run<'_> {
             self.version(),
         );
         let written = self
-            .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links, scope, true))
+            .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links, scope))
             .await?;
-        Ok(Binding::Handle(self.record_write(written, binding_name, scope, &target, &evaluated.provenance, None)))
+        Ok(Binding::Handle(self.record_write(written, Recorded { binding_name, scope, target: &target, provenance: &evaluated.provenance, into: None })))
     }
 
     /// The write's field lines, its spreads written out (`expandWriteSpreads`)
@@ -973,9 +993,9 @@ impl Run<'_> {
     }
 
     /// `findThenWrite`: the search, the rules and the judge, then an update
-    /// of what was found or a create. `found_record`: the write's handle
-    /// stands on the record it finds (a write into a system, not into a
-    /// node this run built), so the update keeps it as found (`prior`).
+    /// of what was found or a create. A write into a system keeps the record
+    /// it found (`prior`), as its handle stands on it; one into a node this
+    /// run built (a target with no graph) has no handle to read it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn find_then_write(
         &self,
@@ -986,7 +1006,6 @@ impl Run<'_> {
         narrowings: &[Option<Expression>],
         parent_links: &[Js],
         scope: &Rc<Scope>,
-        found_record: bool,
     ) -> Result<Written, Stop> {
         let (chosen, judge_unavailable) = self.resolve_identity(target, &fields.fields, resolve_record, constraints, narrowings, scope).await?;
         if let Some(chosen) = chosen {
@@ -996,14 +1015,11 @@ impl Run<'_> {
                     None => vec![LockRequest::exclusive(unique::record_lock_name(&target.adapter.adapter_type, &external_id))],
                     Some(edge) => self.local_update_locks(edge, &external_id, constraints, resolve_record, &fields.fields).await.map_err(thrown)?,
                 };
-                let prior = match &target.graph {
-                    Some(graph) if found_record => Some(Prior {
-                        data: candidate_data(&chosen),
-                        target_type: target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
-                        graph: graph.clone(),
-                    }),
-                    _ => None,
-                };
+                let prior = target.graph.as_ref().map(|graph| Prior {
+                    data: candidate_data(&chosen),
+                    target_type: target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
+                    graph: graph.clone(),
+                });
                 if let Some(updated) = self.apply_update(target, &external_id, fields, parent_links, locks, prior).await? {
                     return Ok(updated);
                 }
@@ -1251,13 +1267,13 @@ impl Run<'_> {
     /// stands on — a write's handle, or a traversed record.
     async fn position_write(&self, alias: &str, lines: &[Line], binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Binding, Stop> {
         let binding = scope.resolve(alias);
-        let (target, external_id) = self.position_target_of(alias, binding.clone(), scope, "update").await?;
+        let PositionTarget { target, graph, external_id } = self.position_target_of(alias, binding.clone(), scope, "update").await?;
         let fields = self.write_fields(lines, &target.adapter, &target.record_type, scope).await?;
         let lock = unique::record_lock_name(&target.adapter.adapter_type, &external_id);
         let prior = Prior {
             data: known_record_data(binding.as_ref()),
             target_type: target.record_type.clone(),
-            graph: target.graph.clone().expect("a position write's record is in a system"),
+            graph,
         };
         let Some(written) = self.apply_update(&target, &external_id, &fields, &[], vec![LockRequest::exclusive(lock)], Some(prior)).await? else {
             return Err(thrown(Failure::engine(
@@ -1286,20 +1302,20 @@ impl Run<'_> {
             Some(handle) => Written { record: written.record, before: Some(handle.snapshot()) },
             None => written,
         };
-        Ok(Binding::Handle(self.record_write(written, binding_name, scope, &target, &fields.provenance, into.as_ref())))
+        Ok(Binding::Handle(self.record_write(written, Recorded { binding_name, scope, target: &target, provenance: &fields.provenance, into: into.as_ref() })))
     }
 
     /// `resolvePositionWriteTarget`: the record an alias stands on, as an
     /// update's (or a delete's) destination, and its id. A traversed record
     /// is written through its graph's target adapter, under the type its
     /// position names; a handle under the type it stands on.
-    pub(crate) async fn position_target(&self, alias: &str, scope: &Rc<Scope>, action: &str) -> Result<(Target, Js), Stop> {
+    pub(crate) async fn position_target(&self, alias: &str, scope: &Rc<Scope>, action: &str) -> Result<PositionTarget, Stop> {
         self.position_target_of(alias, scope.resolve(alias), scope, action).await
     }
 
     /// `resolvePositionWriteTarget` of a binding in hand, `alias` naming it
     /// in the messages.
-    pub(crate) async fn position_target_of(&self, alias: &str, binding: Option<Binding>, scope: &Rc<Scope>, action: &str) -> Result<(Target, Js), Stop> {
+    pub(crate) async fn position_target_of(&self, alias: &str, binding: Option<Binding>, scope: &Rc<Scope>, action: &str) -> Result<PositionTarget, Stop> {
         let unstable = || {
             thrown(Failure::engine(
                 "MOVENG_RUNTIME",
@@ -1308,7 +1324,11 @@ impl Run<'_> {
                 ),
             ))
         };
-        let target = |adapter, record_type, graph| Target { adapter, record_type, graph: Some(graph), parents: Vec::new(), handle_type: None, where_: Vec::new() };
+        let target = |adapter, record_type, graph: Rc<InstanceBinding>, external_id| PositionTarget {
+            target: Target { adapter, record_type, graph: Some(graph.clone()), parents: Vec::new(), handle_type: None, where_: Vec::new() },
+            graph,
+            external_id,
+        };
         match binding {
             None => Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("'{alias}' is not in scope — the checker should have caught this")))),
             Some(Binding::Landed(landed)) => {
@@ -1330,7 +1350,7 @@ impl Run<'_> {
                     )));
                 };
                 let adapter = self.target_adapter(&instance).await?;
-                Ok((target(adapter, record_type, instance), crate::traverse::record_id(position)))
+                Ok(target(adapter, record_type, instance, crate::traverse::record_id(position)))
             }
             Some(Binding::Handle(handle)) => {
                 let external_id = handle.record().get("externalId");
@@ -1338,7 +1358,7 @@ impl Run<'_> {
                     return Err(unstable());
                 }
                 let adapter = self.target_adapter(&handle.graph).await?;
-                Ok((target(adapter, handle.target_type.clone(), handle.graph.clone()), external_id))
+                Ok(target(adapter, handle.target_type.clone(), handle.graph.clone(), external_id))
             }
             Some(other) => {
                 let statement = if action == "delete" { format!("delete {alias}") } else { format!("write {alias} {{ … }}") };
@@ -1357,15 +1377,8 @@ impl Run<'_> {
     /// through a rehearsing adapter changed nothing, so a record it found
     /// stood before the write exactly as the handle shows it: its `@old` is
     /// the handle itself.
-    pub(crate) fn record_write(
-        &self,
-        written: Written,
-        binding_name: Option<&str>,
-        scope: &Scope,
-        target: &Target,
-        provenance: &[(String, Option<Trail>)],
-        into: Option<&Rc<Handle>>,
-    ) -> Rc<Handle> {
+    pub(crate) fn record_write(&self, written: Written, recorded: Recorded<'_>) -> Rc<Handle> {
+        let Recorded { binding_name, scope, target, provenance, into } = recorded;
         let Written { record, before } = written;
         let write_index = self.writes.borrow().len();
         let Js::Object(object) = &record else { unreachable!("a write record is an object") };
@@ -1558,10 +1571,6 @@ impl Run<'_> {
     }
 }
 
-/// The candidate the judge picked: `candidates[index]`, where anything but a
-/// non-negative integer (negative, fractional, null, absent) finds nothing and
-/// the write creates, as the TypeScript's lookup does. An index past the end
-/// finds nothing too, which the caller's `candidates.get` answers.
 /// A candidate's `{url?, ...data}`: the record as an identity search found it.
 pub(crate) fn candidate_data(candidate: &Js) -> JsObject {
     let mut data = JsObject::new();
@@ -1615,6 +1624,10 @@ fn known_record_data(binding: Option<&Binding>) -> JsObject {
     data
 }
 
+/// The candidate the judge picked: `candidates[index]`, where anything but a
+/// non-negative integer (negative, fractional, null, absent) finds nothing and
+/// the write creates, as the TypeScript's lookup does. An index past the end
+/// finds nothing too, which the caller's `candidates.get` answers.
 fn judged_index(answer: &Json) -> Option<usize> {
     answer.get("index").and_then(Json::as_f64).filter(|i| *i >= 0.0 && i.fract() == 0.0).map(|i| i as usize)
 }

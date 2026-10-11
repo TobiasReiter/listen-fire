@@ -185,7 +185,7 @@ impl Run<'_> {
         record.set("writtenValues".into(), Js::object(JsObject::new()));
         record.set("resultData".into(), Js::object(data));
         record.set("provenance".into(), Js::object(JsObject::new()));
-        Ok(Binding::Handle(self.record_write(Written::plain(Js::object(record)), binding_name, scope, &target, &[], None)))
+        Ok(Binding::Handle(self.record_write(Written::plain(Js::object(record)), crate::write::Recorded { binding_name, scope, target: &target, provenance: &[], into: None })))
     }
 
     /// `readRecord {recordType, externalId}`.
@@ -437,7 +437,7 @@ impl Run<'_> {
     pub(crate) async fn delete(&self, name: &str, scope: &Rc<Scope>) -> Result<(), Stop> {
         let at = format!("delete {name}");
         let binding = scope.resolve(name);
-        let (target, external_id) = self.position_target(name, scope, "delete").await?;
+        let crate::write::PositionTarget { target, external_id, .. } = self.position_target(name, scope, "delete").await?;
         let adapter = &target.adapter;
         if !adapter.has("deleteRecord") {
             return Err(thrown(Failure::engine(
