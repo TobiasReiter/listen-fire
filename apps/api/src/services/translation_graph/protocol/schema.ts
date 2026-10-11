@@ -383,6 +383,8 @@ export const WireWriteInput = z
           recordType: z.string(),
           externalId: z.string(),
           edgeName: z.string(),
+          // The parent's payload in its own adapter's shape (`ParentLink.data`).
+          data: z.record(z.string(), z.unknown()).optional(),
         }),
       )
       .optional(),
