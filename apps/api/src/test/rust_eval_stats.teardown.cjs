@@ -154,7 +154,11 @@ async function globalTeardown(globalConfig, projectConfig) {
   if (corpus === undefined) return;
   const failures = [];
   if (runs.admitted > 0 && runs.ranWhole === 0) failures.push(`${runs.admitted} runs were admitted and none ran whole`);
-  if (Object.keys(runs.declined).length > 0) failures.push(`the corpus expects no declines, and these happened: ${JSON.stringify(runs.declined)}`);
+  // A slot this engine's lowering misses and the check passes is declined
+  // after the check (chunk 7A Task 6): the lowering's coverage, named. Any
+  // other decline is a regression.
+  const declined = Object.fromEntries(Object.entries(runs.declined).filter(([reason]) => !LOWERING_MISSES.includes(reason)));
+  if (Object.keys(declined).length > 0) failures.push(`the corpus expects no declines but the lowering's misses, and these happened: ${JSON.stringify(declined)}`);
   if (runs.shimFaults > 0) failures.push(`${runs.shimFaults} runs ended in a shim fault`);
   if (isWholeCorpus(globalConfig) && runs.ranWhole < RAN_WHOLE_FLOOR[corpus]) {
     failures.push(`${runs.ranWhole} runs ran whole in Rust, under the ${corpus} floor of ${RAN_WHOLE_FLOOR[corpus]}`);
@@ -162,6 +166,9 @@ async function globalTeardown(globalConfig, projectConfig) {
   console.log(`Rust routing floor (${corpus}): ran whole ${runs.ranWhole}, floor ${RAN_WHOLE_FLOOR[corpus]}`);
   if (failures.length > 0) throw new Error(`MOVEMENT_ENGINE=rust routing regression (${corpus}): ${failures.join('; ')}`);
 }
+
+/** The declines a passing check leaves for a slot the lowering misses. */
+const LOWERING_MISSES = ['condition_does_not_lower', 'expression_does_not_lower', 'block_head_does_not_lower'];
 
 module.exports = globalTeardown;
 module.exports.isWholeCorpus = isWholeCorpus;

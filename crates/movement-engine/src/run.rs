@@ -162,6 +162,11 @@ pub struct SegmentInput {
     /// environment. Absent: the built-in table.
     #[serde(default)]
     pub extraction_tiers: std::collections::BTreeMap<String, crate::extract::TierAssignment>,
+    /// The admission dry run's start (rust_engine.ts `dryAdmit`): never
+    /// answered past its first step, so a slot this engine's lowering misses,
+    /// which a real run leaves to the check, is named among the refusals.
+    #[serde(default)]
+    pub dry_admission: bool,
 }
 
 /// A fired callback (`fireCallbackBody`): the call's values on the eval
@@ -472,7 +477,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // judge: one the checker refuses ends the run at the check on either
     // engine; one it passes is declined after the check, before anything.
     let lowering_misses: Vec<String> = reasons.iter().filter(|r| r.ends_with("_does_not_lower")).cloned().collect();
-    if lowering_misses.len() < reasons.len() {
+    if lowering_misses.len() < reasons.len() || (input.dry_admission && !reasons.is_empty()) {
         return Err(Stop::Refused(reasons));
     }
     let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;

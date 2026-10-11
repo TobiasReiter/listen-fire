@@ -565,7 +565,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'), 'rvalue:collection'],
       // The expression tail this engine does not run (chunk 6A Task 4 runs the rest).
       [movement('  x = FIRST(crm-[:companies]->-[:deals]->)'), 'select_multi_hop'],
-      [movement('  x = ONLY(crm-[c:companies]->.`name`)'), 'aggregate:only'],
       [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
       [movement('  x = LLM_AGG(["a"], "sum it")'), 'aggregate:llm'],
       [movement('  if EXISTS(msg-[:files]->-[#transform]->) {\n    x = 1\n  }'), 'exists_step'],

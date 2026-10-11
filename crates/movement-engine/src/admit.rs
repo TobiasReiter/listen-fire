@@ -2777,7 +2777,7 @@ impl Names<'_> {
         match fn_ {
             AggregationFunction::Llm => refuse("aggregate:llm"),
             // ONLY's failure spells its expression back; a name is what it spells.
-            AggregationFunction::Only if crate::eval::spelled_name(inner).is_none() => refuse("aggregate:only"),
+            AggregationFunction::Only if crate::formula::spell(inner).is_none() => refuse("aggregate:only"),
             AggregationFunction::Sort => {
                 if order_by.is_some_and(|key| !matches!(key, Expression::Property { .. } | Expression::AliasRef { .. })) {
                     return refuse("aggregate:sort_key");
@@ -3351,11 +3351,20 @@ mod tests {
         }
     }
 
+    /// `ONLY` of an expression its failure spells back (crate::formula), a
+    /// walk read for a field among them, is admitted; one it does not spell
+    /// (a resource walk) is refused.
+    #[test]
+    fn admits_an_only_its_failure_can_spell() {
+        assert_eq!(refused("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }"), None);
+        assert_eq!(refused("  x = ONLY([1, 2])"), None);
+        assert_eq!(refused("  x = ONLY(msg-[:_resources]->.`name`)").as_deref(), Some("aggregate:only"));
+    }
+
     #[test]
     fn refuses_each_block_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
             ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
-            ("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }", "aggregate:only"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }

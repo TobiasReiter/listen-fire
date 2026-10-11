@@ -430,7 +430,7 @@ refused where it stands (`is_test_declared_record`).
 
 | reason | the construct | needs |
 |---|---|---|
-| `aggregate:llm`, `aggregate:only`, `aggregate:sort_key`, `aggregate_records` | the `llm` fold; `ONLY(e)` of anything but a name; `SORT(xs, key)` whose key is not a field name; `FIRST`/`LAST`/`ONLY`/`SUM`/… of a bare walk anywhere but a binding's whole right-hand side (`COUNT` of one is admitted) | the llm fold through the host, record sorts, record-valued folds |
+| `aggregate:llm`, `aggregate:only`, `aggregate:sort_key`, `aggregate_records` | the `llm` fold; `ONLY(e)` of an expression its failure cannot spell back (a resource walk: crate::formula spells the rest as the formula grammar's `serialize` does, chunk 7A Task 6); `SORT(xs, key)` whose key is not a field name; `FIRST`/`LAST`/`ONLY`/`SUM`/… of a bare walk anywhere but a binding's whole right-hand side (`COUNT` of one is admitted) | the llm fold through the host, record sorts, record-valued folds |
 | `expression:<type>`, `expression:exists` | an expression kind that needs the host, by its lowered `type` (`resource_traverse`, `kg_value` and `kg_exists` — retired, refused by the checker — `edge_property` outside a hop's WHERE, …); a rootless `EXISTS(-[…]->)`. `AI()` (`llm`) runs here (chunk 7A Task 6) | host reads in expressions (KG values) |
 | `meta:<key>` | a key of the dispatch's `meta.bag` (`@trigger`, `@mutationContext`), which the checker refuses as an unknown `@` key, so no checked program reaches it (`@current_*`, `@user_*` and `@actor_*` run here, chunk 7A Task 6) | nothing a program can write; the bag's reading if the checker ever admits one |
 | `function:<id>` | a function the evaluator does not run, by its lowered id: a namespaced member it lacks, `CHUNKS`, `extract`, or a name the program binds or declares, in any letter case (a call written in place: a movement's, a function's or a closure's). A name nothing answers (`DOMAIN_OF`) runs here: a function the write field advertises (`invokeFieldFunction`), else the TypeScript's own MOVENG_UNSUPPORTED; so do `FILE` (`files.render`) and `READ` (`files.resolveFileText`, traced `{kind: "read"}`) (chunk 7A Task 6) | the built-in `CHUNKS`; calls written in place |
@@ -472,7 +472,7 @@ never resumes it wrong.
 | `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` | a `Date` value on the wire (or a ruling that adapters never answer one) |
 | `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `local_zone_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read (a `localZone` the environment's zone database does not know) | to become errors: shim faults in all but name |
 | `source_does_not_parse` | a source this engine's parser refuses and the checker passes | the grammar this engine lacks (none is known) |
-| `condition_does_not_lower`, `expression_does_not_lower`, `block_head_does_not_lower` | a slot (or a block head's probe) this engine's lowering misses, and the checker passes; alone, it is not refused at admission: a slot the checker refuses (`CURRENCY.PARSE(…)`) ends the run at the check on either engine, as the TypeScript's does (chunk 7A Task 6). With another reason it is refused with it. Known: a field read off a fold's answer (`FIRST(held.entries).name`) | the lowering's coverage, in crates/movement-parser (shared with the browser's parser artifact, so a change there weighs its size) |
+| `condition_does_not_lower`, `expression_does_not_lower`, `block_head_does_not_lower` | a slot (or a block head's probe) this engine's lowering misses, and the checker passes; alone, it is not refused at admission: a slot the checker refuses (`CURRENCY.PARSE(…)`) ends the run at the check on either engine, as the TypeScript's does (chunk 7A Task 6). With another reason it is refused with it, and the admission dry run (`dryAdmission`, never answered) names it among the refusals. Known: a field read off a fold's answer (`FIRST(held.entries).name`) | the lowering's coverage, in crates/movement-parser (shared with the browser's parser artifact, so a change there weighs its size) |
 | `unreproduced` | mid-run, this engine's own refusal of what the TypeScript engine runs on through (MOVENG_UNSUPPORTED naming the construct, "Errors a run can meet mid-run" below), met before the run's first effect: it has asked its host only reads (the check, `adapters.resolve`, an adapter's read methods, the clock, the cancel gate, `builtins.*`), so nothing it did is kept | each construct's port; after an effect the same refusal fails the run |
 
 **Not refusals, still TypeScript.** Zero refusals is not zero TypeScript:
@@ -1251,7 +1251,7 @@ writes each value out whole, numbering it afresh.
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, teamId?, credentialIds?, spend?, now, localZone?,
 catalog, dryRun?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
-extractionFileChars?, maxCallDepth?, extractionTiers?}`. `segmentId` is the segment the run host opened (`segment.open`),
+extractionFileChars?, maxCallDepth?, extractionTiers?, dryAdmission?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
@@ -1275,7 +1275,9 @@ run a callback body or settle a deferred race against `resume`'s state;
 (call_depth.ts, the deployment's `MOVEMENT_MAX_CALL_DEPTH`);
 `extractionTiers` is what the deployment buys for each extraction tier
 (ai_tiers.ts, its `EXTRACTION_TIERS` parsed: `{careful: {model?, effort?},
-…}`, each member over the built-in row's; the built-in table when absent).
+…}`, each member over the built-in row's; the built-in table when absent);
+`dryAdmission` marks the admission dry run's start, which is never answered,
+so a slot the lowering misses is named among its refusals.
 Other members are ignored.
 
 **Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or

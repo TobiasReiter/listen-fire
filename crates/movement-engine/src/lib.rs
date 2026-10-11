@@ -33,6 +33,7 @@ pub mod extract;
 pub mod is_test;
 pub mod filter;
 pub mod flow;
+pub mod formula;
 pub mod host;
 pub mod js;
 pub mod js_date;

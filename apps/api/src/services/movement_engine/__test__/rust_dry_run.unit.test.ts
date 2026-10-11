@@ -192,6 +192,16 @@ describe('the admission dry run, through the real artifact', () => {
     expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['expression_closure', 'expression:kg_value'] }]);
   });
 
+  // A real run leaves a slot this engine's lowering misses to its check
+  // (declined after a passing one); the dry run, never answered, names it.
+  it('names a slot the lowering misses, which a real run leaves to its check', async () => {
+    const missed = program('  rows = crm-[c:companies]-> {', '    return c', '  }', '  held = { entries: rows }', '  x = FIRST(held.entries).name');
+    const { segment, asked } = await failingSegment(missed.replace('inbox = email(credentials: dealflow_inbox)', 'inbox = email(credentials: dealflow_inbox)\ncrm = email(credentials: dealflow_inbox)'), 'run-missed');
+    dryAdmitRun(segment);
+    expect(asked).toEqual([]);
+    expect(rustRunStats.dryRun.first).toEqual({ expression_does_not_lower: 1 });
+  });
+
   it("puts a resume to the engine's start as a real resume, its answer included", async () => {
     const { segment, asked } = await failingSegment(ADMITTED);
     const starts: unknown[] = [];

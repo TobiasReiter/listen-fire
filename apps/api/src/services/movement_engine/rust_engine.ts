@@ -425,9 +425,12 @@ function admissionReasons(
   if (localZone === undefined) return [LOCAL_ZONE_UNVERIFIED];
   const start = segmentInput(input, context, { resume, localZone }, new WireOut({ whole: true }));
   if (start === undefined) return [EVENT_DOES_NOT_CROSS];
+  // Never answered: a lowering miss a real run leaves to its check is named
+  // here, as the refusal it is until the check passes it.
+  const asked = record(start, 'the dry run start');
   const segment = engine ?? openWasmEngine();
   try {
-    const step = segment.start(start);
+    const step = segment.start({ ...asked, dryAdmission: true });
     if ('pending' in step) return [];
     const done = record(step.done, 'the dry run start');
     if (!('refused' in done)) {

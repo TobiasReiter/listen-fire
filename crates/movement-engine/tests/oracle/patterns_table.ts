@@ -822,11 +822,14 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'aggregate:only',
-    routes: 'refused',
-    note: '`ONLY(e)` of anything but a name: needs record-valued folds of walks',
+    routes: 'whole',
+    note: "closed in chunk 7A Task 6: ONLY of any expression its failure spells back (crate::formula, the formula grammar's serialize), its more-than-one failure naming it as the TypeScript does; a resource walk stays refused",
     programs: [
       () => ({ body: '  x = ONLY(crm-[c:companies WHERE `name` == "Acme"]->.`stage`)\n  write crm-[:notes]-> { body: COALESCE(x, "none") }' }),
       () => ({ body: '  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`title`)\n  }' }),
+      () => ({ body: '  x = ONLY(crm-[c:companies WHERE `stage` != "x" AND `employees` > 3 ORDER BY `name` DESC LIMIT 5]->.`name`)' }),
+      () => ({ body: '  x = ONLY([1, "a b", null, 2.5, msg.`subject`])' }),
+      () => ({ body: '  x = ONLY(crm-[c:companies]->.`name`)\n  write crm-[:notes]-> { body: COALESCE(x, "none") }' }),
     ],
   },
   {

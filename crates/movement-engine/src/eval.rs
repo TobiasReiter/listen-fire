@@ -668,7 +668,7 @@ impl<'a> Evaluator<'a> {
             AggregationFunction::Only => {
                 let present: Vec<&Js> = values.iter().filter(|v| !v.is_nullish()).collect();
                 if present.len() > 1 {
-                    let Some(spelled) = spelled_name(inner) else {
+                    let Some(spelled) = crate::formula::spell(inner) else {
                         return Err(EvalError::Fallback("ONLY's message spells an expression this engine does not".into()));
                     };
                     return Err(EvalError::engine(
@@ -977,18 +977,6 @@ fn describe_held_value(value: &Js) -> String {
     }
 }
 
-/// A bare name as the formula serializer spells it (`quoteName`): the only
-/// expression ONLY folds that this engine admits.
-pub(crate) fn spelled_name(expr: &Expression) -> Option<String> {
-    let (Expression::AliasRef { name } | Expression::Property { property_type_id: name }) = expr else { return None };
-    let mut chars = name.chars();
-    let plain = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if plain {
-        return Some(name.clone());
-    }
-    let escaped: String = name.chars().flat_map(|c| if c == '\\' || c == '`' { vec!['\\', c] } else { vec![c] }).collect();
-    Some(format!("`{escaped}`"))
-}
 
 /// `Number(v) || 0`.
 fn or_zero(n: f64) -> f64 {
