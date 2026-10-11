@@ -1089,26 +1089,35 @@ exports. A callback mints its row (`park.callbacks.mint`) and binds
 `{kind: 'callback', …}`; awaiting it, a landing (`resolveAwait`,
 `commitAwaitPark`) or an `until` parks as the TypeScript does.
 
-tests/oracle/parallel.json holds this to the TypeScript: 396 seeded
+tests/oracle/parallel.json holds this to the TypeScript: 398 seeded
 programs (seed 20261011, written by generate.ts) of two to four arms, some
 nested, that take every kind of the run's locks: writes `unique by` a key
 two arms share, by two fields (another key-set group), FUZZY (the type
 lock exclusive), updates of and links between records written before the
-combinator (record and edge locks), plain writes and counts. Both runs
-have the same scheduled host: adapter calls and cross-run locks are
+combinator (record and edge locks), links from the arm's own record (one
+written per arm before the combinator), plain writes, and counts whose
+WHERE names the arm (pushed to the adapter, so the request names it). Both
+runs have the same scheduled host: adapter calls and cross-run locks are
 answered one at a time, the run going as far as it can before the next,
 the oldest step's request first and, among one step's, the least by its
 text. A lock taken carries the request its flow made next, so the arm and
-the key it was taken for are compared. 341 cases ask exactly the
+the key it was taken for are compared. 326 cases ask exactly the
 TypeScript's requests in its order, with its ids. Two kinds of case may
 differ, and each must still ask every request and no other, each arm in
-its own order, with the writes in ledger order and the same ending:
-- 47 where two arms one step let run reach one in-run gate in modes that
+its own order (its counts and its links from its own record included),
+the movement's requests after the combinator after all the arms' (the
+same requests on either side of the continuation's first write), with the
+writes in ledger order and the same ending:
+- 63 where two arms one step let run reach one in-run gate in modes that
   exclude each other (FUZZY against a key, two key-set groups, one key, one
   record or edge). The TypeScript's arms reach it in the order their
   microtasks let them, this engine's in arm order.
-- 8 where two flows let through together ask the very same cross-run lock,
+- 9 where two flows let through together ask the very same cross-run lock,
   one text a host cannot tell apart, answered the other way round.
+
+Of those 72, 47 hold a count or a link an arm asked, so each is held to its
+arm's order too (chunk 7A Task 6; before, a count, a link and the
+continuation's write were held to nothing past the first difference).
 
 
 A suspension (run.ts `suspendFlow`) writes `{version: 1, address,

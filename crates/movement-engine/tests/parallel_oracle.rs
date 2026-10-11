@@ -87,7 +87,7 @@ impl Host<'_> {
                 let args = self.sent.plain(&request.args["args"]);
                 match request.args["method"].as_str() {
                     Some("resolveEntity") => Some(json!(["resolveEntity", [field(&args["record"], "body"), field(&args["record"], "payload"), field(&args["record"], "tag")]])),
-                    Some("getRelated") => Some(json!(["getRelated", args["fieldId"]])),
+                    Some("getRelated") => Some(json!(["getRelated", args["fieldId"], tag_of(&args["where"])])),
                     Some("createRecord") => Some(json!(["createRecord", [field(&args["fields"], "body"), field(&args["fields"], "payload"), field(&args["fields"], "tag")]])),
                     Some("updateRecord") => Some(json!(["updateRecord", [args["externalId"], field(&args["fields"], "body")]])),
                     Some("linkRecords") => Some(json!(["linkRecords", [args["from"]["externalId"], args["edgeName"], args["to"]["externalId"]]])),
@@ -200,8 +200,11 @@ fn twin_locks(typescript: &[Json], rust: &[Json]) -> bool {
 
 /// Where two engines let different arms through a gate first, what must
 /// still hold: every request asked, and no other; each arm's own requests
-/// in order; the writes in the ledger's order (their ids follow the order
-/// creates were answered, so not those); the ending.
+/// in order, its counts and its links from its own record included; what
+/// the movement asks after the combinator after every request the arms
+/// asked before it (the same requests on either side of it); the writes in
+/// the ledger's order (their ids follow the order creates were answered,
+/// so not those); the ending.
 fn race_problems(typescript: &[Json], rust: &[Json], ts_writes: &Json, rust_writes: &Json, ended: &Json, ts_ended: &Json) -> Vec<Json> {
     let mut problems = Vec::new();
     if ended != ts_ended {
@@ -214,6 +217,15 @@ fn race_problems(typescript: &[Json], rust: &[Json], ts_writes: &Json, rust_writ
     };
     if sorted(typescript) != sorted(rust) {
         problems.push(json!("not the same requests"));
+    }
+    // The combinator's continuation: its first request is the write after it.
+    let after = |events: &[Json]| events.iter().position(|e| e[0] == "createRecord" && e[1][0] == "after");
+    let split = |events: &[Json], at: Option<usize>| {
+        let at = at.unwrap_or(events.len());
+        (sorted(&events[..at]), sorted(&events[at..]))
+    };
+    if split(typescript, after(typescript)) != split(rust, after(rust)) {
+        problems.push(json!({ "afterTheCombinator": { "typescript": after(typescript), "rust": after(rust) } }));
     }
     let mut arms: Vec<String> = typescript.iter().filter_map(arm_of).collect();
     arms.sort();
@@ -232,18 +244,43 @@ fn race_problems(typescript: &[Json], rust: &[Json], ts_writes: &Json, rust_writ
 }
 
 /// The arm a recorded request is one of: where it is written (a keyed
-/// write's `at`, an update's or a plain write's text), the arm a lock was
-/// taken for by what its flow asked next; `None` for a count, a link, or
-/// what the movement does outside its arms.
+/// write's `at`, an update's or a plain write's text, a count's WHERE), a
+/// link from the arm's own record (the prelude's `ha`…`hd`, minted fifth
+/// to sixth… in order), the arm a lock was taken for by what its flow
+/// asked next; `None` for a link between the two shared records, or what
+/// the movement does outside its arms.
 fn arm_of(event: &Json) -> Option<String> {
     let at = match event[0].as_str()? {
         "acquire" => return arm_of(&event[2]),
         "resolveEntity" | "createRecord" => event[1][1].get("at").and_then(Json::as_str).or(event[1][0].as_str())?,
         "updateRecord" => event[1][1].as_str()?,
+        "getRelated" => event[2].as_str()?,
+        "linkRecords" => {
+            let own = ["n3", "n4", "n5", "n6"].iter().position(|id| event[1][0] == *id)?;
+            return Some(["a", "b", "c", "d"][own].to_string());
+        }
         _ => return None,
     };
     let (arm, _) = at.split_once('.')?;
     Some(arm.to_string())
+}
+
+/// The text a count's pushed WHERE compares the tag with: the arm's place
+/// (`a.1`, `b02.0`); null when it names none.
+fn tag_of(predicate: &Json) -> Json {
+    fn find(value: &Json) -> Option<String> {
+        match value {
+            Json::String(text) => {
+                let (arm, step) = text.split_once('.')?;
+                let named = arm.chars().next().is_some_and(|c| ('a'..='d').contains(&c)) && arm[1..].chars().all(|c| c.is_ascii_digit());
+                (named && !step.is_empty() && step.chars().all(|c| c.is_ascii_digit())).then(|| text.clone())
+            }
+            Json::Array(items) => items.iter().find_map(find),
+            Json::Object(entries) => entries.values().find_map(find),
+            _ => None,
+        }
+    }
+    find(predicate).map_or(Json::Null, Json::String)
 }
 
 /// A record's field as the oracle's fakes record it (`?? null`).
@@ -282,6 +319,8 @@ fn parallel_arms_ask_lock_and_order_their_writes_as_the_typescript_does() {
     let mut differ = Vec::new();
     let mut races = 0;
     let mut swapped = 0;
+    // Of those, the cases holding a count or a link an arm asked.
+    let mut attributed = 0;
     for case in cases {
         let source = prelude.replace("BODY", case["body"].as_str().expect("a body"));
         let event = json!(["o", 0, [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]]);
@@ -349,6 +388,9 @@ fn parallel_arms_ask_lock_and_order_their_writes_as_the_typescript_does() {
             let twins = first.is_some_and(|f| twin_locks(&expected[f..], &host.events[f..]));
             let problems = if raced || twins { race_problems(expected, &host.events, &case["writes"], &written, &ended, &case["outcome"]) } else { vec![json!("ordered otherwise")] };
             if problems.is_empty() {
+                if expected.iter().any(|e| (e[0] == "getRelated" || e[0] == "linkRecords") && arm_of(e).is_some()) {
+                    attributed += 1;
+                }
                 if raced {
                     races += 1;
                 } else {
@@ -364,5 +406,8 @@ fn parallel_arms_ask_lock_and_order_their_writes_as_the_typescript_does() {
     }
     let shown: Vec<String> = differ.iter().take(5).map(|d| d.to_string()).collect();
     assert!(differ.is_empty(), "{} of {} cases differ:\n{}", differ.len(), cases.len(), shown.join("\n"));
-    println!("{} cases, {races} with arms of one step racing for one gate, {swapped} with two identical lock requests answered the other way", cases.len());
+    println!(
+        "{} cases, {races} with arms of one step racing for one gate, {swapped} with two identical lock requests answered the other way ({attributed} of them holding an arm's count or link)",
+        cases.len()
+    );
 }

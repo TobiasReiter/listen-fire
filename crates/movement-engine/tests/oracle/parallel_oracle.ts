@@ -11,8 +11,11 @@
 //   - FUZZY writes (the type lock exclusive);
 //   - updates of a record the run wrote before the combinator (a record
 //     lock two arms may contend for);
-//   - links between two such records (an edge lock);
-//   - plain writes and counts.
+//   - links between two such records (an edge lock), or from the arm's own
+//     record (written before the combinator, one per arm) to one of them,
+//     which names the arm in the request;
+//   - plain writes, and counts whose WHERE names the arm (the predicate is
+//     pushed to the adapter, so the request names it).
 //
 // The host is scheduled: its adapter and its cross-run locks answer one
 // request at a time, and the run goes on until every flow waits on the host
@@ -67,6 +70,11 @@ export const PARALLEL_PRELUDE = [
   // Two records every arm can reach: what an update and a link lock.
   '  h0 = write graph-[:note]-> { body: "h0" }',
   '  h1 = write graph-[:note]-> { body: "h1" }',
+  // One record per arm: a link from it names the arm that made it.
+  '  ha = write graph-[:note]-> { body: "ha" }',
+  '  hb = write graph-[:note]-> { body: "hb" }',
+  '  hc = write graph-[:note]-> { body: "hc" }',
+  '  hd = write graph-[:note]-> { body: "hd" }',
   'BODY',
   '}',
 ].join('\n');
@@ -75,8 +83,9 @@ function pick<T>(rand: Rand, items: readonly T[]): T {
   return items[Math.floor(rand() * items.length)]!;
 }
 
-/** One statement of an arm, `at` naming where it is written. */
-function step(rand: Rand, at: string, j: number, indent: string): string {
+/** One statement of an arm, `at` naming where it is written (`own`, at
+ *  the top level, the arm's own record). */
+function step(rand: Rand, at: string, j: number, indent: string, own: string | undefined): string {
   const key = pick(rand, ['0', '1']);
   const tagged = `payload: { at: "${at}" }`;
   const roll = rand();
@@ -85,8 +94,11 @@ function step(rand: Rand, at: string, j: number, indent: string): string {
   if (roll < 0.52) return `${indent}write graph-[:note]-> { unique by (\`body\`, \`tag\`), body: "k${key}", tag: "t", ${tagged} }`;
   if (roll < 0.62) return `${indent}write graph-[:note]-> { unique by (FUZZY \`body\`), body: "f${key}", ${tagged} }`;
   if (roll < 0.77) return `${indent}write h${key} { body: "${at}" }`;
-  if (roll < 0.87) return `${indent}link h${key} -[:refs]-> h${key === '0' ? '1' : '0'}`;
-  return `${indent}n${j} = COUNT(graph-[:note]->)`;
+  if (roll < 0.87) {
+    if (own !== undefined && rand() < 0.5) return `${indent}link h${own} -[:refs]-> h${key}`;
+    return `${indent}link h${key} -[:refs]-> h${key === '0' ? '1' : '0'}`;
+  }
+  return `${indent}n${j} = COUNT(graph-[x:note WHERE x.\`tag\` == "${at}"]->)`;
 }
 
 /** An arm: a closure of one to three statements, ending in a `return` of
@@ -100,7 +112,7 @@ function arm(rand: Rand, name: string, depth: number): string {
       const inner = [0, 1].map((k) => arm(rand, `${name}${j}${k}`, depth + 1));
       lines.push(`${indent}x${j} = await parallel([`, ...inner.map((a) => `${a},`), `${indent}])`);
     } else {
-      lines.push(step(rand, `${name}.${j}`, j, indent));
+      lines.push(step(rand, `${name}.${j}`, j, indent, depth === 0 ? name : undefined));
     }
   }
   if (rand() < 0.75) lines.push(`${indent}return "${name}"`);
@@ -118,6 +130,14 @@ function body(rand: Rand): string {
     '  ])',
     '  write graph-[:note]-> { body: "after", payload: { r: r } }',
   ].join('\n');
+}
+
+/** The text a count's pushed WHERE compares the tag with: the arm's place. */
+function tagOf(where: unknown): string | null {
+  if (typeof where === 'string') return /^[a-d][0-9]*\.[0-9]+$/.test(where) ? where : null;
+  if (Array.isArray(where)) return where.map(tagOf).find((t) => t !== null) ?? null;
+  if (where !== null && typeof where === 'object') return Object.values(where).map(tagOf).find((t) => t !== null) ?? null;
+  return null;
 }
 
 /** What a recorded request names: the method, and what tells it apart. */
@@ -144,7 +164,7 @@ function scheduledHost(queue: Asked[], answered: () => number) {
     describe: async () => null,
     resolveEntity: (input) => ask(['resolveEntity', [input.record.body ?? null, input.record.payload ?? null, input.record.tag ?? null]], () => ({ candidates: [] })),
     getFieldValue: async ({ position, fieldId }) => (positionData(position) as Record<string, unknown> | undefined)?.[fieldId] ?? null,
-    getRelated: (read) => ask(['getRelated', read.fieldId], () => []),
+    getRelated: (read) => ask(['getRelated', read.fieldId, tagOf(read.where)], () => []),
     createRecord: (write) =>
       ask(['createRecord', [write.fields.body ?? null, write.fields.payload ?? null, write.fields.tag ?? null]], () => {
         created += 1;
