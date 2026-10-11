@@ -518,9 +518,9 @@ describe('a match miss inside a MAP member (version 4)', () => {
 
 // A write with no `unique by` still finds a record when the adapter matches
 // by its own rule (or the target's native constraints): since version 4 its
-// handle then reads the found record for the fields it did not send. The Rust
-// engine runs versions 1 to 3, and admission cannot see an adapter's rule from
-// the text, so a v4 write whose handle is held goes to the TypeScript engine.
+// handle then reads the found record for the fields it did not send. Both
+// engines keep the record the write found, whatever found it, so the Rust
+// engine runs the program whole under either version.
 describe('a handle on a record the adapter matched by its own rule, on both engines', () => {
   const BODY = ['  org = write crm-[:companies]-> { name: "Acme Inc." }', note('org.`domain`')];
 
@@ -538,14 +538,14 @@ describe('a handle on a record the adapter matched by its own rule, on both engi
     }
   }
 
-  it('under version 4 reads the record as found, and Rust leaves the run to TypeScript', async () => {
+  it('under version 4 reads the record as found, and runs whole on Rust', async () => {
     const ts = await on('ts', 4);
     const rust = await on('rust', 4);
     expect(ts.notes).toEqual(['old.example']);
     expect(rust.notes).toEqual(ts.notes);
-    expect(rust.stats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { v4_handle_read_as_found: 1 } });
-    // The TypeScript engine's admission dry run does not count it as one Rust could start.
-    expect(ts.stats.dryRun).toMatchObject({ admitted: 0, first: { v4_handle_read_as_found: 1 } });
+    expect(rust.stats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
+    // The TypeScript engine's admission dry run counts it as one Rust could start.
+    expect(ts.stats.dryRun).toMatchObject({ admitted: 1, first: {} });
   });
 
   it('under version 3 reads only what the write said, and runs whole on Rust', async () => {

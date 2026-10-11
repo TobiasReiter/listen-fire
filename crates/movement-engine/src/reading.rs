@@ -11,7 +11,7 @@ use std::rc::Rc;
 use movement_parser::lowering::POSITION_SENTINEL;
 use movement_parser::lowering::expression::{EdgeDirection, EdgeStep, Expression, TraversalStep};
 
-use crate::bindings::{Binding, Callback, Identity, Landed, Scope, ShapePosition};
+use crate::bindings::{Binding, Callback, Handle, Identity, Landed, Scope, ShapePosition};
 use crate::env::Trail;
 use crate::eval::{Evaluated, Prov, field_terminal};
 use crate::executor::join_all;
@@ -57,6 +57,30 @@ fn direct_field<'e>(expr: &'e Expression, name: &str, what: &str) -> Result<&'e 
     Ok(field)
 }
 
+/// `isOldEdge`: `-[:@old]->`, which the engine answers from a write handle
+/// itself and never asks an adapter about (no system has the edge).
+pub(crate) fn is_old_edge(step: &EdgeStep) -> bool {
+    step.edge_type_id == OLD_EDGE
+}
+
+/// `-[:@old]->`'s name (movement-lang `OLD_EDGE`).
+pub(crate) const OLD_EDGE: &str = "@old";
+
+/// `startsWithOldEdge`.
+pub(crate) fn starts_with_old_edge(steps: &[TraversalStep]) -> bool {
+    matches!(steps.first(), Some(TraversalStep::Edge(step)) if is_old_edge(step))
+}
+
+/// `walkStartsWithOldEdge`: the walk's first hop is `-[:@old]->`, or, with
+/// no hops of its own, a lifted `EXISTS`'s is.
+fn walk_starts_with_old_edge(expr: &Expression) -> bool {
+    let Expression::Traverse { steps, expression, .. } = expr else { return false };
+    if !steps.is_empty() {
+        return starts_with_old_edge(steps);
+    }
+    matches!(expression.as_ref(), Expression::Exists { steps, .. } if starts_with_old_edge(steps))
+}
+
 fn none() -> Prov {
     Prov::Built(Trail::default())
 }
@@ -99,7 +123,7 @@ impl Run<'_> {
     /// of records (a dict taken for one reads its own keys for them).
     pub(crate) fn entity_origins(&self, landing: &Binding) -> Result<Vec<u32>, Failure> {
         Ok(match landing {
-            Binding::Handle(handle) => match handle.record.get("origin") {
+            Binding::Handle(handle) => match handle.record().get("origin") {
                 origin if !origin.truthy() => Vec::new(),
                 origin => vec![self.intern_origin(origin)],
             },
@@ -173,6 +197,25 @@ impl Run<'_> {
                     self.read_adapter(expr, name, &format!("the '{name}' graph"), start, scope, span).await
                 }
                 Binding::Handle(handle) => {
+                    // `-[:@old]->` is answered from the handle itself; past it,
+                    // the walk goes on from the record it landed on, as any
+                    // walk off a landing does.
+                    if walk_starts_with_old_edge(expr) {
+                        let exists = exists_terminal(expr, name, true)?;
+                        let subject = vec![Binding::Handle(handle)];
+                        if let Some((hops, where_)) = exists
+                            && steps.is_empty()
+                        {
+                            let found = self.exists(hops, where_, subject, scope, span).await?;
+                            return Ok(Evaluated { value: Js::Bool(found), prov: none() });
+                        }
+                        let reached = self.walk_meta(subject, steps, name, scope, span).await?;
+                        if let Some((hops, where_)) = exists {
+                            let found = self.exists(hops, where_, reached, scope, span).await?;
+                            return Ok(Evaluated { value: Js::Bool(found), prov: none() });
+                        }
+                        return self.read_landings(expr, reached, name, "a write handle").await;
+                    }
                     if !steps.is_empty() || exists_terminal(expr, name, true)?.is_some() {
                         let (start, read, _) = self.walk_start(name, &Binding::Handle(handle)).await?;
                         return self.read_adapter(expr, name, "a write handle", Rc::new(Landed::new(start, None, read)), scope, span).await;
@@ -305,6 +348,19 @@ impl Run<'_> {
                     Binding::Landed(landed) => {
                         let walked = self.walk_adapter(&landed.position, &landed.read, steps, name, scope, span).await?;
                         reached.extend(walked.into_iter().map(Binding::Landed));
+                        continue;
+                    }
+                    // `-[:@old]->` lands on the record the handle holds as it
+                    // stood before its write; no system has the edge, so it
+                    // never reaches an adapter.
+                    Binding::Handle(handle) if is_old_edge(step) => {
+                        let mut kept = Vec::new();
+                        for landed in Handle::old_landings(handle) {
+                            if self.hop_keeps_binding(step, &landed, scope, span).await? {
+                                kept.push(landed);
+                            }
+                        }
+                        reached.extend(self.walk_meta(kept, rest, name, scope, span).await?);
                         continue;
                     }
                     Binding::Handle(_) => {
@@ -540,6 +596,7 @@ impl Run<'_> {
                         None => Ok(reached),
                     }
                 }
+                Binding::Handle(handle) if is_old_edge(step) => Ok(Handle::old_landings(handle)),
                 Binding::Handle(_) => {
                     let (start, read, _) = self.walk_start("handle", cursor).await?;
                     let landed = Binding::Landed(Rc::new(Landed::new(start, None, read)));

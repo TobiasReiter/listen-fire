@@ -47,7 +47,7 @@ use movement_parser::lowering::expression::{EdgeDirection, EdgeStep, Expression,
 use serde_json::Value as Json;
 
 use crate::address::Address;
-use crate::bindings::{Binding, InstanceBinding, Landed, Scope};
+use crate::bindings::{Binding, Handle, InstanceBinding, Landed, Scope};
 use crate::env::{self, Trail};
 use crate::eval::{ErrorClass, EvalError, Evaluated, Prov};
 use crate::executor::join_all;
@@ -541,6 +541,36 @@ impl Run<'_> {
                     ))),
                     _ => Err(Stop::Thrown(Failure::unsupported("this block head over a callback", ""))),
                 },
+                // `org-[w:@old]-> { … }`: the record before `org`'s write,
+                // which the handle holds itself (no system has the edge): one
+                // iteration, or none when the write created the record. Hops
+                // past it walk on from that record, as a head rooted there
+                // would (`oldEdgeHeadIterations`).
+                Binding::Handle(handle) if steps.is_some_and(crate::reading::starts_with_old_edge) => {
+                    let Some([TraversalStep::Edge(step), rest @ ..]) = steps else { unreachable!("the head starts with -[:@old]->") };
+                    let Some(old) = Handle::old_landings(&handle).into_iter().next() else { return Ok(Vec::new()) };
+                    if !self.hop_keeps_binding(step, &old, scope, span).await.map_err(Stop::Thrown)? {
+                        return Ok(Vec::new());
+                    }
+                    let aliases: Vec<(String, Binding)> = step.alias.iter().map(|alias| (alias.clone(), old.clone())).collect();
+                    if rest.is_empty() {
+                        return Ok(vec![(aliases, old)]);
+                    }
+                    let onward = self.head_iterations_from(old, root, Some(rest), scope, span).await?;
+                    Ok(onward
+                        .into_iter()
+                        .map(|(bindings, landing)| {
+                            let mut merged = aliases.clone();
+                            for (name, binding) in bindings {
+                                match merged.iter_mut().find(|(n, _)| *n == name) {
+                                    Some(slot) => slot.1 = binding,
+                                    None => merged.push((name, binding)),
+                                }
+                            }
+                            (merged, landing)
+                        })
+                        .collect())
+                }
                 binding @ (Binding::Instance(_) | Binding::Handle(_) | Binding::Event | Binding::Landed(_)) => {
                     let Some(steps) = steps else { return Err(over(crate::record::describe(&binding))) };
                     let (start, read) = self.head_start(&binding, root).await.map_err(Stop::Thrown)?;
@@ -680,14 +710,14 @@ impl Run<'_> {
             Binding::Instance(instance) => (self.instance_read(instance).await?, meta_position(&instance.adapter_slug)),
             Binding::Handle(handle) => {
                 // A handle that bound no record has no position to walk from.
-                let external_id = handle.record.get("externalId");
+                let external_id = handle.record().get("externalId");
                 if matches!(external_id, Js::Undefined) {
                     return Err(Failure::engine(
                         "MOVENG_UNSUPPORTED",
                         format!("block heads rooted at '{root}' (a handle binding) is not supported by the movement engine yet"),
                     ));
                 }
-                let start = stable_position(handle.record.get("adapterType"), Js::str(handle.target_type.clone()), external_id, handle.record.get("resultData"));
+                let start = stable_position(handle.record().get("adapterType"), Js::str(handle.target_type.clone()), external_id, handle.record().get("resultData"));
                 (self.instance_read(&handle.graph).await?, start)
             }
             Binding::Event => {
@@ -1016,11 +1046,11 @@ impl Run<'_> {
             Binding::Instance(instance) => Ok((meta_position(&instance.adapter_slug), self.instance_read(instance).await?, format!("the '{name}' graph"))),
             Binding::Handle(handle) => {
                 // `handleRecord`: a handle that bound no record has none to walk from.
-                let external_id = handle.record.get("externalId");
+                let external_id = handle.record().get("externalId");
                 if matches!(external_id, Js::Undefined) {
                     return Err(Failure::unsupported(&format!("traversing from a write handle ('{name}')"), "the handle bound no readable record to traverse from"));
                 }
-                let start = stable_position(handle.record.get("adapterType"), Js::str(handle.target_type.clone()), external_id, handle.record.get("resultData"));
+                let start = stable_position(handle.record().get("adapterType"), Js::str(handle.target_type.clone()), external_id, handle.record().get("resultData"));
                 Ok((start, self.instance_read(&handle.graph).await?, "a write handle".into()))
             }
             // A pick that found nothing (`top = FIRST(…)`, null).

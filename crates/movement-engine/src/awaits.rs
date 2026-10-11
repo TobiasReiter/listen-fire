@@ -285,7 +285,7 @@ impl Run<'_> {
     /// source): its awaitable adapter asked, with the head's own credential
     /// and construction arguments — the instance the write went through.
     async fn await_landing(&self, handle: &crate::bindings::Handle, edge: &str, filter: Option<&(Expression, Option<String>)>, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address) -> Result<(), Stop> {
-        let record = &handle.record;
+        let record = handle.record();
         let record_id = record.get("externalId");
         let adapter_type = record.get("adapterType").to_js_string();
         if matches!(record_id, Js::Undefined) {

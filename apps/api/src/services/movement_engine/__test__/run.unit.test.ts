@@ -1172,7 +1172,11 @@ describe('unique by — entity resolution through the shared arbitration split',
     expect(attio.creates).toHaveLength(1);
 
     const second = await run('second message');
-    expect(second.writes).toEqual([
+    // What `-[:@old]->` lands on is the engine's own, held beside the
+    // contract's write record (packages/engine-contracts/write_record.ts has
+    // no `old`); old_edge.unit.test.ts reads it through programs on both
+    // engines.
+    expect(second.writes.map(({ old: _old, ...record }) => record)).toEqual([
       {
         bindingName: 'co',
         adapterType: 'attio',
@@ -1188,15 +1192,6 @@ describe('unique by — entity resolution through the shared arbitration split',
         resultData: {},
         foundData: { name: 'U123', summary: 'first message' },
         origin: { kind: 'write', writeIndex: 0, externalId: 'ext-attio-1' },
-        old: expect.objectContaining({
-          kind: 'handle',
-          handle: expect.objectContaining({
-            externalId: 'ext-attio-1',
-            snapshot: true,
-            writtenValues: {},
-            resultData: { name: 'U123', summary: 'first message' },
-          }),
-        }),
       },
     ]);
     // No duplicate — the second run updated the first run's record.

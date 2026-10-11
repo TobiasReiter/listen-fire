@@ -255,12 +255,22 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Shape(shape) => object_of(vec![kind("shape"), ("name", Js::str(shape.clone()))]),
         // A plugin travels as the import it is, re-resolved by its slot name.
         Binding::Plugin(_) => object_of(vec![kind("opaque"), ("what", Js::str("a plugin")), ("name", Js::str(name))]),
-        Binding::Handle(handle) => object_of(vec![
-            kind("handle"),
-            ("handle", handle.record.object.clone()),
-            ("targetType", Js::str(handle.target_type.clone())),
-            ("graph", object_of(vec![kind("instance"), ("instance", identity(&handle.graph))])),
-        ]),
+        Binding::Handle(handle) => {
+            let mut members = vec![
+                kind("handle"),
+                ("handle", handle.record().object.clone()),
+                ("targetType", Js::str(handle.target_type.clone())),
+                ("graph", object_of(vec![kind("instance"), ("instance", identity(&handle.graph))])),
+            ];
+            // The record before its write (`-[:@old]->`), itself a handle; a
+            // rehearsed write's is the handle itself, which JSON cannot nest.
+            match handle.old() {
+                crate::bindings::Old::Nothing => {}
+                crate::bindings::Old::Itself => members.push(("oldIsSelf", Js::Bool(true))),
+                crate::bindings::Old::Was(old) => members.push(("old", serialize_binding(run, "", &Binding::Handle(old), park)?)),
+            }
+            object_of(members)
+        }
         // `holdsRecords` recurses through a value that holds itself until
         // V8's stack runs out: the park fails as the TypeScript's does.
         Binding::Value(value) if crate::js::holds_itself(&value.value) => {

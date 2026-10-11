@@ -23,7 +23,7 @@ use movement_parser::catalog::types::InstanceSchema;
 use movement_parser::lowering::expression::{Expression, TraversalStep};
 use serde_json::Value as Json;
 
-use crate::bindings::{Binding, Handle, InstanceBinding, Scope};
+use crate::bindings::{Binding, Handle, InstanceBinding, Old, Scope};
 use crate::env::{self, Trail};
 use crate::eval::{EvalError, Evaluated, Prov};
 use crate::executor::HostError;
@@ -48,7 +48,8 @@ impl WriteRecord {
     }
 
     /// `readHandleField`: the specials, then what was written, then the
-    /// adapter's result data, else null.
+    /// adapter's result data, then the record as the write found it
+    /// (`foundData`, version 4 on), else null.
     pub fn field(&self, field: &str) -> Result<Js, EvalError> {
         match field {
             "externalId" => return Ok(nullish_to_null(self.get("externalId"))),
@@ -62,8 +63,14 @@ impl WriteRecord {
         {
             return Ok(nullish_to_null(crate::js::object_property(&written, field)));
         }
-        Ok(match self.get("resultData") {
-            Js::Object(data) => data.get(field).cloned().map_or(Js::Null, nullish_to_null),
+        // `field in resultData` the same; past it, `foundData?.[field]`.
+        if let Js::Object(data) = self.get("resultData")
+            && (data.get(field).is_some() || crate::js::is_object_prototype_name(field) || matches!(self.get("foundData"), Js::Undefined))
+        {
+            return Ok(nullish_to_null(own_or_inherited(&data, field)));
+        }
+        Ok(match self.get("foundData") {
+            Js::Object(found) => nullish_to_null(own_or_inherited(&found, field)),
             _ => Js::Null,
         })
     }
@@ -71,6 +78,39 @@ impl WriteRecord {
 
 fn nullish_to_null(value: Js) -> Js {
     if value.is_nullish() { Js::Null } else { value }
+}
+
+/// `data[field]` of a bag of values a handle holds: an own key, else what
+/// its prototype holds under the name.
+fn own_or_inherited(data: &Rc<JsObject>, field: &str) -> Js {
+    match data.get(field) {
+        Some(value) => value.clone(),
+        None => crate::js::object_property(data, field),
+    }
+}
+
+/// A write's firing record, and the record as it stood before the write
+/// (`WriteRecord.old`, version 4 on): a snapshot of what an update found.
+pub(crate) struct Written {
+    pub(crate) record: Js,
+    pub(crate) before: Option<Rc<Handle>>,
+}
+
+impl Written {
+    pub(crate) fn plain(record: Js) -> Written {
+        Written { record, before: None }
+    }
+}
+
+/// What the engine held of a record before a write updated it (an identity
+/// candidate's fields, a landing's fetched data, a handle's values) and the
+/// binding a handle on it stands on (run.ts `PriorRecord`). Overlaid with
+/// the read the merge makes anyway, it is the record as it stood, at no
+/// extra adapter call.
+pub(crate) struct Prior {
+    pub(crate) data: JsObject,
+    pub(crate) target_type: String,
+    pub(crate) graph: Rc<InstanceBinding>,
 }
 
 /// A target adapter: its `adapterType`, whether writes through it are
@@ -258,10 +298,10 @@ impl Run<'_> {
             &evaluated.fields,
             self.version(),
         );
-        let record = self
-            .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links, scope))
+        let written = self
+            .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links, scope, true))
             .await?;
-        Ok(Binding::Handle(self.record_write(record, binding_name, scope, &target, &evaluated.provenance)))
+        Ok(Binding::Handle(self.record_write(written, binding_name, scope, &target, &evaluated.provenance, None)))
     }
 
     /// The write's field lines, its spreads written out (`expandWriteSpreads`)
@@ -436,7 +476,7 @@ impl Run<'_> {
             )));
         }
         let (parent_type, parent_id, parent_data) = match &root {
-            Some(Binding::Handle(handle)) => (handle.target_type.clone(), handle.record.get("externalId"), Some(handle.record.get("resultData"))),
+            Some(Binding::Handle(handle)) => (handle.target_type.clone(), handle.record().get("externalId"), Some(handle.record().get("resultData"))),
             Some(Binding::Landed(landed)) => {
                 let position = &landed.position;
                 match (crate::traverse::record_type(position), crate::traverse::is_stable(position)) {
@@ -933,7 +973,9 @@ impl Run<'_> {
     }
 
     /// `findThenWrite`: the search, the rules and the judge, then an update
-    /// of what was found or a create.
+    /// of what was found or a create. `found_record`: the write's handle
+    /// stands on the record it finds (a write into a system, not into a
+    /// node this run built), so the update keeps it as found (`prior`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn find_then_write(
         &self,
@@ -944,32 +986,82 @@ impl Run<'_> {
         narrowings: &[Option<Expression>],
         parent_links: &[Js],
         scope: &Rc<Scope>,
-    ) -> Result<Js, Stop> {
+        found_record: bool,
+    ) -> Result<Written, Stop> {
         let (chosen, judge_unavailable) = self.resolve_identity(target, &fields.fields, resolve_record, constraints, narrowings, scope).await?;
-        let matched = chosen.map(|c| unique::get(&c, "externalId"));
-        if let Some(external_id) = matched.filter(|id| !matches!(id, Js::Undefined)) {
-            let locks = match target.adapter.local_edge() {
-                None => vec![LockRequest::exclusive(unique::record_lock_name(&target.adapter.adapter_type, &external_id))],
-                Some(edge) => self.local_update_locks(edge, &external_id, constraints, resolve_record, &fields.fields).await.map_err(thrown)?,
-            };
-            if let Some(updated) = self.apply_update(target, &external_id, fields, parent_links, locks).await? {
-                return Ok(updated);
+        if let Some(chosen) = chosen {
+            let external_id = unique::get(&chosen, "externalId");
+            if !matches!(external_id, Js::Undefined) {
+                let locks = match target.adapter.local_edge() {
+                    None => vec![LockRequest::exclusive(unique::record_lock_name(&target.adapter.adapter_type, &external_id))],
+                    Some(edge) => self.local_update_locks(edge, &external_id, constraints, resolve_record, &fields.fields).await.map_err(thrown)?,
+                };
+                let prior = match &target.graph {
+                    Some(graph) if found_record => Some(Prior {
+                        data: candidate_data(&chosen),
+                        target_type: target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
+                        graph: graph.clone(),
+                    }),
+                    _ => None,
+                };
+                if let Some(updated) = self.apply_update(target, &external_id, fields, parent_links, locks, prior).await? {
+                    return Ok(updated);
+                }
             }
         }
         let created = self.apply_create(target, fields, parent_links).await?;
-        Ok(match judge_unavailable {
+        Ok(Written::plain(match judge_unavailable {
             Some(message) => with_key(&created, "note", Js::str(format!("judge unavailable: {message}; created rather than merged"))),
             None => created,
-        })
+        }))
     }
 
     /// `applyUpdate`: the record held while its current values are read and
     /// merged into. `None` when the adapter reports it gone.
-    pub(crate) async fn apply_update(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js], locks: Vec<LockRequest>) -> Result<Option<Js>, Stop> {
-        self.with_locks(locks, self.merge_into_record(target, external_id, fields, parent_links)).await
+    pub(crate) async fn apply_update(
+        &self,
+        target: &Target,
+        external_id: &Js,
+        fields: &Fields,
+        parent_links: &[Js],
+        locks: Vec<LockRequest>,
+        prior: Option<Prior>,
+    ) -> Result<Option<Written>, Stop> {
+        self.with_locks(locks, self.merge_into_record(target, external_id, fields, parent_links, prior)).await
     }
 
-    async fn merge_into_record(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js]) -> Result<Option<Js>, Stop> {
+    /// `recordBefore` (version 4 on): the record an update found, as it
+    /// stood — the snapshot its handle's `-[:@old]->` lands on, and the
+    /// values the new handle reads for the fields the write did not send.
+    /// What the engine already held, under the read the merge has just made;
+    /// nothing here asks the adapter again.
+    fn record_before(&self, target: &Target, external_id: &Js, prior: Option<Prior>, current: &Js) -> (Option<Rc<Handle>>, Option<Js>) {
+        let Some(prior) = prior else { return (None, None) };
+        if !movement_parser::version::since(self.version(), 4) {
+            return (None, None);
+        }
+        let mut data = prior.data;
+        if let Js::Object(current) = current {
+            for (key, value) in current.entries() {
+                data.set(key.clone(), value.clone());
+            }
+        }
+        let reads = Js::object(JsObject::clone_of(&data));
+        let mut record = JsObject::new();
+        record.set("adapterType".into(), Js::str(target.adapter.adapter_type.clone()));
+        record.set("recordType".into(), Js::str(target.record_type.clone()));
+        record.set("externalId".into(), external_id.clone());
+        record.set("created".into(), Js::Bool(false));
+        record.set("committed".into(), Js::Bool(false));
+        record.set("writtenValues".into(), Js::object(JsObject::new()));
+        record.set("resultData".into(), Js::object(data));
+        record.set("provenance".into(), Js::object(JsObject::new()));
+        record.set("snapshot".into(), Js::Bool(true));
+        let old = Handle::new(Rc::new(WriteRecord { object: Js::object(record) }), Old::Nothing, prior.target_type, prior.graph);
+        (Some(Rc::new(old)), Some(reads))
+    }
+
+    async fn merge_into_record(&self, target: &Target, external_id: &Js, fields: &Fields, parent_links: &[Js], prior: Option<Prior>) -> Result<Option<Written>, Stop> {
         let adapter = &target.adapter;
         let keys: Vec<Js> = match &fields.fields {
             Js::Object(object) => object.entries().iter().map(|(k, _)| Js::str(k.clone())).collect(),
@@ -985,6 +1077,7 @@ impl Run<'_> {
             Js::Null
         };
         let has_current = current.truthy();
+        let (before, found) = self.record_before(target, external_id, prior, &current);
         let mut to_write = JsObject::new();
         if let Js::Object(object) = &fields.fields {
             for (field, value) in object.entries() {
@@ -1037,12 +1130,15 @@ impl Run<'_> {
         if !changed && fields.resources.is_empty() && parent_links.is_empty() {
             let mut record = record_head(adapter, &target.record_type, false, !adapter.dry, external_id.clone());
             record.set("writtenValues".into(), Js::object(JsObject::new()));
+            if let Some(found) = found {
+                record.set("foundData".into(), found);
+            }
             record.set("outcome".into(), Js::str("noop"));
             record.set("provenance".into(), Js::object(JsObject::new()));
             if let Some(parents) = parents {
                 record.set("parents".into(), parents);
             }
-            return Ok(Some(Js::object(record)));
+            return Ok(Some(Written { record: Js::object(record), before }));
         }
         let to_write = Js::object(to_write);
         let mut update = JsObject::new();
@@ -1079,6 +1175,9 @@ impl Run<'_> {
         let mut record = record_head(adapter, &target.record_type, false, !adapter.dry, external_id.clone());
         record.set("writtenValues".into(), to_write);
         record.set("resultData".into(), write_result_data(&updated));
+        if let Some(found) = found {
+            record.set("foundData".into(), found);
+        }
         record.set("outcome".into(), Js::str(if changed { "update" } else { "attach" }));
         record.set("provenance".into(), Js::object(JsObject::new()));
         if let Some(parents) = parents {
@@ -1089,7 +1188,7 @@ impl Run<'_> {
         {
             record.set("association".into(), association.clone());
         }
-        Ok(Some(Js::object(record)))
+        Ok(Some(Written { record: Js::object(record), before }))
     }
 
     /// `applyCreate`: the required-field gate, then the create.
@@ -1151,10 +1250,16 @@ impl Run<'_> {
     /// `executePositionWrite`: an update by the id of the record the alias
     /// stands on — a write's handle, or a traversed record.
     async fn position_write(&self, alias: &str, lines: &[Line], binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Binding, Stop> {
-        let (target, external_id) = self.position_target(alias, scope, "update").await?;
+        let binding = scope.resolve(alias);
+        let (target, external_id) = self.position_target_of(alias, binding.clone(), scope, "update").await?;
         let fields = self.write_fields(lines, &target.adapter, &target.record_type, scope).await?;
         let lock = unique::record_lock_name(&target.adapter.adapter_type, &external_id);
-        let Some(record) = self.apply_update(&target, &external_id, &fields, &[], vec![LockRequest::exclusive(lock)]).await? else {
+        let prior = Prior {
+            data: known_record_data(binding.as_ref()),
+            target_type: target.record_type.clone(),
+            graph: target.graph.clone().expect("a position write's record is in a system"),
+        };
+        let Some(written) = self.apply_update(&target, &external_id, &fields, &[], vec![LockRequest::exclusive(lock)], Some(prior)).await? else {
             return Err(thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!(
@@ -1164,7 +1269,7 @@ impl Run<'_> {
                 ),
             )));
         };
-        Ok(Binding::Handle(self.record_write(record, binding_name, scope, &target, &fields.provenance)))
+        Ok(Binding::Handle(self.record_write(written, binding_name, scope, &target, &fields.provenance, None)))
     }
 
     /// `resolvePositionWriteTarget`: the record an alias stands on, as an
@@ -1211,7 +1316,7 @@ impl Run<'_> {
                 Ok((target(adapter, record_type, instance), crate::traverse::record_id(position)))
             }
             Some(Binding::Handle(handle)) => {
-                let external_id = handle.record.get("externalId");
+                let external_id = handle.record().get("externalId");
                 if matches!(external_id, Js::Undefined) {
                     return Err(unstable());
                 }
@@ -1230,15 +1335,21 @@ impl Run<'_> {
 
     /// `recordWrite`: the firing record finished — each written field's
     /// trail summarised, the binding's name, the interned origin — onto the
-    /// run's writes, and the handle bound.
+    /// run's writes, and the handle bound: a new one, or `into` moved on to
+    /// the record in place (`write org { … }` from version 4). A write
+    /// through a rehearsing adapter changed nothing, so a record it found
+    /// stood before the write exactly as the handle shows it: its `@old` is
+    /// the handle itself.
     pub(crate) fn record_write(
         &self,
-        record: Js,
+        written: Written,
         binding_name: Option<&str>,
         scope: &Scope,
         target: &Target,
         provenance: &[(String, Option<Trail>)],
+        into: Option<&Rc<Handle>>,
     ) -> Rc<Handle> {
+        let Written { record, before } = written;
         let write_index = self.writes.borrow().len();
         let Js::Object(object) = &record else { unreachable!("a write record is an object") };
         let mut object = JsObject::clone_of(object);
@@ -1251,12 +1362,23 @@ impl Run<'_> {
         object.set("origin".into(), env::object_of(origin));
         let record = Rc::new(WriteRecord { object: Js::object(object) });
         self.append_write(record.clone());
-        let handle = Handle {
-            record,
-            target_type: target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
-            graph: target.graph.clone().expect("a write bound as a handle is in a system"),
+        let old = match before {
+            None => Old::Nothing,
+            Some(_) if target.adapter.dry => Old::Itself,
+            Some(before) => Old::Was(before),
         };
-        let handle = Rc::new(handle);
+        let handle = match into {
+            Some(handle) => {
+                handle.move_to(record, old);
+                handle.clone()
+            }
+            None => Rc::new(Handle::new(
+                record,
+                old,
+                target.handle_type.clone().unwrap_or_else(|| target.record_type.clone()),
+                target.graph.clone().expect("a write bound as a handle is in a system"),
+            )),
+        };
         if let Some(name) = binding_name {
             scope.declare(name, Binding::Handle(handle.clone()));
         }
@@ -1289,8 +1411,8 @@ impl Run<'_> {
             Binding::Extracted { emission, .. } => return emission_field(emission, field),
             other => return Err(EvalError::engine("MOVENG_RUNTIME", format!("{} is not a record in hand", describe_binding(other)))),
         };
-        let value = handle.record.field(field)?;
-        let trail = match handle.record.get("origin") {
+        let value = handle.record().field(field)?;
+        let trail = match handle.record().get("origin") {
             Js::Object(origin) => {
                 let mut read = JsObject::clone_of(&origin);
                 read.set("field".into(), Js::str(field));
@@ -1423,6 +1545,51 @@ impl Run<'_> {
 /// non-negative integer (negative, fractional, null, absent) finds nothing and
 /// the write creates, as the TypeScript's lookup does. An index past the end
 /// finds nothing too, which the caller's `candidates.get` answers.
+/// A candidate's `{url?, ...data}`: the record as an identity search found it.
+pub(crate) fn candidate_data(candidate: &Js) -> JsObject {
+    let mut data = JsObject::new();
+    let url = unique::get(candidate, "url");
+    if !matches!(url, Js::Undefined) {
+        data.set("url".into(), url);
+    }
+    if let Js::Object(bag) = unique::get(candidate, "data") {
+        for (k, v) in bag.entries() {
+            data.set(k.clone(), v.clone());
+        }
+    }
+    data
+}
+
+/// `knownRecordData`: what the run already holds of the record a position
+/// write names — a handle's values (as found, as answered, as written), or
+/// the data a traversal fetched with the landing.
+fn known_record_data(binding: Option<&Binding>) -> JsObject {
+    let mut data = JsObject::new();
+    let mut spread = |bag: Js| {
+        if let Js::Object(bag) = bag {
+            for (k, v) in bag.entries() {
+                data.set(k.clone(), v.clone());
+            }
+        }
+    };
+    match binding {
+        Some(Binding::Handle(handle)) => {
+            let record = handle.record();
+            for bag in ["foundData", "resultData", "writtenValues"] {
+                spread(record.get(bag));
+            }
+        }
+        Some(Binding::Landed(landed)) => {
+            let position = crate::traverse::position_data(&landed.position);
+            if crate::js::is_dict(&position) {
+                spread(position);
+            }
+        }
+        _ => {}
+    }
+    data
+}
+
 fn judged_index(answer: &Json) -> Option<usize> {
     answer.get("index").and_then(Json::as_f64).filter(|i| *i >= 0.0 && i.fract() == 0.0).map(|i| i as usize)
 }

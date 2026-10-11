@@ -31,18 +31,7 @@ use crate::env;
 use crate::js::{self, Js, JsObject};
 use crate::run::{Failure, Run, Stop};
 use crate::unique;
-use crate::write::{Line, Target, Verb, WriteRecord, describe_binding, record_head, thrown};
-
-/// A record's `{url?, ...data}` (`writeResultData` over a candidate).
-fn candidate_data(candidate: &Js) -> JsObject {
-    let mut data = JsObject::new();
-    let url = unique::get(candidate, "url");
-    if !matches!(url, Js::Undefined) {
-        data.set("url".into(), url);
-    }
-    merge_into(&mut data, &unique::get(candidate, "data"));
-    data
-}
+use crate::write::{Line, Target, Verb, WriteRecord, Written, candidate_data, describe_binding, record_head, thrown};
 
 fn merge_into(into: &mut JsObject, bag: &Js) {
     if let Js::Object(bag) = bag {
@@ -55,7 +44,7 @@ fn merge_into(into: &mut JsObject, bag: &Js) {
 /// A handle's write origin, summarised: the provenance a link's or a
 /// delete's row carries for it (`summariseTrail(handleTrail(handle))`).
 fn handle_provenance(handle: &Handle) -> Js {
-    match handle.record.get("origin") {
+    match handle.record().get("origin") {
         Js::Undefined => Js::array(vec![]),
         origin => Js::array(vec![crate::run::summarise(&origin)]),
     }
@@ -196,7 +185,7 @@ impl Run<'_> {
         record.set("writtenValues".into(), Js::object(JsObject::new()));
         record.set("resultData".into(), Js::object(data));
         record.set("provenance".into(), Js::object(JsObject::new()));
-        Ok(Binding::Handle(self.record_write(Js::object(record), binding_name, scope, &target, &[])))
+        Ok(Binding::Handle(self.record_write(Written::plain(Js::object(record)), binding_name, scope, &target, &[], None)))
     }
 
     /// `readRecord {recordType, externalId}`.
@@ -340,7 +329,7 @@ impl Run<'_> {
                 format!("{at}: '{edge}' connects {} to {}, but '{to_name}' is a {} handle", from.target_type, declared.target, to.target_type),
             )));
         }
-        let (from_id, to_id) = (from.record.get("externalId"), to.record.get("externalId"));
+        let (from_id, to_id) = (from.record().get("externalId"), to.record().get("externalId"));
         if matches!(from_id, Js::Undefined) || matches!(to_id, Js::Undefined) {
             let missing = if matches!(from_id, Js::Undefined) { from_name } else { to_name };
             return Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("{at}: '{missing}' carries no written record id to link"))));
@@ -362,7 +351,7 @@ impl Run<'_> {
             _ => None,
         };
         let record_type = crate::write::infer_linked_type(graph.schema.as_ref(), &from.target_type, &link.edge, explicit, &link.from, Verb::Link)?;
-        let from_id = from.record.get("externalId");
+        let from_id = from.record().get("externalId");
         if matches!(from_id, Js::Undefined) {
             return Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("{at}: '{}' carries no written record id to link", link.from))));
         }
@@ -438,7 +427,7 @@ impl Run<'_> {
                 "origin".into(),
                 env::object_of(vec![("kind", Js::str("write")), ("writeIndex", Js::Number(write_index as f64)), ("externalId", to_id)]),
             );
-            let handle = Handle { record: Rc::new(WriteRecord { object: Js::object(handle) }), target_type: record_type, graph };
+            let handle = Handle::new(Rc::new(WriteRecord { object: Js::object(handle) }), crate::bindings::Old::Nothing, record_type, graph);
             scope.declare(name, Binding::Handle(Rc::new(handle)));
         }
         Ok(())

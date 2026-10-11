@@ -396,8 +396,9 @@ impl Run<'_> {
         let resolve_record = overlaid(&fields.fields, &identity.overlay);
         let locks = unique::identity_lock_requests(LOCAL_ADAPTER_TYPE, &edge_name, &constraints, &resolve_record, &fields.fields, self.version());
         let record = self
-            .with_locks(locks, self.find_then_write(&target, &fields, &resolve_record, &constraints, &identity.narrowings, &[], scope))
-            .await?;
+            .with_locks(locks, self.find_then_write(&target, &fields, &resolve_record, &constraints, &identity.narrowings, &[], scope, false))
+            .await?
+            .record;
         let edge = store.local_edge().expect("the store is the edge's");
         let external_id = unique::get(&record, "externalId");
         let Some(landing) = edge.landing_of(&external_id) else {
@@ -413,7 +414,7 @@ impl Run<'_> {
             row.set("externalId".into(), real.external_id.clone());
             row.set("committed".into(), Js::Bool(!real.adapter.dry));
             let destination = Target::bare(real.adapter.clone(), real.record_type.clone(), real.graph.clone());
-            self.record_write(Js::object(row), None, scope, &destination, &fields.provenance);
+            self.record_write(crate::write::Written::plain(Js::object(row)), None, scope, &destination, &fields.provenance, None);
             if let Some(name) = binding_name {
                 scope.declare(name, landing.clone());
             }
@@ -445,7 +446,7 @@ impl Run<'_> {
         let target = Target::local(store.clone(), &edge_name);
         let fields = self.write_fields(lines, &store, &edge_name, scope).await?;
         // The landing's own lock is the run's alone.
-        let Some(record) = self.apply_update(&target, &Js::str("0"), &fields, &[], Vec::new()).await? else {
+        let Some(crate::write::Written { record, .. }) = self.apply_update(&target, &Js::str("0"), &fields, &[], Vec::new(), None).await? else {
             return Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'write {alias} {{ … }}' — the landing on '{edge_name}' is gone"))));
         };
         self.landing_trails(&landing, &record, &fields.provenance);

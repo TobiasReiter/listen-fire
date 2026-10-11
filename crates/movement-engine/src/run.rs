@@ -1370,12 +1370,17 @@ impl Run<'_> {
             return Ok(None);
         }
         let Expression::Traverse { alias_root: Some(root), steps, .. } = expression.as_ref() else { return Ok(None) };
+        // `-[:@old]->` is no system's edge: the evaluator answers it from the
+        // handle, and the record it selects binds as itself.
+        if matches!(scope.resolve(root), Some(Binding::Handle(_))) && crate::reading::starts_with_old_edge(steps) {
+            return Ok(None);
+        }
         // A root `graphReadFor` resolves no graph for (a node the run built,
         // a value): the fold of the walk, evaluated.
         let graph = match scope.resolve(root) {
             Some(Binding::Event | Binding::Landed(_) | Binding::Instance(_)) => true,
             // A handle that bound no record has no graph to read.
-            Some(Binding::Handle(handle)) => !matches!(handle.record.get("externalId"), Js::Undefined),
+            Some(Binding::Handle(handle)) => !matches!(handle.record().get("externalId"), Js::Undefined),
             _ => false,
         };
         if !graph {

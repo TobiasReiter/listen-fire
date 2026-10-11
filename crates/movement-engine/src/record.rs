@@ -234,7 +234,7 @@ pub fn own_property(binding: &Binding, key: &str) -> Result<Js, EvalError> {
         (Binding::Value(value), "many") if value.many => Ok(Js::Bool(true)),
         (Binding::Value(_), "provenance") => internal("provenance"),
         (Binding::Handle(handle), "targetType") => Ok(Js::str(handle.target_type.clone())),
-        (Binding::Handle(handle), "handle") => Ok(handle.record.object.clone()),
+        (Binding::Handle(handle), "handle") => Ok(handle.record().object.clone()),
         (Binding::Handle(_), "graph") => internal("graph"),
         (Binding::Landed(landed), "position") => Ok(landed.position.clone()),
         (Binding::Landed(landed), "edgeProperties") if landed.edge_properties.is_some() => Ok(landed.edge_properties.clone().unwrap_or(Js::Null)),
@@ -304,7 +304,15 @@ fn address(binding: &Binding) -> Option<String> {
                 text(crate::unique::get(&identity, "recordId"))
             ))
         }
-        Binding::Handle(handle) => Some(format!("{}:{}", text(handle.record.get("adapterType")), text(handle.record.get("externalId")))),
+        // A snapshot (`-[:@old]->`) is a record as it once stood, not a
+        // live position: equal only to itself.
+        Binding::Handle(handle) => {
+            let record = handle.record();
+            if matches!(record.get("snapshot"), Js::Bool(true)) {
+                return None;
+            }
+            Some(format!("{}:{}", text(record.get("adapterType")), text(record.get("externalId"))))
+        }
         _ => None,
     }
 }
@@ -372,20 +380,24 @@ pub fn fields_of(binding: &Binding) -> Result<JsObject, EvalError> {
             }
         }
         Binding::Handle(handle) => {
-            let written = handle.record.get("writtenValues");
+            let record = handle.record();
+            let written = record.get("writtenValues");
             if let Js::Object(written) = &written {
                 for (key, value) in written.entries() {
                     fields.set(key.clone(), value.clone());
                 }
             }
-            // `omitKeys`: a key `in` the written values (their prototype's
-            // names too) is the written one.
-            if let Js::Object(data) = handle.record.get("resultData") {
-                for (key, value) in data.entries() {
-                    let written_key = matches!(&written, Js::Object(w) if w.get(key).is_some()) || js::is_object_prototype_name(key);
-                    if !written_key {
-                        fields.set(key.clone(), value.clone());
-                    }
+            // `omitKeys({...foundData, ...resultData}, writtenValues)`: a key
+            // `in` the written values (their prototype's names too) is the
+            // written one.
+            let mut data = JsObject::new();
+            for bag in ["foundData", "resultData"] {
+                spread(&mut data, &record.get(bag));
+            }
+            for (key, value) in data.entries() {
+                let written_key = matches!(&written, Js::Object(w) if w.get(key).is_some()) || js::is_object_prototype_name(key);
+                if !written_key {
+                    fields.set(key.clone(), value.clone());
                 }
             }
         }

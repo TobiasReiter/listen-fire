@@ -395,9 +395,7 @@ refused where it stands (`is_test_declared_record`).
 | `write_multi_hop`, `match_multi_hop` | a linked write or match that walks more (or less) than one edge | the TypeScript's error, or its multi-hop semantics |
 | `write_spread_path`, `node_spread`, `node_spread_path`, `node_spread_source` | `...m.k` in a write or a graph literal; a spread in a `node { … }` literal; a graph spread of a name that is not a value, a handle or a node | spreads of records and of map members |
 | `unique_by_without_key`, `unique_by_reads_beyond_candidate` | a `unique by` clause with no key (no bare field, parent or `field == value`); a conjunct that is not a pure predicate over the candidate | the TypeScript's post-filter for impure conjuncts |
-| `v4_old_edge` | under language version 4, a hop over an `@` edge (`-[:@old]->`, a block head's, a walk's, an `EXISTS`'s, a write's or a match's target): the record a write handle held before its write | the `@old` snapshot a write handle keeps |
 | `v4_write_in_place` | under language version 4, `write org { … }` on a write's handle: the handle moves on to the updated record in place, and its `@old` is the handle as it stood | a handle updated in place, seen by every scope holding it |
-| `v4_handle_read_as_found` | under language version 4, a write whose handle the program holds (`x = write …`), whatever its identity (`unique by`, the target's native constraints and an adapter's own matching rule all find a record, and admission cannot see the last two from the text); a write with `unique by`; or `write x { … }` on any other name (a hop alias, a node, a value holding a record): an update's handle reads the record as found for the fields the write did not send (`foundData`) and holds it as `@old` | the found record's data on the handle |
 
 **Nodes and graphs** (a reached body):
 
@@ -485,9 +483,9 @@ v1, v2 and v3 corpora).
 | main's change | sha | on this engine |
 |---|---|---|
 | a named match that finds nothing binds absent and the block carries on; a judge outage on a match leaves a `MOVENG_MATCH_JUDGE_UNAVAILABLE` warning | 26ed0b502f, 30e1acc55b | runs (crate::verbs `OnMiss`); a link's body still ends the scope on a miss, which version 4's checker refuses (`MOV_LINK_MATCH_BODY_RETIRED`) |
-| `-[:@old]->` off a write handle: the record the write found, the handle itself under `dry_run`, the previous handle on a chained write | 1bd0d3aa10, 30e1acc55b | refused as `v4_old_edge` |
+| `-[:@old]->` off a write handle: the record the write found, the handle itself under `dry_run`, the previous handle on a chained write | 1bd0d3aa10, 30e1acc55b | runs: the hop is answered from the handle, never an adapter (crate::reading `is_old_edge`: an expression's walk, an `EXISTS`, a pick, a block head); the record before rides on the handle (crate::bindings `Old`) and a park carries it as `old` / `oldIsSelf` |
 | `write org { … }` on a handle updates it in place | 1bd0d3aa10 | refused as `v4_write_in_place` |
-| a handle reads the record as found (`foundData`) for a field its write did not set; a parent link carries only what the parent's own write got back | 1bd0d3aa10, ac7ac15ec8 | refused as `v4_handle_read_as_found` |
+| a handle reads the record as found (`foundData`) for a field its write did not set; a parent link carries only what the parent's own write got back | 1bd0d3aa10, ac7ac15ec8 | runs: every update that found its record by identity (`unique by`, native constraints or the adapter's own rule) or through a position keeps it (crate::write `record_before`), whatever admission can see; a hop and a parent link read only `resultData` |
 
 ### What admission cannot decide
 

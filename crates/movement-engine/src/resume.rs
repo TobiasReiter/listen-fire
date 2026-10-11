@@ -867,11 +867,25 @@ impl Run<'_> {
                     let record = at(descriptor, "handle").ok_or_else(|| malformed("a handle descriptor without its record"))?;
                     let target_type = text(at(descriptor, "targetType")).ok_or_else(|| malformed("a handle without a targetType"))?;
                     let graph = at(descriptor, "graph").and_then(|g| at(g, "instance")).ok_or_else(|| malformed("a handle without its graph"))?;
-                    Binding::Handle(Rc::new(Handle {
-                        record: Rc::new(WriteRecord { object: record.clone() }),
-                        target_type: target_type.to_string(),
-                        graph: Rc::new(self.rehydrate_instance(graph)?),
-                    }))
+                    let handle = Rc::new(Handle::new(
+                        Rc::new(WriteRecord { object: record.clone() }),
+                        crate::bindings::Old::Nothing,
+                        target_type.to_string(),
+                        Rc::new(self.rehydrate_instance(graph)?),
+                    ));
+                    // The record before its write (`-[:@old]->`): the handle
+                    // itself, said as `oldIsSelf`, or a handle of its own.
+                    if matches!(at(descriptor, "oldIsSelf"), Some(Js::Bool(true))) {
+                        handle.move_to(handle.record(), crate::bindings::Old::Itself);
+                    } else if let Some(old) = at(descriptor, "old") {
+                        match self.rehydrate(old, park).await? {
+                            Binding::Handle(old) => handle.move_to(handle.record(), crate::bindings::Old::Was(old)),
+                            other => {
+                                return Err(runtime(format!("the parked state's record before a write is {}, not a handle", crate::record::kind_of(&other))));
+                            }
+                        }
+                    }
+                    Binding::Handle(handle)
                 }
                 Some(kind @ ("extractRoot" | "extractPosition")) => {
                     let emission = self.rehydrate_emission(at(descriptor, "emission").unwrap_or(&Js::Undefined))?;

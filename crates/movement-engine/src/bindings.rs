@@ -227,11 +227,86 @@ pub struct LandingShape {
 }
 
 /// `{kind: 'handle', handle: WriteRecord, targetType, graph: {kind: 'instance', instance}}`.
-#[derive(Debug, Clone)]
+///
+/// The record it names is held in a cell: from version 4, `write org { … }`
+/// moves the handle `org` on to the updated record in place (run.ts
+/// `recordWrite`'s `into`), and every scope holding it reads the update.
+/// The record before its write (`-[:@old]->`) is held beside it: the
+/// TypeScript keeps it on the write record, which one handle alone holds.
+#[derive(Debug)]
 pub struct Handle {
-    pub record: Rc<crate::write::WriteRecord>,
+    state: RefCell<HandleState>,
     pub target_type: String,
     pub graph: Rc<InstanceBinding>,
+}
+
+#[derive(Debug)]
+struct HandleState {
+    record: Rc<crate::write::WriteRecord>,
+    old: Old,
+}
+
+/// What `-[:@old]->` lands on from a handle (expression.ts `WriteRecord.old`,
+/// version 4 on).
+#[derive(Debug, Clone)]
+pub enum Old {
+    /// The write created the record (or the version is before 4): nothing.
+    Nothing,
+    /// A rehearsed write that found a record: nothing changed, so the
+    /// record before is the handle itself (`old === binding`).
+    Itself,
+    /// A snapshot of the record as the write found it, or the handle as it
+    /// stood before an in-place write (its own `old` keeping the chain).
+    Was(Rc<Handle>),
+}
+
+impl Handle {
+    pub fn new(record: Rc<crate::write::WriteRecord>, old: Old, target_type: String, graph: Rc<InstanceBinding>) -> Handle {
+        Handle { state: RefCell::new(HandleState { record, old }), target_type, graph }
+    }
+
+    /// The write record the handle names now.
+    pub fn record(&self) -> Rc<crate::write::WriteRecord> {
+        self.state.borrow().record.clone()
+    }
+
+    pub fn old(&self) -> Old {
+        self.state.borrow().old.clone()
+    }
+
+    /// `binding.handle = record`: the handle moves on to a new record, with
+    /// the record before it.
+    pub fn move_to(&self, record: Rc<crate::write::WriteRecord>, old: Old) {
+        *self.state.borrow_mut() = HandleState { record, old };
+    }
+
+    /// `oldEdgeLandings`: where `-[:@old]->` lands from the handle `this`.
+    pub fn old_landings(this: &Rc<Handle>) -> Vec<Binding> {
+        match this.old() {
+            Old::Nothing => Vec::new(),
+            Old::Itself => vec![Binding::Handle(this.clone())],
+            Old::Was(old) => vec![Binding::Handle(old)],
+        }
+    }
+
+    /// `snapshotOfHandle`: the record the handle names as it stands now, a
+    /// distinct position (`snapshot: true`), its value bags copied, its own
+    /// `old` kept so the chain walks (a handle that was its own `old` stays
+    /// its own in the snapshot).
+    pub fn snapshot(&self) -> Rc<Handle> {
+        let record = self.record();
+        let mut object = match &record.object {
+            Js::Object(object) => JsObject::clone_of(object),
+            _ => JsObject::new(),
+        };
+        for bag in ["writtenValues", "resultData"] {
+            if let Some(Js::Object(values)) = object.get(bag).cloned() {
+                object.set(bag.into(), Js::object(JsObject::clone_of(&values)));
+            }
+        }
+        object.set("snapshot".into(), Js::Bool(true));
+        Rc::new(Handle::new(Rc::new(crate::write::WriteRecord { object: Js::object(object) }), self.old(), self.target_type.clone(), self.graph.clone()))
+    }
 }
 
 /// `{kind: 'instance', name, adapterSlug, credentialName?, constructionConfig?, schema}`.
