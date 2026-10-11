@@ -554,8 +554,6 @@ describe('a whole run in the Rust engine', () => {
     // One program per construct admission refuses: each costs a parse and
     // the walk, never a check, an adapter or a trace entry.
     for (const [source, reason] of [
-      [`r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`, 'file_assignment'],
-      [`movement v(n: <number[]>) {\n  x = 1\n}\n${movement('  x = 1')}`, 'movement_value_param'],
       [movement('  inbox = 1'), 'name_shadowed'],
       [movement('  x = 1\n  x = write crm-[:companies]-> { name: "a" }'), 'name_rebound'],
       [movement('  crm-[c:companies]-> {\n    x = 1\n  }\n  c = 1'), 'name_rebound'],
@@ -597,8 +595,6 @@ describe('a whole run in the Rust engine', () => {
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url()')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = { page: fetch_url(msg.`text`) }')}`, 'plugin_call'],
-      [`import { fetch_url } from plugins\npage = fetch_url()\n${movement('  x = 1')}`, 'file_call'],
-      [`import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`, 'file_call'],
       // An extraction this engine does not run (chunk 6A Task 3b runs the rest).
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }'), 'block_head_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
@@ -634,6 +630,25 @@ describe('a whole run in the Rust engine', () => {
       declined: {},
       hostCalls: {},
     });
+  });
+});
+
+describe('the file scope, as interpretFileStatement reads it', () => {
+  // Chunk 7A Task 6: a file-level extraction, block, write or call fails the
+  // run with the TypeScript's own error before any body; any other
+  // right-hand side binds nothing; a file-level statement runs nothing.
+  const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+  it('fails, binds nothing or runs nothing on both engines alike, whole on Rust', async () => {
+    for (const source of [
+      `r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`,
+      `import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`,
+      `w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`,
+      `write crm-[:companies]-> { name: "a" }\n${movement('  x = msg.\`subject\`')}`,
+      `n = node { title: "t" }\n${movement('  x = n.\`title\`')}`,
+    ]) {
+      await agree({ source, event: webhook({ subject: 'Acme' }) });
+      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, notAdmitted: {}, declined: {} });
+    }
   });
 });
 

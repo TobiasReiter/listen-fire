@@ -221,7 +221,13 @@ pub fn refusals(
     // File-level values, in source order: each may read the ones before it.
     // One already refused binds its name and is not walked again.
     let mut file_values: Vec<(&str, Option<&RValue>)> = Vec::new();
+    // A file statement that fails every run before any body (run.ts
+    // `interpretFileStatement`): what follows it never runs.
+    let mut fails_at_file = false;
     for statement in &program.statements {
+        if fails_at_file {
+            break;
+        }
         match statement {
             Statement::Import(import) => {
                 match &import.source {
@@ -236,10 +242,10 @@ pub fn refusals(
             Statement::Assign(assign) => {
                 file_names.insert(assign.name.clone());
                 match &assign.value {
-                    RValue::Construct { construct } if movement_names.contains(&construct.callee) || plugin_named(&construct.callee) => {
-                        reasons.note("file_call");
-                        file_values.push((&assign.name, None));
-                    }
+                    // `fileLevelCall`, and the right-hand sides that have no
+                    // event to run about: the run fails as the TypeScript's
+                    // does, before any body.
+                    RValue::Construct { construct } if movement_named(&construct.callee) || plugin_named(&construct.callee) => fails_at_file = true,
                     RValue::Construct { .. } => {
                         instances.insert(assign.name.clone());
                     }
@@ -247,15 +253,14 @@ pub fn refusals(
                     // built-in's value it would otherwise read as (run.ts
                     // `resolvedRValue`), and a file has no event to make it about
                     // (`fileLevelCall`).
-                    RValue::Call { call } if plugin_named(&call.callee) || movement_named(&call.callee) => {
-                        reasons.note("file_call");
-                        file_values.push((&assign.name, None));
+                    RValue::Call { call } if plugin_named(&call.callee) || movement_named(&call.callee) => fails_at_file = true,
+                    RValue::Extract { .. } | RValue::ExtractCall { .. } | RValue::Block { .. } | RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => {
+                        fails_at_file = true;
                     }
                     RValue::Expr { .. } | RValue::Call { .. } => file_values.push((&assign.name, Some(&assign.value))),
-                    _ => {
-                        reasons.note("file_assignment");
-                        file_values.push((&assign.name, None));
-                    }
+                    // Any other right-hand side binds nothing: a read of the
+                    // name fails at run time on either engine, naming it.
+                    _ => file_values.push((&assign.name, None)),
                 }
             }
             // A declared shape binds its name at file scope (run.ts
@@ -272,7 +277,8 @@ pub fn refusals(
             Statement::Movement(movement) => {
                 file_names.insert(movement.name.clone());
             }
-            other => reasons.note(format!("file_statement:{}", statement_kind(other))),
+            // Any other file statement runs nothing (`interpretFileStatement`).
+            _ => {}
         }
     }
     let none = BTreeSet::new();
@@ -313,6 +319,13 @@ pub fn refusals(
         values.insert(name.to_string());
     }
     let file_values = values;
+    // The dispatched movement is picked and its one parameter read before
+    // any body (`prepareMovement`): one taking other than one parameter, an
+    // untyped one or a value fails the run there, on either engine.
+    let fails_at_entry = entry.is_some_and(|e| e.params.len() != 1 || matches!(e.params[0].type_, None | Some(ParamTypeRef::Value(_))));
+    if fails_at_file || fails_at_entry {
+        return Admission { reasons: reasons.0.into_inner(), called: Vec::new() };
+    }
     // A declared shape's words are read in the file's scope once an
     // extraction asks for them.
     let file_scope = Names {
@@ -360,11 +373,12 @@ pub fn refusals(
                 None => called.push((movement.name.clone(), params.collect())),
             }
         }
-        // A movement no call reaches takes its parameters as the event: one
-        // taking a value can only be entered by what is refused elsewhere.
-        if !walk.called && movement.params.iter().any(|p| matches!(p.type_, Some(ParamTypeRef::Value(_)))) {
-            reasons.note("movement_value_param");
-        }
+        // A movement no call reaches takes its parameters as the event. One
+        // taking a value fails the run before its body when fired itself
+        // (above); as a combinator's arm the checker refuses it
+        // (MOV_COMBINATOR_ARM_TAKES_NOTHING), and handed where a closure goes
+        // it is walked as the closure's function: only a name its text
+        // merely mentions reaches it otherwise, and that never runs.
         let params: BTreeSet<String> = movement.params.iter().map(|p| p.name.clone()).collect();
         let bound = callees.bound(movement, &walk.signature, Vec::new());
         let events: BTreeSet<String> = bound.events.union(&bound.event_aliases).cloned().collect();
@@ -634,7 +648,10 @@ fn file_holders(program: &ast::Program) -> BTreeMap<String, Holder> {
                 Ok(expr) if !may_hold_record(&expr, &|name| holders.get(name).copied().unwrap_or(Holder::Other)) => Holder::Free,
                 _ => Holder::Other,
             },
-            _ => Holder::Other,
+            RValue::Call { .. } => Holder::Other,
+            // Binds nothing at file scope (`interpretFileStatement`): a read
+            // of it fails, naming it, before it is handed anywhere.
+            _ => Holder::Free,
         };
         holders.insert(assign.name.clone(), holder);
     }
@@ -1631,6 +1648,9 @@ impl Names<'_> {
                     self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
                 }
                 RValue::Extract { extract } => self.extract(extract),
+                // `f(n: 3)` of a closure or a value the body binds is its
+                // call (the construction spelling of one), not an instance.
+                RValue::Construct { construct } if self.values.contains(&construct.callee) || self.binds_in_body(&construct.callee) => refuse("function_call"),
                 RValue::Construct { .. } => Ok(()),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
                 // Walked as a block head walks, at every read.
@@ -3142,7 +3162,8 @@ mod tests {
         // A movement taking a value is refused only where it can run.
         let valued = format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
         assert_eq!(reasons_of(&valued, "m", 3), Vec::<String>::new());
-        assert_eq!(reasons_of(&valued, "v", 3).first().map(String::as_str), Some("movement_value_param"));
+        // Fired itself, it fails the run before its body on either engine.
+        assert_eq!(reasons_of(&valued, "v", 3), Vec::<String>::new());
         // No entry picked (none named, or one named the file lacks): the run
         // throws MOVENG_NOT_FOUND after the check on either engine; every
         // movement is walked.
@@ -3215,6 +3236,7 @@ mod tests {
             ("  x = MAP([1], { concurrency: 4 }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { concurrency: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
+            ("  f = (n: <number>) => n + 1\n  r = f(n: 3)", "function_call"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
@@ -3500,8 +3522,15 @@ mod tests {
     fn refuses_what_the_file_says_it_does_not_run() {
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
         assert_eq!(file(&format!("import {{ x }} from \"./lib.mov\"\n{movement}")).as_deref(), Some("import_from_file"));
-        assert_eq!(file(&format!("{PRELUDE}r = extract from [\"a\"] {{\n  node n: \"n\" {{ a: \"a\" }}\n}}\n{movement}")).as_deref(), Some("file_assignment"));
-        assert_eq!(file(&format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\n{movement}")).as_deref(), Some("movement_value_param"));
+        // A file-level extraction, write or call fails every run as the
+        // TypeScript's does, before any body: nothing after it is walked.
+        let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = KG_VALUE(\"why\")\n}";
+        assert_eq!(file(&format!("{PRELUDE}r = extract from [\"a\"] {{\n  node n: \"n\" {{ a: \"a\" }}\n}}\n{refused_body}")), None);
+        assert_eq!(file(&format!("{PRELUDE}w = write crm-[:companies]-> {{ name: \"a\" }}\n{refused_body}")), None);
+        assert_eq!(file(&format!("{PRELUDE}y = KG_VALUE(\"q\")\nw = write crm-[:companies]-> {{ name: \"a\" }}\n{refused_body}")).as_deref(), Some("expression:kg_value"));
+        // A statement at file scope runs nothing.
+        assert_eq!(file(&format!("{PRELUDE}write crm-[:companies]-> {{ name: \"a\" }}\n{movement}")), None);
+        assert_eq!(file(&format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\n{movement}")), None);
         assert_eq!(file(&format!("{PRELUDE}{movement}")), None);
     }
 
@@ -3544,10 +3573,11 @@ mod tests {
         for (value, reason) in [("y = KG_VALUE(\"why\")", "expression:kg_value")] {
             assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some(reason), "{value}");
         }
-        assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}page = fetch_url()\n{movement}")).as_deref(), Some("file_call"));
-        // A plugin or a movement called at file level, in either call form.
-        for value in ["page = fetch_url(url: \"x\")", "page = FETCH_URL(url: \"x\")", "r = m(msg: 1)", "r = M(1)"] {
-            assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}{value}\n{movement}")).as_deref(), Some("file_call"), "{value}");
+        // A plugin or a movement called at file level, in either call form:
+        // `fileLevelCall` fails the run before any body, on either engine.
+        let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = KG_VALUE(\"why\")\n}";
+        for value in ["page = fetch_url()", "page = fetch_url(url: \"x\")", "page = FETCH_URL(url: \"x\")", "r = m(msg: 1)", "r = M(1)"] {
+            assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}{value}\n{refused_body}")), None, "{value}");
         }
     }
 

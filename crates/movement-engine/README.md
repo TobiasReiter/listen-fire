@@ -325,9 +325,7 @@ once (`{refused: <first>, reasons: [<first>, …]}`). The input's and the
 parked state's reasons follow the program's. The first is the one a walk
 that stopped there would give; `rustRunStats.notAdmitted` counts each run
 under it, and `rustRunStats.allReasons` under each reason the run holds.
-One exception: `movement_value_param` is noted with its own movement, after
-the file-level reasons, so for a program holding both its first reason can
-differ from the walk before chunk 7A's.
+
 
 ### The port list
 
@@ -346,10 +344,6 @@ constructs this engine already runs are "The run" below.
 |---|---|---|
 | `language_version_unsupported` | the run is pinned to a language version this release does not support (`SUPPORTED_LANGUAGE_VERSIONS`), refused by that name before the parse and before any construct's reason, so it is the only reason the run holds (the TypeScript engine refuses it with its own message) | nothing: an unsupported version is refused on either engine |
 | `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` | the file scope from the check's `link` (imported movements and shapes, `libraryShape`/`shapeChain`), calls into library movements |
-| `file_assignment` | a file-level binding that is neither an instance construction nor a value (a file-level `extract`, node, graph) | file-level evaluation of those right-hand sides |
-| `file_call` | a file-level construction or call spelled with a movement's or a plugin's name | `fileLevelCall`'s semantics (a call with no event) |
-| `file_statement:<kind>` | any other file-level statement, by the AST's `kind` (`write`, `call`, `match`, …) | statements at file scope |
-| `movement_value_param` | a reached movement taking a value (`n: <number[]>`) | a parameter binding kind that is a value, with the checker's coercion rules for it |
 
 A source this engine's parser refuses goes on to `check.program`, whose
 own MOVENG_PARSE ends the run, as the TypeScript engine's parse ends it (the
@@ -358,7 +352,17 @@ binding × consumer matrix's 24 `graph<Entry> { ?...e }` cells under version
 
 A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
 (`rules = "…"`) are admitted: each binds a name and runs nothing, as
-`interpretFileStatement` does. A file-level value is walked as a body's
+`interpretFileStatement` does. So is the rest of the file, as that function
+reads it (chunk 7A Task 6): a file-level extraction, block, write, match or
+link, or a call of a movement or a plugin (`fileLevelCall`), fails the run
+with the TypeScript's own MOVENG_UNSUPPORTED before any body (admission walks
+nothing after it); any other right-hand side (a node, a graph, a closure)
+binds nothing, and a read of it fails naming it on either engine; any other
+file statement (a write, an `if`) runs nothing. A dispatched movement taking
+other than one parameter, an untyped one or a value (`n: <number[]>`) fails
+the run in `prepareMovement` with the TypeScript's MOVENG_RUNTIME, before its
+body; a movement taking a value that a call reaches runs (chunk 7A Task 2), as
+one handed where a closure goes does. A file-level value is walked as a body's
 expression is, reading only the file-level values before it; a body reads
 it as a value. A declared shape's words are walked in the file's scope (an
 extraction reads them there). An extraction reads a shape and a type, and a

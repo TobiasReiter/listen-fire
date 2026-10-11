@@ -769,14 +769,34 @@ impl Run<'_> {
             .position(|s| matches!(s, Statement::Movement(m) if m.name == movement.name && m.span == movement.span))
             .expect("the movement picked is one of the program's");
         *self.movement_name.borrow_mut() = movement.name.clone();
-        // In source order, so a file-level value reads the ones before it.
+        // In source order, so a file-level value reads the ones before it
+        // (`interpretFileStatement`): a construction binds an instance; a
+        // value binds a value; a call, or an extraction, block, write, match
+        // or link, has no event to run about and fails the run as the
+        // TypeScript's does; any other right-hand side binds nothing.
         for statement in deferred {
             match statement {
-                Statement::Assign(assign) if !matches!(assign.value, RValue::Construct { .. }) => {
-                    let expr = self.value_slot(&assign.value, &file)?;
-                    let bound = self.bind_slot(expr, &file).await?;
-                    file.declare(assign.name.clone(), Binding::Value(bound));
-                }
+                Statement::Assign(assign) => match &assign.value {
+                    RValue::Construct { construct } if self.file_callable(&construct.callee, &file) => return Err(Stop::Thrown(file_level_call())),
+                    RValue::Construct { .. } => self.file_statement(statement, &file),
+                    RValue::Call { call } if self.file_callable(&call.callee, &file) => return Err(Stop::Thrown(file_level_call())),
+                    RValue::Expr { .. } | RValue::Call { .. } => {
+                        let expr = self.value_slot(&assign.value, &file)?;
+                        let bound = self.bind_slot(expr, &file).await?;
+                        file.declare(assign.name.clone(), Binding::Value(bound));
+                    }
+                    RValue::Extract { .. } | RValue::ExtractCall { .. } => {
+                        return Err(Stop::Thrown(Failure::unsupported(
+                            "file-level extract expressions",
+                            "extraction runs inside a movement body, where the event is in scope",
+                        )));
+                    }
+                    RValue::Block { .. } => return Err(Stop::Thrown(Failure::unsupported("file-level traversal blocks", "blocks run inside a movement body"))),
+                    RValue::Write { .. } => return Err(Stop::Thrown(Failure::unsupported("file-level writes", "writes run inside a movement body"))),
+                    RValue::Match { .. } => return Err(Stop::Thrown(Failure::unsupported("file-level matches", "a match runs inside a movement body"))),
+                    RValue::Link { .. } => return Err(Stop::Thrown(Failure::unsupported("file-level links", "a link runs inside a movement body"))),
+                    _ => {}
+                },
                 other => self.file_statement(other, &file),
             }
         }
@@ -799,7 +819,17 @@ impl Run<'_> {
                 )));
             }
             Some(ParamTypeRef::Name(type_ref)) => type_ref,
-            Some(ParamTypeRef::Value(_)) => unreachable!("admission refuses a value-typed parameter"),
+            Some(ParamTypeRef::Value(value)) => {
+                return Err(Stop::Thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!(
+                        "'{}' takes a value ('{}: <{}>'), and a dispatched movement takes the triggering event — the checker should have caught this",
+                        movement.name,
+                        param.name,
+                        spell_value_type(value)
+                    ),
+                )));
+            }
         };
         let Some(Binding::Instance(source_instance)) = file.resolve(&type_ref.graph) else {
             return Err(Stop::Thrown(Failure::unsupported(
@@ -937,6 +967,17 @@ impl Run<'_> {
             }
             // A listen contributes nothing to a run.
             _ => {}
+        }
+    }
+
+    /// Whether a file-level construction or call names a movement or a
+    /// plugin (`resolveCallee` at file scope), which has no event to run
+    /// about.
+    fn file_callable(&self, callee: &str, file: &Scope) -> bool {
+        match file.resolve(callee) {
+            Some(Binding::Movement(_) | Binding::Plugin(_)) => true,
+            Some(_) => false,
+            None => self.version() >= 3 && self.checked.root.program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if js::to_lower_case(&m.name) == js::to_lower_case(callee))),
         }
     }
 
@@ -2311,6 +2352,24 @@ fn event_text(event: &Js, key: &str) -> Option<String> {
         Js::String(text) => Some(text),
         _ => None,
     }
+}
+
+/// `spellValueType`: a written value type in its surface spelling.
+fn spell_value_type(value: &ast::ValueType) -> String {
+    match value {
+        ast::ValueType::Name { name, .. } => name.clone(),
+        ast::ValueType::List { of, .. } => format!("{}[]", spell_value_type(of)),
+        ast::ValueType::Record { keys, .. } => format!(
+            "{{ {} }}",
+            keys.iter().map(|k| format!("{}{}: {}", k.name, if k.optional == Some(true) { "?" } else { "" }, spell_value_type(&k.type_))).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+/// `fileLevelCall`: a call written at file scope, which has no event to be
+/// about.
+fn file_level_call() -> Failure {
+    Failure::unsupported("file-level calls", "a call runs inside a movement body, where the event is in scope")
 }
 
 /// `AI_EXPRESSION_SYSTEM`, the system prompt every `AI()` call carries.
