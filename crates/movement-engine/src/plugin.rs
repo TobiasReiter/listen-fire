@@ -5,8 +5,8 @@
 //! before the host is asked when the plugin is priced and the cap is spent,
 //! and traced; what comes back is bound as the plugin's DECLARED output under
 //! the movement's pin (`pluginOutputUnder`): a `value` output its text, a
-//! `record` output a node of the fields it attached (its text under `text`).
-//! A `records` output is refused at admission.
+//! `record` output a node of the fields it attached (its text under `text`),
+//! a `records` output one such node per record it found.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -62,12 +62,6 @@ impl Run<'_> {
                 format!("'{written}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this"),
             )));
         };
-        if let PluginOutput::Records { .. } = declared {
-            return Err(Stop::Thrown(Failure::unreproduced(
-                &format!("binding what '{written}' fetched as records"),
-                "the Rust engine binds a plugin's value or record output",
-            )));
-        }
         let mut config = JsObject::new();
         let mut origins: Vec<u32> = Vec::new();
         for (name, slot) in args {
@@ -114,7 +108,26 @@ impl Run<'_> {
                 let node = Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() };
                 (Binding::Node(Rc::new(RefCell::new(node))), handed_back)
             }
-            PluginOutput::Records { .. } => unreachable!("refused before the invocation"),
+            // One record per thing the plugin found, in its order: the
+            // landings a hop would give, so FIRST, MAP and a field read work
+            // across them (`pluginCallBinding`). None found is the empty list.
+            PluginOutput::Records { .. } => {
+                let landings: Vec<Binding> = result
+                    .records
+                    .iter()
+                    .map(|record| {
+                        let fields = match record {
+                            Js::Object(object) => JsObject::clone_of(object),
+                            _ => JsObject::new(),
+                        };
+                        let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();
+                        let field_provenance = field_order.iter().map(|name| (name.clone(), trail.clone())).collect();
+                        Binding::Node(Rc::new(RefCell::new(Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() })))
+                    })
+                    .collect();
+                let handed_back = !landings.is_empty();
+                (Binding::Positions(landings), handed_back)
+            }
         };
         let mut entry = Members::default();
         entry.set("plugin", Js::str(registered.clone()));

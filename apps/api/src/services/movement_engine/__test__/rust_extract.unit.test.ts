@@ -294,7 +294,6 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const movement = (body: string) => `import { fetch_url, find_files } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
     for (const [c, reason] of [
       [{ source: movement('  page = fetch_url(msg.`text`)') }, 'plugin_call_form'],
-      [{ source: movement('  found = find_files(q: msg.`text`)') }, 'plugin_call:records'],
     ] as const) {
       resetRustRunStats();
       await runOn('rust', c);

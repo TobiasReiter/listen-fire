@@ -391,7 +391,6 @@ refused where it stands (`is_test_declared_record`).
 | `rvalue:extractCall` | the version-3 `extract(…)` call form | its prompt blocks, `llm.extractCall.call`, site ids `xc:<shape>#<n>` |
 | `rvalue:<kind>` | any other right-hand side, by its AST `kind`; for `return`, also `extract`, `write`, `match` and `link`, and in a block's iteration `node` and a record | a returned record binding (a return value that is a record, as a call's value already is) |
 | `plugin_call` | a plugin's call this engine does not make: inside an expression (`{ page: p(…) }`), spelled in another letter case than imported, or of a plugin the input's snapshot does not describe; a `through` stage naming no imported plugin | a call bound inside an expression (checker `nested_calls`), any-case resolution |
-| `plugin_call:records` | a call of a plugin whose declared output is `records` | a records-output binding kind |
 | `plugin_call_form` | a plugin's call with a positional argument, or an argument that is not a value (a call, a node, a write) | positional arguments; arguments of every kind |
 | `builtin_call_form` | a built-in's call with a named argument, an argument that is not a value (a closure, a write, a node), or no expression to read | the built-ins' call forms |
 

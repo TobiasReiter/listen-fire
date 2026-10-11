@@ -1062,6 +1062,9 @@ impl<'c> Bound<'c> {
                             RValue::Block { .. } => Holder::Free,
                             RValue::Expr { expr } => self.holds(&expr.raw),
                             RValue::Call { call } if self.plugin_kind(&call.callee).is_none() => call.expression.as_ref().map_or(Holder::Other, |e| self.holds(&e.raw)),
+                            // A plugin's records output: a list of records whose
+                            // fields are the data it found.
+                            RValue::Call { call } if self.plugin_binds.get(&call.callee) == Some(&PluginBinds::Records) => Holder::List,
                             // A plugin's value output is its text; a type's members
                             // are its words.
                             RValue::Call { .. } | RValue::Construct { .. } | RValue::Members { .. } => Holder::Free,
@@ -2201,8 +2204,7 @@ impl Names<'_> {
     fn plugin_invocation<'a>(&self, callee: &str, args: impl Iterator<Item = Option<&'a ExprSlot>>) -> Admitted {
         match self.plugin_binds.get(callee) {
             None | Some(PluginBinds::Unknown) => return refuse("plugin_call"),
-            Some(PluginBinds::Records) => return refuse("plugin_call:records"),
-            Some(PluginBinds::Value | PluginBinds::Record | PluginBinds::Nothing) => {}
+            Some(PluginBinds::Value | PluginBinds::Record | PluginBinds::Records | PluginBinds::Nothing) => {}
         }
         for arg in args {
             let Some(slot) = arg else { return refuse("plugin_call_form") };
@@ -3653,11 +3655,11 @@ mod tests {
             "  more = research(name: msg.`subject`)\n  write crm-[:notes]-> { body: more.`summary` }",
             "  fetch_url(url: msg.`text`)",
             "  page = fetch_url()",
+            "  found = find_files(q: msg.`text`)\n  one = FIRST(found)\n  write crm-[:notes]-> { body: COALESCE(one.`url`, \"none\") }",
         ] {
             assert_eq!(with(body), None, "{body}");
         }
         for (body, reason) in [
-            ("  found = find_files(q: msg.`text`)", "plugin_call:records"),
             ("  page = fetch_url(msg.`text`)", "plugin_call_form"),
             ("  page = fetch_url(url: TRIM(msg.`text`))", "plugin_call_form"),
             ("  page = FETCH_URL(url: msg.`text`)", "plugin_call"),

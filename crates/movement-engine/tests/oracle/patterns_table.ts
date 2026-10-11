@@ -462,8 +462,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'plugin_call:records',
-    routes: 'refused',
-    note: 'a call of a plugin whose declared output is records: needs a records-output binding kind',
+    routes: 'whole',
+    note: "closed in chunk 7A Task 6: a records output binds one node per record found, in its order (pluginCallBinding's positions), the empty list for none",
     programs: [
       () => ({ file: `import { find_files } from plugins\n${m('  found = find_files(q: msg.`text`)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}` }),
       () => ({ file: `import { find_files } from plugins\n${m('  found = find_files(q: msg.`subject`)\n  one = FIRST(found)\n  if one != null {\n    write crm-[:notes]-> { body: one.url }\n  }')}` }),
