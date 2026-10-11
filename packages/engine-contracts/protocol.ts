@@ -80,14 +80,24 @@ export const WireEphemeralOriginRef = z.union([
     emissionIndex: z.number(),
     nodeId: z.string(),
   }),
+  // A position from a `#resources` traversal off an extract node.
+  z.object({
+    kind: z.literal('resource'),
+    resourceId: z.string().optional(),
+    nodeId: z.string(),
+  }),
 ]);
 
-/** Mirror of `SourcePosition` (`Position`). `data` stays opaque. */
+/** Mirror of `SourcePosition` (`Position`), including the members an
+ *  `EphemeralNode` adds. `data` stays opaque. The evidence and resource
+ *  mirrors are declared further down, hence `lazy`. */
 export const WireSourcePosition = z.object({
   adapterType: z.string(),
   recordType: z.string().nullable(),
   identity: WirePositionIdentity,
   originRef: WireEphemeralOriginRef.optional(),
+  evidence: z.lazy(() => z.record(z.string(), WireFieldEvidence)).optional(),
+  resources: z.lazy(() => z.array(WireResource)).optional(),
 });
 export type WireSourcePositionShape = z.infer<typeof WireSourcePosition>;
 
@@ -180,6 +190,10 @@ export type WireLinkedObjectShape = z.infer<typeof WireLinkedObject>;
  * in `resolveFileRef`.
  */
 export const WireFileRef = z.object({
+  // `FileRef`'s brand — what `isFileRef` recognises a file by on either side.
+  // Optional so a remote that omits it is not refused (it was never revived
+  // as a file without it).
+  __brand: z.literal('FileRef').optional(),
   name: z.string().optional(),
   contentType: z.string().optional(),
   size: z.number().optional(),
@@ -408,6 +422,8 @@ export const WireWriteInput = z
           recordType: z.string(),
           externalId: z.string(),
           edgeName: z.string(),
+          // The parent's payload in its own adapter's shape (`ParentLink.data`).
+          data: z.record(z.string(), z.unknown()).optional(),
         }),
       )
       .optional(),
