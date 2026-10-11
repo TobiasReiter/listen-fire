@@ -26,7 +26,7 @@ interface PatternRow {
 
 interface CaseRow {
   pattern: string;
-  routes: 'whole' | 'refused' | 'declined';
+  routes: 'whole' | 'refused' | 'declined' | 'unreached';
   reasons: string[];
   agreement?: 'exact' | 'kit' | 'check';
 }

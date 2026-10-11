@@ -35,7 +35,7 @@ import { MovementEngineError } from '../../../../apps/api/src/services/movement_
 import { checkAnswer, checkPinned } from '../../../../apps/api/src/services/movement_engine/program_check';
 import { runFailureCause, runMovement } from '../../../../apps/api/src/services/movement_engine/run';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../../../../apps/api/src/services/movement_engine/test_host';
-import type { Adapter, GetRelatedInput } from '../../../../apps/api/src/services/translation_graph/adapter';
+import type { Adapter, GetRelatedInput, RelatedResult } from '../../../../apps/api/src/services/translation_graph/adapter';
 import { makeStablePosition, positionData } from '../../../../apps/api/src/services/translation_graph/types';
 
 type Rand = () => number;
@@ -50,7 +50,7 @@ const emailSchema: InstanceSchema = {
 };
 
 /** What the adapter's `getRelated` answers, by edge, whatever it walks from. */
-const RELATED: Record<string, unknown[]> = {
+const RELATED: Record<string, RelatedResult[]> = {
   items: [
     { position: makeStablePosition({ adapterType: 'email', recordType: 'item', recordId: 'i1', data: { name: 'b', rank: 2 } }) },
     { position: makeStablePosition({ adapterType: 'email', recordType: 'item', recordId: 'i2', data: { name: 'a', rank: 1 } }) },

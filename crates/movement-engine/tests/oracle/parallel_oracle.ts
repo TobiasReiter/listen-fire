@@ -185,7 +185,7 @@ function scheduledHost(queue: Asked[], answered: () => number) {
     holder(scope) {
       const holder = inner.holder(scope);
       return {
-        acquire: (names) => ask(['acquire', [...names]], () => holder.acquire(names)) as ReturnType<typeof holder.acquire>,
+        acquire: (names) => ask(['acquire', [...names]], () => holder.acquire(names)).then((acquired) => acquired),
         release: (token) => holder.release(token),
       };
     },

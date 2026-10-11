@@ -69,7 +69,7 @@
     "email:dev": "email dev --dir src/email/templates --port 3003",
     "code:lint": "eslint .",
     "code:unused": "knip",
-    "code:type-check": "tsc -p tsconfig.json --pretty --noEmit",
+    "code:type-check": "tsc -p tsconfig.json --pretty --noEmit && tsc -p tsconfig.oracle.json --pretty",
     "test:smoke": "jest --config src/test/jest-smoke.config.ts",
     "verify:local": "NODE_OPTIONS=--max-old-space-size=8192 pnpm code:lint && pnpm code:unused",
     "health": "bash scripts/health-check.sh",

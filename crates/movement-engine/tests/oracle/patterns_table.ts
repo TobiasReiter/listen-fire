@@ -34,6 +34,10 @@ export interface Program {
    *  engine to its first timer park, and both engines resume the state this
    *  makes of it (and are compared on the resume). */
   resume?: (state: Record<string, unknown>) => unknown;
+  /** What the scripted host answers otherwise than the world does: an
+   *  acting user, a records plugin's records, a file's unreadable reason —
+   *  the malformed answers a host may give. */
+  answers?: { actingUser?: unknown; records?: unknown; unreadable?: unknown };
   /** Its input holds what JSON cannot carry (a lone surrogate), which the
    *  recorder refuses: each engine runs it unrecorded, compared on how it
    *  ended. */
@@ -119,6 +123,8 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ body: '  write crm-[:notes]-> { body: COALESCE(@user_email, "nobody") }' }),
       (pick) => ({ body: `  who = "\${@user_name} <\${@user_email}>"\n  write crm-[:notes]-> { body: who, title: "${pick(WORDS)}" }` }),
+      () => ({ body: '  write crm-[:notes]-> { body: COALESCE(@user_email, "nobody") }\n  write crm-[:notes]-> { body: COALESCE(@user_name, "nameless") }', answers: { actingUser: { email: 'ada@acme.example' } } }),
+      () => ({ body: '  x = MAP(["a"], { onError: "ignore" }, (n) => @user_id)\n  write crm-[:notes]-> { body: "${COUNT(x)}" }', answers: { actingUser: { email: 'ada@acme.example', principal: null } } }),
     ],
   },
   {
@@ -164,12 +170,13 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ body: '  t = READ(msg.`deck`)\n  write crm-[:notes]-> { body: COALESCE(t, "unread") }' }),
       () => ({ body: '  files = COLLECT(msg-[:files]->.data)\n  write crm-[:notes]-> { body: COALESCE(READ(AT(files, 1)), "unread") }' }),
+      () => ({ body: '  t = READ(msg.`deck`)\n  write crm-[:notes]-> { body: COALESCE(t, "unread") }', answers: { unreadable: 'no_text' } }),
     ],
   },
   {
     reason: 'expression_does_not_lower',
-    routes: 'whole',
-    note: 'closed in chunk 7A Task 6 for a slot the checker refuses: the run ends at the check on either engine (a slot the checker passes is declined after it, below)',
+    routes: 'unreached',
+    note: 'a slot this engine does not lower that the checker refuses: the run ends at the check on either engine (checker-ended, no exact comparison); one the checker passes is declined after the check (below)',
     programs: [
       () => ({ body: '  write crm-[:notes]-> { body: CURRENCY.PARSE(msg.`text`) }', checks: false }),
       () => ({ body: '  x = TEXT.NOPE(msg.`text`)', checks: false }),
@@ -178,8 +185,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'extract_proto_field',
-    routes: 'whole',
-    note: 'closed in chunk 7A Task 6: the checker refuses a field or node named __proto__ (MOV_SHAPE_FIELD_PROTO), on both engines',
+    routes: 'unreached',
+    note: 'closed in chunk 7A Task 6 by the checker: a field or node named __proto__ is MOV_SHAPE_FIELD_PROTO, so the run ends at the check on either engine (checker-ended, no exact comparison)',
     programs: [
       () => ({ body: '  d = extract from [msg.`text`] {\n    __proto__: "p"\n    name: "n"\n  }', checks: false }),
       () => ({ file: `node Entry {\n  name: <text>\n  node __proto__ {\n    a: <text>\n  }\n}\n${m('  d = extract from [msg.`text`] {\n    node entry: <Entry>\n  }')}`, checks: false }),
@@ -253,7 +260,7 @@ export const PATTERNS: Pattern[] = [
     note: 'closed in chunk 7A Task 6: a movement taking a value that no call reaches runs only as a closure (walked as one) or never (a name the text merely mentions); as an arm the checker refuses it',
     programs: [
       () => ({ file: `movement total(n: <number[]>) {\n  return SUM(n)\n}\n${m('  r = MAP([[1, 2], [3]], total)\n  write crm-[:notes]-> { body: "${COUNT(r)}" }')}`, movementName: 'm' }),
-      () => ({ file: `movement label(names: <text[]>) {\n  return COUNT(names)\n}\n${m('  x = "label"\n  write crm-[:notes]-> { body: x }')}`, movementName: 'm' }),
+      () => ({ file: `movement label(names: <text[]>) {\n  return COUNT(names)\n}\n${m('  x = "label"\n  write crm-[:notes]-> { body: x }')}`, movementName: 'label' }),
     ],
   },
   {
@@ -516,6 +523,9 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ file: `import { find_files } from plugins\n${m('  found = find_files(q: msg.`text`)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}` }),
       () => ({ file: `import { find_files } from plugins\n${m('  found = find_files(q: msg.`subject`)\n  one = FIRST(found)\n  if one != null {\n    write crm-[:notes]-> { body: one.url }\n  }')}` }),
+      () => ({ file: `import { find_files } from plugins\n${m('  found = find_files(q: msg.`text`)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}`, answers: { records: ['ab', [1, 2], 5, { url: 'u' }] } }),
+      () => ({ file: `import { find_files } from plugins\n${m('  found = find_files(q: msg.`text`)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}`, answers: { records: [{ url: 'u' }, null] } }),
+      () => ({ file: `import { find_files } from plugins\n${m('  found = find_files(q: msg.`text`)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}`, answers: { records: { url: 'u' } } }),
     ],
   },
   {
@@ -747,8 +757,9 @@ export const PATTERNS: Pattern[] = [
     routes: 'whole',
     note: "closed in chunk 7A Task 6 by a check.compatible request (the checker's assignability over the record type's schema, which stays TypeScript with the checker; porting it would fork the type system)",
     programs: [
-      () => ({ file: `node Shape {\n  subject: <text>\n}\n${m('  if msg IS <Shape> {\n    write crm-[:notes]-> { body: "fits" }\n  }')}` }),
-      () => ({ file: `node Lead {\n  name: <text>\n}\n${m('  crm-[c:companies]-> {\n    if c IS <Lead> {\n      write crm-[:notes]-> { body: c.`name` }\n    }\n  }')}` }),
+      () => ({ file: `node Lead {\n  name: <text>\n}\n${m('  crm-[c:companies]-> {\n    if c IS <Lead> {\n      write crm-[:notes]-> { body: c.`name` }\n    } else {\n      write crm-[:notes]-> { body: "no" }\n    }\n  }')}` }),
+      () => ({ file: `node Elsewhere {\n  nowhere: <text>\n}\n${m('  crm-[c:companies]-> {\n    if c IS <Elsewhere> {\n      write crm-[:notes]-> { body: "fits" }\n    } else {\n      write crm-[:notes]-> { body: "does not" }\n    }\n  }')}` }),
+      () => ({ file: `node Typed {\n  name: <number>\n}\n${m('  crm-[c:companies]-> {\n    if c IS <Typed> {\n      write crm-[:notes]-> { body: "fits" }\n    }\n  }')}` }),
     ],
   },
   {
@@ -1068,9 +1079,11 @@ export const PATTERNS: Pattern[] = [
   // ── A parked state ───────────────────────────────────────────────────────
   {
     reason: 'resume_state_does_not_read',
-    routes: 'unreached',
-    note: 'a parked state that does not read off the eval wire: every state a JSON host hands back reads, so none reaches it through the real shim; a state an engine parked resumes on Rust (these programs, parked by the TypeScript engine)',
+    routes: 'refused',
+    note: "a parked state neither engine reads: one off the wire that does not decode, or whose scopes, frames or journals are not lists (the TypeScript fails reading it); a state an engine parked resumes on Rust",
     programs: [
+      () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => ({ ...state, journal: 'nonsense' }) }),
+      () => ({ body: '  x = msg.`subject`\n  await sleep(1h)\n  write crm-[:notes]-> { body: x }', resume: (state) => ({ ...state, scopeChain: 'nonsense' }) }),
       () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => state, routes: 'whole' }),
       () => ({ body: '  x = msg.`subject`\n  await sleep(1h)\n  write crm-[:notes]-> { body: x }', resume: (state) => state, routes: 'whole' }),
     ],
@@ -1080,8 +1093,8 @@ export const PATTERNS: Pattern[] = [
     routes: 'unreached',
     note: 'a parked state of a version other than 1: both entries refuse it before routing (refuseUnsupportedParkStateVersion), on either engine',
     programs: [
-      () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => ({ ...state, version: 2 }), routes: 'whole' }),
-      () => ({ body: '  await sleep(1h)\n  x = 1', resume: (state) => ({ ...state, version: 0 }), routes: 'whole' }),
+      () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => ({ ...state, version: 2 }) }),
+      () => ({ body: '  await sleep(1h)\n  x = 1', resume: (state) => ({ ...state, version: 0 }) }),
     ],
   },
   {

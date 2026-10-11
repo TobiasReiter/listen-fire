@@ -34,7 +34,7 @@ import { resumeMovement, runMovement } from '../../../../apps/api/src/services/m
 import { resetRustRunStats, resetRustEvalStats, rustRunStats } from '../../../../apps/api/src/services/movement_engine/rust_stats';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../../../../apps/api/src/services/movement_engine/test_host';
 import { staticCatalogFromManifests } from '../../../../apps/api/src/services/translation_graph/movement/catalog';
-import type { Adapter } from '../../../../apps/api/src/services/translation_graph/adapter';
+import type { Adapter, RelatedResult } from '../../../../apps/api/src/services/translation_graph/adapter';
 import { containerAssociation } from '../../../../apps/api/src/services/translation_graph/adapter';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../../../apps/api/src/services/translation_graph/types';
 import { readFileSync } from 'node:fs';
@@ -127,7 +127,7 @@ function crmAdapter(): Adapter {
   let created = 0;
   const position = (recordType: string, recordId: string, data: Record<string, unknown>) =>
     ({ position: makeStablePosition({ adapterType: 'attio', recordType, recordId, data }) });
-  const related = (fieldId: string, from: Record<string, unknown> | undefined): Array<{ position: unknown }> => {
+  const related = (fieldId: string, from: Record<string, unknown> | undefined): RelatedResult[] => {
     const owner = typeof from?.name === 'string' ? from.name : 'Acme';
     switch (fieldId) {
       case 'companies':
@@ -151,14 +151,29 @@ function crmAdapter(): Adapter {
     supportedTriggers: [],
     runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
     listEntryPoints: async () => [],
-    describe: async ({ typeId }) =>
+    describe: async (typeId) =>
       typeId === 'company'
         ? {
             typeId: 'company',
             displayName: 'Company',
+            references: [],
             fields: [
-              { fieldId: 'name', displayName: 'name', type: 'text' },
-              { fieldId: 'domain', displayName: 'domain', type: 'text', functions: [{ name: 'DOMAIN_OF', description: 'the domain of a text' }] },
+              { fieldId: 'name', displayName: 'name', kind: 'string' as const, writable: true, required: false },
+              {
+                fieldId: 'domain',
+                displayName: 'domain',
+                kind: 'string' as const,
+                writable: true,
+                required: false,
+                functions: [
+                  {
+                    name: 'DOMAIN_OF',
+                    displayName: 'Domain of',
+                    summary: 'the domain of a text',
+                    params: [{ name: 'text', kind: 'string' as const, doc: 'the text to read a domain from' }],
+                  },
+                ],
+              },
             ],
           }
         : null,
@@ -200,14 +215,14 @@ function inboxAdapter(): Adapter {
     createRecord: async () => ({ adapterType: 'email', externalId: 'e-1', data: {} }),
     updateRecord: async (input) => ({ adapterType: 'email', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
     deleteRecord: async () => ({}),
-    getActorCandidates: async () => [{ scheme: 'email', identifier: 'founder@acme.example', role: 'originator' }],
+    getActorCandidates: async () => [{ identity: { scheme: 'email', identifier: 'founder@acme.example' }, source: 'originator' as const }],
     extractActor: async () => ({ scheme: 'email', identifier: 'founder@acme.example', name: 'Ada Founder' }),
   };
 }
 
 /** What the scripted model answers: AI() its envelope, an extraction the
  *  case's replies in order (an empty answer once they run out). */
-function scriptedHost(replies: readonly unknown[], park = makeFakeParkSink()) {
+function scriptedHost(replies: readonly unknown[], park = makeFakeParkSink(), answers: Program['answers'] = {}) {
   const queue = [...replies];
   const crm = crmAdapter();
   const inbox = inboxAdapter();
@@ -229,16 +244,22 @@ function scriptedHost(replies: readonly unknown[], park = makeFakeParkSink()) {
       transforms: {
         invoke: async ({ plugin }) =>
           plugin === 'find_files'
-            ? { records: [{ url: 'https://files.example/1', name: 'one' }, { url: 'https://files.example/2', name: 'two' }] }
+            ? { records: (answers.records ?? [{ url: 'https://files.example/1', name: 'one' }, { url: 'https://files.example/2', name: 'two' }]) as never }
             : { text: `${plugin} says hello` },
       },
       arbitrateEntities: async () => ({ index: null }),
     },
     park: { sink: park.sink },
     files: {
-      resolveFileText: async ({ file }) => ({ text: `the text of ${String(Reflect.get(file, 'name'))}`, rawTextId: 'rt-1' }),
+      resolveFileText: async ({ file }) =>
+        answers.unreadable !== undefined
+          ? ({ unreadable: answers.unreadable } as never)
+          : { text: `the text of ${String(Reflect.get(file, 'name'))}`, rawTextId: 'rt-1' },
     },
-    lookup: { resolveActingUser: async () => ({ id: 'user-1', email: 'ada@acme.example', name: 'Ada' }) },
+    lookup: {
+      resolveActingUser: async () =>
+        (answers.actingUser !== undefined ? answers.actingUser : { principal: { id: 'user-1', display: 'Ada' }, email: 'ada@acme.example' }) as never,
+    },
   });
   return process.env.PATTERNS_DEBUG === undefined ? host : logging(host, '');
 }
@@ -296,7 +317,7 @@ async function parkedState(program: Program): Promise<unknown> {
   const park = makeFakeParkSink();
   const catalog = program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
   const failed = await underEngine('ts', () =>
-    runMovement({ ...runInput(program, catalog), host: scriptedHost(program.replies ?? [], park) }).then(
+    runMovement({ ...runInput(program, catalog), host: scriptedHost(program.replies ?? [], park, program.answers) }).then(
       () => undefined,
       (error: unknown) => String(error),
     ),
@@ -314,7 +335,7 @@ function runInput(program: Program, catalog: typeof PATTERNS_CATALOG) {
     source: sourceOf(program),
     languageVersion: program.version ?? 3,
     ...(program.movementName !== undefined ? { movementName: program.movementName } : {}),
-    event: { pipelineInputId: 'pi-patterns', adapterType: 'email', triggerType: 'webhook', payload: { ...EVENT_PAYLOAD, ...program.payload } },
+    event: { pipelineInputId: 'pi-patterns', adapterType: 'email', triggerType: 'webhook' as const, payload: { ...EVENT_PAYLOAD, ...program.payload } },
     catalog,
     teamId: TEAM,
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
@@ -326,7 +347,7 @@ function runInput(program: Program, catalog: typeof PATTERNS_CATALOG) {
 async function direct(engine: 'ts' | 'rust', program: Program): Promise<HostRecording> {
   const catalog = program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
   const outcome = await underEngine(engine, () =>
-    runMovement({ ...runInput(program, catalog), host: scriptedHost(program.replies ?? []) }).then(
+    runMovement({ ...runInput(program, catalog), host: scriptedHost(program.replies ?? [], undefined, program.answers) }).then(
       (result) => ({ result: JSON.parse(JSON.stringify(result)) as unknown }),
       (error: unknown) => ({ failure: recordedError(error) }),
     ),
@@ -350,7 +371,7 @@ async function recorded(engine: 'ts' | 'rust', program: Program, state?: unknown
       (state === undefined
         ? recordEntry({
             entry: 'run',
-            input: { ...runInput(program, catalog), host: scriptedHost(program.replies ?? []) },
+            input: { ...runInput(program, catalog), host: scriptedHost(program.replies ?? [], undefined, program.answers) },
             run: (input) => runMovement(input),
             keep: (recording) => {
               kept = recording;
@@ -358,7 +379,7 @@ async function recorded(engine: 'ts' | 'rust', program: Program, state?: unknown
           })
         : recordEntry({
             entry: 'resume',
-            input: { ...runInput(program, catalog), state: state as never, host: scriptedHost(program.replies ?? []) },
+            input: { ...runInput(program, catalog), state: state as never, host: scriptedHost(program.replies ?? [], undefined, program.answers) },
             run: (input) => resumeMovement(input),
             keep: (recording) => {
               kept = recording;
@@ -372,9 +393,13 @@ async function recorded(engine: 'ts' | 'rust', program: Program, state?: unknown
 }
 
 /** What the Rust engine's admission did with the run it was just handed. */
-function routing(): { routes: Exclude<Routes, 'unreached'>; reasons: string[] } {
+function routing(): { routes: Routes; reasons: string[] } {
   if (Object.keys(rustRunStats.notAdmitted).length > 0) return { routes: 'refused', reasons: Object.keys(rustRunStats.allReasons) };
   if (Object.keys(rustRunStats.declined).length > 0) return { routes: 'declined', reasons: Object.keys(rustRunStats.declined) };
+  // Never handed to the Rust engine (both entries refuse it first).
+  if (rustRunStats.routed === 0) return { routes: 'unreached', reasons: [] };
+  // Whole means the shim saw it run whole, not only that nothing refused.
+  if (rustRunStats.ranWhole === 0) return { routes: 'declined', reasons: ['did_not_run_whole'] };
   return { routes: 'whole', reasons: [] };
 }
 
@@ -395,11 +420,9 @@ function canonical(value: unknown): unknown {
 }
 
 /** Every request in the order made, what was answered before it, and its
- *  answer. */
+ *  answer — each object's keys in the order the host was handed them. */
 const requestsOf = (recording: HostRecording) =>
-  JSON.stringify(
-    canonical(recording.requests.map((r) => ({ path: `${r.family}.${r.method}`, args: r.args, after: r.after, ...('error' in r ? { error: r.error } : { answer: r.answer }) }))),
-  );
+  JSON.stringify(recording.requests.map((r) => ({ path: `${r.family}.${r.method}`, args: r.args, after: r.after, ...('error' in r ? { error: r.error } : { answer: r.answer }) })));
 
 /** The pattern a reason names: `function:fact` is `function:<id>`. */
 export function patternOf(reason: string, patterns: readonly string[]): string | undefined {
@@ -413,7 +436,7 @@ export function patternOf(reason: string, patterns: readonly string[]): string |
 interface CaseRecord {
   pattern: string;
   program: Program;
-  routes: Exclude<Routes, 'unreached'>;
+  routes: Routes;
   reasons: string[];
   /** For a whole run: whether the Rust run made the TypeScript's requests
    *  exactly (`exact`), or as the kit's matching rule allows (`kit`). */
@@ -462,16 +485,17 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
       }
       const { routes, reasons } = routing();
       const where = `${pattern.reason}: ${program.body ?? program.file}`;
-      const checkFailed = (r: HostRecording) => 'failure' in r && /^MOVENG_(PARSE|CHECK|LANGUAGE_VERSION)$/.test(r.failure.code ?? '');
+      const checkFailed = (r: HostRecording) => 'failure' in r && /^MOVENG_(PARSE|CHECK|LANGUAGE_VERSION)$/.test(r.failure?.code ?? '');
       if (checkFailed(ts) !== (program.checks === false)) {
-        problems.push(`${where}\n  ${checkFailed(ts) ? `does not check: ${'failure' in ts ? ts.failure.message : ''}` : 'checks, yet says the checker refuses it'}`);
+        problems.push(`${where}\n  ${checkFailed(ts) ? `does not check: ${'failure' in ts ? (ts.failure?.message ?? '') : ''}` : 'checks, yet says the checker refuses it'}`);
       }
       const names = reasons.some((r) => patternOf(r, [pattern.reason]) !== undefined);
       const expected = program.routes ?? pattern.routes;
       if (expected === 'unreached') {
-        // The checker refuses every program holding it: the Rust engine's
-        // admission may name it first, and both engines end at the check.
-        if (program.checks !== false) problems.push(`${where}\n  an unreached pattern's program is one the checker refuses`);
+        // The checker refuses every program holding it (the Rust engine's
+        // admission may name it first, and both engines end at the check),
+        // or both entries refuse it before it is routed at all.
+        if (program.checks !== false && routes !== 'unreached') problems.push(`${where}\n  an unreached pattern's program is one the checker refuses, or one never routed`);
         if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) problems.push(`${where}\n  the check ended the engines differently`);
       } else {
         if (routes !== expected) problems.push(`${where}\n  routes ${routes} (${reasons.join(', ')}), the pattern says ${expected}`);

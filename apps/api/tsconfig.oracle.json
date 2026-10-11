@@ -1,0 +1,9 @@
+// The Rust engine's oracle generators (crates/movement-engine/tests/oracle),
+// which run transpile-only: type-checked here so a wrong signature cannot
+// hide behind it (pnpm code:type-check runs this too).
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": true, "tsBuildInfoFile": "./oracle.tsbuildinfo", "noEmit": true },
+  "include": ["../../crates/movement-engine/tests/oracle/*.ts"],
+  "exclude": ["../../crates/movement-engine/tests/oracle/_scratch_*.ts"]
+}
