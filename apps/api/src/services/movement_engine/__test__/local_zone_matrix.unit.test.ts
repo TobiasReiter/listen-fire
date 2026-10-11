@@ -15,7 +15,12 @@ const JEST = path.join(API, 'node_modules/jest/bin/jest.js');
 /** Each `TZ`, and whether `Intl` names the zone `Date` reads in. */
 const ZONES: Array<[string, 'named' | 'unverified']> = [
   ['UTC', 'named'], ['Europe/London', 'named'], ['America/New_York', 'named'], ['Asia/Kolkata', 'named'], ['Pacific/Apia', 'named'],
-  ['GMT+3', 'unverified'], ['UTC+3', 'unverified'], ['utc', 'unverified'], ['', 'unverified'],
+  // Intl names none of these, or names Etc/Unknown (""): tried as UTC.
+  ['utc', 'named'], ['Utc', 'named'], ['', 'named'],
+  // Intl names them itself: UTC, UTC, +00:00.
+  ['Etc/UTC', 'named'], ['Zulu', 'named'], ['GMT', 'named'],
+  // Intl says +03:00 where Date reads three hours west; names none for UTC+3.
+  ['GMT+3', 'unverified'], ['UTC+3', 'unverified'],
 ];
 
 describe("the date tests, in each process's zone", () => {

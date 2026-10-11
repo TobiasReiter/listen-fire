@@ -817,11 +817,14 @@ function holdsBinding(value: unknown, seen = new Set<object>()): boolean {
  * under `TZ=UTC+3` or `TZ=utc` it names none, under `TZ=""` `Etc/Unknown`.
  * So the name is checked against `Date`'s own wall clock at a winter, a
  * summer, a historic and a far-future instant; an ICU canonical name passes
- * (`Asia/Calcutta`, not `Asia/Kolkata`).
+ * (`Asia/Calcutta`, not `Asia/Kolkata`). A zone `Intl` cannot name at all
+ * (`TZ=utc`, the dev and CLI scripts' setting) is tried as `UTC`, and sent
+ * as that when `Date`'s clock agrees.
  */
 export function processLocalZone(): string | undefined {
-  const zone: unknown = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (typeof zone !== 'string' || zone === '' || zone === 'Etc/Unknown') return undefined;
+  const resolved: unknown = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const named = typeof resolved === 'string' && resolved !== '' && resolved !== 'Etc/Unknown';
+  const zone = named ? resolved : 'UTC';
   const key = `${process.env.TZ ?? ''}\u0000${zone}`;
   const known = verifiedZones.get(key);
   if (known !== undefined) return known ? zone : undefined;
