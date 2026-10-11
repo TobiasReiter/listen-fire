@@ -50,7 +50,13 @@ const path = require('node:path');
 // the floors stay those less a margin of 2. Chunk 7A Task 4c (language
 // version 4's four changed constructs run, 2026-10-11) runs the same v1
 // 1060, v2 1362, v3 1918 whole (the corpora are pinned to versions 1 to 3,
-// which it leaves untouched); the floors stay those less a margin of 2. A floor
+// which it leaves untouched); the floors stay those less a margin of 2.
+// Chunk 7A Task 5b (V8's date parser mirrored, the local zone a run input,
+// 2026-10-11) runs the same v1 1060, v2 1362, v3 1918 whole: no corpus
+// program was refused or handed back for a date (no `builtin_arg_record`
+// over a date member, no `builtins.function` request; the five
+// `builtins.compare` requests left in v2 and v3 are WITHIN's); the floors
+// stay those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.

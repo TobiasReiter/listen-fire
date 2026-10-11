@@ -372,21 +372,42 @@ describe('a whole run in the Rust engine', () => {
   });
 
   it('asks the TypeScript member for a reading it does not reproduce, mid-run', async () => {
-    // An offset-less date-time is local time, which only V8 knows here.
+    // A pattern nested past 1,000 groups, which V8's stack decides.
+    const pattern = `${'(?:'.repeat(1001)}a${')'.repeat(1001)}`;
     const { rust } = await agree({
-      source: [
-        'movement m(msg: <inbox-[:message]->>) {',
-        '  iso = DATE.FORMAT_ISO(msg.`text`)',
-        '  later = msg.`text` > "2026-03-12T09:00"',
-        '  if later {',
-        '    day = DATE(msg.`text`)',
-        '  }',
-        '}',
-      ].join('\n'),
-      event: webhook({ text: '2026-03-12T09:30' }),
+      source: ['movement m(msg: <inbox-[:message]->>) {', `  found = TEXT.REGEX_EXTRACT(msg.\`text\`, "${pattern}")`, '}'].join('\n'),
+      event: webhook({ text: 'xay' }),
     });
     expect(rust.result).toBeDefined();
-    expect(rustRunStats.hostCalls).toMatchObject({ 'builtins.function': 2, 'builtins.compare': 1 });
+    expect(rustRunStats.hostCalls).toMatchObject({ 'builtins.function': 1 });
+  });
+
+  it("reads a date text in this process's zone as TypeScript does, asking no TypeScript member", async () => {
+    const saved = process.env.TZ;
+    try {
+      for (const zone of ['UTC', 'America/New_York', 'Pacific/Apia']) {
+        process.env.TZ = zone;
+        resetRustRunStats();
+        const { rust } = await agree({
+          source: [
+            'movement m(msg: <inbox-[:message]->>) {',
+            '  iso = DATE.FORMAT_ISO(msg.`text`)',
+            '  later = msg.`text` > "March 8, 2026 1:45 AM"',
+            '  if later {',
+            '    day = DATE(msg.`text`)',
+            '  }',
+            '}',
+          ].join('\n'),
+          event: webhook({ text: '2026-03-08T02:30' }),
+        });
+        expect(rust.result).toBeDefined();
+        expect(rustRunStats.hostCalls['builtins.function']).toBeUndefined();
+        expect(rustRunStats.hostCalls['builtins.compare']).toBeUndefined();
+      }
+    } finally {
+      if (saved === undefined) delete process.env.TZ;
+      else process.env.TZ = saved;
+    }
   });
 
   it('reads twenty event fields in one expression, in order, one walk', async () => {
@@ -561,7 +582,7 @@ describe('a whole run in the Rust engine', () => {
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
       // A record the TypeScript would hand its host as the binding object,
       // or whose internals a reading would hand out.
-      [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = DATE.FORMAT(top, "YYYY")'), 'builtin_arg_record'],
+      [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = TEXT.REGEX_EXTRACT(top, "x")'), 'builtin_arg_record'],
       [movement('  co = write crm-[:companies]-> { name: "a" }\n  write crm-[:companies]-> { name: co }'), 'write_field_record'],
       [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  key = "kind"\n  a = AT(top, key)'), 'at_record_key'],
       [movement('  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }'), 'node_spread_record'],

@@ -8,7 +8,7 @@ import { parseMovementExpression } from 'movement-lang';
 import { MovementEngineError } from '../errors';
 import { Environment, evalMovementExpr, type Binding, type MovementExprContext } from '../expression';
 import type { Provenance } from '../provenance';
-import { evalInRust, rustCanEval } from '../rust_engine';
+import { evalInRust, processLocalZone, rustCanEval } from '../rust_engine';
 import { resetRustEvalStats, rustEvalStats } from '../rust_stats';
 
 /** Every evaluation in a run carries the run's pin: version 3, which no
@@ -107,28 +107,66 @@ describe('the Rust evaluator switch', () => {
     const env = new Environment();
     env.declare('e', position);
     env.declare('when', { kind: 'value', value: new Date(0) });
-    env.declare('t', { kind: 'value', value: '2026-03-12T09:30' });
+    env.declare('s', { kind: 'value', value: 'x😀y' });
     const ctx: MovementExprContext = { env, languageVersion: PIN };
     expect(rustCanEval(parseMovementExpression('@current_date'))).toBe(false);
     expect(rustCanEval({ type: 'static', value: '\uD800' })).toBe(false);
     expect(inRust('e == null', ctx)).toBeUndefined();
     expect(inRust('when', ctx)).toBeUndefined();
     expect(inRust('missing', ctx)).toBeUndefined();
-    // A date-time with no offset is local time, which only V8 knows here.
-    expect(inRust('DATE.FORMAT_ISO(t)', ctx)).toBeUndefined();
+    // Astral text split into UTF-16 halves, which no Rust string holds.
+    expect(inRust('SPLIT(s, "")', ctx)).toBeUndefined();
+  });
+
+  it("reads a date text as this process's Date reads it, in this process's zone", async () => {
+    const texts = [
+      '2026-03-12T09:30', '2026-03-08T02:30', '2026-11-01T01:30', '2026-03-29T01:30', '2011-12-30T12:00', 'March 12, 2026 9:30 PM',
+      '3/4', 'Thu, 12 Mar 2026 09:30:00 GMT+0530', '2026-03-12', 'nonsense',
+    ];
+    /** The zone's offset at an instant, in minutes, as `Intl` reads it. */
+    const offsetIn = (at: Date, timeZone: string): number => {
+      const parts = Object.fromEntries(
+        new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+          .formatToParts(at)
+          .map((part) => [part.type, Number(part.value)]),
+      );
+      return (Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!, parts.second!) - at.getTime()) / 60_000;
+    };
+    const saved = process.env.TZ;
+    try {
+      for (const zone of ['UTC', 'America/New_York', 'Europe/London', 'Asia/Kolkata', 'Pacific/Apia']) {
+        process.env.TZ = zone;
+        // The zone the shim hands the engine is the one `Date` reads in.
+        for (const instant of ['2026-01-15T12:00:00Z', '2026-07-15T12:00:00Z', '2011-12-30T12:00:00Z', '1850-01-01T00:00:00Z']) {
+          const at = new Date(instant);
+          expect(offsetIn(at, processLocalZone()) + at.getTimezoneOffset()).toBe(0);
+        }
+        for (const [i, t] of texts.entries()) {
+          const ctx = contextOf({ t, u: texts[(i + 1) % texts.length] });
+          for (const text of ['DATETIME(t)', 'DATE.FORMAT(t, "YYYY-MM-DD HH:mm")', 't < u']) {
+            const { rust, ts } = await both(text, ctx);
+            expect(rust).toBeDefined();
+            expect([zone, t, text, rust?.value]).toEqual([zone, t, text, ts.value]);
+          }
+        }
+      }
+    } finally {
+      if (saved === undefined) delete process.env.TZ;
+      else process.env.TZ = saved;
+    }
   });
 
   it('counts what it sent, what Rust answered and what came back, by reason', () => {
     resetRustEvalStats();
-    const ctx = contextOf({ n: 2, t: '2026-03-12T09:30' });
+    const ctx = contextOf({ n: 2, s: 'x😀y' });
     inRust('n + 1', ctx);
-    inRust('DATE.FORMAT_ISO(t)', ctx);
+    inRust('SPLIT(s, "")', ctx);
     inRust('@current_date', ctx);
     expect(rustEvalStats).toEqual({
       notAdmitted: 1,
       admitted: 2,
       answered: 1,
-      fallback: { 'V8 reads "2026-03-12T09:30" its own way': 1 },
+      fallback: { 'splitting astral characters into UTF-16 halves': 1 },
     });
     resetRustEvalStats();
     expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });

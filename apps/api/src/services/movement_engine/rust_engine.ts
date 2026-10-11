@@ -545,6 +545,9 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume: Resu
       ...(input.suspendAt !== undefined && input.suspendAt.length > 0 ? { suspendAt: [...input.suspendAt] } : {}),
       // The run's pinned instant, as the TypeScript interpreter pins it.
       now: input.firedAt ?? context.pinnedNow.toISOString(),
+      // The zone a date-time text with no offset is read in: this
+      // process's, as its `Date` reads one.
+      localZone: processLocalZone(),
       catalog: input.catalog,
       // What the host serves: the engine asks an optional family's method
       // only of a host that serves it, as the TypeScript engine reads its
@@ -790,6 +793,18 @@ function holdsBinding(value: unknown, seen = new Set<object>()): boolean {
 }
 
 /**
+ * The zone this process's `Date` reads a date-time text with no offset in
+ * (`new Date("2026-03-12T09:30")`, `Date.parse("March 12, 2026")`): V8 and
+ * `Intl` share ICU's default zone, which `TZ` sets, so `Intl` names it. The
+ * Rust engine reads no environment, so it is handed this with every segment
+ * and every expression; an ICU canonical name (`Asia/Calcutta`, not
+ * `Asia/Kolkata`).
+ */
+export function processLocalZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/**
  * `expr` evaluated by the Rust engine, or undefined where the TypeScript
  * evaluator must answer: not admitted, a name that is not a value binding, a
  * value that cannot cross as itself, or a reading Rust does not reproduce
@@ -826,6 +841,8 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     languageVersion: ctx.languageVersion,
     // The run's pinned instant, which DATE.TODAY reads.
     now: pinnedNow(ctx).toISOString(),
+    // The zone a date-time text with no offset is read in.
+    localZone: processLocalZone(),
   };
   const reply = callEvalExpression(JSON.stringify(expr), JSON.stringify(envelope));
   const answer = record(reply.json, 'the Rust evaluator reply');
