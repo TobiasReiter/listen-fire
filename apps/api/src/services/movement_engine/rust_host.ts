@@ -17,7 +17,21 @@
 // handed exactly the JavaScript values (key order, `undefined`) the TypeScript
 // engine hands it in process, and an adapter's result comes back the same way.
 
-import { applyStdlib, languageVersionDiagnostic, stdlibFunctionById, type CatalogSnapshot } from 'movement-lang';
+import {
+  applyStdlib,
+  declaredTypesIn,
+  inheritDeclaration,
+  inheritSchema,
+  languageVersionDiagnostic,
+  schemaSurface,
+  shapeToSchema,
+  stdlibFunctionById,
+  surfaceMisfit,
+  type CatalogSnapshot,
+  type InstanceSchema,
+  type Program,
+  type ShapeDeclaration,
+} from 'movement-lang';
 import { isFileRef, type ParkedScopeState } from 'engine-contracts';
 import { z } from 'zod';
 
@@ -75,6 +89,7 @@ type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<u
  *  why each is not on the host boundary. */
 export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
   'check.program': 'the TypeScript checker, which the Rust engine asks for until the checker is Rust',
+  'check.compatible': "the checker's assignability, which an `IS <Decl>` test of a system's record asks of its record type's schema",
   'builtins.function': 'a TypeScript standard-library member, for a reading the Rust engine hands back',
   'builtins.compare': "the shared comparator, for a reading the Rust engine hands back",
   'log.write': "the platform's log, for the lines the TypeScript engine writes (sent as a statement ends)",
@@ -119,6 +134,26 @@ const ROUTES: Record<string, Route> = {
       ...checkAnswer(checked),
       ...(versionWarning !== undefined ? { versionWarning: { code: versionWarning.code, message: versionWarning.message } } : {}),
     };
+  },
+  /** `x IS <Decl>` of a record a system describes (the event, a handle, a
+   *  landed record): does the schema's `recordType` carry everything the
+   *  file's declaration declares, by the checker's own comparator
+   *  (run.ts `evaluateDeclaredNodeTest`)? `{fits}`, or `{undescribed}` when
+   *  the schema enumerates nothing at that position. */
+  async 'check.compatible'(request, context) {
+    const languageVersion = request.languageVersion;
+    if (typeof languageVersion !== 'number') throw new RustShimError('check.compatible languageVersion must be a number');
+    const program = checkedProgram(string(request.source, 'check.compatible source'), context.catalog, languageVersion);
+    const declaration = string(request.declaration, 'check.compatible declaration');
+    const recordType = string(request.recordType, 'check.compatible recordType');
+    const schema = request.schema;
+    if (typeof schema !== 'object' || schema === null || typeof Reflect.get(schema, 'positions') !== 'object') {
+      throw new RustShimError('check.compatible schema is an instance schema');
+    }
+    const supplied = schemaSurface(schema as InstanceSchema, recordType);
+    if (supplied === undefined) return { undescribed: true };
+    const required = declaredSchema(program, declaration);
+    return { fits: surfaceMisfit(supplied, { schema: required.schema, position: required.declaration.name }) === undefined };
   },
   async 'adapters.resolve'(request, { host }) {
     const role = request.role;
@@ -546,6 +581,41 @@ export function shimRoutePaths(): string[] {
 
 /** The segment a forwarded request names (`serve` has held it to the one
  *  the run host opened). */
+/** The last program `check.compatible` checked: one run asks about one. */
+let lastChecked: { key: string; program: Program } | undefined;
+
+function checkedProgram(source: string, catalog: CatalogSnapshot, languageVersion: number): Program {
+  const key = JSON.stringify([source, languageVersion]);
+  if (lastChecked?.key !== key) lastChecked = { key, program: checkPinned({ source, catalog, languageVersion }).program };
+  return lastChecked.program;
+}
+
+/** A file's node declaration as the tree it stands for, every `extends`
+ *  folded in (run.ts `resolvedShape` over its `shapeChain`, the file's own
+ *  declarations: an imported one never reaches here). */
+function declaredSchema(program: Program, name: string): { declaration: ShapeDeclaration; schema: InstanceSchema } {
+  const declarations = new Map(program.statements.flatMap((s) => (s.kind === 'shape' ? [[s.name, s] as const] : [])));
+  const chain: ShapeDeclaration[] = [];
+  for (let at = declarations.get(name); at !== undefined; at = at.extends === undefined ? undefined : declarations.get(at.extends.name)) {
+    if (chain.includes(at)) throw new RustShimError(`'${name}' extends itself`);
+    chain.push(at);
+  }
+  if (chain.length === 0) throw new RustShimError(`check.compatible: '${name}' is not a node declaration of the file`);
+  const types = declaredTypesIn(program);
+  let resolved: { declaration: ShapeDeclaration; schema: InstanceSchema } | undefined;
+  for (const link of chain.reverse()) {
+    const own = shapeToSchema(link, (type) => types.get(type));
+    resolved =
+      resolved === undefined
+        ? { declaration: link, schema: own }
+        : {
+            declaration: inheritDeclaration(link, resolved.declaration),
+            schema: inheritSchema(own, link.name, { name: resolved.declaration.name, schema: resolved.schema }),
+          };
+  }
+  return resolved!;
+}
+
 function segmentOf(request: Record<string, unknown>): string {
   return string(request.segmentId, 'a host request segmentId');
 }

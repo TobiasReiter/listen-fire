@@ -1515,7 +1515,7 @@ impl Run<'_> {
                     Ok(true)
                 }
                 MovementCondition::Expr { expr } => Ok(self.evaluate(expr, scope, slot).await?.value.truthy()),
-                MovementCondition::IsTest { subject_raw, type_ } => self.is_test(subject_raw, type_, scope).map_err(Stop::Thrown),
+                MovementCondition::IsTest { subject_raw, type_ } => self.is_test(subject_raw, type_, scope).await.map_err(Stop::Thrown),
             }
         })
     }

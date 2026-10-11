@@ -413,7 +413,7 @@ refused where it stands (`is_test_declared_record`).
 | reason | the construct | needs |
 |---|---|---|
 | `node_declared_entry`, `node_event_entry`, `rvalue:node`, `exists_node` | a declared edge entry inside a graph literal (the parser refuses one); an entry holding the event; a node a block's iteration returns (its block's value would be the records returned); `EXISTS` off a node this run built, or what one's edge holds, of more than one hop or with an ORDER BY or a LIMIT | an entry holding the event; returned records as a block's value; EXISTS's per-origin ORDER BY / LIMIT and its walk past the node plane |
-| `is_test_declared_record`, `is_test_declared_graph` | `x IS <Decl>` (a node declaration) where `x` is the event, a handle, a landed record, or a `graph { … }` literal | a checker stamp carrying the assignability verdict (the checker stays TypeScript, behind `check.program`) |
+| `is_test_declared_graph` | `x IS <Decl>` (a node declaration) where `x` is a `graph { … }` literal, whose entries may hold a system's records nested (an `IS` of the event, a handle or a landed record runs since chunk 7A Task 6: `check.compatible` asks the checker's assignability of the record type's schema) | the nested comparison of a system's record under a synthesised node |
 
 **Traversal blocks and heads** (a reached body):
 
@@ -618,6 +618,7 @@ TypeScript takes through its host is a host request here:
 | `adapters.call` `extractActor` | the first `@actor_*` a segment reads, when the source's `methods` list it | `host.adapters.call`; its answer kept for the segment, an error read as no actor (`resolveMovementActor`) |
 | `llm.client.call` (`AI()`) | each `AI(prompt[, tier])` an expression evaluates: `{system, userMessage, label: "movement-ai-expression", model, effort?, maxTokens?, budget}` at the tier's settings (ai_tiers.ts `aiExpressionSettings`, a fixed table: no deployment input) | `host.llm.client.call`; its cost charged; the reply read out of its envelope (`aiAnswer`), traced `{kind: "ai", prompt, hasValue}` |
 | `files.render` | each `FILE(content, type)`: `{segmentId, content, type}` | `host.files.render`, its descriptor back on the eval wire |
+| `check.compatible` | `x IS <Decl>` of the event, a handle or a landed record: `{source, languageVersion, declaration, schema, recordType}` (the instance schema the record's type is read in) | the checker's `surfaceMisfit` over `schemaSurface(schema, recordType)` and the file's declaration (run.ts `evaluateDeclaredNodeTest`): `{fits}`, or `{undescribed}`, which stops the run as "can't tell" |
 | `adapters.call` `invokeFieldFunction` | a function a write's destination field advertises (`describe`'s `functions`), called in that field's value: `{recordType, fieldId, functionName, args: {instructions, data}}` (`bindMovementFieldFunctions`) | `host.adapters.call` |
 | `log.write` | the log lines the TypeScript engine writes (an extraction's skipped stage, a plugin's empty argument, a continued answer, a truncated file, a refinement kept), kept and sent as the statement's trace is handed over, so a line costs no yield inside a fan | the platform's logger, the run's id added; never the run's failure |
 

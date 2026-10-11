@@ -573,9 +573,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  crm-[b:bags]-> {\n    x = FIRST(b-[:#foo]->)\n  }'), 'traversal_meta_edge'],
       [movement('  crm-[b:bags]-> {\n    b-[:#foo]-> {\n      y = 1\n    }\n  }'), 'traversal_meta_edge'],
       [movement('  crm-[b:bags]-> {\n    write b-[:#foo]-> { name: "a" }\n  }'), 'traversal_meta_edge'],
-      // A second name for a second name of the event is the event.
-      [`node Lead { name: <text> }\n${movement('  m2 = msg\n  m3 = m2\n  if m3 IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_record'],
-      [`node Lead { name: <text> }\n${movement('  if msg IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_record'],
       [`node Lead { name: <text> }\n${movement('  g = graph { name: "a" }\n  if g IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_graph'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  x = found-[c:co WHERE c.`name` == "x"]->.`name`'), 'walk_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  if EXISTS(found-[c:co ORDER BY `name`]->) {\n    x = 1\n  }'), 'exists_extract_hop'],
@@ -629,6 +626,25 @@ describe('a whole run in the Rust engine', () => {
       declined: {},
       hostCalls: {},
     });
+  });
+});
+
+describe('IS <Decl> of a record a system describes', () => {
+  // Chunk 7A Task 6: compared by the record type's schema with the
+  // checker's own assignability (`check.compatible`), as run.ts
+  // `evaluateDeclaredNodeTest` compares it.
+  const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+  it('takes the arm the TypeScript engine takes, the event, a second name of it, and a landed record, whole on Rust', async () => {
+    for (const [declaration, body] of [
+      ['node Fits { subject: <text> }', '  if msg IS <Fits> {\n    x = 1\n  } else {\n    x = 2\n  }\n  return x'],
+      ['node Lacks { nowhere: <text> }', '  m2 = msg\n  m3 = m2\n  if m3 IS <Lacks> {\n    return "fits"\n  }\n  return "does not"'],
+      ['node Typed { subject: <number> }', '  if msg IS <Typed> {\n    return "fits"\n  }\n  return "does not"'],
+    ] as const) {
+      // An undiscriminated webhook: both engines stop, naming why (the
+      // corpora's `IS` cases take each arm on a typed event).
+      await agree({ source: `${declaration}\n${movement(body)}`, event: webhook({ subject: 'Acme' }) });
+      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+    }
   });
 });
 

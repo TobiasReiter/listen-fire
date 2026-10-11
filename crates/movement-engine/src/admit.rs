@@ -2577,12 +2577,10 @@ impl Names<'_> {
             MovementCondition::IsTest { subject_raw, type_ } => {
                 let subject = crate::js::trim(subject_raw);
                 let declared = self.shapes.contains(&type_.graph) && type_.hops_raw.is_none();
-                let typed_record = self.events.contains(subject) || self.handles.contains(subject) || self.landings.contains(subject);
-                // A record a system describes is compared by its types,
-                // which the checker's assignability decides.
-                if declared && typed_record {
-                    return refuse("is_test_declared_record");
-                }
+                // A record a system describes (the event, a handle, a landed
+                // record) is compared by its record type's schema, with the
+                // checker's assignability (`check.compatible`). A graph
+                // literal's entries may hold such records nested.
                 if declared && self.graphs.contains(subject) {
                     return refuse("is_test_declared_graph");
                 }
@@ -3333,7 +3331,7 @@ mod tests {
         assert_eq!(file(&declared), None);
         // A second name for a second name of the event is the event.
         let aliased = format!("{PRELUDE}node Lead {{\n  name: <text>\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  m2 = `msg`\n  m3 = m2\n  if m3 IS <Lead> {{\n    x = 1\n  }}\n}}");
-        assert_eq!(file(&aliased).as_deref(), Some("is_test_declared_record"));
+        assert_eq!(file(&aliased), None);
     }
 
     #[test]
@@ -3569,7 +3567,6 @@ mod tests {
             ("  page = FETCH()", "plugin_call"),
             ("  fetch(url: msg.`text`)", "plugin_call"),
             ("  x = { page: fetch(msg.`text`) }", "plugin_call"),
-            ("  if msg IS <Lead> {\n    x = 1\n  }", "is_test_declared_record"),
             ("  Lead = 1", "name_shadowed"),
             ("  Stage = 1", "name_shadowed"),
             ("  tag = 1", "name_shadowed"),

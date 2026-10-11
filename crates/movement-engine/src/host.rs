@@ -603,6 +603,18 @@ pub mod check {
         }
         Request { family: Family::Check, method: "program".into(), args }
     }
+
+    /// `x IS <Decl>` of a record a system describes: does `schema`'s
+    /// `record_type` carry everything the file's declaration declares, by
+    /// the checker's assignability (`surfaceMisfit`)? Answered `{fits}`, or
+    /// `{undescribed: true}` when the schema enumerates nothing there.
+    pub fn compatible(source: &str, language_version: u32, declaration: &str, schema: Json, record_type: &str) -> Request {
+        Request {
+            family: Family::Check,
+            method: "compatible".into(),
+            args: json!({ "source": source, "languageVersion": language_version, "declaration": declaration, "schema": schema, "recordType": record_type }),
+        }
+    }
 }
 
 /// The instance a `resolve` answer describes.

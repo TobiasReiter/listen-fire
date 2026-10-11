@@ -25,7 +25,7 @@ use crate::program::DeclaredShape;
 use crate::run::{EventAddress, Failure, Run, event_address_key};
 
 impl Run<'_> {
-    pub(crate) fn is_test(&self, subject_raw: &str, type_: &IsType, scope: &Scope) -> Result<bool, Failure> {
+    pub(crate) async fn is_test(&self, subject_raw: &str, type_: &IsType, scope: &Scope) -> Result<bool, Failure> {
         let name = crate::js::trim(subject_raw);
         if !bare_ident(name) {
             return Ok(false);
@@ -34,7 +34,7 @@ impl Run<'_> {
         if let Binding::Shape(shape) = &graph
             && type_.hops_raw.is_none()
         {
-            return self.declared_node_test(name, &subject, shape);
+            return self.declared_node_test(name, &subject, shape, scope).await;
         }
         let graph_named = |instance: &str| matches!(&graph, Binding::Instance(i) if i.name == instance);
         match subject {
@@ -92,20 +92,46 @@ impl Run<'_> {
     /// `evaluateDeclaredNodeTest`: does the subject carry everything the
     /// declaration declares? A subject that is no record is an ordinary
     /// false.
-    fn declared_node_test(&self, name: &str, subject: &Binding, shape: &str) -> Result<bool, Failure> {
+    async fn declared_node_test(&self, name: &str, subject: &Binding, shape: &str, scope: &Scope) -> Result<bool, Failure> {
         let supplied = match subject {
             Binding::Node(node) => Surface::Node(node.clone()),
             Binding::Extracted { emission, .. } => Surface::Emission(emission.clone()),
-            Binding::Event | Binding::Landed(_) | Binding::Handle(_) => {
-                return Err(Failure::unreproduced(
-                    &format!("comparing '{name}' with a declared node"),
-                    "its structure is its system's types, which the Rust engine does not compare",
-                ));
+            // A record a system describes is compared by its record type's
+            // schema, with the checker's own assignability (`check.compatible`).
+            Binding::Event => {
+                let source = self.source.borrow().clone();
+                let instance = self.source_instance.borrow().clone();
+                let Some(record_type) = source.as_ref().and_then(|s| s.position.record_type.clone()) else { return Err(undiscriminated(name, UNDISCRIMINATED_EVENT)) };
+                return self.typed_record_fits(name, instance.as_ref().and_then(|i| i.schema.as_ref()), &record_type, shape).await;
+            }
+            Binding::Handle(handle) => return self.typed_record_fits(name, handle.graph.schema.as_ref(), &handle.target_type, shape).await,
+            Binding::Landed(landed) => {
+                let Some(record_type) = crate::traverse::record_type(&landed.position) else { return Err(undiscriminated(name, UNSTAMPED_LANDING)) };
+                // The graph the landing was yielded from (`graphSchemaOf`).
+                let schema = match scope.resolve(&landed.read.instance_name) {
+                    Some(Binding::Instance(instance)) => instance.schema.clone(),
+                    _ => landed.read.schema.clone(),
+                };
+                return self.typed_record_fits(name, schema.as_ref(), &record_type, shape).await;
             }
             _ => return Ok(false),
         };
         let required = self.required_shape(shape)?;
         Ok(!misfits(&supplied, &required)?)
+    }
+
+    /// `positionSurface` then `surfaceMisfit`, asked of the checker: a
+    /// schema that enumerates nothing at the record's type is "can't tell".
+    async fn typed_record_fits(&self, name: &str, schema: Option<&movement_parser::catalog::types::InstanceSchema>, record_type: &str, shape: &str) -> Result<bool, Failure> {
+        let undescribed = || undiscriminated(name, &format!("nothing describes the structure of a '{record_type}'"));
+        let Some(schema) = schema else { return Err(undescribed()) };
+        let schema = serde_json::to_value(schema).map_err(|e| Failure::engine("MOVENG_RUNTIME", e.to_string()))?;
+        let request = crate::host::check::compatible(&self.input.source, self.version(), shape, schema, record_type);
+        let answer = self.ask(request).await?.unwrap_or(serde_json::Value::Null);
+        if answer.get("undescribed").is_some() {
+            return Err(undescribed());
+        }
+        answer.get("fits").and_then(serde_json::Value::as_bool).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("check.compatible answered {answer}")))
     }
 
     /// The declaration as the whole tree it stands for (`resolvedShape`):

@@ -692,8 +692,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'is_test_declared_record',
-    routes: 'refused',
-    note: '`x IS <Decl>` on the event, a handle or a landed record: needs the assignability verdict (a checker stamp carrying it, or the rule ported)',
+    routes: 'whole',
+    note: "closed in chunk 7A Task 6 by a check.compatible request (the checker's assignability over the record type's schema, which stays TypeScript with the checker; porting it would fork the type system)",
     programs: [
       () => ({ file: `node Shape {\n  subject: <text>\n}\n${m('  if msg IS <Shape> {\n    write crm-[:notes]-> { body: "fits" }\n  }')}` }),
       () => ({ file: `node Lead {\n  name: <text>\n}\n${m('  crm-[c:companies]-> {\n    if c IS <Lead> {\n      write crm-[:notes]-> { body: c.`name` }\n    }\n  }')}` }),
