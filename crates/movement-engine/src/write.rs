@@ -1269,7 +1269,24 @@ impl Run<'_> {
                 ),
             )));
         };
-        Ok(Binding::Handle(self.record_write(written, binding_name, scope, &target, &fields.provenance, None)))
+        // Through a write's handle, the record before this write is that
+        // handle as it stood — its own `@old` included, so the chain walks
+        // back through every write — and `write org { … }` is a mutation of
+        // the record `org` names, not a rebinding: the handle moves on to the
+        // new record in place, so every scope holding it (an enclosing body
+        // past an `if` arm, a closure, a second name) reads the update. A
+        // found record or a landing is snapshotted from what was known of it
+        // (the merge did that above). Version 4 on; before it `org` keeps the
+        // values of its own write.
+        let into = match &binding {
+            Some(Binding::Handle(handle)) if is_written_handle(handle) && movement_parser::version::since(self.version(), 4) => Some(handle.clone()),
+            _ => None,
+        };
+        let written = match &into {
+            Some(handle) => Written { record: written.record, before: Some(handle.snapshot()) },
+            None => written,
+        };
+        Ok(Binding::Handle(self.record_write(written, binding_name, scope, &target, &fields.provenance, into.as_ref())))
     }
 
     /// `resolvePositionWriteTarget`: the record an alias stands on, as an
@@ -1558,6 +1575,14 @@ pub(crate) fn candidate_data(candidate: &Js) -> JsObject {
         }
     }
     data
+}
+
+/// `isWrittenHandle`: a handle a WRITE returned and that still names the
+/// live record — not what a match found (or a link's row), and not a
+/// snapshot reached through `-[:@old]->`.
+fn is_written_handle(handle: &Handle) -> bool {
+    let record = handle.record();
+    matches!(record.get("kind"), Js::Undefined) && !matches!(record.get("snapshot"), Js::Bool(true))
 }
 
 /// `knownRecordData`: what the run already holds of the record a position

@@ -28,7 +28,6 @@ use movement_parser::lowering::expression::EdgeDirection;
 use movement_parser::lowering::condition::MovementCondition;
 use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
-use movement_parser::version::since;
 
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
@@ -2335,16 +2334,10 @@ impl Names<'_> {
             // `write m.k { … }`: the record a map holds, bound for the write
             // alone (run.ts `bindSlotValue`), which this engine does not.
             WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => return refuse("write_position_member_path"),
-            // The record the name holds, updated in place; anything else
-            // fails as the TypeScript's `executePositionWrite` fails it.
-            // Version 4: `write org { … }` moves the handle `org` on to the
-            // updated record in place, and the record before it is `org`'s
-            // `@old`.
-            WriteTarget::Position { root: PathRoot::Name { name }, .. } => {
-                if since(self.language_version, 4) && self.handles.contains(name) {
-                    self.reasons.note("v4_write_in_place");
-                }
-            }
+            // The record the name holds, updated in place (a write's
+            // handle moved on to it from version 4); anything else fails as
+            // the TypeScript's `executePositionWrite` fails it.
+            WriteTarget::Position { root: PathRoot::Name { .. }, .. } => {}
             WriteTarget::Linked { path, .. } => self.target_path(path, "write")?,
         }
         for clause in &write.unique_by {
@@ -3226,8 +3219,7 @@ mod tests {
     /// Language version 4 (Luminous Owl, main's d5bb93f794): the constructs
     /// whose meaning changed run here (PLAN-07A Task 4c), each a
     /// `since(v, 4)` conditional where it differs, so the same program is
-    /// admitted under versions 3 and 4 alike; only the in-place write on a
-    /// write handle is still refused by name, under version 4.
+    /// admitted under versions 3 and 4 alike.
     #[test]
     fn admits_version_4s_changed_constructs_and_leaves_version_3_alone() {
         let under = |body: &str, version: u32| {
@@ -3247,13 +3239,13 @@ mod tests {
             "  co = write crm-[:companies]-> { name: \"a\" }\n  co-[o:@old]-> {\n    x = 1\n  }",
             "  co = write crm-[:companies]-> { name: \"a\" }\n  if EXISTS(co-[:@old]->) {\n    x = 1\n  }",
             "  co = write crm-[:companies]-> { name: \"a\" }\n  was = FIRST(co-[:@old]->)",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  write co { name: \"b\" }",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  x = write co { name: \"b\" }",
+            "  co = match crm-[:companies]-> { unique by (`name`) name: \"a\" }\n  if co != null {\n    x = write co { name: \"b\" }\n  }",
         ] {
             assert_eq!(under(body, 4), None, "{body}");
             assert_eq!(under(body, 3), None, "{body} under version 3");
         }
-        let body = "  co = write crm-[:companies]-> { name: \"a\" }\n  write co { name: \"b\" }";
-        assert_eq!(under(body, 4).as_deref(), Some("v4_write_in_place"), "{body}");
-        assert_eq!(under(body, 3), None, "{body} under version 3");
     }
 
     /// Main's v0.10.2–v0.10.9 language changes (the merge's port list): each
