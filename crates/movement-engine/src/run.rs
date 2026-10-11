@@ -94,10 +94,6 @@ pub struct SegmentInput {
     /// The segment the run host opened for this entry (`segment.open`):
     /// every host request names it.
     pub segment_id: String,
-    /// The team the run is for, which a log line the TypeScript engine
-    /// writes names (an await's lost wake).
-    #[serde(default)]
-    pub team_id: Option<String>,
     /// The credential ids the run's imports name, by credential name
     /// (`RunMovementInput.credentialIds`).
     #[serde(default)]

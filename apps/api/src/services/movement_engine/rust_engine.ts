@@ -610,7 +610,6 @@ function segmentInput(
       event,
       // The segment the run host opened: every host request names it.
       segmentId: context.segmentId,
-      teamId: input.teamId,
       ...(input.credentialIds !== undefined ? { credentialIds: input.credentialIds } : {}),
       // The run's account as this segment starts (crates/movement-engine/src/ledger.rs).
       spend: {

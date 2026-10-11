@@ -576,7 +576,8 @@ const ROUTES: Record<string, Route> = {
     for (const line of lines) {
       const { level, message, fields } = record(line, 'a log line');
       const text = string(message, 'a log line message');
-      const meta = { ...record(fields, 'a log line fields'), ...runLogFields(context) };
+      // The team is the host's to name: the engine holds none.
+      const meta = { ...record(fields, 'a log line fields'), teamId: context.teamId, ...runLogFields(context) };
       if (level === 'warn') logger.warn(text, meta);
       else if (level === 'info') logger.info(text, meta);
       else if (level === 'error') logger.error(text, meta);

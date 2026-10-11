@@ -260,9 +260,6 @@ impl Run<'_> {
             let mut fields = serde_json::Map::new();
             fields.insert("adapterType".into(), Json::String(adapter_type.into()));
             fields.insert("correlationKey".into(), key.clone());
-            if let Some(team) = &self.input.team_id {
-                fields.insert("teamId".into(), Json::String(team.clone()));
-            }
             if let Some(error) = error {
                 fields.insert("error".into(), Json::String(error));
             }

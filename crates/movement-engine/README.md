@@ -111,6 +111,7 @@ Measured 2026-10-07 (gzip -9):
 | host data never read as an engine object (PLAN-07A Task 4b) | 3,031,573 | 908,024 |
 | language version 4's changed constructs run (PLAN-07A Task 4c) | 3,044,472 | 912,975 |
 | a file is what the envelope declares (`Js::File`, PLAN-07A Task 4d; the forward merges between) | 3,276,404 | 981,675 |
+| the engine holds no team (PLAN-07A Task 4d fix round 1) | 3,275,777 | 981,473 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -1266,7 +1267,7 @@ one value. `["i", id]` (one of the caller's own objects) appears only in
 writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
-movementName?, event, segmentId, teamId?, credentialIds?, spend?, now, localZone?,
+movementName?, event, segmentId, credentialIds?, spend?, now, localZone?,
 catalog, dryRun?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
 extractionFileChars?, maxCallDepth?, extractionTiers?, dryAdmission?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
@@ -1286,7 +1287,8 @@ text an extraction prompt takes (extraction.ts `maxFileChars`, the
 deployment's `EXTRACTION_FILE_CHARS`, 50,000 when absent); `localZone` is
 the IANA zone a date-time text with no offset is read in, `now` among them
 (the shim's process zone, verified against its `Date`; UTC when absent);
-`teamId` names the run's team on the engine's log lines; `fire` and `settle`
+the engine holds no team (the shim names it on the engine's log lines, as the
+host's own fact); `fire` and `settle`
 run a callback body or settle a deferred race against `resume`'s state;
 `maxCallDepth` is how many named calls deep a run may nest from version 3
 (call_depth.ts, the deployment's `MOVEMENT_MAX_CALL_DEPTH`);
@@ -1667,6 +1669,6 @@ admitted: {reason: count}` (by first reason, largest first), `Rust runs not
 admitted, every reason: {reason: count}` (each run counted under every
 reason it holds), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 1180, v2 1491, v3 2547). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 1178, v2 1489, v3 2545). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

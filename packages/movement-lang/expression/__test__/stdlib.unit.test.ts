@@ -722,6 +722,14 @@ describe('TEXT.SERIALISE', () => {
     );
   });
 
+  it("TEXT.PAIRS skips a file member as any object, and prints a file's own members passed whole", () => {
+    const pairs = stdlibFunctionById('text.pairs');
+    if (pairs === undefined) throw new Error('test: TEXT.PAIRS is registered');
+    const file = markedFile({ __brand: 'FileRef', name: 'a.pdf' });
+    expect(applyStdlib(pairs, [{ name: 'Acme', deck: file, n: 2 }], new Date(0))).toBe('name=Acme | n=2');
+    expect(applyStdlib(pairs, [file], new Date(0))).toBe('__brand=FileRef | name=a.pdf');
+  });
+
   it('a dict that spells a file is a dict: its keys print', () => {
     expect(json({ f: { __brand: 'FileRef', name: 'x.pdf' } })).toBe(
       '{\n  "f": {\n    "__brand": "FileRef",\n    "name": "x.pdf"\n  }\n}',

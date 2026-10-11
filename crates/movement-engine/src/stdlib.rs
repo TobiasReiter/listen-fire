@@ -872,6 +872,21 @@ mod tests {
         result.unwrap_or_else(|e| panic!("{id}: {e:?}"))
     }
 
+    /// TEXT.PAIRS skips a member that is any object, as the TypeScript's
+    /// `typeof value === 'object'` does: a file the engine holds and a record
+    /// held as a value are objects; a file passed whole prints its members.
+    #[test]
+    fn text_pairs_skips_every_object_member_as_typescript_does() {
+        let file = crate::file::file_value_of(&crate::env::js_of_json(&serde_json::json!({ "__brand": "FileRef", "name": "a.pdf" }))).unwrap();
+        let mut record = JsObject::new();
+        record.set("name".into(), Js::str("Acme"));
+        record.set("deck".into(), file.clone());
+        record.set("held".into(), crate::record::held(crate::bindings::Binding::Event));
+        record.set("n".into(), Js::Number(2.0));
+        assert_eq!(text(call("text.pairs", vec![Js::object(record)])), "name=Acme | n=2");
+        assert_eq!(text(call("text.pairs", vec![file])), "__brand=FileRef | name=a.pdf");
+    }
+
     fn text(value: Js) -> String {
         match value {
             Js::String(s) => s,
