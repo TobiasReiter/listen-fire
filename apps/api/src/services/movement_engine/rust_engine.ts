@@ -32,6 +32,7 @@ import type { Binding, MovementEvalResult, MovementExprContext } from './express
 import { bindingOf, pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { maxFileChars } from './extraction';
+import type { CheckedProgram } from './program_check';
 import { MovementRunFailed, type MovementRunResult, type ResumeMovementInput, type RunMovementInput } from './run';
 import type { CallbackBodyInput, SettleRaceInput } from 'engine-contracts';
 import type { RunContext } from './run_context';
@@ -131,11 +132,14 @@ export function refusalOutcome(reason: string): MovementEngineError | undefined 
   return engineFallback() === 'none' ? refusedWithoutFallback(reason) : undefined;
 }
 
-/** What a segment in the Rust engine runs: the run's input and the segment
- *  the run host opened. */
+/** What a segment in the Rust engine runs: the run's input, the segment
+ *  the run host opened, and the check the run host made before opening it
+ *  (run.ts), which answers the engine's `check.program` (absent: the route
+ *  checks). */
 export interface RustSegment<Input extends RunMovementInput = RunMovementInput> {
   input: Input;
   context: RunContext;
+  checked?: CheckedProgram;
 }
 
 /** A segment of `input`'s run in the Rust engine: its result, or why the
@@ -207,7 +211,7 @@ interface Resumption {
 }
 
 async function segmentInRust(
-  { input, context }: RustSegment,
+  { input, context, checked }: RustSegment,
   resume: Resumption | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
@@ -231,6 +235,7 @@ async function segmentInRust(
       catalog: input.catalog,
       hostErrors,
       wire,
+      ...(checked !== undefined ? { prechecked: { source: input.source, languageVersion: context.languageVersion, checked } } : {}),
     });
     outcome = readRunResult(done, { context, hostErrors, wire });
   } catch (error) {
@@ -241,6 +246,11 @@ async function segmentInRust(
     if (error instanceof RustShimError) {
       rustRunStats.shimFaults += 1;
       noteEngine(input, 'rust', 'shim_fault');
+    } else if (failedItsCheck(error)) {
+      // A driver that did not check before the segment opened (run.ts
+      // does): the engine's own `check.program` ended it, not a run.
+      rustRunStats.endedAtCheck += 1;
+      noteEngine(input, 'rust', ADMITTED);
     } else if (endedByName(error)) {
       // A construct this engine names and does not run, met mid-run: not a
       // run's own ending, so not counted as one that ran whole.
@@ -269,6 +279,11 @@ async function segmentInRust(
 function endedByName(error: unknown): boolean {
   const cause = error instanceof MovementRunFailed ? error.cause : error;
   return cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED';
+}
+
+/** Whether a run ended at its check: its pin, its parse, the checker. */
+function failedItsCheck(error: unknown): boolean {
+  return error instanceof MovementEngineError && (error.code === 'MOVENG_LANGUAGE_VERSION' || error.code === 'MOVENG_PARSE' || error.code === 'MOVENG_CHECK');
 }
 
 /** A `done`'s cost lines, summed by source. */

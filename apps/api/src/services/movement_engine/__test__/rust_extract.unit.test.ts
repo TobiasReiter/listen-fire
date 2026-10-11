@@ -21,7 +21,7 @@ import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../test_host';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from '../test_host';
 import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
 import { MovementEngineError } from '../errors';
 import type { ParkedScopeState } from '../serialize';
@@ -175,7 +175,7 @@ async function agree(c: Case, onRust: { runsWhole: true } | { refused: string })
   const ts = await runOn('ts', c);
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  if ('runsWhole' in onRust) expect(rustRunStats).toMatchObject({ routed: 1, ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, declined: {}, shimFaults: 0 });
+  if ('runsWhole' in onRust) expect(rustRunStats).toMatchObject({ ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, declined: {}, shimFaults: 0 });
   else expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, hostCalls: {} });
   expect(rust.asked).toEqual(ts.asked);
   expect(rust.invoked).toEqual(ts.invoked);
@@ -487,7 +487,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       resetRustRunStats();
       const rust = await runOn('rust', c);
       // Never the shim's fault, never a refusal: the host was asked.
-      expect(rustRunStats).toMatchObject({ routed: 1, ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, shimFaults: 0, declined: {} });
+      expect(rustRunStats).toMatchObject({ ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, shimFaults: 0, declined: {} });
       // TypeScript reads the answer as it is.
       expect('result' in ts).toBe(true);
       expect('error' in rust && rust.error).toBeInstanceOf(MovementRunFailed);
@@ -609,10 +609,3 @@ function baseInput(source: string): Omit<RunMovementInput, 'host'> {
   return { source: PRELUDE + source, event: EVENT, teamId: TEAM_ID, catalog, credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`) };
 }
 
-/** What the Rust run's counts say of how it ended: run to its end (its own
- *  failure included), or, counted apart, ended mid-run naming a construct
- *  the engine does not run (`MOVENG_UNSUPPORTED`). */
-function endedInRust(error: unknown): { ranWhole: number; failedByName: number } {
-  const cause = runFailureCause(error);
-  return cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED' ? { ranWhole: 0, failedByName: 1 } : { ranWhole: 1, failedByName: 0 };
-}

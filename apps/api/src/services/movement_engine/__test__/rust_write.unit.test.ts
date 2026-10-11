@@ -19,7 +19,7 @@ import { staticCatalogFromManifests } from '../../translation_graph/movement/cat
 import type { MovementTraceEntry } from '../expression';
 import type { SchemaTypeDescriptor } from '../../translation_graph/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks, type TestHostOverrides } from '../test_host';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks, endedInRust, type TestHostOverrides } from '../test_host';
 import {
   MovementRunFailed,
   resumeMovement,
@@ -343,7 +343,7 @@ async function agreeUnder(c: Case) {
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, ...endedInRust(rust.error), notAdmitted: {}, declined: {} });
+  expect(rustRunStats).toMatchObject({ ...endedInRust(rust.error), notAdmitted: {}, declined: {} });
   expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   const world = ({ failed: _failed, result: _result, error: _error, ...rest }: Outcome) => rest;
   expect(sameIds(world(rust))).toEqual(sameIds(world(ts)));
@@ -1371,10 +1371,3 @@ function isSourceResolve(request: unknown): request is { role: 'source' } {
   return typeof request === 'object' && request !== null && Reflect.get(request, 'role') === 'source';
 }
 
-/** What the Rust run's counts say of how it ended: run to its end (its own
- *  failure included), or, counted apart, ended mid-run naming a construct
- *  the engine does not run (`MOVENG_UNSUPPORTED`). */
-function endedInRust(error: unknown): { ranWhole: number; failedByName: number } {
-  const cause = runFailureCause(error);
-  return cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED' ? { ranWhole: 0, failedByName: 1 } : { ranWhole: 1, failedByName: 0 };
-}

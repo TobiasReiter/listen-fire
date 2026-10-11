@@ -15,6 +15,7 @@ import path from 'node:path';
 import { canonicalJson, hostRecordingSchema, type HostRecording, type ReplayTarget, type ReplayVerdict } from 'engine-contracts/conformance';
 
 import { httpTarget, rustTarget, typescriptTarget } from '../replay';
+import { parsePinned } from '../../program_check';
 import { rustRunStats } from '../../rust_stats';
 
 const FIXTURES = path.resolve(__dirname, '../__fixtures__');
@@ -35,11 +36,15 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  Rust, less a margin of 2. Raised at chunk 7A Task 3, records held as
  *  values (2026-10-09): 346 and 429 on Rust, less a margin of 2. Raised at
  *  chunk 7A Task 4, awaits and parallel with parks (2026-10-10): 392 and
- *  475 on Rust, less a margin of 2.
+ *  475 on Rust, less a margin of 2. Raised at chunk 7A Task 7 (2026-10-11),
+ *  the Rust target judging every run it ran to an ending by its verdict (a
+ *  mid-run named failure included, once skipped unlabelled) and the runs
+ *  that fail their check before a segment opens (once skipped as "not
+ *  routed by the shim"): 430 and 519 on Rust, less a margin of 2.
  *  Raise them deliberately; never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 390 },
-  v2: { recordings: 542, rust: 473 },
+  v1: { recordings: 443, rust: 428 },
+  v2: { recordings: 542, rust: 517 },
 } as const;
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);
@@ -158,16 +163,52 @@ const ENCODED_A_FIXED_BUG: Array<{
 }> = [
   {
     // PLAN-07A Task 4d: a file is only what an envelope declares one. The
-    // recording's catalog gives the `through` plugin no output, so its
-    // records' `file` key is declared nowhere: the plugin's fetched file is
-    // data now, and the FILE resource the recorded write carried is not made.
+    // recording's catalog gives the plugin its `through` names no output, so
+    // its records' `file` key is declared nowhere: the plugin's fetched file
+    // is data now, and the FILE resource the recorded write carried from
+    // that key (its `data.file`) is not made. Matched on exactly that.
     reason: "a plugin's undeclared `file` key was taken for a file (PLAN-07A Task 4d)",
-    matches: (recording, divergence) =>
-      divergence.includes('differs at args.args.resources.') &&
-      Object.values(recording.input.catalog?.plugins ?? {}).some((spec) => spec.output === undefined),
+    matches: (recording, divergence) => {
+      const at = /differs at args\.args\.resources\.(\d+)/.exec(divergence);
+      if (at === null) return false;
+      const undeclared = throughPlugins(recording).filter((name) => recording.input.catalog?.plugins?.[name]?.output === undefined);
+      return undeclared.length > 0 && recording.requests.some((request) => fileResourceAt(request.args, Number(at[1])));
+    },
     count: { v1: 0, v2: 1 },
   },
 ];
+
+/** The plugins the recording's program names in its `through` stages. */
+function throughPlugins(recording: HostRecording): string[] {
+  const program = parsePinned({
+    source: recording.input.source,
+    ...(recording.input.languageVersion !== undefined ? { languageVersion: recording.input.languageVersion } : {}),
+  });
+  const names: string[] = [];
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (!isObject(node)) return;
+    if (Array.isArray(node.through)) {
+      for (const call of node.through) if (isObject(call) && typeof call.plugin === 'string') names.push(call.plugin);
+    }
+    Object.values(node).forEach(visit);
+  };
+  visit(program);
+  return names;
+}
+
+/** Whether a recorded `adapters.call` carries, at resource `index`, a FILE
+ *  resource made from a record's `file` key (its `data.file`). */
+function fileResourceAt(args: unknown, index: number): boolean {
+  const call = isObject(args) && isObject(args.args) ? args.args : undefined;
+  const resource = call !== undefined && Array.isArray(call.resources) ? call.resources[index] : undefined;
+  return isObject(resource) && resource.type === 'FILE' && isObject(resource.data) && isObject(resource.data.file);
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const label = (recording: HostRecording, i: number): string =>
   `#${i + 1} ${recording.entry} ${JSON.stringify(recording.input.source.slice(0, 80))}`;

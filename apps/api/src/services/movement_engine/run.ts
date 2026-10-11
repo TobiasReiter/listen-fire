@@ -306,7 +306,7 @@ import {
   type FileTextResolution,
   type TransformInvocationResult,
 } from './extraction';
-import { MovementRunFailed, RunCancelledSignal, RunLeaseLost } from './errors';
+import { MovementRunFailed, RunCancelledSignal, RunLeaseLost, runFailureCause } from './errors';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import {
@@ -345,7 +345,7 @@ import {
   type CallbackCall,
   type CallbackParamSpec,
 } from 'engine-contracts';
-import { checkPinned, type CheckInput } from './program_check';
+import { checkPinned, type CheckInput, type CheckedProgram } from './program_check';
 import {
   ENGINE_CHOICE_TS,
   dryAdmitFire,
@@ -361,6 +361,7 @@ import {
   runSegmentInRust,
   settleSegmentInRust,
 } from './rust_engine';
+import { rustRunStats } from './rust_stats';
 import { WriteLedger, forkWriteOrder, rootWriteOrder, type WriteOrder } from './write_ledger';
 import {
   closeRunContext,
@@ -597,16 +598,10 @@ export interface MovementRunResult {
   deferredRaceFrames?: string[];
 }
 
-// `MovementRunFailed` (a run that died, carrying its ledger) is in errors.ts.
-export { MovementRunFailed };
+// `MovementRunFailed` (a run that died, carrying its ledger) and
+// `runFailureCause` (what it died of) are in errors.ts.
+export { MovementRunFailed, runFailureCause };
 
-/**
- * The error a run really died of. `MovementRunFailed` is a transparent CARRIER
- * for the partial ledger, so anything that discriminates on the error itself —
- * its class, its `MovementEngineError` code — must look THROUGH it. Errors
- * raised before the interpreter starts (parse / check) are never wrapped and
- * pass straight back.
- */
 /** A resolution's identity: what it asks for, the construction args in any
  *  key order. */
 function resolutionKey(resolution: AdapterResolution): string {
@@ -620,10 +615,6 @@ function resolutionKey(resolution: AdapterResolution): string {
   ]);
 }
 
-export function runFailureCause(error: unknown): unknown {
-  return error instanceof MovementRunFailed ? error.cause : error;
-}
-
 export async function runMovement(input: RunMovementInput): Promise<MovementRunResult> {
   // Error severity only: info diagnostics (MOV_LISTEN_MISSING — a
   // dispatchable movement with no listen) never block a run; the engine is
@@ -632,20 +623,22 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // the engine's import structure — validation and execution consume one
   // resolution.
   //
-  // Under `MOVEMENT_ENGINE=rust` the program is not parsed here: the Rust
-  // engine admits it on its own parse, then asks for its own check (the
-  // `check.program` host call), which throws exactly what parseAndCheck
-  // throws. It runs inside the same segment the interpreter would: its host
-  // calls are the run's.
+  // Under `MOVEMENT_ENGINE=rust` the program is checked here too, before
+  // its segment opens, so a program that fails its check makes no host
+  // request on either engine. The Rust engine then admits it on its own
+  // parse and asks for its check (`check.program`), answered from this one.
+  // It runs inside the same segment the interpreter would: its host calls
+  // are the run's.
   if (routesToRust(input)) {
+    const checked = checkBeforeRustSegment(input);
     return inRunContext(input, async (context) => {
-      const outcome = await runSegmentInRust({ input, context });
+      const outcome = await runSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined);
       if (refusal !== undefined) throw refusal;
       // Refused or declined before any host-visible effect: the interpreter
       // runs it, in the same segment.
-      const { program, prepared } = parseAndCheck(input);
+      const { program, prepared } = preparedOf(checked);
       return new Interpreter(input, { ...prepared, context }).run(program);
     });
   }
@@ -727,8 +720,23 @@ interface PreparedRun {
  *  point does. Shared by run + resume so a resume re-validates the pinned
  *  source exactly as a fresh run did. */
 function parseAndCheck(input: RunMovementInput): { program: Program; prepared: PreparedRun } {
-  const { program, catalog, link } = checkPinned(checkInputOf(input));
+  return preparedOf(checkPinned(checkInputOf(input)));
+}
+
+function preparedOf({ program, catalog, link }: CheckedProgram): { program: Program; prepared: PreparedRun } {
   return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
+}
+
+/** The Rust route's check, made where the TypeScript route makes it: before
+ *  the segment opens. A run that fails it ends there, counted apart
+ *  (`rustRunStats.endedAtCheck`): it never reached the Rust engine. */
+function checkBeforeRustSegment(input: RunMovementInput): CheckedProgram {
+  try {
+    return checkPinned(checkInputOf(input));
+  } catch (error) {
+    rustRunStats.endedAtCheck += 1;
+    throw error;
+  }
 }
 
 /** A resume's input: the contract's (`engine-contracts`), and the host. */
@@ -748,12 +756,13 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // engine's: the state is one shape) is the Rust engine's to admit, with
   // its program, as `runMovement` routes a run.
   if (routesToRust(input)) {
+    const checked = checkBeforeRustSegment(input);
     return inRunContext(input, async (context) => {
-      const outcome = await resumeSegmentInRust({ input, context });
+      const outcome = await resumeSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined);
       if (refusal !== undefined) throw refusal;
-      const { program, prepared } = parseAndCheck(input);
+      const { program, prepared } = preparedOf(checked);
       return resumeInterpreter(input, { program, prepared, context });
     });
   }
@@ -801,12 +810,13 @@ export async function settleRaceFrame(
 ): Promise<MovementRunResult> {
   refuseUnsupportedParkStateVersion(input.state.version);
   if (routesToRust(input)) {
+    const checked = checkBeforeRustSegment(input);
     return inRunContext(input, async (context) => {
-      const outcome = await settleSegmentInRust({ input, context });
+      const outcome = await settleSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined);
       if (refusal !== undefined) throw refusal;
-      const { program, prepared } = parseAndCheck(input);
+      const { program, prepared } = preparedOf(checked);
       return new Interpreter(input, { ...prepared, context }).settleRaceFrame({
         program,
         state: input.state,
@@ -837,12 +847,13 @@ export async function fireCallbackBody(
 ): Promise<MovementRunResult> {
   refuseUnsupportedParkStateVersion(input.state.version);
   if (routesToRust(input)) {
+    const checked = checkBeforeRustSegment(input);
     return inRunContext(input, async (context) => {
-      const outcome = await fireSegmentInRust({ input, context });
+      const outcome = await fireSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined);
       if (refusal !== undefined) throw refusal;
-      const { program, prepared } = parseAndCheck(input);
+      const { program, prepared } = preparedOf(checked);
       return new Interpreter(input, { ...prepared, context }).fireCallback({
         program,
         state: input.state,

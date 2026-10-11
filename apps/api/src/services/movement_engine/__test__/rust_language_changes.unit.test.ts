@@ -333,7 +333,7 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('a body rebinding a file-level value: refused by name, failed by the TypeScript engine', async () => {
+  it('a body rebinding a file-level value: the check ends it on either engine, before a segment opens', async () => {
     const source = [PRELUDE, 'tag = "x"', 'movement m(msg: <inbox-[:message]->>) {', '  tag = 1', '}'].join('\n');
     for (const languageVersion of COMPARED_VERSIONS) {
       const ts = await runOn('ts', source, languageVersion);
@@ -341,7 +341,7 @@ describe("main's language changes on both engines", () => {
       resetRustEvalStats();
       resetRustRunStats();
       const rust = await runOn('rust', source, languageVersion);
-      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { name_shadowed: 1 }, declined: {}, hostCalls: {} });
+      expect(rustRunStats).toMatchObject({ routed: 0, endedAtCheck: 1, admitted: 0, ranWhole: 0, notAdmitted: {}, declined: {}, hostCalls: {} });
       expect(seen(rust)).toEqual(seen(ts));
     }
   });

@@ -512,7 +512,7 @@ describe('until and callbacks in the Rust engine', () => {
           '    write graph-[:note]-> { body: "${c.note} at ${c.At}" }',
           '  }',
           '  got = await FIRST(cb-[:Called]->)',
-          '  write graph-[:note]-> { body: got.note }',
+          '  write graph-[:note]-> { body: COALESCE(got.note, "unknown") }',
         ].join('\n'),
       ),
       ledger,

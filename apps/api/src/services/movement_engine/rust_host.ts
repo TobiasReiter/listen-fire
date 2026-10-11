@@ -46,7 +46,7 @@ import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
 import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost } from './host';
 import { hostCallFailure } from './host_adapter';
-import { checkAnswer, checkPinned } from './program_check';
+import { checkAnswer, checkPinned, type CheckedProgram } from './program_check';
 import type { MovementRunResult } from './run';
 import { publishTrace, runLogFields, withDeclaredFiles, type RunContext } from './run_context';
 import { pluginSpecNamed } from './extraction';
@@ -87,6 +87,9 @@ export interface RouteContext {
    *  pin: the segment's own catalog is what they were checked against, so
    *  nothing a check settled reaches another run, or another tenant. */
   checked: Map<string, Program>;
+  /** The run's own check, made before its segment opened (run.ts): it
+   *  answers `check.program` for the run's source under its pin. */
+  prechecked?: { source: string; languageVersion: number; checked: CheckedProgram };
 }
 
 type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<unknown>;
@@ -121,16 +124,21 @@ const ROUTES: Record<string, Route> = {
       throw new RustShimError('check.program upgradingFrom must be a number');
     }
     const source = string(request.source, 'check.program source');
+    const prechecked = context.prechecked;
     let checked;
-    try {
-      checked = checkPinned({
-        source,
-        catalog: context.catalog,
-        languageVersion,
-        ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
-      });
-    } catch (error) {
-      throw new RunAborted(error);
+    if (prechecked !== undefined && upgradingFrom === undefined && prechecked.source === source && prechecked.languageVersion === languageVersion) {
+      checked = prechecked.checked;
+    } else {
+      try {
+        checked = checkPinned({
+          source,
+          catalog: context.catalog,
+          languageVersion,
+          ...(upgradingFrom !== undefined ? { upgradingFrom } : {}),
+        });
+      } catch (error) {
+        throw new RunAborted(error);
+      }
     }
     // The run's own version warning, read as the TypeScript engine reads it
     // (run.ts, before the body): the release the engine runs under, not the

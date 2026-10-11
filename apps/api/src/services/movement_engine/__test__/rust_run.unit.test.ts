@@ -19,7 +19,7 @@ import { logger } from '../../logger';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { positionData } from '../../translation_graph/types';
 import { openRunContext } from '../run_context';
-import { credentialIdsFor, makeTestHost, type TestHostOverrides } from '../test_host';
+import { credentialIdsFor, makeTestHost, endedInRust, type TestHostOverrides } from '../test_host';
 import { AdapterCallFailed } from '../host_adapter';
 import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
 import { MovementEngineError } from '../errors';
@@ -182,7 +182,9 @@ async function agree(c: Case) {
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, notAdmitted: {}, declined: {} });
+  // A run that fails its check ends there on either engine, before its
+  // segment opens: the Rust route checks where the TypeScript route does.
+  expect(rustRunStats).toMatchObject({ ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, declined: {} });
   expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   expect(rust.calls).toEqual(ts.calls);
   expect(rust.resolved).toEqual(ts.resolved);
@@ -321,7 +323,7 @@ describe('a whole run in the Rust engine', () => {
       });
       resetRustRunStats();
       const run = await runOn(engine, { ...c, host: counting });
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ...endedInRust('error' in run ? run.error : undefined), notAdmitted: {}, declined: {} });
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ ...endedInRust('error' in run ? run.error : undefined), notAdmitted: {}, declined: {} });
       return { ...run, called, ended: String(runFailureCause('error' in run ? run.error : undefined)) };
     };
     /** `c` on both engines, each held to `expectOf`, the two agreeing. */
@@ -505,8 +507,8 @@ describe('a whole run in the Rust engine', () => {
     expect(cause).toBeInstanceOf(AdapterCallFailed);
     expect(cause).toMatchObject({ name: 'FakeAdapterError', message: 'no text today' });
     await agree({ source: BINDINGS_AND_IF.replace('msg.`subject`', 'msg.`nope`'), event: webhook({}) });
-    // A source neither parser reads: the check's own parse error, routed
-    // (chunk 7A Task 2), never refused.
+    // A source neither parser reads: the check's own parse error, before a
+    // segment opens on either engine, never refused.
     const { rust: unparsed } = await agree({ source: 'movement m(msg: <inbox-[:message]->>) {\n  g = graph { ?...msg }\n}', event: webhook({}) });
     expect(String('error' in unparsed ? unparsed.error : '')).toContain('MOVENG_PARSE');
   });
@@ -642,7 +644,7 @@ describe('IS <Decl> of a record a system describes', () => {
   const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
   it('takes the arm the TypeScript engine takes, the event, a second name of it, and a landed record, whole on Rust', async () => {
     for (const [declaration, body] of [
-      ['node Fits { subject: <text> }', '  if msg IS <Fits> {\n    x = 1\n  } else {\n    x = 2\n  }\n  return x'],
+      ['node Fits { subject: <text> }', '  if msg IS <Fits> {\n    return "fits"\n  }\n  return "does not"'],
       ['node Lacks { nowhere: <text> }', '  m2 = msg\n  m3 = m2\n  if m3 IS <Lacks> {\n    return "fits"\n  }\n  return "does not"'],
       ['node Typed { subject: <number> }', '  if msg IS <Typed> {\n    return "fits"\n  }\n  return "does not"'],
     ] as const) {
@@ -660,15 +662,22 @@ describe('the file scope, as interpretFileStatement reads it', () => {
   // right-hand side binds nothing; a file-level statement runs nothing.
   const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
   it('fails, binds nothing or runs nothing on both engines alike, whole on Rust', async () => {
-    for (const source of [
-      `r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`,
-      `import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`,
-      `w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`,
-      `write crm-[:companies]-> { name: "a" }\n${movement('  x = msg.\`subject\`')}`,
-      `n = node { title: "t" }\n${movement('  x = n.\`title\`')}`,
-    ]) {
+    // Where the run ends: in the engine (`segment`), or at the check, before
+    // a segment opens, on either engine (`check`: the snapshot describes no
+    // `fetch_url`, and its `companies` are read-only).
+    for (const [source, ends] of [
+      [`r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`, 'segment'],
+      [`import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`, 'check'],
+      [`w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`, 'check'],
+      [`write crm-[:companies]-> { name: "a" }\n${movement('  x = msg.\`subject\`')}`, 'check'],
+      [`n = node { title: "t" }\n${movement('  x = n.\`title\`')}`, 'segment'],
+    ] as const) {
       await agree({ source, event: webhook({ subject: 'Acme' }) });
-      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, notAdmitted: {}, declined: {} });
+      expect(rustRunStats).toMatchObject({
+        ...(ends === 'segment' ? { routed: 1, admitted: 1 } : { routed: 0, endedAtCheck: 1 }),
+        notAdmitted: {},
+        declined: {},
+      });
     }
   });
 });
@@ -679,18 +688,20 @@ describe('the run counts', () => {
     const runs = [
       'movement m(msg: <inbox-[:message]->>) {\n  x = KG_VALUE("why?")\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}',
-      'movement m(msg: <inbox-[:message]->>) {\n  y = FIRST(crm-[:#foo]->)\n  z = KG_VALUE("again")\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  y = msg.`subject` WITHIN "7d"\n  z = KG_VALUE("again")\n}',
+      // Fails its check (`crm` has no `#foo`), so never reaches the engine.
+      'movement m(msg: <inbox-[:message]->>) {\n  y = FIRST(crm-[:#foo]->)\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  return UPPER(msg.`subject`)\n}',
     ];
     for (const source of runs) await runOn('rust', { source, event: webhook({ subject: 'Acme' }) });
     // `routed` counts every segment the engine started, its admission's
     // refusals among them; the refused ones are exactly `routed - admitted`,
     // and each is under one first reason.
-    expect(rustRunStats).toMatchObject({ routed: 4, admitted: 2, ranWhole: 2, declined: {} });
+    expect(rustRunStats).toMatchObject({ routed: 4, admitted: 2, ranWhole: 2, endedAtCheck: 1, declined: {} });
     const refused = Object.values(rustRunStats.notAdmitted).reduce((a, b) => a + b, 0);
     expect(refused).toBe(rustRunStats.routed - rustRunStats.admitted);
-    expect(rustRunStats.notAdmitted).toEqual({ 'expression:kg_value': 1, traversal_meta_edge: 1 });
-    expect(rustRunStats.allReasons).toEqual({ 'expression:kg_value': 2, traversal_meta_edge: 1 });
+    expect(rustRunStats.notAdmitted).toEqual({ 'expression:kg_value': 1, within_compare: 1 });
+    expect(rustRunStats.allReasons).toEqual({ 'expression:kg_value': 2, within_compare: 1 });
   });
 });
 
@@ -766,8 +777,10 @@ async function admission(source: string): Promise<string> {
   const { outcome } = await segmentOf(source);
   const [reason] = Object.keys(rustRunStats.notAdmitted);
   if (reason !== undefined) return reason;
-  // Admitted: it ran in Rust, to its end or its own failure.
-  expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ...endedInRust('error' in outcome ? outcome.error : undefined) });
+  // Admitted: it ran in Rust, to its end or its own failure, or to the
+  // engine's own check (this drives the segment directly, with no check
+  // before it), routed either way.
+  expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ...endedInRust('error' in outcome ? outcome.error : undefined), routed: 1 });
   return 'admitted';
 }
 
@@ -778,10 +791,3 @@ function expectZoneStanding(named: string | undefined): void {
   if (expected !== undefined) expect([process.env.TZ, named === undefined ? 'unverified' : 'named']).toEqual([process.env.TZ, expected]);
 }
 
-/** What the Rust run's counts say of how it ended: run to its end (its own
- *  failure included), or, counted apart, ended mid-run naming a construct
- *  the engine does not run (`MOVENG_UNSUPPORTED`). */
-function endedInRust(error: unknown): { ranWhole: number; failedByName: number } {
-  const cause = runFailureCause(error);
-  return cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED' ? { ranWhole: 0, failedByName: 1 } : { ranWhole: 1, failedByName: 0 };
-}

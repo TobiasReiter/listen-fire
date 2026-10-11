@@ -268,7 +268,13 @@ answered nothing.
 ## Admission
 
 Whether this engine runs a program whole is decided in three places, in
-this order, and the program is parsed once, here:
+this order, and this engine parses the program once, here. Before any of
+them, the run's check: run.ts checks the program (`checkPinned`: its pin,
+its parse, the checker) where the TypeScript route checks it, before the run
+host opens the segment, so a program that fails it (MOVENG_LANGUAGE_VERSION,
+MOVENG_PARSE, MOVENG_CHECK) ends there on either engine and its host sees no
+request at all, `segment.open` included (`rustRunStats.endedAtCheck`; never
+routed). That check answers this engine's own `check.program` request.
 
 1. **The shim's input checks** (rust_engine.ts: an event, source or parked
    state that cannot cross the eval wire), on what the run is handed,
@@ -352,13 +358,15 @@ constructs this engine already runs are "The run" below.
 
 | reason | the construct | needs |
 |---|---|---|
-| `language_version_unsupported` | the run is pinned to a language version this release does not support (`SUPPORTED_LANGUAGE_VERSIONS`), refused by that name before the parse and before any construct's reason, so it is the only reason the run holds (the TypeScript engine refuses it with its own message) | nothing: an unsupported version is refused on either engine |
+| `language_version_unsupported` | the run is pinned to a language version this release does not support (`SUPPORTED_LANGUAGE_VERSIONS`), refused by that name before the parse and before any construct's reason, so it is the only reason the run holds. In process the run's check ends such a run first (MOVENG_LANGUAGE_VERSION, before the segment opens); the reason is what the dry run and an embedder that does not check first see | nothing: an unsupported version is refused on either engine |
 | `import_from_file`, `import_from_<namespace>` | an import from a library file, or from a namespace other than `adapters`, `credentials` and `plugins` | the file scope from the check's `link` (imported movements and shapes, `libraryShape`/`shapeChain`), calls into library movements |
 
-A source this engine's parser refuses goes on to `check.program`, whose
-own MOVENG_PARSE ends the run, as the TypeScript engine's parse ends it (the
-binding × consumer matrix's 24 `graph<Entry> { ?...e }` cells under version
-3: both parsers refuse a fill spread in a graph literal).
+A source the TypeScript parser refuses never reaches this engine: the run's
+check ends it with MOVENG_PARSE before the segment opens (the binding ×
+consumer matrix's 24 `graph<Entry> { ?...e }` cells under version 3: both
+parsers refuse a fill spread in a graph literal). A source only this
+engine's parser refuses goes on to `check.program`, and is declined
+(`source_does_not_parse`) when the check passes.
 
 A file-level `node <Name> { … }`, `type`, `import … from plugins` and value
 (`rules = "…"`) are admitted: each binds a name and runs nothing, as
@@ -1579,7 +1587,11 @@ snapshot (the host holds it; the segment was handed the same), answered
 every TypeScript run passes). A program that fails it never gets an answer:
 the host ends the run with MOVENG_CHECK (or MOVENG_PARSE,
 MOVENG_LANGUAGE_VERSION), exactly as the TypeScript engine throws before it
-runs anything.
+runs anything. In process the run host checks before it opens the segment
+(run.ts), as the TypeScript route does, and answers the request from that
+check: a program that fails it has made no host request on either engine.
+The request carries no segment, so an embedder may answer it, or check,
+before its own `segment.open`.
 
 The checker mutates the AST the engine then reads, so its three facts cross
 as **stamps**: `{file?, path, spreadFields | copy | reference}`.
@@ -1677,12 +1689,30 @@ MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # pe
 
 The teardown prints `Rust evaluator: {…}` (expressions not admitted,
 admitted, answered, fallbacks by reason), `Rust runs: {runsRouted,
-runsAdmitted, ranWhole, shimFaults, declined, hostCalls}` (routed counts the
-segments admission refused too; admitted does not) and `Rust runs not
-admitted: {reason: count}` (by first reason, largest first), `Rust runs not
-admitted, every reason: {reason: count}` (each run counted under every
-reason it holds), and fails a run in which Rust
-answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 1172, v2 1483, v3 2564; a run ending mid-run with `MOVENG_UNSUPPORTED` is counted apart, `failedByName`). Any filter (a path or name pattern, related or
-changed files, a shard, positional paths) makes a run partial, and the floor
-does not apply to it.
+runsAdmitted, ranWhole, failedByName, shimFaults, endedAtCheck, declined,
+hostCalls}` (routed counts the segments admission refused too; admitted does
+not), every count with its denominator (`Rust runs, ran whole N of M runs
+attempted (K refused at admission by name, J failed by name, D declined, C
+failed their check before a segment opened, S shim faults)`: each run the
+Rust route was entered for ends under exactly one of these), `Rust runs not
+admitted: {reason: count}` (by first reason, largest first) and `Rust runs
+not admitted, every reason: {reason: count}` (each run counted under every
+reason it holds). The endings:
+
+- `ranWhole`: the engine ran it to its end, its own failure included;
+- `failedByName`: admitted, then ended mid-run naming a construct this
+  engine does not run (`MOVENG_UNSUPPORTED`, "Errors a run can meet
+  mid-run"): a divergence unless the TypeScript engine ends the run with the
+  same failure, which every corpus case that ends so pins;
+- refused at admission by name (`notAdmitted`, the shim's input checks
+  among them) and `declined`: the TypeScript engine ran it;
+- `endedAtCheck`: it failed its check, which the Rust route makes before
+  the segment opens, as the TypeScript route does ("Admission" above): it
+  never reached this engine, and ends the same on either;
+- `shimFaults`: a fault of the shim's own.
+
+It fails a run in which Rust answered nothing, admitted runs none of which
+ran whole, any decline or shim fault, or a whole-corpus run whose
+`ranWhole` is under its routing floor (v1 1021, v2 1249, v3 2150). Any
+filter (a path or name pattern, related or changed files, a shard,
+positional paths) makes a run partial, and the floor does not apply to it.

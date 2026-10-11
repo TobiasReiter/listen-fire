@@ -5,9 +5,10 @@
 //
 //  - `typescript`: the in-process TypeScript engine, answered in process;
 //  - `rust`: the Rust engine through its shim (rust_host.ts) against the same
-//    host — only for a recording whose program the shim routes and the Rust
-//    engine runs whole, which the shim's own counts say; any other is
-//    skipped, with the reason;
+//    host — judged for a recording whose run the Rust engine ran to an
+//    ending (whole, or failing by name mid-run) or that failed its check
+//    before a segment opened, which the shim's own counts say; one the
+//    engine refused or declined is skipped, with the reason;
 //  - `http`: the TypeScript engine against a host that is a wire — each
 //    request a POST to the HTTP host double (http_host_double.ts), the model
 //    of an embedder's remote host.
@@ -92,26 +93,40 @@ export const rustTarget: ReplayTarget = {
   name: 'rust',
   async replay(recording) {
     const before = {
-      routed: rustRunStats.routed,
       ranWhole: rustRunStats.ranWhole,
+      failedByName: rustRunStats.failedByName,
+      shimFaults: rustRunStats.shimFaults,
+      endedAtCheck: rustRunStats.endedAtCheck,
       notAdmitted: { ...rustRunStats.notAdmitted },
       declined: { ...rustRunStats.declined },
     };
     const verdict = await underEngine('rust', () =>
       replayThrough(recording, (conversation) => inProcess(conversation, recording.methods)),
     );
-    if (rustRunStats.ranWhole > before.ranWhole) return verdict;
+    // Judged by its verdict: a run the Rust engine ran to an ending (whole, a
+    // construct it names and does not run met mid-run, a fault of its shim's),
+    // and a run that failed the check the Rust route makes before its segment
+    // opens. Each passes only where it ended as the TypeScript's recorded run
+    // ended, after the same requests.
+    if (
+      rustRunStats.ranWhole > before.ranWhole ||
+      rustRunStats.failedByName > before.failedByName ||
+      rustRunStats.shimFaults > before.shimFaults ||
+      rustRunStats.endedAtCheck > before.endedAtCheck
+    ) {
+      return verdict;
+    }
     const grew = (now: Record<string, number>, then: Record<string, number>) =>
       Object.entries(now).filter(([reason, count]) => count > (then[reason] ?? 0)).map(([reason]) => reason);
-    // The shim's own input checks (`event_does_not_cross`) count in `notAdmitted`
-    // too, before a segment opens: only a routed run was refused by the engine.
-    if (rustRunStats.routed === before.routed) {
-      return { kind: 'skipped', reason: 'the shim does not route this program to the Rust engine' };
-    }
+    // The shim's own input checks (`event_does_not_cross`) count in
+    // `notAdmitted` too, as the engine's admission refusals do.
     const refused = grew(rustRunStats.notAdmitted, before.notAdmitted);
     if (refused.length > 0) return { kind: 'skipped', reason: `the Rust engine refused it: ${refused.join('; ')}` };
     const declined = grew(rustRunStats.declined, before.declined);
-    return { kind: 'skipped', reason: `the Rust engine declined it: ${declined.join('; ') || 'no reason counted'}` };
+    if (declined.length > 0) return { kind: 'skipped', reason: `the Rust engine declined it: ${declined.join('; ')}` };
+    // Every Rust route ends in one of the counts above: a run none counts
+    // is the instrument's own fault, not a skip.
+    return { kind: 'diverged', divergence: 'the Rust route counted this run under none of its endings' };
   },
 };
 

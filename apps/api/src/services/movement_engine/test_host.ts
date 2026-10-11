@@ -9,6 +9,7 @@ import type { DryRunWriteSink } from '../translation_graph/engine/dry_run_adapte
 import type { MovementTraceEntry } from './expression';
 import type { EngineHost, RenderFile } from './host';
 import type { ParkSink } from './run';
+import { MovementEngineError, runFailureCause } from './errors';
 
 import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
 import { withFileOwners } from '../translation_graph/engine/files/file_owners';
@@ -282,4 +283,23 @@ export function makeFakeParkSink(): {
     async cancelSubtrees() {},
   };
   return { sink, timerParks, awaitParks, joins };
+}
+
+// ── How a Rust-routed run ended ───────────────────────────────────────────────
+
+/** A failure of a program's check: its pin, its parse, the checker. */
+const CHECK_FAILURES: ReadonlySet<string> = new Set(['MOVENG_LANGUAGE_VERSION', 'MOVENG_PARSE', 'MOVENG_CHECK']);
+
+/**
+ * What the Rust run's counts (`rustRunStats`) say of how a run that threw
+ * `error` (none for a run that returned) ended: run to its end, its own
+ * failure included; counted apart, ended mid-run naming a construct the
+ * engine does not run (`MOVENG_UNSUPPORTED`); or ended at the check the Rust
+ * route makes before its segment opens, never routed.
+ */
+export function endedInRust(error: unknown): { routed: number; ranWhole: number; failedByName: number; endedAtCheck: number } {
+  const cause = runFailureCause(error);
+  if (cause instanceof MovementEngineError && CHECK_FAILURES.has(cause.code)) return { routed: 0, ranWhole: 0, failedByName: 0, endedAtCheck: 1 };
+  if (cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED') return { routed: 1, ranWhole: 0, failedByName: 1, endedAtCheck: 0 };
+  return { routed: 1, ranWhole: 1, failedByName: 0, endedAtCheck: 0 };
 }

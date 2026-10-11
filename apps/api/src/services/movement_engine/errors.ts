@@ -99,3 +99,14 @@ export class MovementRunFailed extends Error {
     if (cause instanceof Error && cause.stack !== undefined) this.stack = cause.stack;
   }
 }
+
+/**
+ * The error a run really died of. `MovementRunFailed` is a transparent CARRIER
+ * for the partial ledger, so anything that discriminates on the error itself —
+ * its class, its `MovementEngineError` code — must look THROUGH it. Errors
+ * raised before the interpreter starts (parse / check) are never wrapped and
+ * pass straight back.
+ */
+export function runFailureCause(error: unknown): unknown {
+  return error instanceof MovementRunFailed ? error.cause : error;
+}

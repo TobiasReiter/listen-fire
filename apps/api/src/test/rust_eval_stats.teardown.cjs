@@ -93,8 +93,19 @@ const path = require('node:path');
 // pins that very failure on both engines (an unadvertised DOMAIN_OF, a
 // file-level extraction, a callback with no sink, a recursive movement call,
 // a value passed as a position argument). That leaves v1 1174, v2 1485, v3
-// 2566 whole; the floors are those less a margin of 2.
-const RAN_WHOLE_FLOOR = { v1: 1172, v2: 1483, v3: 2564 };
+// 2566 whole; the floors are those less a margin of 2. Chunk 7A Task 7 (the
+// instrument made honest, 2026-10-11) checks a Rust-routed program before
+// its segment opens, where the TypeScript route checks it, so a program
+// that fails its check (MOVENG_PARSE, MOVENG_CHECK, MOVENG_LANGUAGE_VERSION)
+// never reaches the Rust engine and is counted apart, `endedAtCheck`: v1
+// 152, v2 236, v3 417. Before, the Rust engine parsed and admitted such a
+// program and then asked for the check, whose failure counted as a run it
+// ran whole. That leaves v1 1023, v2 1251, v3 2152 whole: ranWhole plus
+// endedAtCheck is v1 1175, v2 1487, v3 2569, the old count plus the few
+// check failures admission used to refuse first. No run the Rust engine
+// ran is lost; the floor is re-based to what it measures (a run the engine
+// ran), not lowered to pass: the floors are those less a margin of 2.
+const RAN_WHOLE_FLOOR = { v1: 1021, v2: 1249, v3: 2150 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
@@ -134,7 +145,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
-  const runs = { routed: 0, admitted: 0, ranWhole: 0, failedByName: 0, shimFaults: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {} };
+  const runs = { routed: 0, admitted: 0, ranWhole: 0, failedByName: 0, shimFaults: 0, endedAtCheck: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {} };
   // The admission dry run asks only about runs MOVEMENT_ENGINE kept from
   // Rust: under rust, it must have asked about none.
   const dryRun = { firings: 0, sampled: 0 };
@@ -155,6 +166,7 @@ async function globalTeardown(globalConfig, projectConfig) {
       runs.ranWhole += stats.runs?.ranWhole ?? 0;
       runs.shimFaults += stats.runs?.shimFaults ?? 0;
       runs.failedByName += stats.runs?.failedByName ?? 0;
+      runs.endedAtCheck += stats.runs?.endedAtCheck ?? 0;
       if ((stats.runs?.ranWhole ?? 0) > 0 && stats.file) byFile[stats.file] = (byFile[stats.file] ?? 0) + stats.runs.ranWhole;
       add(runs.notAdmitted, stats.runs?.notAdmitted);
       add(runs.allReasons, stats.runs?.allReasons);
@@ -169,7 +181,10 @@ async function globalTeardown(globalConfig, projectConfig) {
   console.log(`\nRust evaluator: ${JSON.stringify(total)}`);
   // Routed: segments the Rust engine started, its own admission's refusals
   // among them. Admitted: those its admission let by.
-  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, runsAdmitted: runs.admitted, ranWhole: runs.ranWhole, failedByName: runs.failedByName, shimFaults: runs.shimFaults, declined: runs.declined, hostCalls: runs.hostCalls })}`);
+  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, runsAdmitted: runs.admitted, ranWhole: runs.ranWhole, failedByName: runs.failedByName, shimFaults: runs.shimFaults, endedAtCheck: runs.endedAtCheck, declined: runs.declined, hostCalls: runs.hostCalls })}`);
+  // Every count with its denominator: each run the Rust route was entered
+  // for ends in exactly one of these.
+  console.log(`Rust runs, ${ranWholeOf(runs)}`);
   // Why every run that did not run in Rust ran on the TypeScript engine: the
   // shim's input checks and the engine's own admission, by reason.
   console.log(`Rust runs not admitted: ${JSON.stringify(sorted(runs.notAdmitted))}`);
@@ -198,8 +213,18 @@ async function globalTeardown(globalConfig, projectConfig) {
   if (isWholeCorpus(globalConfig) && runs.ranWhole < RAN_WHOLE_FLOOR[corpus]) {
     failures.push(`${runs.ranWhole} runs ran whole in Rust, under the ${corpus} floor of ${RAN_WHOLE_FLOOR[corpus]}`);
   }
-  console.log(`Rust routing floor (${corpus}): ran whole ${runs.ranWhole}, floor ${RAN_WHOLE_FLOOR[corpus]}`);
+  console.log(`Rust routing floor (${corpus}): ${ranWholeOf(runs)}; floor ${RAN_WHOLE_FLOOR[corpus]}`);
   if (failures.length > 0) throw new Error(`MOVEMENT_ENGINE=rust routing regression (${corpus}): ${failures.join('; ')}`);
+}
+
+/** `ran whole N of M runs attempted (…)`: M is every run the Rust route was
+ *  entered for, each under exactly one ending. */
+function ranWholeOf(runs) {
+  const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
+  const refused = sum(runs.notAdmitted);
+  const declined = sum(runs.declined);
+  const attempted = runs.ranWhole + refused + runs.failedByName + declined + runs.endedAtCheck + runs.shimFaults;
+  return `ran whole ${runs.ranWhole} of ${attempted} runs attempted (${refused} refused at admission by name, ${runs.failedByName} failed by name, ${declined} declined, ${runs.endedAtCheck} failed their check before a segment opened, ${runs.shimFaults} shim faults)`;
 }
 
 /** The declines a passing check leaves for a slot the lowering misses. */
@@ -207,3 +232,4 @@ const LOWERING_MISSES = ['condition_does_not_lower', 'expression_does_not_lower'
 
 module.exports = globalTeardown;
 module.exports.isWholeCorpus = isWholeCorpus;
+module.exports.ranWholeOf = ranWholeOf;
