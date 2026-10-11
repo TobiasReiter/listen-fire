@@ -23,30 +23,48 @@ import { Readable } from 'node:stream';
 import type { RenderFile } from '../../movement_engine/host';
 import type { FileRef } from '../adapter';
 
-import { documentStoreFileRef } from '../engine/files/document_store';
+import type { TeamId } from '../../../generated/kysely/core/Team';
 
-export const renderFileArtifact: RenderFile = async (input) => {
-  if (input.type === 'text') {
+import { documentStoreFileRef, teamDocumentKeyPrefix } from '../engine/files/document_store';
+
+/** The team's `files.render`: its artifacts are stored under the team's key
+ *  prefix, which is what makes them the team's to read again. */
+export function renderFileArtifactFor(teamId: TeamId): RenderFile {
+  return renderInto(teamId);
+}
+
+/** A render for no team: its artifacts carry no team's prefix, so only a store
+ *  that vouches for its own files (a test's in-memory store) serves them back.
+ *  The run host renders with `renderFileArtifactFor`. */
+export const renderFileArtifact: RenderFile = renderInto(undefined);
+
+function renderInto(teamId: TeamId | undefined): RenderFile {
+  return async (input) => {
+    if (input.type === 'text') {
+      return storeArtifact({
+        teamId,
+        name: 'movement-artifact.txt',
+        contentType: 'text/plain',
+        bytes: Buffer.from(input.content, 'utf8'),
+      });
+    }
+    const bytes = await renderHtmlToPdf(plainTextHtml(input.content));
     return storeArtifact({
-      name: 'movement-artifact.txt',
-      contentType: 'text/plain',
-      bytes: Buffer.from(input.content, 'utf8'),
+      teamId,
+      name: 'movement-artifact.pdf',
+      contentType: 'application/pdf',
+      bytes,
     });
-  }
-  const bytes = await renderHtmlToPdf(plainTextHtml(input.content));
-  return storeArtifact({
-    name: 'movement-artifact.pdf',
-    contentType: 'application/pdf',
-    bytes,
-  });
-};
+  };
+}
 
 async function storeArtifact(options: {
+  teamId: TeamId | undefined;
   name: string;
   contentType: string;
   bytes: Buffer;
 }): Promise<FileRef> {
-  const { name, contentType, bytes } = options;
+  const { teamId, name, contentType, bytes } = options;
   // Lazy import keeps the document-store + registry off this module's eval-time
   // graph (Playwright / dry-run captures load it without an S3 dependency).
   const { services } = await import('../../../adapters/registry');
@@ -54,6 +72,7 @@ async function storeArtifact(options: {
     filename: name,
     mimeType: contentType,
     contentLength: bytes.byteLength,
+    ...(teamId !== undefined ? { keyPrefix: teamDocumentKeyPrefix(teamId) } : {}),
   });
   return documentStoreFileRef({ objectUri, name, contentType, size: bytes.byteLength });
 }

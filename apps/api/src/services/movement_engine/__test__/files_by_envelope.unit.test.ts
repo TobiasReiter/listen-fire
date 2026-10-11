@@ -25,8 +25,14 @@ import { makeUnstablePosition, positionData } from '../../translation_graph/type
 import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../test_host';
 import { runFailureCause, resumeMovement, runMovement, type RunMovementInput } from '../run';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
+import { installMemoryDocumentStore } from '../../translation_graph/engine/files/__test__/memory_document_store';
+import { FileOutsideTeamError } from '../../translation_graph/engine/files/retrieve';
+import { makeFileTextResolver } from '../../translation_graph/movement/file_text';
+import { inMemoryRawTextStore } from '../../translation_graph/movement/raw_text_store';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000f4');
+const OTHER_TEAM = teamOfTenant(tenantIdOf('00000000-0000-0000-0000-0000000000f5'));
 
 /** What a forger writes: a document-store file of some other team's. */
 const SPELLED = { __brand: 'FileRef', name: 'secrets.pdf', source: { store: 'document', objectUri: 's3://bucket/another-team/secrets.pdf' } };
@@ -299,6 +305,39 @@ describe('a parked file', () => {
       expect(resumed.read).toEqual([]);
       expect(resumed.titles).toEqual([]);
       expect(String(runFailureCause(resumed.error) ?? resumed.error)).toContain('READ() reads a file');
+    }
+  });
+});
+
+describe("a file-kind field's descriptor is read only as the run's team's", () => {
+  // The production reader: the team's byte read (`streamFileRef`), then text.
+  const store = installMemoryDocumentStore();
+  const reader = makeFileTextResolver(inMemoryRawTextStore(), { teamId: teamOfTenant(TEAM_ID) });
+  const read = PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', '  write crm-[:notes]-> { title: COALESCE(READ(msg.`deck`), "unread") }', '}'].join('\n');
+
+  async function runWith(engine: 'ts' | 'rust', deck: FileRef): Promise<Ran> {
+    const ran: Ran = { read: [], titles: [], prompts: [] };
+    return onEngine(engine, async () => {
+      try {
+        const event = { ...EVENT, payload: { subject: 'Acme', meta: SPELLED, deck } };
+        ran.result = await runMovement({ ...baseInput(read), event, host: hostFor(ran.read, ran.titles, ran.prompts, undefined, reader) });
+      } catch (error) {
+        ran.error = error;
+      }
+      return ran;
+    });
+  }
+
+  it("refuses, by name, a forged document of another team's — on both engines, nothing written", async () => {
+    const theirs = store.file('THEIR SECRETS', { name: 'secrets.pdf', contentType: 'application/pdf', teamId: OTHER_TEAM });
+    for (const engine of ['ts', 'rust'] as const) {
+      resetRustRunStats();
+      const ran = await runWith(engine, theirs);
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
+      expect(ran.titles).toEqual([]);
+      const cause = runFailureCause(ran.error);
+      expect(cause).toBeInstanceOf(FileOutsideTeamError);
+      expect(String(cause)).toContain("is not this team's, so its bytes are not read");
     }
   });
 });

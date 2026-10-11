@@ -57,7 +57,7 @@ import { resolveAdapter } from '../adapters/resolve';
 import { meteredArbitration } from '../engine/entity_match';
 import { adapterTable, type LiveAdapterResolver } from '../engine/adapter_table';
 import { hostSegments, segmentScopedCalls } from '../segment_scope';
-import { renderFileArtifact } from './file_render';
+import { renderFileArtifactFor } from './file_render';
 import { teamOfTenant } from './tenant';
 import { makeFileTextResolver, type FileTextReader } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
@@ -162,7 +162,7 @@ export function productionEngineHost(input: {
         makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId), { teamId: input.teamId }),
         usage,
       ),
-      render: renderFileArtifact,
+      render: renderFileArtifactFor(input.teamId),
     },
     lookup: {
       // The source instance's parse of the event's actors, asked of it inside

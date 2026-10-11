@@ -688,6 +688,7 @@ answer:  PricedAnswer<
 >
 ```
 
+- **Only the run's team's bytes.** A document-store descriptor is read only when the store says the team owns it (a key under the team's prefix, `movement-files/<teamId>/`, or the team's `knowledge.document` row); an adapter-owned one only when its `credentialId` is one of the team's credentials. Anything else is refused by name: the host throws `FileOutsideTeamError` (`code: 'FILE_OUTSIDE_TEAM'`, `engine/files/file_outside_team.ts`), never an `unreadable` answer, so the run fails naming the file. A target's upload of a file redeems it the same way.
 - Transcription and OCR are model calls, so the call is priced.
 - The byte reads happen outside any segment: they are not counted against a segment's call ceiling and not kept in its read memo.
 - **Persist:** the text (production: the team's `raw_text` table, whose id comes back as `rawTextId`; a test run stores nothing durable). **Retry:** idempotent.
@@ -699,7 +700,7 @@ request: { segmentId: string; content: string; type: 'pdf' | 'text' }
 answer:  FileRef            // a document-store descriptor
 ```
 
-- `FILE(content, type)`: the host renders the composed string, stores the artifact, and answers its descriptor.
+- `FILE(content, type)`: the host renders the composed string, stores the artifact under the team's key prefix (what makes it the team's to read again), and answers its descriptor.
 - **Persist:** the artifact's bytes in the document store. **Retry:** not idempotent (each call stores a new artifact).
 
 ### `lookup`

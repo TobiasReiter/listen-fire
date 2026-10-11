@@ -38,6 +38,7 @@ import { jsPDF } from 'jspdf';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { FileRef } from '../../adapter';
 
+import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
 import { makeFileTextResolver } from '../file_text';
 import { services } from '../../../../adapters/registry';
 import { LlmUsageContext } from '../../../../lib/llm_usage';
@@ -278,6 +279,22 @@ describe('the existing kinds are untouched', () => {
       },
     });
     expect(result).toEqual({ unreadable: 'bytes_unavailable', detail: 'file not found (404)' });
+  });
+
+  it("refuses, by name, a file that is not the team's — never an unreadable answer", async () => {
+    const refused = new FileOutsideTeamError('document', 's3://bucket/another-team/deck.pdf');
+    streamFileRefMock.mockRejectedValue(refused);
+    const resolve = makeFileTextResolver(rawText, FILE_BYTES);
+    await expect(
+      resolve({
+        file: {
+          __brand: 'FileRef',
+          name: 'deck.pdf',
+          contentType: 'application/pdf',
+          source: { store: 'document', objectUri: 's3://bucket/another-team/deck.pdf' },
+        },
+      }),
+    ).rejects.toBe(refused);
   });
 
   it('an unknown binary type is skipped — and says which type it was', async () => {

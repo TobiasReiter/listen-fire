@@ -47,6 +47,7 @@ import { transcribe } from '../../../lib/models/transcription';
 import { getXlsxContent } from '../../../lib/utils/excel';
 import { getPptxText } from '../../../lib/utils/powerpoint';
 import { logger } from '../../logger';
+import { FileOutsideTeamError } from '../engine/files/file_outside_team';
 import { streamFileRef, type StreamFileRefOptions } from '../engine/files/retrieve';
 
 
@@ -271,6 +272,9 @@ export function makeFileTextResolver(rawText: RawTextStore, bytes: StreamFileRef
     try {
       resolved = await streamFileRef(ref, bytes);
     } catch (error) {
+      // A file that is not the team's is refused by name, never read as one
+      // whose bytes were merely unavailable.
+      if (error instanceof FileOutsideTeamError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       logger.warn('[movement:file-text] failed to resolve file bytes', {
         name: ref.name,

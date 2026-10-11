@@ -1379,7 +1379,8 @@ describe('AttioAdapter file-on-write', () => {
         fields: { deck: failing },
         mutationContext: writeMutationContext,
       }),
-    ).rejects.toThrow(/no mem:\/\/doc\/gone/);
+    // A key the store never stored is nobody's: refused by name before any read.
+    ).rejects.toThrow(/stored document mem:\/\/doc\/gone, which is not this team's/);
   });
 });
 
