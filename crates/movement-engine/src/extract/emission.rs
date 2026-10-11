@@ -373,6 +373,21 @@ fn traced_value(value: &Js) -> Js {
     Js::str(cut(&text, TRACE_VALUE_CHARS))
 }
 
+/// Whether `text.slice(0, limit)` would end between the two halves of a
+/// surrogate pair (a text longer than `limit` whose character spanning the
+/// cut is astral).
+pub(crate) fn cut_splits_pair(text: &str, limit: usize) -> bool {
+    let mut units = 0;
+    for c in text.chars() {
+        let next = units + c.len_utf16();
+        if next > limit {
+            return units < limit;
+        }
+        units = next;
+    }
+    false
+}
+
 /// A text past `limit` UTF-16 units cut there and marked, as
 /// `${text.slice(0, limit)}…` cuts it.
 pub(crate) fn cut(text: &str, limit: usize) -> String {
@@ -402,6 +417,14 @@ mod tests {
         assert_eq!(env::json_of_js(&list), serde_json::json!(["a"]));
         assert!(matches!(absent_if_blank(&Js::array(vec![Js::str("")])), Js::Null));
         assert!(matches!(absent_if_blank(&Js::Number(0.0)), Js::Number(_)));
+    }
+
+    #[test]
+    fn a_cut_that_splits_a_pair_is_named() {
+        assert!(cut_splits_pair("a😀b", 2));
+        assert!(!cut_splits_pair("a😀b", 1));
+        assert!(!cut_splits_pair("a😀b", 3));
+        assert!(!cut_splits_pair("ab", 1));
     }
 
     #[test]

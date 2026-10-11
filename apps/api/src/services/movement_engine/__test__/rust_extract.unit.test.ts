@@ -290,6 +290,13 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     }
   });
 
+  it('declines, before any effect, a file-level value holding a nested call (it stages nested calls in a body only)', async () => {
+    resetRustRunStats();
+    await runOn('rust', { source: `import { echo } from plugins\nsaid = { page: echo(q: "x") }\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}` });
+    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 0, notAdmitted: {}, declined: { unreproduced: 1 } });
+    expect(Object.keys(rustRunStats.hostCalls).filter((call) => call !== 'check.program')).toEqual([]);
+  });
+
   it('refuses, before it asks its host anything, the extraction and plugin forms it does not run', async () => {
     const movement = (body: string) => `import { fetch_url, find_files } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
     for (const [c, reason] of [
@@ -473,6 +480,17 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect(cause).toContain('MOVENG_UNSUPPORTED');
       expect(cause).toContain(`${named} holding a \`__proto__\` key or a lone surrogate (in ${member})`);
     });
+  });
+
+  it("fails the run by name, never as the shim's fault, when the file reader calls a file unreadable for a reason outside the four", async () => {
+    const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
+    const source = ['movement m(msg: <inbox-[:message]->>) {', '  t = READ(msg.`deck`)', '}'].join('\n');
+    resetRustRunStats();
+    const rust = await runOn('rust', { source, event: { ...EVENT, payload: { subject: 'Acme', deck } }, fileText: { unreadable: 'garbled' } as never });
+    expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
+    const cause = String('error' in rust ? runFailureCause(rust.error) : undefined);
+    expect(cause).toContain('MOVENG_UNSUPPORTED');
+    expect(cause).toContain('a file the host calls unreadable for "garbled"');
   });
 
   it("parks what an extraction yielded as the TypeScript does, and either engine's park resumes to the same writes", async () => {

@@ -735,6 +735,9 @@ impl Run<'_> {
                         crate::resume::Leaf::Continue { answer, reenter: resume.reenter }
                     }
                 };
+                if let Some(failure) = crate::resume::unparsed_address(&state, &leaf) {
+                    return Err(Stop::Thrown(failure));
+                }
                 self.resume_along(&movement, &scope, &path, &state, leaf).await
             }
         };
@@ -789,7 +792,11 @@ impl Run<'_> {
                 Statement::Assign(assign) => match &assign.value {
                     RValue::Construct { construct } if self.file_callable(&construct.callee, &file) => return Err(Stop::Thrown(file_level_call())),
                     RValue::Construct { .. } => self.file_statement(statement, &file),
-                    RValue::Call { call } if self.file_callable(&call.callee, &file) => return Err(Stop::Thrown(file_level_call())),
+                    // A call there is a built-in's value, or a call with
+                    // nothing to run about (`resolvedRValue`, then
+                    // `fileLevelCall`) — whatever its callee is, a closure's
+                    // or a name nothing binds.
+                    RValue::Call { call } if !self.reads_as_builtin(call, &file) => return Err(Stop::Thrown(file_level_call())),
                     RValue::Expr { .. } | RValue::Call { .. } => {
                         let expr = self.value_slot(&assign.value, &file)?;
                         let bound = self.bind_slot(expr, &file).await?;
@@ -978,6 +985,17 @@ impl Run<'_> {
             // A listen contributes nothing to a run.
             _ => {}
         }
+    }
+
+    /// `readCall`'s value reading: from version 3, a callee the scope does
+    /// not bind (nor names a function in any letter case) that the standard
+    /// library answers.
+    fn reads_as_builtin(&self, call: &ast::CallStatement, scope: &Scope) -> bool {
+        self.version() >= 3
+            && scope.resolve(&call.callee).is_none()
+            && scope.resolve_function(&call.callee).is_none()
+            && !call.callee.contains('.')
+            && crate::stdlib::is_flat_builtin(&call.callee)
     }
 
     /// Whether a file-level construction or call names a movement or a
@@ -1707,6 +1725,16 @@ impl Run<'_> {
     /// `evaluateAi`: one priced `llm.client.call` at the tier's settings,
     /// its reply read out of the structured envelope (`aiAnswer`), traced.
     async fn ai(&self, prompt: &str, tier: Option<&str>) -> Result<Js, Failure> {
+        // The trace keeps the prompt's first 300 UTF-16 units: where that cut
+        // splits a pair, JavaScript keeps the lone high half, which no Rust
+        // string holds (transition artefacts, row 9) — refused, before the
+        // model is asked, rather than traced otherwise.
+        if crate::extract::emission::cut_splits_pair(prompt, AI_TRACE_PROMPT_UNITS) {
+            return Err(Failure::unreproduced(
+                "an AI() prompt whose trace cut splits a character in two",
+                "a Rust string cannot hold the lone half the TypeScript traces",
+            ));
+        }
         let settings = crate::extract::run::ai_expression_settings(tier);
         let call = host::llm::ClientCall {
             system: AI_EXPRESSION_SYSTEM,
@@ -1719,7 +1747,7 @@ impl Run<'_> {
         let answer = self.priced(host::llm::client_call(self.segment(), call, self.ledger.budget())).await?;
         crate::extract::run::refuse_uncarried(&answer, "the AI() reply")?;
         let value = ai_answer(&event_get(&answer, "parsedJson"));
-        let traced = crate::extract::emission::cut(prompt, 300);
+        let traced = crate::extract::emission::cut(prompt, AI_TRACE_PROMPT_UNITS);
         self.trace.push(TraceEntry::Ai { prompt: traced, has_value: !value.is_nullish() });
         Ok(value)
     }
@@ -1733,10 +1761,16 @@ impl Run<'_> {
                 if !acting.truthy() {
                     return Ok(Js::Null);
                 }
+                // `acting.principal.display`: a principal the host left out
+                // throws JavaScript's TypeError (forgivable, as any).
+                let principal = |field: &str| {
+                    let principal = event_get(&acting, "principal");
+                    crate::record::get(&principal, field).map_err(|error| Failure::of_eval(error, ""))
+                };
                 Ok(match key {
                     "user_email" => nullish(event_get(&acting, "email")),
-                    "user_name" => nullish(event_get(&event_get(&acting, "principal"), "display")),
-                    _ => event_get(&event_get(&acting, "principal"), "id"),
+                    "user_name" => nullish(principal("display")?),
+                    _ => principal("id")?,
                 })
             }
             _ => {
@@ -2394,6 +2428,9 @@ fn spell_value_type(value: &ast::ValueType) -> String {
 fn file_level_call() -> Failure {
     Failure::unsupported("file-level calls", "a call runs inside a movement body, where the event is in scope")
 }
+
+/// How much of an `AI()` prompt its trace entry keeps, in UTF-16 units.
+const AI_TRACE_PROMPT_UNITS: usize = 300;
 
 /// `AI_EXPRESSION_SYSTEM`, the system prompt every `AI()` call carries.
 const AI_EXPRESSION_SYSTEM: &str = "You are evaluating an AI() expression inside a data-movement program.\n\

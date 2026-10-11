@@ -124,6 +124,22 @@ fn runtime(message: String) -> Stop {
     Stop::Thrown(Failure::engine("MOVENG_RUNTIME", message))
 }
 
+/// The address a resume descends (the state's, or a race frame's), when it
+/// does not parse: `parseAddress`'s plain `Error`, which the TypeScript
+/// raises before its interpreter runs, so it is the run's failure as it
+/// stands, not a failure inside the run.
+pub(crate) fn unparsed_address(state: &Js, leaf: &Leaf) -> Option<Failure> {
+    let state_address = match leaf {
+        Leaf::SettleRace { frame } => frame.clone(),
+        _ => text(at(state, "address")).unwrap_or("").to_string(),
+    };
+    if parse_address(&state_address).is_some() {
+        return None;
+    }
+    let token = state_address.split('.').find(|t| parse_address(t).is_none()).unwrap_or("");
+    Some(Failure::Engine { class: crate::eval::ErrorClass::Error, message: format!("malformed address token '{token}' in '{state_address}'") })
+}
+
 impl Run<'_> {
     /// `resume`, `fireCallback` or `settleRaceFrame`: the state's leaf, by
     /// its rule.
@@ -345,9 +361,7 @@ impl Run<'_> {
             };
             return Ok((Rc::new(block.body.clone()), stmt_address.iter(index), format!("{block_path}/body")));
         }
-        if step != 'b' {
-            return Err(runtime(format!("resume: address descends '{}' into a '{}' statement (parked '{parked}')", step_name(step), statement_kind(container))));
-        }
+        // Any other step reads as a branch (`descendForResume`).
         if let Statement::If(statement) = container {
             let (body, body_path) = match statement.arms.get(index) {
                 Some(arm) => (arm.body.clone(), format!("{container_path}/arms/{index}/body")),

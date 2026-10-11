@@ -412,7 +412,16 @@ impl Parse {
         if let Some(item) = object.get("item") {
             let checked = self.at(PathKey::Key("item".into()), |p| match item {
                 Js::Undefined => Js::Undefined,
-                Js::Number(n) if n.is_finite() && js::is_integer(*n) => item.clone(),
+                // zod's `int()` is a SAFE integer.
+                Js::Number(n) if n.is_finite() && js::is_integer(*n) && n.abs() <= MAX_SAFE_INTEGER => item.clone(),
+                Js::Number(n) if n.is_finite() && js::is_integer(*n) => {
+                    p.issue(if *n > 0.0 {
+                        "Too big: expected int to be <9007199254740991".into()
+                    } else {
+                        "Too small: expected int to be >-9007199254740991".into()
+                    });
+                    Js::Undefined
+                }
                 Js::Number(n) if n.is_finite() => {
                     p.issue("Invalid input: expected int, received number".into());
                     Js::Undefined
@@ -437,6 +446,9 @@ impl Parse {
         Js::object(out)
     }
 }
+
+/// `Number.MAX_SAFE_INTEGER`.
+const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
 
 /// One key a call's record declares.
 enum CallDeclared<'s> {
@@ -859,6 +871,23 @@ mod tests {
         let Err(issues) = read_reply(&region, &wired(serde_json::json!(["n", "Infinity"]))) else { panic!("Infinity is not a number zod reads") };
         assert_eq!(issue_lines(&issues), ["  - x:n#1.0.amount.value: Invalid input: expected number, received number"]);
         assert!(read_reply(&region, &wired(serde_json::Value::Null)).is_ok(), "null reads clean");
+    }
+
+    /// A citation's `item` is a safe integer, as zod's `int()` holds it.
+    #[test]
+    fn a_citation_item_past_the_safe_integers_is_refused_as_zod_refuses_it() {
+        let spec = node(&["name"]);
+        for (item, line) in [
+            ("1e20", "  - records.0.name.evidence.item: Too big: expected int to be <9007199254740991"),
+            ("9007199254740992", "  - records.0.name.evidence.item: Too big: expected int to be <9007199254740991"),
+            ("-9007199254740992", "  - records.0.name.evidence.item: Too small: expected int to be >-9007199254740991"),
+        ] {
+            let reply = reply(&format!(r#"{{"records": [{{"name": {{"evidence": {{"item": {item}}}}}}}]}}"#));
+            let Err(issues) = read_call_reply(&spec, false, &reply) else { panic!("{item} is no safe integer") };
+            assert!(issue_lines(&issues).contains(&line.to_string()), "{item}: {:?}", issue_lines(&issues));
+        }
+        let ok = reply(r#"{"records": [{"name": {"value": "a", "evidence": {"item": 9007199254740991}}}]}"#);
+        assert!(read_call_reply(&spec, false, &ok).is_ok());
     }
 
     #[test]

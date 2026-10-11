@@ -161,6 +161,9 @@ pub(crate) struct PluginResult {
     /// An object, or absent.
     pub(crate) data: Option<Js>,
     pub(crate) records: Vec<Js>,
+    /// `records` answered as something other than a list (or nothing),
+    /// which a records output cannot map.
+    pub(crate) records_not_a_list: bool,
     pub(crate) outcome: Option<String>,
 }
 
@@ -175,15 +178,16 @@ impl PluginResult {
             data @ Js::Object(_) => Some(data),
             _ => None,
         };
-        let records = match member("records") {
-            Js::Array(list) => list.items().clone(),
-            _ => Vec::new(),
+        let (records, records_not_a_list) = match member("records") {
+            Js::Array(list) => (list.items().clone(), false),
+            nullish if nullish.is_nullish() => (Vec::new(), false),
+            _ => (Vec::new(), true),
         };
         let outcome = match member("outcome") {
             Js::String(outcome) if !outcome.is_empty() => Some(outcome),
             _ => None,
         };
-        PluginResult { text, data, records, outcome }
+        PluginResult { text, data, records, records_not_a_list, outcome }
     }
 
     /// `Object.keys(result.data ?? {})`.

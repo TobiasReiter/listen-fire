@@ -19,6 +19,23 @@ pub const FLAT: [&str; 17] = [
     "multi", "split", "date", "datetime", "number",
 ];
 
+/// The other flat names the standard library answers (`lookupBuiltin`):
+/// the aggregations, `AI`, `CONCAT`, `AT`, `SORT`, `FILE`, `READ`, `CHUNKS`,
+/// `EXISTS` and the rest the expression grammar reads as forms of its own,
+/// and the built-ins that run as calls (the collection ops, `MEMBERS`,
+/// `extract`). With `FLAT`, every flat built-in there is: held to the
+/// TypeScript's list by apps/api's rust_builtin_names.unit.test.ts.
+pub const FORMS: [&str; 30] = [
+    "map", "filter", "reduce", "groupby", "keyby", "members", "extract", "extractone", "file", "read", "chunks", "ai", "llm_agg", "kg_exists",
+    "kg_value", "extract_value", "first", "last", "only", "count", "sum", "avg", "min", "max", "join", "collect", "at", "sort", "concat", "exists",
+];
+
+/// Whether `name` (in any letter case) is a flat built-in (`lookupBuiltin`).
+pub fn is_flat_builtin(name: &str) -> bool {
+    let folded = crate::js::to_lower_case(name);
+    FLAT.contains(&folded.as_str()) || FORMS.contains(&folded.as_str())
+}
+
 pub const NAMESPACED: [&str; 15] = [
     "currency.get_number_from_figure",
     "currency.get_code_from_figure",

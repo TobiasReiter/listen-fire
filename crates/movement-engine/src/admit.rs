@@ -2496,15 +2496,8 @@ impl Names<'_> {
     /// call written in place, which the TypeScript runs first) stay refused
     /// by name.
     fn integration_function(&self, id: &str) -> bool {
-        const OWN: [&str; 30] = [
-            "map", "filter", "reduce", "groupby", "keyby", "members", "extract", "extractone", "file", "read", "chunks", "ai", "llm_agg",
-            "kg_exists", "kg_value", "extract_value", "first", "last", "only", "count", "sum", "avg", "min", "max", "join", "collect", "at",
-            "sort", "concat", "exists",
-        ];
-        let lowered = crate::js::to_lower_case(id);
         !id.contains('.')
-            && !OWN.contains(&lowered.as_str())
-            && !crate::stdlib::FLAT.contains(&lowered.as_str())
+            && !crate::stdlib::is_flat_builtin(id)
             && self.callee(id).is_none()
             && !self.binds_any_case(id)
     }

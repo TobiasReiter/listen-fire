@@ -233,6 +233,18 @@ impl Run<'_> {
         let request = host::files::resolve_file_text(self.segment(), self.encode(file)?, self.ledger.budget());
         let answer = self.priced(request).await?;
         super::run::refuse_uncarried(&answer, "a file's text")?;
+        // A reason the host names outside the four a file is unreadable for
+        // reaches the trace, whose entry this engine holds to them: named
+        // here rather than left to the shim's check of the trace.
+        let unreadable = member(&answer, "unreadable");
+        if !matches!(unreadable, Js::Undefined)
+            && !matches!(&unreadable, Js::String(why) if matches!(why.as_str(), "unsupported_type" | "bytes_unavailable" | "extraction_failed" | "no_text"))
+        {
+            return Err(Failure::unreproduced(
+                &format!("a file the host calls unreadable for {}", crate::js::json_stringify(&unreadable, 0)),
+                "a file is unreadable as unsupported_type, bytes_unavailable, extraction_failed or no_text",
+            ));
+        }
         if matches!(member(&answer, "unreadable"), Js::String(why) if why == "bytes_unavailable") {
             let key = file_handle(file).or_else(|| match member(file, "name") {
                 Js::String(name) => Some(name),

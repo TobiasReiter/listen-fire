@@ -38,6 +38,39 @@ pub fn output_under(spec: &PluginSpec, language_version: u32) -> Option<&PluginO
     earlier.map(|entry| &entry.output).or(spec.output.as_ref())
 }
 
+/// `{ ...record }` and `Object.keys(record)` of what a records output found:
+/// an object's own fields, a list's or a text's by index, nothing of a
+/// number or a flag; null and undefined throw, as `Object.keys` throws.
+fn spread_fields(record: &Js) -> Result<JsObject, Stop> {
+    let mut fields = JsObject::new();
+    match record {
+        Js::Object(object) => return Ok(JsObject::clone_of(object)),
+        Js::Undefined | Js::Null => {
+            return Err(Stop::Thrown(Failure::Engine { class: crate::eval::ErrorClass::TypeError, message: "Cannot convert undefined or null to object".into() }));
+        }
+        Js::Array(list) => {
+            for (i, item) in list.items().iter().enumerate() {
+                fields.set(i.to_string(), item.clone());
+            }
+        }
+        // By UTF-16 unit: an astral character would spread as two lone
+        // halves, which no Rust string holds.
+        Js::String(text) if text.chars().any(|c| c.len_utf16() > 1) => {
+            return Err(Stop::Thrown(Failure::unreproduced(
+                "a records plugin's record that is a text holding an astral character",
+                "a Rust string cannot hold the lone halves its spread makes",
+            )));
+        }
+        Js::String(text) => {
+            for (i, c) in text.chars().enumerate() {
+                fields.set(i.to_string(), Js::String(c.to_string()));
+            }
+        }
+        _ => {}
+    }
+    Ok(fields)
+}
+
 impl Run<'_> {
     /// `executeCall` for a plugin: the statement's next call opened (so it is
     /// numbered, a `suspendAt` before it suspends, and a statement re-run
@@ -147,19 +180,19 @@ impl Run<'_> {
             // landings a hop would give, so FIRST, MAP and a field read work
             // across them (`pluginCallBinding`). None found is the empty list.
             PluginOutput::Records { .. } => {
-                let landings: Vec<Binding> = result
-                    .records
-                    .iter()
-                    .map(|record| {
-                        let fields = match record {
-                            Js::Object(object) => JsObject::clone_of(object),
-                            _ => JsObject::new(),
-                        };
-                        let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();
-                        let field_provenance = field_order.iter().map(|name| (name.clone(), trail.clone())).collect();
-                        Binding::Node(Rc::new(RefCell::new(Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() })))
-                    })
-                    .collect();
+                if result.records_not_a_list {
+                    return Err(Stop::Thrown(Failure::Engine {
+                        class: crate::eval::ErrorClass::TypeError,
+                        message: "(result.records ?? []).map is not a function".into(),
+                    }));
+                }
+                let mut landings: Vec<Binding> = Vec::new();
+                for record in &result.records {
+                    let fields = spread_fields(record)?;
+                    let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();
+                    let field_provenance = field_order.iter().map(|name| (name.clone(), trail.clone())).collect();
+                    landings.push(Binding::Node(Rc::new(RefCell::new(Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() }))));
+                }
                 let handed_back = !landings.is_empty();
                 (Binding::Positions(landings), handed_back)
             }

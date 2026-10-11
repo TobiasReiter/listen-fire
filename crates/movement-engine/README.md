@@ -448,7 +448,7 @@ binding kind included; only these are refused:
 
 | reason | the state | needs |
 |---|---|---|
-| `resume_state_does_not_read` | it does not read off the wire | — |
+| `resume_state_does_not_read` | it does not read off the wire, or its scopes, frames or journals (a frame's own) are not lists, which the TypeScript does not read either (chunk 7A Task 6 fix round 1) | — |
 | `resume_state_version` | a version other than 1 | — |
 | `resume_state_suspended` | a `suspended` other than `true` | — |
 | `resume_state_kind:blockMeta`, `resume_state_kind:localShape` | a block's meta edges bound as a name; a shape declared in a body (serialize.ts writes both, and no corpus run parks holding either) | their rehydration (serialize.ts `rehydrate`) |
@@ -1521,7 +1521,21 @@ beyond those, and these, held back by decision:
 
 | construct | the TypeScript | this engine | why held |
 |---|---|---|---|
+| when flows woken together ask the host again (collection members, `parallel` arms: "Concurrent flows" below) | each continuation runs its microtasks to its next request; one that descends into a taken `if` arm gets there in fewer ticks than one that falls out of an untaken one, so the host may answer the first before the second asks | the shim hands every settled answer over before serving what it leads to, so flows woken together ask together | the request paths and answers are the same and the conformance kit's rule matches them; only which answers came before a request (`after`) differs, and reproducing it would mean counting V8's microtask ticks per code path (2 of the generator's 152 compared programs) |
 | an object an in-process adapter answered and then MUTATED before answering it again | holds the one object: a later read, `IN` or `CONTAINS` sees the mutation through every name holding it | decodes the second answer fresh: names bound to the first answer keep its old contents | parked (Task 3 review): only an in-process adapter that mutates what it already returned can produce it; a protocol-v2 adapter answers fresh JSON each time, so cannot; no corpus program does |
+
+### Concurrent flows
+
+Collection members (`concurrency` > 1) and `parallel` / `race` arms run as
+futures polled together (`join_all`); a member slot takes the next member as
+its own finishes, as `runMembers`' slots do. The shim answers the engine one
+settled request at a time, but hands over every answer already settled
+before it serves any request those answers led to (rust_engine.ts
+`runSegment`): the TypeScript engine runs each continuation an answer wakes
+before the host is asked anything further, so flows woken together ask
+together, and the host sees the same requests with the same answers before
+them. What is left is the microtask depth of each continuation (Known
+divergences above).
 
 ## The check
 

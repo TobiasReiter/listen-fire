@@ -473,6 +473,19 @@ pub fn resume_refusal(state: &Json) -> Option<String> {
     let scopes = at(&state, "scopeChain").cloned().unwrap_or(Js::Undefined);
     let frames = at(&state, "frames").cloned().unwrap_or(Js::Undefined);
     let journal = at(&state, "journal").cloned().unwrap_or(Js::Undefined);
+    // The lists a state's reader walks (its scopes, frames and journals, a
+    // frame's own): one that is not a list is a state the TypeScript does
+    // not read either.
+    let listed = |value: &Js| matches!(value, Js::Undefined | Js::Array(_));
+    let frames_listed = match &frames {
+        Js::Array(list) => list.items().iter().all(|frame| {
+            ["journal", "scopeChain"].iter().all(|key| listed(at(frame, key).unwrap_or(&Js::Undefined)))
+        }),
+        other => listed(other),
+    };
+    if !listed(&scopes) || !listed(&journal) || !frames_listed {
+        return Some("resume_state_does_not_read".into());
+    }
     // A value's own data is the host's, never a descriptor: only the
     // descriptors' kinds are read.
     descriptors_refusal(&scopes).or_else(|| descriptors_refusal(&frames)).or_else(|| descriptors_refusal(&journal))
