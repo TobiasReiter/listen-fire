@@ -828,6 +828,12 @@ Five requests are the Rust engine's own: they are not `EngineHost` methods, and 
 
 ## Changes
 
+- **Within version 1, the Rust engine's requests and inputs (chunk 7A).** None is an `EngineHost` method or a required member, so the version holds; an embedder of the Rust engine serves or sends each as "The Rust engine's requests" says:
+  - **`localZone`** (input, optional): the zone an offset-less date-time text is read in; absent, UTC.
+  - **`extractionTiers`** (input, optional): the deployment's tier table; absent, the built-in rows.
+  - **`check.compatible`** (engine's own request): the checker's assignability, for `IS <Decl>` of a system's record.
+  - **The files family's opaque handle:** the engine holds a file as an opaque handle with its `name`, `contentType`, `size` and `handle`, and the host is handed the plain descriptor (`files.resolveFileText`, write fields); a file is made only where an envelope declares one.
+  - **`check.program` before the segment:** the in-process run host checks a program before it opens the segment and answers the engine's request from that check, so a program that fails it makes no host request.
 - **Version 1 includes the clock and ids.** Two required families, `clock.now` and `ids.mint`, joined the manifest before version 1 was released, so they are part of it. The engine reads no wall clock and mints no random id: a sleep's wake, a callback's expiry, a segment's pin without `firedAt`, every measured duration and an extraction's resource ids come from the host, so a recorded run replays to the same values. A host without them is refused before `segment.open`, naming the missing methods.
 - **Version 1** (the first version on the wire). Relative to the contract as chunk 4A left it:
   - **`segment.open`** carries `hostFamiliesVersion`, and a host refuses a version it does not serve.
