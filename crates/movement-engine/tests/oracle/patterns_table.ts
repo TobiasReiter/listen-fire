@@ -459,7 +459,7 @@ export const PATTERNS: Pattern[] = [
       () => ({ file: `${COMPANY_DECL}\n${m('  found = extract([], Company)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}` }),
       () => ({ file: `${COMPANY_DECL}\n${m('  found = extract(COLLECT(msg-[:files]->.data), Company)\n  again = extract(COLLECT(msg-[:files]->.data), Company)\n  write crm-[:notes]-> { body: "${COUNT(found)}/${COUNT(again)}" }')}`, replies: [{ records: [{ name: said('Acme', 'x') }] }, { records: [] }] }),
       (pick) => ({ body: `  found = extract([msg.\`subject\`, "${pick(WORDS)}"], node Lead: "a lead" { who: <text> "the person" })\n  MAP(found, (l) => {\n    write crm-[:notes]-> { body: l.who }\n  })`, replies: [{ records: [{ who: said('Ada') }] }] }),
-      () => ({ file: `${COMPANY_DECL}\n${m('  parts = [msg.`subject`, msg.`text`]\n  seen = MAP(parts, (p) => {\n    return COUNT(extractOne([msg.`subject`, p], Company))\n  })\n  write crm-[:notes]-> { body: "x" }')}`, routes: 'refused' }),
+      () => ({ file: `${COMPANY_DECL}\n${m('  parts = [msg.`subject`, msg.`text`]\n  seen = MAP(parts, (p) => {\n    return COUNT(extractOne([msg.`subject`, p], Company))\n  })\n  write crm-[:notes]-> { body: "x" }')}`, replies: [{ record: { name: said('Acme') } }, { record: null }] }),
     ],
   },
   {
