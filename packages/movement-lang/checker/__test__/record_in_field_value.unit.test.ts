@@ -13,7 +13,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog, type FieldType } from '../catalog';
-import { fieldAssignable, fieldTypeCompatible, recordWithin, spellHeldSteps } from '../typing';
+import { fieldAssignable, fieldTypeCompatible, handleWithin, spellHeldSteps } from '../typing';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
 
 const crmSchema: InstanceSchema = {
@@ -177,11 +177,11 @@ describe('the type rule, as pure functions', () => {
   });
 
   it('names where the record sits', () => {
-    expect(recordWithin(dictHolding)?.steps).toEqual([{ kind: 'key', key: 'a' }]);
-    expect(recordWithin({ kind: 'tuple', of: ['text', record] })?.steps).toEqual([{ kind: 'slot', index: 1 }]);
-    expect(recordWithin({ kind: 'list', of: record })?.steps).toEqual([{ kind: 'member' }]);
-    expect(spellHeldSteps(recordWithin({ kind: 'dict', of: 'json', shape: { 'a b': { kind: 'list', of: record } } })!.steps)).toBe('.`a b`[…]');
-    expect(recordWithin('json')).toBeUndefined();
+    expect(handleWithin(dictHolding)?.steps).toEqual([{ kind: 'key', key: 'a' }]);
+    expect(handleWithin({ kind: 'tuple', of: ['text', record] })?.steps).toEqual([{ kind: 'slot', index: 1 }]);
+    expect(handleWithin({ kind: 'list', of: record })?.steps).toEqual([{ kind: 'member' }]);
+    expect(spellHeldSteps(handleWithin({ kind: 'dict', of: 'json', shape: { 'a b': { kind: 'list', of: record } } })!.steps)).toBe('.`a b`[…]');
+    expect(handleWithin('json')).toBeUndefined();
   });
 });
 
