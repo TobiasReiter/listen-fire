@@ -36,6 +36,7 @@ import {
   stdlibFamily,
   stdlibFunctionById,
 } from '../stdlib';
+import { markedFile } from '../file_value';
 
 /** A pure member never looks at the instant; a clock-reading one is handed
  *  this unless the case supplies its own. */
@@ -705,19 +706,25 @@ describe('TEXT.SERIALISE', () => {
     expect(json({})).toBe('{}');
   });
 
-  it('a file is a descriptor, never its contents', () => {
-    const file = {
+  it('a file the engine holds is a descriptor, never its contents', () => {
+    const file = markedFile({
       __brand: 'FileRef',
       name: 'deck.pdf',
       size: 12,
       contentType: 'application/pdf',
-      retrieve: () => 'bytes',
-    };
+      source: { store: 'document', objectUri: 's3://x/deck.pdf' },
+    });
     expect(json({ deck: file })).toBe(
       '{\n  "deck": {\n    "contentType": "application/pdf",\n    "kind": "file",\n    "name": "deck.pdf",\n    "size": 12\n  }\n}',
     );
-    expect(json({ f: { __brand: 'FileRef' } })).toBe(
+    expect(json({ f: markedFile({ __brand: 'FileRef' }) })).toBe(
       '{\n  "f": {\n    "contentType": null,\n    "kind": "file",\n    "name": null,\n    "size": null\n  }\n}',
+    );
+  });
+
+  it('a dict that spells a file is a dict: its keys print', () => {
+    expect(json({ f: { __brand: 'FileRef', name: 'x.pdf' } })).toBe(
+      '{\n  "f": {\n    "__brand": "FileRef",\n    "name": "x.pdf"\n  }\n}',
     );
   });
 

@@ -62,7 +62,7 @@ import type {
 } from './expression';
 import { bindValue, binding, bindingOf, isDictValue } from './expression';
 import { settledAll } from './fans';
-import { isFileRef } from '../translation_graph/adapter';
+import { fileValueOf, isFileValue } from '../translation_graph/adapter';
 import { MovementEngineError } from './errors';
 
 // ── The descriptor (plain JSON) ──────────────────────────────────────────────
@@ -266,10 +266,12 @@ function serializeEmission(emission: ExtractEmission): ExtractEmissionDescriptor
   for (const [edge, kids] of emission.children) {
     children[edge] = kids.map(serializeEmission);
   }
+  const fileFields = fileFieldsOf(emission.fields);
   return {
     nodeName: emission.nodeName,
     fields: emission.fields,
     fieldOrder: Object.keys(emission.fields),
+    ...(fileFields !== undefined ? { fileFields } : {}),
     provenance: emission.provenance,
     ...(emission.origin !== undefined ? { origin: emission.origin } : {}),
     resources: emission.resources.map(serializeResource),
@@ -316,14 +318,17 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
         // edgeFieldId are rebound on rehydrate.
         ...(binding.read !== undefined ? { read: { instanceName: binding.read.instanceName } } : {}),
       };
-    case 'shapePosition':
+    case 'shapePosition': {
+      const fileFields = fileFieldsOf(binding.fields);
       return {
         kind: 'shapePosition',
         shape: binding.shape,
         node: binding.node,
         fields: binding.fields,
+        ...(fileFields !== undefined ? { fileFields } : {}),
         fieldProvenance: binding.fieldProvenance,
       };
+    }
     case 'nodePosition': {
       const seen = park.nodes.get(binding);
       if (seen !== undefined) return { kind: 'nodeRef', id: seen };
@@ -342,11 +347,13 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
               }
             : { kind: 'deferred', walk: serializeDeferredWalk(edge.walk, park) };
       }
+      const fileFields = fileFieldsOf(binding.fields);
       return {
         kind: 'nodePosition',
         id,
         fields: binding.fields,
         fieldOrder: binding.fieldOrder,
+        ...(fileFields !== undefined ? { fileFields } : {}),
         fieldProvenance: binding.fieldProvenance,
         ...(binding.landedOn !== undefined ? { landedOn: binding.landedOn } : {}),
         edges,
@@ -368,7 +375,7 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
       return { kind: 'resource', resource: serializeResource(binding.resource) };
     // ── Bucket 1 (value) — with the JSON guard, unless it holds records ──
     case 'value':
-      if (holdsRecords(binding.value)) {
+      if (holdsEngineValues(binding.value)) {
         return {
           kind: 'recordValue',
           value: serializeValue(binding.value, park),
@@ -441,7 +448,7 @@ function rehydrateEmission(descriptor: ExtractEmissionDescriptor): ExtractEmissi
   }
   return {
     nodeName: descriptor.nodeName,
-    fields: inOrder(descriptor.fields, descriptor.fieldOrder),
+    fields: withFileFields(inOrder(descriptor.fields, descriptor.fieldOrder), descriptor.fileFields),
     provenance: descriptor.provenance,
     ...(descriptor.origin !== undefined ? { origin: descriptor.origin } : {}),
     resources: (descriptor.resources ?? []).map(rehydrateResource),
@@ -456,12 +463,18 @@ async function rehydrateHandleGraph(
   return { kind: 'instance', instance: await ctx.resolveInstance(graph.instance) };
 }
 
+/**
+ * A parked resource: data as it stands, its `fileRef` slot a file again — the
+ * slot is typed, so whatever it holds is that resource's file (a park written
+ * before descriptors carried the brand holds it without). Its `data.file`, the
+ * same file as the resource's fields expose it, is that file too.
+ */
 function rehydrateResource(descriptor: ResourceDescriptor): Resource {
   const { fileRef, ...rest } = descriptor;
-  return {
-    ...rest,
-    ...(fileRef !== undefined ? { fileRef: { ...fileRef, __brand: 'FileRef' } } : {}),
-  };
+  const file = fileRef !== undefined ? fileValueOf(fileRef) : undefined;
+  if (file === undefined) return rest;
+  const data = rest.data !== undefined && Object.hasOwn(rest.data, 'file') ? { ...rest.data, file } : rest.data;
+  return { ...rest, fileRef: file, ...(data !== undefined ? { data } : {}) };
 }
 
 function serializeDeferredWalk(walk: DeferredWalk, park: ParkWriter): DeferredWalkDescriptor {
@@ -557,7 +570,7 @@ async function rehydrateInPark(
         kind: 'shapePosition',
         shape: descriptor.shape,
         node: descriptor.node,
-        fields: descriptor.fields,
+        fields: withFileFields(descriptor.fields, descriptor.fileFields),
         fieldProvenance: descriptor.fieldProvenance,
       });
     case 'nodePosition': {
@@ -568,7 +581,7 @@ async function rehydrateInPark(
           ? nodeNumbered(park, descriptor.id)
           : binding({ kind: 'nodePosition', fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} });
       if (descriptor.id !== undefined) park.unfilled.delete(descriptor.id);
-      node.fields = inOrder(descriptor.fields, descriptor.fieldOrder);
+      node.fields = withFileFields(inOrder(descriptor.fields, descriptor.fieldOrder), descriptor.fileFields);
       node.fieldOrder = descriptor.fieldOrder ?? Object.keys(descriptor.fields);
       node.fieldProvenance = descriptor.fieldProvenance;
       if (descriptor.landedOn !== undefined) node.landedOn = descriptor.landedOn;
@@ -696,25 +709,26 @@ export function serializeScopeChain(chain: Environment[], park: ParkWriter = new
   return chain.map((env) => serializeScope(env, park));
 }
 
-// ── Values that hold records ──────────────────────────────────────────────────
+// ── Values that hold records or files ─────────────────────────────────────────
 
 /**
- * Does this value hold a RECORD anywhere inside it? Only then does the value
- * need the recursive descriptor: everything else is data and travels as data,
- * which is what every parked run before this one carries.
+ * Does this value hold a RECORD or a FILE anywhere inside it? Only then does
+ * the value need the recursive descriptor: everything else is data and travels
+ * as data, which is what every parked run before this one carries. A file is
+ * said to be one (`{ kind: 'file' }`); its descriptor written as data would
+ * come back as data.
  */
-function holdsRecords(value: unknown): boolean {
-  if (bindingOf(value) !== undefined) return true;
-  if (Array.isArray(value)) return value.some(holdsRecords);
-  if (isDictValue(value)) return Object.values(value).some(holdsRecords);
+function holdsEngineValues(value: unknown): boolean {
+  if (bindingOf(value) !== undefined || isFileValue(value)) return true;
+  if (Array.isArray(value)) return value.some(holdsEngineValues);
+  if (isDictValue(value)) return Object.values(value).some(holdsEngineValues);
   return false;
 }
 
 function serializeValue(value: unknown, park: ParkWriter): ValueDescriptor {
   const record = bindingOf(value);
   if (record !== undefined) return { kind: 'record', binding: serializeBinding(record, park) };
-  // A file is a leaf: its descriptor is data.
-  if (isFileRef(value)) return { kind: 'data', value: assertJsonSerializable(value, 'value binding') };
+  if (isFileValue(value)) return { kind: 'file', file: { ...value } };
   if (Array.isArray(value)) return { kind: 'list', of: value.map((entry) => serializeValue(entry, park)) };
   if (isDictValue(value)) {
     const of: Record<string, ValueDescriptor> = {};
@@ -734,6 +748,8 @@ async function rehydrateValue(
       return descriptor.value;
     case 'record':
       return rehydrateInPark(descriptor.binding, ctx, park);
+    case 'file':
+      return revivedFile(descriptor.file);
     case 'list':
       return settledAll(descriptor.of.map((entry) => rehydrateValue(entry, ctx, park)));
     case 'map': {
@@ -743,6 +759,77 @@ async function rehydrateValue(
       }
       return out;
     }
+  }
+}
+
+/** A parked `file`: a file again, by the descriptor that said so. */
+function revivedFile(descriptor: unknown): unknown {
+  const file = fileValueOf(descriptor);
+  if (file === undefined) {
+    throw new MovementEngineError('MOVENG_PARK_NONSERIALIZABLE', `a parked file is not a file's descriptor: ${JSON.stringify(descriptor)}`);
+  }
+  return file;
+}
+
+/**
+ * A record's fields that hold a file, each as its value descriptor — beside the
+ * fields themselves, which a park still writes whole as data. Absent when no
+ * field holds one (and on every park written before files were said to be).
+ * A field never holds a record (the engine refuses one nested in a field), so
+ * only files are walked.
+ */
+function fileFieldsOf(fields: Record<string, unknown>): Record<string, ValueDescriptor> | undefined {
+  let out: Record<string, ValueDescriptor> | undefined;
+  for (const [key, value] of Object.entries(fields)) {
+    if (holdsFile(value)) (out ??= {})[key] = fileFieldValue(value);
+  }
+  return out;
+}
+
+function holdsFile(value: unknown): boolean {
+  if (isFileValue(value)) return true;
+  if (Array.isArray(value)) return value.some(holdsFile);
+  if (isDictValue(value)) return Object.values(value).some(holdsFile);
+  return false;
+}
+
+/** A field's value with its files said to be; the rest is the data the
+ *  fields themselves already carry. */
+function fileFieldValue(value: unknown): ValueDescriptor {
+  if (isFileValue(value)) return { kind: 'file', file: { ...value } };
+  if (Array.isArray(value)) return { kind: 'list', of: value.map(fileFieldValue) };
+  if (isDictValue(value)) {
+    const of: Record<string, ValueDescriptor> = {};
+    for (const [key, entry] of Object.entries(value)) of[key] = fileFieldValue(entry);
+    return { kind: 'map', of };
+  }
+  return { kind: 'data', value };
+}
+
+/** `fields` with each field a park said holds a file made whole again, in
+ *  the fields' own order. */
+function withFileFields(
+  fields: Record<string, unknown>,
+  fileFields: Record<string, ValueDescriptor> | undefined,
+): Record<string, unknown> {
+  if (fileFields === undefined) return fields;
+  const out = { ...fields };
+  for (const [key, descriptor] of Object.entries(fileFields)) out[key] = revivedFieldValue(descriptor);
+  return out;
+}
+
+function revivedFieldValue(descriptor: ValueDescriptor): unknown {
+  switch (descriptor.kind) {
+    case 'data':
+      return descriptor.value;
+    case 'file':
+      return revivedFile(descriptor.file);
+    case 'list':
+      return descriptor.of.map(revivedFieldValue);
+    case 'map':
+      return Object.fromEntries(Object.entries(descriptor.of).map(([key, entry]) => [key, revivedFieldValue(entry)]));
+    case 'record':
+      throw new MovementEngineError('MOVENG_PARK_NONSERIALIZABLE', 'a parked field holds a record, which no field can');
   }
 }
 

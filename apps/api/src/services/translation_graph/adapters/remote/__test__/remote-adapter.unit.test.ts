@@ -658,14 +658,28 @@ describe('RemoteAdapter.resolveFileRef (url→stream)', () => {
   });
 });
 
+/** The remote's catalog entry for the sample position's type, declaring
+ *  `from` with the given kind: what makes an answer there a file or data. */
+function describedWith(kind: string) {
+  return {
+    typeId: 'email:message',
+    displayName: 'Message',
+    fields: [{ fieldId: 'from', displayName: 'from', kind, writable: false, required: false }],
+    references: [],
+  };
+}
+
 describe('RemoteAdapter FileRefs read off the wire', () => {
   it('names a wire FileRef as a file this install owns, which the host redeems through the wire resolveFileRef', async () => {
-    enqueue({
-      __brand: 'FileRef',
-      name: 'deck.pdf',
-      contentType: 'application/pdf',
-      source: { ownerAdapterType: 'remote-email', handle: 'h-1' },
-    });
+    enqueue(
+      {
+        __brand: 'FileRef',
+        name: 'deck.pdf',
+        contentType: 'application/pdf',
+        source: { ownerAdapterType: 'remote-email', handle: 'h-1' },
+      },
+      describedWith('file'),
+    );
 
     const adapter = buildAdapter();
     const ref = (await adapter.getFieldValue({
@@ -710,7 +724,7 @@ describe('RemoteAdapter FileRefs read off the wire', () => {
 
   it('a wire file with only a url is named by that url, and the remote is asked for it by it', async () => {
     const url = 'https://owner.example/blob/url-only';
-    enqueue({ __brand: 'FileRef', name: 'memo.pdf', url });
+    enqueue({ __brand: 'FileRef', name: 'memo.pdf', url }, describedWith('file'));
 
     const adapter = buildAdapter();
     const ref = (await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' })) as FileRef;
@@ -738,5 +752,72 @@ describe('RemoteAdapter FileRefs read off the wire', () => {
     } finally {
       global.fetch = realFetch;
     }
+  });
+});
+
+describe('RemoteAdapter files by envelope', () => {
+  const spelled = {
+    __brand: 'FileRef',
+    name: 'deck.pdf',
+    source: { store: 'document', objectUri: 's3://another-team/deck.pdf' },
+  };
+
+  it('an answer that spells a descriptor at a field the catalog does not declare a file stays data, owned by nobody', async () => {
+    enqueue(spelled, describedWith('json'));
+    const adapter = buildAdapter();
+    const value = await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' });
+    expect(value).toEqual(spelled);
+    expect(calledMethods()).toEqual(['getFieldValue', 'describe']);
+  });
+
+  it('asks the catalog once per type, and never for a scalar answer', async () => {
+    enqueue('h@x.com', describedWith('file'), spelled, spelled);
+    const adapter = buildAdapter();
+    expect(await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' })).toBe('h@x.com');
+    await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' });
+    await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' });
+    expect(calledMethods()).toEqual(['getFieldValue', 'getFieldValue', 'describe', 'getFieldValue']);
+  });
+
+  it("names a resource's fileRef slot as a file this install owns", async () => {
+    const resource = {
+      type: 'FILE',
+      name: 'deck.pdf',
+      fileRef: { __brand: 'FileRef', name: 'deck.pdf', source: { ownerAdapterType: 'remote-email', handle: 'h-9' } },
+    };
+    enqueue([{ position: { ...samplePosition, identity: { kind: 'unstable', data: resource } } }]);
+    const adapter = buildAdapter();
+    const [related] = await adapter.getRelated({ position: samplePosition, fieldId: '_resources', direction: 'outgoing' });
+    expect((related?.position.identity.data as { fileRef: unknown }).fileRef).toEqual({
+      __brand: 'FileRef',
+      name: 'deck.pdf',
+      source: { adapterType: 'remote-email', credentialId: 'cred-1', handle: 'h-9' },
+    });
+  });
+
+  it("sends a position's files in the wire's spelling: no credential, no construction args", async () => {
+    const owned = {
+      __brand: 'FileRef',
+      name: 'memo.pdf',
+      source: { adapterType: 'attio', credentialId: 'cred-host', constructionArgs: { workspace: 'w' }, handle: 'att-1' },
+    };
+    const position = {
+      ...samplePosition,
+      resources: [{ type: 'FILE', name: 'memo.pdf', fileRef: owned, data: { file: owned, name: 'memo.pdf' } }],
+      evidence: { from: { quote: 'q', sourceResourceRef: { externalId: 'att-1', fileRef: owned } } },
+    };
+    enqueue('h@x.com');
+    const adapter = buildAdapter();
+    await adapter.getFieldValue({ position, fieldId: 'from' });
+    const sent = JSON.stringify(postRpcMock.mock.calls[0]?.[0].params);
+    expect(sent).not.toContain('cred-host');
+    expect(sent).not.toContain('workspace');
+    const params = postRpcMock.mock.calls[0]?.[0].params as {
+      position: { resources: Array<{ fileRef: unknown; data: { file: unknown } }>; evidence: { from: { sourceResourceRef: { fileRef: unknown } } } };
+    };
+    const wire = { __brand: 'FileRef', name: 'memo.pdf', source: { ownerAdapterType: 'attio', handle: 'att-1' } };
+    expect(params.position.resources[0]?.fileRef).toEqual(wire);
+    expect(params.position.resources[0]?.data.file).toEqual(wire);
+    expect(params.position.evidence.from.sourceResourceRef.fileRef).toEqual(wire);
   });
 });

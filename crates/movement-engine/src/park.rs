@@ -227,8 +227,11 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
                 ("id", Js::Number(id as f64)),
                 ("fields", Js::object(JsObject::clone_of(&node.fields))),
                 ("fieldOrder", Js::array(node.field_order.iter().map(|f| Js::str(f.clone())).collect())),
-                ("fieldProvenance", Js::object(provenance)),
             ];
+            if let Some(files) = crate::file::file_fields_of(&node.fields) {
+                members.push(("fileFields", files));
+            }
+            members.push(("fieldProvenance", Js::object(provenance)));
             if let Some(edge) = &node.landed_on {
                 members.push(("landedOn", Js::str(edge.clone())));
             }
@@ -276,9 +279,9 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Value(value) if crate::js::holds_itself(&value.value) => {
             return Err(Failure::Engine { class: crate::eval::ErrorClass::RangeError, message: crate::js::stack_overflow().message });
         }
-        // A value that holds a record anywhere is written down to its
-        // records (`serializeValue`).
-        Binding::Value(value) if crate::record::holds_records(&value.value) => {
+        // A value that holds a record or a file anywhere is written down to
+        // them (`holdsEngineValues`, `serializeValue`).
+        Binding::Value(value) if crate::record::holds_records(&value.value) || crate::file::holds_file(&value.value) => {
             let mut descriptor = vec![kind("recordValue"), ("value", serialize_value(run, &value.value, park)?)];
             if let Some(trail) = &value.trail {
                 descriptor.push(("provenance", provenance_of(run, trail)));
@@ -350,19 +353,19 @@ fn serialize_deferred_walk(run: &Run<'_>, walk: &crate::bindings::DeferredWalk, 
     Ok(object_of(members))
 }
 
-/// `serializeValue`: a record as its own descriptor, a list or a map walked,
-/// anything else (a file reference included) data.
+/// `serializeValue`: a record as its own descriptor, a file as one (its
+/// descriptor), a list or a map walked, anything else data.
 fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<Js, Failure> {
     if let Some(record) = crate::record::binding_of(value) {
         return Ok(object_of(vec![("kind", Js::str("record")), ("binding", serialize_binding(run, "", &record, park)?)]));
     }
-    let file = matches!(value, Js::Object(object) if matches!(object.get("__brand"), Some(Js::String(brand)) if brand == "FileRef"));
     Ok(match value {
-        Js::Array(list) if !file => {
+        Js::File(file) => object_of(vec![("kind", Js::str("file")), ("file", crate::file::descriptor(file))]),
+        Js::Array(list) => {
             let of = list.items().iter().map(|item| serialize_value(run, item, park)).collect::<Result<Vec<_>, _>>()?;
             object_of(vec![("kind", Js::str("list")), ("of", Js::array(of))])
         }
-        Js::Object(dict) if !file => {
+        Js::Object(dict) => {
             let mut of = JsObject::new();
             for (key, item) in dict.entries() {
                 of.set(key.clone(), serialize_value(run, item, park)?);
@@ -501,7 +504,7 @@ fn descriptors_refusal(value: &Js) -> Option<String> {
             match object.get("kind") {
                 Some(Js::String(kind)) if kind == "blockMeta" || kind == "localShape" => return Some(format!("resume_state_kind:{kind}")),
                 // Data: a value's own, a callback's params, a position.
-                Some(Js::String(kind)) if matches!(kind.as_str(), "value" | "data" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
+                Some(Js::String(kind)) if matches!(kind.as_str(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
                     return None;
                 }
                 _ => {}

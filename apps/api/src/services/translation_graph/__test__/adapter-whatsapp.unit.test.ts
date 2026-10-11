@@ -67,7 +67,7 @@ import {
   WHATSAPP_TYPING_TYPE,
   type WhatsappPayload,
 } from '../adapters/whatsapp';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { fileValue, RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
 import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
 import { normalizeWhatsappPhone } from '../adapters/acting_user/phone';
 import { discriminateEvent } from '../engine/inbound/discriminate';
@@ -418,7 +418,7 @@ describe('WhatsappAdapter.createRecord — reply (msg-[:Replies]->)', () => {
       recordType: 'Message',
       fields: {
         Body: 'the report',
-        File: store.file('PDFBYTES', { name: 'report.pdf', contentType: 'application/pdf' }),
+        File: fileValue(store.file('PDFBYTES', { name: 'report.pdf', contentType: 'application/pdf' })),
       },
       parentLinks: [inboundParent('Replies')],
       mutationContext,

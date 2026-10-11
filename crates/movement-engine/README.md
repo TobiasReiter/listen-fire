@@ -57,6 +57,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers and Unicode normalisation, from the JavaScript runtime (WASM) or natively (below); never a clock |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on, and a segment's one wire with its host |
+| `file` | a file the engine holds (`Js::File`, never a `Js::Object` with a key): made only where an envelope declares one — a field the catalog types `file` (`files_at_type`, through the read wrapper), a plugin output's declared file, a resource's `fileRef`, `files.render`'s answer, a parked `file`; its descriptor validated (`fileDescriptorOf`); `fileFields` for a park (PLAN-07A Task 4d) |
 | `js`, `js_date`, `js_regex` | the JavaScript semantics the TypeScript leans on, written out (below) |
 
 ## Two artifacts
@@ -109,6 +110,7 @@ Measured 2026-10-07 (gzip -9):
 | the forward merge of cloud-native (main merge 2's refusals in) | 3,254,071 | 966,867 |
 | host data never read as an engine object (PLAN-07A Task 4b) | 3,031,573 | 908,024 |
 | language version 4's changed constructs run (PLAN-07A Task 4c) | 3,044,472 | 912,975 |
+| a file is what the envelope declares (`Js::File`, PLAN-07A Task 4d; the forward merges between) | 3,276,404 | 981,675 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -148,10 +150,13 @@ Step = {"pending": [{id, family, method, args}]} | {"done": result}
   or not) crosses again, under a fresh id, as it now is. A request hands an
   object the host sent back as itself (`["i", id]`), when it is that very
   object, unchanged: the shim gives the host the original, whichever of its
-  ids the engine names. So a value an adapter answered (a
-  `FileRef` read off a landing, carried in a node into a callee's write)
-  reaches the next host call as the object it was, as in the TypeScript
-  engine; anything the engine built is written out.
+  ids the engine names. So a value an adapter answered (a dict read off a
+  landing, carried in a node into a callee's write) reaches the next host
+  call as the object it was, as in the TypeScript engine; anything the
+  engine built is written out. A file the engine holds crosses tagged,
+  `["F", descriptor]`, both ways: the tag, never the descriptor's keys,
+  makes it a file on the other side (a file read off a `file` field is the
+  engine's own, so it is written out, as the TypeScript's own file is).
 
 Entries (`input.entry`):
 
@@ -612,12 +617,12 @@ TypeScript takes through its host is a host request here:
 | `llm.client.call` | each region of an extraction, once, and once more when its reply does not read ("Extraction" below); `{segmentId, system, userMessage, label, model, effort, maxTokens?, budget}` | `host.llm.client.call`, answered on the eval wire (`parsedJson` as `JSON.parse` left it); its cost charged |
 | `llm.extractCall.call` | each extraction call (`extract(content, Shape, config)`, `extractOne(…)`), once, and once more when its reply does not read: `{system, blocks, label, model, effort, maxTokens?, segmentId, budget}`, the prompt as blocks — each content item one, a cache breakpoint at the end of the longest content prefix this run already sent at that model and effort and at the end of the content, the shape and the rules last (extraction_call.ts) | `host.llm.extractCall.call`, answered on the eval wire; its cost charged; traced `{kind: "extraction", form: "call", …, cache}` |
 | `llm.transforms.invoke` | each `through` plugin per entity, and a plugin's plain call ("Plugin calls" below); `{segmentId, plugin, config, extractedContext, budget}`, the plugin by its registered name | `host.llm.transforms.invoke`, on the eval wire both ways; its cost charged |
-| `files.resolveFileText` | each source file an extraction's `from […]` names, once per file; each content file of the run's extraction calls, once per run | `host.files.resolveFileText`, on the eval wire both ways; its cost charged |
+| `files.resolveFileText` | each source file an extraction's `from […]` names, once per file; each content file of the run's extraction calls, once per run | `host.files.resolveFileText`, on the eval wire both ways (the file tagged `["F", descriptor]`; the host is handed the plain descriptor); its cost charged |
 | `ids.mint` | an extraction's resources without ids, once per batch: the `from` text, each source file, the bundle pipeline's files, then every record's fetched files in the tree's order | `host.ids.mint`: `count` distinct texts, or the run fails |
 | `lookup.resolveActingUser` | the first `@user_*` a segment reads, when the source's `methods` list `getActorCandidates`; `{triggerId?, instance, event, segmentId}`, the event on the eval wire | `host.lookup.resolveActingUser`; its answer kept for the segment, a host error read as no user (`resolveMovementActingUser`) |
 | `adapters.call` `extractActor` | the first `@actor_*` a segment reads, when the source's `methods` list it | `host.adapters.call`; its answer kept for the segment, an error read as no actor (`resolveMovementActor`) |
 | `llm.client.call` (`AI()`) | each `AI(prompt[, tier])` an expression evaluates: `{system, userMessage, label: "movement-ai-expression", model, effort?, maxTokens?, budget}` at the tier's settings (ai_tiers.ts `aiExpressionSettings`, a fixed table: no deployment input) | `host.llm.client.call`; its cost charged; the reply read out of its envelope (`aiAnswer`), traced `{kind: "ai", prompt, hasValue}` |
-| `files.render` | each `FILE(content, type)`: `{segmentId, content, type}` | `host.files.render`, its descriptor back on the eval wire |
+| `files.render` | each `FILE(content, type)`: `{segmentId, content, type}` | `host.files.render`, its descriptor back on the eval wire tagged as a file (`["F", descriptor]`) |
 | `check.compatible` | `x IS <Decl>` of the event, a handle or a landed record: `{source, languageVersion, declaration, schema, recordType}` (the instance schema the record's type is read in) | the checker's `surfaceMisfit` over `schemaSurface(schema, recordType)` and the file's declaration (run.ts `evaluateDeclaredNodeTest`): `{fits}`, or `{undescribed}`, which stops the run as "can't tell" |
 | `adapters.call` `invokeFieldFunction` | a function a write's destination field advertises (`describe`'s `functions`), called in that field's value: `{recordType, fieldId, functionName, args: {instructions, data}}` (`bindMovementFieldFunctions`) | `host.adapters.call` |
 | `log.write` | the log lines the TypeScript engine writes (an extraction's skipped stage, a plugin's empty argument, a continued answer, a truncated file, a refinement kept), kept and sent as the statement's trace is handed over, so a line costs no yield inside a fan | the platform's logger, the run's id added; never the run's failure |
@@ -1662,6 +1667,6 @@ admitted: {reason: count}` (by first reason, largest first), `Rust runs not
 admitted, every reason: {reason: count}` (each run counted under every
 reason it holds), and fails a run in which Rust
 answered nothing, admitted runs none of which ran whole, any decline or
-shim fault, or a whole-corpus run under its routing floor (v1 1058, v2 1360, v3 1916). Any filter (a path or name pattern, related or
+shim fault, or a whole-corpus run under its routing floor (v1 1180, v2 1491, v3 2547). Any filter (a path or name pattern, related or
 changed files, a shard, positional paths) makes a run partial, and the floor
 does not apply to it.

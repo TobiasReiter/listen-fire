@@ -92,7 +92,7 @@ import {
   type Resource,
 } from '../../translation_graph/adapter';
 import type { FileRef } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
+import { containerAssociation, isFileValue } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
@@ -567,9 +567,10 @@ describe('values ride through untouched', () => {
 
     expect(dropbox.creates).toHaveLength(1);
     expect(dropbox.creates[0].fields.name).toBe('pitch.pdf');
-    // Object IDENTITY: the handle the source produced is the handle the callee
-    // wrote. Nothing copied it, and nothing read the bytes.
-    expect(dropbox.creates[0].fields.data).toBe(fileRef);
+    // The descriptor the source answered at its `file` field, made a file by
+    // that declaration, is what the callee wrote. Nothing read the bytes.
+    expect(dropbox.creates[0].fields.data).toEqual(fileRef);
+    expect(isFileValue(dropbox.creates[0].fields.data)).toBe(true);
   });
 });
 
@@ -666,9 +667,10 @@ describe('the files-through-a-call gap, closed', () => {
 
     expect(dropbox.creates).toHaveLength(1);
     expect(dropbox.creates[0].fields.name).toBe('pitch.pdf');
-    // IDENTITY: the handle the source produced is the handle the callee wrote.
-    // Nothing copied it, nothing read the bytes, nothing materialised.
-    expect(dropbox.creates[0].fields.data).toBe(deck.data);
+    // The file the source's `file` field made is the file the callee wrote.
+    // Nothing read the bytes, nothing materialised.
+    expect(dropbox.creates[0].fields.data).toEqual(deck.data);
+    expect(isFileValue(dropbox.creates[0].fields.data)).toBe(true);
     // The trail names the REAL source the walk went through — a pass-through
     // edge invents no origin of its own.
     expect(result.writes[0].provenance.name).toEqual([
@@ -693,7 +695,8 @@ describe('the files-through-a-call gap, closed', () => {
     );
 
     expect(dropbox.creates).toHaveLength(1);
-    expect(dropbox.creates[0].fields.data).toBe(deck.data);
+    expect(dropbox.creates[0].fields.data).toEqual(deck.data);
+    expect(isFileValue(dropbox.creates[0].fields.data)).toBe(true);
   });
 
   it('every landing fans out — one write per walked position', async () => {
@@ -1179,7 +1182,8 @@ describe('the design example, end to end', () => {
     expect(dropbox.creates[0].fields.filename).toBe('pitch.pdf');
     // IDENTITY: the handle the source produced is the handle the callee wrote.
     // The wrapper renamed the entry; it did not copy the value.
-    expect(dropbox.creates[0].fields.data).toBe(deck.data);
+    expect(dropbox.creates[0].fields.data).toEqual(deck.data);
+    expect(isFileValue(dropbox.creates[0].fields.data)).toBe(true);
 
     // The trail names the REAL source read the entry came from — a synthesised
     // entry carries the provenance of the expression that produced it, and the
@@ -1223,7 +1227,8 @@ describe('the design example, end to end', () => {
     );
 
     expect(email.relatedCalls.count).toBe(1);
-    expect(dropbox.creates[0].fields.data).toBe(deck.data);
+    expect(dropbox.creates[0].fields.data).toEqual(deck.data);
+    expect(isFileValue(dropbox.creates[0].fields.data)).toBe(true);
   });
 });
 

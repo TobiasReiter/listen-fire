@@ -190,6 +190,31 @@ impl PluginResult {
         PluginResult { text, data, records, records_not_a_list, outcome }
     }
 
+    /// `withDeclaredFiles`: the files the plugin's output declares made
+    /// files — a records output's fields, a record output's `data` fields,
+    /// each by its declared type. A key that merely spells a descriptor is
+    /// data.
+    fn with_declared_files(mut self, output: Option<&movement_parser::catalog::types::PluginOutput>) -> PluginResult {
+        use movement_parser::catalog::types::PluginOutput;
+        let typed = |value: &Js, fields: &movement_parser::catalog::types::JsMap<movement_parser::catalog::types::SchemaFieldType>| -> Js {
+            let Js::Object(object) = value else { return value.clone() };
+            if !matches!(object.proto, None | Some(Js::Null)) {
+                return value.clone();
+            }
+            let mut out = JsObject::new();
+            for (name, member) in object.entries() {
+                out.set(name.clone(), crate::file::files_at_type(fields.get(name), member.clone()));
+            }
+            Js::object(out)
+        };
+        match output {
+            Some(PluginOutput::Records { fields }) => self.records = self.records.iter().map(|record| typed(record, fields)).collect(),
+            Some(PluginOutput::Record { fields }) => self.data = self.data.as_ref().map(|data| typed(data, fields)),
+            Some(PluginOutput::Value { .. }) | None => {}
+        }
+        self
+    }
+
     /// `Object.keys(result.data ?? {})`.
     pub(crate) fn data_keys(&self) -> Vec<String> {
         match &self.data {
@@ -491,7 +516,8 @@ impl Run<'_> {
         );
         let answer = self.priced(request).await?;
         refuse_uncarried(&answer, &format!("'{registered}''s answer"))?;
-        Ok(PluginResult::of(&answer))
+        let output = self.plugin_spec(registered).and_then(|spec| crate::plugin::output_under(spec, self.version()));
+        Ok(PluginResult::of(&answer).with_declared_files(output))
     }
 }
 

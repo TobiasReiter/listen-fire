@@ -42,9 +42,10 @@ pub(crate) struct FileResolution {
     traced: Js,
 }
 
-/// `isFileRef`: a branded descriptor.
+/// `isFileValue`: a file the engine holds (`Js::File`), never a dict that
+/// spells a descriptor.
 pub(crate) fn is_file_ref(value: &Js) -> bool {
-    matches!(value, Js::Object(object) if matches!(object.get("__brand"), Some(Js::String(brand)) if brand == "FileRef"))
+    matches!(value, Js::File(_))
 }
 
 /// `fileHandle`: the owner's handle, or the store key.
@@ -414,10 +415,13 @@ mod tests {
     }
 
     #[test]
-    fn a_file_is_known_by_its_brand_and_its_handle() {
-        let file = env::js_of_json(&json!({ "__brand": "FileRef", "name": "a.pdf", "source": { "store": "document", "objectUri": "s3://x" } }));
+    fn a_file_is_one_the_engine_made_never_a_dict_with_its_keys() {
+        let spelled = env::js_of_json(&json!({ "__brand": "FileRef", "name": "a.pdf", "source": { "store": "document", "objectUri": "s3://x" } }));
+        assert!(!is_file_ref(&spelled));
+        let file = crate::file::file_value_of(&spelled).expect("a descriptor");
         assert!(is_file_ref(&file));
         assert_eq!(file_handle(&file).as_deref(), Some("s3://x"));
-        assert!(!is_file_ref(&env::js_of_json(&json!({ "name": "a.pdf" }))));
+        assert!(crate::file::file_value_of(&env::js_of_json(&json!({ "name": "a.pdf" }))).is_none());
+        assert!(crate::file::file_value_of(&env::js_of_json(&json!({ "__brand": "FileRef", "extra": 1 }))).is_none());
     }
 }

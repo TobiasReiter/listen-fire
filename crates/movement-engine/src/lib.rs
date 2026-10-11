@@ -30,6 +30,7 @@ pub mod env_services;
 pub mod eval;
 pub mod executor;
 pub mod extract;
+pub mod file;
 pub mod is_test;
 pub mod filter;
 pub mod flow;

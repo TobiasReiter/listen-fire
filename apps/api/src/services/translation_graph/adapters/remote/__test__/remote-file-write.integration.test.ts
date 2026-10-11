@@ -20,6 +20,7 @@ import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { createAdapterProtocolHandler } from '../../../protocol/server';
 import { createRemoteAdapter, fetchRemoteManifest, RemoteAdapter } from '../index';
+import { fileValue } from '../../../adapter';
 
 const EXPOSED_URL = 'https://example.test/api/files/blob/xyz';
 
@@ -121,9 +122,11 @@ describe('RemoteAdapter write with a FileRef exposes bytes to a URL (over real H
     const fileRef = installMemoryDocumentStore().file('PDF-BYTES', { name: 'deck.pdf', contentType: 'application/pdf' });
     const objectUri = fileRef.source !== undefined && 'store' in fileRef.source ? fileRef.source.objectUri : '';
 
+    // The engine writes a file it holds (made at a typed entry); a dict that
+    // spells a descriptor would be written as data.
     await remote.createRecord({
       recordType: 'Doc',
-      fields: { file: fileRef },
+      fields: { file: fileValue(fileRef) },
       mutationContext: { source: {}, occurredAt: '2026-07-09T00:00:00Z' },
     } as unknown as Parameters<RemoteAdapter['createRecord']>[0]);
 

@@ -161,7 +161,7 @@ import {
   ATTIO_LISTS_EDGE,
   ATTIO_WEBHOOK_EVENT_TYPE_ID,
 } from '../adapters/attio';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { fileValue, RESOURCES_REFERENCE_FIELD_ID, type FileValue } from '../adapter';
 import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
 import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
 import { logger } from '../../logger';
@@ -306,11 +306,15 @@ const fileStore = installMemoryDocumentStore();
  *  download endpoint. */
 const DOWNLOAD_BYTES = new Uint8Array([9, 8, 7, 6]);
 
-function makeFileRef(overrides?: { name?: string; contentType?: string }): FileRef {
-  return fileStore.file(Buffer.from(FILE_BYTES), {
-    name: overrides?.name ?? 'report.pdf',
-    contentType: overrides?.contentType ?? 'application/pdf',
-  });
+/** A file the engine writes: the stored descriptor, made a file as the engine
+ *  makes one at a typed entry (a dict that spells one is data to the write). */
+function makeFileRef(overrides?: { name?: string; contentType?: string }): FileValue {
+  return fileValue(
+    fileStore.file(Buffer.from(FILE_BYTES), {
+      name: overrides?.name ?? 'report.pdf',
+      contentType: overrides?.contentType ?? 'application/pdf',
+    }),
+  );
 }
 
 const writeMutationContext = {
@@ -1356,7 +1360,7 @@ describe('AttioAdapter file-on-write', () => {
     await expect(
       adapter.createRecord({
         recordType: 'Companies',
-        fields: { logo: { __brand: 'FileRef', name: 'x.png' } as FileRef },
+        fields: { logo: fileValue({ __brand: 'FileRef', name: 'x.png' }) },
         mutationContext: writeMutationContext,
       }),
     ).rejects.toThrow(/no handle to its bytes/);
@@ -1364,11 +1368,11 @@ describe('AttioAdapter file-on-write', () => {
 
   it('createRecord: a failed byte retrieval surfaces as a write error', async () => {
     const adapter = makeAdapter({ teamId: 'team-fow-7' });
-    const failing: FileRef = {
+    const failing = fileValue({
       __brand: 'FileRef',
       name: 'deck.pdf',
       source: { store: 'document', objectUri: 'mem://doc/gone' },
-    };
+    });
     await expect(
       adapter.createRecord({
         recordType: 'Companies',

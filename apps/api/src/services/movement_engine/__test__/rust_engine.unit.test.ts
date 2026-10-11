@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot, type CatalogSnapshot } from 'movement-lang';
 
-import { tenantIdOf } from 'engine-contracts';
+import { fileValue, isFileValue, tenantIdOf } from 'engine-contracts';
 
 import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
@@ -690,6 +690,20 @@ describe("a segment's wire", () => {
     expect(wire.value({ kind: 'lazyWalk', walk: {} })).toEqual(['o', 2, [['kind', 'lazyWalk'], ['walk', ['o', 3, []]]]]);
     expect(() => wire.read(['x', 'handle'])).toThrow('the engine handed the host a record it cannot carry (handle)');
     expect(() => wire.read(['x', 1, ['o', 4, [['kind', 'lazyWalk']]]])).toThrow('a record of kind lazyWalk, which the shim does not rebuild');
+  });
+
+  it('carries a file the engine holds tagged both ways, and a dict that spells one as data', () => {
+    const wire = new WireOut({ whole: true });
+    const descriptor = { __brand: 'FileRef' as const, name: 'deck.pdf', source: { store: 'document' as const, objectUri: 's3://x/deck.pdf' } };
+    const written = wire.value(fileValue(descriptor));
+    expect(written).toEqual(['F', expect.arrayContaining(['o'])]);
+    const read = wire.read(written);
+    expect(isFileValue(read)).toBe(true);
+    expect(read).toEqual(descriptor);
+    // The same keys as data: an object, never a file, on either side.
+    expect(wire.value(descriptor)).toEqual(expect.arrayContaining(['o']));
+    expect(isFileValue(wire.read(['o', 9, [['__brand', 'FileRef'], ['name', 'x']]]))).toBe(false);
+    expect(() => wire.read(['F', ['o', 10, [['__brand', 'Not']]]])).toThrow("a file whose descriptor is not one");
   });
 
   it('writes each value whole, an object again under the id it was first sent under, and hands each id back as its object', () => {

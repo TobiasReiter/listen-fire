@@ -28,7 +28,7 @@ export type { ConfigBlock, TriggerConfigField } from './triggerConfig';
 
 // A file's descriptor and the records a run carries (a resource, an external
 // record, a value's evidence) are the contract's (`engine-contracts`).
-export { fileHandle, isFileRef, ownedFileSource } from 'engine-contracts';
+export { fileDescriptorOf, fileHandle, fileValue, fileValueOf, filesAtType, isFileValue, ownedFileSource } from 'engine-contracts';
 export type {
   EarlierFileSource,
   ExternalRecordRef,
@@ -36,6 +36,7 @@ export type {
   FieldEvidence,
   FileRef,
   FileSource,
+  FileValue,
   Resource,
   ResourceProvenance,
 } from 'engine-contracts';

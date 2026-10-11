@@ -24,7 +24,7 @@ import {
   type ExtractRuntime,
   type FileTextResolution,
 } from '../extraction';
-import type { FileRef } from '../../translation_graph/adapter';
+import { fileValue, type FileRef, type FileValue } from '../../translation_graph/adapter';
 import { NO_PROVENANCE } from '../provenance';
 import type { LlmCallInput, LlmCallResult } from '../../translation_graph/engine/batched_extraction';
 import type { MovementTraceEntry } from '../expression';
@@ -47,15 +47,17 @@ function extractExpr(fromSlots: string[], fields: { name: string; description: s
   return { from: fromSlots.map(slot), stages: [stage], span: SPAN };
 }
 
-function fileRef(over: Partial<FileRef> = {}): FileRef {
-  return {
+/** A file as the engine holds it: made at a typed entry (an attachment's
+ *  `file` field), never a dict that spells one. */
+function fileRef(over: Partial<FileRef> = {}): FileValue {
+  return fileValue({
     __brand: 'FileRef',
     name: 'deck.pdf',
     contentType: 'application/pdf',
     size: 1234,
     source: { adapterType: 'email', handle: 'attachment-1' },
     ...over,
-  };
+  });
 }
 
 /** A queued LLM whose single canned response is the extractor's nested JSON. */

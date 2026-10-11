@@ -231,6 +231,13 @@ impl Decoder<'_> {
                         None => return Err(format!("a built-in without its name: {json}")),
                     },
                     "p" => crate::js::object_prototype(),
+                    // A file the host hands the engine as one (a render's
+                    // answer): its descriptor, made a file by the tag.
+                    "F" => {
+                        let descriptor = tagged.get(1).ok_or("a wire file without its descriptor")?;
+                        let descriptor = self.value(descriptor)?;
+                        crate::file::file_value_of(&descriptor).ok_or_else(|| format!("a wire file whose descriptor is not one: {json}"))?
+                    }
                     "x" => {
                         let record = self.records.and_then(|records| records.get(usize::try_from(id().ok()?).ok()?).cloned());
                         Js::Record(record.ok_or_else(|| format!("a record the engine never handed out: {json}"))?)
@@ -393,6 +400,12 @@ impl Encoder<'_> {
                     json!(["x", kind])
                 }
             },
+            // A file the engine holds crosses tagged: the tag, never its
+            // descriptor's keys, is what makes it a file on the host.
+            Js::File(file) => {
+                let descriptor = crate::file::descriptor(file);
+                json!(["F", self.value(&descriptor)])
+            }
             Js::Array(_) | Js::Object(_) if self.sent_as(value).is_some() => json!(["i", self.sent_as(value)]),
             Js::Array(array) => match array.origin.filter(|_| !self.plain) {
                 Some(id) => json!(["i", id]),
@@ -466,6 +479,7 @@ pub fn json_round_trip(value: &Js) -> Js {
             }
             Js::object(copy)
         }
+        Js::File(file) => json_round_trip(&crate::file::descriptor(file)),
         // The binding object's JSON, where this engine writes it as the
         // TypeScript does (`try_json_stringify` names the rest).
         Js::Record(record) => match (crate::record::data_object(record), record.as_ref()) {
@@ -499,6 +513,7 @@ fn json_of_tree(value: &Js) -> Json {
             (crate::bindings::Binding::Event, _) | (_, None) => Json::Object(Map::new()),
             (_, Some(data)) => json_of_tree(&data),
         },
+        Js::File(file) => json_of_tree(&crate::file::descriptor(file)),
         Js::Bool(b) => json!(b),
         Js::Number(n) if !n.is_finite() => Json::Null,
         Js::Number(n) if *n == 0.0 => json!(0),

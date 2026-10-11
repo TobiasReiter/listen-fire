@@ -69,7 +69,7 @@ import {
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 
 
-import { fileHandle, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from '../adapter';
+import { fileHandle, isFileValue, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from '../adapter';
 import { BaseAdapter } from './base';
 import { stubTargetOf, type EdgesFromResult } from '../adapter';
 import { uniformWalk } from './hop';
@@ -3846,7 +3846,7 @@ export class AttioAdapter extends BaseAdapter {
   private async createFileFromWrite(input: WriteInput): Promise<WriteResult> {
     const parent = await this.requireAttachmentParent(input, 'a file');
     const value = input.fields['data'];
-    if (!isFileRef(value)) {
+    if (!isFileValue(value)) {
       throw new Error(
         `AttioAdapter.createRecord(File): the "File" field must carry a file value ` +
           `(an attachment's \`File\` read, or FILE(...)) — got ${typeof value}.`,
@@ -5296,27 +5296,14 @@ function pickStringField(
 }
 
 /**
- * Structural guard for a branded `FileRef`. Local copy — the brand check is the
- * whole contract, and keeping it inline avoids a cross-module import for a
- * one-line guard.
- */
-function isFileRef(value: unknown): value is FileRef {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as { __brand?: unknown }).__brand === 'FileRef'
-  );
-}
-
-/**
  * Split a write's `fields` into the file values to upload and the rest to
  * pass through to Attio's record values envelope.
  *
- * A `file`-kind field's value is a branded `FileRef` descriptor, redeemed
- * for its bytes on this side. Multi-cardinality file attributes arrive as an
- * array of `FileRef`s. Detection is by the brand, not the type descriptor:
- * Attio's attribute catalogue doesn't enumerate a file kind, so the descriptor
- * can't be trusted to mark these — and a branded `FileRef` is unambiguous.
+ * A `file`-kind field's value is a file the engine holds, redeemed for its
+ * bytes on this side. Multi-cardinality file attributes arrive as an array of
+ * them. Detection is by the engine's own mark (`isFileValue`), never the
+ * value's keys: Attio's attribute catalogue doesn't enumerate a file kind, and
+ * a dict that spells a descriptor is data the author wrote, not a file.
  *
  * The file fields are dropped from the passthrough payload because Attio has
  * no per-attribute file write — files attach to the record as a whole via
@@ -5380,11 +5367,11 @@ function partitionFileFields(fields: Record<string, unknown>): {
     if (value === null || value === undefined) {
       continue;
     }
-    if (isFileRef(value)) {
+    if (isFileValue(value)) {
       fileRefs.push(value);
       continue;
     }
-    if (Array.isArray(value) && value.length > 0 && value.every(isFileRef)) {
+    if (Array.isArray(value) && value.length > 0 && value.every(isFileValue)) {
       fileRefs.push(...value);
       continue;
     }

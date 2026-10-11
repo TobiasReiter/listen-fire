@@ -694,7 +694,7 @@ impl Run<'_> {
                     // object, and to nothing for one that is not.
                     if key == "__proto__" {
                         if op == CollectionOp::Keyby {
-                            if matches!(member, Js::Object(_) | Js::Array(_) | Js::Record(_) | Js::Function(_)) {
+                            if matches!(member, Js::Object(_) | Js::Array(_) | Js::Record(_) | Js::File(_) | Js::Function(_)) {
                                 filed.proto = Some(member.clone());
                             }
                             continue;

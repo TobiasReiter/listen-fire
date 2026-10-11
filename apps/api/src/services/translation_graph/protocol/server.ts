@@ -32,7 +32,7 @@
 //
 // Dependency-light by design: Node `http` types only, no express.
 
-import { MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from 'engine-contracts';
+import { fileValueOf, MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from 'engine-contracts';
 
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
@@ -349,7 +349,7 @@ export function createAdapterProtocolHandler(opts: {
         return;
       }
 
-      const result = await call(...args);
+      const result = await call(...(method === 'createRecord' || method === 'updateRecord' ? [await withDeclaredFiles(adapter, args[0])] : args));
       send(res, 200, { ok: true, result: result ?? null });
     } catch (err) {
       if (err instanceof AdapterBadRequestError) {
@@ -370,6 +370,34 @@ export function createAdapterProtocolHandler(opts: {
       );
     }
   };
+}
+
+/**
+ * A write as the in-process adapter takes it: each field the adapter's own
+ * catalog declares a file (`describe` of the written type) holds a file —
+ * the descriptor the wire spelled there, made one. Any other field's value is
+ * data, whatever keys it carries, exactly as it is on the host's side of the
+ * wire.
+ */
+async function withDeclaredFiles(adapter: Adapter, input: unknown): Promise<unknown> {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return input;
+  const recordType: unknown = Reflect.get(input, 'recordType');
+  const fields: unknown = Reflect.get(input, 'fields');
+  if (typeof recordType !== 'string' || fields === null || typeof fields !== 'object' || Array.isArray(fields)) return input;
+  const descriptor = await adapter.describe(recordType).catch(() => null);
+  const files = new Set(
+    (descriptor?.fields ?? []).filter((field) => field.kind === 'file').flatMap((field) => [field.fieldId, field.displayName]),
+  );
+  if (files.size === 0) return input;
+  const typed: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(fields)) {
+    typed[name] = !files.has(name)
+      ? value
+      : Array.isArray(value)
+        ? value.map((member) => fileValueOf(member) ?? member)
+        : (fileValueOf(value) ?? value);
+  }
+  return { ...input, fields: typed };
 }
 
 /**

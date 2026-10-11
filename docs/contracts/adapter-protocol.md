@@ -286,7 +286,9 @@ your `recordId`, and the `data` you attached when you returned it. Read from
 
 A position an automation produced, rather than read from you, also carries
 `originRef` (its `kind` is `extract`, `transform` or `resource`) and may carry
-`evidence` and `resources`. You may ignore all three.
+`evidence` and `resources`. You may ignore all three. A file ref inside them
+is in the wire's spelling ([Files](#files)): its owner type and handle, never
+Listen-Fire's credential or construction args.
 
 ### getRelated
 
@@ -663,25 +665,33 @@ neither, the method answers `method_not_implemented`.
 
 ## Files
 
-File bytes never ride the JSON envelope; they move by URL.
+File bytes never ride the JSON envelope; they move by URL. A file is what
+the envelope declares one, never a shape the data carries: a field your
+catalog declares `"kind": "file"` (in `describe`), or a resource's `fileRef`.
+A file ref anywhere else is data to Listen-Fire, whatever keys it carries.
 
-- **Into your system.** A write may carry a file (in `fields` or a resource's
-  `fileRef`) with a `url`:
+- **Into your system.** A write may carry a file (in a field you declare a
+  file, or a resource's `fileRef`) with a `url`:
 
   ```json
-  { "name": "deck.pdf", "contentType": "application/pdf", "source": { "ownerAdapterType": "email", "handle": "…" },
+  { "__brand": "FileRef", "name": "deck.pdf", "contentType": "application/pdf",
+    "source": { "ownerAdapterType": "email", "handle": "…" },
     "url": "https://listen-fire.example/api/files/blob/abc123" }
   ```
 
-  `GET` the `url` at write time; it is short-lived. The ref also carries
-  `"__brand": "FileRef"`, which marks it as a file.
+  `GET` the `url` at write time; it is short-lived. `__brand` is the ref's
+  spelling; the field it sits in is what makes it a file. The `source` names
+  the owner type and its handle only: no ref Listen-Fire sends names its
+  credential or construction args. The reference kit makes the value at each
+  field you declare a file a file before your code sees it.
 
-- **Out of your system.** Return a file ref whose `source` is
-  `{ "ownerAdapterType": "<your adapterType>", "handle": "<your id>" }`, and
-  implement `resolveFileRef`:
+- **Out of your system.** Return a file ref only at a field your catalog
+  declares a file. Its `source` is
+  `{ "ownerAdapterType": "<your adapterType>", "handle": "<your id>" }` (or a
+  `url` alone), and you implement `resolveFileRef`:
 
   ```json
-  { "ref": { "name": "deck.pdf", "source": { "ownerAdapterType": "acme_crm", "handle": "f_42" } } }
+  { "ref": { "__brand": "FileRef", "name": "deck.pdf", "source": { "ownerAdapterType": "acme_crm", "handle": "f_42" } } }
   ```
   →
   ```json
@@ -691,6 +701,9 @@ File bytes never ride the JSON envelope; they move by URL.
   Listen-Fire fetches the URL server-side, so it can be signed and
   short-lived. The reference kit answers `resolveFileRef` only for a ref that
   already carries a `url`; any other ref answers `method_not_implemented`.
+  A ref returned at a field you do not declare a file reaches Listen-Fire as
+  data: it is never read as a file (the conformance CLI's `files-declared`
+  check names such a field).
 
 ## Limits and timeouts
 
@@ -754,7 +767,8 @@ from the root, so no automation can walk the collection.
    envelopes (`bad_request` naming the method and path, `method_not_implemented`);
    `listEntryPoints`, `describe` and the natural names; `resolveEntity`,
    `getRelated`, `iterateRelatedPage` (paging), `getFieldValue`, `createRecord`,
-   `updateRecord`, `deleteRecord`; `resolveAwait`; the event subscription
+   `files-declared` (no field answers a file ref unless your catalog declares
+   it a file), `updateRecord`, `deleteRecord`; `resolveAwait`; the event subscription
    (a secret, a stable `externalId`); `listEventTypes`, `preprocessInbound`
    and `wakeKeys`; and the two push doors.
 
@@ -864,4 +878,5 @@ from the root, so no automation can walk the collection.
   - Params are validated, and a mismatch answers `bad_request` naming the path.
   - New: awaits (`resolveAwait`, `wakeKeys`), the two push doors (`emit`, `wake`), paging (`iterateRelatedPage`), and files by URL.
   - A webhook subscription must return a secret, and deliveries are signed.
+  - Clarified within version 2 (no bump; the reference adapter declares no file field, and conformance is unchanged for it): a file is read only at a field the catalog declares `kind: "file"` or in a resource's `fileRef`; a file ref anywhere else is data. File refs Listen-Fire sends (in a write, a position's resources, evidence) name no credential. The CLI gains `files-declared`.
 - **Version 1**: the first protocol. Not supported: an install that answers it is refused, naming the version.

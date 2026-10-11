@@ -38,7 +38,7 @@ import { z } from 'zod';
 import { neverAsAny } from '../../lib/utils/types';
 import type { LlmCallResult } from '../translation_graph/engine/batched_extraction/llm_call';
 import type { FileRef } from '../translation_graph/adapter';
-import { fileHandle, isFileRef } from '../translation_graph/adapter';
+import { fileHandle, isFileValue } from '../translation_graph/adapter';
 import type { Effort, ExtractionCallSettings, TierModel } from './ai_tiers';
 import {
   absentIfBlank,
@@ -610,7 +610,7 @@ async function contentItems(content: unknown, runtime: ExtractCallRuntime): Prom
   const items: ContentItem[] = [];
   for (const [index, value] of list.entries()) {
     if (value === null || value === undefined) continue;
-    if (isFileRef(value)) {
+    if (isFileValue(value)) {
       const file = await contentFile(value, runtime);
       const label = `file${value.name !== undefined ? ` "${value.name}"` : ''}`;
       items.push({

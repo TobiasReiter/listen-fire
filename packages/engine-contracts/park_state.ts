@@ -73,6 +73,8 @@ export interface ExtractEmissionDescriptor {
   /** `fields`' keys in declaration order — the parked state is jsonb, which
    *  reorders an object's keys. Absent on a park written before it was kept. */
   fieldOrder?: string[];
+  /** The fields that hold a file, each as its value descriptor (`FileFields`). */
+  fileFields?: FileFields;
   provenance: Record<string, ProvenanceOrigin>;
   origin?: ProvenanceOrigin;
   /** Layer-5 source resources (plain data; a FILE resource's `fileRef` is a
@@ -152,7 +154,15 @@ export type BindingDescriptor =
    *  closure's body is. */
   | { kind: 'localShape'; declaration: ShapeDeclaration }
   | { kind: 'movement'; name: string }
-  | { kind: 'shapePosition'; shape: string; node: string; fields: Record<string, unknown>; fieldProvenance: Record<string, Provenance> }
+  | {
+      kind: 'shapePosition';
+      shape: string;
+      node: string;
+      fields: Record<string, unknown>;
+      /** The fields that hold a file, each as its value descriptor (`FileFields`). */
+      fileFields?: FileFields;
+      fieldProvenance: Record<string, Provenance>;
+    }
   /** Bucket 3 (recursive) — a synthesised node. Its entry VALUES are already
    *  data; each edge is either landings (bindings, serialised like a
    *  meta-node's) or a deferred WALK. */
@@ -166,6 +176,8 @@ export type BindingDescriptor =
       /** Absent on a park written before the order was kept — the stored
        *  map's own keys stand in, in whatever order jsonb returned them. */
       fieldOrder?: string[];
+      /** The fields that hold a file, each as its value descriptor (`FileFields`). */
+      fileFields?: FileFields;
       fieldProvenance: Record<string, Provenance>;
       /** The edge of a run-built node this node landed on — what lets
        *  `write e { … }` update it in place after the resume. Absent for a
@@ -194,8 +206,22 @@ export type BindingDescriptor =
 export type ValueDescriptor =
   | { kind: 'data'; value: unknown }
   | { kind: 'record'; binding: BindingDescriptor }
+  /** A file the engine held: its descriptor, which a resume makes a file
+   *  again. A `data` value is data whatever its keys — a park written before
+   *  files were said to be holds a file's descriptor as data, and that resumes
+   *  as data. */
+  | { kind: 'file'; file: FileRef }
   | { kind: 'list'; of: ValueDescriptor[] }
   | { kind: 'map'; of: Record<string, ValueDescriptor> };
+
+/**
+ * A record's fields that hold a file, each as its value descriptor (`file`,
+ * or a list or map holding one), beside the fields themselves, which the park
+ * still writes whole as data. A resume makes those fields' files files again.
+ * Absent when no field holds a file, and on a park written before files were
+ * said to be — whose fields resume as data.
+ */
+export type FileFields = Record<string, ValueDescriptor>;
 
 export type NodeEdgeDescriptor =
   /** `landingShape` rides across because it is what a write AFTER the resume

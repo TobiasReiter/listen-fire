@@ -63,6 +63,8 @@ import {
   zonedDateString,
 } from '@listen-fire/shared/timezone';
 
+import { isMarkedFile } from './file_value';
+
 // ── Parameters ───────────────────────────────────────────────────────────────
 
 /**
@@ -969,14 +971,6 @@ function checkSerialiseFormat(format: string): string | undefined {
   }the formats are ${SERIALISE_FORMATS.map((f) => `"${f}"`).join(', ')}.`;
 }
 
-function isFileDescriptorSource(value: object): value is {
-  name?: unknown;
-  contentType?: unknown;
-  size?: unknown;
-} {
-  return (value as { __brand?: unknown }).__brand === 'FileRef';
-}
-
 /** The value as plain, ordered-by-key JSON data — everything JSON cannot say
  *  (a Date, a file, a non-finite number) already turned into what it should
  *  print as. */
@@ -998,12 +992,15 @@ function toStableJson(value: unknown): unknown {
   const obj = value as object;
   if (obj instanceof Date) return Number.isNaN(obj.getTime()) ? null : obj.toISOString();
   if (Array.isArray(obj)) return obj.map(toStableJson);
-  if (isFileDescriptorSource(obj)) {
+  // A file the engine made, by its mark: data carrying a file's keys prints
+  // as the keys it carries.
+  if (isMarkedFile(obj)) {
+    const file = obj as { name?: unknown; contentType?: unknown; size?: unknown };
     return {
-      contentType: toStableJson(obj.contentType),
+      contentType: toStableJson(file.contentType),
       kind: 'file',
-      name: toStableJson(obj.name),
-      size: toStableJson(obj.size),
+      name: toStableJson(file.name),
+      size: toStableJson(file.size),
     };
   }
   const entries = Object.entries(obj as Record<string, unknown>).sort(([a], [b]) =>

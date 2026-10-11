@@ -33,13 +33,14 @@
 // inline `data`. It lives here because the kg-seeded source was its first
 // consumer, but it carries no KG knowledge.
 
-import type { InstanceSchema } from 'movement-lang';
+import type { InstanceSchema, SchemaFieldType } from 'movement-lang';
 import type {
   Adapter,
   GetFieldValueInput,
   GetRelatedInput,
   RelatedResult,
 } from '../translation_graph/adapter';
+import { filesAtType } from '../translation_graph/adapter';
 import {
   META_RECORD_TYPE,
   isStablePosition,
@@ -107,6 +108,17 @@ export function stampedPositionName(input: {
   const concrete = input.position.recordType;
   if (concrete === null || concrete === undefined) return undefined;
   return input.schema?.positions[concrete] !== undefined ? concrete : undefined;
+}
+
+/** The type the instance's schema declares for a field of a position type. */
+export function declaredFieldType(
+  schema: InstanceSchema | undefined,
+  recordType: string | null,
+  field: string,
+): SchemaFieldType | undefined {
+  if (schema === undefined || recordType === null) return undefined;
+  const position = schema.positions[recordType];
+  return position !== undefined && Object.hasOwn(position.properties, field) ? position.properties[field] : undefined;
 }
 
 export function surfaceReadAdapter(input: {
@@ -194,7 +206,11 @@ export function surfaceReadAdapter(input: {
           // resolve the (also-natural) field against it — the field name
           // itself crosses verbatim (the adapter translates).
           const position = restamp(read.position, surfaceTypeOf(read.position) ?? undefined);
-          return target.getFieldValue({ ...read, position });
+          const value = await target.getFieldValue({ ...read, position });
+          // A file is what the catalog declares one: the answer at a field
+          // typed `file` (or a list of them) is made a file, and any other
+          // field's answer is data, whatever keys it carries.
+          return filesAtType(declaredFieldType(schema, position.recordType, read.fieldId), value);
         };
       }
       if (prop === 'getRelated') {

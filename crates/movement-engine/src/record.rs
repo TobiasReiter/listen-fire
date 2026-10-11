@@ -168,7 +168,7 @@ pub fn held_records(value: &Js, expr: &Expression) -> Option<Binding> {
 /// names included), `?? null`; anything else null.
 pub fn project(value: &Js, field: &str) -> Js {
     match value {
-        Js::Object(object) => nullish_to_null(js::object_property(object, field)),
+        Js::Object(object) | Js::File(object) => nullish_to_null(js::object_property(object, field)),
         _ => Js::Null,
     }
 }
@@ -323,6 +323,8 @@ pub fn get(value: &Js, key: &str) -> Result<Js, EvalError> {
     match value {
         Js::Undefined | Js::Null => Err(type_error(&format!("Cannot read properties of {} (reading '{key}')", value.to_js_string()))),
         Js::Object(object) => Ok(js::object_property(object, key)),
+        // A file's members, as a property of the TypeScript's file object.
+        Js::File(file) => Ok(js::object_property(file, key)),
         Js::Record(record) => match own_property(record, key)? {
             Js::Null if !matches!(key, "kind") => Ok(Js::Undefined),
             found => Ok(found),

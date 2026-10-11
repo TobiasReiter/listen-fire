@@ -134,7 +134,7 @@ import type {
   FileRef,
   Resource,
 } from '../translation_graph/adapter';
-import { fileHandle, isFileRef } from '../translation_graph/adapter';
+import { fileHandle, fileValueOf, isFileValue } from '../translation_graph/adapter';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { EngineClock, SegmentHost } from './run_context';
 import { hostInstanceOf } from './host_adapter';
@@ -2251,10 +2251,15 @@ async function evaluateFileFunction(
       'FILE() has nothing in scope that can render a file — this expression is being evaluated outside a run',
     );
   }
-  const ref = await ctx.renderFile({
+  const rendered = await ctx.renderFile({
     content: content.value == null ? '' : String(content.value),
     type,
   });
+  // The render's answer is a file by its envelope: `files.render` answers one.
+  const ref = fileValueOf(rendered);
+  if (ref === undefined) {
+    throw new MovementEngineError('MOVENG_RUNTIME', "FILE()'s render answered something that is not a file's descriptor");
+  }
   // The FileRef carries the content's trail: rendering transforms, so
   // the union survives and `direct` drops (no verbatim-quote claim).
   return {
@@ -2293,7 +2298,8 @@ async function evaluateReadFunction(
   // The argument may itself be absent (`file | absent` types fine). Reading
   // nothing is nothing — the seam is never asked.
   if (file.value == null) return { value: null, provenance: transformed(file.provenance) };
-  if (!isFileRef(file.value)) {
+  // A file the engine made, by its mark: a dict carrying a file's keys is data.
+  if (!isFileValue(file.value)) {
     throw new MovementEngineError(
       'MOVENG_RUNTIME',
       `READ() reads a file, and this is ${typeof file.value} — the checker should have caught this`,

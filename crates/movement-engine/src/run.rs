@@ -1874,6 +1874,10 @@ impl Run<'_> {
         let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
         let seed = &source.position;
         let value = self.call_adapter_at(&source.instance, "getFieldValue", &source.surface, vec![("fieldId", Js::str(field))]).await?;
+        // A file is what the catalog declares one (the read wrapper's
+        // `filesAtType`): any other field's answer is data, whatever its keys.
+        let declared = crate::file::declared_field_type(source.read.schema.as_ref(), crate::traverse::record_type(&source.surface).as_deref(), field);
+        let value = crate::file::files_at_type(declared, value);
         if value.is_nullish() && !seed.is_stable() {
             self.trace_miss_in(&source.instance_name, &seed.data, field);
         }
@@ -2467,7 +2471,7 @@ fn ai_answer(parsed: &Js) -> Js {
 
 fn event_get(value: &Js, key: &str) -> Js {
     match value {
-        Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
+        Js::Object(object) | Js::File(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
         _ => Js::Undefined,
     }
 }

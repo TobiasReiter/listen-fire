@@ -3,7 +3,7 @@
 // (crates/movement-engine/src/env.rs says the format), the plain-JSON check,
 // and the shim's own faults.
 
-import { isCallbackParamType, type CallbackParamSpec } from 'engine-contracts';
+import { fileValueOf, isCallbackParamType, isFileValue, type CallbackParamSpec } from 'engine-contracts';
 import { neverAsAny } from '../../lib/utils/types';
 import { binding, type Binding } from './expression';
 import type { Provenance, ProvenanceOrigin } from './provenance';
@@ -161,7 +161,9 @@ function bindingFromWire(descriptor: unknown): Binding {
  * they carry, numbered. A value is data or one of the engine's records, and
  * the two never share a form: every object the host writes is data, whatever
  * keys it carries; a record is only ever one the engine handed out
- * (`["x", id, descriptor]`), handed back by its id.
+ * (`["x", id, descriptor]`), handed back by its id. A file the engine holds
+ * crosses tagged (`["F", descriptor]`), both ways: the tag, never the
+ * descriptor's keys, is what makes it a file.
  */
 export class WireOut {
   /** `whole`: each value is written whole — a back-reference only within
@@ -230,6 +232,10 @@ export class WireOut {
 
   private composite(value: unknown): unknown {
     if (value === null || typeof value !== 'object') return value;
+    if (isFileValue(value)) {
+      const descriptor = this.write({ ...value });
+      return descriptor === REFUSED ? REFUSED : ['F', descriptor];
+    }
     const record = this.recordIds.get(value);
     if (record !== undefined) return ['x', record];
     const seen = this.ids.get(value);
@@ -317,6 +323,11 @@ export class WireOut {
         this.records.set(a, record);
         this.recordIds.set(record, a);
         return record;
+      }
+      case 'F': {
+        const file = fileValueOf(this.read(a, made));
+        if (file === undefined) throw new RustShimError("the engine handed the host a file whose descriptor is not one");
+        return file;
       }
       case 'l': {
         if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire list is ["l", id, items]');

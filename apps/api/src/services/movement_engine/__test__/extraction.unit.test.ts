@@ -141,7 +141,7 @@ import type {
   RuntimeCapabilities,
   ExternalRecordRef,
 } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
+import { containerAssociation, isFileValue } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { MutationContext } from '../../translation_graph/mutation_context';
 import { positionData } from '../../translation_graph/types';
@@ -2496,7 +2496,19 @@ const carryFileSchema = (): { catalog: CatalogSnapshot } => {
         dealflow_inbox: { adapters: ['email'] },
         acme_main: { adapters: ['attio'] },
       },
-      plugins: { vc_url_retrieval: { args: [], priced: true, fedArgs: [{ name: 'text', required: true }] } },
+      plugins: {
+        vc_url_retrieval: {
+          args: [],
+          priced: true,
+          fedArgs: [{ name: 'text', required: true }],
+          // What makes a fetched record's `file` a file: the plugin's output
+          // declares it one.
+          output: {
+            kind: 'records',
+            fields: { name: 'text', url: 'text', file: { kind: 'maybeAbsent', of: 'file' }, text: { kind: 'maybeAbsent', of: 'text' } },
+          },
+        },
+      },
     }),
   };
 };
@@ -2622,13 +2634,16 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
     const plainFileResources = (plain.resources ?? []).filter((r) => r.type === 'FILE');
     expect(plainFileResources).toHaveLength(1);
     expect(plainFileResources[0].name).toBe('pitch.pdf');
-    expect(plainFileResources[0].fileRef).toBe(deckRef); // byte channel preserved
+    // The descriptor the `file` field answered, made a file by that
+    // declaration: the byte channel preserved.
+    expect(plainFileResources[0].fileRef).toEqual(deckRef);
+    expect(isFileValue(plainFileResources[0].fileRef)).toBe(true);
 
-    // (b) The `_resources` carry write set the file field to the source FileRef —
-    //     the same FileRef object, so the bytes upload through streamFileRef.
+    // (b) The `_resources` carry write set the file field to the source file —
+    //     the same file object, so the bytes upload through streamFileRef.
     const carry = attio.creates[1];
     expect(carry.fields.name).toBe('Acme');
-    expect(carry.fields.deck).toBe(deckRef);
+    expect(carry.fields.deck).toBe(plainFileResources[0].fileRef);
   });
 
   it('an OCR-EMPTY source file still becomes a node resource AND carries forward to a file field', async () => {
@@ -2681,14 +2696,15 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
     expect(plain.fields).toEqual({ name: 'Acme' });
     const plainFileResources = (plain.resources ?? []).filter((r) => r.type === 'FILE');
     expect(plainFileResources).toHaveLength(1);
-    expect(plainFileResources[0].fileRef).toBe(deckRef);
+    expect(plainFileResources[0].fileRef).toEqual(deckRef);
+    expect(isFileValue(plainFileResources[0].fileRef)).toBe(true);
     expect(plainFileResources[0].content).toBeUndefined(); // no OCR text
 
     // (b) The `_resources` carry write set the file field to the SAME FileRef —
     //     bytes upload through streamFileRef even though OCR yielded nothing.
     const carry = attio.creates[1];
     expect(carry.fields.name).toBe('Acme');
-    expect(carry.fields.deck).toBe(deckRef);
+    expect(carry.fields.deck).toBe(plainFileResources[0].fileRef);
   });
 
   it('the documented `type == "FILE"` filter form selects ONLY the file resource', async () => {
@@ -2737,7 +2753,8 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
     // resource. A dropped filter would iterate the TEXT resource too (a third
     // create with an empty file field).
     expect(attio.creates).toHaveLength(2);
-    expect(attio.creates[1].fields.deck).toBe(deckRef);
+    expect(attio.creates[1].fields.deck).toEqual(deckRef);
+    expect(isFileValue(attio.creates[1].fields.deck)).toBe(true);
   });
 
   it('the WHERE is a real expression — resource fields and AND compose', async () => {
@@ -2782,7 +2799,8 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
     });
 
     expect(attio.creates).toHaveLength(2);
-    expect(attio.creates[1].fields.deck).toBe(deckRef);
+    expect(attio.creates[1].fields.deck).toEqual(deckRef);
+    expect(isFileValue(attio.creates[1].fields.deck)).toBe(true);
   });
 });
 

@@ -130,6 +130,7 @@ describe('adapter conformance CLI', () => {
         'getRelated',
         'iterateRelatedPage',
         'getFieldValue',
+        'files-declared',
         'updateRecord',
         'resolveAwait',
         'deleteRecord',

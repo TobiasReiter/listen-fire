@@ -40,7 +40,7 @@ import type { TriggerEvent } from '../../triggers/types';
 
 import { parseWhatsappEvents } from '../../../webhook_sync/providers/whatsapp';
 import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
-import { fileHandle, isFileRef, ownedFileSource, singleParentLink } from '../../adapter';
+import { fileHandle, isFileValue, ownedFileSource, singleParentLink } from '../../adapter';
 import { naturalName } from '../name_resolution';
 import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
@@ -809,7 +809,7 @@ export class WhatsappAdapter extends BaseAdapter implements Adapter {
       sentId = await this.apiFor(parent).sendInteractive(to, interactiveValue, {
         replyToMessageId: parent.externalId,
       });
-    } else if (isFileRef(fileValue)) {
+    } else if (isFileValue(fileValue)) {
       const resolved = await streamFileRef(fileValue, { teamId: this.teamId });
       const chunks: Buffer[] = [];
       for await (const chunk of resolved.stream) {
@@ -856,7 +856,7 @@ export class WhatsappAdapter extends BaseAdapter implements Adapter {
       data: {
         to,
         ...(bodyValue.length > 0 ? { body: bodyValue } : {}),
-        ...(isFileRef(fileValue) ? { file_name: fileValue.name ?? 'file' } : {}),
+        ...(isFileValue(fileValue) ? { file_name: fileValue.name ?? 'file' } : {}),
         ...(interactiveValue !== undefined ? { interactive: true } : {}),
         reply_to_message_id: parent.externalId,
       },

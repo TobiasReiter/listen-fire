@@ -943,7 +943,10 @@ impl Run<'_> {
                 Some("shapePosition") => Binding::ShapePosition(Rc::new(crate::bindings::ShapePosition {
                     shape: at(descriptor, "shape").cloned().unwrap_or(Js::Undefined),
                     node: at(descriptor, "node").cloned().unwrap_or(Js::Undefined),
-                    fields: at(descriptor, "fields").cloned().unwrap_or(Js::Undefined),
+                    fields: match (at(descriptor, "fields"), at(descriptor, "fileFields")) {
+                        (Some(Js::Object(fields)), Some(files)) => Js::object(with_file_fields(JsObject::clone_of(fields), Some(files))?),
+                        (fields, _) => fields.cloned().unwrap_or(Js::Undefined),
+                    },
                     field_provenance: at(descriptor, "fieldProvenance").cloned().unwrap_or(Js::Undefined),
                 })),
                 Some("resource") => Binding::Resource(Rc::new(rehydrate_resource(at(descriptor, "resource").unwrap_or(&Js::Undefined)))),
@@ -1011,6 +1014,7 @@ impl Run<'_> {
                 ordered.set(key.clone(), value.clone());
             }
         }
+        let ordered = with_file_fields(ordered, at(descriptor, "fileFields"))?;
         let mut provenance = Vec::new();
         for (field, trail) in pairs(at(descriptor, "fieldProvenance")) {
             provenance.push((field.clone(), self.rehydrate_trail(trail).map_err(|e| runtime(format!("the parked state holds {e}")))?));
@@ -1085,6 +1089,7 @@ impl Run<'_> {
                 }
             }
         }
+        let ordered = with_file_fields(ordered, at(descriptor, "fileFields"))?;
         let provenance = pairs(at(descriptor, "provenance")).iter().map(|(field, origin)| (field.clone(), self.mint_origin(origin.clone()))).collect();
         let origin = at(descriptor, "origin").map(|origin| self.mint_origin(origin.clone()));
         let resources = items(at(descriptor, "resources")).iter().map(rehydrate_resource).collect();
@@ -1104,6 +1109,7 @@ impl Run<'_> {
         Box::pin(async move {
             Ok(match text(at(descriptor, "kind")) {
                 Some("record") => crate::record::held(self.rehydrate(at(descriptor, "binding").unwrap_or(&Js::Undefined), park).await?),
+                Some("file") => revived_file(at(descriptor, "file"))?,
                 Some("list") => {
                     let mut out = Vec::new();
                     for entry in items(at(descriptor, "of")) {
@@ -1211,22 +1217,62 @@ pub(crate) fn rematerialise_answer(answer: Js) -> Binding {
     Binding::Extracted { emission: emission(JsObject::new(), vec![(type_name.clone(), kids)]), root: true, id: crate::bindings::Identity::new() }
 }
 
-/// `rehydrateResource`: a file's descriptor branded again.
+/// `rehydrateResource`: a parked resource, its `fileRef` slot (typed: its
+/// file, branded or not) a file again, and its `data.file` that same file.
 fn rehydrate_resource(descriptor: &Js) -> Js {
     let Js::Object(object) = descriptor else { return descriptor.clone() };
+    let file = object.get("fileRef").filter(|f| !matches!(f, Js::Undefined)).and_then(crate::file::file_value_of);
     let mut out = JsObject::new();
     for (key, value) in object.entries() {
         if key == "fileRef" {
             continue;
         }
-        out.set(key.clone(), value.clone());
+        match (key.as_str(), value, &file) {
+            ("data", Js::Object(data), Some(file)) if data.get("file").is_some() => {
+                let mut data = JsObject::clone_of(data);
+                data.set("file".into(), file.clone());
+                out.set(key.clone(), Js::object(data));
+            }
+            _ => out.set(key.clone(), value.clone()),
+        }
     }
-    if let Some(Js::Object(file)) = object.get("fileRef") {
-        let mut branded = JsObject::clone_of(file);
-        branded.set("__brand".into(), Js::str("FileRef"));
-        out.set("fileRef".into(), Js::object(branded));
+    if let Some(file) = file {
+        out.set("fileRef".into(), file);
     }
     Js::object(out)
+}
+
+/// A parked `file`: a file again, by the descriptor that said so.
+fn revived_file(descriptor: Option<&Js>) -> Result<Js, Stop> {
+    let descriptor = descriptor.cloned().unwrap_or(Js::Undefined);
+    crate::file::file_value_of(&descriptor).ok_or_else(|| {
+        Stop::Thrown(crate::run::Failure::engine("MOVENG_PARK_NONSERIALIZABLE", format!("a parked file is not a file's descriptor: {}", crate::js::json_stringify(&descriptor, 0))))
+    })
+}
+
+/// `withFileFields`: the fields a park said hold a file made whole again,
+/// each in its place.
+fn with_file_fields(mut fields: JsObject, file_fields: Option<&Js>) -> Result<JsObject, Stop> {
+    for (key, descriptor) in pairs(file_fields) {
+        fields.set(key.clone(), revived_field_value(descriptor)?);
+    }
+    Ok(fields)
+}
+
+fn revived_field_value(descriptor: &Js) -> Result<Js, Stop> {
+    Ok(match text(at(descriptor, "kind")) {
+        Some("file") => revived_file(at(descriptor, "file"))?,
+        Some("list") => Js::array(items(at(descriptor, "of")).iter().map(revived_field_value).collect::<Result<_, _>>()?),
+        Some("map") => {
+            let mut out = JsObject::new();
+            for (key, entry) in pairs(at(descriptor, "of")) {
+                out.set(key.clone(), revived_field_value(entry)?);
+            }
+            Js::object(out)
+        }
+        Some("record") => return Err(runtime("a parked field holds a record, which no field can".into())),
+        _ => at(descriptor, "value").cloned().unwrap_or(Js::Undefined),
+    })
 }
 
 /// `combinatorOf`: the `race([…])` / `parallel([…])` a statement carries

@@ -10,7 +10,7 @@ import { PROTOCOL_VERSION } from 'engine-contracts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Adapter, GetRelatedInput, RelatedPage, RelatedResult } from '../../adapter';
 
-import { BASE_RUNTIME_CAPABILITIES } from '../../adapter';
+import { BASE_RUNTIME_CAPABILITIES, isFileValue } from '../../adapter';
 import { makeMetaPosition, makeStablePosition } from '../../types';
 import { AdapterBadRequestError, createAdapterProtocolHandler, DRAINED_PAGE_LIMIT } from '../server';
 
@@ -349,5 +349,44 @@ describe('every member the remote adapter sends passes the gate and reaches the 
     const { status, body } = await rpc(handler, 'getRelated', { position: company });
     expect(status).toBe(200);
     expect(body).toMatchObject({ ok: false, error: { code: 'bad_request', retryable: false } });
+  });
+});
+
+describe("a write's files are what the adapter's own catalog declares", () => {
+  const received: unknown[] = [];
+  const handler = createAdapterProtocolHandler({
+    adapter: baseAdapter({
+      describe: async (typeId) =>
+        typeId === 'Doc'
+          ? {
+              typeId: 'Doc',
+              displayName: 'Doc',
+              fields: [
+                { fieldId: 'deck', displayName: 'Deck', kind: 'file', writable: true, required: false },
+                { fieldId: 'meta', displayName: 'Meta', kind: 'json', writable: true, required: false },
+              ],
+              references: [],
+            }
+          : null,
+      createRecord: async (input) => {
+        received.push(input);
+        return { adapterType: 'paged_crm', externalId: 'd-1', recordType: 'Doc', data: {} };
+      },
+    }),
+  });
+  const spelled = { __brand: 'FileRef', name: 'deck.pdf', url: 'https://example.test/f' };
+
+  it('a declared file field holds a file; the same descriptor anywhere else is data', async () => {
+    const write = {
+      recordType: 'Doc',
+      fields: { deck: spelled, meta: spelled },
+      mutationContext: { source: {}, occurredAt: '2026-10-11T00:00:00.000Z' },
+    };
+    expect((await rpc(handler, 'createRecord', write)).body).toMatchObject({ ok: true });
+    const { fields } = received[0] as { fields: { deck: unknown; meta: unknown } };
+    expect(isFileValue(fields.deck)).toBe(true);
+    expect(fields.deck).toEqual(spelled);
+    expect(isFileValue(fields.meta)).toBe(false);
+    expect(fields.meta).toEqual(spelled);
   });
 });

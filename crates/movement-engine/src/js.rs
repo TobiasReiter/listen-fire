@@ -27,6 +27,11 @@ pub enum Js {
     /// collection op's answer), which `bindingOf` reads back as the record.
     /// To every other JavaScript operation it is a plain object.
     Record(Rc<crate::bindings::Binding>),
+    /// A file the engine holds (crate::file): its descriptor, made a file at
+    /// an envelope that declares one. To JavaScript it is an object that is
+    /// no dict (an instance of the TypeScript engine's file class): its
+    /// members read, `JSON.stringify` writes them, a spread refuses it.
+    File(Rc<JsObject>),
     /// A function `Object.prototype` holds, or `Object` itself: what reading
     /// one of `OBJECT_PROTOTYPE_NAMES` off a plain object finds.
     Function(NativeFunction),
@@ -229,7 +234,7 @@ impl JsObject {
         if key != "__proto__" {
             return self.set(key, value);
         }
-        if matches!(value, Js::Object(_) | Js::Array(_) | Js::Record(_) | Js::Function(_) | Js::Null) {
+        if matches!(value, Js::Object(_) | Js::Array(_) | Js::Record(_) | Js::File(_) | Js::Function(_) | Js::Null) {
             self.proto = Some(value);
         }
     }
@@ -291,7 +296,7 @@ impl Js {
             Js::Bool(b) => *b,
             Js::Number(n) => !(n.is_nan() || *n == 0.0),
             Js::String(s) => !s.is_empty(),
-            Js::Array(_) | Js::Object(_) | Js::Record(_) | Js::Function(_) => true,
+            Js::Array(_) | Js::Object(_) | Js::Record(_) | Js::File(_) | Js::Function(_) => true,
         }
     }
 
@@ -299,7 +304,7 @@ impl Js {
     pub fn type_of(&self) -> &'static str {
         match self {
             Js::Undefined => "undefined",
-            Js::Null | Js::Array(_) | Js::Object(_) | Js::Record(_) => "object",
+            Js::Null | Js::Array(_) | Js::Object(_) | Js::Record(_) | Js::File(_) => "object",
             Js::Function(_) => "function",
             Js::Bool(_) => "boolean",
             Js::Number(_) => "number",
@@ -320,7 +325,7 @@ impl Js {
             Js::Array(array) => joining(Rc::as_ptr(array).cast(), String::new, || {
                 array.items().iter().map(|item| if item.is_nullish() { String::new() } else { item.to_js_string() }).collect::<Vec<_>>().join(",")
             }),
-            Js::Object(_) | Js::Record(_) => "[object Object]".into(),
+            Js::Object(_) | Js::Record(_) | Js::File(_) => "[object Object]".into(),
             Js::Function(function) => function.source_text(),
         }
     }
@@ -353,7 +358,7 @@ impl Js {
             Js::Number(n) => *n,
             Js::String(s) => string_to_number(s),
             Js::Array(_) => string_to_number(&self.to_js_string()),
-            Js::Object(_) | Js::Record(_) | Js::Function(_) => f64::NAN,
+            Js::Object(_) | Js::Record(_) | Js::File(_) | Js::Function(_) => f64::NAN,
         }
     }
 }
@@ -472,6 +477,7 @@ pub fn strict_equals(a: &Js, b: &Js) -> bool {
         (Js::Array(x), Js::Array(y)) => Rc::ptr_eq(x, y),
         (Js::Object(x), Js::Object(y)) => Rc::ptr_eq(x, y),
         (Js::Record(x), Js::Record(y)) => x.is(y),
+        (Js::File(x), Js::File(y)) => Rc::ptr_eq(x, y),
         (Js::Function(x), Js::Function(y)) => x == y,
         _ => false,
     }
@@ -828,6 +834,8 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
                 out.push_str("{}");
             }
         },
+        // A file's members, as `JSON.stringify` writes a class instance's.
+        Js::File(file) => write_json(&crate::file::descriptor(file), indent, depth, out, held),
         Js::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Js::Number(n) => out.push_str(&if n.is_finite() { number_to_string(*n) } else { "null".into() }),
         Js::String(s) => out.push_str(&json_quote(s)),

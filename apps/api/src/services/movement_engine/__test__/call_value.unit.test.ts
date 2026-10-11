@@ -93,7 +93,7 @@ import {
   type Resource,
 } from '../../translation_graph/adapter';
 import type { FileRef } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
+import { containerAssociation, isFileValue } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
@@ -386,9 +386,10 @@ describe('the utility idiom — one movement shapes, another writes', () => {
     expect(dropbox.creates).toHaveLength(1);
     // The shaper's names reached the writer — which never learned the source's.
     expect(dropbox.creates[0].fields.filename).toBe('pitch.pdf');
-    // IDENTITY: the handle the SOURCE produced is the handle the writer wrote.
+    // The file the SOURCE's `file` field made is the file the writer wrote.
     // Crossing a call boundary renamed nothing and copied nothing.
-    expect(dropbox.creates[0].fields.data).toBe(deck.data);
+    expect(dropbox.creates[0].fields.data).toEqual(deck.data);
+    expect(isFileValue(dropbox.creates[0].fields.data)).toBe(true);
 
     // The trail names the real source read. A call's value is its bindings, and
     // each binding still carries the provenance of the expression that made it.

@@ -59,8 +59,11 @@ impl Emission {
             ("nodeName", Js::str(self.node_name.clone())),
             ("fields", Js::object(JsObject::clone_of(&self.fields))),
             ("fieldOrder", Js::array(self.fields.entries().iter().map(|(k, _)| Js::str(k.clone())).collect())),
-            ("provenance", Js::object(provenance)),
         ];
+        if let Some(files) = crate::file::file_fields_of(&self.fields) {
+            members.push(("fileFields", files));
+        }
+        members.push(("provenance", Js::object(provenance)));
         if let Some(id) = self.origin {
             members.push(("origin", origin(id)));
         }
@@ -367,7 +370,7 @@ fn traced_value(value: &Js) -> Js {
     let text = match value {
         Js::Undefined | Js::Null => return Js::Null,
         Js::String(text) => text.clone(),
-        Js::Array(_) | Js::Object(_) => js::json_stringify(value, 0),
+        Js::Array(_) | Js::Object(_) | Js::File(_) => js::json_stringify(value, 0),
         other => other.to_js_string(),
     };
     Js::str(cut(&text, TRACE_VALUE_CHARS))

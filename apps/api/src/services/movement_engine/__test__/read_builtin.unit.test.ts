@@ -21,21 +21,23 @@ import {
   type MovementTraceEntry,
 } from '../expression';
 import { buildExtractSpec, materializeExtract, type ExtractRuntime } from '../extraction';
-import type { FileRef } from '../../translation_graph/adapter';
+import { fileValue, type FileRef, type FileValue } from '../../translation_graph/adapter';
 import type { LlmCallInput, LlmCallResult } from '../../translation_graph/engine/batched_extraction';
 import type { ExtractExpression, ExtractStage } from 'movement-lang';
 
 const SPAN: Span = { start: { line: 1, col: 1 }, end: { line: 1, col: 1 } };
 
-function fileRef(over: Partial<FileRef> = {}): FileRef {
-  return {
+/** A file as the engine holds it: made at a typed entry (an attachment's
+ *  `file` field), never a dict that spells one. */
+function fileRef(over: Partial<FileRef> = {}): FileValue {
+  return fileValue({
     __brand: 'FileRef',
     name: 'deck.pdf',
     contentType: 'application/pdf',
     size: 1234,
     source: { adapterType: 'email', handle: 'attachment-1' },
     ...over,
-  };
+  });
 }
 
 /** Evaluate an expression with `attachment` bound and a stubbed file seam. */

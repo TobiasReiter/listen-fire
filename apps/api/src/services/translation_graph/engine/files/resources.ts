@@ -22,7 +22,7 @@ import type {
 } from '../../adapter';
 import type { SourcePosition } from '../../types';
 
-import { RESOURCES_REFERENCE_FIELD_ID } from '../../adapter';
+import { fileValueOf, RESOURCES_REFERENCE_FIELD_ID } from '../../adapter';
 import { positionData } from '../../types';
 
 /**
@@ -48,8 +48,28 @@ export async function resolvePositionResources(input: {
   });
   const resources = related
     .map((r) => positionData(r.position) as Resource | null | undefined)
-    .filter((r): r is Resource => r != null);
+    .filter((r): r is Resource => r != null)
+    .map(withResourceFile);
   return (await stampResourceIds(resources, input.mintIds)).filter((r) => matchesResourceFilter(r, input.filter));
+}
+
+/**
+ * A resource as the run holds it: its `fileRef` slot is typed, so whatever
+ * descriptor it holds is the resource's file, made one here (and so is its
+ * `data.file`, the same file as the resource's fields expose it). A slot that
+ * spells no descriptor is dropped rather than carried as a file. Nothing else
+ * in the resource is ever a file, whatever its keys.
+ */
+export function withResourceFile(resource: Resource): Resource {
+  if (resource.fileRef === undefined) return resource;
+  const file = fileValueOf(resource.fileRef);
+  if (file === undefined) {
+    const { fileRef: _dropped, ...rest } = resource;
+    return rest;
+  }
+  const data = resource.data !== undefined && Object.hasOwn(resource.data, 'file') ? { ...resource.data, file } : resource.data;
+  // In the resource's own key order: each slot keeps its place.
+  return { ...resource, fileRef: file, ...(data !== undefined ? { data } : {}) };
 }
 
 /** `count` fresh ids. */

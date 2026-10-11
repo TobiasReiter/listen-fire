@@ -399,18 +399,25 @@ describe('a file bound before an ordinary timer park', () => {
     await h.start();
     const [park] = [...h.parks.parks.values()];
     const content = park?.state.scopeChain.flatMap((scope) => Object.entries(scope.bindings)).find(([name]) => name === 'content');
-    // Metadata, the owner and its handle — the descriptor as the run held it.
+    // Metadata, the owner and its handle — the descriptor as the run held it,
+    // said to be a file (a descriptor parked as data resumes as data).
     expect(content?.[1]).toMatchObject({
-      kind: 'value',
-      value: [
-        'Intros',
-        {
-          __brand: 'FileRef',
-          name: 'memo.pdf',
-          contentType: 'application/pdf',
-          source: { adapterType: 'email', handle: 'att-key-1' },
-        },
-      ],
+      kind: 'recordValue',
+      value: {
+        kind: 'list',
+        of: [
+          { kind: 'data', value: 'Intros' },
+          {
+            kind: 'file',
+            file: {
+              __brand: 'FileRef',
+              name: 'memo.pdf',
+              contentType: 'application/pdf',
+              source: { adapterType: 'email', handle: 'att-key-1' },
+            },
+          },
+        ],
+      },
     });
   });
 

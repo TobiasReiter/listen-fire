@@ -29,7 +29,7 @@ import {
   type Program,
   type ShapeDeclaration,
 } from 'movement-lang';
-import { isFileRef, type ParkedScopeState } from 'engine-contracts';
+import { fileValueOf, isFileValue, type ParkedScopeState } from 'engine-contracts';
 import { z } from 'zod';
 
 import { compareValues } from '#shared/expression/filter';
@@ -303,9 +303,11 @@ const ROUTES: Record<string, Route> = {
   /** A source file's text, a priced call: the descriptor on the eval wire. */
   async 'files.resolveFileText'(request, { host, context, wire }) {
     if (request.wire !== true) throw new RustShimError('files.resolveFileText carries its file on the eval wire');
+    // A file the engine made crosses tagged (`["F", descriptor]`); a dict with
+    // a file's keys is data, and is no file to read.
     const file = wire.read(request.file);
-    if (!isFileRef(file)) throw new RustShimError('files.resolveFileText file is a FileRef');
-    const answer = await host.files.resolveFileText({ file, segmentId: segmentOf(request), budget: budgetOf(request.budget) });
+    if (!isFileValue(file)) throw new RustShimError('files.resolveFileText file is a file the engine holds');
+    const answer = await host.files.resolveFileText({ file: { ...file }, segmentId: segmentOf(request), budget: budgetOf(request.budget) });
     context.ledger.charge(answer.cost);
     return new Plain(wired(wire, answer, 'files.resolveFileText', ['text', 'rawTextId', 'detail']));
   },
@@ -334,7 +336,10 @@ const ROUTES: Record<string, Route> = {
   async 'files.render'(request, { host, wire }) {
     const type = request.type;
     if (type !== 'pdf' && type !== 'text') throw new RustShimError('files.render type is "pdf" or "text"');
-    const ref = await host.files.render({ content: string(request.content, 'files.render content'), type, segmentId: segmentOf(request) });
+    const rendered = await host.files.render({ content: string(request.content, 'files.render content'), type, segmentId: segmentOf(request) });
+    // The render's answer is a file by its envelope: it crosses as one.
+    const ref = fileValueOf(rendered);
+    if (ref === undefined) throw new RustShimError("files.render answered something that is not a file's descriptor");
     const value = wire.value(ref);
     if (value === REFUSED) throw new RustShimError('files.render answered a descriptor the eval wire cannot carry as itself');
     return new Plain(value);

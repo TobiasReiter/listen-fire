@@ -661,7 +661,7 @@ fn text_slug(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
 }
 
 fn text_pairs(record: &Js, separator: &Js) -> Js {
-    let Js::Object(record) = record else { return Js::Null };
+    let (Js::Object(record) | Js::File(record)) = record else { return Js::Null };
     let separator = match separator {
         Js::String(s) => s.as_str(),
         _ => " | ",
@@ -670,7 +670,7 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
         .entries()
         .iter()
         // A nested node or edge (an object or list) is skipped, not printed.
-        .filter(|(_, v)| !matches!(v, Js::Array(_) | Js::Object(_)))
+        .filter(|(_, v)| !matches!(v, Js::Array(_) | Js::Object(_) | Js::Record(_) | Js::File(_)))
         .map(|(k, v)| format!("{k}={}", if v.is_nullish() { String::new() } else { v.to_js_string() }))
         .collect();
     Js::String(parts.join(separator))
@@ -678,7 +678,8 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
 
 /// `toStableJson`: keys sorted by UTF-16 code unit (and then laid out as an
 /// object lays them out: index keys first), `-0` as `0`, non-finite numbers
-/// and absence as null, a `FileRef` as its descriptor.
+/// and absence as null, a file the engine holds as its descriptor (a dict
+/// with a file's keys is a dict).
 fn to_stable_json(value: &Js) -> Js {
     match value {
         Js::Undefined | Js::Null | Js::Function(_) => Js::Null,
@@ -687,15 +688,16 @@ fn to_stable_json(value: &Js) -> Js {
         Js::Bool(_) | Js::String(_) => value.clone(),
         Js::Number(n) => if n.is_finite() { Js::Number(*n + 0.0) } else { Js::Null },
         Js::Array(list) => Js::array(list.items().iter().map(to_stable_json).collect()),
+        Js::File(file) => {
+            let mut out = JsObject::new();
+            for key in ["contentType", "kind", "name", "size"] {
+                let field = if key == "kind" { Js::str("file") } else { file.get(key).map_or(Js::Null, to_stable_json) };
+                out.set(key.into(), field);
+            }
+            Js::object(out)
+        }
         Js::Object(object) => {
             let mut out = JsObject::new();
-            if matches!(object.get("__brand"), Some(Js::String(brand)) if brand == "FileRef") {
-                for key in ["contentType", "kind", "name", "size"] {
-                    let field = if key == "kind" { Js::str("file") } else { object.get(key).map_or(Js::Null, to_stable_json) };
-                    out.set(key.into(), field);
-                }
-                return Js::object(out);
-            }
             let mut entries: Vec<&(String, Js)> = object.entries().iter().collect();
             entries.sort_by(|(a, _), (b, _)| js::utf16_cmp(a, b));
             for (key, item) in entries {

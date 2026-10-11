@@ -71,11 +71,15 @@ const path = require('node:path');
 // runs refused as write_field_record are values admission cannot tell from
 // records (a closure's record parameter, a graph built from a spread, an
 // awaited receipt), not records the rule refuses; the floors stay those less
-// a margin of 2. A floor
+// a margin of 2. PLAN-07A Task 4d (a file is what the envelope declares, never
+// a shape the data carries, 2026-10-11) leaves v1 1182, v2 1493, v3 2549
+// whole: the drop is the triaged corpus cases that handed the engine a
+// descriptor-shaped dict as a file (6 / 6 / 7 of them ran whole), skipped now,
+// not runs Rust newly refuses; the floors are those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 1186, v2: 1497, v3: 2554 };
+const RAN_WHOLE_FLOOR = { v1: 1180, v2: 1491, v3: 2547 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

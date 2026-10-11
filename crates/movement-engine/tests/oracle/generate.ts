@@ -66,6 +66,7 @@ import {
   stdlibFunctionById,
 } from '../../../../packages/movement-lang/expression/stdlib';
 import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
+import { fileValue, isFileValue } from '../../../../packages/engine-contracts/file_ref';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import { writeExtractionOracle } from './extraction_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
@@ -87,6 +88,8 @@ function wire(value: unknown): unknown {
     return value;
   }
   if (Array.isArray(value)) return ['l', 0, value.map(wire)];
+  // A file the engine holds crosses tagged, as the eval wire carries it.
+  if (isFileValue(value)) return ['F', wire({ ...value })];
   if (value !== null && typeof value === 'object') {
     return ['o', 0, Object.entries(value).map(([k, v]) => [k, wire(v)])];
   }
@@ -181,7 +184,10 @@ stdlib('text.pairs', cross([{ name: 'Acme', url: 'acme.com' }, { a: 1, b: null, 
 stdlib('text.serialise', [
   ...VALUES.map((v) => [v, 'JSON']),
   [{ z: { b: 2, a: [1, -0, NaN] }, '10': 'ten', '9': 'nine', é: 1, e: 2 }, 'JSON'],
+  // A dict that spells a descriptor is a dict: its keys print.
   [{ __brand: 'FileRef', name: 'a.pdf', size: 3, extra: 1 }, 'JSON'],
+  // A file the engine holds prints as a file.
+  [fileValue({ __brand: 'FileRef', name: 'a.pdf', size: 3, source: { store: 'document', objectUri: 's3://x/a.pdf' } }), 'JSON'],
   [1, 'json'], [1, undefined], [1, 7], [1, { a: 1 }],
 ]);
 

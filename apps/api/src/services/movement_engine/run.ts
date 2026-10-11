@@ -2565,6 +2565,7 @@ class Interpreter {
       segmentId: prepared.context.segmentId,
       ledger: prepared.context.ledger,
       plugins: input.catalog.plugins,
+      languageVersion: prepared.context.languageVersion,
     });
     this.effectLocks = new EffectLocks({ crossRun: prepared.context.locks });
     this.runTrace = prepared.context.trace.entries;

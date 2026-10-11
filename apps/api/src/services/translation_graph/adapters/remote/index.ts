@@ -7,10 +7,14 @@
 // edge display names) the in-process interface does, so nothing is translated
 // here. The remote server resolves names to its own internal ids exactly as an
 // in-process adapter does on the first line of each method. The only rewriting
-// is transport: FileRefs written into the remote are exposed at a fetchable
-// URL, and FileRefs read back are named as files this install owns, redeemed
-// through `resolveFileRef`. The wire keeps its own FileRef spelling
-// (`source: { ownerAdapterType, handle }`, no credential).
+// is transport: files written into the remote are exposed at a fetchable URL;
+// a file read back — ONLY at a field the remote's own catalog declares a file
+// (`describe`), or in a resource's `fileRef` slot — is named as a file this
+// install owns, redeemed through `resolveFileRef`; anything else it answers is
+// data, whatever its keys. The wire keeps its own FileRef spelling
+// (`source: { ownerAdapterType, handle }`): no file this side sends — in a
+// write, or in a position's resources and evidence — names a credential or
+// construction args.
 //
 // Construction is synchronous: the manifest is fetched once at install time
 // (`fetchRemoteManifest`) and passed IN, so the engine can read
@@ -59,6 +63,7 @@ import type {
   WriteInput,
   WriteResult,
   ExternalRecordRef,
+  FieldEvidence,
   ParentAssociation,
   LinkRecordsInput,
   LinkRecordsResult,
@@ -89,8 +94,10 @@ import { DOCUMENT_STORE_OWNER } from '../../engine/files/document_store';
 import { fileOwner, hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import { exposeFile } from '../../engine/files/expose';
 import {
-  isFileRef,
+  fileDescriptorOf,
+  isFileValue,
   iterateRelatedPages,
+  RESOURCES_REFERENCE_FIELD_ID,
   ownedFileSource,
   unsupportedAssociation,
   writeParentLinks,
@@ -265,7 +272,7 @@ export class RemoteAdapter implements Adapter {
    *  manifest doesn't advertise it. */
   async edgesFrom(position: SourcePosition, cursor?: unknown): Promise<EdgesFromResult | null> {
     return this.call('edgesFrom', {
-      position,
+      position: wirePosition(position),
       ...(cursor !== undefined ? { cursor } : {}),
     }) as Promise<EdgesFromResult | null>;
   }
@@ -275,38 +282,73 @@ export class RemoteAdapter implements Adapter {
   }
 
   async getFieldValue(input: GetFieldValueInput): Promise<unknown> {
-    return this.filesFromWire(await this.call('getFieldValue', input));
+    const value = await this.call('getFieldValue', { ...input, position: wirePosition(input.position) });
+    // A scalar is no file whatever the catalog says: no need to ask it.
+    if (value === null || typeof value !== 'object') return value;
+    const field = await this.declaredField(input.position.recordType, input.fieldId);
+    if (field?.kind !== 'file') return value;
+    return Array.isArray(value) ? value.map((member) => this.ownedFile(member)) : this.ownedFile(value);
+  }
+
+  /** The remote's own catalog entries, by type, asked once each. */
+  private readonly described = new Map<string, Promise<SchemaTypeDescriptor | null>>();
+
+  /** The field a read names, as the remote's catalog declares it on the
+   *  position's type — by its natural name or its id. */
+  private async declaredField(
+    recordType: string | null,
+    fieldId: string,
+  ): Promise<SchemaTypeDescriptor['fields'][number] | undefined> {
+    if (recordType === null) return undefined;
+    let descriptor = this.described.get(recordType);
+    if (descriptor === undefined) {
+      descriptor = this.describe(recordType).catch(() => null);
+      this.described.set(recordType, descriptor);
+    }
+    return (await descriptor)?.fields.find((field) => field.displayName === fieldId || field.fieldId === fieldId);
   }
 
   /**
-   * A FileRef read off the wire names its file by the remote's own handle
-   * (`{ ownerAdapterType, handle }`); this side's descriptor names the owning
-   * INSTANCE — this remote install, with its credential — so the host can
-   * resolve it again to redeem the handle through `resolveFileRef`. The wire
-   * makes `source` optional: a file that arrives with only a `url` is named by
-   * that url, and `resolveFileRef` sends it back as before (the reference kit
-   * answers with the ref's url). Deep, because a file can sit anywhere in a
-   * list or a record.
+   * A file read off the wire, at a field the remote declares a file: its
+   * descriptor names the file by the remote's own handle (`{ ownerAdapterType,
+   * handle }`); this side's names the owning INSTANCE — this remote install,
+   * with its credential — so the host can resolve it again to redeem the handle
+   * through `resolveFileRef`. The wire makes `source` optional: a file that
+   * arrives with only a `url` is named by that url, and `resolveFileRef` sends
+   * it back as before (the reference kit answers with the ref's url). A value
+   * there that spells no descriptor stays as it came. The engine makes the
+   * descriptor a file by the same declaration (its catalog snapshot).
    */
-  private filesFromWire(value: unknown): unknown {
-    return mapFileRefs(value, (ref) => {
-      const { source, ...rest } = ref;
-      const handle = wireHandle(source) ?? (typeof rest.url === 'string' ? rest.url : undefined);
-      return handle === undefined
-        ? rest
-        : {
-            ...rest,
-            source: ownedFileSource({
-              adapterType: this.adapterType,
-              credentialsId: this.config.credentialsId,
-              handle,
-            }),
-          };
-    });
+  private ownedFile(value: unknown): unknown {
+    const ref = fileDescriptorOf(value);
+    if (ref === undefined) return value;
+    const { source, ...rest } = ref;
+    const handle = wireHandle(source) ?? (typeof rest.url === 'string' ? rest.url : undefined);
+    return handle === undefined
+      ? rest
+      : {
+          ...rest,
+          source: ownedFileSource({
+            adapterType: this.adapterType,
+            credentialsId: this.config.credentialsId,
+            handle,
+          }),
+        };
   }
 
-  getRelated(input: GetRelatedInput): Promise<RelatedResult[]> {
-    return this.call('getRelated', input) as Promise<RelatedResult[]>;
+  async getRelated(input: GetRelatedInput): Promise<RelatedResult[]> {
+    const related = (await this.call('getRelated', { ...input, position: wirePosition(input.position) })) as RelatedResult[];
+    return input.fieldId === RESOURCES_REFERENCE_FIELD_ID ? related.map((r) => this.ownedResource(r)) : related;
+  }
+
+  /** A resource the remote answered: its `fileRef` slot (typed — whatever it
+   *  holds is that resource's file) named as a file this install owns. */
+  private ownedResource(related: RelatedResult): RelatedResult {
+    const identity = related.position.identity;
+    const data: unknown = identity.data;
+    if (typeof data !== 'object' || data === null || !('fileRef' in data) || data.fileRef === undefined) return related;
+    const owned = { ...data, fileRef: this.ownedFile(data.fileRef) };
+    return { ...related, position: { ...related.position, identity: { ...identity, data: owned } } };
   }
 
   async createRecord(input: WriteInput): Promise<WriteResult> {
@@ -359,7 +401,7 @@ export class RemoteAdapter implements Adapter {
     if (Array.isArray(value)) {
       return Promise.all(value.map((v) => this.exposeWriteFileRefs(v)));
     }
-    if (isFileRef(value)) {
+    if (isFileValue(value)) {
       return this.fileRefToWire(value);
     }
     if (value !== null && typeof value === 'object') {
@@ -409,7 +451,7 @@ export class RemoteAdapter implements Adapter {
    *  old `iterateRelated` name with the same shape. */
   async iterateRelatedPage(input: GetRelatedInput, cursor?: unknown): Promise<RelatedPage> {
     const method = this.advertised.has('iterateRelatedPage') ? 'iterateRelatedPage' : 'iterateRelated';
-    const page = await this.call(method, { ...input, cursor });
+    const page = await this.call(method, { ...input, position: wirePosition(input.position), cursor });
     return {
       items: page.items as unknown as RelatedResult[],
       ...(page.nextCursor != null ? { nextCursor: page.nextCursor } : {}),
@@ -541,16 +583,48 @@ function wireHandle(source: unknown): string | undefined {
   return typeof source.handle === 'string' ? source.handle : undefined;
 }
 
-/** Every FileRef inside a value replaced by `map`'s answer; a copy. */
-function mapFileRefs(value: unknown, map: (ref: FileRef) => FileRef): unknown {
-  if (Array.isArray(value)) return value.map((item) => mapFileRefs(item, map));
-  if (isFileRef(value)) return map(value);
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) out[key] = mapFileRefs(entry, map);
-    return out;
-  }
-  return value;
+/**
+ * A position as the wire carries it: the files on its resources and on its
+ * evidence in the wire's spelling — the owner type and handle, never this
+ * side's credential or construction args. Everything else as it stands.
+ */
+function wirePosition(position: SourcePosition): SourcePosition {
+  const { resources, evidence } = position as SourcePosition & {
+    resources?: Resource[];
+    evidence?: Record<string, FieldEvidence>;
+  };
+  if (resources === undefined && evidence === undefined) return position;
+  return {
+    ...position,
+    ...(resources !== undefined ? { resources: resources.map(wireResource) } : {}),
+    ...(evidence !== undefined
+      ? {
+          evidence: Object.fromEntries(
+            Object.entries(evidence).map(([field, entry]) => [
+              field,
+              entry.sourceResourceRef?.fileRef !== undefined
+                ? { ...entry, sourceResourceRef: { ...entry.sourceResourceRef, fileRef: wireFile(entry.sourceResourceRef.fileRef) } }
+                : entry,
+            ]),
+          ),
+        }
+      : {}),
+  };
+}
+
+function wireResource(resource: Resource): Resource {
+  if (resource.fileRef === undefined) return resource;
+  const file = wireFile(resource.fileRef);
+  const data = resource.data !== undefined && Object.hasOwn(resource.data, 'file') ? { ...resource.data, file } : resource.data;
+  return { ...resource, fileRef: file, ...(data !== undefined ? { data } : {}) };
+}
+
+/** A descriptor in the wire's spelling: its metadata, its url, its owner type
+ *  and handle — no credential. */
+function wireFile(ref: FileRef): FileRef {
+  const { source, ...rest } = { ...ref };
+  const onWire = source !== undefined ? wireSource(source) : undefined;
+  return { ...rest, ...(onWire !== undefined ? { source: onWire } : {}) };
 }
 
 /**

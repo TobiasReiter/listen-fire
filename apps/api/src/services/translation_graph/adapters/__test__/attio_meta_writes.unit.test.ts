@@ -12,7 +12,7 @@
 //   - the legacy generic list-entry type staying UNWRITABLE.
 
 
-import type { FileRef } from '../../adapter';
+import { fileValue, type FileValue } from '../../adapter';
 import type { MutationContext } from '../../mutation_context';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
@@ -316,8 +316,9 @@ describe('list membership create (`write <record>-[:Lists]-> { list: "…", … 
 
 describe('file create (`write record-[:files]->` — upload against the parent record)', () => {
   const store = installMemoryDocumentStore();
-  function voiceRef(): FileRef {
-    return store.file('OGGBYTES', { name: 'voice.ogg', contentType: 'audio/ogg' });
+  /** The file a write carries, made one as the engine makes one. */
+  function voiceRef(): FileValue {
+    return fileValue(store.file('OGGBYTES', { name: 'voice.ogg', contentType: 'audio/ogg' }));
   }
 
   beforeEach(() => {

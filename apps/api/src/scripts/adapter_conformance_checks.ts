@@ -406,6 +406,7 @@ async function checkRecords(input: {
     'getRelated',
     'iterateRelatedPage',
     'getFieldValue',
+    'files-declared',
     'updateRecord',
     'resolveAwait',
     'deleteRecord',
@@ -509,6 +510,38 @@ async function checkRecords(input: {
       throw new Error(`field ${fieldId}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(value) ?? 'nothing'}`);
     }
     return `${fieldId} = ${JSON.stringify(value)}, as written`;
+  });
+
+  // A file reaches Listen-Fire only at a field the catalog declares a file:
+  // anywhere else the same descriptor is data, so a server that answers one
+  // there has a field it should declare `kind: 'file'`.
+  await report.run('files-declared', async () => {
+    const descriptor = descriptors.get(scratch.typeId) ?? (await adapter.describe(scratch.typeId));
+    if (descriptor === null) throw new Error(`describe(${JSON.stringify(scratch.typeId)}) is null`);
+    const position = landed.find((r) => recordIdOf(r) === first.externalId)?.position ?? {
+      adapterType,
+      recordType: scratch.typeId,
+      identity: { kind: 'stable' as const, recordId: first.externalId },
+    };
+    const undeclared: string[] = [];
+    let files = 0;
+    for (const field of descriptor.fields) {
+      if (field.readable === false) continue;
+      const value = await adapter.getFieldValue({ position, fieldId: field.displayName });
+      const spelled = (Array.isArray(value) ? value : [value]).some(
+        (member) => member !== null && typeof member === 'object' && Reflect.get(member, '__brand') === 'FileRef',
+      );
+      if (field.kind === 'file') files++;
+      else if (spelled) undeclared.push(field.displayName);
+    }
+    if (undeclared.length > 0) {
+      throw new Error(
+        `${undeclared.join(', ')} answered a file at a field not declared kind 'file': Listen-Fire reads it as data — declare the field a file`,
+      );
+    }
+    return files === 0
+      ? `${scratch.typeId} declares no file field, and no field answers one`
+      : `${files} file field${files === 1 ? '' : 's'} declared; no other field answers a file`;
   });
 
   await report.run('updateRecord', async () => {

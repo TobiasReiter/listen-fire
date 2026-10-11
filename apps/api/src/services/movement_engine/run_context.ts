@@ -25,9 +25,9 @@
 // from a limit pause. The cap itself is run input (`costCapMicrodollars`),
 // read by the run host, never by the engine.
 
-import { CURRENT_LANGUAGE_VERSION, type FileArtifactType, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, pluginOutputUnder, type FileArtifactType, type LanguageVersion, type PluginOutput } from 'movement-lang';
 
-import { HOST_FAMILIES_VERSION, guidSequence, missingHostMethods, type ActingPrincipal, type TenantId } from 'engine-contracts';
+import { HOST_FAMILIES_VERSION, filesAtType, guidSequence, missingHostMethods, type ActingPrincipal, type TenantId } from 'engine-contracts';
 import type { FileRef } from '../translation_graph/adapter';
 import type { LlmClient } from '../translation_graph/engine/batched_extraction/llm_call';
 import type { ArbitrationAnswer, EntityArbitration } from './host';
@@ -47,8 +47,9 @@ import type {
 } from './host';
 import type { CancelGate, ParkSink } from './run';
 
-import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs } from './extraction';
+import { pluginSpecNamed, type MovementTransformInvoker, type PluginSpecs, type TransformInvocationResult } from './extraction';
 import { getErrorMessage } from '../../lib/utils/error';
+import { neverAsAny } from '../../lib/utils/types';
 import { logger } from '../logger';
 import { MovementEngineError, RunCancelledSignal } from './errors';
 import {
@@ -290,12 +291,16 @@ export function pricedCalls(
     /** The segment every call is made in. */
     segmentId: string;
     ledger: RunLedger;
-    /** The run's catalog snapshot's plugins: which of them are priced. */
+    /** The run's catalog snapshot's plugins: which of them are priced, and
+     *  what each one's output declares. */
     plugins: PluginSpecs;
+    /** The movement's pin: which of a plugin's outputs it gets (absent: the
+     *  current language's). */
+    languageVersion?: LanguageVersion;
   },
 ): PricedCalls {
   const { llm, files } = host;
-  const { segmentId, ledger, plugins } = run;
+  const { segmentId, ledger, plugins, languageVersion = CURRENT_LANGUAGE_VERSION } = run;
   return {
     client: { call: (input) => charged(ledger, (budget) => llm.client.call({ ...input, segmentId, budget })) },
     extractCall: {
@@ -305,8 +310,10 @@ export function pricedCalls(
       // A priced plugin is refused before it starts once the run has spent
       // its cap; anything it or the models it calls spend comes back as cost.
       invoke: async (input) => {
-        if (pluginSpecNamed(plugins, input.plugin)?.priced === true) ledger.check();
-        return charged(ledger, (budget) => llm.transforms.invoke({ ...input, segmentId, budget }));
+        const spec = pluginSpecNamed(plugins, input.plugin);
+        if (spec?.priced === true) ledger.check();
+        const answer = await charged(ledger, (budget) => llm.transforms.invoke({ ...input, segmentId, budget }));
+        return withDeclaredFiles(answer, spec !== undefined ? pluginOutputUnder(spec, languageVersion) : undefined);
       },
     },
     arbitrateEntities: async (input) => {
@@ -315,8 +322,41 @@ export function pricedCalls(
       );
       return { index, ...(judgeUnavailable !== undefined ? { judgeUnavailable } : {}) };
     },
-    resolveFileText: (input) => charged(ledger, (budget) => files.resolveFileText({ ...input, segmentId, budget })),
+    // The host redeems a descriptor: the file crosses as its plain JSON, the
+    // engine's mark staying on this side.
+    resolveFileText: (input) =>
+      charged(ledger, (budget) => files.resolveFileText({ ...input, file: { ...input.file }, segmentId, budget })),
   };
+}
+
+/**
+ * A plugin's answer with the files its output declares made files: a
+ * `records` output's fields, a `record` output's `data` fields, each by its
+ * declared type. A key that merely spells a descriptor — in an undeclared
+ * field, or from a plugin that declares no file — is data.
+ */
+function withDeclaredFiles<Answer extends TransformInvocationResult>(answer: Answer, output: PluginOutput | undefined): Answer {
+  if (output === undefined || output.kind === 'value') return answer;
+  const { fields } = output;
+  // A plain object's fields, each by its declared type; anything else as it is.
+  const typed = (value: Record<string, unknown>): Record<string, unknown> => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+    const proto: unknown = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
+    const out: Record<string, unknown> = {};
+    for (const [name, member] of Object.entries(value)) {
+      out[name] = Object.hasOwn(fields, name) ? filesAtType(fields[name], member) : member;
+    }
+    return out;
+  };
+  switch (output.kind) {
+    case 'records':
+      return Array.isArray(answer.records) ? { ...answer, records: answer.records.map(typed) } : answer;
+    case 'record':
+      return answer.data !== undefined ? { ...answer, data: typed(answer.data) } : answer;
+    default:
+      return neverAsAny(output);
+  }
 }
 
 // ── The host, bound to a segment ────────────────────────────────────────────

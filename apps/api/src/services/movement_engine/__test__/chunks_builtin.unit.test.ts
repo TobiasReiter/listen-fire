@@ -21,21 +21,23 @@ import {
   type FileTextResolution,
   type MovementTraceEntry,
 } from '../expression';
-import type { FileRef } from '../../translation_graph/adapter';
+import { fileValue, type FileRef, type FileValue } from '../../translation_graph/adapter';
 
 /** 36 characters with no break of any kind in them, so every cut falls at the
  *  ceiling — the arithmetic is readable straight off the string. */
 const UNBROKEN = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
-function fileRef(over: Partial<FileRef> = {}): FileRef {
-  return {
+/** A file as the engine holds it: made at a typed entry (an attachment's
+ *  `file` field), never a dict that spells one. */
+function fileRef(over: Partial<FileRef> = {}): FileValue {
+  return fileValue({
     __brand: 'FileRef',
     name: 'deck.pdf',
     contentType: 'application/pdf',
     size: 1234,
     source: { adapterType: 'email', handle: 'attachment-1' },
     ...over,
-  };
+  });
 }
 
 /** Evaluate an expression with `body` and `attachment` bound. */

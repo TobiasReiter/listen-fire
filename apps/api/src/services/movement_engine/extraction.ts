@@ -81,7 +81,7 @@ import { selectModel } from '../translation_graph/engine/batched_extraction/mode
 import { extractionCallSettings, type ExtractionCallSettings, type TierModel } from './ai_tiers';
 import { logger } from '../logger';
 import type { FileRef, Resource } from '../translation_graph/adapter';
-import { fileHandle, isFileRef } from '../translation_graph/adapter';
+import { fileHandle, isFileValue } from '../translation_graph/adapter';
 import { stampResourceIds } from '../translation_graph/engine/files/resources';
 import {
   isFileUnreadable,
@@ -493,8 +493,10 @@ function pluginFileResources(
   if (before(languageVersion, 2)) return [];
   const resources: Resource[] = [];
   for (const record of result.records ?? []) {
+    // A file the plugin's declared output made one (`pricedCalls`), never a
+    // `file` key that merely spells a descriptor.
     const file = record.file;
-    if (!isFileRef(file)) continue;
+    if (!isFileValue(file)) continue;
     const name = typeof record.name === 'string' ? record.name : file.name;
     const url = typeof record.url === 'string' ? record.url : null;
     const externalId = fileHandle(file);
@@ -1127,7 +1129,7 @@ class Materializer {
       const flat = value == null ? [] : Array.isArray(value) ? value : [value];
       for (const datum of flat) {
         if (datum == null) continue;
-        if (isFileRef(datum)) {
+        if (isFileValue(datum)) {
           // No resolver in the path → legacy fall-through (stringify). With a
           // resolver, a source file ALWAYS becomes a FILE resource (carry-forward
           // provenance — a file qualifies by being a source, not by yielding

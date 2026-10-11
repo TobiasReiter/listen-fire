@@ -676,6 +676,8 @@ answer:  boolean
 
 A file crosses as its descriptor (`FileRef`), never its bytes. The engine carries descriptors: it hands them to `files.resolveFileText` and gets text back, gets one back from `files.render`, and passes them through write fields. Every byte read is on the host: a target adapter or the file-text resolver resolves the instance the descriptor names, with its credential, and asks it for the bytes. A parked run holds the descriptors as they are, so a resume needs nothing rebound.
 
+A descriptor is only ever data; the envelope that carries it is what makes it a file, and the engine marks the file it makes there (`fileValue`, `engine-contracts`). The envelopes: an adapter's `getFieldValue` answer at a field the catalog snapshot types `file` (or a list, dict, tuple or maybe-absent of them); a resource's `fileRef` slot; a field a plugin's declared output types `file`; `files.render`'s answer; a parked `file` (park-state). The same descriptor anywhere else — a webhook body's field, an answer at a `json` field, a knowledge-graph property — is data, whatever keys it carries, `__brand: "FileRef"` included. `__brand` stays the descriptor's spelling, read by nobody. On the eval wire a file the engine holds crosses tagged (`["F", descriptor]`), both ways; the host is handed the plain descriptor for `files.resolveFileText`.
+
 #### `files.resolveFileText`
 
 ```ts

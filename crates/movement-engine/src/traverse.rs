@@ -1188,6 +1188,13 @@ impl Run<'_> {
             restamp(&landed.position, natural.as_deref(), &read.adapter_type)
         });
         let value = self.call_adapter_at(&read.instance, "getFieldValue", position, vec![("fieldId", Js::str(field))]).await?;
+        // Through the read wrapper, a file is what the catalog declares one
+        // (`filesAtType`); the adapter itself, read raw, answers data.
+        let value = if read.raw {
+            value
+        } else {
+            crate::file::files_at_type(crate::file::declared_field_type(read.schema.as_ref(), record_type(position).as_deref(), field), value)
+        };
         let stable = is_stable(&landed.position);
         if value.is_nullish() && !stable {
             self.trace_miss_in(&read.instance_name, &position_data(&landed.position), field);
