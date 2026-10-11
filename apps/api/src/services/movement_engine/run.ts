@@ -932,7 +932,7 @@ function boundRValueOf(statement: Statement): { name: string; value: RValue } | 
  * so a park above still carries it.
  */
 function returnFrom(env: Environment): BodyOutcome {
-  const value = env.resolveOwn(RETURN_SLOT) ?? NULL_SLOT;
+  const value = env.resolveOwn(RETURN_SLOT) ?? nullSlot();
   env.declare(RETURN_SLOT, value);
   return { returned: true, value };
 }
@@ -1061,7 +1061,14 @@ function describeHeadValue(value: unknown): string {
   }
 }
 
-const NULL_SLOT: Binding = binding({ kind: 'value', value: null, provenance: NO_PROVENANCE });
+// Made on first use, not at load: expression.ts reaches this module through
+// the Rust evaluator (rust_engine.ts) while its own constructor is still
+// uninitialised, so a binding built at load time here would throw.
+let madeNullSlot: Binding | undefined;
+function nullSlot(): Binding {
+  madeNullSlot ??= binding({ kind: 'value', value: null, provenance: NO_PROVENANCE });
+  return madeNullSlot;
+}
 
 /** The fields `...e` writes: the list the checker resolved from `e`'s TYPE.
  *  Never read off the value — a record handed to a `<Deal>` parameter may carry
@@ -3547,7 +3554,7 @@ class Interpreter {
     armCount: number,
     ctx: RehydrationContext,
   ): Promise<Binding> {
-    const slots: Binding[] = new Array(armCount).fill(NULL_SLOT);
+    const slots: Binding[] = new Array(armCount).fill(nullSlot());
     for (const row of rows) {
       const exports = row.exports as Record<string, BindingDescriptor>;
       const descriptor = exports[RETURN_SLOT];
@@ -5091,7 +5098,7 @@ class Interpreter {
               : await this.withinBoundary({ kind: 'arm', arm: fork.index, body: runtime }, () =>
                   this.runArm(fork.arm, fork.env, body, fork.address),
                 );
-            settled.set(fork.index, outcome.returned ? outcome.value : NULL_SLOT);
+            settled.set(fork.index, outcome.returned ? outcome.value : nullSlot());
           } catch (e) {
             if (e instanceof RunParked) {
               parked.push(fork);
@@ -5100,7 +5107,7 @@ class Interpreter {
             // A quiet scope end (find-on-missing) still COMPLETED — it ran to its
             // end, it just bound less on the way.
             if (!(e instanceof ScopeEndedQuietly)) throw e;
-            settled.set(fork.index, NULL_SLOT);
+            settled.set(fork.index, nullSlot());
           }
         }),
       ),
@@ -5117,7 +5124,7 @@ class Interpreter {
       if (bindingName === undefined) return;
       env.declare(bindingName, binding({
         kind: 'tuple',
-        slots: forks.map((fork) => settled.get(fork.index) ?? NULL_SLOT),
+        slots: forks.map((fork) => settled.get(fork.index) ?? nullSlot()),
       }));
     };
 
