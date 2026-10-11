@@ -16,7 +16,9 @@ use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 use crate::bindings::{Binding, Node, Scope};
 use crate::env::{Trail, ValueBinding};
 use crate::js::{Js, JsObject};
-use crate::run::{Failure, Run, Stop};
+use movement_parser::ast::CallArg;
+
+use crate::run::{Address, Failure, Run, Stop};
 use crate::trace::{Members, TraceEntry};
 
 /// The field a `record` output hands its fetched text back under.
@@ -41,19 +43,19 @@ impl Run<'_> {
     /// numbered, a `suspendAt` before it suspends, and a statement re-run
     /// hands back what it bound rather than invoking it again), then
     /// `executePluginCall`.
-    pub(crate) async fn plugin_call(&self, written: &str, args: &[(String, movement_parser::ast::ExprSlot)], scope: &Rc<Scope>) -> Result<Binding, Stop> {
+    pub(crate) async fn plugin_call(&self, written: &str, args: &[CallArg], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Binding, Stop> {
         let event = self.begin_call_event().await?;
         if let Some(replayed) = &event.replayed {
             return Ok(replayed.value.clone().unwrap_or_else(|| Binding::Value(ValueBinding { value: Js::Undefined, trail: None, many: false })));
         }
-        let bound = self.invoke_plugin(written, args, scope).await?;
+        let bound = self.invoke_plugin(written, args, scope, at, path).await?;
         self.finish_call(&event, Some(&bound));
         Ok(bound)
     }
 
     /// `executePluginCall`: `args` are the call's named arguments, in the
     /// order written.
-    async fn invoke_plugin(&self, written: &str, args: &[(String, movement_parser::ast::ExprSlot)], scope: &Rc<Scope>) -> Result<Binding, Stop> {
+    async fn invoke_plugin(&self, written: &str, args: &[CallArg], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Binding, Stop> {
         let registered = self.registered_plugin(written, scope);
         let declared = self.plugin_spec(&registered).and_then(|spec| output_under(spec, self.version())).cloned();
         let Some(declared) = declared else {
@@ -62,18 +64,51 @@ impl Run<'_> {
                 format!("'{written}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this"),
             )));
         };
+        if args.first().is_some_and(|arg| arg.name().is_none()) {
+            return Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("'{written}' is a plugin, and a plugin's arguments are named — the checker should have caught this"),
+            )));
+        }
         let mut config = JsObject::new();
         let mut origins: Vec<u32> = Vec::new();
-        for (name, slot) in args {
-            let evaluated = self.evaluate_slot(slot, scope).await?;
-            let trail = self.trail_of(&evaluated.prov, scope).unwrap_or_default();
+        for (position, arg) in args.iter().enumerate() {
+            let Some(name) = arg.name() else { continue };
+            let (value, trail) = match arg {
+                // A plugin's parameters are values: a write is an effect, and
+                // a function or a type is no value yet.
+                CallArg::Write { .. } | CallArg::Closure { .. } | CallArg::Type { .. } => {
+                    let kind = match arg {
+                        CallArg::Write { .. } => "write",
+                        CallArg::Closure { .. } => "closure",
+                        _ => "type",
+                    };
+                    return Err(Stop::Thrown(Failure::unsupported(
+                        &format!("a {kind} argument to the plugin '{written}'"),
+                        "a plugin takes values — pass a field or an expression",
+                    )));
+                }
+                CallArg::Expr { expr, .. } => {
+                    let evaluated = self.evaluate_slot(expr, scope).await?;
+                    (evaluated.value, self.trail_of(&evaluated.prov, scope).unwrap_or_default())
+                }
+                // `pluginArgValue` over `evaluateCallArg`: a value with its
+                // trail; a record as the binding it is, with none.
+                CallArg::Call { .. } | CallArg::Node { .. } => {
+                    let bound = self.plugin_bound_arg(arg, scope, at, &format!("{path}/args/{position}")).await?;
+                    match bound {
+                        Binding::Value(value) => (value.value, value.trail.unwrap_or_default()),
+                        record => (Js::Record(Rc::new(record)), Trail::default()),
+                    }
+                }
+            };
             // A record reaches only an argument that takes structured data:
             // what that takes is the record's fields (`recordFields`).
-            let value = match crate::record::binding_of(&evaluated.value) {
+            let value = match crate::record::binding_of(&value) {
                 Some(record) => Js::object(crate::record::fields_of(&record).map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?),
-                None => evaluated.value,
+                None => value,
             };
-            config.set(name.clone(), value);
+            config.set(name.to_string(), value);
             for origin in trail.origins {
                 if !origins.contains(&origin) {
                     origins.push(origin);

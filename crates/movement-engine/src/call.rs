@@ -330,6 +330,12 @@ impl Run<'_> {
         }
     }
 
+    /// A plugin's call or node argument (`pluginArgValue`): bound as a
+    /// value parameter's argument is.
+    pub(crate) async fn plugin_bound_arg(&self, arg: &CallArg, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Binding, Stop> {
+        self.call_arg(arg, scope, at, path, true).await
+    }
+
     /// `evaluateCallArg`.
     fn call_arg<'s>(&'s self, arg: &'s CallArg, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str, takes_value: bool) -> Bound<'s> {
         Box::pin(async move {

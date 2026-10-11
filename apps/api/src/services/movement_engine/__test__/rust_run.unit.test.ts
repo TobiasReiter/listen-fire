@@ -582,7 +582,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = { __proto__: 1 }'), 'proto_key'],
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
-      [movement('  held = { k: 1 }\n  write held.k { a: 1 }'), 'write_position_member_path'],
       [movement('  held = { k: { name: "a" } }\n  g = graph { ...held.k }'), 'node_spread_path'],
       [movement('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }'), 'expression_closure'],
       // A call of a plugin the snapshot does not describe, in each of its spellings.

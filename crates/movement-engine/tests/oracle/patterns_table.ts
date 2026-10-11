@@ -463,6 +463,33 @@ export const PATTERNS: Pattern[] = [
     ],
   },
   {
+    reason: 'extract_call_shape',
+    routes: 'refused',
+    note: "an extraction call whose shape is written in place with words worked out (read in the body's scope, which the spec builder does not), or names a shape the body rebinds: needs a shape's words read in the body's scope",
+    programs: [
+      () => ({ body: '  found = extract([msg.`text`], node Lead: "a lead about ${msg.`subject`}" { who: <text> "the person" })\n  write crm-[:notes]-> { body: "${COUNT(found)}" }' }),
+      (pick) => ({ body: `  found = extract([msg.\`text\`], node Lead: "a lead" { who: <text> "who wrote \${msg.\`subject\`}" })\n  write crm-[:notes]-> { body: "${pick(WORDS)}" }` }),
+    ],
+  },
+  {
+    reason: 'extract_call_settings',
+    routes: 'refused',
+    note: "an extraction call's settings that do not read clean (a setting it does not have, a worked-out value): the checker refuses them, and the run ends at the check on either engine",
+    programs: [
+      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { speed: 'fast' })")}`, checks: false }),
+      () => ({ file: `${COMPANY_DECL}\n${m('  found = extract([msg.`text`], Company, { tier: msg.`subject` })')}`, checks: false }),
+    ],
+  },
+  {
+    reason: 'extract_call_model',
+    routes: 'refused',
+    note: "an extraction call naming a model the catalog does not list: the TypeScript holds it to the model registry, which this engine does not hold; needs the registry's chat models as run input",
+    programs: [
+      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }")}`, replies: [{ records: [] }] }),
+      (pick) => ({ file: `${COMPANY_DECL}\n${m(`  one = extractOne([msg.\`subject\`], Company, { model: 'claude-sonnet-4-6', effort: '${pick(['low', 'medium'])}' })`)}` }),
+    ],
+  },
+  {
     reason: 'rvalue:<kind>',
     routes: 'refused',
     note: 'a right-hand side this engine does not bind there: a `return` of a block (its iterations returning), of an inline block; needs a returned block value (a `return` of a write runs since chunk 7A Task 3)',
@@ -475,11 +502,11 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'plugin_call',
     routes: 'refused',
-    note: "a plugin's call spelled in another letter case than imported (from version 3), or inside an expression (bound first by the TypeScript; such a slot does not lower here, so it declines after the check): needs any-case resolution and calls bound inside an expression (the checker's nested_calls)",
+    note: "a plugin's call spelled in another letter case than imported (from version 3): needs any-case resolution of a plugin's name; one inside an expression runs since chunk 7A Task 6 (nested_call)",
     programs: [
       () => ({ file: `import { fetch_url } from plugins\n${m('  page = Fetch_Url(url: msg.`text`)\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
       () => ({ file: `import { echo } from plugins\n${m('  said = ECHO(q: msg.`subject`)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}` }),
-      () => ({ file: `import { fetch_url } from plugins\n${m('  x = { page: fetch_url(url: msg.`text`) }')}`, routes: 'declined' }),
+      () => ({ file: `import { fetch_url } from plugins\n${m('  x = { page: fetch_url(url: msg.`text`) }')}`, routes: 'whole' }),
     ],
   },
   {
@@ -494,11 +521,14 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'plugin_call_form',
     routes: 'refused',
-    note: "a plugin's argument that is not a value (a built-in's or a movement's call): needs arguments of every kind, each evaluated as the TypeScript evaluates it before the invocation (a positional argument the checker refuses, MOV_PLUGIN_ARGS_NAMED)",
+    note: "a plugin's argument that calls a function the program declares, whose value may be records handed over as binding objects: needs the call's value held to what it may hold; every other argument form runs since chunk 7A Task 6 (a built-in's call, a node as its fields, a write or a function as the TypeScript's unsupported, a positional first argument as the run's failure)",
     programs: [
-      () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(LOWER(msg.`text`))')}`, checks: false, routes: 'unreached' }),
-      () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(url: UPPER(msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
       () => ({ file: `import { fetch_url } from plugins\nmovement shout(t: <text>) {\n  return UPPER(t)\n}\n${m('  page = fetch_url(url: shout(t: msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}`, movementName: 'm' }),
+      () => ({ file: `import { fetch_url } from plugins\n${m('  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
+      () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(url: UPPER(msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}`, routes: 'whole' }),
+      () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(LOWER(msg.`text`))')}`, checks: false, routes: 'whole' }),
+      (pick) => ({ file: `import { summarise } from plugins\n${m(`  said = summarise(data: node { name: "${pick(NAMES)}", tag: "c" })\n  write crm-[:notes]-> { body: said }`)}`, routes: 'whole' }),
+      () => ({ file: `import { summarise } from plugins\n${m('  said = summarise(data: write crm-[:notes]-> { body: "x" })')}`, checks: false, routes: 'whole' }),
     ],
   },
   {
@@ -559,8 +589,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'write_position_member_path',
-    routes: 'refused',
-    note: '`write m.k { … }`: a write from the record a map’s member holds; needs a member-path record binding',
+    routes: 'whole',
+    note: 'closed by chunk 7A Task 6: `write m.k { … }` binds the record the member holds for the write alone (`bindTargetRoots`) and updates it',
     programs: [
       () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    write held.k { stage: "seen" }\n  }' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  held = { k: co }\n  write held.k { stage: "seen" }' }),
@@ -568,20 +598,20 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'write_root_expression',
-    routes: 'refused',
-    note: "a linked write rooted at a map member's record (`write held.k-[:notes]-> { … }`): needs the TypeScript's root resolution (a root written as an expression the parser refuses)",
+    routes: 'unreached',
+    note: "a linked write rooted at an expression that is no member path: the parser refuses it; one rooted at a map member's record (`write held.k-[:notes]-> { … }`) runs since chunk 7A Task 6 (`bindTargetRoots`)",
     programs: [
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  write AT(rows, 0)-[:notes]-> { body: "x" }', checks: false, routes: 'unreached' }),
-      () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    write held.k-[:notes]-> { body: "x" }\n  }' }),
+      () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    write held.k-[:notes]-> { body: "x" }\n  }', routes: 'whole' }),
     ],
   },
   {
     reason: 'match_root_expression',
-    routes: 'refused',
-    note: "a linked match rooted at a map member's record: as write_root_expression",
+    routes: 'unreached',
+    note: "a linked match rooted at an expression that is no member path: the parser refuses it; one rooted at a map member's record runs since chunk 7A Task 6, as write_root_expression",
     programs: [
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  found = match AT(rows, 0)-[:notes]-> { unique by (`body`), body: "x" }', checks: false, routes: 'unreached' }),
-      () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    found = match held.k-[:notes]-> { unique by (`body`), body: "x" }\n  }' }),
+      () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    found = match held.k-[:notes]-> { unique by (`body`), body: "x" }\n  }', routes: 'whole' }),
     ],
   },
   {
@@ -908,7 +938,38 @@ export const PATTERNS: Pattern[] = [
     note: 'CHUNKS, a namespaced member this engine lacks, or a function, movement or closure called inside an expression (bound first by the TypeScript, the checker’s nested_calls): needs CHUNKS ported and calls bound inside expressions',
     programs: [
       (pick) => ({ body: `  pieces = CHUNKS("aaaa bbbb cccc dddd eeee ffff", { size: ${pick([8, 12])} })\n  write crm-[:notes]-> { body: "\${COUNT(pieces)}" }` }),
+    ],
+  },
+  {
+    reason: 'nested_call',
+    routes: 'whole',
+    note: "closed by chunk 7A Task 6: a closure's, a plugin's or an extraction's call written inside an expression runs on Rust as the TypeScript stages it (`stageNestedCalls`: bound first to a name only the engine spells, in the order written and only where reached — AND, OR, IF and COALESCE skip what they do not need)",
+    programs: [
+      (pick) => ({ body: `  f = (n: <number>) => n * ${pick([2, 3])}\n  write crm-[:notes]-> { body: "\${f(3) + 1}" }` }),
+      () => ({ body: '  loud = (t: <text>) => {\n    write crm-[:notes]-> { body: t }\n    return UPPER(t)\n  }\n  x = msg.`subject` == "nope" AND loud("skipped") == "SKIPPED"\n  y = COALESCE(msg.`subject`, loud("unreached"))\n  z = IF msg.`subject` != "" THEN loud("taken") ELSE loud("not taken") END\n  write crm-[:notes]-> { body: "${x} ${y} ${z}" }' }),
+      (pick) => ({ body: `  fact = (n: <number>): <number> => {\n    if n <= 1 {\n      return 1\n    }\n    return n * fact(n - 1)\n  }\n  write crm-[:notes]-> { body: "\${fact(${pick([3, 5])})}" }` }),
+      () => ({ body: '  big = (n: <number>) => n > 2\n  small = (n: <number>) => n < 10\n  if big(4) AND small(4) {\n    write crm-[:notes]-> { body: "between" }\n  }\n  if big(1) AND small(9) {\n    write crm-[:notes]-> { body: "never" }\n  }' }),
+      () => ({ file: `${COMPANY_DECL}\n${m('  n = COUNT(extract([msg.`text`], Company))\n  first = ONLY(extract([msg.`subject`], Company)).name\n  write crm-[:notes]-> { body: "${n} ${first}" }')}`, replies: [{ records: [{ name: said('Acme') }, { name: said('Beta') }] }, { records: [{ name: said('Gamma') }] }] }),
+      () => ({ file: `import { echo } from plugins\n${m('  said = { page: echo(q: msg.`subject`) }\n  write crm-[:notes]-> { body: COALESCE(said.page, "none") }')}` }),
+      () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    return UPPER(t)\n  }\n  write crm-[:notes]-> { body: CONCAT(later(msg.`subject`), "!") }', checks: false }),
+    ],
+  },
+  {
+    reason: 'nested_call_form',
+    routes: 'refused',
+    note: "a nested call handed a write, a node, a function or a type, which carry the checker's stamps by their place in the program, and a nested call has none: needs stamps for a nested call's arguments",
+    programs: [
+      () => ({ file: `${COMPANY_DECL}\n${m('  name_of = (c: <Company>) => c.name\n  write crm-[:notes]-> { body: "${name_of(node { name: "A" })}" }')}` }),
+      (pick) => ({ file: `${COMPANY_DECL}\n${m(`  name_of = (c: <Company>) => c.name\n  x = "\${name_of(node { name: "${pick(NAMES)}" })}!"`)}` }),
+    ],
+  },
+  {
+    reason: 'nested_movement_call',
+    routes: 'refused',
+    note: "a movement called inside an expression: admission walks a callee's body under the calls statements make, and a nested call is none of them; needs the nested calls collected with the statements' (the closure's, the plugin's and the extraction's run)",
+    programs: [
       () => ({ file: `function double(n: <number>): <number> {\n  return n * 2\n}\n${m('  write crm-[:notes]-> { body: "${double(3) + 1}" }')}`, movementName: 'm' }),
+      (pick) => ({ file: `function inc(n: <number>): <number> {\n  return n + 1\n}\n${m(`  x = inc(${pick([1, 2])}) * 2\n  write crm-[:notes]-> { body: "\${x}" }`)}`, movementName: 'm' }),
     ],
   },
   {

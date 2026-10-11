@@ -338,12 +338,71 @@ impl Line {
     }
 }
 
+/// `memberPathBindingName`: the name a member path (`m.k`, ``m.`a b`.c``)
+/// written as a target's root is bound to for the write alone.
+pub(crate) fn member_path_binding_name(expr: &ast::ExprSlot) -> Option<String> {
+    let raw = crate::js::trim(&expr.raw);
+    let units: Vec<u16> = raw.encode_utf16().collect();
+    let (names, end) = movement_parser::scan::scan_member_path(&units, 0)?;
+    (end == units.len()).then(|| names.join("."))
+}
+
 impl Run<'_> {
+    /// `bindTargetRoots`: a target whose root is a member path, with each
+    /// such root bound (`bindSlotValue`) to a name of its own in a scope
+    /// over `scope`, and the target reading those names; `None` when every
+    /// root is a name already.
+    pub(crate) async fn bound_target_roots(&self, target: &WriteTarget, scope: &Rc<Scope>) -> Result<Option<(WriteTarget, Rc<Scope>)>, Stop> {
+        let mut bound: Vec<(String, ast::ExprSlot)> = Vec::new();
+        let mut name_of = |root: &PathRoot| -> Result<PathRoot, Stop> {
+            let PathRoot::Expression { expr } = root else { return Ok(root.clone()) };
+            let name = member_path_binding_name(expr).ok_or_else(|| {
+                thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("'{}' starts a write — only a name or a member path can, and the parser should have refused it", expr.raw),
+                ))
+            })?;
+            bound.push((name.clone(), expr.clone()));
+            Ok(PathRoot::Name { name })
+        };
+        let mut head = |path: &ast::PathHead| -> Result<ast::PathHead, Stop> {
+            let mut path = path.clone();
+            if let Some(root) = &path.root {
+                path.root = Some(name_of(root)?);
+            }
+            Ok(path)
+        };
+        let named = match target {
+            WriteTarget::Linked { path, explicit_type, span } => WriteTarget::Linked { path: head(path)?, explicit_type: explicit_type.clone(), span: *span },
+            WriteTarget::Tuple { paths, explicit_type, span } => {
+                WriteTarget::Tuple { paths: paths.iter().map(&mut head).collect::<Result<_, _>>()?, explicit_type: explicit_type.clone(), span: *span }
+            }
+            WriteTarget::Position { root, span } => WriteTarget::Position { root: name_of(root)?, span: *span },
+        };
+        if bound.is_empty() {
+            return Ok(None);
+        }
+        let own = scope.child();
+        for (name, expr) in &bound {
+            let binding = self.bind_slot_binding(expr, scope).await?;
+            own.declare(name.clone(), binding);
+        }
+        Ok(Some((named, own)))
+    }
+
     /// `executeWrite`. `path` is the write expression's AST path, where the
     /// checker's spread stamps are keyed.
     /// What it hands back is what a write argument passes on: the handle, or
     /// the landing a write into a run-built node's edge made or merged into.
     pub(crate) async fn write(&self, write: &WriteExpression, binding_name: Option<&str>, scope: &Rc<Scope>, path: &str) -> Result<Binding, Stop> {
+        if let Some((target, own)) = self.bound_target_roots(&write.target, scope).await? {
+            let rooted = WriteExpression { target, ..write.clone() };
+            let written = Box::pin(self.write(&rooted, binding_name, &own, path)).await?;
+            if let Some(name) = binding_name {
+                scope.declare(name, written.clone());
+            }
+            return Ok(written);
+        }
         let lines = self.write_lines(write, path)?;
         // Into an edge of a node this run built: the engine is the adapter.
         if let WriteTarget::Linked { path, .. } = &write.target
@@ -693,9 +752,14 @@ impl Run<'_> {
             let functions = FieldFunctions::of(field, adapter, record_type, &line.name);
             let evaluated = match &functions {
                 Some(functions) => {
-                    let expr = crate::run::lowered(&line.slot, |tree| movement_parser::lowering::lower_expression(tree, &line.slot.raw), "expression").map_err(thrown)?;
+                    let staged = self.staged(&line.slot, scope).await?;
+                    let (slot, at) = match &staged {
+                        Some((slot, scratch)) => (slot, scratch),
+                        None => (&line.slot, scope),
+                    };
+                    let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression").map_err(thrown)?;
                     let span = env::js_of_json(&serde_json::to_value(line.slot.span).expect("a span is JSON"));
-                    self.evaluate_with(&expr, scope, Some(span), None, Some(functions)).await?
+                    self.evaluate_with(&expr, at, Some(span), None, Some(functions)).await?
                 }
                 None => self.evaluate_slot(&line.slot, scope).await?,
             };
@@ -762,6 +826,9 @@ impl Run<'_> {
     /// A slot evaluated as `evaluateSlot` evaluates it: lowered, its literals
     /// citing the slot's span.
     pub(crate) async fn evaluate_slot(&self, slot: &ast::ExprSlot, scope: &Rc<Scope>) -> Result<Evaluated, Stop> {
+        if let Some((staged, scratch)) = self.staged(slot, scope).await? {
+            return Box::pin(self.evaluate_slot(&staged, &scratch)).await;
+        }
         let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression").map_err(thrown)?;
         self.evaluate(&expr, scope, slot).await
     }

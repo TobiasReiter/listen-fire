@@ -1525,9 +1525,16 @@ impl<'c> Bound<'c> {
         self.holds(raw) == Holder::Free
     }
 
-    /// What a value bound to an expression slot holds.
+    /// What a value bound to an expression slot holds: a nested call's
+    /// value may be anything.
     fn holds(&self, raw: &str) -> Holder {
-        lowered(raw).map_or(Holder::Other, |expr| value_holder(&expr, &|name| self.holder(name)))
+        let nested = nested_rewrite(raw, &|name| self.callee(name).is_some() || self.calls_closure(name) || self.plugin_kind(name).is_some(), &self.plugin_binds, &|name| self.holder(name));
+        let names = nested.as_ref().map_or(&[][..], |(_, plan)| plan.names.as_slice());
+        let holder = |name: &str| match names.iter().find(|(n, _)| n == name) {
+            Some((_, held)) => *held,
+            None => self.holder(name),
+        };
+        lowered(nested.as_ref().map_or(raw, |(text, _)| text.as_str())).map_or(Holder::Other, |expr| value_holder(&expr, &holder))
     }
 
     /// What each value holds, for the walk of the body: the file's values
@@ -1839,13 +1846,19 @@ impl Names<'_> {
             value_holders.insert(param.clone(), held);
         }
         // A parameter typed by a field type (`<text>`) takes a value no
-        // record is (the checker holds the argument to it).
+        // record is (the checker holds the argument to it); one typed by a
+        // position takes one record, whose fields hold none where no node
+        // of the body's holds one.
         for param in declared {
-            if let Some(ParamTypeRef::Name(type_)) = &param.type_
-                && type_.hops_raw.is_none()
-                && movement_parser::catalog::helpers::parse_field_type_name(Some(&type_.graph)).is_some()
-            {
-                value_holders.insert(param.name.clone(), Holder::Free);
+            let Some(type_) = &param.type_ else { continue };
+            if self.callees.takes_value(param) {
+                if let ParamTypeRef::Name(named) = type_
+                    && movement_parser::catalog::helpers::parse_field_type_name(Some(&named.graph)).is_some()
+                {
+                    value_holders.insert(param.name.clone(), Holder::Free);
+                }
+            } else if self.record_nodes.is_empty() && self.graphs.is_empty() {
+                value_holders.insert(param.name.clone(), Holder::Record);
             }
         }
         let inner = Names {
@@ -2061,6 +2074,9 @@ impl Names<'_> {
     /// record it picks (`selectedPositionBinding`), of one hop off a root a
     /// block head walks from.
     fn assigned(&self, slot: &ExprSlot) -> Admitted {
+        if let Some(staged) = self.with_nested(slot, &|names, slot| names.assigned(slot)) {
+            return staged;
+        }
         let expr = lowered(&slot.raw)?;
         if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
             && self.is_record(name)
@@ -2244,6 +2260,9 @@ impl Names<'_> {
             RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call(call),
             RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call(&construction_as_call(construct)),
             RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
+            RValue::Construct { construct } if self.plugin(&construct.callee) => {
+                self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
+            }
             RValue::Call { call } => self.slot(self.builtin_value(call)?),
             other => refuse(format!("rvalue:{}", rvalue_kind(other))),
         }
@@ -2287,11 +2306,47 @@ impl Names<'_> {
     /// in another letter case is the TypeScript's), named value arguments,
     /// an output the slice binds.
     fn plugin_call(&self, call: &CallStatement) -> Admitted {
-        let args = call.args.iter().map(|arg| match arg {
-            CallArg::Expr { name: Some(_), expr } => Some(expr),
-            _ => None,
-        });
-        self.plugin_invocation(&call.callee, args)
+        match self.plugin_binds.get(&call.callee) {
+            None | Some(PluginBinds::Unknown) => return refuse("plugin_call"),
+            Some(PluginBinds::Value | PluginBinds::Record | PluginBinds::Records | PluginBinds::Nothing) => {}
+        }
+        // A first argument unnamed fails the call before any is read, on
+        // either engine; a later unnamed one is skipped.
+        if call.args.first().is_some_and(|arg| arg.name().is_none()) {
+            return Ok(());
+        }
+        for arg in &call.args {
+            match arg {
+                CallArg::Expr { name: None, .. } | CallArg::Call { name: None, .. } | CallArg::Node { name: None, .. } => {}
+                CallArg::Expr { expr, .. } => {
+                    self.slot(expr)?;
+                    self.plugin_arg(expr)?;
+                }
+                // The run fails there, on either engine (`unsupported`);
+                // nothing after it is read.
+                CallArg::Write { .. } | CallArg::Closure { .. } | CallArg::Type { .. } => return Ok(()),
+                // A built-in's call is the value it computes; any other's
+                // value may be records handed over as binding objects.
+                CallArg::Call { call: inner, .. } => {
+                    if self.callee(&inner.callee).is_some() || self.calls_closure(&inner.callee) || self.plugin(&inner.callee) {
+                        return refuse("plugin_call_form");
+                    }
+                    let expr = self.builtin_value(inner)?;
+                    self.slot(expr)?;
+                    self.plugin_arg(expr)?;
+                }
+                // A node reads as its fields (`recordFields`): one holding a
+                // record would hand the binding object over.
+                CallArg::Node { node, .. } => {
+                    self.node(node, node.graph.is_some())?;
+                    let holds_record = node.entries.iter().any(|entry| matches!(entry, NodeEntry::Value { value, .. } if self.may_hold_record_slot(value)));
+                    if holds_record || node.spreads.as_ref().is_some_and(|s| !s.is_empty()) {
+                        return refuse("plugin_arg_record");
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn plugin_invocation<'a>(&self, callee: &str, args: impl Iterator<Item = Option<&'a ExprSlot>>) -> Admitted {
@@ -2500,8 +2555,13 @@ impl Names<'_> {
             // write's (`resolveTupleWriteTarget`).
             WriteTarget::Tuple { paths, .. } => paths.iter().try_for_each(|path| self.target_path(path, "write"))?,
             // `write m.k { … }`: the record a map holds, bound for the write
-            // alone (run.ts `bindSlotValue`), which this engine does not.
-            WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => return refuse("write_position_member_path"),
+            // alone (run.ts `bindTargetRoots`); a root that is no member
+            // path fails, on either engine.
+            WriteTarget::Position { root: PathRoot::Expression { expr }, .. } => {
+                if crate::write::member_path_binding_name(expr).is_some() {
+                    self.assigned(expr)?;
+                }
+            }
             // The record the name holds, updated in place (a write's
             // handle moved on to it from version 4); anything else fails as
             // the TypeScript's `executePositionWrite` fails it.
@@ -2550,7 +2610,18 @@ impl Names<'_> {
     /// A write's or a match's linked target: one edge off an instance, a
     /// handle, the event or a hop alias, its WHERE scoped at the candidate.
     fn target_path(&self, path: &PathHead, verb: &str) -> Admitted {
-        let Some(PathRoot::Name { name: root }) = &path.root else { return refuse(format!("{verb}_root_expression")) };
+        let bound;
+        let root = match &path.root {
+            Some(PathRoot::Name { name }) => name,
+            // A member path's record, bound for the write alone (run.ts
+            // `bindTargetRoots`).
+            Some(PathRoot::Expression { expr }) if crate::write::member_path_binding_name(expr).is_some() => {
+                self.assigned(expr)?;
+                bound = crate::write::member_path_binding_name(expr).unwrap_or_default();
+                &bound
+            }
+            _ => return refuse(format!("{verb}_root_expression")),
+        };
         // Rooted at any name: the record it holds parents the write (or the
         // engine is the adapter, into a node the run built), and anything
         // else fails as the TypeScript's `linkedPathGraph` fails it — but a
@@ -2689,10 +2760,162 @@ impl Names<'_> {
     }
 
     fn slot(&self, slot: &ExprSlot) -> Admitted {
+        if let Some(staged) = self.with_nested(slot, &|names, slot| names.expression(&lowered(&slot.raw)?)) {
+            return staged;
+        }
         self.expression(&lowered(&slot.raw)?)
     }
 
+    /// A function a nested call names (crate::nested `runsAsCall`): one of
+    /// the program's, or a plugin.
+    fn nested_function(&self, name: &str) -> bool {
+        self.callee(name).is_some() || self.calls_closure(name) || self.plugin(name)
+    }
+
+    /// A slot holding nested calls (crate::nested): each nested call walked
+    /// as the right-hand side it is read as — a closure's call, a plugin's,
+    /// an extraction call (a movement's is refused: its body is walked only
+    /// under the calls statements make, `nested_movement_call`; a
+    /// collection op too, which a park inside could not be resumed into,
+    /// `expression_closure`) — each operand bound before it as an
+    /// expression, and `then` handed the text that reads the names they are
+    /// bound to, with those names values that may hold anything.
+    fn with_nested(&self, slot: &ExprSlot, then: &dyn Fn(&Names<'_>, &ExprSlot) -> Admitted) -> Option<Admitted> {
+        if self.language_version < 3 {
+            return None;
+        }
+        let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
+        let runs = |call: &movement_parser::tree::MExpr| match call {
+            movement_parser::tree::MExpr::Call { callee, .. } => match callee.as_ref() {
+                movement_parser::tree::MExpr::Name { name, .. } => {
+                    self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        let calls = crate::nested::staged_calls(&tree, &runs);
+        if calls.is_empty() {
+            return None;
+        }
+        Some(self.admit_staged(slot, &tree, &calls, then))
+    }
+
+    fn admit_staged(&self, slot: &ExprSlot, tree: &movement_parser::tree::MExpr, calls: &[movement_parser::tree::At], then: &dyn Fn(&Names<'_>, &ExprSlot) -> Admitted) -> Admitted {
+        let units = movement_parser::util::utf16::Utf16::new(&slot.raw);
+        let mut plan = NestedPlan::default();
+        let text = self.plan_nested(tree, calls, &units, &mut plan);
+        for at in &plan.calls {
+            let Ok(value) = crate::nested::nested_call(slot, *at, self.language_version) else { return refuse("nested_call_form") };
+            self.nested_value(&value)?;
+        }
+        let values: BTreeSet<String> = self.values.iter().cloned().chain(plan.names.iter().map(|(n, _)| n.clone())).collect();
+        let mut value_holders = self.value_holders.clone();
+        value_holders.extend(plan.names.iter().cloned());
+        let inner = Names { values: &values, value_holders: &value_holders, instances: self.instances.clone(), ..*self };
+        let piece = |raw: &str| ExprSlot { raw: raw.to_string(), span: slot.span, eager: false };
+        for bound in &plan.bound {
+            inner.assigned(&piece(bound))?;
+        }
+        then(&inner, &piece(&text))
+    }
+
+    /// `stageTree`'s shape, statically (`plan_nested`).
+    fn plan_nested(&self, tree: &movement_parser::tree::MExpr, calls: &[movement_parser::tree::At], units: &movement_parser::util::utf16::Utf16, plan: &mut NestedPlan) -> String {
+        plan_nested(
+            tree,
+            calls,
+            units,
+            plan,
+            &|callee| !self.binds_any_case(callee) && crate::js::to_upper_case(callee) == "COALESCE",
+            &|callee| nested_call_holder(callee, self.plugin_binds.get(callee).copied()),
+            &|name| self.holder(name),
+        )
+    }
+
+    /// One nested call's right-hand side.
+    fn nested_value(&self, value: &RValue) -> Admitted {
+        let RValue::Call { call } = value else {
+            return match value {
+                RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
+                _ => refuse("nested_call_form"),
+            };
+        };
+        // A collection op or `MEMBERS`: a park inside a member could not be
+        // resumed into (its frame names the op by its span in the
+        // expression).
+        if crate::nested::is_call_form(&call.callee) && !self.nested_function(&call.callee) {
+            return refuse("expression_closure");
+        }
+        // An argument that is a write, a node, a function or a type carries
+        // the checker's stamps by its place in the program, which a nested
+        // call has none of.
+        if call.args.iter().any(|arg| !matches!(arg, CallArg::Expr { .. } | CallArg::Call { .. })) {
+            return refuse("nested_call_form");
+        }
+        if self.callee(&call.callee).is_some() {
+            return refuse("nested_movement_call");
+        }
+        if self.calls_closure(&call.callee) {
+            return self.closure_call(call);
+        }
+        if self.plugin(&call.callee) {
+            return self.plugin_call(call);
+        }
+        // A built-in whose value a member access reads, bound first: the
+        // expression it reads as.
+        if !crate::nested::is_call_form(&call.callee) && !self.binds_any_case(&call.callee) {
+            return self.assigned(self.builtin_value(call)?);
+        }
+        refuse("expression_closure")
+    }
+
+    /// A slot's text with its nested calls read as the names they are bound
+    /// to (`plan_nested`), when it holds any.
+    fn nested_text(&self, raw: &str) -> Option<(String, NestedPlan)> {
+        if self.language_version < 3 {
+            return None;
+        }
+        let tree = movement_parser::expr::parse_expression(raw).ok()?;
+        let runs = |call: &movement_parser::tree::MExpr| match call {
+            movement_parser::tree::MExpr::Call { callee, .. } => match callee.as_ref() {
+                movement_parser::tree::MExpr::Name { name, .. } => {
+                    self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        let calls = crate::nested::staged_calls(&tree, &runs);
+        if calls.is_empty() {
+            return None;
+        }
+        let units = movement_parser::util::utf16::Utf16::new(raw);
+        let mut plan = NestedPlan::default();
+        let text = self.plan_nested(&tree, &calls, &units, &mut plan);
+        Some((text, plan))
+    }
+
     fn condition(&self, slot: &ExprSlot) -> Admitted {
+        if let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw)
+            && self.with_nested(slot, &|_, _| Ok(())).is_some()
+        {
+            // `evaluateStagedCondition`: each top-level conjunct staged on
+            // its own, then read as a condition.
+            let units = movement_parser::util::utf16::Utf16::new(&slot.raw);
+            for conjunct in crate::nested::conjuncts_of(&tree) {
+                let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false };
+                match self.with_nested(&part, &|names, staged| names.plain_condition(staged)) {
+                    Some(admitted) => admitted?,
+                    None => self.plain_condition(&part)?,
+                }
+            }
+            return Ok(());
+        }
+        self.plain_condition(slot)
+    }
+
+    fn plain_condition(&self, slot: &ExprSlot) -> Admitted {
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return refuse("condition_does_not_lower") };
         match movement_parser::lowering::lower_condition(&tree, &slot.raw) {
             Ok(condition) => self.conjunct(&condition),
@@ -2877,7 +3100,14 @@ impl Names<'_> {
     /// Whether a slot's value may hold a record (one it does not lower to
     /// is refused where it is walked).
     fn may_hold_record_slot(&self, slot: &ExprSlot) -> bool {
-        lowered(&slot.raw).map_or(true, |expr| may_hold_record(&expr, &|name| self.holder(name)))
+        // A nested call's value may be anything.
+        let nested = self.nested_text(&slot.raw);
+        let names = nested.as_ref().map_or(&[][..], |(_, plan)| plan.names.as_slice());
+        let holder = |name: &str| match names.iter().find(|(n, _)| n == name) {
+            Some((_, held)) => *held,
+            None => self.holder(name),
+        };
+        lowered(nested.as_ref().map_or(&slot.raw, |(text, _)| text)).map_or(true, |expr| may_hold_record(&expr, &holder))
     }
 
     /// A plugin's argument: one record reads as its fields
@@ -2885,6 +3115,9 @@ impl Names<'_> {
     /// to the plugin as the binding object itself, which this engine's
     /// wire does not carry.
     fn plugin_arg(&self, slot: &ExprSlot) -> Admitted {
+        if self.nested_text(&slot.raw).is_some() {
+            return if self.may_hold_record_slot(slot) { refuse("plugin_arg_record") } else { Ok(()) };
+        }
         let Ok(expr) = lowered(&slot.raw) else { return Ok(()) };
         let one_record = match &expr {
             Expression::AliasRef { name } | Expression::Property { property_type_id: name } if !self.values.contains(name) => !self.lazies.contains(name),
@@ -3154,6 +3387,133 @@ fn field_read(terminal: &Expression) -> bool {
     }
 }
 
+/// The names a staging binds (crate::nested), which no author can write.
+const NESTED_PREFIX: &str = "#nested ";
+
+/// What a slot's nested calls are bound to, in the order they are settled
+/// (`Names::plan_nested`).
+#[derive(Default)]
+struct NestedPlan {
+    /// The nested calls, by where they are written.
+    calls: Vec<movement_parser::tree::At>,
+    /// The operands bound before the last nested call, as the text each is
+    /// read as.
+    bound: Vec<String>,
+    /// Every name bound, with what it holds.
+    names: Vec<(String, Holder)>,
+}
+
+impl NestedPlan {
+    /// What a settled part's text holds, its names read as what they hold.
+    fn holder_of(&self, text: &str, outer: &dyn Fn(&str) -> Holder) -> Holder {
+        let holder = |name: &str| self.names.iter().find(|(n, _)| n == name).map_or_else(|| outer(name), |(_, held)| *held);
+        lowered(text).map_or(Holder::Other, |expr| value_holder(&expr, &holder))
+    }
+
+    fn name(&mut self, holder: Holder) -> String {
+        let name = format!("{NESTED_PREFIX}{}", self.names.len() + 1);
+        self.names.push((name.clone(), holder));
+        name
+    }
+}
+
+/// `stageTree`'s shape, statically: what each settled part is bound to,
+/// and the text that reads those names.
+fn plan_nested(
+    tree: &movement_parser::tree::MExpr,
+    calls: &[movement_parser::tree::At],
+    units: &movement_parser::util::utf16::Utf16,
+    plan: &mut NestedPlan,
+    is_coalesce: &dyn Fn(&str) -> bool,
+    call_holder: &dyn Fn(&str) -> Holder,
+    outer: &dyn Fn(&str) -> Holder,
+) -> String {
+    use crate::nested::{ShortCircuit, holds, rewritten, short_circuit_of, spelled, value_children};
+    let at = tree.at();
+    if !holds(tree, calls) {
+        return units.text(at.start, at.end);
+    }
+    if matches!(tree, movement_parser::tree::MExpr::Call { .. }) && calls.contains(&at) {
+        plan.calls.push(at);
+        let held = match tree {
+            movement_parser::tree::MExpr::Call { callee, .. } => match callee.as_ref() {
+                movement_parser::tree::MExpr::Name { name, .. } => call_holder(&name.text),
+                _ => Holder::Other,
+            },
+            _ => Holder::Other,
+        };
+        return spelled(&plan.name(held));
+    }
+    if let Some(short) = short_circuit_of(tree, is_coalesce) {
+        let operands: Vec<&movement_parser::tree::MExpr> = match short {
+            ShortCircuit::And(a, b) | ShortCircuit::Or(a, b) => vec![a, b],
+            ShortCircuit::If(c, t, e) => [Some(c), Some(t), e].into_iter().flatten().collect(),
+            ShortCircuit::Coalesce(args) => args,
+        };
+        for operand in operands {
+            let text = plan_nested(operand, calls, units, plan, is_coalesce, call_holder, outer);
+            plan.bound.push(text);
+        }
+        return spelled(&plan.name(Holder::Other));
+    }
+    let operands = value_children(tree);
+    let Some(last) = operands.iter().rposition(|operand| holds(operand, calls)) else { return units.text(at.start, at.end) };
+    let mut replaced = Vec::new();
+    for operand in &operands[..=last] {
+        let text = plan_nested(operand, calls, units, plan, is_coalesce, call_holder, outer);
+        let held = plan.holder_of(&text, outer);
+        plan.bound.push(text);
+        replaced.push((operand.at(), spelled(&plan.name(held))));
+    }
+    rewritten(units, at, replaced)
+}
+
+
+/// A slot's text with its nested calls (crate::nested) read as the names
+/// they are bound to: calls of a function `is_function` names, or of a
+/// built-in that is no value; `None` when it holds none.
+/// What a nested call's value holds, by what it calls: an extraction's
+/// records, a plugin's declared output, anything for a function.
+fn nested_call_holder(callee: &str, plugin: Option<PluginBinds>) -> Holder {
+    match crate::js::to_upper_case(callee).as_str() {
+        "EXTRACT" => return Holder::List,
+        "EXTRACTONE" => return Holder::Record,
+        _ => {}
+    }
+    match plugin {
+        Some(PluginBinds::Value) => Holder::Free,
+        Some(PluginBinds::Record) => Holder::Record,
+        Some(PluginBinds::Records) => Holder::List,
+        _ => Holder::Other,
+    }
+}
+
+fn nested_rewrite(raw: &str, is_function: &dyn Fn(&str) -> bool, plugins: &BTreeMap<String, PluginBinds>, outer: &dyn Fn(&str) -> Holder) -> Option<(String, NestedPlan)> {
+    let tree = movement_parser::expr::parse_expression(raw).ok()?;
+    let runs = |call: &movement_parser::tree::MExpr| match call {
+        movement_parser::tree::MExpr::Call { callee, .. } => {
+            matches!(callee.as_ref(), movement_parser::tree::MExpr::Name { name, .. } if is_function(&name.text) || crate::nested::is_call_form(&name.text))
+        }
+        _ => false,
+    };
+    let calls = crate::nested::staged_calls(&tree, &runs);
+    if calls.is_empty() {
+        return None;
+    }
+    let units = movement_parser::util::utf16::Utf16::new(raw);
+    let mut plan = NestedPlan::default();
+    let text = plan_nested(
+        &tree,
+        &calls,
+        &units,
+        &mut plan,
+        &|callee| crate::js::to_upper_case(callee) == "COALESCE",
+        &|callee| nested_call_holder(callee, plugins.get(callee).copied()),
+        outer,
+    );
+    Some((text, plan))
+}
+
 /// The keys of a binding object that hold the TypeScript engine's own
 /// currency (a read seam, provenance objects, `Map`s): `AT` hands them out.
 const INTERNAL_KEYS: [&str; 12] = ["provenance", "graph", "read", "fields", "fieldProvenance", "edges", "emission", "walk", "constructionConfig", "schema", "declaration", "fileEnv"];
@@ -3360,9 +3720,7 @@ mod tests {
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
             ("  g = graph { owner: msg }", "node_event_entry"),
             ("  g = graph { ...msg }", "node_spread_source"),
-            ("  held = { k: 1 }\n  write held.k { a: 1 }", "write_position_member_path"),
             ("  held = { k: 1 }\n  g = graph { ...held.k }", "node_spread_path"),
-            ("  held = { k: 1 }\n  write held.k-[:e]-> { a: 1 }", "write_root_expression"),
             ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
@@ -3418,12 +3776,11 @@ mod tests {
     #[test]
     fn refuses_mains_new_constructs_by_name_and_admits_its_scan_rules() {
         for (body, reason) in [
-            ("  held = { k: 1 }\n  write held.k { a: 1 }", "write_position_member_path"),
             ("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }", "node_spread_path"),
             ("  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }", "expression_closure"),
             ("  if COUNT(FILTER([msg.`subject`], (s) => s != \"\")) > 0 {\n    x = 1\n  }", "expression_closure"),
             ("  write crm-[c:companies]-> { unique by (`name` == AT(MAP([1], (v) => v), 0)) name: \"a\" }", "expression_closure"),
-            ("  x = [MAP([1], f)]", "function:map"),
+            ("  x = [MAP([1], f)]", "expression_closure"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
@@ -3510,6 +3867,22 @@ mod tests {
             refused("  if msg.`a` {\n    f = (n: <number>) => n\n  } else {\n    f = (n) => n\n  }\n  x = f(n: 1)").as_deref(),
             Some("function_call")
         );
+    }
+
+    /// A call written inside an expression (crate::nested): a closure's or
+    /// an extraction's is admitted, its operands and the rest walked over
+    /// the names they are bound to; a movement's, one handed a node, and a
+    /// collection op stay refused by name.
+    #[test]
+    fn admits_calls_written_inside_an_expression() {
+        for body in [
+            "  f = (n: <number>) => n * 2\n  write crm-[:notes]-> { body: \"${f(3) + 1}\" }",
+            "  f = (n: <number>) => n > 1\n  if msg.`subject` != \"\" AND f(2) {\n    x = 1\n  }",
+            "  f = (t: <text>) => UPPER(t)\n  x = COALESCE(msg.`subject`, f(\"a\"))",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
+        }
+        assert_eq!(refused("  x = { all: MAP([1], (v) => v) }").as_deref(), Some("expression_closure"));
     }
 
     #[test]
@@ -3802,19 +4175,21 @@ mod tests {
             refusal(&program, 3, &Plugins(Some(&specs), None))
         };
         for body in [
+            "  said = { page: fetch_url(url: msg.`subject`) }\n  write crm-[:notes]-> { body: COALESCE(said.page, \"none\") }",
             "  page = fetch_url(url: msg.`text`)\n  write crm-[:notes]-> { body: COALESCE(page, \"none\") }",
             "  more = research(name: msg.`subject`)\n  write crm-[:notes]-> { body: more.`summary` }",
             "  fetch_url(url: msg.`text`)",
             "  page = fetch_url()",
+            "  page = fetch_url(msg.`text`)",
+            "  page = fetch_url(url: TRIM(msg.`text`))",
+            "  return fetch_url(url: msg.`text`)",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  page = fetch_url(url: write crm-[:notes]-> { body: \"b\" })",
             "  found = find_files(q: msg.`text`)\n  one = FIRST(found)\n  write crm-[:notes]-> { body: COALESCE(one.`url`, \"none\") }",
         ] {
             assert_eq!(with(body), None, "{body}");
         }
         for (body, reason) in [
-            ("  page = fetch_url(msg.`text`)", "plugin_call_form"),
-            ("  page = fetch_url(url: TRIM(msg.`text`))", "plugin_call_form"),
             ("  page = FETCH_URL(url: msg.`text`)", "plugin_call"),
-            ("  return fetch_url(url: msg.`text`)", "rvalue:construct"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
         }

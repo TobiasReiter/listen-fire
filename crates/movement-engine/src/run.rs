@@ -1208,9 +1208,7 @@ impl Run<'_> {
             Statement::Block(statement) => self.block(&statement.block, None, scope, at, path).await,
             // `ERROR(message)`: the run fails with the author's words.
             Statement::Error(statement) => {
-                let expr = lowered(&statement.message, |tree| movement_parser::lowering::lower_expression(tree, &statement.message.raw), "expression")
-                    .map_err(Stop::Thrown)?;
-                let message = self.evaluate(&expr, scope, &statement.message).await?.value;
+                let message = self.evaluate_slot(&statement.message, scope).await?.value;
                 let message = match message {
                     Js::String(text) => text,
                     other if other.is_nullish() => String::new(),
@@ -1239,7 +1237,7 @@ impl Run<'_> {
             }
             // A plugin called for what it does: its value goes nowhere.
             Statement::Call(call) if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
-                self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
+                self.plugin_call(&call.callee, &call.args, scope, at, path).await?;
                 Ok(Flow::FellThrough)
             }
             Statement::Call(call) => {
@@ -1268,7 +1266,7 @@ impl Run<'_> {
 
     /// `declareAssign`: `name = <right-hand side>`, `return` binding into
     /// the slot the grammar cannot spell. `path` is the statement's.
-    async fn assign(&self, name: &str, value: &RValue, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<(), Stop> {
+    pub(crate) async fn assign(&self, name: &str, value: &RValue, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<(), Stop> {
         match value {
             RValue::Write { write } => {
                 self.write(write, Some(name), scope, &format!("{path}/value/write")).await?;
@@ -1315,12 +1313,12 @@ impl Run<'_> {
             // A plugin's name in a construction's spelling is its call
             // (`constructionAsCall`).
             RValue::Construct { construct } if matches!(scope.resolve(&construct.callee), Some(Binding::Plugin(_))) => {
-                let args: Vec<(String, ExprSlot)> = construct.args.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
-                let bound = self.plugin_call(&construct.callee, &args, scope).await?;
+                let args: Vec<ast::CallArg> = construct.args.iter().map(|a| ast::CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect();
+                let bound = self.plugin_call(&construct.callee, &args, scope, at, &format!("{path}/value/construct")).await?;
                 scope.declare(name, bound);
             }
             RValue::Call { call } if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
-                let bound = self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
+                let bound = self.plugin_call(&call.callee, &call.args, scope, at, &format!("{path}/value/call")).await?;
                 scope.declare(name, bound);
             }
             // A function's name in a construction's spelling is a call too.
@@ -1408,6 +1406,9 @@ impl Run<'_> {
     /// record it picks (`selectedPositionBinding`); anything else, the value
     /// it evaluates to.
     pub(crate) async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+        if let Some((staged, scratch)) = self.staged(slot, scope).await? {
+            return Box::pin(self.bind_slot_binding(&staged, &scratch)).await;
+        }
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
@@ -1448,6 +1449,14 @@ impl Run<'_> {
     /// `bindSlotValue` for what this engine binds: the value the slot
     /// evaluates to, with its trail.
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
+        // A file-level value holding a nested call: this engine binds the
+        // file's values before anything else, and stages none there.
+        if self.version() >= 3
+            && let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw)
+            && !crate::nested::staged_calls(&tree, &|call| self.runs_as_call(call, scope)).is_empty()
+        {
+            return Err(Stop::Thrown(Failure::unreproduced("a nested call in a file-level value", "the Rust engine stages nested calls in a body")));
+        }
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         self.bind_evaluated(&expr, slot, scope).await
@@ -1511,7 +1520,10 @@ impl Run<'_> {
 
     /// `evaluateCondition`: the condition's conjuncts, each an expression's
     /// truthiness.
-    async fn condition(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<bool, Stop> {
+    pub(crate) async fn condition(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<bool, Stop> {
+        if let Some(held) = self.staged_condition(slot, scope).await? {
+            return Ok(held);
+        }
         let condition = lowered(slot, |tree| movement_parser::lowering::lower_condition(tree, &slot.raw), "condition")
             .map_err(Stop::Thrown)?;
         self.parsed_condition(&condition, scope, slot).await
@@ -2115,19 +2127,6 @@ fn binds_many_values(expr: &Expression, scope: &Scope) -> bool {
 }
 
 /// A plugin call's named arguments; admission lets by no other kind.
-fn plugin_args(call: &ast::CallStatement) -> Result<Vec<(String, ExprSlot)>, Stop> {
-    call.args
-        .iter()
-        .map(|arg| match arg {
-            ast::CallArg::Expr { name: Some(name), expr } => Ok((name.clone(), expr.clone())),
-            _ => Err(Stop::Thrown(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("'{}' is a plugin, and a plugin's arguments are named values — the checker should have caught this", call.callee),
-            ))),
-        })
-        .collect()
-}
-
 /// `Array.prototype`'s own names, which `in` finds on any list.
 const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
     "at", "concat", "copyWithin", "entries", "every", "fill", "filter", "find", "findIndex", "findLast", "findLastIndex",

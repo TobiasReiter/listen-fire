@@ -141,6 +141,14 @@ impl Run<'_> {
     /// `executeMatch`: the record found, bound as a handle (and returned:
     /// a link body links it).
     pub(crate) async fn match_record(&self, m: &MatchExpression, binding_name: Option<&str>, scope: &Rc<Scope>, on_miss: OnMiss) -> Result<Binding, Stop> {
+        if let Some((target, own)) = self.bound_target_roots(&m.target, scope).await? {
+            let rooted = MatchExpression { target, ..m.clone() };
+            let found = Box::pin(self.match_record(&rooted, binding_name, &own, on_miss)).await?;
+            if let Some(name) = binding_name {
+                scope.declare(name, found.clone());
+            }
+            return Ok(found);
+        }
         let at = format!("match {}", describe_match_target(m));
         // Among the landings of a node this run built.
         if let WriteTarget::Linked { path, .. } = &m.target

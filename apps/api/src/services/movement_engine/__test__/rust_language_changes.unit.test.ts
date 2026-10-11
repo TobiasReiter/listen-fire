@@ -208,12 +208,11 @@ const movement = (...body: string[]) => [PRELUDE, 'movement m(msg: <inbox-[:mess
 const shaped = (...body: string[]) => [PRELUDE, SHAPE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
 
 describe("main's language changes on both engines", () => {
-  it('write m.k { … } (39197a6903): refused, the record the member holds updated by the TypeScript engine', async () => {
+  it('write m.k { … } (39197a6903): the record the member holds updated, run whole in Rust (chunk 7A Task 6)', async () => {
     await onBoth(
       movement('  crm-[c:companies]-> {', '    held = { k: c }', '    write held.k { stage: "seen" }', '  }'),
-      // The map holding the record is held as a value (chunk 7A Task 3); the
-      // write from its member is not this engine's yet.
-      { refused: 'write_position_member_path' },
+      // The member's record bound for the write alone (`bindTargetRoots`).
+      { runsWhole: true },
       [
         ['update', { id: 'c-acme', stage: 'seen' }],
         ['update', { id: 'c-beta', stage: 'seen' }],

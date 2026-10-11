@@ -293,7 +293,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   it('refuses, before it asks its host anything, the extraction and plugin forms it does not run', async () => {
     const movement = (body: string) => `import { fetch_url, find_files } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
     for (const [c, reason] of [
-      [{ source: movement('  page = fetch_url(msg.`text`)') }, 'plugin_call_form'],
+      [{ source: movement('  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.`text`))') }, 'plugin_call_form'],
     ] as const) {
       resetRustRunStats();
       await runOn('rust', c);
