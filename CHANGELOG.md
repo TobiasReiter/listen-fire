@@ -38,6 +38,7 @@ These apply to every language version. Full text: the [migration guide's appendi
 ### Security
 
 - Data from a connected system or a webhook is always treated as data. Before, a value that copied the shape of one of the engine's internal objects could be run as part of the automation: a webhook body or a field answer could make the engine follow its edges and evaluate expression text it carried. The engine now marks its own objects in a way no data can carry. No automation changes, and there is no new language version.
+- A record placed inside a field's value (under a key of a dict, or in a list) is now refused when the automation is validated, as a record placed directly in a field already was (`MOV_WRITE_FIELD_TYPE`, naming where in the value the record sits). Before, such an automation validated, and the connector received the engine's internal description of the record, including the connection's schema and credential name, and passed it to the vendor. Write a field off the record in its place, or, for a record the automation wrote, spread the fields it was written with (`{ ...org }`). This applies to every language version, with no new version: an automation that did this now fails validation instead of running.
 
 ## [v0.10.9] - 2026-10-07
 

@@ -280,6 +280,8 @@ import {
   instanceOfType,
   fieldAssignable,
   fieldTypeCompatible,
+  recordWithin,
+  type HeldRecord,
   fieldTypeEquals,
   LocalEdge,
   InstanceRef,
@@ -1776,6 +1778,31 @@ function escapedFromBlock(scope: Scope, member: string, blockName: string): bool
     if (s.escaped.has(member)) return s.escaped.get(member) === blockName;
   }
   return false;
+}
+
+// ── Field value messages ──
+
+/**
+ * A record written into a field that holds values — the value itself, or a
+ * record somewhere inside it. The repair is the same either way: write a field
+ * off the record in its place, or link the two records.
+ */
+function recordInFieldMessage(input: {
+  fieldName: string;
+  subject: string;
+  targetType: FieldType;
+  valueType: FieldType | undefined;
+  held: HeldRecord;
+}): string {
+  const { fieldName, subject, targetType, valueType, held } = input;
+  const direct = held.steps.length === 0;
+  const verb = held.may ? 'may be' : 'is';
+  const what = direct && !held.may && valueType !== undefined ? valueType : held.record;
+  const where = direct ? 'this' : `'${fieldName}${held.steps.join('')}'`;
+  const last = held.steps[held.steps.length - 1];
+  const place = direct ? fieldName : last?.startsWith('.') === true ? last.slice(1) : undefined;
+  const repair = place !== undefined ? `'${place}: r.\`Name\`'` : `'r.\`Name\`'`;
+  return `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and ${where} ${verb} ${describeFieldType(what)} — a record, not a value. Write a field off it (${repair}), or join the two records with a link ('link … -[:edge]-> r').`;
 }
 
 // ── Span helpers ──
@@ -4901,9 +4928,13 @@ class Checker {
         const result = this.checkAwait(value.await, scope, name);
         // A traversal / maybe-empty landing binds a NODE (arrow plane); an
         // `until` that resolves a scalar condition binds a SCALAR (dot plane).
+        // A combinator's receipt is a list of what its arms returned — a VALUE
+        // even where nobody can type it (arms built at run time), as the
+        // un-awaited combinator binds it; on the arrow plane it would read as
+        // "a record nobody can name", which it is not.
         symbol =
-          result.fieldType !== undefined
-            ? { ...symbol, fieldType: result.fieldType, bindingPlane: 'scalar' }
+          result.fieldType !== undefined || value.await.source.kind === 'combinator'
+            ? { ...symbol, ...(result.fieldType !== undefined ? { fieldType: result.fieldType } : {}), bindingPlane: 'scalar' }
             : { ...symbol, ...(result.posType ? { posType: result.posType } : {}), bindingPlane: 'node' };
         break;
       }
@@ -6525,6 +6556,12 @@ class Checker {
    * exactly two things: write a field OFF the record, or join the two records
    * with a link. Saying "produces slack.message" and leaving the author to
    * infer that is the silence this checker exists to refuse.
+   *
+   * The same words wherever in the value the record sits — a map's key, a
+   * list's member, one arm of a conditional (`held`, found by the walk that
+   * typed the value) — since a field holds values all the way down, and a
+   * record placed inside one reached the system as the engine's own
+   * description of it.
    */
   private reportFieldValueType(
     fieldName: string,
@@ -6532,9 +6569,19 @@ class Checker {
     targetType: FieldType | undefined,
     valueType: FieldType | undefined,
     span: Span,
-    options?: { relationship?: boolean; declared?: boolean },
+    options?: { relationship?: boolean; declared?: boolean; held?: HeldRecord },
   ): void {
-    if (targetType === undefined || valueType === undefined) return;
+    if (targetType === undefined) return;
+    const held = options?.held;
+    if (held !== undefined && options?.relationship !== true && recordWithin(targetType) === undefined) {
+      this.report(
+        DiagnosticCodes.WRITE_FIELD_TYPE,
+        recordInFieldMessage({ fieldName, subject, targetType, valueType, held }),
+        span,
+      );
+      return;
+    }
+    if (valueType === undefined) return;
     if (isRecordType(valueType) && options?.relationship === true) return;
     // A field a node DECLARATION types holds what it says, as a parameter
     // typed on the declaration does (`surfaceMisfit`): the program wrote the
@@ -6553,7 +6600,7 @@ class Checker {
     if (isRecordType(valueType)) {
       this.report(
         DiagnosticCodes.WRITE_FIELD_TYPE,
-        `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and this is ${describeFieldType(valueType)} — a record, not a value. Write a field off it ('${fieldName}: r.\`Name\`'), or join the two records with a link ('link … -[:edge]-> r').`,
+        recordInFieldMessage({ fieldName, subject, targetType, valueType, held: { steps: [], record: valueType, may: false } }),
         span,
       );
       return;
@@ -7818,7 +7865,7 @@ class Checker {
                 : {}),
             }
           : undefined;
-      const { valueType } = this.checkExprSlot(field.value, scope, {
+      const { valueType, held } = this.checkExprSlot(field.value, scope, {
         ...(writeTarget !== undefined ? { writeTarget } : {}),
         writeField: true,
       });
@@ -7858,6 +7905,7 @@ class Checker {
         // about the same line.
         relationship: writtenSchema?.edges[field.name] !== undefined,
         declared: declaredTarget,
+        ...(held !== undefined ? { held } : {}),
       });
       this.checkEnumLiteralWrite(field.value, {
         targetType,
@@ -8358,12 +8406,14 @@ class Checker {
           field.span,
         );
       }
-      const { valueType } = this.checkExprSlot(field.value, scope, {
+      const { valueType, held } = this.checkExprSlot(field.value, scope, {
         ...(targetType !== undefined ? { writeTarget: { type: targetType } } : {}),
         writeField: true,
       });
       this.reportBlankableIdentityKey({ uniqueBy: match.uniqueBy, field, valueType, rootDescription, scope });
-      this.reportFieldValueType(field.name, rootDescription, targetType, valueType, field.value.span);
+      this.reportFieldValueType(field.name, rootDescription, targetType, valueType, field.value.span, {
+        ...(held !== undefined ? { held } : {}),
+      });
       this.checkEnumLiteralWrite(field.value, {
         targetType,
         subject: `'${field.name}' on ${rootDescription}`,
@@ -12965,7 +13015,7 @@ class Checker {
     slot: ExprSlot,
     scope: Scope,
     options?: SlotOptions,
-  ): { valueType?: FieldType; parsed?: Expression } {
+  ): { valueType?: FieldType; parsed?: Expression; held?: HeldRecord } {
     const trimmed = slot.raw.trim();
     if (BARE_IDENT.test(trimmed)) {
       if (EXPR_LITERALS.has(trimmed.toUpperCase())) {
@@ -12978,9 +13028,10 @@ class Checker {
       // A bare name short-circuits the parse, but it still HAS a value type —
       // the binding's own. Without this its absence would die here, at the very
       // sites (a plain write field) that require presence.
-      const held = this.bareNameValueType(scope, trimmed);
-      const valueType = options?.holdsValue === true ? held : this.readHeldValue(held, slot.span);
-      return valueType !== undefined ? { valueType } : {};
+      const bound = this.bareNameValueType(scope, trimmed);
+      const valueType = options?.holdsValue === true ? bound : this.readHeldValue(bound, slot.span);
+      const held = recordWithin(bound);
+      return { ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
     }
     const hoisted = this.hoistNestedCalls(slot, scope);
     if (hoisted !== undefined) return this.checkExprSlot(hoisted, scope, options);
@@ -13003,7 +13054,8 @@ class Checker {
     const valueType = options?.holdsValue === true
       ? typing.inferExact(parsed, options.writeTarget)
       : typing.infer(parsed, options?.writeTarget);
-    return { parsed, ...(valueType !== undefined ? { valueType } : {}) };
+    const held = typing.recordHeldBy(parsed) ?? recordWithin(valueType);
+    return { parsed, ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
   }
 
   /** A held value READ — a tuple as the list it widens to, refused where it
