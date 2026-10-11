@@ -80,16 +80,17 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
   }),
 }));
 
-import { mockCatalog, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { Readable } from 'node:stream';
 import { services } from '../../../adapters/registry';
 import { runMovement } from '../run';
 import type { Adapter, FileRef, RuntimeCapabilities } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import { tenantIdOf } from 'engine-contracts';
+import { makeTestHost } from '../test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000079' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000079');
 
 // FILE() persists its bytes to the document store on creation (the
 // stdlib_file.unit.test.ts pattern); an in-memory one keeps the run hermetic.
@@ -169,7 +170,7 @@ const crmSchema: InstanceSchema = {
   },
 };
 
-const catalog = mockCatalog({
+const catalog = mockCatalogSnapshot({
   adapters: {
     email: {
       constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
@@ -218,11 +219,15 @@ async function run(fields: string) {
     event,
     teamId: TEAM_ID,
     catalog,
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'email') return email.adapter;
-      if (adapterType === 'attio') return attio.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'email') return email.adapter;
+          if (adapterType === 'attio') return attio.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
   });
   return { outcome, attio };
 }
