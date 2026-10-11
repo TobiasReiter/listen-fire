@@ -2285,6 +2285,22 @@ impl Names<'_> {
         self.callees.callee(written, self.binds(written))
     }
 
+    /// A function name nothing in the program or the standard library
+    /// answers (`DOMAIN_OF`): a function the write field advertises, or the
+    /// TypeScript's own MOVENG_UNSUPPORTED naming it, both run here. A
+    /// namespaced member, `FILE`, `READ`, `CHUNKS`, `extract`, and a name
+    /// the program binds or declares (in any letter case: a call written in
+    /// place, which the TypeScript runs first) stay refused by name.
+    fn integration_function(&self, id: &str) -> bool {
+        const OWN: [&str; 5] = ["file", "read", "chunks", "extract", "extractone"];
+        let lowered = crate::js::to_lower_case(id);
+        !id.contains('.')
+            && !OWN.contains(&lowered.as_str())
+            && !crate::stdlib::FLAT.contains(&lowered.as_str())
+            && self.callee(id).is_none()
+            && !self.binds_any_case(id)
+    }
+
     /// A name the body itself binds (a parameter, a value, a record).
     fn binds_in_body(&self, name: &str) -> bool {
         self.events.contains(name)
@@ -2299,6 +2315,17 @@ impl Names<'_> {
     }
 
     /// `CallScope.binds`: a name the file or the body binds, anywhere.
+    /// `binds`, or `movements`, `shapes`, `graphs`, `plugins` or an
+    /// instance, for a name in any letter case.
+    fn binds_any_case(&self, name: &str) -> bool {
+        let lowered = crate::js::to_lower_case(name);
+        let sets: [&BTreeSet<String>; 15] = [
+            self.events, self.extracts, self.values, self.handles, self.nodes, self.members, self.lazies, self.body_instances,
+            self.file_names, self.landings, &self.instances, self.movements, self.plugins, self.graphs, self.shapes,
+        ];
+        sets.iter().any(|set| set.iter().any(|bound| crate::js::to_lower_case(bound) == lowered))
+    }
+
     fn binds(&self, name: &str) -> bool {
         self.events.contains(name)
             || self.extracts.contains(name)
@@ -2576,7 +2603,9 @@ impl Names<'_> {
             Expression::Aggregate { fn_, expression, order_by, .. } => self.aggregate(*fn_, expression, order_by.as_deref(), scoped),
             // The run's pinned instant; the acting user and the actor are
             // looked up, and the dispatch's bag is not the input's.
-            Expression::Meta { key } if key == "current_date" || key == "current_timestamp" => Ok(()),
+            Expression::Meta { key } if key == "current_date" || key == "current_timestamp" || crate::eval::is_host_meta(key) => Ok(()),
+            // The dispatch's bag (`trigger`, `mutationContext`), which no
+            // author writes: the checker refuses any other `@` key.
             Expression::Meta { key } => refuse(format!("meta:{key}")),
             // `x == null` of a name bound to anything but a value: answered by
             // the binding (`presenceCompare`).
@@ -2652,7 +2681,7 @@ impl Names<'_> {
             // (checker/nested_calls.ts): its invocation.
             Expression::Function { fn_, .. } if names_plugin(self.plugins, fn_, self.language_version) => refuse("plugin_call"),
             Expression::Function { fn_, args } => {
-                if !FUNCTIONS.contains(&fn_.as_str()) {
+                if !FUNCTIONS.contains(&fn_.as_str()) && !self.integration_function(fn_) {
                     return refuse(format!("function:{fn_}"));
                 }
                 // A reading handed back carries its arguments to the host.
@@ -3297,7 +3326,6 @@ mod tests {
         for (body, reason) in [
             ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
             ("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }", "aggregate:only"),
-            ("  crm-[c:companies WHERE `name` == @user_email]-> {\n    x = 1\n  }", "meta:user_email"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }

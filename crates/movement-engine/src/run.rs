@@ -370,6 +370,10 @@ pub(crate) struct Run<'a> {
     pub(crate) movement_name: RefCell<String>,
     /// The writes, in program order (`MovementRunResult.writes`).
     pub(crate) writes: RefCell<Vec<Rc<WriteRecord>>>,
+    /// `@user_*`'s acting user and `@actor_*`'s actor, once looked up
+    /// (`actingUserCache` / `actorCache`: null is an answer too).
+    pub(crate) acting_user: RefCell<Option<Js>>,
+    pub(crate) actor: RefCell<Option<Js>>,
     /// The target adapters resolved, by instance identity.
     pub(crate) targets: RefCell<Vec<(String, Rc<TargetAdapter>)>>,
     /// What every write tells its adapter about where it came from.
@@ -496,6 +500,8 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         import_originals: RefCell::default(),
         source: RefCell::default(),
         source_instance: RefCell::default(),
+        acting_user: RefCell::default(),
+        actor: RefCell::default(),
         origins: RefCell::default(),
         misses: RefCell::default(),
         trace: FlowTrace::default(),
@@ -1479,9 +1485,22 @@ impl Run<'_> {
     /// One walk, scoped at `subject` when given: a landed record, or an
     /// extracted entity (an `EXISTS` WHERE over an extraction's).
     pub(crate) async fn evaluate_scoped(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, subject: Option<Scoped>) -> Result<Evaluated, Stop> {
+        self.evaluate_with(expr, scope, span, subject, None).await
+    }
+
+    /// `evaluate_scoped`, as a write field's value when `field` names the
+    /// functions that field advertises (`bindMovementFieldFunctions`).
+    pub(crate) async fn evaluate_with(
+        &self,
+        expr: &Expression,
+        scope: &Rc<Scope>,
+        span: Option<Js>,
+        subject: Option<Scoped>,
+        field: Option<&crate::write::FieldFunctions>,
+    ) -> Result<Evaluated, Stop> {
         let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
         let scoped = subject.is_some();
-        let reader = Reading { run: self, scope, span: span.clone(), subject };
+        let reader = Reading { run: self, scope, span: span.clone(), subject, field };
         let evaluator = if scoped {
             Evaluator::scoped_in_run(scope.as_ref(), self.version(), around, &reader)
         } else {
@@ -1535,7 +1554,100 @@ impl Run<'_> {
                 let request = self.compare_request(op, &left, &right).await?;
                 self.builtin(request).await
             }
+            Ask::Meta { key } => {
+                let value = self.meta_value(&key).await?;
+                Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
+            }
+            // Asked only of a write field's evaluation, which answers it.
+            Ask::FieldFunction { id, .. } => Err(Failure::engine("MOVENG_RUNTIME", format!("{id}() was asked of no write field"))),
         }
+    }
+
+    /// `resolveMovementMetaKey` for the acting-user and raw-actor keys.
+    async fn meta_value(&self, key: &str) -> Result<Js, Failure> {
+        let nullish = |value: Js| if value.is_nullish() { Js::Null } else { value };
+        match key {
+            "user_email" | "user_name" | "user_id" => {
+                let acting = self.acting_user().await?;
+                if !acting.truthy() {
+                    return Ok(Js::Null);
+                }
+                Ok(match key {
+                    "user_email" => nullish(event_get(&acting, "email")),
+                    "user_name" => nullish(event_get(&event_get(&acting, "principal"), "display")),
+                    _ => event_get(&event_get(&acting, "principal"), "id"),
+                })
+            }
+            _ => {
+                let actor = self.actor().await?;
+                if !actor.truthy() {
+                    return Ok(Js::Null);
+                }
+                Ok(match key {
+                    "actor_email" => {
+                        let email = event_get(&actor, "email");
+                        if !email.is_nullish() {
+                            email
+                        } else if crate::js::strict_equals(&event_get(&actor, "scheme"), &Js::str("email")) {
+                            event_get(&actor, "identifier")
+                        } else {
+                            Js::Null
+                        }
+                    }
+                    "actor_name" => {
+                        let name = event_get(&actor, "name");
+                        if !name.is_nullish() { name } else { nullish(event_get(&actor, "label")) }
+                    }
+                    _ => event_get(&actor, "identifier"),
+                })
+            }
+        }
+    }
+
+    /// `resolveMovementActingUser`: asked of the host once per segment,
+    /// through the source when it lists `getActorCandidates`; a throw is no
+    /// user.
+    async fn acting_user(&self) -> Result<Js, Failure> {
+        if let Some(cached) = self.acting_user.borrow().clone() {
+            return Ok(cached);
+        }
+        let source = self.source.borrow().clone();
+        let resolved = match source {
+            Some(source) if source.instance.has("getActorCandidates") => {
+                let trigger = event_get(&self.event, "triggerEntryId");
+                let trigger_id = trigger.truthy().then(|| trigger.to_js_string());
+                let request = host::lookup::resolve_acting_user(self.segment(), trigger_id.as_deref(), &source.instance, self.encode(&self.event)?);
+                match self.ask(request).await {
+                    Ok(Some(user)) => self.wire.decode(&user).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?,
+                    Ok(None) | Err(Failure::Host(_)) => Js::Null,
+                    Err(other) => return Err(other),
+                }
+            }
+            _ => Js::Null,
+        };
+        *self.acting_user.borrow_mut() = Some(resolved.clone());
+        Ok(resolved)
+    }
+
+    /// `resolveMovementActor`: the source adapter's `extractActor` of the
+    /// event, once per segment; a failure is no actor.
+    async fn actor(&self) -> Result<Js, Failure> {
+        if let Some(cached) = self.actor.borrow().clone() {
+            return Ok(cached);
+        }
+        let source = self.source.borrow().clone();
+        let resolved = match source {
+            Some(source) if source.instance.has("extractActor") => {
+                match self.call_adapter(&source.instance, "extractActor", env::object_of(vec![("event", self.event.clone())])).await {
+                    Ok(actor) => actor,
+                    Err(Failure::Host(_)) => Js::Null,
+                    Err(other) => return Err(other),
+                }
+            }
+            _ => Js::Null,
+        };
+        *self.actor.borrow_mut() = Some(resolved.clone());
+        Ok(resolved)
     }
 
     /// `{value: wire}` or `{threw: {class, code?, message}}`: the TypeScript
@@ -1883,6 +1995,8 @@ struct Reading<'r, 'h> {
     span: Option<Js>,
     /// What a position-scoped evaluation reads.
     subject: Option<Scoped>,
+    /// The functions the write field this is the value of advertises.
+    field: Option<&'r crate::write::FieldFunctions>,
 }
 
 /// What a position-scoped evaluation's bare names read (`PositionScope`).
@@ -1897,7 +2011,17 @@ pub(crate) enum Scoped {
 
 impl Reader for Reading<'_, '_> {
     fn ask(&self, ask: Ask) -> Evaluating<'_> {
-        Box::pin(async move { self.run.answer(ask, self.scope, self.subject.as_ref(), self.span.as_ref()).await.map_err(Failure::into_eval)? })
+        Box::pin(async move {
+            if let (Ask::FieldFunction { id, args }, Some(field)) = (&ask, self.field) {
+                let value = self.run.field_function(field, id, args).await.map_err(Failure::into_eval)??;
+                return Ok(Evaluated { value, prov: Prov::Built(Trail::default()) });
+            }
+            self.run.answer(ask, self.scope, self.subject.as_ref(), self.span.as_ref()).await.map_err(Failure::into_eval)?
+        })
+    }
+
+    fn field_function(&self, id: &str) -> bool {
+        self.field.is_some_and(|field| field.has(id))
     }
 
     fn literal(&self) -> u32 {

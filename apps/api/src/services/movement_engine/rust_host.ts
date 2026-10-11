@@ -25,6 +25,7 @@ import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
 import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
+import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
 import { EFFORTS, type Effort } from './ai_tiers';
 import { applyMovementFunction } from './builtins';
@@ -241,6 +242,26 @@ const ROUTES: Record<string, Route> = {
     const answer = await host.files.resolveFileText({ segmentId: segmentOf(request), file, budget: budgetOf(request.budget) });
     context.ledger.charge(answer.cost);
     return new Plain(wired(wire, answer, 'files.resolveFileText', ['text', 'rawTextId', 'detail']));
+  },
+  /** The principal the event acts as (`@user_*`), the event on the eval
+   *  wire, and the answer back on it. A host that throws answers an error,
+   *  which the engine reads as no user, as the TypeScript engine forgives
+   *  the throw (`resolveMovementActingUserUncached`). */
+  async 'lookup.resolveActingUser'(request, { host, wire }) {
+    if (request.wire !== true) throw new RustShimError('lookup.resolveActingUser carries its event on the eval wire');
+    const event = wire.read(request.event);
+    if (!isTriggerEvent(event)) throw new RustShimError('lookup.resolveActingUser event is a trigger event');
+    const triggerId = optionalString(request.triggerId, 'lookup.resolveActingUser triggerId');
+    const actingUser = await host.lookup.resolveActingUser({
+      ...(triggerId !== undefined ? { triggerId } : {}),
+      instance: string(request.instance, 'lookup.resolveActingUser instance'),
+      event,
+      // Last, as run_context.ts's binding adds it.
+      segmentId: segmentOf(request),
+    });
+    const value = wire.value(actingUser);
+    if (value === REFUSED) throw new RustShimError('lookup.resolveActingUser answered a principal the eval wire cannot carry as itself');
+    return new Plain(value);
   },
   /** Fresh ids, for the resources an extraction carries. */
   async 'ids.mint'(request, { host }) {
@@ -522,6 +543,11 @@ function segmentOf(request: Record<string, unknown>): string {
  *  (crates/movement-engine/src/write.rs, run.rs) as the TypeScript engine
  *  does; what the shim can hold it to here is that it is one object, and the
  *  host's adapter reads it as its protocol `params`. */
+/** An event as the engine hands it back: the run's own, off the wire. */
+function isTriggerEvent(value: unknown): value is TriggerEvent {
+  return typeof value === 'object' && value !== null && typeof Reflect.get(value, 'adapterType') === 'string' && typeof Reflect.get(value, 'triggerType') === 'string';
+}
+
 function isCallArgs(value: unknown): value is AdapterCall['args'] {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

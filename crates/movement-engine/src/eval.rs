@@ -170,6 +170,18 @@ pub enum Ask {
     /// `expr` scoped at the record `subject` holds (`memberScope`): a SORT
     /// key over a list of records.
     ScopedAt { expr: Expression, subject: Js },
+    /// `@user_*` and `@actor_*` (`resolveMovementMetaKey`): the acting user
+    /// the host looks up, the actor the source adapter parses.
+    Meta { key: String },
+    /// A function the destination field advertises (`invokeFieldFunction`),
+    /// called by its lowered name with its arguments' values.
+    FieldFunction { id: String, args: Vec<Js> },
+}
+
+/// The ambients a run reads through its host (`resolveMovementMetaKey`'s
+/// acting-user and raw-actor families).
+pub fn is_host_meta(key: &str) -> bool {
+    matches!(key, "user_email" | "user_name" | "user_id" | "actor_email" | "actor_name" | "actor_id")
 }
 
 /// An evaluation in progress, or a host answer it awaits.
@@ -187,6 +199,11 @@ pub trait Reader {
     /// An ambient's origin (`{kind: 'meta', key}`), minted as the
     /// evaluation reaches it.
     fn meta(&self, key: &str) -> u32;
+    /// Whether the write field this evaluation is the value of advertises a
+    /// function of this lowered name (`ctx.fieldFunctions`).
+    fn field_function(&self, _id: &str) -> bool {
+        false
+    }
 }
 
 pub struct Evaluator<'a> {
@@ -437,6 +454,16 @@ impl<'a> Evaluator<'a> {
                 let value = if key == "current_date" { instant[..10].to_string() } else { instant };
                 let id = reader.meta(key);
                 Ok(Evaluated { value: Js::String(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
+            }
+            // `@user_*` / `@actor_*`: the run's lookups, then the key's trail,
+            // minted after the value as the TypeScript's `fromOrigin` is.
+            Expression::Meta { key } if is_host_meta(key) => {
+                let Some(reader) = self.reader() else {
+                    return Err(EvalError::Fallback("an ambient is the run's".into()));
+                };
+                let value = reader.ask(Ask::Meta { key: key.clone() }).await?.value;
+                let id = reader.meta(key);
+                Ok(Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
             Expression::Traverse { alias_root: Some(root), .. } => self.traverse_from(expr, root).await,
             Expression::Aggregate { fn_, expression, separator, order_by, order_direction, .. } => {
@@ -733,7 +760,27 @@ impl<'a> Evaluator<'a> {
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
         if !stdlib::FLAT.contains(&id) {
-            return Err(EvalError::Fallback(format!("{id} is not a built-in this engine runs")));
+            let Some(reader) = self.reader() else {
+                return Err(EvalError::Fallback(format!("{id} is not a built-in this engine runs")));
+            };
+            // Built-ins always win; any other name is a function the write
+            // field advertises, or unsupported, named, before its arguments
+            // are read.
+            if !reader.field_function(id) {
+                return Err(EvalError::unsupported(
+                    &format!("the function {}()", crate::js::to_upper_case(id)),
+                    "built-in functions run everywhere; an integration-provided function runs only as a write-field value on a field that advertises it",
+                ));
+            }
+            let mut values = Vec::new();
+            let mut provs = Vec::new();
+            for a in args {
+                let result = self.eval(a).await?;
+                provs.push(result.prov);
+                values.push(result.value);
+            }
+            let value = reader.ask(Ask::FieldFunction { id: id.to_string(), args: values }).await?.value;
+            return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
         if id == "coalesce" && self.language_version >= 3 {
             // From version 3 COALESCE short-circuits, as `??` does.

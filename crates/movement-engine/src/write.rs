@@ -133,6 +133,73 @@ pub struct TargetAdapter {
     pub through: Through,
 }
 
+/// The functions a destination field advertises (`bindMovementFieldFunctions`),
+/// bound to the write's target: called by their lowered names.
+pub(crate) struct FieldFunctions {
+    adapter_type: String,
+    instance: Option<Instance>,
+    record_type: String,
+    field_id: String,
+    /// Each lowered name with the name the field advertises it under; a
+    /// later one of the same lowered name wins, as the map's assignment does.
+    names: Vec<(String, String)>,
+}
+
+impl FieldFunctions {
+    /// None when the field advertises none.
+    fn of(field: Option<&Js>, adapter: &TargetAdapter, record_type: &str, field_id: &str) -> Option<FieldFunctions> {
+        let Js::Array(functions) = unique::get(field?, "functions") else { return None };
+        let mut names: Vec<(String, String)> = Vec::new();
+        for function in functions.items().iter() {
+            let name = unique::get(function, "name").to_js_string();
+            let lowered = crate::js::to_lower_case(&name);
+            names.retain(|(l, _)| *l != lowered);
+            names.push((lowered, name));
+        }
+        if names.is_empty() {
+            return None;
+        }
+        let instance = match &adapter.through {
+            Through::Host(instance) => Some(instance.clone()),
+            Through::Local(_) => None,
+        };
+        Some(FieldFunctions { adapter_type: adapter.adapter_type.clone(), instance, record_type: record_type.to_string(), field_id: field_id.to_string(), names })
+    }
+
+    pub(crate) fn has(&self, id: &str) -> bool {
+        self.names.iter().any(|(lowered, _)| lowered == id)
+    }
+}
+
+impl Run<'_> {
+    /// `invokeFieldFunction`: `args[0]` as the brief, the rest as data.
+    pub(crate) async fn field_function(&self, field: &FieldFunctions, id: &str, args: &[Js]) -> Result<Result<Js, EvalError>, Failure> {
+        let name = field.names.iter().find(|(lowered, _)| lowered == id).map(|(_, name)| name.clone()).unwrap_or_default();
+        let Some(instance) = field.instance.as_ref().filter(|instance| instance.has("invokeFieldFunction")) else {
+            return Ok(Err(EvalError::engine(
+                "MOVENG_RUNTIME",
+                format!("the '{}' adapter advertises {name}() on '{}.{}' but does not implement invokeFieldFunction", field.adapter_type, field.record_type, field.field_id),
+            )));
+        };
+        let brief = match args.first() {
+            None | Some(Js::Undefined | Js::Null) => String::new(),
+            Some(value) => value.to_js_string(),
+        };
+        let data = Js::array(args.iter().skip(1).cloned().collect());
+        let call = env::object_of(vec![
+            ("recordType", Js::str(field.record_type.clone())),
+            ("fieldId", Js::str(field.field_id.clone())),
+            ("functionName", Js::str(name)),
+            ("args", env::object_of(vec![("instructions", Js::String(brief)), ("data", data)])),
+        ]);
+        match self.call_adapter(instance, "invokeFieldFunction", call).await {
+            Ok(value) => Ok(Ok(value)),
+            Err(Failure::Host(error)) => Err(Failure::Host(error)),
+            Err(other) => Err(other),
+        }
+    }
+}
+
 /// Who answers a target adapter's calls: the host, for the instance it
 /// resolved; or this engine, for an edge of a node the run built.
 #[derive(Debug)]
@@ -621,12 +688,20 @@ impl Run<'_> {
         let mut provenance: Vec<(String, Option<Trail>)> = Vec::new();
         let mut semantics = Vec::new();
         for line in lines {
-            let evaluated = self.evaluate_slot(&line.slot, scope).await?;
+            // `new Map(fields.map((f) => [f.displayName, f]))`: the last wins.
+            let field = described.iter().rev().find(|f| matches!(unique::get(f, "displayName"), Js::String(n) if n == line.name));
+            let functions = FieldFunctions::of(field, adapter, record_type, &line.name);
+            let evaluated = match &functions {
+                Some(functions) => {
+                    let expr = crate::run::lowered(&line.slot, |tree| movement_parser::lowering::lower_expression(tree, &line.slot.raw), "expression").map_err(thrown)?;
+                    let span = env::js_of_json(&serde_json::to_value(line.slot.span).expect("a span is JSON"));
+                    self.evaluate_with(&expr, scope, Some(span), None, Some(functions)).await?
+                }
+                None => self.evaluate_slot(&line.slot, scope).await?,
+            };
             if matches!(evaluated.value, Js::Undefined) {
                 continue;
             }
-            // `new Map(fields.map((f) => [f.displayName, f]))`: the last wins.
-            let field = described.iter().rev().find(|f| matches!(unique::get(f, "displayName"), Js::String(n) if n == line.name));
             fields.set(line.name.clone(), coerce_for_cardinality(evaluated.value, field));
             let trail = self.trail_of(&evaluated.prov, scope);
             match provenance.iter_mut().find(|(n, _)| *n == line.name) {
