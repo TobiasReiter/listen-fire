@@ -661,7 +661,11 @@ fn text_slug(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
 }
 
 fn text_pairs(record: &Js, separator: &Js) -> Js {
-    let (Js::Object(record) | Js::File(record)) = record else { return Js::Null };
+    let record = match record {
+        Js::Object(record) => record.clone(),
+        Js::File(file) => std::rc::Rc::new(JsObject::clone_of(&file.display)),
+        _ => return Js::Null,
+    };
     let separator = match separator {
         Js::String(s) => s.as_str(),
         _ => " | ",
@@ -691,7 +695,7 @@ fn to_stable_json(value: &Js) -> Js {
         Js::File(file) => {
             let mut out = JsObject::new();
             for key in ["contentType", "kind", "name", "size"] {
-                let field = if key == "kind" { Js::str("file") } else { file.get(key).map_or(Js::Null, to_stable_json) };
+                let field = if key == "kind" { Js::str("file") } else { file.display.get(key).map_or(Js::Null, to_stable_json) };
                 out.set(key.into(), field);
             }
             Js::object(out)
@@ -877,7 +881,7 @@ mod tests {
     /// held as a value are objects; a file passed whole prints its members.
     #[test]
     fn text_pairs_skips_every_object_member_as_typescript_does() {
-        let file = crate::file::file_value_of(&crate::env::js_of_json(&serde_json::json!({ "__brand": "FileRef", "name": "a.pdf" }))).unwrap();
+        let file = crate::file::for_test(1, Some("h"), Some("a.pdf"));
         let mut record = JsObject::new();
         record.set("name".into(), Js::str("Acme"));
         record.set("deck".into(), file.clone());

@@ -23,6 +23,8 @@ import type { ResolveFileRefResult } from '../../adapter';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { getEnvVar } from '../../../../lib/utils/environment';
 import { mintAttachmentDownloadUrl, parseResendAttachmentHandle } from './resend';
+import { isExposedFileUrl } from '../../engine/files/expose';
+import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
 
 type EmailProviderSlug = 'mailgun' | 'resend';
 
@@ -46,7 +48,8 @@ const MAILGUN_PROVIDER: EmailProvider = {
   callbackPath: '/api/mailgun/callback',
   owns(handle) {
     try {
-      return new URL(handle).hostname.endsWith('mailgun.net');
+      const url = new URL(handle);
+      return url.protocol === 'https:' && (url.hostname === 'mailgun.net' || url.hostname.endsWith('.mailgun.net'));
     } catch {
       return false;
     }
@@ -97,13 +100,17 @@ function emailProvidersOverlap(env: NodeJS.ProcessEnv = process.env): boolean {
   return Boolean(env.RESEND_API_KEY) && Boolean(env.MAILGUN_API_KEY);
 }
 
-/** The bytes behind a stored attachment handle, from whoever stored it. */
+/**
+ * The bytes behind a stored attachment handle, from whoever stored it: a
+ * provider's handle (its own storage), or a URL this deployment exposed (the
+ * custom-email blob path), which needs no credential. Any other handle was
+ * not issued to this adapter, and is refused by name, never fetched.
+ */
 async function fetchEmailAttachment(handle: string): Promise<ResolveFileRefResult> {
   const owner = EMAIL_PROVIDERS.find((provider) => provider.owns(handle));
-  // A handle nobody claims is a plain URL on one of our own hosts (the
-  // custom-email blob path), which needs no credential at all.
-  if (owner === undefined) return fetchUrlToStream(handle);
-  return owner.fetchAttachment(handle);
+  if (owner !== undefined) return owner.fetchAttachment(handle);
+  if (isExposedFileUrl(handle)) return fetchUrlToStream(handle);
+  throw new FileOutsideTeamError('handle', 'email');
 }
 
 export {

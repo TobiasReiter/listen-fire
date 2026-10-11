@@ -267,12 +267,12 @@ impl Run<'_> {
         };
         match resolved {
             Err(stop) => {
-                self.log("error", "[MovementEngine] await re-check after parking failed; the run stays parked without a wake", fields(Some(stop_message(&stop))));
+                self.log_with_team("error", "[MovementEngine] await re-check after parking failed; the run stays parked without a wake", fields(Some(stop_message(&stop))), "correlationKey");
             }
             Ok(false) => {}
             Ok(true) => {
                 if let Err(failure) = self.ask(host::park::wake(self.segment(), adapter_type, key)).await {
-                    self.log("error", "[MovementEngine] await wake after parking could not be queued", fields(Some(failure_message(&failure))));
+                    self.log_with_team("error", "[MovementEngine] await wake after parking could not be queued", fields(Some(failure_message(&failure))), "correlationKey");
                 }
             }
         }

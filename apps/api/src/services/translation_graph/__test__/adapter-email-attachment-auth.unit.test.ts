@@ -65,13 +65,30 @@ describe('email attachment byte auth (resolveFileRef)', () => {
     expect(decoded.startsWith('api:')).toBe(true);
   });
 
-  it('sends no auth for a non-Mailgun handle (custom-email blob URL)', async () => {
-    const adapter = new EmailAdapter(TEAM_ID);
-    const handle = 'https://blob.example.com/inbound/xyz/attachment-0';
-    await adapter.resolveFileRef(refFor(handle));
+  it('sends no auth for a URL this deployment exposed (custom-email blob URL)', async () => {
+    const saved = process.env.EXPOSED_FILE_PUBLIC_BASE_URL;
+    process.env.EXPOSED_FILE_PUBLIC_BASE_URL = 'https://api.listen-fire.example';
+    try {
+      const adapter = new EmailAdapter(TEAM_ID);
+      const handle = 'https://api.listen-fire.example/api/files/blob/xyz';
+      await adapter.resolveFileRef(refFor(handle));
 
-    const [, init] = fetchSpy.mock.calls[0];
-    expect(authHeaderFrom(init)).toBeUndefined();
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(authHeaderFrom(init)).toBeUndefined();
+    } finally {
+      if (saved === undefined) delete process.env.EXPOSED_FILE_PUBLIC_BASE_URL;
+      else process.env.EXPOSED_FILE_PUBLIC_BASE_URL = saved;
+    }
+  });
+
+  it.each([
+    ['another host', 'https://blob.example.com/inbound/xyz/attachment-0'],
+    ['a host that only ends like Mailgun', 'https://evilmailgun.net/v3/x'],
+    ['plain http to Mailgun', 'http://storage.mailgun.net/v3/x'],
+  ])('refuses, by name, a handle on %s — nothing fetched', async (_what, handle) => {
+    const adapter = new EmailAdapter(TEAM_ID);
+    await expect(adapter.resolveFileRef(refFor(handle))).rejects.toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'handle' });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('mints a fresh download URL for a Resend handle rather than storing one', async () => {

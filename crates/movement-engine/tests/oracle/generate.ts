@@ -66,7 +66,7 @@ import {
   stdlibFunctionById,
 } from '../../../../packages/movement-lang/expression/stdlib';
 import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
-import { fileValue, isFileValue } from '../../../../packages/engine-contracts/file_ref';
+import { fileHandle, fileValue, isFileValue } from '../../../../packages/engine-contracts/file_ref';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import { writeExtractionOracle } from './extraction_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
@@ -88,8 +88,12 @@ function wire(value: unknown): unknown {
     return value;
   }
   if (Array.isArray(value)) return ['l', 0, value.map(wire)];
-  // A file the engine holds crosses tagged, as the eval wire carries it.
-  if (isFileValue(value)) return ['F', wire({ ...value })];
+  // A file crosses as the eval wire carries it: an opaque handle (id, identity,
+  // what it may print), its descriptor staying host-side.
+  if (isFileValue(value)) {
+    const handle = fileHandle(value);
+    return ['F', 0, { ...(handle !== undefined ? { handle } : {}), ...(value.name !== undefined ? { name: value.name } : {}), ...(value.size !== undefined ? { size: value.size } : {}) }];
+  }
   if (value !== null && typeof value === 'object') {
     return ['o', 0, Object.entries(value).map(([k, v]) => [k, wire(v)])];
   }

@@ -27,11 +27,11 @@ pub enum Js {
     /// collection op's answer), which `bindingOf` reads back as the record.
     /// To every other JavaScript operation it is a plain object.
     Record(Rc<crate::bindings::Binding>),
-    /// A file the engine holds (crate::file): its descriptor, made a file at
-    /// an envelope that declares one. To JavaScript it is an object that is
-    /// no dict (an instance of the TypeScript engine's file class): its
-    /// members read, `JSON.stringify` writes them, a spread refuses it.
-    File(Rc<JsObject>),
+    /// A file the engine holds (crate::file): an opaque handle onto a file
+    /// the host keeps, with what a reader may print of it. To JavaScript it
+    /// is an object that is no dict (an instance of the TypeScript engine's
+    /// file class): its printable members read, a spread refuses it.
+    File(Rc<crate::file::FileHandle>),
     /// A function `Object.prototype` holds, or `Object` itself: what reading
     /// one of `OBJECT_PROTOTYPE_NAMES` off a plain object finds.
     Function(NativeFunction),
@@ -835,7 +835,8 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
             }
         },
         // A file's members, as `JSON.stringify` writes a class instance's.
-        Js::File(file) => write_json(&crate::file::descriptor(file), indent, depth, out, held),
+        // Its printable members: the engine holds no more of it.
+        Js::File(file) => write_json(&crate::file::display(file), indent, depth, out, held),
         Js::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Js::Number(n) => out.push_str(&if n.is_finite() { number_to_string(*n) } else { "null".into() }),
         Js::String(s) => out.push_str(&json_quote(s)),

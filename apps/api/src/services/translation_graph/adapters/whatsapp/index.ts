@@ -44,6 +44,8 @@ import { fileHandle, isFileValue, ownedFileSource, singleParentLink } from '../.
 import { naturalName } from '../name_resolution';
 import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
+import { isExposedFileUrl } from '../../engine/files/expose';
+import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
 import { streamFileRef } from '../../engine/files/retrieve';
 import { META_RECORD_TYPE, makeUnstablePosition, positionData } from '../../types';
 import { uniformWalk } from '../hop';
@@ -678,6 +680,8 @@ export class WhatsappAdapter extends BaseAdapter implements Adapter {
         `${WHATSAPP_ADAPTER_TYPE}.resolveFileRef: FileRef has no source handle to resolve.`,
       );
     }
+    // Only a handle this adapter issued is fetched: refused by name otherwise.
+    if (!isIssuedMediaHandle(handle)) throw new FileOutsideTeamError('handle', WHATSAPP_ADAPTER_TYPE);
     return fetchUrlToStream(handle);
   }
 
@@ -980,4 +984,22 @@ function whatsappMediaFileRef(att: Partial<WhatsappAttachment>): FileRef | null 
 /** Factory matching the registry's AdapterFactory signature. */
 export function createWhatsappAdapter(input: { teamId: TeamId }): WhatsappAdapter {
   return new WhatsappAdapter(input.teamId);
+}
+
+/**
+ * Whether a media handle is one this adapter issued: a Twilio media URL of
+ * this deployment's own Twilio account (`TWILIO_ACCOUNT_SID`; any account's
+ * when none is configured), over https, or a URL this deployment exposed
+ * itself (`isExposedFileUrl`).
+ */
+function isIssuedMediaHandle(handle: string): boolean {
+  if (isExposedFileUrl(handle)) return true;
+  try {
+    const url = new URL(handle);
+    if (url.protocol !== 'https:' || url.hostname !== 'api.twilio.com') return false;
+    const account = process.env.TWILIO_ACCOUNT_SID;
+    return account === undefined || account === '' || url.pathname.startsWith(`/2010-04-01/Accounts/${account}/`);
+  } catch {
+    return false;
+  }
 }

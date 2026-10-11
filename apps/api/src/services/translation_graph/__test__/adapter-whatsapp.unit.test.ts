@@ -826,3 +826,38 @@ describe('File duality — movement compile against the real projected schema', 
     expect(diagnostics.map((d) => d.code)).toEqual(['MOV_WRITE_ONLY_PROPERTY']);
   });
 });
+
+describe('WhatsappAdapter.resolveFileRef reads only a handle it issued', () => {
+  const realFetch = global.fetch;
+  const fetched: unknown[] = [];
+  beforeEach(() => {
+    fetched.length = 0;
+    global.fetch = (async (url: unknown) => {
+      fetched.push(url);
+      return new Response('MEDIA', { status: 200 });
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    global.fetch = realFetch;
+    delete process.env.TWILIO_ACCOUNT_SID;
+  });
+  const ref = (handle: string) => ({ ref: { __brand: 'FileRef' as const, source: { adapterType: 'whatsapp', handle } } });
+
+  it("fetches a Twilio media URL of this deployment's account", async () => {
+    process.env.TWILIO_ACCOUNT_SID = 'AC123';
+    const url = 'https://api.twilio.com/2010-04-01/Accounts/AC123/Messages/MM1/Media/ME1';
+    await new WhatsappAdapter(TEAM_ID).resolveFileRef(ref(url));
+    expect(fetched).toEqual([url]);
+  });
+
+  it.each([
+    ['another host', 'https://evil.example/exfiltrate'],
+    ['plain http to Twilio', 'http://api.twilio.com/2010-04-01/Accounts/AC123/Media/ME1'],
+    ["another Twilio account's media", 'https://api.twilio.com/2010-04-01/Accounts/AC999/Media/ME1'],
+    ['a cloud metadata address', 'http://169.254.169.254/latest/meta-data'],
+  ])('refuses, by name, %s — nothing fetched', async (_what, url) => {
+    process.env.TWILIO_ACCOUNT_SID = 'AC123';
+    await expect(new WhatsappAdapter(TEAM_ID).resolveFileRef(ref(url))).rejects.toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'handle' });
+    expect(fetched).toEqual([]);
+  });
+});

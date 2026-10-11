@@ -1869,11 +1869,11 @@ impl Run<'_> {
     async fn event_field(&self, field: &str) -> Result<Evaluated, Failure> {
         let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
         let seed = &source.position;
-        let value = self.call_adapter_at(&source.instance, "getFieldValue", &source.surface, vec![("fieldId", Js::str(field))]).await?;
         // A file is what the catalog declares one (the read wrapper's
-        // `filesAtType`): any other field's answer is data, whatever its keys.
+        // `filesAtType`, which the host applies): any other field's answer is
+        // data, whatever its keys.
         let declared = crate::file::declared_field_type(source.read.schema.as_ref(), crate::traverse::record_type(&source.surface).as_deref(), field);
-        let value = crate::file::files_at_type(declared, value);
+        let value = self.field_value_at(&source.instance, &source.surface, field, declared).await?;
         if value.is_nullish() && !seed.is_stable() {
             self.trace_miss_in(&source.instance_name, &seed.data, field);
         }
@@ -2047,6 +2047,13 @@ impl Run<'_> {
     /// kept until the statement's trace is handed over.
     pub(crate) fn log(&self, level: &str, message: &str, fields: serde_json::Map<String, Json>) {
         self.log_lines.borrow_mut().push(json!({ "level": level, "message": message, "fields": fields }));
+    }
+
+    /// A log line the host names the run's team on, after `after` (where the
+    /// TypeScript engine's line has it): the engine holds no team, so it
+    /// says only where the host's goes.
+    pub(crate) fn log_with_team(&self, level: &str, message: &str, fields: serde_json::Map<String, Json>, after: &str) {
+        self.log_lines.borrow_mut().push(json!({ "level": level, "message": message, "fields": fields, "teamAfter": after }));
     }
 
     /// `adapters.resolve`, one request per distinct resolution per segment
@@ -2467,7 +2474,8 @@ fn ai_answer(parsed: &Js) -> Js {
 
 fn event_get(value: &Js, key: &str) -> Js {
     match value {
-        Js::Object(object) | Js::File(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
+        Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
+        Js::File(file) => file.display.get(key).cloned().unwrap_or(Js::Undefined),
         _ => Js::Undefined,
     }
 }

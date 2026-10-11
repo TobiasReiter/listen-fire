@@ -360,7 +360,9 @@ fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<J
         return Ok(object_of(vec![("kind", Js::str("record")), ("binding", serialize_binding(run, "", &record, park)?)]));
     }
     Ok(match value {
-        Js::File(file) => object_of(vec![("kind", Js::str("file")), ("file", crate::file::descriptor(file))]),
+        // The file itself: the wire hands the host its id, and the host parks
+        // the descriptor it keeps.
+        Js::File(_) => object_of(vec![("kind", Js::str("file")), ("file", value.clone())]),
         Js::Array(list) => {
             let of = list.items().iter().map(|item| serialize_value(run, item, park)).collect::<Result<Vec<_>, _>>()?;
             object_of(vec![("kind", Js::str("list")), ("of", Js::array(of))])

@@ -692,18 +692,22 @@ describe("a segment's wire", () => {
     expect(() => wire.read(['x', 1, ['o', 4, [['kind', 'lazyWalk']]]])).toThrow('a record of kind lazyWalk, which the shim does not rebuild');
   });
 
-  it('carries a file the engine holds tagged both ways, and a dict that spells one as data', () => {
+  it('hands the engine a file as an opaque handle, keeps its descriptor, and carries a dict that spells one as data', () => {
     const wire = new WireOut({ whole: true });
     const descriptor = { __brand: 'FileRef' as const, name: 'deck.pdf', source: { store: 'document' as const, objectUri: 's3://x/deck.pdf' } };
-    const written = wire.value(fileValue(descriptor));
-    expect(written).toEqual(['F', expect.arrayContaining(['o'])]);
-    const read = wire.read(written);
-    expect(isFileValue(read)).toBe(true);
-    expect(read).toEqual(descriptor);
+    const file = fileValue(descriptor);
+    // The id, the opaque identity, what it may print: no source, no URI's
+    // reading, nothing of a credential.
+    const written = wire.value(file);
+    expect(written).toEqual(['F', 0, { handle: 's3://x/deck.pdf', name: 'deck.pdf' }]);
+    expect(JSON.stringify(written)).not.toContain('store');
+    // The same file again is the same id; back from the engine, the very file.
+    expect(wire.value(file)).toEqual(['F', 0, { handle: 's3://x/deck.pdf', name: 'deck.pdf' }]);
+    expect(wire.read(['F', 0])).toBe(file);
+    expect(() => wire.read(['F', 7])).toThrow('a file 7 this segment never handed it');
     // The same keys as data: an object, never a file, on either side.
     expect(wire.value(descriptor)).toEqual(expect.arrayContaining(['o']));
     expect(isFileValue(wire.read(['o', 9, [['__brand', 'FileRef'], ['name', 'x']]]))).toBe(false);
-    expect(() => wire.read(['F', ['o', 10, [['__brand', 'Not']]]])).toThrow("a file whose descriptor is not one");
   });
 
   it('writes each value whole, an object again under the id it was first sent under, and hands each id back as its object', () => {

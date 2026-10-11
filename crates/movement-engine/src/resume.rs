@@ -1217,11 +1217,13 @@ pub(crate) fn rematerialise_answer(answer: Js) -> Binding {
     Binding::Extracted { emission: emission(JsObject::new(), vec![(type_name.clone(), kids)]), root: true, id: crate::bindings::Identity::new() }
 }
 
-/// `rehydrateResource`: a parked resource, its `fileRef` slot (typed: its
-/// file, branded or not) a file again, and its `data.file` that same file.
+/// `rehydrateResource`: a parked resource, its `fileRef` slot the file the
+/// host made of it, and its `data.file` that same file.
 fn rehydrate_resource(descriptor: &Js) -> Js {
     let Js::Object(object) = descriptor else { return descriptor.clone() };
-    let file = object.get("fileRef").filter(|f| !matches!(f, Js::Undefined)).and_then(crate::file::file_value_of);
+    // The host handed the slot's file as one (its parked descriptor made a
+    // file host-side); anything else in the slot is no file.
+    let file = object.get("fileRef").filter(|f| matches!(f, Js::File(_))).cloned();
     let mut out = JsObject::new();
     for (key, value) in object.entries() {
         if key == "fileRef" {
@@ -1244,10 +1246,14 @@ fn rehydrate_resource(descriptor: &Js) -> Js {
 
 /// A parked `file`: a file again, by the descriptor that said so.
 fn revived_file(descriptor: Option<&Js>) -> Result<Js, Stop> {
-    let descriptor = descriptor.cloned().unwrap_or(Js::Undefined);
-    crate::file::file_value_of(&descriptor).ok_or_else(|| {
-        Stop::Thrown(crate::run::Failure::engine("MOVENG_PARK_NONSERIALIZABLE", format!("a parked file is not a file's descriptor: {}", crate::js::json_stringify(&descriptor, 0))))
-    })
+    match descriptor {
+        Some(file @ Js::File(_)) => Ok(file.clone()),
+        // The host makes a parked file a file before the engine reads it.
+        other => Err(Stop::Thrown(crate::run::Failure::engine(
+            "MOVENG_PARK_NONSERIALIZABLE",
+            format!("a parked file the host did not hand back as a file: {}", crate::js::json_stringify(&other.cloned().unwrap_or(Js::Undefined), 0)),
+        ))),
+    }
 }
 
 /// `withFileFields`: the fields a park said hold a file made whole again,

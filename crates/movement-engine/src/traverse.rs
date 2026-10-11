@@ -42,7 +42,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use movement_parser::ast::{PathHead, PathRoot, TraversalBlock};
-use movement_parser::catalog::types::InstanceSchema;
+use movement_parser::catalog::types::{FieldType, InstanceSchema};
 use movement_parser::lowering::expression::{EdgeDirection, EdgeStep, Expression, FilterOperator, TraversalStep};
 use serde_json::Value as Json;
 
@@ -1187,14 +1187,10 @@ impl Run<'_> {
             let natural = record_type(&landed.position).or_else(|| read.start_surface_type.clone());
             restamp(&landed.position, natural.as_deref(), &read.adapter_type)
         });
-        let value = self.call_adapter_at(&read.instance, "getFieldValue", position, vec![("fieldId", Js::str(field))]).await?;
         // Through the read wrapper, a file is what the catalog declares one
-        // (`filesAtType`); the adapter itself, read raw, answers data.
-        let value = if read.raw {
-            value
-        } else {
-            crate::file::files_at_type(crate::file::declared_field_type(read.schema.as_ref(), record_type(position).as_deref(), field), value)
-        };
+        // (the host makes it); the adapter itself, read raw, answers data.
+        let declared = if read.raw { None } else { crate::file::declared_field_type(read.schema.as_ref(), record_type(position).as_deref(), field) };
+        let value = self.field_value_at(&read.instance, position, field, declared).await?;
         let stable = is_stable(&landed.position);
         if value.is_nullish() && !stable {
             self.trace_miss_in(&read.instance_name, &position_data(&landed.position), field);
@@ -1220,15 +1216,35 @@ impl Run<'_> {
     /// position sent by handle (crate::host `call_at`): registered with the
     /// host the first time it is named, by its number after.
     pub(crate) async fn call_adapter_at(&self, instance: &Instance, method: &str, position: &Js, rest: Vec<(&str, Js)>) -> Result<Js, Failure> {
-        let Js::Object(object) = position else {
-            let mut args = vec![("position", position.clone())];
-            args.extend(rest);
-            return self.call_adapter(instance, method, env::object_of(args)).await;
+        self.call_adapter_typed(instance, method, position, rest, None).await
+    }
+
+    /// `getFieldValue` of a field whose declared type is `files_at`: the host
+    /// makes the files that type calls for (`filesAtType`, rust_host.ts) and
+    /// hands them back as files; any other answer is data.
+    pub(crate) async fn field_value_at(&self, instance: &Instance, position: &Js, field: &str, files_at: Option<&FieldType>) -> Result<Js, Failure> {
+        let files_at = files_at.filter(|ty| crate::file::may_hold_file(ty));
+        self.call_adapter_typed(instance, "getFieldValue", position, vec![("fieldId", Js::str(field))], files_at).await
+    }
+
+    async fn call_adapter_typed(&self, instance: &Instance, method: &str, position: &Js, rest: Vec<(&str, Js)>, files_at: Option<&FieldType>) -> Result<Js, Failure> {
+        let files_at = files_at.map(|ty| serde_json::to_value(ty).expect("a field type is JSON"));
+        let mut request = match position {
+            Js::Object(object) => {
+                let (reference, first) = self.positions.borrow_mut().register(object);
+                let value = if first { Some(self.encode(position)?) } else { None };
+                let arg = host::adapters::PositionArg { reference, value };
+                host::adapters::call_at(self.segment(), instance, method, arg, self.encode(&env::object_of(rest))?)
+            }
+            _ => {
+                let mut args = vec![("position", position.clone())];
+                args.extend(rest);
+                host::adapters::call(self.segment(), instance, method, self.encode(&env::object_of(args))?)
+            }
         };
-        let (reference, first) = self.positions.borrow_mut().register(object);
-        let value = if first { Some(self.encode(position)?) } else { None };
-        let arg = host::adapters::PositionArg { reference, value };
-        let request = host::adapters::call_at(self.segment(), instance, method, arg, self.encode(&env::object_of(rest))?);
+        if let Some(files_at) = files_at {
+            request.args["filesAt"] = files_at;
+        }
         self.adapter_answer(self.ask(request).await?)
     }
 }

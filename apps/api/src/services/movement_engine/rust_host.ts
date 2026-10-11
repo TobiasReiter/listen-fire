@@ -21,6 +21,7 @@ import {
   applyStdlib,
   declaredTypesIn,
   languageVersionDiagnostic,
+  pluginOutputUnder,
   schemaSurface,
   stdlibFunctionById,
   surfaceMisfit,
@@ -29,7 +30,7 @@ import {
   type Program,
   type ShapeDeclaration,
 } from 'movement-lang';
-import { fileValueOf, isFileValue, type ParkedScopeState } from 'engine-contracts';
+import { filesAtType, fileValueOf, isFileValue, type ParkedScopeState } from 'engine-contracts';
 import { z } from 'zod';
 
 import { compareValues } from '#shared/expression/filter';
@@ -47,7 +48,8 @@ import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost 
 import { hostCallFailure } from './host_adapter';
 import { checkAnswer, checkPinned } from './program_check';
 import type { MovementRunResult } from './run';
-import { publishTrace, runLogFields, type RunContext } from './run_context';
+import { publishTrace, runLogFields, withDeclaredFiles, type RunContext } from './run_context';
+import { pluginSpecNamed } from './extraction';
 import type { HostAnswer, HostRequest } from './rust_engine';
 import { rustRunStats } from './rust_stats';
 import {
@@ -55,7 +57,9 @@ import {
   RunAborted,
   RustShimError,
   WireOut,
+  filesInParkState,
   isCallbackParam,
+  schemaFieldTypeOf,
   optionalString,
   optionalStringRecord,
   plainJson,
@@ -194,8 +198,13 @@ const ROUTES: Record<string, Route> = {
       hostErrors.push(hostCallFailure(answer.error));
       return new Plain(plainJson({ error: { ...answer.error, ref: hostErrors.length - 1 } }, `adapters.call ${method} error`));
     }
-    // An adapter's answer is data, as the event is, whatever keys it carries.
-    const result = wire.value(answer.result);
+    // An adapter's answer is data, as the event is, whatever keys it carries
+    // — but where the engine says the catalog declares the field a file
+    // (`filesAt`), the host makes the files that type calls for, and the
+    // engine is handed each as an opaque handle.
+    const filesAt = request.filesAt === undefined ? undefined : schemaFieldTypeOf(request.filesAt);
+    if (request.filesAt !== undefined && filesAt === undefined) throw new RustShimError(`adapters.call ${method} filesAt is a field type`);
+    const result = wire.value(filesAt !== undefined ? filesAtType(filesAt, answer.result) : answer.result);
     if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
     return new Plain({ result });
   },
@@ -288,7 +297,7 @@ const ROUTES: Record<string, Route> = {
   /** A plugin's invocation (`through` or a plain call), a priced call: its
    *  arguments and the entity's fields so far arrive on the eval wire, and
    *  what it brought back goes back on it. */
-  async 'llm.transforms.invoke'(request, { host, context, wire }) {
+  async 'llm.transforms.invoke'(request, { host, context, catalog, wire }) {
     if (request.wire !== true) throw new RustShimError('llm.transforms.invoke carries its values on the eval wire');
     const answer = await host.llm.transforms.invoke({
       plugin: string(request.plugin, 'llm.transforms.invoke plugin'),
@@ -298,7 +307,12 @@ const ROUTES: Record<string, Route> = {
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(wire, answer, 'llm.transforms.invoke', ['text', 'data', 'records', 'outcome']));
+    // The files the plugin's output declares, made here (as the TypeScript
+    // engine's priced invoker makes them): the engine is handed handles.
+    const spec = pluginSpecNamed(catalog.plugins, string(request.plugin, 'llm.transforms.invoke plugin'));
+    const output = spec !== undefined ? pluginOutputUnder(spec, context.languageVersion) : undefined;
+    const typed = 'error' in answer ? answer : withDeclaredFiles(answer, output);
+    return new Plain(wired(wire, typed, 'llm.transforms.invoke', ['text', 'data', 'records', 'outcome']));
   },
   /** A source file's text, a priced call: the descriptor on the eval wire. */
   async 'files.resolveFileText'(request, { host, context, wire }) {
@@ -465,7 +479,8 @@ const ROUTES: Record<string, Route> = {
       frameAddress: string(request.frameAddress, 'park.sink.collectBranchExports frameAddress'),
       segmentId: segmentOf(request),
     });
-    const value = wire.value(rows);
+    // A branch's exports are parked state: its files the host's to make.
+    const value = wire.value(filesInParkState(rows));
     if (value === REFUSED) throw new RustShimError('park.sink.collectBranchExports answered exports the eval wire cannot carry as themselves');
     return new Plain(value);
   },
@@ -543,11 +558,11 @@ const ROUTES: Record<string, Route> = {
   },
   /** Entries on the run's trace, as they land: the segment's own trace (the
    *  result's), handed on to the host's. */
-  async 'trace.append'(request, { host, context }) {
+  async 'trace.append'(request, { host, context, wire }) {
     segmentOf(request);
     // On the eval wire, so each entry keeps the key order the engine wrote.
     if (request.wire !== true) throw new RustShimError('trace.append carries its entries on the eval wire');
-    const entries = new WireOut().read(request.entries);
+    const entries = new WireOut({ files: wire.files }).read(request.entries);
     if (!Array.isArray(entries)) throw new RustShimError('trace.append entries are a list');
     if (request.closing !== undefined && request.closing !== true) throw new RustShimError('trace.append closing is true or absent');
     context.trace.entries.push(...entries.map(traceEntry));
@@ -574,10 +589,11 @@ const ROUTES: Record<string, Route> = {
     const lines = request.lines;
     if (!Array.isArray(lines)) throw new RustShimError('log.write lines are a list');
     for (const line of lines) {
-      const { level, message, fields } = record(line, 'a log line');
+      const { level, message, fields, teamAfter } = record(line, 'a log line');
       const text = string(message, 'a log line message');
-      // The team is the host's to name: the engine holds none.
-      const meta = { ...record(fields, 'a log line fields'), teamId: context.teamId, ...runLogFields(context) };
+      // The team is the host's to name (the engine holds none), on the lines
+      // the TypeScript engine names it on, where it names it.
+      const meta = { ...withTeam(record(fields, 'a log line fields'), teamAfter, context.teamId), ...runLogFields(context) };
       if (level === 'warn') logger.warn(text, meta);
       else if (level === 'info') logger.info(text, meta);
       else if (level === 'error') logger.error(text, meta);
@@ -1048,3 +1064,16 @@ function errorAnswer(error: unknown): { message: string; name?: string } {
   return { message: String(error) };
 }
 
+/** A log line's fields with the run's team after the member `after` names,
+ *  when the engine asked for it there. */
+function withTeam(fields: Record<string, unknown>, after: unknown, teamId: string): Record<string, unknown> {
+  if (after === undefined) return fields;
+  const named = string(after, 'a log line teamAfter');
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    out[key] = value;
+    if (key === named) out.teamId = teamId;
+  }
+  if (!Object.hasOwn(out, 'teamId')) out.teamId = teamId;
+  return out;
+}

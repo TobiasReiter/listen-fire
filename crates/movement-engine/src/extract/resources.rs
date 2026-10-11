@@ -48,13 +48,11 @@ pub(crate) fn is_file_ref(value: &Js) -> bool {
     matches!(value, Js::File(_))
 }
 
-/// `fileHandle`: the owner's handle, or the store key.
+/// `fileHandle`: the file's identity, as the host handed it — opaque,
+/// compared and carried, never read inside.
 pub(crate) fn file_handle(file: &Js) -> Option<String> {
-    let source = member(file, "source");
-    let Js::Object(source) = source else { return None };
-    let key = if source.get("store").is_some() { source.get("objectUri") } else { source.get("handle") };
-    match key {
-        Some(Js::String(text)) => Some(text.clone()),
+    match file {
+        Js::File(file) => file.handle.clone(),
         _ => None,
     }
 }
@@ -418,10 +416,13 @@ mod tests {
     fn a_file_is_one_the_engine_made_never_a_dict_with_its_keys() {
         let spelled = env::js_of_json(&json!({ "__brand": "FileRef", "name": "a.pdf", "source": { "store": "document", "objectUri": "s3://x" } }));
         assert!(!is_file_ref(&spelled));
-        let file = crate::file::file_value_of(&spelled).expect("a descriptor");
+        assert_eq!(file_handle(&spelled), None);
+        // What the host hands: an id, the opaque handle, the printable parts.
+        let file = env::decode(&json!(["F", 3, { "handle": "h-9", "name": "a.pdf" }])).expect("a file");
         assert!(is_file_ref(&file));
-        assert_eq!(file_handle(&file).as_deref(), Some("s3://x"));
-        assert!(crate::file::file_value_of(&env::js_of_json(&json!({ "name": "a.pdf" }))).is_none());
-        assert!(crate::file::file_value_of(&env::js_of_json(&json!({ "__brand": "FileRef", "extra": 1 }))).is_none());
+        assert_eq!(file_handle(&file).as_deref(), Some("h-9"));
+        assert!(matches!(member(&file, "name"), Js::String(name) if name == "a.pdf"));
+        assert!(matches!(member(&file, "source"), Js::Undefined));
+        assert_eq!(env::encode(&file), json!(["F", 3]));
     }
 }

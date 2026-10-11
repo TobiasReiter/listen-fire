@@ -30,6 +30,7 @@ import { FileOutsideTeamError } from '../../translation_graph/engine/files/retri
 import { makeFileTextResolver } from '../../translation_graph/movement/file_text';
 import { inMemoryRawTextStore } from '../../translation_graph/movement/raw_text_store';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
+import { createEmailAdapter } from '../../translation_graph/adapters/email';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000f4');
 const OTHER_TEAM = teamOfTenant(tenantIdOf('00000000-0000-0000-0000-0000000000f5'));
@@ -79,6 +80,8 @@ const EVENT: TriggerEvent = {
 
 /** Each file a source double was asked to serve, as [its type, the handle]. */
 const served: Array<[string, string | undefined]> = [];
+/** Set: the email double serves its files as the real email adapter does. */
+let realEmailOwner: Adapter | undefined;
 
 /** A source that answers each field off the position's own data, and is
  *  asked (and refuses) to serve any file it owns. */
@@ -87,6 +90,7 @@ function sourceAdapter(adapterType: string, records: ReadonlyArray<Record<string
     adapterType,
     async resolveFileRef({ ref }) {
       served.push([adapterType, ref.source !== undefined && 'handle' in ref.source ? ref.source.handle : undefined]);
+      if (adapterType === 'email' && realEmailOwner?.resolveFileRef !== undefined) return realEmailOwner.resolveFileRef({ ref });
       throw new Error('test: the double serves no bytes');
     },
     supportedTriggers: [],
@@ -389,6 +393,34 @@ describe("a file-kind field's descriptor is read only as the run's team's", () =
       expect(served).toEqual([['email', 'https://storage.mailgun.net/v3/x']]);
       expect(ran.error).toBeUndefined();
       expect(ran.titles).toEqual(['unread']);
+    }
+  });
+
+  it.each([
+    ['its own spelling', { adapterType: 'email', handle: 'https://evil.example/exfiltrate' }],
+    ['the earlier spelling', { ownerAdapterType: 'email', handle: 'https://evil.example/exfiltrate' }],
+    ['a host that only ends like the provider', { adapterType: 'email', handle: 'https://evilmailgun.net/v3/x' }],
+  ])("refuses, by name, an email handle (%s) its owner never issued: on both engines, nothing fetched", async (_what, source) => {
+    realEmailOwner = createEmailAdapter({ teamId: teamOfTenant(TEAM_ID) });
+    const realFetch = global.fetch;
+    const fetched: unknown[] = [];
+    global.fetch = (async (url: unknown) => {
+      fetched.push(url);
+      throw new Error('test: nothing may be fetched');
+    }) as typeof fetch;
+    try {
+      const deck = { __brand: 'FileRef' as const, name: 'deck.pdf', contentType: 'application/pdf', source } as FileRef;
+      for (const engine of ['ts', 'rust'] as const) {
+        resetRustRunStats();
+        const ran = await runWith(engine, deck);
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
+        expect(ran.titles).toEqual([]);
+        expect(runFailureCause(ran.error)).toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'handle' });
+      }
+      expect(fetched).toEqual([]);
+    } finally {
+      global.fetch = realFetch;
+      realEmailOwner = undefined;
     }
   });
 });

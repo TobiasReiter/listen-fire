@@ -45,6 +45,19 @@ function publicBase(): string {
   );
 }
 
+/** Whether `url` is one this deployment exposed (`exposeFile`): its own API
+ *  origin's blob route. What a URL-handle owner accepts as a handle it issued
+ *  through this deployment. */
+export function isExposedFileUrl(url: string): boolean {
+  try {
+    const exposed = new URL(publicBase());
+    const parsed = new URL(url);
+    return parsed.origin === exposed.origin && parsed.pathname.startsWith('/api/files/blob/');
+  } catch {
+    return false;
+  }
+}
+
 export interface ExposeFileInput {
   stream: Readable;
   filename?: string;

@@ -47,7 +47,7 @@ import {
   tallyVerdict,
   type DryRunRoute,
 } from './rust_stats';
-import { LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
+import { filesInParkState, LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
 
 export { RustShimError, plainJson } from './rust_wire';
 
@@ -578,7 +578,9 @@ function segmentInput(
   // binding crosses, and is read, as the dict it is.
   const event = wire.value(input.event);
   if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
-  const state = resume !== undefined ? new WireOut().value(resume.state) : undefined;
+  // A parked state's files are made host-side, in the segment's file table:
+  // the engine is handed their handles, never their descriptors.
+  const state = resume !== undefined ? new WireOut({ files: wire.files }).value(filesInParkState(resume.state)) : undefined;
   if (state === REFUSED) return undefined;
   // The answer a step-past resume binds and a fired callback's values are
   // data, as the event is.

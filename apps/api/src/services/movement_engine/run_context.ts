@@ -335,7 +335,7 @@ export function pricedCalls(
  * declared type. A key that merely spells a descriptor — in an undeclared
  * field, or from a plugin that declares no file — is data.
  */
-function withDeclaredFiles<Answer extends TransformInvocationResult>(answer: Answer, output: PluginOutput | undefined): Answer {
+export function withDeclaredFiles<Answer extends TransformInvocationResult>(answer: Answer, output: PluginOutput | undefined): Answer {
   if (output === undefined || output.kind === 'value') return answer;
   const { fields } = output;
   // A plain object's fields, each by its declared type; anything else as it is.

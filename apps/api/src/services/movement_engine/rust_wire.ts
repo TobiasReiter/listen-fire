@@ -3,7 +3,8 @@
 // (crates/movement-engine/src/env.rs says the format), the plain-JSON check,
 // and the shim's own faults.
 
-import { fileValueOf, isCallbackParamType, isFileValue, type CallbackParamSpec } from 'engine-contracts';
+import { fileHandle, fileValueOf, isCallbackParamType, isFileValue, type CallbackParamSpec, type FileValue } from 'engine-contracts';
+import type { SchemaFieldType } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
 import { binding, type Binding } from './expression';
 import type { Provenance, ProvenanceOrigin } from './provenance';
@@ -161,10 +162,35 @@ function bindingFromWire(descriptor: unknown): Binding {
  * they carry, numbered. A value is data or one of the engine's records, and
  * the two never share a form: every object the host writes is data, whatever
  * keys it carries; a record is only ever one the engine handed out
- * (`["x", id, descriptor]`), handed back by its id. A file the engine holds
- * crosses tagged (`["F", descriptor]`), both ways: the tag, never the
- * descriptor's keys, is what makes it a file.
+ * (`["x", id, descriptor]`), handed back by its id. A file crosses as an
+ * opaque handle (`["F", id, { handle, name, contentType, size }]` to the
+ * engine, `["F", id]` back): the segment's `files` table keeps the descriptor
+ * — its source, credential, store and URL never reach the engine — and the
+ * tag, never a descriptor's keys, is what makes a file.
  */
+export class FileTable {
+  private readonly byId: FileValue[] = [];
+  private readonly ids = new Map<FileValue, number>();
+
+  /** The id the engine holds a file by: one per file object. */
+  id(file: FileValue): number {
+    let id = this.ids.get(file);
+    if (id === undefined) {
+      id = this.byId.length;
+      this.byId.push(file);
+      this.ids.set(file, id);
+    }
+    return id;
+  }
+
+  /** The file the engine names by `id`. */
+  file(id: unknown): FileValue {
+    const file = typeof id === 'number' ? this.byId[id] : undefined;
+    if (file === undefined) throw new RustShimError(`the engine named a file ${String(id)} this segment never handed it`);
+    return file;
+  }
+}
+
 export class WireOut {
   /** `whole`: each value is written whole — a back-reference only within
    *  it — because a segment's engine decodes each answer on its own, in the
@@ -172,7 +198,12 @@ export class WireOut {
    *  as it now is. An object keeps the id it was first sent under, so the
    *  engine knows an object sent twice for the one object it is (the same
    *  object a host hands the TypeScript engine twice is `===` itself). */
-  constructor(private readonly options: { whole?: true } = {}) {}
+  constructor(private readonly options: { whole?: true; files?: FileTable } = {}) {
+    this.files = options.files ?? new FileTable();
+  }
+
+  /** The files this wire handed the engine, by id. */
+  readonly files: FileTable;
 
   /** The records the engine handed out, by the id it gave each. */
   private readonly records = new Map<number, Binding>();
@@ -233,8 +264,16 @@ export class WireOut {
   private composite(value: unknown): unknown {
     if (value === null || typeof value !== 'object') return value;
     if (isFileValue(value)) {
-      const descriptor = this.write({ ...value });
-      return descriptor === REFUSED ? REFUSED : ['F', descriptor];
+      // The engine's opaque handle: its id, its identity, what it may print.
+      const handle = fileHandle(value);
+      const shown = {
+        ...(handle !== undefined ? { handle } : {}),
+        ...(value.name !== undefined ? { name: value.name } : {}),
+        ...(value.contentType !== undefined ? { contentType: value.contentType } : {}),
+        ...(value.size !== undefined ? { size: value.size } : {}),
+      };
+      if ([handle, value.name, value.contentType].some((text) => text !== undefined && LONE_SURROGATE.test(text))) return REFUSED;
+      return ['F', this.files.id(value), shown];
     }
     const record = this.recordIds.get(value);
     if (record !== undefined) return ['x', record];
@@ -324,11 +363,8 @@ export class WireOut {
         this.recordIds.set(record, a);
         return record;
       }
-      case 'F': {
-        const file = fileValueOf(this.read(a, made));
-        if (file === undefined) throw new RustShimError("the engine handed the host a file whose descriptor is not one");
-        return file;
-      }
+      case 'F':
+        return this.files.file(a);
       case 'l': {
         if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire list is ["l", id, items]');
         const list: unknown[] = [];
@@ -360,3 +396,73 @@ export class WireOut {
 }
 
 
+
+// ── Files the host makes for the engine ─────────────────────────────────────
+
+const SCALAR_FIELD_TYPES = ['text', 'number', 'boolean', 'date', 'datetime', 'file', 'json', 'absent'] as const;
+
+/** A field type the engine named (`filesAt`), as the catalog spells one;
+ *  undefined for anything else. */
+export function schemaFieldTypeOf(value: unknown): SchemaFieldType | undefined {
+  if (typeof value === 'string') return SCALAR_FIELD_TYPES.find((scalar) => scalar === value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const kind: unknown = Reflect.get(value, 'kind');
+  const of: unknown = Reflect.get(value, 'of');
+  switch (kind) {
+    case 'list':
+    case 'dict':
+    case 'maybeAbsent': {
+      const inner = schemaFieldTypeOf(of);
+      return inner !== undefined ? { kind, of: inner } : undefined;
+    }
+    case 'tuple':
+      return Array.isArray(of) ? { kind, of: of.map((slot) => (slot === null ? null : (schemaFieldTypeOf(slot) ?? null))) } : undefined;
+    // An enum holds no file: nothing the host makes there.
+    default:
+      return undefined;
+  }
+}
+
+/** Members of a park descriptor that hold data, which no walk reads into. */
+const PARKED_DATA_MEMBERS: ReadonlySet<string> = new Set([
+  'fields', 'fieldProvenance', 'provenance', 'position', 'handle', 'op', 'body', 'closure', 'head', 'mapping', 'params', 'edgeProperties', 'origin',
+]);
+
+/**
+ * A parked state (or a branch's exports) as the engine reads it: every file
+ * the park SAYS is one — a `{ kind: 'file', file }` value, the fields
+ * `fileFields` names, a resource's `fileRef` slot and its `data.file` — made a
+ * file host-side, so the engine is handed its opaque handle and never its
+ * descriptor. A data payload (`{ kind: 'data' }`, a `value`, a record's
+ * `fields`) is not read into: nothing in data is ever a file.
+ */
+export function filesInParkState(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(filesInParkState);
+  if (!isPlainObject(value)) return value;
+  const kind: unknown = value.kind;
+  if (kind === 'data' || kind === 'value') return value;
+  if (kind === 'file' && Object.hasOwn(value, 'file')) return { ...value, file: fileValueOf(value.file) ?? value.file };
+  const out: Record<string, unknown> = {};
+  for (const [key, member] of Object.entries(value)) {
+    if (PARKED_DATA_MEMBERS.has(key)) out[key] = member;
+    else if (key === 'resource' && kind === 'resource') out[key] = resourceFiles(member);
+    else if (key === 'resources' && Array.isArray(member)) out[key] = member.map(resourceFiles);
+    else out[key] = filesInParkState(member);
+  }
+  return out;
+}
+
+/** A parked resource with its `fileRef` slot (and `data.file`) a file. */
+function resourceFiles(resource: unknown): unknown {
+  if (!isPlainObject(resource)) return resource;
+  const file = fileValueOf(resource.fileRef);
+  if (file === undefined) return resource;
+  const data = isPlainObject(resource.data) && Object.hasOwn(resource.data, 'file') ? { ...resource.data, file } : resource.data;
+  return { ...resource, fileRef: file, ...(resource.data !== undefined ? { data } : {}) };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}

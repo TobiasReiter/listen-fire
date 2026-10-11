@@ -3676,7 +3676,7 @@
 {"fn":"text.serialise","args":[["o",0,[["2",null],["10",true],["b",1],["a","x"]]],"JSON"],"outcome":{"value":"{\n  \"2\": null,\n  \"10\": true,\n  \"a\": \"x\",\n  \"b\": 1\n}"}},
 {"fn":"text.serialise","args":[["o",0,[["9","nine"],["10","ten"],["z",["o",0,[["b",2],["a",["l",0,[1,["n","-0"],["n","NaN"]]]]]]],["é",1],["e",2]]],"JSON"],"outcome":{"value":"{\n  \"9\": \"nine\",\n  \"10\": \"ten\",\n  \"e\": 2,\n  \"z\": {\n    \"a\": [\n      1,\n      0,\n      null\n    ],\n    \"b\": 2\n  },\n  \"é\": 1\n}"}},
 {"fn":"text.serialise","args":[["o",0,[["__brand","FileRef"],["name","a.pdf"],["size",3],["extra",1]]],"JSON"],"outcome":{"value":"{\n  \"__brand\": \"FileRef\",\n  \"extra\": 1,\n  \"name\": \"a.pdf\",\n  \"size\": 3\n}"}},
-{"fn":"text.serialise","args":[["F",["o",0,[["__brand","FileRef"],["name","a.pdf"],["size",3],["source",["o",0,[["store","document"],["objectUri","s3://x/a.pdf"]]]]]]],"JSON"],"outcome":{"value":"{\n  \"contentType\": null,\n  \"kind\": \"file\",\n  \"name\": \"a.pdf\",\n  \"size\": 3\n}"}},
+{"fn":"text.serialise","args":[["F",0,{"handle":"s3://x/a.pdf","name":"a.pdf","size":3}],"JSON"],"outcome":{"value":"{\n  \"contentType\": null,\n  \"kind\": \"file\",\n  \"name\": \"a.pdf\",\n  \"size\": 3\n}"}},
 {"fn":"text.serialise","args":[1,"json"],"outcome":{"throws":{"name":"Error","message":"TEXT.SERIALISE: unknown format \"json\""}}},
 {"fn":"text.serialise","args":[1,["u"]],"outcome":{"throws":{"name":"Error","message":"TEXT.SERIALISE: unknown format undefined"}}},
 {"fn":"text.serialise","args":[1,7],"outcome":{"throws":{"name":"Error","message":"TEXT.SERIALISE: unknown format 7"}}},

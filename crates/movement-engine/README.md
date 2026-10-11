@@ -57,7 +57,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `env_services` | `EnvServices`: zones, WHATWG URLs, locale numbers and Unicode normalisation, from the JavaScript runtime (WASM) or natively (below); never a clock |
 | `filter` | packages/shared/expression/filter.ts: `compareValues`, `compareToNull`, `evaluatePredicate` |
 | `env` | value bindings in scopes with a parent chain; the wire values and trails cross on, and a segment's one wire with its host |
-| `file` | a file the engine holds (`Js::File`, never a `Js::Object` with a key): made only where an envelope declares one — a field the catalog types `file` (`files_at_type`, through the read wrapper), a plugin output's declared file, a resource's `fileRef`, `files.render`'s answer, a parked `file`; its descriptor validated (`fileDescriptorOf`); `fileFields` for a park (PLAN-07A Task 4d) |
+| `file` | a file the engine holds (`Js::File`, never a `Js::Object` with a key): an opaque handle onto a file the HOST keeps — the segment's id for it, its identity `handle`, and what a reader may print (`name`, `contentType`, `size`). The host makes every file, where an envelope declares one: a field the catalog types `file` (the engine names the declared type on the read, `filesAt`, and the shim applies `filesAtType`), a plugin output's declared file, `files.render`'s answer, a parked `file` (the shim's `filesInParkState`). The descriptor — source, credential, construction args, store, URL — never reaches the engine. The handle is an OPAQUE identity string: the engine compares and carries it (a FILE resource's `externalId`, a `file` origin's `handle`, the dedupe key) and never parses it. `fileFields` for a park (PLAN-07A Task 4d) |
 | `js`, `js_date`, `js_regex` | the JavaScript semantics the TypeScript leans on, written out (below) |
 
 ## Two artifacts
@@ -112,6 +112,7 @@ Measured 2026-10-07 (gzip -9):
 | language version 4's changed constructs run (PLAN-07A Task 4c) | 3,044,472 | 912,975 |
 | a file is what the envelope declares (`Js::File`, PLAN-07A Task 4d; the forward merges between) | 3,276,404 | 981,675 |
 | the engine holds no team (PLAN-07A Task 4d fix round 1) | 3,275,777 | 981,473 |
+| a file is an opaque handle the host resolves (PLAN-07A Task 4d fix round 2) | 3,271,057 | 980,116 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -154,10 +155,10 @@ Step = {"pending": [{id, family, method, args}]} | {"done": result}
   ids the engine names. So a value an adapter answered (a dict read off a
   landing, carried in a node into a callee's write) reaches the next host
   call as the object it was, as in the TypeScript engine; anything the
-  engine built is written out. A file the engine holds crosses tagged,
-  `["F", descriptor]`, both ways: the tag, never the descriptor's keys,
-  makes it a file on the other side (a file read off a `file` field is the
-  engine's own, so it is written out, as the TypeScript's own file is).
+  engine built is written out. A file crosses as an opaque handle: the
+  host sends `["F", id, { handle, name, contentType, size }]` and the
+  engine hands it back as `["F", id]`, the segment's file table keeping the
+  descriptor. The tag, never a descriptor's keys, makes a file.
 
 Entries (`input.entry`):
 

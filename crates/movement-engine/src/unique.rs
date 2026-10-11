@@ -226,7 +226,8 @@ pub fn is_fuzzy(entry: &Js) -> bool {
 
 pub fn get(value: &Js, key: &str) -> Js {
     match value {
-        Js::Object(object) | Js::File(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
+        Js::Object(object) => object.get(key).cloned().unwrap_or(Js::Undefined),
+        Js::File(file) => file.display.get(key).cloned().unwrap_or(Js::Undefined),
         _ => Js::Undefined,
     }
 }
