@@ -53,7 +53,8 @@ These apply to every language version. Full text: the [migration guide's appendi
     - on language versions 1 and 2 only, a file handed back by a function called inside an expression, for the same reason as a record;
     - a file passed to a plugin argument typed text, or a dict holding a file passed to one (`tag(label: f)`, `tag(label: { a: f })`);
     - a dict holding a file passed to a plugin argument typed file (`ocr(doc: { a: f })`);
-    - a file joined into a text (`"x${f}"`), which renders as `[object Object]`.
+    - a file joined into a text (`"x${f}"`), which renders as `[object Object]`;
+    - a record bound to a name through an `IF` whose other arm is a file (`x = IF c THEN f ELSE org END`, then `upload: x`), which reaches a file field, because the name's type no longer shows the record. This is older than this change.
 
 ## [v0.10.9] - 2026-10-07
 

@@ -248,13 +248,24 @@ describe('a spread of a file is refused once, for what it is', () => {
 describe.each(VERSIONS)('KNOWN GAP: under language version %i, a file the field rule does not reach', version => {
   // Accepted on main and here; follow-ups. A plugin argument typed other than
   // structured data is held to no rule for a file (a text one is handed the
-  // file's descriptor; a file one, a dict holding the file), and a file joined
-  // into a text renders as "[object Object]".
+  // file's descriptor; a file one, a dict holding the file), a file joined
+  // into a text renders as "[object Object]", and a conditional bound to a
+  // name hides the record in one arm.
   it.each([
     ['a text-typed plugin argument, the file itself', '  s = tag(label: f)'],
     ['a text-typed plugin argument, a dict holding it', '  s = tag(label: { a: f })'],
     ['a file-typed plugin argument, a dict holding it', '  s = ocr(doc: { a: f })'],
     ['a file joined into a text', '  write crm-[:notes]-> { title: "x${f}" }'],
+    // A conditional bound to a name: the name's type no longer shows the
+    // record in one arm, so it reaches a file field.
+    [
+      'a record bound through a conditional, into a file field',
+      [
+        '  org = write crm-[:companies]-> { name: "Acme Inc." }',
+        '  x = IF 1 > 0 THEN f ELSE org END',
+        '  write crm-[:notes]-> { title: "hello", upload: x }',
+      ].join('\n'),
+    ],
   ])('%s: accepted today', (_label, use) => {
     expect(errorsUnder(version, [use])).toEqual([]);
   });
