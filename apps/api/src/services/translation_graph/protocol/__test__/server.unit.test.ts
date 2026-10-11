@@ -245,3 +245,109 @@ describe('what an adapter throw answers', () => {
     expect(body.error).toEqual({ code: 'adapter_error', message: 'read-only', retryable: true });
   });
 });
+
+// The adapter receives the request's own params; the method's schema is only
+// the gate. So every member the remote adapter sends must be one the schema
+// accepts, or a well-formed call is refused as bad_request.
+describe('every member the remote adapter sends passes the gate and reaches the adapter', () => {
+  const received: Record<string, unknown> = {};
+  const handler = createAdapterProtocolHandler({
+    adapter: baseAdapter({
+      getFieldValue: async (input) => {
+        received.getFieldValue = input;
+        return null;
+      },
+      getRelated: async (input) => {
+        received.getRelated = input;
+        return [];
+      },
+      async *iterateRelated(input) {
+        received.iterateRelated = input;
+      },
+      createRecord: async (input) => {
+        received.createRecord = input;
+        return { adapterType: 'paged_crm', externalId: 'c-1', recordType: 'Company', data: {} };
+      },
+    }),
+  });
+  const company = makeStablePosition({ adapterType: 'paged_crm', recordType: 'Company', recordId: 'c-7' });
+
+  it('the pushdown hints reach the adapter on both edge reads', async () => {
+    const hints = {
+      where: { kind: 'literal', value: true },
+      orderBy: { fieldId: 'Name', direction: 'desc' },
+      limit: 2,
+      nativeFilter: { q: 'acme' },
+    };
+    for (const method of ['getRelated', 'iterateRelated'] as const) {
+      const input = { position: company, fieldId: 'People', direction: 'outgoing', ...hints };
+      expect((await rpc(handler, method, input)).body).toMatchObject({ ok: true });
+      expect(received[method]).toEqual(input);
+    }
+  });
+
+  it('a position from a resources traversal is accepted with its provenance', async () => {
+    const resourceNode = {
+      adapterType: 'paged_crm',
+      recordType: 'Company',
+      identity: { kind: 'unstable', data: {} },
+      originRef: { kind: 'resource', resourceId: 'r-1', nodeId: 'n-1' },
+      evidence: { Name: { quote: 'Acme' } },
+      resources: [
+        {
+          id: 'r-1',
+          type: 'FILE',
+          fileRef: { __brand: 'FileRef', name: 'deck.pdf', url: 'https://example.test/f' },
+        },
+      ],
+    };
+    expect((await rpc(handler, 'getFieldValue', { position: resourceNode, fieldId: 'Name' })).body).toMatchObject({
+      ok: true,
+    });
+    expect(received.getFieldValue).toEqual({ position: resourceNode, fieldId: 'Name' });
+  });
+
+  it("a position's resources pass with the host's own file descriptors, which the remote adapter echoes unchanged", async () => {
+    const extracted = {
+      adapterType: 'paged_crm',
+      recordType: 'Company',
+      identity: { kind: 'unstable', data: {} },
+      originRef: { kind: 'extract', extractStepId: 'x-1', nodeId: 'n-2' },
+      resources: [
+        {
+          id: 'r-2',
+          type: 'FILE',
+          url: null,
+          fileRef: {
+            __brand: 'FileRef',
+            name: 'deck.pdf',
+            source: { adapterType: 'email', credentialId: 'cred-1', handle: 'att-1' },
+            url: null,
+          },
+        },
+      ],
+    };
+    expect((await rpc(handler, 'getFieldValue', { position: extracted, fieldId: 'Name' })).body).toMatchObject({
+      ok: true,
+    });
+    expect(received.getFieldValue).toEqual({ position: extracted, fieldId: 'Name' });
+  });
+
+  it("a write's parent link keeps the parent's own payload", async () => {
+    const write = {
+      recordType: 'Company',
+      fields: { Name: 'Acme' },
+      evidence: { Name: { quote: 'Acme' } },
+      mutationContext: { source: {}, occurredAt: '2026-10-11T00:00:00.000Z' },
+      parentLinks: [{ recordType: 'Person', externalId: 'p-1', edgeName: 'People', data: { ts: '1' } }],
+    };
+    expect((await rpc(handler, 'createRecord', write)).body).toMatchObject({ ok: true });
+    expect(received.createRecord).toEqual(write);
+  });
+
+  it('a body the method schema refuses is a non-retryable bad_request', async () => {
+    const { status, body } = await rpc(handler, 'getRelated', { position: company });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: false, error: { code: 'bad_request', retryable: false } });
+  });
+});

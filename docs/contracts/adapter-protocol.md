@@ -284,6 +284,10 @@ A position is how Listen-Fire hands a record back to you: the `recordType`,
 your `recordId`, and the `data` you attached when you returned it. Read from
 `data` when you can; it saves a call to your system.
 
+A position an automation produced, rather than read from you, also carries
+`originRef` (its `kind` is `extract`, `transform` or `resource`) and may carry
+`evidence` and `resources`. You may ignore all three.
+
 ### getRelated
 
 ```json
@@ -321,6 +325,7 @@ your `recordId`, and the `data` you attached when you returned it. Read from
 
 - `fields` is keyed by your field display names.
 - `parentLinks` (optional) are parents to attach the new record to, along the named edge.
+  A link may carry `data`: the parent's own payload, in its adapter's shape.
 - Optional inputs: `evidence` (per field), `resources`, `bridgeToExternal`.
 - The `data` you return is what an automation reads off the written record,
   and what [`resolveAwait`](#waiting-on-your-system-awaits) later receives as `headData`.
@@ -668,7 +673,8 @@ File bytes never ride the JSON envelope; they move by URL.
     "url": "https://listen-fire.example/api/files/blob/abc123" }
   ```
 
-  `GET` the `url` at write time; it is short-lived.
+  `GET` the `url` at write time; it is short-lived. The ref also carries
+  `"__brand": "FileRef"`, which marks it as a file.
 
 - **Out of your system.** Return a file ref whose `source` is
   `{ "ownerAdapterType": "<your adapterType>", "handle": "<your id>" }`, and
