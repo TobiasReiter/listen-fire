@@ -809,10 +809,10 @@ impl<'a> Evaluator<'a> {
                 .await?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
-        if id == "file" || id == "read" {
-            if let Some(reader) = self.reader() {
-                return if id == "file" { self.render_file(reader, args).await } else { self.read_file(reader, args).await };
-            }
+        if (id == "file" || id == "read")
+            && let Some(reader) = self.reader()
+        {
+            return if id == "file" { self.render_file(reader, args).await } else { self.read_file(reader, args).await };
         }
         if !stdlib::FLAT.contains(&id) {
             let Some(reader) = self.reader() else {

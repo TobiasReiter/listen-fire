@@ -56,7 +56,7 @@ enum PluginBinds {
 
 /// The plugins a run's catalog snapshot describes, when it reads: what
 /// admission knows of a plugin call's output.
-pub struct Plugins<'a>(pub Option<&'a JsMap<PluginSpec>>);
+pub struct Plugins<'a>(pub Option<&'a JsMap<PluginSpec>>, pub Option<&'a [String]>);
 
 impl Plugins<'_> {
     fn binds(&self, registered: &str, language_version: u32) -> PluginBinds {
@@ -210,7 +210,8 @@ pub fn refusals(
             }
         }
     }
-    let callees = Callees::of(program, &plugin_binds, language_version);
+    let mut callees = Callees::of(program, &plugin_binds, language_version);
+    callees.models = catalog.1.map(<[String]>::to_vec);
     let movement_names: BTreeSet<String> =
         program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m.name.clone()) } else { None }).collect();
     let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
@@ -678,6 +679,8 @@ struct Callees<'p> {
     /// call of one binds; `None` where closures of that name differ in
     /// what their parameters take.
     closures: BTreeMap<String, Option<Vec<ast::MovementParam>>>,
+    /// The models the catalog says this deployment reaches, when it says.
+    models: Option<Vec<String>>,
 }
 
 impl<'p> Callees<'p> {
@@ -707,7 +710,7 @@ impl<'p> Callees<'p> {
         let keeps_walks = movements.iter().any(|m| holds_lazy(m));
         let held_kinds = HELD_KINDS.iter().copied().filter(|k| *k != Kind::Lazy || keeps_walks).collect();
         let file_holders = file_holders(program);
-        let mut callees = Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default(), held_kinds, file_holders, closures: BTreeMap::new() };
+        let mut callees = Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default(), held_kinds, file_holders, closures: BTreeMap::new(), models: None };
         for (name, closure) in crate::code::bound_closures(program) {
             let takes = |params: &[ast::MovementParam]| params.iter().map(|p| (p.name.clone(), callees.takes_value(p))).collect::<Vec<_>>();
             let same = match callees.closures.get(name) {
@@ -1113,6 +1116,10 @@ impl<'c> Bound<'c> {
                             },
                             // The callback's binding object: its fields (id, url) data.
                             RValue::Callback { .. } => Holder::Record,
+                            // The records an extraction call found, run-local
+                            // nodes whose fields are what the model said.
+                            RValue::ExtractCall { extract_call } if matches!(extract_call.finds, ast::ExtractCallFinds::One) => Holder::Record,
+                            RValue::ExtractCall { .. } => Holder::List,
                             _ => Holder::Other,
                         };
                         let joined = self.value_holders.get(&assign.name).map_or(holder, |h| h.join(holder));
@@ -1690,6 +1697,7 @@ impl Names<'_> {
                     self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
                 }
                 RValue::Extract { extract } => self.extract(extract),
+                RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
                 // `f(n: 3)` of a closure or a value the body binds is its
                 // call (the construction spelling of one), not an instance.
                 RValue::Construct { construct } if self.values.contains(&construct.callee) || self.binds_in_body(&construct.callee) => refuse("function_call"),
@@ -1720,6 +1728,7 @@ impl Names<'_> {
                 RValue::Match { r#match } => self.match_(r#match),
                 RValue::Link { link } => self.link(link),
                 RValue::Extract { extract } => self.extract(extract),
+                RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
                 RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
                 RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
@@ -2234,6 +2243,7 @@ impl Names<'_> {
             RValue::Call { call } if self.plugin(&call.callee) => self.plugin_call(call),
             RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call(call),
             RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call(&construction_as_call(construct)),
+            RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
             RValue::Call { call } => self.slot(self.builtin_value(call)?),
             other => refuse(format!("rvalue:{}", rvalue_kind(other))),
         }
@@ -2302,6 +2312,41 @@ impl Names<'_> {
     /// tree writes walked as expressions, each `through` plugin's arguments
     /// too — a bare name there reads the entity's field of that name first,
     /// else a value the body binds.
+    /// The extraction call (crate::extract::call): its content walked as an
+    /// expression; its shape a declaration of the file, or one written in
+    /// place whose words are written down and whose base is the file's
+    /// (the words of a shape written in place read the body's scope, which
+    /// the spec builder does not); its settings read clean.
+    fn extract_call(&self, call: &ast::ExtractCallExpression) -> Admitted {
+        match &call.shape {
+            ast::ExtractCallShape::Named { name, .. } if !self.shapes.contains(name) || self.binds_in_body(name) => return refuse("extract_call_shape"),
+            ast::ExtractCallShape::Inline { declaration, .. } => {
+                fn written_down(node: &ast::ShapeNode) -> bool {
+                    let literal = |slot: &Option<ExprSlot>| {
+                        slot.as_ref().is_none_or(|slot| matches!(lowered(&slot.raw), Ok(Expression::Static { .. })))
+                    };
+                    literal(&node.description) && node.fields.iter().all(|f| literal(&f.description)) && node.children.iter().all(written_down)
+                }
+                let based = declaration.extends.as_ref().is_none_or(|base| self.shapes.contains(&base.name) && !self.binds_in_body(&base.name));
+                if !written_down(&declaration.root) || !based {
+                    return refuse("extract_call_shape");
+                }
+            }
+            _ => {}
+        }
+        if let Some(config) = &call.config {
+            let Ok(written) = crate::extract::call::read_config(config) else { return refuse("extract_call_settings") };
+            // The TypeScript holds a model to the model registry, which this
+            // engine does not hold: only one the catalog lists runs here.
+            if let Some(model) = written.model()
+                && !self.callees.models.as_ref().is_some_and(|models| models.iter().any(|m| m == model))
+            {
+                return refuse("extract_call_model");
+            }
+        }
+        self.slot(&call.content)
+    }
+
     fn extract(&self, extract: &ast::ExtractExpression) -> Admitted {
         extract.from.iter().try_for_each(|slot| self.slot(slot))?;
         // A `from` datum is written into the prompt as `JSON.stringify` writes
@@ -3198,12 +3243,12 @@ mod tests {
     fn refused(body: &str) -> Option<String> {
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
-        refusal(&program, 3, &Plugins(None))
+        refusal(&program, 3, &Plugins(None, None))
     }
 
     fn file(source: &str) -> Option<String> {
         let program = movement_parser::stmt::parse_program(source, 3, false).expect("the test's program parses");
-        refusal(&program, 3, &Plugins(None))
+        refusal(&program, 3, &Plugins(None, None))
     }
 
     /// Every reason, the entry named: what `run` hands the shim.
@@ -3211,7 +3256,7 @@ mod tests {
         let program = movement_parser::stmt::parse_program(source, language_version, false).expect("the test's program parses");
         let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
         let picked = entry_of(&declared, Some(entry), language_version);
-        refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None)).reasons
+        refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None, None)).reasons
     }
 
     /// A movement nothing the entry reaches names is not walked: what it
@@ -3344,7 +3389,7 @@ mod tests {
         let under = |body: &str, version: u32| {
             let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
             let program = movement_parser::stmt::parse_program(&source, version, false).expect("the test's program parses");
-            refusal(&program, version, &Plugins(None))
+            refusal(&program, version, &Plugins(None, None))
         };
         for body in [
             "  co = write crm-[:companies]-> { name: \"a\" }\n  fund = link co -[:portfolio]-> { unique by (`name`), name: \"F\" }",
@@ -3502,7 +3547,7 @@ mod tests {
         let typed = format!("{PRELUDE}type Stage = <\"a\" | \"b\">\nnode Lead {{\n  name: <text>\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  stages = MEMBERS(<Stage>)\n  x = Lead\n}}");
         assert_eq!(file(&typed), None);
         let before = movement_parser::stmt::parse_program(&format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  names = MAP(crm-[c:companies]->, (c) => {{\n    return c.`name`\n  }})\n  MAP(names, (n) => {{\n    write crm-[:notes]-> {{ body: n }}\n  }})\n}}"), 2, false).unwrap();
-        assert_eq!(refusal(&before, 2, &Plugins(None)), None, "the ops written as ops, before version 3");
+        assert_eq!(refusal(&before, 2, &Plugins(None, None)), None, "the ops written as ops, before version 3");
     }
 
     #[test]
@@ -3754,7 +3799,7 @@ mod tests {
         let with = |body: &str| {
             let source = format!("import {{ fetch_url, research, find_files }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
             let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
-            refusal(&program, 3, &Plugins(Some(&specs)))
+            refusal(&program, 3, &Plugins(Some(&specs), None))
         };
         for body in [
             "  page = fetch_url(url: msg.`text`)\n  write crm-[:notes]-> { body: COALESCE(page, \"none\") }",
@@ -3776,7 +3821,7 @@ mod tests {
         // A snapshot that does not say what the plugin hands back refuses
         // its call.
         let unknown = movement_parser::stmt::parse_program(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  page = fetch_url(url: \"x\")\n}}"), 3, false).unwrap();
-        assert_eq!(refusal(&unknown, 3, &Plugins(None)).as_deref(), Some("plugin_call"));
+        assert_eq!(refusal(&unknown, 3, &Plugins(None, None)).as_deref(), Some("plugin_call"));
     }
 
     /// A request carries no record: where the TypeScript would hand its host
@@ -3792,7 +3837,7 @@ mod tests {
         let with = |body: &str| {
             let source = format!("import {{ echo }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
             let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the test's program parses");
-            refusal(&program, 3, &Plugins(Some(&specs)))
+            refusal(&program, 3, &Plugins(Some(&specs), None))
         };
         for body in [
             // One record reads as its fields; a record's field is data; the

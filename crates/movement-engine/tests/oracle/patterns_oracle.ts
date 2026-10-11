@@ -220,6 +220,12 @@ function scriptedHost(replies: readonly unknown[], park = makeFakeParkSink()) {
             ? { parsedJson: { value: `answer to ${request.userMessage.slice(0, 24)}`, has_value: true } }
             : { parsedJson: queue.shift() ?? {} },
       },
+      extractCall: {
+        call: async () => ({
+          parsedJson: queue.shift() ?? {},
+          usage: { inputTokens: 120, outputTokens: 30, cacheReadTokens: 80, cacheCreationTokens: 40 },
+        }),
+      },
       transforms: {
         invoke: async ({ plugin }) =>
           plugin === 'find_files'

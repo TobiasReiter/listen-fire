@@ -301,6 +301,27 @@ const TRACE_VALUE_CHARS: usize = 200;
 /// as display text, at most twenty per name and the rest counted: the
 /// `entities` and `truncatedCount` objects, each in the order first met.
 pub(crate) fn traced_entities(root: &Emission) -> (Js, Js) {
+    traced_entities_of(&traced_tree(root))
+}
+
+/// A record and the records under it as the trace's sample reads them
+/// (`TracedTree`): its node's name, its fields, its children in order.
+pub(crate) struct TracedTree {
+    pub(crate) node_name: String,
+    pub(crate) fields: Vec<(String, Js)>,
+    pub(crate) children: Vec<TracedTree>,
+}
+
+fn traced_tree(emission: &Emission) -> TracedTree {
+    TracedTree {
+        node_name: emission.node_name.clone(),
+        fields: emission.fields.entries().to_vec(),
+        children: emission.children.iter().flat_map(|(_, list)| list.iter().map(|child| traced_tree(child))).collect(),
+    }
+}
+
+/// `collectTracedEntities` over a tree.
+pub(crate) fn traced_entities_of(root: &TracedTree) -> (Js, Js) {
     let mut entities: Vec<(String, Vec<Js>)> = Vec::new();
     let mut truncated: Vec<(String, f64)> = Vec::new();
     collect_traced(root, &mut entities, &mut truncated);
@@ -315,9 +336,9 @@ pub(crate) fn traced_entities(root: &Emission) -> (Js, Js) {
     (Js::object(by_alias), Js::object(counted))
 }
 
-fn collect_traced(emission: &Emission, into: &mut Vec<(String, Vec<Js>)>, truncated: &mut Vec<(String, f64)>) {
-    if !emission.fields.entries().is_empty() {
-        let alias = emission.node_name.clone();
+fn collect_traced(tree: &TracedTree, into: &mut Vec<(String, Vec<Js>)>, truncated: &mut Vec<(String, f64)>) {
+    if !tree.fields.is_empty() {
+        let alias = tree.node_name.clone();
         let at = match into.iter().position(|(name, _)| *name == alias) {
             Some(at) => at,
             None => {
@@ -327,7 +348,7 @@ fn collect_traced(emission: &Emission, into: &mut Vec<(String, Vec<Js>)>, trunca
         };
         if into[at].1.len() < TRACE_ENTITY_CAP {
             let mut fields = JsObject::new();
-            for (name, value) in emission.fields.entries() {
+            for (name, value) in &tree.fields {
                 fields.set(name.clone(), traced_value(value));
             }
             into[at].1.push(env::object_of(vec![("fields", Js::object(fields))]));
@@ -335,10 +356,8 @@ fn collect_traced(emission: &Emission, into: &mut Vec<(String, Vec<Js>)>, trunca
             bump(truncated, &alias);
         }
     }
-    for (_, children) in &emission.children {
-        for child in children {
-            collect_traced(child, into, truncated);
-        }
+    for child in &tree.children {
+        collect_traced(child, into, truncated);
     }
 }
 

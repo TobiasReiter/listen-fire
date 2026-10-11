@@ -18,7 +18,7 @@
 //! `__proto__` is no key of zod's shape at all (`shape.__proto__ = …` set
 //! the shape's prototype), so it is never checked, nor counted as declared.
 
-use crate::extract::spec::Region;
+use crate::extract::spec::{NodeSpec, Region};
 use crate::js::{self, Js, JsObject};
 use movement_parser::catalog::types::{Composite, FieldType, Scalar};
 
@@ -63,9 +63,25 @@ pub fn read_reply(region: &Region<'_>, reply: &Js) -> Result<Read, Vec<Issue>> {
     if parse.issues.is_empty() { Ok(Read { value, coercions: parse.coercions }) } else { Err(parse.issues) }
 }
 
+/// extraction_call.ts `responseSchema(spec, sink, finds).safeParse(reply)`:
+/// the extraction CALL's answer — every record under `records` (`one`: the
+/// one record, or null, under `record`), each field `{ value, evidence }`
+/// with its citation normalised (`normaliseCallField`), each nested node a
+/// bare list of its own records.
+pub fn read_call_reply(spec: &NodeSpec, one: bool, reply: &Js) -> Result<Read, Vec<Issue>> {
+    let mut parse = Parse { issues: Vec::new(), path: Vec::new(), coercions: Coercions::default() };
+    let value = parse.call_response(spec, one, reply);
+    if parse.issues.is_empty() { Ok(Read { value, coercions: parse.coercions }) } else { Err(parse.issues) }
+}
+
 /// The issues as the retry prompt and the trace list them (`issueLines`).
 pub fn issue_lines(issues: &[Issue]) -> Vec<String> {
     issues.iter().map(|issue| format!("  - {}: {}", joined(&issue.path), issue.message)).collect()
+}
+
+/// An issue's path as zod joins it (`path.join('.')`).
+pub fn issue_path(issue: &Issue) -> String {
+    joined(&issue.path)
 }
 
 /// `retryInstruction`: a complaint at the top of the reply is about its
@@ -203,6 +219,229 @@ fn record_list(site: &Region<'_>, value: &Js) -> Js {
 /// `isEvidenceEnvelope`: `value`, and nothing but an optional `evidence`.
 fn evidence_envelope(object: &JsObject) -> bool {
     object.get("value").is_some() && object.entries().iter().all(|(k, _)| k == "value" || k == "evidence")
+}
+
+// ── The extraction call's schema ─────────────────────────────────────────────
+
+/// `recordList`: a node's records, a lone record made a list.
+fn call_record_list(value: &Js) -> Js {
+    match value {
+        Js::Array(_) | Js::Undefined | Js::Null => value.clone(),
+        record => Js::array(vec![record.clone()]),
+    }
+}
+
+/// `singleRecord`: a list holding one record (or none) read as that record
+/// (or null); a list of several stays a list, for the schema to refuse.
+fn single_record(value: &Js) -> Js {
+    match value {
+        Js::Array(list) if list.items().len() <= 1 => list.items().first().cloned().unwrap_or(Js::Null),
+        other => other.clone(),
+    }
+}
+
+/// `normaliseCallField`: a field's citation as the model may write it — the
+/// object asked for, a bare quote, or nothing — made `{ item?, quote? }` or
+/// null; the value left as written.
+fn normalise_call_field(raw: &Js) -> Js {
+    let Js::Object(object) = raw else { return raw.clone() };
+    if object.get("value").is_none() {
+        return raw.clone();
+    }
+    let evidence = match object.get("evidence") {
+        None | Some(Js::Undefined | Js::Null) => Js::Null,
+        Some(Js::String(quote)) => crate::env::object_of(vec![("quote", Js::str(quote.clone()))]),
+        Some(Js::Object(evidence)) => {
+            let item = match evidence.get("item") {
+                Some(Js::String(text)) if !js::trim(text).is_empty() && js::trim(text).bytes().all(|b| b.is_ascii_digit()) => {
+                    Js::Number(js::string_to_number(js::trim(text)))
+                }
+                Some(other) => other.clone(),
+                None => Js::Undefined,
+            };
+            let quote = [evidence.get("quote"), evidence.get("text")].into_iter().flatten().find(|q| matches!(q, Js::String(_))).cloned();
+            let mut members = Vec::new();
+            if let Js::Number(n) = item
+                && js::is_integer(n)
+            {
+                members.push(("item", item));
+            }
+            if let Some(quote) = quote {
+                members.push(("quote", quote));
+            }
+            crate::env::object_of(members)
+        }
+        Some(_) => Js::Null,
+    };
+    let mut copy = JsObject::clone_of(object);
+    copy.set("evidence".into(), evidence);
+    Js::object(copy)
+}
+
+impl Parse {
+    /// The answer key, required; any other key passes through.
+    fn call_response(&mut self, spec: &NodeSpec, one: bool, reply: &Js) -> Js {
+        let Js::Object(object) = reply else {
+            self.expected("object", reply);
+            return Js::Undefined;
+        };
+        let key = if one { "record" } else { "records" };
+        let under = object.get(key).cloned();
+        let parsed = self.at(PathKey::Key(key.into()), |p| {
+            let given = under.clone().unwrap_or(Js::Undefined);
+            if one { p.call_one(spec, &given) } else { p.call_records(spec, &call_record_list(&given)) }
+        });
+        let mut out = JsObject::new();
+        if under.is_some() || !matches!(parsed, Js::Undefined) {
+            out.set(key.into(), parsed);
+        }
+        for (k, value) in object.entries() {
+            if k != key {
+                out.assign(k.clone(), value.clone());
+            }
+        }
+        Js::object(out)
+    }
+
+    /// `z.array(recordSchema(spec))`.
+    fn call_records(&mut self, spec: &NodeSpec, value: &Js) -> Js {
+        let Js::Array(list) = value else {
+            self.expected("array", value);
+            return Js::Undefined;
+        };
+        let items = list.items().iter().enumerate().map(|(i, item)| self.at(PathKey::Index(i), |p| p.call_record(spec, item))).collect();
+        Js::array(items)
+    }
+
+    /// `extractOne`'s answer: several records refused (the pipe goes no
+    /// further), else the record or null.
+    fn call_one(&mut self, spec: &NodeSpec, value: &Js) -> Js {
+        let value = single_record(value);
+        match &value {
+            Js::Array(list) => {
+                self.issue(format!("{} records were answered, and this asks for the single one — answer one object, or null", list.items().len()));
+                Js::Undefined
+            }
+            Js::Null => Js::Null,
+            record => self.call_record(spec, record),
+        }
+    }
+
+    /// `recordSchema`: the declared keys checked, the rest passed through,
+    /// and a record answered only under undeclared keys refused.
+    fn call_record(&mut self, spec: &NodeSpec, value: &Js) -> Js {
+        let Js::Object(object) = value else {
+            self.expected("object", value);
+            return Js::Undefined;
+        };
+        let stage = spec.stages.first();
+        let mut declared: Vec<(String, CallDeclared<'_>)> = Vec::new();
+        let fields = stage.into_iter().flat_map(|s| &s.fields).map(|f| (f.name.clone(), CallDeclared::Field(f)));
+        let children = stage.into_iter().flat_map(|s| &s.children).map(|c| (c.name.clone(), CallDeclared::Child(c)));
+        for (key, kind) in fields.chain(children).filter(|(key, _)| key != "__proto__") {
+            js::insert_in_object_order(&mut declared, key, kind);
+        }
+        let declared_names: Vec<String> = declared.iter().map(|(k, _)| k.clone()).collect();
+        let before = self.issues.len();
+        let mut out = JsObject::new();
+        for (key, kind) in &declared {
+            let raw = object.get(key).cloned().or_else(|| js::is_object_prototype_name(key).then(|| js::plain_property(object, key)));
+            let given = raw.clone().unwrap_or(Js::Undefined);
+            let parsed = self.at(PathKey::Key(key.clone()), |p| match kind {
+                CallDeclared::Field(field) => p.call_field(field.type_.as_ref(), &given, &format!("{}.{}", spec.name, field.name)),
+                CallDeclared::Child(child) => match &given {
+                    Js::Undefined => Js::Undefined,
+                    Js::Null => Js::Null,
+                    given => p.call_records(child, &call_record_list(given)),
+                },
+            });
+            if raw.is_some() || !matches!(parsed, Js::Undefined) {
+                out.set(key.clone(), parsed);
+            }
+        }
+        for (key, value) in object.entries() {
+            if !declared_names.contains(key) {
+                out.assign(key.clone(), value.clone());
+            }
+        }
+        if self.issues.len() == before && !declared.is_empty() {
+            let keys: Vec<String> = out.entries().iter().map(|(k, _)| k.clone()).collect();
+            if !keys.is_empty() && !keys.iter().any(|k| declared_names.contains(k)) {
+                let quoted = |names: &[String]| names.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ");
+                self.issue(format!("this record was answered under {} — its fields are {}", quoted(&keys), quoted(&declared_names)));
+            }
+        }
+        Js::object(out)
+    }
+
+    /// `fieldSchema`: absent, null, or `{ value, evidence }` — the value by
+    /// type, then the citation.
+    fn call_field(&mut self, type_: Option<&FieldType>, raw: &Js, ctx: &str) -> Js {
+        let raw = normalise_call_field(raw);
+        let Js::Object(object) = &raw else {
+            if raw.is_nullish() {
+                return raw;
+            }
+            self.expected("object", &raw);
+            return Js::Undefined;
+        };
+        let mut out = JsObject::new();
+        let value = object.get("value").cloned();
+        let parsed = self.at(PathKey::Key("value".into()), |p| p.value(type_, value.as_ref().unwrap_or(&Js::Undefined), ctx));
+        if value.is_some() || !matches!(parsed, Js::Undefined) {
+            out.set("value".into(), parsed);
+        }
+        let evidence = object.get("evidence").cloned();
+        let checked = self.at(PathKey::Key("evidence".into()), |p| p.citation(evidence.as_ref().unwrap_or(&Js::Undefined)));
+        if evidence.is_some() || !matches!(checked, Js::Undefined) {
+            out.set("evidence".into(), checked);
+        }
+        Js::object(out)
+    }
+
+    /// `citation`: `{ item?: integer, quote?: string }`, or null.
+    fn citation(&mut self, value: &Js) -> Js {
+        let Js::Object(object) = value else {
+            if matches!(value, Js::Null) {
+                return Js::Null;
+            }
+            self.expected("object", value);
+            return Js::Undefined;
+        };
+        let mut out = JsObject::new();
+        if let Some(item) = object.get("item") {
+            let checked = self.at(PathKey::Key("item".into()), |p| match item {
+                Js::Undefined => Js::Undefined,
+                Js::Number(n) if n.is_finite() && js::is_integer(*n) => item.clone(),
+                Js::Number(n) if n.is_finite() => {
+                    p.issue("Invalid input: expected int, received number".into());
+                    Js::Undefined
+                }
+                other => {
+                    p.expected("number", other);
+                    Js::Undefined
+                }
+            });
+            out.set("item".into(), checked);
+        }
+        if let Some(quote) = object.get("quote") {
+            let checked = self.at(PathKey::Key("quote".into()), |p| match quote {
+                Js::Undefined | Js::String(_) => quote.clone(),
+                other => {
+                    p.expected("string", other);
+                    Js::Undefined
+                }
+            });
+            out.set("quote".into(), checked);
+        }
+        Js::object(out)
+    }
+}
+
+/// One key a call's record declares.
+enum CallDeclared<'s> {
+    Field(&'s crate::extract::spec::FieldSpec),
+    Child(&'s NodeSpec),
 }
 
 // ── The schema ───────────────────────────────────────────────────────────────

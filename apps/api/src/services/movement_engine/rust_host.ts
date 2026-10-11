@@ -255,6 +255,36 @@ const ROUTES: Record<string, Route> = {
     context.ledger.charge(answer.cost);
     return new Plain(wired(wire, answer, 'llm.client.call', ['parsedJson', 'rawText']));
   },
+  /** The extraction call's model call (`extract(content, Shape)`), a priced
+   *  call: its prompt as blocks with cache breakpoints, the reply back on the
+   *  eval wire as the region's is; its cost charged as it passes. */
+  async 'llm.extractCall.call'(request, { host, context, wire }) {
+    if (request.wire !== true) throw new RustShimError('llm.extractCall.call takes its answer on the eval wire');
+    const effort = optionalString(request.effort, 'llm.extractCall.call effort');
+    if (effort !== undefined && !isEffort(effort)) throw new RustShimError(`llm.extractCall.call effort ${JSON.stringify(effort)} is not an effort`);
+    const maxTokens = request.maxTokens;
+    if (maxTokens !== undefined && (typeof maxTokens !== 'number' || !Number.isInteger(maxTokens))) {
+      throw new RustShimError('llm.extractCall.call maxTokens is an integer');
+    }
+    const blocks = request.blocks;
+    if (!Array.isArray(blocks) || !blocks.every(isPromptBlock)) {
+      throw new RustShimError('llm.extractCall.call blocks are [{text, cacheBreakpoint?: true}]');
+    }
+    // In the order run_context.ts hands them on: the call's own, then the
+    // segment and the budget.
+    const answer = await host.llm.extractCall.call({
+      system: string(request.system, 'llm.extractCall.call system'),
+      blocks: blocks.map((block) => ({ text: block.text, ...(block.cacheBreakpoint === true ? { cacheBreakpoint: true as const } : {}) })),
+      label: string(request.label, 'llm.extractCall.call label'),
+      model: extractionModel(request.model),
+      ...(effort !== undefined ? { effort } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+      segmentId: segmentOf(request),
+      budget: budgetOf(request.budget),
+    });
+    context.ledger.charge(answer.cost);
+    return new Plain(wired(wire, answer, 'llm.extractCall.call', ['parsedJson', 'rawText']));
+  },
   /** A plugin's invocation (`through` or a plain call), a priced call: its
    *  arguments and the entity's fields so far arrive on the eval wire, and
    *  what it brought back goes back on it. */
@@ -624,6 +654,13 @@ function segmentOf(request: Record<string, unknown>): string {
  *  (crates/movement-engine/src/write.rs, run.rs) as the TypeScript engine
  *  does; what the shim can hold it to here is that it is one object, and the
  *  host's adapter reads it as its protocol `params`. */
+/** One block of an extraction call's prompt. */
+function isPromptBlock(value: unknown): value is { text: string; cacheBreakpoint?: true } {
+  if (typeof value !== 'object' || value === null) return false;
+  const breakpoint = Reflect.get(value, 'cacheBreakpoint');
+  return typeof Reflect.get(value, 'text') === 'string' && (breakpoint === undefined || breakpoint === true);
+}
+
 /** An event as the engine hands it back: the run's own, off the wire. */
 function isTriggerEvent(value: unknown): value is TriggerEvent {
   return typeof value === 'object' && value !== null && typeof Reflect.get(value, 'adapterType') === 'string' && typeof Reflect.get(value, 'triggerType') === 'string';
@@ -905,9 +942,11 @@ function readTraceEntry(entry: Record<string, unknown>): ReadTraceEntry {
 }
 
 /** An extraction's trace entry as crates/movement-engine/src/extract/run.rs
- *  writes it, held to expression.ts's type member by member. */
+ *  (and extract/call.rs, `form: 'call'`) writes it, held to expression.ts's
+ *  type member by member. */
 const extractionTraceEntrySchema: z.ZodType<ExtractionTraceEntry> = z.strictObject({
   kind: z.literal('extraction'),
+  form: z.literal('call').optional(),
   node: z.string().optional(),
   inputChars: z.number(),
   inputs: z.array(z.object({ classification: z.string(), chars: z.number() })).optional(),
@@ -933,6 +972,15 @@ const extractionTraceEntrySchema: z.ZodType<ExtractionTraceEntry> = z.strictObje
     })
     .optional(),
   emissions: counts,
+  cache: z
+    .strictObject({
+      breakpoints: z.array(z.number()),
+      sharedItems: z.number(),
+      inputTokens: z.number().optional(),
+      readTokens: z.number().optional(),
+      writeTokens: z.number().optional(),
+    })
+    .optional(),
   empty: counts.optional(),
   dropped: counts.optional(),
   coerced: z.record(z.string(), z.array(z.string())).optional(),

@@ -20,6 +20,7 @@ pub struct TierAssignment {
 
 pub(crate) use resources::{file_handle, is_file_ref};
 
+pub(crate) mod call;
 pub mod emission;
 pub mod prompt;
 pub(crate) mod resources;

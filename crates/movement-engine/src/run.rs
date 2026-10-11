@@ -199,6 +199,8 @@ fn default_file_chars() -> f64 {
 struct CatalogPlugins {
     #[serde(default = "no_plugins")]
     plugins: movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec>,
+    #[serde(default)]
+    models: Option<Vec<String>>,
 }
 
 fn no_plugins() -> movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec> {
@@ -407,6 +409,8 @@ pub(crate) struct Run<'a> {
     pub(crate) extraction_sites: RefCell<Vec<(String, Js)>>,
     /// The reply digests the run's trace holds (`TraceSink`'s budget).
     pub(crate) reply_digests: std::cell::Cell<usize>,
+    /// What the run's extraction calls share (`ExtractCallRunState`).
+    pub(crate) extract_calls: crate::extract::call::CallState,
     /// The files whose bytes could not be fetched, warned of once each.
     pub(crate) unfetched_files: RefCell<Vec<String>>,
     /// Log lines not yet handed to the shim.
@@ -469,7 +473,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         root.program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
     let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
     let crate::admit::Admission { mut reasons, called } =
-        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)));
+        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins), plugins.as_ref().and_then(|c| c.models.as_deref())));
     if let Some(resume) = &input.resume {
         reasons.extend(crate::park::resume_refusal(&resume.state));
     }
@@ -530,6 +534,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         positions: RefCell::default(),
         extraction_sites: RefCell::default(),
         reply_digests: std::cell::Cell::new(0),
+        extract_calls: Default::default(),
         unfetched_files: RefCell::default(),
         log_lines: RefCell::default(),
         file_scope: RefCell::default(),
@@ -1282,6 +1287,20 @@ impl Run<'_> {
             RValue::Extract { extract } => {
                 let emission = self.extraction(extract, scope).await?;
                 scope.declare(name, Binding::Extracted { emission, root: true, id: crate::bindings::Identity::new() });
+            }
+            // A call like any other: re-running its statement takes the
+            // value it already extracted instead of paying for it again.
+            RValue::ExtractCall { extract_call } => {
+                let event = self.begin_call_event().await?;
+                let extracted = match &event.replayed {
+                    Some(replayed) => replayed.value.clone(),
+                    None => {
+                        let value = self.extract_call(extract_call, scope).await?;
+                        self.finish_call(&event, Some(&value));
+                        Some(value)
+                    }
+                };
+                scope.declare(name, self.call_value("extract", extracted)?);
             }
             RValue::Collection { collection } => {
                 self.collection(collection, Some(name), scope, at, crate::collection::OpOrigin::Written(format!("{path}/value/collection"))).await?;

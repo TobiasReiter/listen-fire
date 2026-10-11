@@ -283,7 +283,7 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('extracted records updated in place (e03887cc3b): refused, updated by the TypeScript engine', async () => {
+  it('extracted records updated in place (e03887cc3b): run whole in Rust (chunk 7A Task 6)', async () => {
     await onBoth(
       shaped(
         '  found = extract([msg.`text`], Co)',
@@ -294,7 +294,7 @@ describe("main's language changes on both engines", () => {
         '    write crm-[:companies]-> { name: c.name }',
         '  })',
       ),
-      { refused: 'rvalue:extractCall' },
+      { runsWhole: true },
       [
         ['create', { name: 'Acme!' }],
         ['create', { name: 'Beta!' }],

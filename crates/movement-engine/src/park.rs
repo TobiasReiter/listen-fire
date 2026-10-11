@@ -752,6 +752,7 @@ mod tests {
             positions: RefCell::default(),
             extraction_sites: RefCell::default(),
             reply_digests: std::cell::Cell::new(0),
+            extract_calls: Default::default(),
             unfetched_files: RefCell::default(),
             log_lines: RefCell::default(),
             file_scope: RefCell::default(),

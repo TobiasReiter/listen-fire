@@ -43,13 +43,13 @@ use crate::trace::{Members, TraceEntry};
 /// How much of the walk runs at once, per fan (extraction.ts `STAGE_FAN_OUT`).
 pub const STAGE_FAN_OUT: usize = 4;
 /// Prompt parts kept per call on the trace; the rest are counted.
-const TRACE_INPUT_PARTS: usize = 12;
+pub(crate) const TRACE_INPUT_PARTS: usize = 12;
 /// How much of a misbehaving reply the trace keeps.
 const TRACE_REPLY_CHARS: usize = 1000;
 /// Reply digests kept per run.
-const TRACE_REPLY_DIGESTS: usize = 5;
+pub(crate) const TRACE_REPLY_DIGESTS: usize = 5;
 /// Validation issues quoted when the retry fires.
-const TRACE_ISSUE_LINES: usize = 8;
+pub(crate) const TRACE_ISSUE_LINES: usize = 8;
 pub(crate) const TRACE_URL_CHARS: usize = 200;
 /// Entities declaring at least this many sites ask the larger model
 /// (model_choice.ts `ENTITY_DENSITY_OPUS_THRESHOLD`).
@@ -86,24 +86,44 @@ pub(crate) fn room_to_think(effort: Option<&str>) -> Option<u64> {
 /// deployment's assignment over it), or with no tier the density
 /// heuristic's model at extraction's own depth.
 pub(crate) fn extraction_call_settings(tier: Option<&str>, density_model: &str, tiers: &std::collections::BTreeMap<String, super::TierAssignment>) -> CallSettings {
+    extraction_call_settings_over(tier, density_model, tiers, None, None)
+}
+
+/// `extractionCallSettings` with the author's own model and effort over
+/// the row (the extraction call's `{ model, effort }`).
+pub(crate) fn extraction_call_settings_over(
+    tier: Option<&str>,
+    density_model: &str,
+    tiers: &std::collections::BTreeMap<String, super::TierAssignment>,
+    model_over: Option<&str>,
+    effort_over: Option<&str>,
+) -> CallSettings {
     let Some(named) = ai_tier(tier) else {
-        return CallSettings { model: density_model.into(), effort: Some(EXTRACTION_EFFORT.into()), max_tokens: None };
+        let effort = effort_over.unwrap_or(EXTRACTION_EFFORT).to_string();
+        let max_tokens = room_to_think(Some(&effort));
+        return CallSettings { model: model_over.unwrap_or(density_model).into(), effort: Some(effort), max_tokens };
     };
-    let (mut model, mut effort) = match named {
+    let (mut row_model, mut effort) = match named {
         "careful" => ("sonnet".to_string(), "high".to_string()),
         "thorough" => ("sonnet".to_string(), "xhigh".to_string()),
         _ => ("sonnet".to_string(), EXTRACTION_EFFORT.to_string()),
     };
     if let Some(assigned) = tiers.get(named) {
         if let Some(m) = &assigned.model {
-            model = m.clone();
+            row_model = m.clone();
         }
         if let Some(e) = &assigned.effort {
             effort = e.clone();
         }
     }
+    if let Some(e) = effort_over {
+        effort = e.to_string();
+    }
+    if let Some(m) = model_over {
+        row_model = m.to_string();
+    }
     let max_tokens = room_to_think(Some(&effort));
-    CallSettings { model, effort: Some(effort), max_tokens }
+    CallSettings { model: row_model, effort: Some(effort), max_tokens }
 }
 
 /// `aiExpressionSettings`: an `AI(prompt[, tier])` call's.
@@ -254,7 +274,7 @@ impl<'r, 'h> Sink<'r, 'h> {
 /// The firing a spec is resolved in (crate::extract::spec `Firing`): the
 /// body's scope for the extraction's own words, the file's for a root
 /// declaration's; the live schemas of the instances the body sees.
-struct FiringScope<'r, 'h> {
+pub(crate) struct FiringScope<'r, 'h> {
     run: &'r Run<'h>,
     scope: &'r Rc<Scope>,
     /// Each name the scope chain binds to an instance, innermost first.
@@ -262,7 +282,7 @@ struct FiringScope<'r, 'h> {
 }
 
 impl<'r, 'h> FiringScope<'r, 'h> {
-    fn new(run: &'r Run<'h>, scope: &'r Rc<Scope>) -> Self {
+    pub(crate) fn new(run: &'r Run<'h>, scope: &'r Rc<Scope>) -> Self {
         let mut seen: Vec<String> = Vec::new();
         let mut instances = Vec::new();
         for at in scope.chain_from_root().iter().rev() {
@@ -371,14 +391,14 @@ struct Telemetry {
 
 /// A model call's answer (`LlmCallResult`).
 #[derive(Clone)]
-struct Reply {
+pub(crate) struct Reply {
     /// The reply held what the eval wire cannot carry (the shim's
     /// `uncarried`): a `__proto__` key, a lone surrogate.
-    unreadable: bool,
-    parsed_json: Js,
-    raw_text: Option<String>,
-    effort_stepped_down: Option<Js>,
-    continuations: f64,
+    pub(crate) unreadable: bool,
+    pub(crate) parsed_json: Js,
+    pub(crate) raw_text: Option<String>,
+    pub(crate) effort_stepped_down: Option<Js>,
+    pub(crate) continuations: f64,
 }
 
 impl Run<'_> {
@@ -1038,7 +1058,7 @@ fn read_reply(region: &Region<'_>, reply: &Reply) -> Result<validate::Read, Vec<
     validate::read_reply(region, &reply.parsed_json)
 }
 
-const UNREADABLE_REPLY: &str = "the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)";
+pub(crate) const UNREADABLE_REPLY: &str = "the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)";
 
 /// The members of a host's answer the shim could not carry on the eval wire.
 pub(crate) fn uncarried(answer: &Js) -> Vec<String> {
@@ -1191,7 +1211,7 @@ fn coercion_members(coercions: &Coercions, entry: &mut Members) {
 
 /// `replyDigest`: the keys a misbehaving reply answered under, and the head
 /// of it — or the entity the rejection named.
-fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, Js)>) -> Option<Js> {
+pub(crate) fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, Js)>) -> Option<Js> {
     if why.is_empty() {
         return None;
     }
@@ -1247,6 +1267,11 @@ fn offending_entity(reply: &Js, path: &[PathKey]) -> Option<(String, Js)> {
 /// last call that happened (a stage skipped for want of anything new is not
 /// one); none when that call was skipped for an empty source.
 fn record_extracted_entities(run: &Run<'_>, from: usize, root: &Emission) {
+    record_traced_entities(run, from, emission::traced_entities(root));
+}
+
+/// `recordExtractedEntities` with the sample already read off the tree.
+pub(crate) fn record_traced_entities(run: &Run<'_>, from: usize, (entities, truncated): (Js, Js)) {
     run.trace.amend(from, |entries| {
         let target = entries.iter_mut().rev().find_map(|entry| match entry {
             TraceEntry::Extraction(members) if !matches!(members.get("skipped"), Some(Js::String(why)) if why == "no_enrichment") => Some(members),
@@ -1256,7 +1281,6 @@ fn record_extracted_entities(run: &Run<'_>, from: usize, root: &Emission) {
         if target.get("skipped").is_some() {
             return;
         }
-        let (entities, truncated) = emission::traced_entities(root);
         if let Js::Object(object) = &entities
             && !object.entries().is_empty()
         {

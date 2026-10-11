@@ -22,6 +22,7 @@ pub enum Family {
     Adapters,
     Llm,
     LlmClient,
+    LlmExtractCall,
     LlmTransforms,
     ParkSink,
     Park,
@@ -44,6 +45,7 @@ const FAMILIES: &[Family] = &[
     Family::Adapters,
     Family::Llm,
     Family::LlmClient,
+    Family::LlmExtractCall,
     Family::LlmTransforms,
     Family::ParkSink,
     Family::Park,
@@ -68,6 +70,7 @@ impl Family {
             Family::Adapters => "adapters",
             Family::Llm => "llm",
             Family::LlmClient => "llm.client",
+            Family::LlmExtractCall => "llm.extractCall",
             Family::LlmTransforms => "llm.transforms",
             Family::ParkSink => "park.sink",
             Family::Park => "park",
@@ -294,6 +297,28 @@ pub mod llm {
             args["maxTokens"] = json!(max_tokens);
         }
         Request { family: Family::LlmClient, method: "call".into(), args: in_segment(segment, args) }
+    }
+
+    /// The extraction call's model call (`llm.extractCall.call`), a priced
+    /// call: its prompt as blocks, the last the shape; answered on the eval
+    /// wire with `{parsedJson, rawText?, usage?, cost?}`, or a budget
+    /// refusal. Its members in the order run_context.ts hands them on.
+    pub(crate) fn extract_call(segment: &str, system: &str, blocks: Vec<Json>, label: &str, settings: &crate::extract::run::CallSettings, budget: Json) -> Request {
+        let mut args = serde_json::Map::new();
+        args.insert("system".into(), json!(system));
+        args.insert("blocks".into(), Json::Array(blocks));
+        args.insert("label".into(), json!(label));
+        args.insert("model".into(), json!(settings.model));
+        if let Some(effort) = &settings.effort {
+            args.insert("effort".into(), json!(effort));
+        }
+        if let Some(max_tokens) = settings.max_tokens {
+            args.insert("maxTokens".into(), json!(max_tokens));
+        }
+        args.insert("segmentId".into(), json!(segment));
+        args.insert("budget".into(), budget);
+        args.insert("wire".into(), json!(true));
+        Request { family: Family::LlmExtractCall, method: "call".into(), args: Json::Object(args) }
     }
 
     /// What one model call is asked.
