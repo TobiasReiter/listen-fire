@@ -34,7 +34,7 @@ import { resumeMovement, runMovement } from '../../../../apps/api/src/services/m
 import { resetRustRunStats, resetRustEvalStats, rustRunStats } from '../../../../apps/api/src/services/movement_engine/rust_stats';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../../../../apps/api/src/services/movement_engine/test_host';
 import { staticCatalogFromManifests } from '../../../../apps/api/src/services/translation_graph/movement/catalog';
-import type { Adapter, RelatedResult } from '../../../../apps/api/src/services/translation_graph/adapter';
+import type { ActingUser, Adapter, RelatedResult } from '../../../../apps/api/src/services/translation_graph/adapter';
 import { containerAssociation } from '../../../../apps/api/src/services/translation_graph/adapter';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../../../apps/api/src/services/translation_graph/types';
 import { readFileSync } from 'node:fs';
@@ -256,11 +256,11 @@ function scriptedHost(replies: readonly unknown[], park = makeFakeParkSink(), an
           ? ({ unreadable: answers.unreadable } as never)
           : { text: `the text of ${String(Reflect.get(file, 'name'))}`, rawTextId: 'rt-1' },
     },
-    lookup: {
-      resolveActingUser: async () =>
-        (answers.actingUser !== undefined ? answers.actingUser : { principal: { id: 'user-1', display: 'Ada' }, email: 'ada@acme.example' }) as never,
-    },
+    lookup: { resolveActingUser: async (): Promise<ActingUser> => ({ id: 'user-1', email: 'ada@acme.example', name: 'Ada' }) },
   });
+  // A malformed answer is the host's own (past the test host's mapping to a
+  // principal): what the engine is handed when a host breaks its contract.
+  if (answers.actingUser !== undefined) Reflect.set(host.lookup, 'resolveActingUser', async () => answers.actingUser);
   return process.env.PATTERNS_DEBUG === undefined ? host : logging(host, '');
 }
 

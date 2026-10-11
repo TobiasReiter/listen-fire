@@ -124,6 +124,7 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  write crm-[:notes]-> { body: COALESCE(@user_email, "nobody") }' }),
       (pick) => ({ body: `  who = "\${@user_name} <\${@user_email}>"\n  write crm-[:notes]-> { body: who, title: "${pick(WORDS)}" }` }),
       () => ({ body: '  write crm-[:notes]-> { body: COALESCE(@user_email, "nobody") }\n  write crm-[:notes]-> { body: COALESCE(@user_name, "nameless") }', answers: { actingUser: { email: 'ada@acme.example' } } }),
+      () => ({ body: '  x = MAP(["a", "b"], { onError: "warn" }, (n) => "${n}:${@user_name}")\n  write crm-[:notes]-> { body: "${COUNT(x)}" }', answers: { actingUser: { email: 'ada@acme.example' } } }),
       () => ({ body: '  x = MAP(["a"], { onError: "ignore" }, (n) => @user_id)\n  write crm-[:notes]-> { body: "${COUNT(x)}" }', answers: { actingUser: { email: 'ada@acme.example', principal: null } } }),
     ],
   },

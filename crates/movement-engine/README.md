@@ -1227,6 +1227,20 @@ TypeScript engine runs the segment, having seen only reads.
   structure is its system's types. Admission lets no such node reach an
   `IS` (a `node { … }` literal nests nodes only; a `graph { … }` literal is
   refused, `is_test_declared_graph`).
+- An `AI()` prompt whose 300-unit trace cut lands mid surrogate pair: the
+  TypeScript traces the lone high half, which no Rust string holds (the
+  lone-surrogate family, transition artefacts row 9), so MOVENG_UNSUPPORTED
+  before the model is asked. After an effect it fails the run, including
+  inside an `onError` handler, which does not catch it (run.rs `ai`).
+- A records plugin's record that is a text holding an astral character: its
+  spread makes two lone halves per character (the lone-surrogate family).
+  The plugin call is itself an effect, so this always fails the run, never
+  declines (plugin.rs `spread_fields`).
+- A file reader answering `unreadable` with a reason outside the four
+  (`unsupported_type`, `bytes_unavailable`, `extraction_failed`, `no_text`):
+  the host has broken its typed contract; the TypeScript traces the reason
+  as given, this engine fails the run naming it (extract/resources.rs
+  `resolve_file_text`).
 
 None of the first three is a built-in's reading, so none can be handed to the
 TypeScript member (`builtins.*`).
@@ -1403,7 +1417,7 @@ Sizes are estimates (XS, S, M, L).
 | 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | 0 |
 | 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | follows 9 |
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | 0 to S |
-| 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
+| 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole, except an `AI()` prompt's trace cut, which fails ("Errors a run can meet mid-run") | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | L |
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | mirrored (chunk 7A Task 5): the shim passes the deployment's number as written; the text is cut where `slice` truncates it and the marker and the trace's `chars` print the number itself (`first 2.5 of …`) | oracle file_bound.json (seed 20261012, tests/tail_oracle.rs) | done |
 | 11 | records held in values, `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` the only record, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run". The structural binding emulation (a dict whose `kind` names a binding's read as that binding, `Binding::Shaped`) is deleted (chunk 7A Task 4b): data is never an engine object | oracle records.json (1,458 whole programs, seed 20261010, tests/records_oracle.rs: the 3,024 that turn on the TypeScript engine's shape classification deleted, to be regenerated from the fixed TypeScript engine when main's fix merges forward) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | — |
@@ -1505,7 +1519,9 @@ mirror replaces that plan):
     units, or a file bounded for the prompt, landing mid-pair): a Rust
     string cannot hold a lone surrogate, so this engine never splits the
     pair and drops it whole; JavaScript's `slice` keeps the high half.
-    Specified as: a cut never splits a pair.
+    Specified as: a text or file cut never splits a pair. An `AI()`
+    prompt's 300-unit trace cut is the exception: it is refused or fails
+    by name ("Errors a run can meet mid-run"), not dropped whole.
   - a fractional `EXTRACTION_FILE_CHARS` (mirrored, row 10): the
     TypeScript compares the text's length with the number as written, cuts
     at `slice`'s truncation of it, and prints it in the marker ("first 2.5
@@ -1521,7 +1537,7 @@ beyond those, and these, held back by decision:
 
 | construct | the TypeScript | this engine | why held |
 |---|---|---|---|
-| when flows woken together ask the host again (collection members, `parallel` arms: "Concurrent flows" below) | each continuation runs its microtasks to its next request; one that descends into a taken `if` arm gets there in fewer ticks than one that falls out of an untaken one, so the host may answer the first before the second asks | the shim hands every settled answer over before serving what it leads to, so flows woken together ask together | the request paths and answers are the same and the conformance kit's rule matches them; only which answers came before a request (`after`) differs, and reproducing it would mean counting V8's microtask ticks per code path (2 of the generator's 152 compared programs) |
+| when flows woken together ask the host again (collection members, `parallel` arms: "Concurrent flows" below) | each continuation runs its microtasks to its next request; flows that do different non-host work before it (a taken `if` arm against an untaken one, an `else` arm against the `then` arm) reach it in different numbers of ticks, so the host may answer the first before the second asks | the shim hands every settled answer over before serving what it leads to, so flows woken together ask together | the request paths and answers are the same and the conformance kit's rule matches them; the order the requests are made in differs, and with it which answers came before each (`after`). Example: TypeScript asks `getRelated`, `describe`, `describe`, `getFieldValue`, `locks.acquire`; this engine asks `describe`, `describe`, `getRelated`, `locks.acquire`, `getFieldValue`. Ruled not a defect: a real host's latency makes this order nondeterministic anyway, and reproducing it would mean counting V8's microtask ticks per code path (2 of the generator's 153 compared programs) |
 | an object an in-process adapter answered and then MUTATED before answering it again | holds the one object: a later read, `IN` or `CONTAINS` sees the mutation through every name holding it | decodes the second answer fresh: names bound to the first answer keep its old contents | parked (Task 3 review): only an in-process adapter that mutates what it already returned can produce it; a protocol-v2 adapter answers fresh JSON each time, so cannot; no corpus program does |
 
 ### Concurrent flows
@@ -1531,10 +1547,12 @@ futures polled together (`join_all`); a member slot takes the next member as
 its own finishes, as `runMembers`' slots do. The shim answers the engine one
 settled request at a time, but hands over every answer already settled
 before it serves any request those answers led to (rust_engine.ts
-`runSegment`): the TypeScript engine runs each continuation an answer wakes
+`driveEngine`): the TypeScript engine runs each continuation an answer wakes
 before the host is asked anything further, so flows woken together ask
 together, and the host sees the same requests with the same answers before
-them. What is left is the microtask depth of each continuation (Known
+them. What is left is the microtask depth of each continuation: flows doing
+different non-host work before their next request can ask in a different
+order, which a real host's latency makes nondeterministic anyway (Known
 divergences above).
 
 ## The check
