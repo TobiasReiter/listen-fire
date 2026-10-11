@@ -280,10 +280,10 @@ import {
   instanceOfType,
   fieldAssignable,
   fieldTypeCompatible,
-  recordSpreadOf,
-  recordWithin,
+  handleSpreadOf,
+  handleWithin,
   spellHeldSteps,
-  type HeldRecord,
+  type HeldHandle,
   fieldTypeEquals,
   LocalEdge,
   InstanceRef,
@@ -1791,39 +1791,55 @@ function escapedFromBlock(scope: Scope, member: string, blockName: string): bool
 // ── Field value messages ──
 
 /**
- * A record written into a field that holds values — the value itself, or a
- * record somewhere inside it. The repair is the same either way: write a field
- * off the record in its place, or link the two records.
+ * A record or a file written into a field that holds values — the value
+ * itself, or one somewhere inside it. Both are the engine's own objects, not
+ * data. The repair for a record: write a field off it in its place, or link
+ * the two records. A file goes only to a field that holds files; inside a
+ * value, its text stands in its place.
  */
-function recordInFieldMessage(input: {
+function handleInFieldMessage(input: {
   fieldName: string;
   subject: string;
   targetType: FieldType;
   valueType: FieldType | undefined;
-  held: HeldRecord;
+  held: HeldHandle;
 }): string {
   const { fieldName, subject, targetType, valueType, held } = input;
   const direct = held.steps.length === 0;
   const verb = held.may ? 'may be' : 'is';
-  const what = direct && !held.may && valueType !== undefined ? valueType : held.record;
+  const what = direct && !held.may && valueType !== undefined ? valueType : held.handle;
   const where = direct ? 'this' : `'${fieldName}${spellHeldSteps(held.steps)}'`;
-  return `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and ${where} ${verb} ${describeFieldType(what)} — a record, not a value. Write a field off it (${fieldOffRepair(direct ? fieldName : held)}), or join the two records with a link ('link … -[:edge]-> r').`;
+  const said = `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and ${where} ${verb} ${describeFieldType(what)}`;
+  const place = direct ? fieldName : held;
+  if (isFileHandle(held)) {
+    return `${said} — a file, not a value. A file goes only into a field that holds files; inside a value, put its text in its place (${repairAt(place, 'READ(f)')}).`;
+  }
+  return `${said} — a record, not a value. Write a field off it (${repairAt(place, 'r.`Name`')}), or join the two records with a link ('link … -[:edge]-> r').`;
 }
 
-/** A plugin argument taking structured data, with a record inside its value.
- *  The whole argument may be a record — the plugin is handed its fields — but
- *  a record inside a value reaches the plugin as nothing it can read. */
-function recordInPluginArgMessage(input: { callee: string; name: string; held: HeldRecord }): string {
+/** A plugin argument taking structured data, with a record or a file inside
+ *  its value. The whole argument may be a record — the plugin is handed its
+ *  fields — but a record inside a value, or a file anywhere in it, reaches the
+ *  plugin as nothing it can read. */
+function handleInPluginArgMessage(input: { callee: string; name: string; held: HeldHandle }): string {
   const { callee, name, held } = input;
-  return `'${callee}' takes structured data for '${name}', and '${name}${spellHeldSteps(held.steps)}' ${held.may ? 'may be' : 'is'} ${describeFieldType(held.record)} — a record, not a value. A record goes to a plugin only as the whole argument ('${name}: r', which hands it the record's fields); inside a value, write a field off it (${fieldOffRepair(held)}).`;
+  const said = `'${callee}' takes structured data for '${name}', and '${name}${spellHeldSteps(held.steps)}' ${held.may ? 'may be' : 'is'} ${describeFieldType(held.handle)}`;
+  if (isFileHandle(held)) {
+    return `${said} — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place (${repairAt(held.steps.length === 0 ? name : held, 'READ(f)')}).`;
+  }
+  return `${said} — a record, not a value. A record goes to a plugin only as the whole argument ('${name}: r', which hands it the record's fields); inside a value, write a field off it (${repairAt(held, 'r.`Name`')}).`;
 }
 
-/** The repair "write a field off it", placed under the key the record sat at
- *  where there is one. */
-function fieldOffRepair(at: string | HeldRecord): string {
+function isFileHandle(held: HeldHandle): boolean {
+  return held.handle === 'file';
+}
+
+/** A repair, placed under the key the engine object sat at where there is
+ *  one. */
+function repairAt(at: string | HeldHandle, repair: string): string {
   const last = typeof at === 'string' ? undefined : at.steps[at.steps.length - 1];
   const place = typeof at === 'string' ? at : last?.kind === 'key' ? last.key : undefined;
-  return place !== undefined ? `'${place}: r.\`Name\`'` : `'r.\`Name\`'`;
+  return place !== undefined ? `'${place}: ${repair}'` : `'${repair}'`;
 }
 
 // ── Span helpers ──
@@ -6582,7 +6598,8 @@ class Checker {
    * list's member, one arm of a conditional (`held`, found by the walk that
    * typed the value) — since a field holds values all the way down, and a
    * record placed inside one reached the system as the engine's own
-   * description of it.
+   * description of it. A FILE is the same kind of object and gets the same
+   * rule: it goes only to a field that holds files.
    */
   private reportFieldValueType(
     fieldName: string,
@@ -6590,14 +6607,14 @@ class Checker {
     targetType: FieldType | undefined,
     valueType: FieldType | undefined,
     span: Span,
-    options?: { relationship?: boolean; declared?: boolean; held?: HeldRecord },
+    options?: { relationship?: boolean; declared?: boolean; held?: HeldHandle },
   ): void {
     if (targetType === undefined) return;
     const held = options?.held;
-    if (held !== undefined && options?.relationship !== true && recordWithin(targetType) === undefined) {
+    if (held !== undefined && options?.relationship !== true && handleWithin(targetType) === undefined) {
       this.report(
         DiagnosticCodes.WRITE_FIELD_TYPE,
-        recordInFieldMessage({ fieldName, subject, targetType, valueType, held }),
+        handleInFieldMessage({ fieldName, subject, targetType, valueType, held }),
         span,
       );
       return;
@@ -6621,7 +6638,7 @@ class Checker {
     if (isRecordType(valueType)) {
       this.report(
         DiagnosticCodes.WRITE_FIELD_TYPE,
-        recordInFieldMessage({ fieldName, subject, targetType, valueType, held: { steps: [], record: valueType, may: false } }),
+        handleInFieldMessage({ fieldName, subject, targetType, valueType, held: { steps: [], handle: valueType, may: false } }),
         span,
       );
       return;
@@ -12914,8 +12931,8 @@ class Checker {
     name: string;
     record: PositionTypeRef | undefined;
     valueType: FieldType | undefined;
-    /** The record the argument's value holds, found by the walk that typed it. */
-    held?: HeldRecord;
+    /** The record or file the argument's value holds, found by the walk that typed it. */
+    held?: HeldHandle;
     span: Span;
   }): void {
     const { callee, declared, name, record, valueType, held, span } = at;
@@ -12923,11 +12940,12 @@ class Checker {
     // type), it takes it as the WHOLE argument and is handed its fields — the
     // spread `{ ...r }` would copy. A record anywhere inside that value (a
     // map's key, a list's member, a field of the record handed over) reaches
-    // the plugin as the engine's own description of it.
+    // the plugin as the engine's own description of it; so does a file
+    // anywhere in it, the whole argument included.
     if (declared === 'json' || declared === undefined) {
-      const nested = held !== undefined && held.steps.length > 0 ? held : recordSpreadOf(valueType, []);
+      const nested = held !== undefined && (held.steps.length > 0 || isFileHandle(held)) ? held : handleSpreadOf(valueType, []);
       if (nested !== undefined) {
-        this.report(DiagnosticCodes.CALL_ARG_TYPE, recordInPluginArgMessage({ callee, name, held: nested }), span);
+        this.report(DiagnosticCodes.CALL_ARG_TYPE, handleInPluginArgMessage({ callee, name, held: nested }), span);
         return;
       }
     }
@@ -13063,7 +13081,7 @@ class Checker {
     slot: ExprSlot,
     scope: Scope,
     options?: SlotOptions,
-  ): { valueType?: FieldType; parsed?: Expression; held?: HeldRecord } {
+  ): { valueType?: FieldType; parsed?: Expression; held?: HeldHandle } {
     const trimmed = slot.raw.trim();
     if (BARE_IDENT.test(trimmed)) {
       if (EXPR_LITERALS.has(trimmed.toUpperCase())) {
@@ -13078,7 +13096,7 @@ class Checker {
       // sites (a plain write field) that require presence.
       const bound = this.bareNameValueType(scope, trimmed);
       const valueType = options?.holdsValue === true ? bound : this.readHeldValue(bound, slot.span);
-      const held = recordWithin(bound);
+      const held = handleWithin(bound);
       return { ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
     }
     const hoisted = this.hoistNestedCalls(slot, scope);
@@ -13102,7 +13120,7 @@ class Checker {
     const valueType = options?.holdsValue === true
       ? typing.inferExact(parsed, options.writeTarget)
       : typing.infer(parsed, options?.writeTarget);
-    const held = typing.recordHeldBy(parsed) ?? recordWithin(valueType);
+    const held = typing.handleHeldBy(parsed) ?? handleWithin(valueType);
     return { parsed, ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
   }
 
