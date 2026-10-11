@@ -13,7 +13,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog, type FieldType } from '../catalog';
-import { fieldAssignable, fieldTypeCompatible, recordWithin } from '../typing';
+import { fieldAssignable, fieldTypeCompatible, recordWithin, spellHeldSteps } from '../typing';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
 
 const crmSchema: InstanceSchema = {
@@ -48,11 +48,23 @@ const catalog = mockCatalog({
     },
   },
   credentials: { crm_cred: { adapter: 'attio' }, ledger_cred: { adapter: 'ledger' } },
+  plugins: {
+    // A plugin handed structured data, and one whose argument declares no type.
+    summarise: {
+      args: ['data'],
+      argTypes: { data: 'json' },
+      requiredArgs: ['data'],
+      effects: { ai: true },
+      output: { kind: 'value', type: 'text' },
+    },
+    relay: { args: ['data'], requiredArgs: ['data'], effects: { ai: true }, output: { kind: 'value', type: 'text' } },
+  },
 });
 
 const PRELUDE = [
   'import { attio, ledger } from adapters',
   'import { crm_cred, ledger_cred } from credentials',
+  'import { summarise, relay } from plugins',
   '',
   'crm = attio(credentials: crm_cred)',
   'l = ledger(credentials: ledger_cred)',
@@ -165,9 +177,10 @@ describe('the type rule, as pure functions', () => {
   });
 
   it('names where the record sits', () => {
-    expect(recordWithin(dictHolding)?.steps).toEqual(['.a']);
-    expect(recordWithin({ kind: 'tuple', of: ['text', record] })?.steps).toEqual(['[1]']);
-    expect(recordWithin({ kind: 'list', of: record })?.steps).toEqual(['[…]']);
+    expect(recordWithin(dictHolding)?.steps).toEqual([{ kind: 'key', key: 'a' }]);
+    expect(recordWithin({ kind: 'tuple', of: ['text', record] })?.steps).toEqual([{ kind: 'slot', index: 1 }]);
+    expect(recordWithin({ kind: 'list', of: record })?.steps).toEqual([{ kind: 'member' }]);
+    expect(spellHeldSteps(recordWithin({ kind: 'dict', of: 'json', shape: { 'a b': { kind: 'list', of: record } } })!.steps)).toBe('.`a b`[…]');
     expect(recordWithin('json')).toBeUndefined();
   });
 });
@@ -184,5 +197,66 @@ describe('a receipt nobody can type is not a record', () => {
         ...note('{ r: r }'),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, a record inside a plugin argument\'s value is refused', version => {
+  const refused = (body: string[], where: string): void => {
+    const errors = errorsUnder(version, body);
+    expect(errors.map(d => d.code)).toEqual(['MOV_CALL_ARG_TYPE']);
+    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
+  };
+
+  it('a write handle under a map key', () => {
+    refused(['  s = summarise(data: { a: org })'], "'summarise' takes structured data for 'data', and 'data.a' is ");
+  });
+
+  it("a system record under a map key", () => {
+    refused(['  crm-[c:companies]-> {', '    s = summarise(data: { a: c })', '  }'], "and 'data.a' is ");
+  });
+
+  it('a list member', () => {
+    refused(['  s = summarise(data: [org])'], "and 'data[0]' is ");
+  });
+
+  it('under a key in one arm of a conditional', () => {
+    refused(['  s = summarise(data: IF 1 > 0 THEN { a: org } ELSE { a: "x" } END)'], "and 'data.a' may be ");
+  });
+
+  it('an argument that declares no type, the same way', () => {
+    refused(['  s = relay(data: { a: org })'], "'relay' takes structured data for 'data', and 'data.a' is ");
+  });
+
+  it('the whole argument a record the program holds is still handed its fields', () => {
+    expect(errorsUnder(version, ['  s = summarise(data: org)'])).toEqual([]);
+  });
+});
+
+describe('a spread that may be a record copies its fields either way', () => {
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a conditional of a record and a map', version => {
+    expect(errorsUnder(version, note('{ ...(IF 1 > 0 THEN org ELSE { name: "x" } END) }'))).toEqual([]);
+  });
+});
+
+describe('KNOWN GAP: a combinator receipt holding records is not typed from its arms', () => {
+  // The receipt is a list of what the arms returned (the engine's `parallel`),
+  // so arms returning a record put the engine's object into the field. The
+  // checker types a receipt over arms built at run time as untyped — a value
+  // it cannot see into — and a literal arm returning a record as an untyped
+  // slot. Both are accepted TODAY; the fix is to type a receipt from what its
+  // arms return, after which these become refusals.
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, arms built at run time: accepted today', version => {
+    expect(
+      errorsUnder(version, [
+        '  arms = MAP([1, 2], (n) => { return () => { return org } })',
+        '  r = await parallel(arms)',
+        ...note('r'),
+      ]),
+    ).toEqual([]);
+  });
+
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a literal arm: accepted today', version => {
+    expect(errorsUnder(version, ['  r = await parallel([() => { return org }])', ...note('r')])).toEqual([]);
   });
 });

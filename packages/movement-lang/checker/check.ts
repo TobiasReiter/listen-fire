@@ -280,7 +280,9 @@ import {
   instanceOfType,
   fieldAssignable,
   fieldTypeCompatible,
+  recordSpreadOf,
   recordWithin,
+  spellHeldSteps,
   type HeldRecord,
   fieldTypeEquals,
   LocalEdge,
@@ -1798,11 +1800,24 @@ function recordInFieldMessage(input: {
   const direct = held.steps.length === 0;
   const verb = held.may ? 'may be' : 'is';
   const what = direct && !held.may && valueType !== undefined ? valueType : held.record;
-  const where = direct ? 'this' : `'${fieldName}${held.steps.join('')}'`;
-  const last = held.steps[held.steps.length - 1];
-  const place = direct ? fieldName : last?.startsWith('.') === true ? last.slice(1) : undefined;
-  const repair = place !== undefined ? `'${place}: r.\`Name\`'` : `'r.\`Name\`'`;
-  return `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and ${where} ${verb} ${describeFieldType(what)} — a record, not a value. Write a field off it (${repair}), or join the two records with a link ('link … -[:edge]-> r').`;
+  const where = direct ? 'this' : `'${fieldName}${spellHeldSteps(held.steps)}'`;
+  return `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and ${where} ${verb} ${describeFieldType(what)} — a record, not a value. Write a field off it (${fieldOffRepair(direct ? fieldName : held)}), or join the two records with a link ('link … -[:edge]-> r').`;
+}
+
+/** A plugin argument taking structured data, with a record inside its value.
+ *  The whole argument may be a record — the plugin is handed its fields — but
+ *  a record inside a value reaches the plugin as nothing it can read. */
+function recordInPluginArgMessage(input: { callee: string; name: string; held: HeldRecord }): string {
+  const { callee, name, held } = input;
+  return `'${callee}' takes structured data for '${name}', and '${name}${spellHeldSteps(held.steps)}' ${held.may ? 'may be' : 'is'} ${describeFieldType(held.record)} — a record, not a value. A record goes to a plugin only as the whole argument ('${name}: r', which hands it the record's fields); inside a value, write a field off it (${fieldOffRepair(held)}).`;
+}
+
+/** The repair "write a field off it", placed under the key the record sat at
+ *  where there is one. */
+function fieldOffRepair(at: string | HeldRecord): string {
+  const last = typeof at === 'string' ? undefined : at.steps[at.steps.length - 1];
+  const place = typeof at === 'string' ? at : last?.kind === 'key' ? last.key : undefined;
+  return place !== undefined ? `'${place}: r.\`Name\`'` : `'r.\`Name\`'`;
 }
 
 // ── Span helpers ──
@@ -3454,15 +3469,29 @@ class Checker {
    *  the checker has already walked. A bare name reads as the walker reads it,
    *  whichever plane it is bound on. */
   private slotValueTypeSilently(slot: ExprSlot, scope: Scope): FieldType | undefined {
+    return this.slotTypedSilently(slot, scope).valueType;
+  }
+
+  /** `slotValueTypeSilently`, with the record the value holds (`recordHeldBy`). */
+  private slotTypedSilently(slot: ExprSlot, scope: Scope): { valueType?: FieldType; held?: HeldRecord } {
     const trimmed = slot.raw.trim();
-    if (BARE_IDENT.test(trimmed)) return this.bareNameValueType(scope, trimmed);
+    const typed = (valueType: FieldType | undefined, held: HeldRecord | undefined) => ({
+      ...(valueType !== undefined ? { valueType } : {}),
+      ...(held !== undefined ? { held } : {}),
+    });
+    if (BARE_IDENT.test(trimmed)) {
+      const valueType = this.bareNameValueType(scope, trimmed);
+      return typed(valueType, recordWithin(valueType));
+    }
     let parsed: Expression;
     try {
       parsed = expressionOfSlot(slot);
     } catch {
-      return undefined; // the syntax error is reported where the slot is read
+      return {}; // the syntax error is reported where the slot is read
     }
-    return this.silentTyping(scope, slot.span).infer(parsed);
+    const typing = this.silentTyping(scope, slot.span);
+    const valueType = typing.infer(parsed);
+    return typed(valueType, typing.recordHeldBy(parsed) ?? recordWithin(valueType));
   }
 
   /** A bound name's position type, where one is derivable. */
@@ -12824,9 +12853,9 @@ class Checker {
     const name = arg.name ?? '';
     switch (arg.kind) {
       case 'expr': {
-        const valueType = this.slotValueTypeSilently(arg.expr, scope);
+        const { valueType, held } = this.slotTypedSilently(arg.expr, scope);
         const record = this.bareSlotPositionType(arg.expr, scope) ?? recordIn(valueType)?.position;
-        this.checkPluginArgValue({ callee, declared, name, record, valueType, span: arg.expr.span });
+        this.checkPluginArgValue({ callee, declared, name, record, valueType, held, span: arg.expr.span });
         return;
       }
       case 'call': {
@@ -12834,9 +12863,9 @@ class Checker {
         if (reading.kind === 'value') {
           // A built-in called here (`relay(data: UPPER(x))`) is the value it
           // computes — an ordinary expression argument.
-          const { valueType } = this.checkExprSlot(reading.expr, scope);
+          const { valueType, held } = this.checkExprSlot(reading.expr, scope);
           const record = this.bareSlotPositionType(reading.expr, scope) ?? recordIn(valueType)?.position;
-          this.checkPluginArgValue({ callee, declared, name, record, valueType, span: arg.call.span });
+          this.checkPluginArgValue({ callee, declared, name, record, valueType, held, span: arg.call.span });
           return;
         }
         if (reading.kind === 'refused') {
@@ -12880,9 +12909,23 @@ class Checker {
     name: string;
     record: PositionTypeRef | undefined;
     valueType: FieldType | undefined;
+    /** The record the argument's value holds, found by the walk that typed it. */
+    held?: HeldRecord;
     span: Span;
   }): void {
-    const { callee, declared, name, record, valueType, span } = at;
+    const { callee, declared, name, record, valueType, held, span } = at;
+    // Where a plugin takes a record at all (structured data, or no declared
+    // type), it takes it as the WHOLE argument and is handed its fields — the
+    // spread `{ ...r }` would copy. A record anywhere inside that value (a
+    // map's key, a list's member, a field of the record handed over) reaches
+    // the plugin as the engine's own description of it.
+    if (declared === 'json' || declared === undefined) {
+      const nested = held !== undefined && held.steps.length > 0 ? held : recordSpreadOf(valueType, []);
+      if (nested !== undefined) {
+        this.report(DiagnosticCodes.CALL_ARG_TYPE, recordInPluginArgMessage({ callee, name, held: nested }), span);
+        return;
+      }
+    }
     if (declared === 'json') {
       // Handed its fields, all at once: a record whose fields are read from
       // its system one at a time has none to hand, and a function's parameter
