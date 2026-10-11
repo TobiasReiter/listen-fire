@@ -5,7 +5,7 @@
 // right. A rule the Rust parser mirrors (the backtick-name escape, a `#`
 // comment inside brackets) runs whole in Rust, and agrees.
 
-import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from '../../translation_graph/adapter';
@@ -135,12 +135,12 @@ interface Outcome {
   error?: string;
 }
 
-/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
- *  the constructs whose meaning changed (admit.rs), so the two engines are
- *  compared under the newest version both run. */
-const RUST_LANGUAGE_VERSION = 3;
+/** The versions every program compares under: these changes landed before
+ *  version 4, and version 4 changed what a match's miss, a write handle's
+ *  reads and `write h { … }` mean, so both are held to both engines. */
+const COMPARED_VERSIONS: readonly LanguageVersion[] = [3, 4];
 
-async function runOn(engine: 'ts' | 'rust', source: string): Promise<Outcome> {
+async function runOn(engine: 'ts' | 'rust', source: string, languageVersion: LanguageVersion): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
   const attio = fakeAttio();
@@ -150,7 +150,7 @@ async function runOn(engine: 'ts' | 'rust', source: string): Promise<Outcome> {
       event: webhook(),
       teamId: TEAM_ID,
       catalog,
-      languageVersion: RUST_LANGUAGE_VERSION,
+      languageVersion,
       host: makeTestHost({
         adapters: { resolve: ({ adapterType }) => (adapterType === 'attio' ? attio.adapter : fakeEmail()) },
         llm: { extractCall: extractLlm, transforms },
@@ -185,18 +185,20 @@ type OnRust = { runsWhole: true } | { refused: string };
  * goes as `onRust` says and leaves the same.
  */
 async function onBoth(source: string, onRust: OnRust, writes: Array<[string, unknown]>) {
-  const ts = await runOn('ts', source);
-  expect(ts.error).toBeUndefined();
-  expect(ts.writes).toEqual(writes);
-  resetRustEvalStats();
-  resetRustRunStats();
-  const rust = await runOn('rust', source);
-  if ('runsWhole' in onRust) {
-    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
-  } else {
-    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, declined: {}, hostCalls: {} });
+  for (const languageVersion of COMPARED_VERSIONS) {
+    const ts = await runOn('ts', source, languageVersion);
+    expect(ts.error).toBeUndefined();
+    expect(ts.writes).toEqual(writes);
+    resetRustEvalStats();
+    resetRustRunStats();
+    const rust = await runOn('rust', source, languageVersion);
+    if ('runsWhole' in onRust) {
+      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+    } else {
+      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, declined: {}, hostCalls: {} });
+    }
+    expect(seen(rust)).toEqual(seen(ts));
   }
-  expect(seen(rust)).toEqual(seen(ts));
 }
 
 const movement = (...body: string[]) => [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
@@ -330,13 +332,15 @@ describe("main's language changes on both engines", () => {
 
   it('a body rebinding a file-level value: refused by name, failed by the TypeScript engine', async () => {
     const source = [PRELUDE, 'tag = "x"', 'movement m(msg: <inbox-[:message]->>) {', '  tag = 1', '}'].join('\n');
-    const ts = await runOn('ts', source);
-    expect(ts.error).toContain('MOV_SHADOWED_NAME');
-    resetRustEvalStats();
-    resetRustRunStats();
-    const rust = await runOn('rust', source);
-    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { name_shadowed: 1 }, declined: {}, hostCalls: {} });
-    expect(seen(rust)).toEqual(seen(ts));
+    for (const languageVersion of COMPARED_VERSIONS) {
+      const ts = await runOn('ts', source, languageVersion);
+      expect(ts.error).toContain('MOV_SHADOWED_NAME');
+      resetRustEvalStats();
+      resetRustRunStats();
+      const rust = await runOn('rust', source, languageVersion);
+      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { name_shadowed: 1 }, declined: {}, hostCalls: {} });
+      expect(seen(rust)).toEqual(seen(ts));
+    }
   });
 
   it('a # comment inside brackets is skipped (2ee8959ba6, 48009be49a, 51bca6a37b): mirrored, run whole in Rust', async () => {

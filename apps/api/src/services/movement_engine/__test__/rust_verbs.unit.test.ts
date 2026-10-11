@@ -6,7 +6,7 @@
 // judge's questions, a rehearsal's captured writes, and every call the
 // adapters received, in order and key for key (compared as JSON text).
 
-import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 
@@ -187,7 +187,9 @@ interface Case {
   crm?: Store;
   judge?: (asked: unknown[]) => Judge;
   dryRun?: boolean;
-  languageVersion?: number;
+  /** The pin the run is under. Unpinned, a case compares under version 3
+   *  and under the current version (`agree`). */
+  languageVersion?: LanguageVersion;
 }
 
 interface Outcome {
@@ -202,11 +204,6 @@ interface Outcome {
   captured: CapturedWrite[];
   asked: unknown[];
 }
-
-/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
- *  the constructs whose meaning changed (admit.rs), so the two engines are
- *  compared under the newest version both run. */
-const RUST_LANGUAGE_VERSION = 3;
 
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
@@ -228,7 +225,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       catalog,
       credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
       firedAt: '2026-05-01T09:00:00.000Z',
-      languageVersion: c.languageVersion ?? RUST_LANGUAGE_VERSION,
+      ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
       ...(c.dryRun === true ? { dryRun: true } : {}),
       host: makeTestHost({
         locks: recordingWriteLocks(locks),
@@ -265,7 +262,23 @@ function sameIds<T>(value: T): T {
   return JSON.parse(normal) as T;
 }
 
+/** A run's writes as the contract records them: what `-[:@old]->` lands on
+ *  is the engine's own (`old`, a binding), held beside the write record. */
+function contractual<T extends { writes: Array<{ old?: unknown }> } | undefined>(result: T): T {
+  if (result === undefined) return result;
+  return { ...result, writes: result.writes.map(({ old: _old, ...record }) => record) };
+}
+
+/** The case on both engines, and the Rust run the Rust engine's alone.
+ *  Unpinned, under version 3 and then under the current version, whose run
+ *  is handed back: version 4 changed what a match's miss, a write handle's
+ *  reads and `write h { … }` mean, and both engines run both. */
 async function agree(c: Case) {
+  if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
+  return agreeUnder(c);
+}
+
+async function agreeUnder(c: Case) {
   const ts = await runOn('ts', c);
   resetRustEvalStats();
   resetRustRunStats();
@@ -279,11 +292,11 @@ async function agree(c: Case) {
     expect(String(rust.error)).toBe(String(ts.error));
     expect(runFailureCause(rust.error)?.constructor).toBe((runFailureCause(ts.error) as object).constructor);
     if (ts.error instanceof MovementRunFailed && rust.error instanceof MovementRunFailed) {
-      expect(sameIds(rust.error.partial)).toEqual(sameIds(ts.error.partial));
+      expect(sameIds(contractual(rust.error.partial))).toEqual(sameIds(contractual(ts.error.partial)));
     }
   } else {
     expect(rust.failed).toBe(false);
-    expect(sameIds(rust.result)).toEqual(sameIds(ts.result));
+    expect(sameIds(contractual(rust.result))).toEqual(sameIds(contractual(ts.result)));
   }
   return { ts, rust };
 }
@@ -306,12 +319,27 @@ describe('match in the Rust engine', () => {
     expect(rust.asked).toHaveLength(1);
   });
 
-  it('ends the body quietly on a miss, keeping what ran before it', async () => {
+  it('ends the body quietly on a miss before version 4, keeping what ran before it', async () => {
     const { rust } = await agree({
       body: ['  write crm-[:notes]-> { body: "first" }', '  co = match crm-[:companies]-> { unique by (`name`), name: "Nowhere" }', NOTE_OF('co')].join('\n'),
+      // Version 4 binds absent on a miss (the case below).
+      languageVersion: 3,
     });
     expect(rust.failed).toBe(false);
     expect(rust.result?.writes).toHaveLength(1);
+  });
+
+  it('binds absent on a miss from version 4, and the block carries on', async () => {
+    const { rust } = await agree({
+      body: [
+        '  write crm-[:notes]-> { body: "first" }',
+        '  co = match crm-[:companies]-> { unique by (`name`), name: "Nowhere" }',
+        '  write crm-[:notes]-> { body: IF co == null THEN "absent" ELSE co.`summary` END }',
+      ].join('\n'),
+      languageVersion: 4,
+    });
+    expect(rust.failed).toBe(false);
+    expect(rust.result?.writes.map((w) => w.writtenValues.body)).toEqual(['first', 'absent']);
   });
 
   it('narrows the shortlist by the target’s WHERE before the judge — an aliased field and a bare one', async () => {
@@ -392,6 +420,8 @@ describe('link and unlink in the Rust engine', () => {
         '  write crm-[:notes]-> { body: fund.`vintage` }',
       ].join('\n'),
       crm: { candidates: { fund: [{ adapterType: 'attio', externalId: 'fund-7', data: { name: 'Fund III' } }] } },
+      // Version 4 retires the body form (MOV_LINK_MATCH_BODY_RETIRED).
+      languageVersion: 3,
     });
     expect(rust.result?.writes.map((w) => w.kind ?? w.outcome)).toEqual(['create', 'match', 'link', 'create']);
   });

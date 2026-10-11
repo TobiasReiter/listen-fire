@@ -101,6 +101,7 @@ Measured 2026-10-07 (gzip -9):
 | the extraction keyword and plugin calls run whole (chunk 6A) | 2,423,062 | 694,914 |
 | folds, EXISTS, IS and a record named twice (chunk 6A Task 4) | 2,458,709 | 710,999 |
 | language version 4's changed constructs refused at admission (main merge 2) | 2,459,419 | 711,283 |
+| language version 4's changed constructs run (PLAN-07A Task 4c) | 3,044,244 | 912,912 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -485,6 +486,22 @@ v1, v2 and v3 corpora).
 | `-[:@old]->` off a write handle: the record the write found, the handle itself under `dry_run`, the previous handle on a chained write | 1bd0d3aa10, 30e1acc55b | runs: the hop is answered from the handle, never an adapter (crate::reading `is_old_edge`: an expression's walk, an `EXISTS`, a pick, a block head); the record before rides on the handle (crate::bindings `Old`) and a park carries it as `old` / `oldIsSelf` |
 | `write org { … }` on a handle updates it in place | 1bd0d3aa10, 30e1acc55b | runs: the handle `org` moves on to the updated record (crate::bindings `Handle::move_to`), seen by every scope holding it, its `@old` a snapshot of it as it stood (or itself, under `dry_run`); a match's handle, a landing or a snapshot is written through as before, into a new handle |
 | a handle reads the record as found (`foundData`) for a field its write did not set; a parent link carries only what the parent's own write got back | 1bd0d3aa10, ac7ac15ec8 | runs: every update that found its record by identity (`unique by`, native constraints or the adapter's own rule) or through a position keeps it (crate::write `record_before`), whatever admission can see; a hop and a parent link read only `resultData` |
+
+tests/oracle/handles.json holds the four to the TypeScript: 983 seeded
+programs (seed 20261012, written by generate.ts's `writeHandlesOracle`,
+tests/handles_oracle.rs) over a CRM of two companies, written through it and
+through a rehearsing instance: writes with and without `unique by` (FUZZY
+among them, a judge scripted per case: an index, none, or out), a CRM that
+matches by name or by its own rule (every company, whatever was asserted)
+and that can read a record back or not, `write h { … }` and `x = write h {
+… }`, guarded matches that hit or miss and a write through what one found,
+writes through a traversal landing and per MAP member, linked writes off a
+handle, and reads of every handle into notes (its fields, `-[:@old]->`
+picked, tested, filtered, counted, compared with the handle, walked twice,
+a block over it), now and then a sleep. Each case compares every call the
+CRM received, the writes as the result hands them back, the trace, the
+parked state byte for byte and how the run ended; none differs, none is
+refused. Regenerated twice from the TypeScript engine, byte-identical.
 
 ### What admission cannot decide
 

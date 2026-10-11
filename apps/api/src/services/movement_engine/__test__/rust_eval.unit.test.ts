@@ -11,7 +11,9 @@ import type { Provenance } from '../provenance';
 import { evalInRust, rustCanEval } from '../rust_engine';
 import { resetRustEvalStats, rustEvalStats } from '../rust_stats';
 
-/** Every evaluation in a run carries the run's pin. */
+/** Every evaluation in a run carries the run's pin: version 3, which no
+ *  expression here reads differently from version 4 (Luminous Owl changed
+ *  matches, write handles and `@old`, none of which an expression alone holds). */
 const PIN = 3;
 
 function contextOf(bindings: Record<string, unknown>, extra: Partial<MovementExprContext> = {}): MovementExprContext {

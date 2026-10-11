@@ -114,7 +114,8 @@ function failingEveryRequest(host: EngineHost): { host: EngineHost; asked: strin
 }
 
 /** A segment of `source` against a host that fails every request once the
- *  segment is open. */
+ *  segment is open. Pinned to version 3: the dry run's counters are the
+ *  point, kept by version, and these programs' reasons are the same under 4. */
 async function failingSegment(source: string, runId?: string) {
   const working = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
   const context = await openRunContext({ host: working, teamId: TEAM_ID, languageVersion: 3, spend: {} });

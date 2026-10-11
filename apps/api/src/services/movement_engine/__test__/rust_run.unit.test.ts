@@ -655,6 +655,8 @@ describe('admission walks what the entry reaches', () => {
  *  webhook with an empty payload: its outcome, or the error it ended in,
  *  and what the resolver was asked. */
 async function segmentOf(source: string) {
+  // The context is pinned to version 3, as the next helper's is: what is
+  // asked of it here is refused (or admitted) by construct, alike under 4.
   const resolved: unknown[] = [];
   const host = makeTestHost({ adapters: { resolve: (r) => (resolved.push(r), fakeEmail().adapter) } });
   const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });

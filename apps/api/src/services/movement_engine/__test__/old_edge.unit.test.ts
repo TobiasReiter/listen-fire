@@ -10,6 +10,8 @@
 //
 // Harness mirrors match.unit.test.ts; the fake CRM here reads its records back
 // (`readRecord`) and records its updates, which is what a snapshot is made of.
+// Every case runs on both engines (`run`), the Rust engine running it whole,
+// and the CRM sees the same calls from each.
 
 // ── Jest module workarounds (mirrors run.unit.test.ts) ──────────────────────
 
@@ -87,7 +89,7 @@ jest.mock('../../../lib/prompts/execute', () => ({
   flattenMessages: jest.fn(),
 }));
 
-import { runMovement } from '../run';
+import { resumeMovement, runMovement, type ParkSink } from '../run';
 
 import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
@@ -100,7 +102,8 @@ import {
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
-import { makeTestHost } from '../test_host';
+import { makeFakeParkSink, makeTestHost } from '../test_host';
+import type { ParkedScopeState } from '../serialize';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000022');
@@ -233,10 +236,47 @@ function webhookEvent(payload: Record<string, unknown>): TriggerEvent {
   return { pipelineInputId: 'pi-old-edge', adapterType: 'email', triggerType: 'webhook', payload };
 }
 
-function run(
+type Crm = ReturnType<typeof makeCrm>;
+
+/**
+ * `body` on both engines, each against a fresh CRM: the CRM sees the same
+ * calls from both, the runs hand back the same writes (as the contract
+ * records them: what `-[:@old]->` lands on is the engine's own), and the
+ * Rust engine runs the program whole. Hands back the TypeScript run's CRM.
+ */
+async function run(
+  body: string[],
+  crmOf: () => Crm,
+  options: { languageVersion?: LanguageVersion; head?: string[] } = {},
+): Promise<Crm> {
+  const previous = process.env.MOVEMENT_ENGINE;
+  const runs: Array<{ crm: Crm; writes: unknown }> = [];
+  try {
+    for (const engine of ['ts', 'rust'] as const) {
+      process.env.MOVEMENT_ENGINE = engine;
+      resetRustRunStats();
+      const crm = crmOf();
+      const result = await runOn(body, crm.adapter, options);
+      runs.push({ crm, writes: JSON.parse(JSON.stringify(result.writes.map(({ old: _old, ...record }) => record))) });
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+    }
+  } finally {
+    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+    else process.env.MOVEMENT_ENGINE = previous;
+  }
+  const [ts, rust] = runs as [(typeof runs)[number], (typeof runs)[number]];
+  expect({ creates: rust.crm.creates, updates: rust.crm.updates, writes: rust.writes }).toEqual({
+    creates: ts.crm.creates,
+    updates: ts.crm.updates,
+    writes: ts.writes,
+  });
+  return ts.crm;
+}
+
+function runOn(
   body: string[],
   crm: Adapter,
-  options: { languageVersion?: LanguageVersion; head?: string[] } = {},
+  options: { languageVersion?: LanguageVersion; head?: string[]; park?: ParkSink; resume?: ParkedScopeState } = {},
 ) {
   const source =
     PRELUDE +
@@ -247,7 +287,7 @@ function run(
       ...body,
       '}',
     ].join('\n');
-  return runMovement({
+  const input = {
     source,
     movementName: 'intake',
     ...(options.languageVersion !== undefined ? { languageVersion: options.languageVersion } : {}),
@@ -263,8 +303,10 @@ function run(
           throw new Error(`test: no fake adapter for '${adapterType}'`);
         },
       },
+      ...(options.park !== undefined ? { park: { sink: options.park } } : {}),
     }),
-  });
+  };
+  return options.resume !== undefined ? resumeMovement({ ...input, state: options.resume }) : runMovement(input);
 }
 
 const ACME: ExternalRecordRef = {
@@ -291,20 +333,18 @@ const WRITE_ACME = (domain: string) =>
 
 describe('-[:@old]-> off a write handle', () => {
   it('a created record has no @old', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         '  org = write crm-[:companies]-> { unique by (`name`), name: "Newco", domain: "new.example" }',
         note('IF EXISTS(org-[:@old]->) THEN "matched" ELSE "created" END'),
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['created']);
   });
 
   it('a matched record with a changed field: @old present, old domain differs, positions differ', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         WRITE_ACME('new.example'),
         '  was = FIRST(org-[:@old]->)',
@@ -314,15 +354,14 @@ describe('-[:@old]-> off a write handle', () => {
         note('IF was == org THEN "same position" ELSE "distinct position" END'),
         '  }',
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['old.example', 'changed', 'distinct position']);
     expect(crm.updates).toEqual([{ externalId: 'co-1', fields: { domain: 'new.example' } }]);
   });
 
   it('a matched no-op (?: declined): @old present, values equal, positions differ', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         '  org = write crm-[:companies]-> { unique by (`name`), name: "Acme Incorporated", domain ?: "x.example" }',
         '  was = FIRST(org-[:@old]->)',
@@ -331,20 +370,19 @@ describe('-[:@old]-> off a write handle', () => {
         note('IF was == org THEN "same position" ELSE "distinct position" END'),
         '  }',
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['same', 'distinct position']);
     expect(crm.updates).toEqual([]);
   });
 
   it('dry run on an existing record: @old is the same position, and nothing is updated', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         '  org = write rehearsed-[:companies]-> { unique by (`name`), name: "Acme Incorporated", domain: "new.example" }',
         note('IF FIRST(org-[:@old]->) == org THEN "rehearsed" ELSE "live" END'),
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
       { head: ['  rehearsed = attio(credentials: acme_main, dry_run: true)'] },
     );
     expect(notes(crm)).toEqual(['rehearsed']);
@@ -352,34 +390,31 @@ describe('-[:@old]-> off a write handle', () => {
   });
 
   it('a match the adapter made by its own rule (no unique by) still populates @old', async () => {
-    const crm = makeCrm([ACME], { findsAlways: true });
-    await run(
+    const crm = await run(
       [
         '  org = write crm-[:companies]-> { name: "Acme Inc.", domain: "new.example" }',
         note('IF EXISTS(org-[:@old]->) THEN "matched" ELSE "created" END'),
       ],
-      crm.adapter,
+      () => makeCrm([ACME], { findsAlways: true }),
     );
     expect(notes(crm)).toEqual(['matched']);
   });
 
   it('a block head over -[:@old]-> runs once on the record before the write, and not at all after a create', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         WRITE_ACME('new.example'),
         '  org-[w:@old]-> { ' + note('w.`domain`').trim() + ' }',
         '  fresh = write crm-[:companies]-> { unique by (`name`), name: "Newco", domain: "new.example" }',
         '  fresh-[w2:@old]-> { ' + note('"never"').trim() + ' }',
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['old.example']);
   });
 
   it('a snapshot is per write: two MAP members each see their own @old', async () => {
-    const crm = makeCrm([ACME, BETA]);
-    await run(
+    const crm = await run(
       [
         '  MAP(["Acme Incorporated", "Beta Ltd", "Newco"], (n) => {',
         '    o = write crm-[:companies]-> { unique by (`name`), name: n, domain: "new.example" }',
@@ -387,7 +422,7 @@ describe('-[:@old]-> off a write handle', () => {
         '    write crm-[:notes]-> { title: IF w == null THEN "created" ELSE w.`domain` END }',
         '  })',
       ],
-      crm.adapter,
+      () => makeCrm([ACME, BETA]),
     );
     expect(notes(crm).sort()).toEqual(['beta-old.example', 'created', 'old.example']);
   });
@@ -395,8 +430,7 @@ describe('-[:@old]-> off a write handle', () => {
 
 describe('a chained write updates the handle in place (version 4)', () => {
   it('after write org { … } twice, org-[:@old]-> is the first handle and its @old is the original snapshot', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         WRITE_ACME('second.example'),
         '  write org { domain: "third.example" }',
@@ -408,20 +442,19 @@ describe('a chained write updates the handle in place (version 4)', () => {
         '  }',
         note('org.`domain`'),
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['second.example', 'old.example', 'third.example']);
   });
 
   it('under dry run an in-place write also meets itself at @old: nothing changed, so before is after', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         '  org = write rehearsed-[:companies]-> { unique by (`name`), name: "Acme Incorporated", domain: "second.example" }',
         '  write org { domain: "third.example" }',
         note('IF FIRST(org-[:@old]->) == org THEN "rehearsed" ELSE "live" END'),
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
       { head: ['  rehearsed = attio(credentials: acme_main, dry_run: true)'] },
     );
     expect(notes(crm)).toEqual(['rehearsed']);
@@ -429,18 +462,16 @@ describe('a chained write updates the handle in place (version 4)', () => {
   });
 
   it('under version 3 write org { … } leaves org as the first handle (stale, as before)', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [WRITE_ACME('second.example'), '  write org { domain: "third.example" }', note('org.`domain`')],
-      crm.adapter,
+      () => makeCrm([ACME]),
       { languageVersion: 3 },
     );
     expect(notes(crm)).toEqual(['second.example']);
   });
 
   it('x = write org { … } names the same record: x == org, and both read the new value', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         WRITE_ACME('second.example'),
         '  x = write org { domain: "third.example" }',
@@ -448,27 +479,25 @@ describe('a chained write updates the handle in place (version 4)', () => {
         note('x.`domain`'),
         note('org.`domain`'),
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['same', 'third.example', 'third.example']);
   });
 
   it('a write to org inside an if arm is visible to a read of org after the arm', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         WRITE_ACME('second.example'),
         '  if TRUE { write org { domain: "arm.example" } }',
         note('org.`domain`'),
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['arm.example']);
   });
 
   it('a write through a traversal landing: the named handle reaches the landing as it stood', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         '  crm-[c:companies]-> {',
         '    x = write c { domain: "landed.example" }',
@@ -477,14 +506,13 @@ describe('a chained write updates the handle in place (version 4)', () => {
         '    ' + note('x.`domain`').trim(),
         '  }',
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['old.example', 'landed.example']);
   });
 
   it('a write through a found record: the named handle reaches the record as found; the match is untouched', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         '  m = match crm-[:companies]-> { unique by (`name`), name: "Acme Incorporated" }',
         '  if m != null {',
@@ -494,7 +522,7 @@ describe('a chained write updates the handle in place (version 4)', () => {
         '    ' + note('m.`domain`').trim(),
         '  }',
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm)).toEqual(['old.example', 'old.example']);
   });
@@ -502,15 +530,14 @@ describe('a chained write updates the handle in place (version 4)', () => {
 
 describe('a match miss inside a MAP member (version 4)', () => {
   it('binds absent for that member only; the other member runs', async () => {
-    const crm = makeCrm([ACME]);
-    await run(
+    const crm = await run(
       [
         '  MAP(["Acme Incorporated", "Nope Ltd"], (n) => {',
         '    m = match crm-[:companies]-> { unique by (`name`), name: n }',
         '    write crm-[:notes]-> { title: IF m == null THEN "absent" ELSE m.`domain` END }',
         '  })',
       ],
-      crm.adapter,
+      () => makeCrm([ACME]),
     );
     expect(notes(crm).sort()).toEqual(['absent', 'old.example']);
   });
@@ -530,7 +557,7 @@ describe('a handle on a record the adapter matched by its own rule, on both engi
     resetRustRunStats();
     try {
       const crm = makeCrm([ACME], { findsAlways: true });
-      await run(BODY, crm.adapter, { languageVersion });
+      await runOn(BODY, crm.adapter, { languageVersion });
       return { notes: notes(crm), stats: JSON.parse(JSON.stringify(rustRunStats)) as typeof rustRunStats };
     } finally {
       if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
@@ -554,5 +581,50 @@ describe('a handle on a record the adapter matched by its own rule, on both engi
     expect(ts.notes).toEqual([null]);
     expect(rust.notes).toEqual(ts.notes);
     expect(rust.stats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
+  });
+
+  it('parks with the record as found and its @old, one string on both engines, and resumes on either from either', async () => {
+    const parkedBody = [
+      '  org = write crm-[:companies]-> { name: "Acme Inc." }',
+      '  dry = write rehearsed-[:companies]-> { name: "Acme Inc." }',
+      '  await sleep(1h)',
+      note('org.`domain`'),
+      note('IF EXISTS(org-[:@old]->) THEN "matched" ELSE "created" END'),
+      note('COALESCE(FIRST(org-[:@old]->).`domain`, "none")'),
+      note('IF FIRST(dry-[:@old]->) == dry THEN "rehearsed" ELSE "live" END'),
+    ];
+    const head = ['  rehearsed = attio(credentials: acme_main, dry_run: true)'];
+    const previous = process.env.MOVEMENT_ENGINE;
+    try {
+      const parkedBy = async (engine: 'ts' | 'rust') => {
+        process.env.MOVEMENT_ENGINE = engine;
+        resetRustRunStats();
+        const park = makeFakeParkSink();
+        await runOn(parkedBody, makeCrm([ACME], { findsAlways: true }).adapter, { head, park: park.sink });
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
+        expect(park.timerParks).toHaveLength(1);
+        return JSON.stringify(park.timerParks[0]?.state);
+      };
+      const [fromTs, fromRust] = [await parkedBy('ts'), await parkedBy('rust')];
+      // Key for key, in order: the handle's record as found, and `old` /
+      // `oldIsSelf` as serialize.ts writes them.
+      expect(fromRust).toBe(fromTs);
+      expect(fromTs).toContain('"foundData":{"name":"Acme Incorporated","domain":"old.example"}');
+      expect(fromTs).toContain('"snapshot":true');
+      expect(fromTs).toContain('"oldIsSelf":true');
+      for (const state of [fromTs, fromRust]) {
+        for (const engine of ['ts', 'rust'] as const) {
+          process.env.MOVEMENT_ENGINE = engine;
+          resetRustRunStats();
+          const crm = makeCrm([ACME], { findsAlways: true });
+          await runOn(parkedBody, crm.adapter, { head, resume: JSON.parse(state) as ParkedScopeState });
+          if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
+          expect(notes(crm)).toEqual(['old.example', 'matched', 'old.example', 'rehearsed']);
+        }
+      }
+    } finally {
+      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+      else process.env.MOVEMENT_ENGINE = previous;
+    }
   });
 });

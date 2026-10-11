@@ -47,7 +47,10 @@ const path = require('node:path');
 // whole; the floors are those less a margin of 2. Chunk 7A Task 4b (host
 // data never read as an engine object, 2026-10-11) runs the same v1 1060,
 // v2 1362, v3 1918 whole (no corpus program held a binding-shaped dict);
-// the floors stay those less a margin of 2. A floor
+// the floors stay those less a margin of 2. Chunk 7A Task 4c (language
+// version 4's four changed constructs run, 2026-10-11) runs the same v1
+// 1060, v2 1362, v3 1918 whole (the corpora are pinned to versions 1 to 3,
+// which it leaves untouched); the floors stay those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.

@@ -96,6 +96,8 @@ function fakeAdapter(methods: Partial<Adapter> = {}): Adapter {
  *  host opens one. */
 async function hostWith(overrides: TestHostOverrides, catalog: CatalogSnapshot = EMPTY_CATALOG_SNAPSHOT) {
   const host = makeTestHost(overrides);
+  // The pins in this file are the protocol's fixtures: scripted engines and
+  // programs no version reads differently, so version 3 throughout.
   const context = await openRunContext({ host, teamId: TEAM, languageVersion: 3, spend: {} });
   return { host, context, catalog };
 }

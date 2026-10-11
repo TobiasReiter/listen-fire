@@ -6,7 +6,7 @@
 // (compared as JSON text, so the order of an argument object's keys is held
 // too: a hop's `getRelated` is the very request the TypeScript makes).
 
-import { mockCatalogSnapshot, parseTraversalPath, refinementKey, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, parseTraversalPath, refinementKey, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 
@@ -263,6 +263,9 @@ interface Case {
   suspendAt?: readonly string[];
   /** A fresh hold for each run (see `holdingRead`). */
   hold?: () => HeldRead;
+  /** The pin the run is under. Unpinned, a case compares under version 3
+   *  and under the current version (`agree`). */
+  languageVersion?: LanguageVersion;
 }
 
 interface HeldRead {
@@ -317,11 +320,6 @@ interface Outcome {
 
 const noop = () => {};
 
-/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
- *  the constructs whose meaning changed (admit.rs), so the two engines are
- *  compared under the newest version both run. */
-const RUST_LANGUAGE_VERSION = 3;
-
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
@@ -346,7 +344,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   try {
     const run = runMovement({
       source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`,
-      languageVersion: RUST_LANGUAGE_VERSION,
+      ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
       event: c.event ?? webhook({ subject: 'Seed', text: 'Late' }),
       teamId: TEAM_ID,
       catalog,
@@ -393,9 +391,24 @@ function sameIds<T>(value: T): T {
   return JSON.parse(normal) as T;
 }
 
+/** A run's writes as the contract records them: what `-[:@old]->` lands on
+ *  is the engine's own (`old`, a binding), held beside the write record. */
+function contractual<T extends { writes: Array<{ old?: unknown }> } | undefined>(result: T): T {
+  if (result === undefined) return result;
+  return { ...result, writes: result.writes.map(({ old: _old, ...record }) => record) };
+}
+
 /** The case on both engines: they agree, and the Rust run was the Rust
- *  engine's alone. */
+ *  engine's alone. Unpinned, under version 3 and then under the current
+ *  version, whose run is handed back: version 4 changed what a match's
+ *  miss, a write handle's reads and `write h { … }` mean, and both engines
+ *  run both. */
 async function agree(c: Case) {
+  if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
+  return agreeUnder(c);
+}
+
+async function agreeUnder(c: Case) {
   const ts = await runOn('ts', c);
   resetRustEvalStats();
   resetRustRunStats();
@@ -410,11 +423,11 @@ async function agree(c: Case) {
     expect(runFailureCause(rust.error)?.constructor).toBe((runFailureCause(ts.error) as object).constructor);
     expect(codeOf(runFailureCause(rust.error))).toBe(codeOf(runFailureCause(ts.error)));
     if (ts.error instanceof MovementRunFailed && rust.error instanceof MovementRunFailed) {
-      expect(sameIds(rust.error.partial)).toEqual(sameIds(ts.error.partial));
+      expect(sameIds(contractual(rust.error.partial))).toEqual(sameIds(contractual(ts.error.partial)));
     }
   } else {
     expect(rust.failed).toBe(false);
-    expect(sameIds(rust.result)).toEqual(sameIds(ts.result));
+    expect(sameIds(contractual(rust.result))).toEqual(sameIds(contractual(ts.result)));
   }
   return { ts, rust };
 }
@@ -882,7 +895,7 @@ describe('the expression tail, on both engines', () => {
       '  await sleep(1h)',
       '  write kg-[:note]-> { text: COALESCE(top.`name`, m2.`subject`) }',
     ].join('\n');
-    async function parkOn(engine: 'ts' | 'rust') {
+    async function parkOn(engine: 'ts' | 'rust', languageVersion: LanguageVersion) {
       const previous = process.env.MOVEMENT_ENGINE;
       process.env.MOVEMENT_ENGINE = engine;
       try {
@@ -890,7 +903,7 @@ describe('the expression tail, on both engines', () => {
         const graph = fakeGraph();
         await runMovement({
           source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
-          languageVersion: RUST_LANGUAGE_VERSION,
+          languageVersion,
           event: webhook({ subject: 'Seed', text: 'Late' }),
           teamId: TEAM_ID,
           catalog,
@@ -908,14 +921,16 @@ describe('the expression tail, on both engines', () => {
         else process.env.MOVEMENT_ENGINE = previous;
       }
     }
-    const ts = await parkOn('ts');
-    resetRustRunStats();
-    const rust = await parkOn('rust');
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-    expect(rust.state).toBe(ts.state);
-    expect(JSON.stringify(rust.calls)).toBe(JSON.stringify(ts.calls));
-    expect(ts.state).toContain('"top":{"kind":"sourcePosition"');
-    expect(ts.state).toContain('"read":{"instanceName":"kg"}');
+    for (const languageVersion of [3, 4] as const) {
+      const ts = await parkOn('ts', languageVersion);
+      resetRustRunStats();
+      const rust = await parkOn('rust', languageVersion);
+      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+      expect(rust.state).toBe(ts.state);
+      expect(JSON.stringify(rust.calls)).toBe(JSON.stringify(ts.calls));
+      expect(ts.state).toContain('"top":{"kind":"sourcePosition"');
+      expect(ts.state).toContain('"read":{"instanceName":"kg"}');
+    }
   });
 
   it('tests a record IS of a kind, from the run alone', async () => {
@@ -984,7 +999,8 @@ describe("5A's engine fixes, on both engines", () => {
     it('does not fail while a sibling of the failed read is still held at the host', async () => {
       const held = holdingRead('n-5/name');
       const { rust } = await agree({ body: ORDERED, graph: { failOn: 'n-2/name' }, hold: held.hold });
-      expect(held.settledWhileHeld).toEqual([false, false]);
+      // A run each: both engines, under versions 3 and 4.
+      expect(held.settledWhileHeld).toEqual([false, false, false, false]);
       expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
     });
 
@@ -992,7 +1008,8 @@ describe("5A's engine fixes, on both engines", () => {
       // n-2's read is held and fails on release; n-4's fails at once.
       const held = holdingRead('n-2/name');
       const { ts, rust } = await agree({ body: ORDERED, graph: { failOn: ['n-2/name', 'n-4/name'] }, hold: held.hold });
-      expect(held.settledWhileHeld).toEqual([false, false]);
+      // A run each: both engines, under versions 3 and 4.
+      expect(held.settledWhileHeld).toEqual([false, false, false, false]);
       for (const o of [ts, rust]) expect(String(runFailureCause(o.error))).toContain('graph: n-2 is unreadable');
     });
   });

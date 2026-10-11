@@ -6,7 +6,7 @@
 // writes, the park sink's rows. A park written by either engine resumes on
 // the other.
 
-import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 
@@ -184,8 +184,9 @@ interface Case {
   capBaselineMicrodollars?: number;
   limitPaused?: boolean;
   suspendAt?: string[];
-  /** The pin the run is under: the current version by default. */
-  languageVersion?: 1 | 2 | 3;
+  /** The pin the run is under. Unpinned, a case compares under version 3
+   *  and under the current version (`agree`). */
+  languageVersion?: LanguageVersion;
   /** The movement fired, when the program holds more than one. */
   movementName?: string;
   /** Which of the sink's suspension methods it has: both by default. */
@@ -213,11 +214,6 @@ interface Outcome {
   suspensions: Array<{ address: string; state: unknown }>;
   limitPauses: RunLimitPause[];
 }
-
-/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
- *  the constructs whose meaning changed (admit.rs), so the two engines are
- *  compared under the newest version both run. */
-const RUST_LANGUAGE_VERSION = 3;
 
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
@@ -253,7 +249,6 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   };
   const input: RunMovementInput = {
     source: PRELUDE + c.source,
-    languageVersion: RUST_LANGUAGE_VERSION,
     event: c.event,
     teamId: TEAM_ID,
     catalog,
@@ -325,9 +320,24 @@ function sameIds<T>(value: T): T {
   return JSON.parse(normal) as T;
 }
 
+/** A run's writes as the contract records them: what `-[:@old]->` lands on
+ *  is the engine's own (`old`, a binding), held beside the write record. */
+function contractual<T extends { writes: Array<{ old?: unknown }> } | undefined>(result: T): T {
+  if (result === undefined) return result;
+  return { ...result, writes: result.writes.map(({ old: _old, ...record }) => record) };
+}
+
 /** The case on both engines: they agree, and the Rust run was the Rust
- *  engine's alone — routed whole, the expression switch never consulted. */
+ *  engine's alone — routed whole, the expression switch never consulted.
+ *  Unpinned, under version 3 and then under the current version, whose run
+ *  is handed back: version 4 changed what a match's miss, a write handle's
+ *  reads and `write h { … }` mean, and both engines run both. */
 async function agree(c: Case) {
+  if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
+  return agreeUnder(c);
+}
+
+async function agreeUnder(c: Case) {
   const ts = await runOn('ts', c);
   resetRustEvalStats();
   resetRustRunStats();
@@ -343,11 +353,11 @@ async function agree(c: Case) {
     expect(String(rustError)).toBe(String(tsError));
     expect(runFailureCause(rustError)?.constructor).toBe((runFailureCause(tsError) as object).constructor);
     if (tsError instanceof MovementRunFailed && rustError instanceof MovementRunFailed) {
-      expect(sameIds(rustError.partial)).toEqual(sameIds(tsError.partial));
+      expect(sameIds(contractual(rustError.partial))).toEqual(sameIds(contractual(tsError.partial)));
     }
   } else {
     expect(rust.failed).toBe(false);
-    expect(sameIds(rust.result)).toEqual(sameIds(ts.result));
+    expect(sameIds(contractual(rust.result))).toEqual(sameIds(contractual(ts.result)));
   }
   return { ts, rust };
 }
@@ -1042,13 +1052,21 @@ describe('parks in the Rust engine', () => {
     const FOUND: ExternalRecordRef[] = [
       { adapterType: 'attio', externalId: 'co-1', url: 'https://x/co-1', data: { name: 'Acme', stage: 'Seed' } },
     ];
-    const cases: Array<[string, string[], Store]> = [
+    const cases: Array<[string, string[], Store, LanguageVersion?]> = [
       [
         'a match',
-        ['  co = match crm-[:companies]-> { unique by (`name`), name: msg.`subject` }', '  await sleep(30s)', '  write co-[:notes]-> { body: co.`stage` }'],
+        [
+          '  co = match crm-[:companies]-> { unique by (`name`), name: msg.`subject` }',
+          '  await sleep(30s)',
+          '  if co != null {',
+          '    write co-[:notes]-> { body: co.`stage` }',
+          '  }',
+        ],
         { candidates: () => FOUND, current: { 'co-1': { domain: 'acme.dev' } } },
       ],
       [
+        // A link's body form, which version 4 retires
+        // (MOV_LINK_MATCH_BODY_RETIRED): compared under version 3.
         'a link whose body matches',
         [
           '  co = write crm-[:companies]-> { name: msg.`subject` }',
@@ -1057,6 +1075,7 @@ describe('parks in the Rust engine', () => {
           '  write crm-[:companies]-> { name: "${found.externalId} ${found.`body`}" }',
         ],
         { candidates: (record) => (record.body === 'hello' ? [{ adapterType: 'attio', externalId: 'n-9', data: { body: 'hello' } }] : []), links: true },
+        3,
       ],
       [
         'a write with a target WHERE, bound',
@@ -1079,20 +1098,20 @@ describe('parks in the Rust engine', () => {
         { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' }, 'co-3': { name: 'Initech' } } },
       ],
     ];
-    for (const [what, lines, attio] of cases) {
+    for (const [what, lines, attio, languageVersion] of cases) {
       it(`${what}: parked as one string on both engines, resumed by either from either`, async () => {
         const source = ['movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
         const event = webhook({ subject: 'Acme' });
-        const { ts, rust } = await agree({ source, event, attio });
+        const { ts, rust } = await agree({ source, event, attio, ...(languageVersion !== undefined ? { languageVersion } : {}) });
         expect(rust.result).toMatchObject({ parked: true });
         const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
         expect(text(rust)).toBe(text(ts));
         const fromTs = JSON.parse(text(ts)) as ParkedScopeState;
         const fromRust = JSON.parse(text(rust)) as ParkedScopeState;
         for (const state of [fromTs, fromRust]) {
-          const resumed = await agree({ source, event, attio, resume: state });
+          const resumed = await agree({ source, event, attio, resume: state, ...(languageVersion !== undefined ? { languageVersion } : {}) });
           expect(resumed.rust.result?.parked).toBeUndefined();
-          expect(JSON.stringify(resumed.rust.result)).toBe(JSON.stringify(resumed.ts.result));
+          expect(JSON.stringify(contractual(resumed.rust.result))).toBe(JSON.stringify(contractual(resumed.ts.result)));
         }
       });
     }
@@ -1115,7 +1134,7 @@ describe('parks in the Rust engine', () => {
     const { ts, rust } = await agree({ source, event, resume: state });
     // `toEqual` ignores key order: the strings are the point.
     expect(JSON.stringify(rust.attio)).toBe(JSON.stringify(ts.attio));
-    expect(JSON.stringify(rust.result)).toBe(JSON.stringify(ts.result));
+    expect(JSON.stringify(contractual(rust.result))).toBe(JSON.stringify(contractual(ts.result)));
     expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}');
   });
 

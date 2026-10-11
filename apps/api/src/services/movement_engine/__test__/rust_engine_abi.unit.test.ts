@@ -18,7 +18,8 @@ import { makeTestHost } from '../test_host';
 const SOURCE = 'import { manual } from adapters';
 
 /** A `segment` entry's input: the smallest run, which asks its host for
- *  the check first. */
+ *  the check first. Pinned to version 3, as every fixture here is: the
+ *  crossing is the point, and no version reads these programs differently. */
 function segmentStart(source: string, segmentId = 'g1', catalog: object = EMPTY_CATALOG_SNAPSHOT): string {
   return JSON.stringify({
     entry: 'segment',

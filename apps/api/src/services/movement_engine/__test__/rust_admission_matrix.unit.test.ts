@@ -15,7 +15,7 @@ import { WireOut } from '../rust_wire';
 import { cellId, cells, type Cell } from './binding_consumer_matrix.cells';
 import { catalog, programFor } from './binding_consumer_matrix.program';
 
-const VERSIONS: LanguageVersion[] = [1, 2, 3];
+const VERSIONS: LanguageVersion[] = [1, 2, 3, 4];
 
 /** Every helper movement the matrix's skeleton declares, by name. */
 const HELPER = /^movement (?!run_cell\b)(\w+)\(/;

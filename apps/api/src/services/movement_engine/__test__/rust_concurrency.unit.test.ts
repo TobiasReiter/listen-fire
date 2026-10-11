@@ -5,7 +5,7 @@
 // the writes the adapter received, and every call the park sink and the
 // callback store received, in order, each state key for key.
 
-import type { InstanceSchema } from 'movement-lang';
+import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { tenantIdOf, type CallbackCall } from 'engine-contracts';
 
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
@@ -211,6 +211,9 @@ function makeCallbacks(events: Events, ledger: Record<string, CallbackCall[]>, m
 
 interface Case {
   source: string;
+  /** The pin the run is under. Unpinned, a case compares under version 3
+   *  and under the current version (`agree`). */
+  languageVersion?: LanguageVersion;
   /** What the callback store's ledger holds, by callback id. */
   ledger?: Record<string, CallbackCall[]>;
   /** Resume this state rather than run. */
@@ -245,11 +248,6 @@ interface Outcome {
   awaited: unknown[];
 }
 
-/** The Rust engine runs language versions 1 to 3: under version 4 it refuses
- *  the constructs whose meaning changed (admit.rs), so the two engines are
- *  compared under the newest version both run. */
-const RUST_LANGUAGE_VERSION = 3;
-
 async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
@@ -267,7 +265,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     catalog,
     movementName: 'recap',
     firedAt: '2026-10-05T09:00:00.000Z',
-    languageVersion: RUST_LANGUAGE_VERSION,
+    ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
     ...(c.dryRun === true ? { dryRun: true } : {}),
     ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
     host: makeTestHost({
@@ -307,9 +305,23 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   }
 }
 
+/** A run's writes as the contract records them: what `-[:@old]->` lands on
+ *  is the engine's own (`old`, a binding), held beside the write record. */
+function contractual(writes: Array<{ old?: unknown }> | undefined): unknown {
+  return writes?.map(({ old: _old, ...record }) => record);
+}
+
 /** The case on both engines: they agree, and the Rust run was the Rust
- *  engine's alone, routed whole. */
+ *  engine's alone, routed whole. Unpinned, under version 3 and then under
+ *  the current version, whose run is handed back: version 4 changed what a
+ *  match's miss, a write handle's reads and `write h { … }` mean, and both
+ *  engines run both. */
 async function agree(c: Case) {
+  if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
+  return agreeUnder(c);
+}
+
+async function agreeUnder(c: Case) {
   const ts = await runOn('ts', c);
   resetRustEvalStats();
   resetRustRunStats();
@@ -321,7 +333,7 @@ async function agree(c: Case) {
     ranWhole: 1,
   });
   expect(rust.error).toBe(ts.error);
-  expect(JSON.stringify(rust.result?.writes)).toBe(JSON.stringify(ts.result?.writes));
+  expect(JSON.stringify(contractual(rust.result?.writes))).toBe(JSON.stringify(contractual(ts.result?.writes)));
   expect(rust.result?.parkedAddress).toBe(ts.result?.parkedAddress);
   expect(rust.result?.parked).toBe(ts.result?.parked);
   expect(rust.result?.deferredRaceFrames).toEqual(ts.result?.deferredRaceFrames);
