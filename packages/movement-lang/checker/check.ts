@@ -1300,6 +1300,12 @@ type DeclaredParams = Array<{ name: string; type: PlaneType }>;
 type BoundParam = DeclaredParams[number];
 
 /** One argument against the parameter it binds, for the fit diagnostics. */
+/** What a plugin declares each named argument takes, by name — absent for an
+ *  argument it declares no type for. */
+interface PluginArgTypes {
+  declared: Readonly<Record<string, SchemaFieldType>>;
+}
+
 interface ArgFit {
   callee: string;
   param: BoundParam | undefined;
@@ -3469,29 +3475,15 @@ class Checker {
    *  the checker has already walked. A bare name reads as the walker reads it,
    *  whichever plane it is bound on. */
   private slotValueTypeSilently(slot: ExprSlot, scope: Scope): FieldType | undefined {
-    return this.slotTypedSilently(slot, scope).valueType;
-  }
-
-  /** `slotValueTypeSilently`, with the record the value holds (`recordHeldBy`). */
-  private slotTypedSilently(slot: ExprSlot, scope: Scope): { valueType?: FieldType; held?: HeldRecord } {
     const trimmed = slot.raw.trim();
-    const typed = (valueType: FieldType | undefined, held: HeldRecord | undefined) => ({
-      ...(valueType !== undefined ? { valueType } : {}),
-      ...(held !== undefined ? { held } : {}),
-    });
-    if (BARE_IDENT.test(trimmed)) {
-      const valueType = this.bareNameValueType(scope, trimmed);
-      return typed(valueType, recordWithin(valueType));
-    }
+    if (BARE_IDENT.test(trimmed)) return this.bareNameValueType(scope, trimmed);
     let parsed: Expression;
     try {
       parsed = expressionOfSlot(slot);
     } catch {
-      return {}; // the syntax error is reported where the slot is read
+      return undefined; // the syntax error is reported where the slot is read
     }
-    const typing = this.silentTyping(scope, slot.span);
-    const valueType = typing.infer(parsed);
-    return typed(valueType, typing.recordHeldBy(parsed) ?? recordWithin(valueType));
+    return this.silentTyping(scope, slot.span).infer(parsed);
   }
 
   /** A bound name's position type, where one is derivable. */
@@ -9624,6 +9616,9 @@ class Checker {
     });
     let params: DeclaredParams | undefined;
     let value: ReturnShape = UNKNOWN_RETURN;
+    // A plugin's argument VALUES are held to what it declares it takes where
+    // each is checked (`checkCallArg`), so one typing walk answers both.
+    let pluginArgTypes: PluginArgTypes | undefined;
     if (resolution.kind !== 'found') {
       this.reportCalleeUnresolved(statement.callee, statement.span, resolution, scope);
       // Something runs here and nobody can say what: the row is a lower bound.
@@ -9649,6 +9644,7 @@ class Checker {
       } else if (callee.kind === 'plugin') {
         // One function sort: a plugin is a function whose body isn't visible.
         value = this.checkPluginApplication(statement, callee, scope);
+        pluginArgTypes = { declared: this.catalog.plugin(callee.importedName ?? statement.callee)?.argTypes ?? {} };
       } else if (closure !== undefined) {
         // A closure bound to a name is a function: its signature is its
         // parameters, its value what its body returns, and calling it does
@@ -9688,7 +9684,7 @@ class Checker {
       recorded.argParams = bound.map(b => b.param?.name);
     }
     for (const { arg, param, index } of bound) {
-      this.checkCallArg(statement.callee, arg, param, index, scope);
+      this.checkCallArg(statement.callee, arg, param, index, scope, pluginArgTypes);
     }
     return value;
   }
@@ -9703,12 +9699,27 @@ class Checker {
     param: BoundParam | undefined,
     index: number,
     scope: Scope,
+    plugin?: PluginArgTypes,
   ): void {
     const fit: ArgFit = { callee, param, index, positional: arg.name === undefined };
     switch (arg.kind) {
       case 'expr': {
-        const { valueType, parsed } = this.checkExprSlot(arg.expr, scope);
+        const { valueType, parsed, held } = this.checkExprSlot(arg.expr, scope);
         const argType = this.bareSlotPositionType(arg.expr, scope);
+        // A plugin's named argument: a value against what the plugin takes
+        // (a positional one is refused where the call is checked).
+        if (plugin !== undefined && arg.name !== undefined) {
+          this.checkPluginArgValue({
+            callee,
+            declared: plugin.declared[arg.name],
+            name: arg.name,
+            record: argType ?? recordIn(valueType)?.position,
+            valueType,
+            ...(held !== undefined ? { held } : {}),
+            span: arg.expr.span,
+          });
+          return;
+        }
         if (param?.type.fieldType !== undefined) {
           this.checkValueArgFit(fit, param.type.fieldType, argType !== undefined ? recordOf(argType) : valueType, {
             span: arg.expr.span,
@@ -9764,6 +9775,7 @@ class Checker {
             param,
             index,
             scope,
+            plugin,
           );
           return;
         }
@@ -12852,22 +12864,15 @@ class Checker {
   ): void {
     const name = arg.name ?? '';
     switch (arg.kind) {
-      case 'expr': {
-        const { valueType, held } = this.slotTypedSilently(arg.expr, scope);
-        const record = this.bareSlotPositionType(arg.expr, scope) ?? recordIn(valueType)?.position;
-        this.checkPluginArgValue({ callee, declared, name, record, valueType, held, span: arg.expr.span });
+      // An expression, and a built-in called in place (`relay(data:
+      // UPPER(x))`) — the value it computes — are held to the declared type
+      // where the argument is checked (`checkCallArg`), off the one walk that
+      // types it, nested calls included.
+      case 'expr':
         return;
-      }
       case 'call': {
         const reading = this.readCallAt(arg.call, scope, 'argument');
-        if (reading.kind === 'value') {
-          // A built-in called here (`relay(data: UPPER(x))`) is the value it
-          // computes — an ordinary expression argument.
-          const { valueType, held } = this.checkExprSlot(reading.expr, scope);
-          const record = this.bareSlotPositionType(reading.expr, scope) ?? recordIn(valueType)?.position;
-          this.checkPluginArgValue({ callee, declared, name, record, valueType, held, span: arg.call.span });
-          return;
-        }
+        if (reading.kind === 'value') return;
         if (reading.kind === 'refused') {
           this.reportCallRefusal(reading.refusal);
           return;

@@ -260,3 +260,44 @@ describe('KNOWN GAP: a combinator receipt holding records is not typed from its 
     expect(errorsUnder(version, ['  r = await parallel([() => { return org }])', ...note('r')])).toEqual([]);
   });
 });
+
+describe.each([3, 4])('under language version %i, a record a closure returns inside a plugin argument is refused', version => {
+  // The argument is typed by the walk a write field's value is, nested calls
+  // included — so what a closure hands back is seen inside the value.
+  const refused = (body: string[], where: string): void => {
+    const errors = errorsUnder(version, body);
+    expect(errors.map(d => d.code)).toEqual(['MOV_CALL_ARG_TYPE']);
+    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
+  };
+
+  it('a call returning a record, under a map key', () => {
+    refused(['  f = () => { return org }', '  s = summarise(data: { a: f() })'], "and 'data.a' is ");
+  });
+
+  it('a call returning a map that holds a record', () => {
+    refused(['  f = () => { return { a: org } }', '  s = summarise(data: f())'], "and 'data.a' is ");
+  });
+
+  it('a call returning a record, as a list member', () => {
+    refused(['  f = () => { return org }', '  s = summarise(data: [f()])'], "and 'data[0]' is ");
+  });
+});
+
+describe.each([1, 2])('KNOWN GAP: under language version %i, a call inside an expression is untyped', version => {
+  // Versions 1 and 2 type a call written inside an expression as nothing
+  // anyone can see (the nested-call hoisting that types it is version 3's),
+  // so a record a closure returns is not seen there — in a write field, even
+  // as the whole value, as in a plugin argument. Accepted TODAY.
+  const body = (use: string): string[] => ['  f = () => { return org }', '  g = () => { return { a: org } }', use];
+
+  it.each([
+    ['a write field, whole value', '  write crm-[:notes]-> { title: "hello", company: f() }'],
+    ['a write field, under a key', '  write crm-[:notes]-> { title: "hello", company: { a: f() } }'],
+    ['a plugin argument, under a key', '  s = summarise(data: { a: f() })'],
+    ['a plugin argument, a map holding one', '  s = summarise(data: g())'],
+    ['a plugin argument, as a list member', '  s = summarise(data: [f()])'],
+  ])('%s: accepted today', (_label, use) => {
+    expect(errorsUnder(version, body(use))).toEqual([]);
+  });
+});
