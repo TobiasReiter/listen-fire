@@ -94,9 +94,19 @@ These apply to every language version. Full text: the [migration guide's appendi
 - An adapter edge or collection whose name starts with `@` is left out of the catalog with a note, instead of failing the connection's `describe`.
 - An Affinity identity candidate carries the organisation's or person's fields as Affinity holds them, not the asserted values.
 
+### Fixed
+
+- An awaited `parallel` or `race` whose arms are built at run time (`await parallel(arms)`) now binds its result as a value that nobody can type, as the same combinator does without `await`. Before, it was bound as a record, so writing it into a field was refused even when the arms returned values. Arms that return records are now accepted there too, because the result is still not typed from what its arms return. The same holds, as before, for a literal arm that returns a record (`await parallel([() => { return org }])`). Typing the result from its arms, so both forms are refused, is a follow-up.
+
 ### Security
 
 - Data from a connected system or a webhook is always treated as data. Before, a value that copied the shape of one of the engine's internal objects could be run as part of the automation: a webhook body or a field answer could make the engine follow its edges and evaluate expression text it carried. The engine now marks its own objects in a way no data can carry. No automation changes, and there is no new language version.
+- A record placed inside a value is now refused when the automation is validated, as a record placed directly in a field already was. This covers a write or match field (`MOV_WRITE_FIELD_TYPE`) and a plugin argument that takes structured data or declares no type (`MOV_CALL_ARG_TYPE`), with the record under a key of a dict, in a list, or in either arm of an `IF`. The message names where in the value the record sits. Before, such an automation validated, and the connector or plugin received the engine's internal description of the record, including the connection's schema and credential name, and passed it to the vendor. Write a field off the record in its place. For a record the automation wrote, you can instead spread the fields it was written with (`{ ...org }`). Passing a whole record to a plugin argument that takes structured data still hands the plugin the record's fields. This applies to every language version, with no new version:
+  - An affected automation shows a Validation Issue at the next release's deploy check. Its runs fail with `MOVENG_CHECK` until the record is taken out of the value.
+  - Operators will see one `[DeployCheck] PRESERVATION FAILURE` log line for each affected automation. This is expected for this release.
+  - The class is not fully closed. Two forms are still accepted, and are follow-ups:
+    - a file placed inside a dict in a structured value;
+    - on language versions 1 and 2 only, a record handed back by a function called inside an expression (`company: f()`, `summarise(data: { a: f() })`). Those versions do not type a call written inside an expression. Versions 3 and 4 refuse it.
 
 ## [v0.10.9] - 2026-10-07
 
