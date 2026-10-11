@@ -860,4 +860,16 @@ describe('WhatsappAdapter.resolveFileRef reads only a handle it issued', () => {
     await expect(new WhatsappAdapter(TEAM_ID).resolveFileRef(ref(url))).rejects.toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'handle' });
     expect(fetched).toEqual([]);
   });
+
+  it('accepts no Twilio media when no account is configured, and says so', async () => {
+    const url = 'https://api.twilio.com/2010-04-01/Accounts/AC123/Messages/MM1/Media/ME1';
+    await expect(new WhatsappAdapter(TEAM_ID).resolveFileRef(ref(url))).rejects.toThrow(/TWILIO_ACCOUNT_SID is not configured/);
+    expect(fetched).toEqual([]);
+  });
+
+  it('fetches a URL this deployment exposed (the Meta door\'s media)', async () => {
+    const url = 'http://localhost:3003/api/files/blob/abc';
+    await new WhatsappAdapter(TEAM_ID).resolveFileRef(ref(url));
+    expect(fetched).toEqual([url]);
+  });
 });

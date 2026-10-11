@@ -135,6 +135,7 @@ import type {
   Resource,
 } from '../translation_graph/adapter';
 import { fileHandle, fileValueOf, isFileValue } from '../translation_graph/adapter';
+import { fileView } from 'movement-lang';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { EngineClock, SegmentHost } from './run_context';
 import { hostInstanceOf } from './host_adapter';
@@ -4138,8 +4139,11 @@ function readBindingField(
     case 'value': {
       // One record is never held here — it binds as itself (`bindValue`).
       const value = binding.value;
-      const projected =
-        value !== null && typeof value === 'object' && !Array.isArray(value)
+      // A file reads as its opaque view: its source, credential and URL are
+      // absent to a read, as a key a dict lacks is.
+      const projected = isFileValue(value)
+        ? (Reflect.get(fileView(value), field) ?? null)
+        : value !== null && typeof value === 'object' && !Array.isArray(value)
           ? ((value as Record<string, unknown>)[field] ?? null)
           : null;
       // A field projected out of a plain value keeps the taint union

@@ -18,9 +18,39 @@ class FileMark {
 export type { FileMark };
 
 /** A fresh marked object holding `fields`, in their order: the ONE way a file
- *  value is made (`engine-contracts` `fileValue` is the typed door to it). */
+ *  value is made (`engine-contracts` `fileValue` is the typed door to it).
+ *  Written out as JSON, it is its opaque view (`fileView`), never its
+ *  descriptor: whatever writes a file into text — a prompt, a trace, a CRM
+ *  field — writes no host internals. */
 export function markedFile<T extends object>(fields: T): T & FileMark {
-  return Object.assign(new FileMark(), fields);
+  const file = Object.assign(new FileMark(), fields);
+  Object.defineProperty(file, 'toJSON', { value: () => fileView(file), enumerable: false });
+  return file;
+}
+
+/**
+ * What a reader sees of a file, on both engines: its `name`, `contentType`
+ * and `size`, and its `handle` — the opaque identity string (the owner's
+ * handle, or the store key), compared and carried, never read inside. Its
+ * source, credential, construction args and URL are not part of it: a read of
+ * any of them off a file is absent.
+ */
+export function fileView(file: object): { name?: string; contentType?: string; size?: number; handle?: string } {
+  const member = (key: string): unknown => Reflect.get(file, key);
+  const name = member('name');
+  const contentType = member('contentType');
+  const size = member('size');
+  const source = member('source');
+  const handle =
+    typeof source === 'object' && source !== null
+      ? Reflect.get(source, Object.hasOwn(source, 'store') ? 'objectUri' : 'handle')
+      : undefined;
+  return {
+    ...(typeof name === 'string' ? { name } : {}),
+    ...(typeof contentType === 'string' ? { contentType } : {}),
+    ...(typeof size === 'number' ? { size } : {}),
+    ...(typeof handle === 'string' ? { handle } : {}),
+  };
 }
 
 /** Whether a value is a file the engine made — by the mark alone. */

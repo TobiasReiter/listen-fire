@@ -727,7 +727,11 @@ describe('TEXT.SERIALISE', () => {
     if (pairs === undefined) throw new Error('test: TEXT.PAIRS is registered');
     const file = markedFile({ __brand: 'FileRef', name: 'a.pdf' });
     expect(applyStdlib(pairs, [{ name: 'Acme', deck: file, n: 2 }], new Date(0))).toBe('name=Acme | n=2');
-    expect(applyStdlib(pairs, [file], new Date(0))).toBe('__brand=FileRef | name=a.pdf');
+    // A file passed whole prints its opaque view: never its descriptor.
+    expect(applyStdlib(pairs, [file], new Date(0))).toBe('name=a.pdf');
+    const sourced = markedFile({ __brand: 'FileRef', name: 'b.pdf', source: { adapterType: 'attio', credentialId: 'cred-1', handle: 'h-1' }, url: 'https://x' });
+    expect(applyStdlib(pairs, [sourced], new Date(0))).toBe('name=b.pdf | handle=h-1');
+    expect(JSON.parse(JSON.stringify({ f: sourced }))).toEqual({ f: { name: 'b.pdf', handle: 'h-1' } });
   });
 
   it('a dict that spells a file is a dict: its keys print', () => {

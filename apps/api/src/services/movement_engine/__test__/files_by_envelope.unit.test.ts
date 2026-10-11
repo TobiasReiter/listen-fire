@@ -253,6 +253,21 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
     expect(ran.read).toEqual([]);
   });
 
+  it("at a field the catalog declares a file, a read of it gives its opaque view: never its source or URL", async () => {
+    const ran = await both(
+      program(source, [
+        'd = r.`deck`',
+        'write crm-[:notes]-> { title: COALESCE(d.name, "-") }',
+        'write crm-[:notes]-> { title: COALESCE(d.handle, "-") }',
+        'write crm-[:notes]-> { title: COALESCE(d.source, "-") }',
+        'write crm-[:notes]-> { title: COALESCE(d.url, "-") }',
+      ]),
+    );
+    expect(ran.error).toBeUndefined();
+    expect(ran.titles).toEqual(['secrets.pdf', 's3://bucket/another-team/secrets.pdf', '-', '-']);
+    expect(ran.read).toEqual([]);
+  });
+
   it('at a field the catalog declares a file is a file: READ reads it, once', async () => {
     const ran = await both(program(source, ['write crm-[:notes]-> { title: COALESCE(READ(r.`deck`), "unread") }']));
     expect(ran.error).toBeUndefined();

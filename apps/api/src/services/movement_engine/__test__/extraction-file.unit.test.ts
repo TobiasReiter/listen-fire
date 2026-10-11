@@ -439,17 +439,21 @@ describe('extract from a file attachment — text + provenance', () => {
     }
   });
 
-  it('falls back to the legacy stringify when no resolveFileText seam is present', async () => {
+  it('falls back to stringifying the file as its opaque view when no resolveFileText seam is present', async () => {
     const llm = queuedLlm([{ 'x:extract_result#1': [{ name: wrap('x') }] }]);
     const extract = extractExpr(['attachment'], [{ name: 'name', description: 'name' }]);
 
     await materializeExtract({
       extract,
       spec: await buildExtractSpec(extract),
-      // No resolveFileText → the FileRef stringifies (pre-existing behaviour).
+      // No resolveFileText → the file stringifies: its opaque view (name,
+      // type, size, handle), never its source or credential.
       runtime: runtimeFor({ llm: llm.client, slots: { attachment: fileRef() } }),
     });
 
-    expect(llm.calls[0].userMessage).toContain('__brand');
+    const prompt = llm.calls[0].userMessage;
+    expect(prompt).toContain('{"name":"deck.pdf","contentType":"application/pdf","size":1234,"handle":"attachment-1"}');
+    expect(prompt).not.toContain('__brand');
+    expect(prompt).not.toContain('adapterType');
   });
 });

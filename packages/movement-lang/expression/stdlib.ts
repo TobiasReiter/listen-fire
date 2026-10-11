@@ -63,7 +63,7 @@ import {
   zonedDateString,
 } from '@listen-fire/shared/timezone';
 
-import { isMarkedFile } from './file_value';
+import { fileView, isMarkedFile } from './file_value';
 
 // ── Parameters ───────────────────────────────────────────────────────────────
 
@@ -929,7 +929,9 @@ function textPairs(args: unknown[]): unknown {
   if (record == null || typeof record !== 'object' || Array.isArray(record)) return null;
   const sep = typeof separator === 'string' ? separator : ' | ';
   const parts: string[] = [];
-  for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
+  // A file prints as its opaque view, never its descriptor.
+  const entries = isMarkedFile(record) ? Object.entries(fileView(record)) : Object.entries(record as Record<string, unknown>);
+  for (const [key, value] of entries) {
     if (value !== null && typeof value === 'object') continue; // nested node/edge \u2014 skip
     parts.push(`${key}=${textPairsScalar(value)}`);
   }

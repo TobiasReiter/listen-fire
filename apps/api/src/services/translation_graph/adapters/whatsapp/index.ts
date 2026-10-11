@@ -681,7 +681,8 @@ export class WhatsappAdapter extends BaseAdapter implements Adapter {
       );
     }
     // Only a handle this adapter issued is fetched: refused by name otherwise.
-    if (!isIssuedMediaHandle(handle)) throw new FileOutsideTeamError('handle', WHATSAPP_ADAPTER_TYPE);
+    const issued = issuedMediaHandle(handle);
+    if (issued !== true) throw new FileOutsideTeamError('handle', issued);
     return fetchUrlToStream(handle);
   }
 
@@ -987,19 +988,24 @@ export function createWhatsappAdapter(input: { teamId: TeamId }): WhatsappAdapte
 }
 
 /**
- * Whether a media handle is one this adapter issued: a Twilio media URL of
- * this deployment's own Twilio account (`TWILIO_ACCOUNT_SID`; any account's
- * when none is configured), over https, or a URL this deployment exposed
- * itself (`isExposedFileUrl`).
+ * Whether a media handle is one this adapter issued, by its configuration:
+ * a URL this deployment exposed (the Meta door's downloaded media,
+ * `services/whatsapp/dispatch.ts`), or a Twilio media URL of this
+ * deployment's own Twilio account (`TWILIO_ACCOUNT_SID`), over https. True,
+ * or the owner as the refusal names it — with why, where the account is not
+ * configured (then no Twilio media is its).
  */
-function isIssuedMediaHandle(handle: string): boolean {
+function issuedMediaHandle(handle: string): true | string {
   if (isExposedFileUrl(handle)) return true;
+  const account = process.env.TWILIO_ACCOUNT_SID;
+  if (account === undefined || account === '') {
+    return `${WHATSAPP_ADAPTER_TYPE} (TWILIO_ACCOUNT_SID is not configured, so it issues no Twilio media)`;
+  }
   try {
     const url = new URL(handle);
-    if (url.protocol !== 'https:' || url.hostname !== 'api.twilio.com') return false;
-    const account = process.env.TWILIO_ACCOUNT_SID;
-    return account === undefined || account === '' || url.pathname.startsWith(`/2010-04-01/Accounts/${account}/`);
+    if (url.protocol === 'https:' && url.hostname === 'api.twilio.com' && url.pathname.startsWith(`/2010-04-01/Accounts/${account}/`)) return true;
   } catch {
-    return false;
+    // Not a URL: no handle it issued.
   }
+  return WHATSAPP_ADAPTER_TYPE;
 }

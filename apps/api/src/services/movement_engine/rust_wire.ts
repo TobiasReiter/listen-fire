@@ -466,3 +466,33 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   const proto: unknown = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
+
+/**
+ * A parked state the engine wrote, as the host stores it: every file the park
+ * says is one (a `{ kind: 'file', file }` value, the fields `fileFields`
+ * names, a resource's `fileRef` and `data.file`) as the descriptor the
+ * segment's table keeps — a file written out as JSON anywhere else is only
+ * its opaque view. The inverse of `filesInParkState`.
+ */
+export function descriptorsInParkState(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(descriptorsInParkState);
+  if (!isPlainObject(value)) return value;
+  const kind: unknown = value.kind;
+  if (kind === 'data' || kind === 'value') return value;
+  if (kind === 'file' && isFileValue(value.file)) return { ...value, file: { ...value.file } };
+  const out: Record<string, unknown> = {};
+  for (const [key, member] of Object.entries(value)) {
+    if (PARKED_DATA_MEMBERS.has(key)) out[key] = member;
+    else if (key === 'resource' && kind === 'resource') out[key] = resourceDescriptors(member);
+    else if (key === 'resources' && Array.isArray(member)) out[key] = member.map(resourceDescriptors);
+    else out[key] = descriptorsInParkState(member);
+  }
+  return out;
+}
+
+function resourceDescriptors(resource: unknown): unknown {
+  if (!isPlainObject(resource) || !isFileValue(resource.fileRef)) return resource;
+  const fileRef = { ...resource.fileRef };
+  const data = isPlainObject(resource.data) && isFileValue(resource.data.file) ? { ...resource.data, file: { ...resource.data.file } } : resource.data;
+  return { ...resource, fileRef, ...(resource.data !== undefined ? { data } : {}) };
+}

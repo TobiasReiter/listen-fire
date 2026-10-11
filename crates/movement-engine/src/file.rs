@@ -28,8 +28,9 @@ pub struct FileHandle {
     pub id: u32,
     /// Its identity, opaque: compared and carried, never read inside.
     pub handle: Option<String>,
-    /// What a reader may print of it: `__brand`, `name`, `contentType`,
-    /// `size` (each that the file has).
+    /// Its opaque view — what a reader sees, on both engines: `name`,
+    /// `contentType`, `size` and `handle` (each that the file has). A read of
+    /// any other member is absent.
     pub display: JsObject,
 }
 
@@ -52,7 +53,7 @@ pub fn may_hold_file(ty: &FieldType) -> bool {
     }
 }
 
-/// A file's display as data: what JSON writes of it inside the engine.
+/// A file's opaque view as data: what JSON writes of it.
 pub fn display(file: &FileHandle) -> Js {
     Js::object(JsObject::clone_of(&file.display))
 }
@@ -105,9 +106,23 @@ fn file_field_value(value: &Js) -> Js {
 #[cfg(test)]
 pub fn for_test(id: u32, handle: Option<&str>, name: Option<&str>) -> Js {
     let mut display = JsObject::new();
-    display.set("__brand".into(), Js::str("FileRef"));
     if let Some(name) = name {
         display.set("name".into(), Js::str(name));
     }
+    if let Some(handle) = handle {
+        display.set("handle".into(), Js::str(handle));
+    }
     Js::File(std::rc::Rc::new(FileHandle { id, handle: handle.map(String::from), display }))
 }
+
+#[cfg(test)]
+mod tests {
+    /// JSON of a file — a prompt fragment, a trace's sample — is its opaque
+    /// view, as the TypeScript's `toJSON` writes it: never its source.
+    #[test]
+    fn a_file_writes_out_as_its_opaque_view() {
+        let file = crate::env::decode(&serde_json::json!(["F", 2, { "handle": "h-1", "name": "a.pdf", "size": 3 }])).unwrap();
+        assert_eq!(crate::js::json_stringify(&file, 0), r#"{"name":"a.pdf","size":3,"handle":"h-1"}"#);
+    }
+}
+

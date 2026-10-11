@@ -23,7 +23,6 @@ import type { ResolveFileRefResult } from '../../adapter';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { getEnvVar } from '../../../../lib/utils/environment';
 import { mintAttachmentDownloadUrl, parseResendAttachmentHandle } from './resend';
-import { isExposedFileUrl } from '../../engine/files/expose';
 import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
 
 type EmailProviderSlug = 'mailgun' | 'resend';
@@ -101,15 +100,16 @@ function emailProvidersOverlap(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
- * The bytes behind a stored attachment handle, from whoever stored it: a
- * provider's handle (its own storage), or a URL this deployment exposed (the
- * custom-email blob path), which needs no credential. Any other handle was
- * not issued to this adapter, and is refused by name, never fetched.
+ * The bytes behind a stored attachment handle, from the provider that stored
+ * it. Every inbound email arrives through one of the providers — Mailgun's
+ * form, whose attachment `url` is its storage URL and becomes the handle
+ * (`normaliseInboundEmailPayload`), or Resend's id pair
+ * (`resendAttachmentHandle`) — so a handle no provider claims was not issued
+ * to this adapter, and is refused by name, never fetched.
  */
 async function fetchEmailAttachment(handle: string): Promise<ResolveFileRefResult> {
   const owner = EMAIL_PROVIDERS.find((provider) => provider.owns(handle));
   if (owner !== undefined) return owner.fetchAttachment(handle);
-  if (isExposedFileUrl(handle)) return fetchUrlToStream(handle);
   throw new FileOutsideTeamError('handle', 'email');
 }
 

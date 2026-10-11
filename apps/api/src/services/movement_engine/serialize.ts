@@ -279,8 +279,15 @@ function serializeEmission(emission: ExtractEmission): ExtractEmissionDescriptor
   };
 }
 
+/** A resource as a park writes it: its file slots as their descriptors (a
+ *  file written out as JSON is only its opaque view). */
 function serializeResource(resource: Resource): ResourceDescriptor {
-  return resource;
+  const { fileRef } = resource;
+  if (fileRef === undefined) return resource;
+  const file = { ...fileRef };
+  const data =
+    resource.data !== undefined && isFileValue(resource.data.file) ? { ...resource.data, file: { ...resource.data.file } } : resource.data;
+  return { ...resource, fileRef: file, ...(data !== undefined ? { data } : {}) };
 }
 
 /**

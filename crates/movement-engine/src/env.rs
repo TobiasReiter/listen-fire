@@ -242,7 +242,6 @@ impl Decoder<'_> {
                             Some(_) => return Err(format!("a wire file's handle is text: {json}")),
                         };
                         let mut display = JsObject::new();
-                        display.set("__brand".into(), Js::str("FileRef"));
                         for key in ["name", "contentType", "size"] {
                             match shown.get(key) {
                                 None | Some(Json::Null) => {}
@@ -250,6 +249,9 @@ impl Decoder<'_> {
                                 Some(Json::Number(n)) if key == "size" => display.set(key.into(), Js::Number(n.as_f64().unwrap_or(f64::NAN))),
                                 Some(_) => return Err(format!("a wire file's {key} is not one: {json}")),
                             }
+                        }
+                        if let Some(handle) = &handle {
+                            display.set("handle".into(), Js::str(handle.clone()));
                         }
                         Js::File(Rc::new(crate::file::FileHandle { id, handle, display }))
                     }
