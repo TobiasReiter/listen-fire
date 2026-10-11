@@ -122,7 +122,7 @@ export function productionEngineHost(input: {
     makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId), { teamId: input.teamId }),
     usage,
   );
-    // Each segment's cross-run lock session, closed with the segment.
+  // Each segment's cross-run lock session, closed with the segment.
   const locks = segmentWriteLocks(input.locks ?? processWriteLocks());
   return {
     segment: {

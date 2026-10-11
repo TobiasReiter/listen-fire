@@ -589,9 +589,9 @@ export class EmailAdapter extends BaseAdapter implements Adapter {
 
   // ── 3c. Byte resolution (owner-side) ─────────────────────────────────────
   // Email OWNS the FILE resources it emits (P4): the host redeems their
-  // handle here. The handle is the attachment `key` — the same stable storage
-  // URL the inbound layer uses to fetch the bytes (Mailgun's storage URL or a
-  // custom-email blob URL). We fetch it and hand back a Node stream.
+  // handle here. The handle is the attachment `key` the provider that stored
+  // it issued (Mailgun's storage URL, Resend's id pair); one no provider
+  // claims is refused by name, never fetched (`fetchEmailAttachment`).
   //
   // owners serve bytes
   async resolveFileRef(input: { ref: FileRef }): Promise<ResolveFileRefResult> {

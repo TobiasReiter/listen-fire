@@ -294,11 +294,11 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'plugin_arg_record',
     routes: 'refused',
-    note: "a record inside a list or map reaching a plugin's argument: needs the binding objects themselves on the eval wire. The checker refuses a record it can see inside a plugin's argument (forward merge 3: main's nested-record rule, the first two programs); it still lets by a helper movement's json parameter under a key, which admission cannot tell from a record, and a record through COALESCE, which the checker does not see",
+    note: "a record inside a list or map reaching a plugin's argument: needs the binding objects themselves on the eval wire. The checker refuses a record it can see inside a plugin's argument (forward merge 3: main's nested-record rule, the first two programs); a helper movement's json parameter under a key runs whole since chunk 7A Task 6b (admission reads a value parameter as the checker types it, holding each call's argument to it); a record through COALESCE, which the checker does not see, is still refused",
     programs: [
       () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: [co])\n  write crm-[:notes]-> { body: said }')}`, checks: false }),
       () => ({ file: `import { summarise } from plugins\n${m('  rows = crm-[c:companies]->\n  said = summarise(data: { all: rows })\n  write crm-[:notes]-> { body: said }')}`, checks: false }),
-      () => ({ file: `import { summarise } from plugins\nmovement put(x: <json>) {\n  said = summarise(data: { k: x })\n  write crm-[:notes]-> { body: said }\n}\n${m('  put(x: "Acme")')}`, movementName: 'm' }),
+      () => ({ file: `import { summarise } from plugins\nmovement put(x: <json>) {\n  said = summarise(data: { k: x })\n  write crm-[:notes]-> { body: said }\n}\n${m('  put(x: "Acme")')}`, movementName: 'm', routes: 'whole' }),
       () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: { k: COALESCE(co, "x") })\n  write crm-[:notes]-> { body: said }')}` }),
     ],
   },
@@ -314,12 +314,23 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'write_field_record',
     routes: 'refused',
-    note: "a record reaching a system write's field (one typed json): needs the binding object as the TypeScript hands it to the adapter. The checker refuses a record it can see inside a field's value (forward merge 3: main's nested-record rule, the first two programs); it still lets by a field read off a closure's record parameter bound to a built graph (`(r: <Co>) => { write … { body: r.name } }`), which admission cannot tell from a record, and a record through COALESCE, which the checker does not see",
+    note: "a record reaching a system write's field (one typed json): needs the binding object as the TypeScript hands it to the adapter. The checker refuses a record it can see inside a field's value (forward merge 3: main's nested-record rule, the first two programs); a field read off a closure's record parameter bound to a built graph (`(r: <Co>) => { write … { body: r.name } }`) runs whole since chunk 7A Task 6b (admission reads the parameter as the checker types it: one record, its field reads values); a record through COALESCE, which the checker does not see, is still refused",
     programs: [
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { company: co } }', checks: false }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { a: co, b: "x" } }', checks: false }),
-      () => ({ file: `node Co {\n  name: <text>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  named = (r: <Co>) => {\n    write crm-[:notes]-> { body: r.name }\n  }\n  named(r: x)')}` }),
+      () => ({ file: `node Co {\n  name: <text>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  named = (r: <Co>) => {\n    write crm-[:notes]-> { body: r.name }\n  }\n  named(r: x)')}`, routes: 'whole' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  f = () => COALESCE(co, "x")\n  write crm-[:notes]-> { body: f() }' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: COALESCE(co, "x") }' }),
+    ],
+  },
+  {
+    reason: 'call_arg_record',
+    routes: 'refused',
+    note: "a value that may hold a record handed to a value parameter (a closure's, a movement's, one handed by name to a collection op): admission reads such a parameter as the checker types it, free of records (chunk 7A Task 6b), and the checker does not see a record through COALESCE or MULTI. Needs the binding object as the TypeScript hands it on, as write_field_record does",
+    programs: [
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  note = (t: <text>) => {\n    write crm-[:notes]-> { body: t }\n  }\n  note(COALESCE(co, "x"))' }),
+      () => ({ file: `movement put(t: <text>) {\n  write crm-[:notes]-> { body: t }\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  put(t: COALESCE(co, "x"))')}`, movementName: 'm' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  note = (t: <text>) => {\n    write crm-[:notes]-> { body: t }\n  }\n  MAP([COALESCE(co, "x")], note)' }),
     ],
   },
   {
@@ -334,7 +345,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'at_record_key',
     routes: 'refused',
-    note: "AT over a record with a key that is not a text literal, or names the binding object's internals: needs those internals as values. Main's nested-record rule (forward merge 3) does not touch AT, so both programs still check",
+    note: "AT over a record with a key that is not a text literal, or names the binding object's internals: needs those internals as values. Main's nested-record rule (forward merge 3) does not touch AT, so both programs still check; each AT is over a genuine record, so chunk 7A Task 6b's reading of the checker's types leaves both refused",
     programs: [
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  top = FIRST(rows)\n  key = "name"\n  a = AT(top, key)' }),
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  a = AT(FIRST(rows), "provenance")' }),
@@ -343,7 +354,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'node_spread_record',
     routes: 'refused',
-    note: "a map holding a record spread into a graph, which asMapList files as a child of the binding object's keys: needs those keys. Main's nested-record rule (forward merge 3) types write and match fields and plugin arguments, not a graph's spread, so both programs still check (the TypeScript refuses them mid-run)",
+    note: "a map holding a record spread into a graph, which asMapList files as a child of the binding object's keys: needs those keys. Main's nested-record rule (forward merge 3) types write and match fields and plugin arguments, not a graph's spread, so both programs still check (the TypeScript refuses them mid-run); each map genuinely holds a record, so chunk 7A Task 6b's reading of the checker's types leaves both refused",
     programs: [
       () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }' }),
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { first: FIRST(rows) }\n  g = graph { ...held }' }),

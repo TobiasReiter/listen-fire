@@ -82,8 +82,13 @@ const path = require('node:path');
 // predates the store's key reader; the floors are those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
-// ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 1178, v2: 1489, v3: 2545 };
+// ran whole) but not it. PLAN-07A Task 6b (admission reads the checker's
+// types for parameters, calls and spreads) leaves v1 1180, v2 1491 and v3
+// 2570 whole: v3's 23 more are closures' position parameters read field by
+// field, closure, movement and extraction calls' values, MAPs, GROUPBY and
+// MEMBERS of values, and map spreads of records; the floors are those less a
+// margin of 2.
+const RAN_WHOLE_FLOOR = { v1: 1178, v2: 1489, v3: 2568 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
