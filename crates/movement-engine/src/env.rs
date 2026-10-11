@@ -85,6 +85,10 @@ pub struct Envelope {
     /// The run's pinned instant, in milliseconds (`now`, a `toISOString`
     /// text on the wire): what `DATE.TODAY` reads.
     pub now: Option<f64>,
+    /// The zone a date-time text with no offset is read in (`localZone`, an
+    /// IANA name): the caller's process's local zone, as V8 reads it there.
+    /// Absent: UTC.
+    pub local_zone: Option<String>,
 }
 
 pub fn read_envelope(text: &str) -> Result<Envelope, String> {
@@ -104,13 +108,18 @@ pub fn read_envelope(text: &str) -> Result<Envelope, String> {
     };
     let now = match json.get("now") {
         None => None,
-        Some(Json::String(iso)) => match crate::js_date::parse(iso) {
-            crate::js_date::Parsed::Valid(ms) => Some(ms),
-            _ => return Err(format!("the pinned instant {iso:?} is not a toISOString text")),
+        Some(Json::String(iso)) => match crate::js_date::parse(iso, crate::js_date::LocalZone::UTC) {
+            Some(ms) => Some(ms),
+            None => return Err(format!("the pinned instant {iso:?} is not a toISOString text")),
         },
         Some(other) => return Err(format!("the pinned instant is a text, not {other}")),
     };
-    Ok(Envelope { env, origins, language_version, now })
+    let local_zone = match json.get("localZone") {
+        None => None,
+        Some(Json::String(zone)) => Some(zone.clone()),
+        Some(other) => return Err(format!("the local zone is a text, not {other}")),
+    };
+    Ok(Envelope { env, origins, language_version, now, local_zone })
 }
 
 fn read_trail(json: &Json) -> Result<Trail, String> {

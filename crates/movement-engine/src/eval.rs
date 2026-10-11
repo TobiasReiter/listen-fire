@@ -391,7 +391,7 @@ impl<'a> Evaluator<'a> {
                     return Ok(Evaluated { value: Js::Bool(same), prov: self.union(&[&l.prov, &r.prov]) });
                 }
                 let value = self
-                    .or_ask(compare_values(&l.value, *op, &r.value).map(Js::Bool), || Ask::Compare {
+                    .or_ask(compare_values(&l.value, *op, &r.value, self.around.local()).map(Js::Bool), || Ask::Compare {
                         op: *op,
                         left: l.value.clone(),
                         right: r.value.clone(),
@@ -760,7 +760,7 @@ impl<'a> Evaluator<'a> {
             return Ok(Evaluated { value: Js::Null, prov: self.union(&provs) });
         }
         let values: Vec<Js> = results.iter().map(|r| r.value.clone()).collect();
-        let value = self.or_ask(stdlib::apply_flat(id, &values), || Ask::Function { id: id.to_string(), args: values.clone() }).await?;
+        let value = self.or_ask(stdlib::apply_flat(id, &values, self.around), || Ask::Function { id: id.to_string(), args: values.clone() }).await?;
         Ok(Evaluated { value, prov: self.union(&provs) })
     }
 
@@ -985,7 +985,7 @@ mod tests {
     }
 
     fn in_run<'a>(reader: &'a Counting) -> Evaluator<'a> {
-        Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None }, reader)
+        Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None, local_zone: None }, reader)
     }
 
     #[test]

@@ -2993,10 +2993,9 @@ const INTERNAL_KEYS: [&str; 12] = ["provenance", "graph", "read", "fields", "fie
 const PROTO_FIELD: &str = "extract_proto_field";
 
 /// The built-ins whose reading this engine may hand back to the TypeScript
-/// member (`builtins.function`) on what their arguments hold: a date V8
-/// reads its own way, a regex nested past what V8's stack allows, astral
-/// text.
-const HANDED_BACK: [&str; 7] = ["split", "date", "datetime", "date.add_days", "date.format", "date.format_iso", "text.regex_extract"];
+/// member (`builtins.function`) on what their arguments hold: a regex nested
+/// past what V8's stack allows, astral text.
+const HANDED_BACK: [&str; 2] = ["split", "text.regex_extract"];
 
 /// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` of a bare walk, its root and
 /// hops.
@@ -3651,7 +3650,7 @@ mod tests {
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = echo(q: [co])", "plugin_arg_record"),
             ("  rows = crm-[c:companies]->\n  x = echo(q: rows)", "plugin_arg_record"),
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  x = echo(q: { k: co })", "plugin_arg_record"),
-            ("  rows = crm-[c:companies]->\n  x = DATE.FORMAT(FIRST(rows), \"YYYY\")", "builtin_arg_record"),
+            ("  rows = crm-[c:companies]->\n  x = TEXT.REGEX_EXTRACT(FIRST(rows), \"x\")", "builtin_arg_record"),
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  write crm-[:notes]-> { body: co }", "write_field_record"),
             ("  rows = crm-[c:companies]->\n  write crm-[:notes]-> { body: rows }", "write_field_record"),
             ("  rows = crm-[c:companies]->\n  found = extract from [rows] {\n    name: \"the company\"\n  }", "extract_from_record"),

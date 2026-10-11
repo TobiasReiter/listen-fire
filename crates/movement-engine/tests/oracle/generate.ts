@@ -26,10 +26,13 @@
 //     found, `-[:@old]->`, in-place writes, a match's miss) run on the
 //     TypeScript engine against a scripted CRM, with what it received, the
 //     writes, the trace and the parked state (./handles_oracle.ts);
-//   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts).
+//   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts);
+//   - dates.json: V8's date parser, and the members that read dates through
+//     it, under five local zones (./dates_oracle.ts).
 // Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
 // read local time (an offset-less date-time is local to `new Date`), so the
-// process runs in UTC wherever it is started.
+// process runs in UTC wherever it is started — all but dates_oracle.ts,
+// which sets each of its zones in turn and then UTC again.
 //
 // Regenerate from apps/api (for its ts-node and compiler settings):
 //   TS_NODE_PROJECT=tsconfig.json npx ts-node --transpile-only \
@@ -64,6 +67,7 @@ import { writeHandlesOracle } from './handles_oracle';
 import { writeParallelOracle } from './parallel_oracle';
 import { writeRecordsOracle } from './records_oracle';
 import { writeTailOracles } from './tail_oracle';
+import { writeDatesOracle } from './dates_oracle';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
 function wire(value: unknown): unknown {
@@ -392,6 +396,7 @@ console.log(`regex.json: ${regexCases.length} cases`);
   await writeParallelOracle(mulberry32(20261011), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeHandlesOracle(mulberry32(20261012), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeTailOracles(mulberry32, (name, text) => writeFileSync(path.join(__dirname, name), text));
+  writeDatesOracle(mulberry32(20261013), (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;

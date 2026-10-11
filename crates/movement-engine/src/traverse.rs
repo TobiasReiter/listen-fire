@@ -1024,7 +1024,7 @@ impl Run<'_> {
             let ask = |op: FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
                 Box::pin(async move { self.compare(op, l, r, now).await })
             };
-            last = crate::filter::evaluate_predicate_with(conjunct, &read, Some(&ask))
+            last = crate::filter::evaluate_predicate_with(conjunct, &read, crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone() })
                 .await
                 .map_err(|e| Failure::of_eval(e, "the Rust engine does not reproduce it"))?;
             if !last.truthy() {

@@ -18,9 +18,9 @@ use movement_engine::stdlib::{self, Surroundings};
 use movement_parser::lowering::expression::FilterOperator;
 use serde_json::{Value as Json, json};
 
-/// The generator pins `now` at the epoch.
+/// The generator pins `now` at the epoch and runs in UTC.
 fn around() -> Surroundings<'static> {
-    Surroundings { services: movement_engine::env_services::current(), now: Some(0.0) }
+    Surroundings { services: movement_engine::env_services::current(), now: Some(0.0), local_zone: Some("UTC") }
 }
 
 /// The wire with object ids dropped (the two sides number them apart) and
@@ -52,14 +52,14 @@ fn plain(value: &Js) -> Json {
 fn run(fn_: &str, args: &[Js]) -> Result<Js, EvalError> {
     if let Some(op) = fn_.strip_prefix("compare.") {
         let op: FilterOperator = serde_json::from_value(json!(op)).unwrap();
-        return compare_values(&args[0], op, &args[1]).map(Js::Bool);
+        return compare_values(&args[0], op, &args[1], around().local()).map(Js::Bool);
     }
     let value = || args.first().cloned().unwrap_or(Js::Undefined);
     match fn_ {
-        "coerce.date" => stdlib::coerce_to_date(&value()).map(|d| d.map_or(Js::Null, Js::String)),
-        "coerce.datetime" => stdlib::coerce_to_datetime(&value()).map(|d| d.map_or(Js::Null, |(iso, _)| Js::String(iso))),
+        "coerce.date" => Ok(stdlib::coerce_to_date(&value(), around().local()).map_or(Js::Null, Js::String)),
+        "coerce.datetime" => Ok(stdlib::coerce_to_datetime(&value(), around().local()).map_or(Js::Null, |(iso, _)| Js::String(iso))),
         "coerce.number" => Ok(stdlib::coerce_to_number(&value()).map_or(Js::Null, Js::Number)),
-        flat if flat.starts_with("flat.") => stdlib::apply_flat(&flat["flat.".len()..], args),
+        flat if flat.starts_with("flat.") => stdlib::apply_flat(&flat["flat.".len()..], args, around()),
         id => stdlib::apply_namespaced(id, args, around()),
     }
 }
@@ -116,17 +116,6 @@ fn the_standard_library_answers_as_typescript_does() {
 /// TypeScript: what it was when recorded (2026-10-07), rounded up at the
 /// third place. Every function not listed may hand back none.
 const FALLBACK_CEILINGS: &[(&str, f64)] = &[
-    // An offset-less date-time (local time), or a text only V8's legacy parser reads.
-    ("coerce.date", 0.012),
-    ("coerce.datetime", 0.012),
-    ("flat.date", 0.012),
-    ("flat.datetime", 0.012),
-    ("date.format_iso", 0.012),
-    ("date.format", 0.012),
-    ("compare.gt", 0.036),
-    ("compare.gte", 0.036),
-    ("compare.lt", 0.036),
-    ("compare.lte", 0.036),
     // Astral characters split into UTF-16 halves.
     ("flat.split", 0.018),
     // A match that splits an astral character.

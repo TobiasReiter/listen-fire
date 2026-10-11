@@ -9,7 +9,7 @@
 use crate::env_services::{EnvServices, NormalForm};
 use crate::eval::EvalError;
 use crate::js::{self, Js, JsObject};
-use crate::js_date::{self, Parsed};
+use crate::js_date::{self, LocalZone};
 use crate::js_regex::{Regex, RegexError};
 
 /// The 17 flat built-ins `applyMovementFunction` runs (`coalesce` is the
@@ -48,12 +48,20 @@ pub fn whole_value_arg(id: &str) -> Option<usize> {
 }
 
 /// What a member reads beyond its arguments: the environment's services,
-/// and the run's pinned instant (milliseconds), which only `DATE.TODAY`
-/// reads.
+/// the run's pinned instant (milliseconds), which only `DATE.TODAY` reads,
+/// and the zone a date-time text with no offset is read in (the run's
+/// `localZone`; absent, UTC).
 #[derive(Clone, Copy)]
 pub struct Surroundings<'a> {
     pub services: &'a dyn EnvServices,
     pub now: Option<f64>,
+    pub local_zone: Option<&'a str>,
+}
+
+impl<'a> Surroundings<'a> {
+    pub fn local(&self) -> LocalZone<'a> {
+        LocalZone::new(self.local_zone, self.services)
+    }
 }
 
 fn arg(args: &[Js], i: usize) -> Js {
@@ -61,7 +69,7 @@ fn arg(args: &[Js], i: usize) -> Js {
 }
 
 /// `applyMovementFunction`.
-pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
+pub fn apply_flat(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js, EvalError> {
     let a = arg(args, 0);
     let text_or_null = |f: fn(&str) -> String| if a.is_nullish() { Js::Null } else { Js::String(f(&a.to_js_string())) };
     Ok(match id {
@@ -85,8 +93,8 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
             let n = a.to_number();
             if n.is_nan() { Js::Null } else { Js::Number(n) }
         }
-        "date" => coerce_to_date(&a)?.map_or(Js::Null, Js::String),
-        "datetime" => coerce_to_datetime(&a)?.map_or(Js::Null, |(iso, _)| Js::String(iso)),
+        "date" => coerce_to_date(&a, around.local()).map_or(Js::Null, Js::String),
+        "datetime" => coerce_to_datetime(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::String(iso)),
         "number" => coerce_to_number(&a).map_or(Js::Null, Js::Number),
         "multi" => {
             let mut flat = Vec::new();
@@ -130,8 +138,8 @@ pub fn apply_namespaced(id: &str, args: &[Js], around: Surroundings<'_>) -> Resu
         "currency.format_figure" => Ok(format_figure(&a, &b)),
         "date.parse" => Ok(read_date_parts(&a).map_or(Js::Null, |p| Js::String(iso_date(p)))),
         "date.add_days" => date_add_days(&a, &b),
-        "date.format" => date_format(&a, &b),
-        "date.format_iso" => Ok(date_format_iso(&a)?.map_or(Js::Null, |(iso, _)| Js::String(iso))),
+        "date.format" => Ok(date_format(&a, &b, around.local())),
+        "date.format_iso" => Ok(date_format_iso(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::String(iso))),
         "date.today" => date_today(&a, around),
         "datetime.at" => datetime_at(args, around.services),
         "text.regex_extract" => text_regex_extract(args),
@@ -455,12 +463,13 @@ fn year_tail(c: &[char], at: usize) -> Option<i64> {
 }
 
 /// `dateFormatIso`: any readable date, timestamp or epoch as an ISO
-/// instant, with its milliseconds.
-fn date_format_iso(value: &Js) -> Result<Option<(String, f64)>, EvalError> {
+/// instant, with its milliseconds. A text that starts as an ISO date-time
+/// is `new Date(text)`, read in the local zone when it names no offset.
+fn date_format_iso(value: &Js, local: LocalZone<'_>) -> Option<(String, f64)> {
     let instant = |ms: f64| (js_date::to_iso_string(ms), ms);
     match value {
-        Js::Undefined | Js::Null => Ok(None),
-        Js::Number(n) => Ok(js_date::time_clip(*n).map(instant)),
+        Js::Undefined | Js::Null => None,
+        Js::Number(n) => js_date::time_clip(*n).map(instant),
         other => {
             let text = other.to_js_string();
             let s = js::trim(&text);
@@ -473,23 +482,19 @@ fn date_format_iso(value: &Js) -> Result<Option<(String, f64)>, EvalError> {
                 && b[8..10].iter().all(u8::is_ascii_digit)
                 && b[10] == b'T';
             if looks_iso {
-                return match js_date::parse(s) {
-                    Parsed::Valid(ms) => Ok(Some(instant(ms))),
-                    Parsed::Invalid => Ok(None),
-                    Parsed::Unknown => Err(EvalError::Fallback(format!("V8 reads {s:?} its own way"))),
-                };
+                return js_date::parse(s, local).map(instant);
             }
-            Ok(read_date_parts(&Js::str(s)).map(|p| instant(js_date::utc_midnight(p.y, p.m, p.d))))
+            read_date_parts(&Js::str(s)).map(|p| instant(js_date::utc_midnight(p.y, p.m, p.d)))
         }
     }
 }
 
-pub fn coerce_to_datetime(value: &Js) -> Result<Option<(String, f64)>, EvalError> {
-    date_format_iso(value)
+pub fn coerce_to_datetime(value: &Js, local: LocalZone<'_>) -> Option<(String, f64)> {
+    date_format_iso(value, local)
 }
 
-pub fn coerce_to_date(value: &Js) -> Result<Option<String>, EvalError> {
-    Ok(coerce_to_datetime(value)?.map(|(iso, _)| iso.chars().take(10).collect()))
+pub fn coerce_to_date(value: &Js, local: LocalZone<'_>) -> Option<String> {
+    coerce_to_datetime(value, local).map(|(iso, _)| iso.chars().take(10).collect())
 }
 
 fn date_add_days(date: &Js, days: &Js) -> Result<Js, EvalError> {
@@ -551,12 +556,12 @@ fn pad(value: i64, width: usize) -> String {
     format!("{}{text}", "0".repeat(width.saturating_sub(text.len())))
 }
 
-fn date_format(value: &Js, pattern: &Js) -> Result<Js, EvalError> {
-    let Some((_, ms)) = coerce_to_datetime(value)? else { return Ok(Js::Null) };
+fn date_format(value: &Js, pattern: &Js, local: LocalZone<'_>) -> Js {
+    let Some((_, ms)) = coerce_to_datetime(value, local) else { return Js::Null };
     if pattern.is_nullish() {
-        return Ok(Js::Null);
+        return Js::Null;
     }
-    let Some(pieces) = read_date_format(&pattern.to_js_string()) else { return Ok(Js::Null) };
+    let Some(pieces) = read_date_format(&pattern.to_js_string()) else { return Js::Null };
     let f = js_date::utc_fields(ms);
     let mut out = String::new();
     for piece in pieces {
@@ -584,7 +589,7 @@ fn date_format(value: &Js, pattern: &Js) -> Result<Js, EvalError> {
             }),
         }
     }
-    Ok(Js::String(out))
+    Js::String(out)
 }
 
 // ── TEXT ─────────────────────────────────────────────────────────────────────
@@ -840,11 +845,11 @@ mod tests {
     use super::*;
 
     fn around() -> Surroundings<'static> {
-        Surroundings { services: crate::env_services::current(), now: Some(0.0) }
+        Surroundings { services: crate::env_services::current(), now: Some(0.0), local_zone: None }
     }
 
     fn call(id: &str, args: Vec<Js>) -> Js {
-        let result = if FLAT.contains(&id) { apply_flat(id, &args) } else { apply_namespaced(id, &args, around()) };
+        let result = if FLAT.contains(&id) { apply_flat(id, &args, around()) } else { apply_namespaced(id, &args, around()) };
         result.unwrap_or_else(|e| panic!("{id}: {e:?}"))
     }
 
@@ -932,7 +937,15 @@ mod tests {
         assert_eq!(iso(s("12 March 2026")), "2026-03-12T00:00:00.000Z");
         assert_eq!(iso(s("2026-03-12T09:30+01:00")), "2026-03-12T08:30:00.000Z");
         assert_eq!(iso(Js::Number(8.64e15 + 1.0)), "<null>");
-        assert!(matches!(apply_namespaced("date.format_iso", &[s("2026-03-12T09:30")], around()), Err(EvalError::Fallback(_))));
+        // A date-time with no offset is the local zone's: UTC when the run names none.
+        assert_eq!(iso(s("2026-03-12T09:30")), "2026-03-12T09:30:00.000Z");
+        let in_new_york = Surroundings { local_zone: Some("America/New_York"), ..around() };
+        let at = |text: &str| apply_namespaced("date.format_iso", &[s(text)], in_new_york).unwrap().to_js_string();
+        assert_eq!(at("2026-03-12T09:30"), "2026-03-12T13:30:00.000Z");
+        // The clock skips 02:30 on 8 March and shows 01:30 twice on 1 November.
+        assert_eq!(at("2026-03-08T02:30"), "2026-03-08T07:30:00.000Z");
+        assert_eq!(at("2026-11-01T01:30"), "2026-11-01T05:30:00.000Z");
+        assert_eq!(at("2026-03-12"), "2026-03-12T00:00:00.000Z");
         assert_eq!(text(call("date", vec![s("2026-03-12T23:30-02:00")])), "2026-03-13");
         assert_eq!(text(call("datetime", vec![s("2026-03-12")])), "2026-03-12T00:00:00.000Z");
         assert_eq!(text(call("date", vec![Js::Bool(true)])), "<null>");

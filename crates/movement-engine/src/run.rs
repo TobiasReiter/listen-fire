@@ -107,6 +107,11 @@ pub struct SegmentInput {
     pub spend: crate::ledger::Spend,
     /// The run's pinned instant (`firedAt`, else when the run began).
     pub now: String,
+    /// The zone a date-time text with no offset of its own is read in (an
+    /// IANA name): the shim sends its process's, the zone V8's `Date`
+    /// reads such a text in there. Absent: UTC.
+    #[serde(default)]
+    pub local_zone: Option<String>,
     /// Kept as text: the catalog's maps are ordered.
     pub catalog: Box<RawValue>,
     /// A rehearsal: every write captured by the host, not committed, and a
@@ -460,10 +465,16 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // host sent first.
     let wire = env::Wire::default();
     let event = wire.decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
-    let now_ms = match js_date::parse(&input.now) {
-        js_date::Parsed::Valid(ms) => ms,
-        _ => return Err(Stop::Declined("instant_does_not_read".into())),
+    let Some(now_ms) = js_date::parse(&input.now, js_date::LocalZone::UTC) else {
+        return Err(Stop::Declined("instant_does_not_read".into()));
     };
+    // A zone the environment does not know reads no date text as the
+    // TypeScript's process does.
+    if let Some(zone) = &input.local_zone
+        && env_services::current().tz_convert(&js_date::to_iso_string(now_ms), zone).is_none()
+    {
+        return Err(Stop::Declined("local_zone_does_not_read".into()));
+    }
     let answer = host
         .request(host::check::program(&input.source, version, None))
         .await
@@ -555,6 +566,11 @@ async fn unparsed(host: &Host, input: &SegmentInput) -> Stop {
 impl Run<'_> {
     pub(crate) fn version(&self) -> u32 {
         self.input.language_version
+    }
+
+    /// The zone a date text with no offset is read in.
+    pub(crate) fn local_zone(&self) -> js_date::LocalZone<'_> {
+        js_date::LocalZone::new(self.input.local_zone.as_deref(), env_services::current())
     }
 
     /// The segment every host request names.
@@ -1459,7 +1475,7 @@ impl Run<'_> {
     /// One walk, scoped at `subject` when given: a landed record, or an
     /// extracted entity (an `EXISTS` WHERE over an extraction's).
     pub(crate) async fn evaluate_scoped(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, subject: Option<Scoped>) -> Result<Evaluated, Stop> {
-        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
+        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
         let scoped = subject.is_some();
         let reader = Reading { run: self, scope, span: span.clone(), subject };
         let evaluator = if scoped {

@@ -151,7 +151,7 @@ fn answer_envelope(answer: &Answer) -> Json {
 pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
     let expr: Expression = serde_json::from_str(expr).map_err(|e| format!("the expression does not read: {e}"))?;
     let envelope = env::read_envelope(bindings)?;
-    let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now };
+    let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now, local_zone: envelope.local_zone.as_deref() };
     let evaluator = Evaluator::new(&envelope.env, envelope.language_version, around, envelope.origins);
     Ok(match evaluator.eval_pure(&expr) {
         Ok(result) => json!({

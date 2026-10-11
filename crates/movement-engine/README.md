@@ -178,7 +178,8 @@ eval_expression(expr, bindings) → {value, provenance} | {error: {class, code?,
 - `expr` is the lowered `Expression` JSON, read back into the parser's own
   types (crates/movement-parser/src/lowering/expression.rs).
 - `bindings` is `{bindings: {name: {value, provenance?, many?}}, origins,
-  languageVersion?, now?}`.
+  languageVersion?, now?, localZone?}`; `localZone` is the zone a date-time
+  text with no offset is read in (the shim's process zone; absent, UTC).
 - Synchronous, on the parser's long-lived instance: no segment.
 - The switch is one guarded line in `evalMovementExpr`
   (apps/api/src/services/movement_engine/expression.ts). The shim
@@ -221,7 +222,7 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `.length`, `<` on text | UTF-16 code units; comparison in code-unit order | `js::tests::strings_are_utf16_where_javascript_says_so`, `stdlib::tests::flat_builtins` |
 | `split("")` | per UTF-16 unit: BMP text splits per character, astral text goes back to TypeScript | `stdlib::tests::flat_builtins`, `oracle::…` (`flat.split`) |
 | `toLowerCase`/`toUpperCase` | Node 22.20's ICU (77.1, Unicode 16), not Rust's tables (which follow the toolchain's Unicode, 17 today): each code point's mapping and the final sigma's neighbours read off Node into src/case_mapping.rs by tests/oracle/case_mapping.ts; every case mapping the engine does goes through `js::to_lower_case` / `js::to_upper_case` (`LOWER`, `UPPER`, case-insensitive name lookup, enum matching, slugs) | tests/tail_oracle.rs (case_mapping.json), `stdlib::tests::case_mapping_follows_nodes_icu` |
-| `new Date(text)` | the ISO forms V8's spec parser reads (`YYYY-MM-DD`, `…THH:mm[:ss[.f…]]` with `Z`/`±HH:mm`; day 31 rolls over, `24:00`, three fraction digits kept); a text with no digit is Invalid; anything else (V8's legacy parser, a date-time without offset = local time) goes back to TypeScript | `js_date::tests::reads_the_iso_forms_as_v8_does`, `js_date::tests::leaves_what_only_v8_can_read_unknown` |
+| `new Date(text)`, `Date.parse` | V8's parser written out step for step (dateparser-inl.h, dateparser.cc, builtins-date.cc `ParseDateTimeString`): the ES5 form first (`[±yy]yyyy[-MM[-DD]][THH:mm[:ss[.f…]]][Z\|±hh:mm\|±hhmm]`, `t` and `z` in either case), then the legacy parser over what is left — numbers, words matched on their first three letters (months, `AM`/`PM`, `UT`/`UTC`/`GMT`/`Z`, the eight US zones, `T`), parenthesised comments, the numeric orders and the 50 pivot for two-digit years (two numbers are a month and a day of 2001), offsets `±hh[mm]`, `±hh:mm`, `GMT±h`. A date alone is UTC; a date-time with no offset is read in the run's local zone (`localZone`; absent, UTC), a reading the clock shows twice being the earlier instant and one it skips read with the offset before the change, as ICU's `getOffsetFromLocal(FORMER, FORMER)` reads it for V8 | `js_date::tests::reads_the_iso_forms_as_v8_does`, `js_date::tests::reads_the_legacy_forms_as_v8_does`, tests/dates_oracle.rs (6,000 seeded texts in five zones) |
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
 | `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) | `js_date::tests::iso_strings_outside_four_digit_years`, `js_date::tests::time_clip_bounds_and_truncates`, `tests::coalesce_short_circuits_from_version_three` |
 | regexes (TEXT.REGEX_EXTRACT) | V8's whole flagless dialect, compiled to a flat program run on an explicit backtracking stack over UTF-16 units: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators; lookahead and lookbehind (right to left, its captures and backreferences too), named groups and `\k<name>`, Annex B's octal, `\c` and identity escapes, a class escape at a range's end, quantified lookaheads. No step budget (a pattern V8 runs slowly runs slowly here). Invalid patterns are null, as `new RegExp` throws. Groups nested past 1,000 levels go back to the TypeScript built-in, so the answer is TypeScript's: V8 overflows its stack on CAPTURING groups nested somewhere between 8,000 and 10,000 deep, at a depth set by the stack it runs on (`(?:` it parses 50,000 deep; handed back past 1,000 all the same) | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them` (7,209 seeded cases) |
@@ -372,7 +373,7 @@ refused where it stands (`is_test_declared_record`).
 | `name_shadowed` | a body binds a name the movement's parameters or the file bind | the TypeScript's environment rebinding rules (what a later binding does to an earlier one) |
 | `name_rebound` | a body binds one name as two kinds (a value and a handle, …), or twice where one binding can see the other (in one scope, or in a scope and one inside it); names are scoped lexically, so two blocks may reuse a hop alias, and two arms or two block bodies a name | the same rules |
 | `name_not_value` | a plugin call's argument naming bare a name that may hold something other than a value (the event, a handle, an instance, a node, an extraction's record) | what the TypeScript hands a plugin for a binding |
-| `plugin_arg_record`, `builtin_arg_record`, `write_field_record`, `extract_from_record` | a record (other than the event, whose binding object is the data `{kind: 'event'}`) that may reach, inside a list or a map, a plugin's argument; any record reaching a reading this engine may hand back to the TypeScript member (`builtins.function`: a date, a regex, a split), a system write's or match's field, or an extraction's `from` datum written into the prompt. Admission follows what each value holds — free of records, one record whose fields are data, a map or a list of them, or anything — through bindings, collection ops' parameters and answers, bound blocks, node literals and local writes, and parameters typed as scalars | the binding objects themselves on the eval wire: the TypeScript hands its host a record's binding object, its read seam and provenance included |
+| `plugin_arg_record`, `builtin_arg_record`, `write_field_record`, `extract_from_record` | a record (other than the event, whose binding object is the data `{kind: 'event'}`) that may reach, inside a list or a map, a plugin's argument; any record reaching a reading this engine may hand back to the TypeScript member (`builtins.function`: a regex, a split), a system write's or match's field, or an extraction's `from` datum written into the prompt. Admission follows what each value holds — free of records, one record whose fields are data, a map or a list of them, or anything — through bindings, collection ops' parameters and answers, bound blocks, node literals and local writes, and parameters typed as scalars | the binding objects themselves on the eval wire: the TypeScript hands its host a record's binding object, its read seam and provenance included |
 | `at_record_key`, `node_spread_record` | `AT` over a value that may be a record with a key that is not a text literal, or names an internal of the binding object (its read seam, provenance, `Map`s); a map holding a record spread into a graph, which `asMapList` would file as a child of the binding object's keys | the binding object's internals as values |
 
 **Statements and right-hand sides** (a reached body):
@@ -468,7 +469,7 @@ never resumes it wrong.
 | reason | what the stamps say | needs |
 |---|---|---|
 | `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` | a `Date` value on the wire (or a ruling that adapters never answer one) |
-| `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read | to become errors: shim faults in all but name |
+| `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `local_zone_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read (a `localZone` the environment's zone database does not know) | to become errors: shim faults in all but name |
 | `source_does_not_parse` | a source this engine's parser refuses and the checker passes | the grammar this engine lacks (none is known) |
 | `unreproduced` | mid-run, this engine's own refusal of what the TypeScript engine runs on through (MOVENG_UNSUPPORTED naming the construct, "Errors a run can meet mid-run" below), met before the run's first effect: it has asked its host only reads (the check, `adapters.resolve`, an adapter's read methods, the clock, the cancel gate, `builtins.*`), so nothing it did is kept | each construct's port; after an effect the same refusal fails the run |
 
@@ -601,7 +602,7 @@ TypeScript takes through its host is a host request here:
 | `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`, with the run's budget (`ledger`); its cost is charged |
 | `locks.acquire`, `locks.release` | around an identity search and an update by id | `host.locks`: a token per acquire, released by token |
 | `clock.now` | a `sleep`'s wake time; a `WITHIN` the comparator measures (once per comparison in an expression, once per conjunct of a hop's WHERE and once per record of a `unique by` narrowing that reaches one, as expression.ts `decideWithClock`) | `host.clock.now`, its answer read as the TypeScript engine reads it |
-| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (V8's date parser, local time, a regex match that splits an astral character or a pattern nested past 1,000 groups, `WITHIN` with the clock's answer) | the TypeScript member itself |
+| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (a regex match that splits an astral character or a pattern nested past 1,000 groups, `WITHIN` with the clock's answer) | the TypeScript member itself |
 | `park.sink.commitTimerPark` | a `sleep` in a run that is not a rehearsal, on a host that serves it | `host.park.sink`; `wakeAt` is `clock.now`'s answer plus the sleep |
 | `park.sink.commitLimitPause` | the first time the run meets its cost cap (a budget refusal, charged, that the ledger says is the cap), on a host that serves it and can suspend | `host.park.sink.commitLimitPause` |
 | `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address; on a host that serves it | `host.park.sink.commitSuspension` |
@@ -1227,7 +1228,7 @@ writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, catalog, dryRun?,
-resume?, limitPaused?, suspendAt?, serves, extractionFileChars?}`. `segmentId` is the segment the run host opened (`segment.open`),
+resume?, limitPaused?, suspendAt?, serves, extractionFileChars?, localZone?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
@@ -1242,8 +1243,10 @@ a `toISOString` text (`firedAt`, else when the run began); `catalog` is the
 by path (`park.sink.commitTimerPark`): the engine asks an optional one only
 when it is listed; `extractionFileChars` is how much of one source file's
 text an extraction prompt takes (extraction.ts `maxFileChars`, the
-deployment's `EXTRACTION_FILE_CHARS`, 50,000 when absent). Other members
-are ignored.
+deployment's `EXTRACTION_FILE_CHARS`, 50,000 when absent); `localZone` is
+the IANA zone a date-time text with no offset is read in (the shim's
+process zone, which its `Date` reads such a text in; UTC when absent).
+Other members are ignored.
 
 **Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or
 `{error: {message, name?, ref?}}`; `ref` numbers the very error object the
@@ -1271,7 +1274,7 @@ shape. Where `wire: true`, the values named cross on the eval wire.
 | `files.resolveFileText {segmentId, file, budget, wire: true}` (`file` on the eval wire) | on the eval wire: `{text, rawTextId?}` or `{unreadable, detail?}`, and `cost?`, or a budget refusal |
 | `ids.mint {segmentId, count}` | `count` distinct texts |
 | `log.write {lines: [{level, message, fields}]}` | `undefined`: the lines on the platform's log, the run's id added (the engine's own, like `check` and `builtins`) |
-| `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`date.format_iso`, `trim`), `args` on the eval wire, the value too |
+| `builtins.function {id, args, now, languageVersion}` | `{value}` or `{threw: {class: "MovementEngineError" \| "Error" \| "RangeError", code?, message}}`: the TypeScript member's value or what it throws; `id` is the lowered function id (`text.regex_extract`, `split`), `args` on the eval wire, the value too |
 | `builtins.compare {op, left, right, now?}` | the same two shapes, for `compareValues(left, op, right, {now})`; `op` a `FilterOperator`; `now` (the `clock.now` answer the engine asked) on a `within` and only there |
 
 A host answer is `{value}`, `{}` for `undefined`, or `{error: {message,
@@ -1355,7 +1358,7 @@ Sizes are estimates (XS, S, M, L).
 | # | the artefact | here today | the mirror | size |
 |---|---|---|---|---|
 | 1 | the regex dialect | mirrored (chunk 7A Task 5): `js_regex` made complete and kept (lookbehind, named groups and `\k<name>`, Annex B's octal and `\c` escapes, a class escape at a range end, quantified lookaheads), with no budget, on an explicit stack so neither long texts nor nesting cost native stack; a group name spelled in ID_Start/ID_Continue read off Node (src/letter_number.rs). Residual: nesting past 1,000 levels hands back to the TypeScript built-in, since V8's own limit for capturing groups (between 8,000 and 10,000) depends on its stack | oracle regex.json, 7,209 cases (the 4,009 new from seed 8), none handed back | done |
-| 2 | date parsing | ISO texts only; V8's legacy forms handed back, including under every `<` between two texts with a digit (filter.rs) and ORDER BY | V8's legacy parser ported (dateparser.cc: keyword tables, parenthesised comments, zone names, two-digit years), fuzzed against Node; an ISO date-time without offset read in a local zone that becomes a run input | L |
+| 2 | date parsing | mirrored (chunk 7A Task 5b): V8's parser ported step for step in crate::js_date, the ES5 form then the legacy one (keyword table, parenthesised comments, zone words, numeric orders, two-digit years, offsets), NaN where V8 gives NaN; a date-time with no offset read in the run's local zone (`localZone`, the shim's process zone; absent, UTC), ICU's reading of a skipped or repeated wall time included. `DATE`, `DATETIME`, `DATE.FORMAT`, `DATE.FORMAT_ISO` and the comparator's `<` between texts no longer hand back (ORDER BY never read dates: `compareOrderValues` orders as text) | oracle dates.json (6,000 seeded texts, seed 20261013, in UTC, Europe/London, America/New_York, Asia/Kolkata and Pacific/Apia: `Date.parse`, `DATE`, `DATE.FORMAT`, `<`; tests/dates_oracle.rs) | done |
 | 3 | Unicode case mapping | mirrored (chunk 7A Task 5): Node 22.20's ICU 77.1 (Unicode 16), its tables generated into src/case_mapping.rs by tests/oracle/case_mapping.ts, the final sigma's cased and ignorable neighbours probed through `toLowerCase` itself; regenerate when the pinned Node moves | oracle case_mapping.json (4,000 seeded texts, seed 20261013, tests/tail_oracle.rs) | done |
 | 3a | the local edge's word split (`/[^\p{L}\p{N}]+/u`, FUZZY candidates) | src/letter_number.rs, generated from Node 22.20 (Unicode 16) by tests/oracle/letter_number.ts | regenerated with row 3's data whenever the pinned Node moves; the language's own Unicode version once one is named | XS |
 | 4 | ORDER BY and `SORT` over mixed key kinds | mirrored (chunk 7A Task 5): V8's ArrayTimSort ported step for step (crate::order_limit: the minimum run, runs found and reversed, binary insertion, the pending-run invariants, `merge_lo`/`merge_hi` with galloping and the shared `minGallop`, the early exits an inconsistent comparator takes), so keys mixing numbers with texts land where JavaScript lands them at every length; the 64-record refusal is gone | oracle mixed_sort.json (400 seeded key lists, 1 to 2,000 keys, seed 20261014, tests/tail_oracle.rs; the stable merge it replaces got 317 of them wrong) | done |
@@ -1397,7 +1400,8 @@ mirror replaces that plan):
 
   - the regex dialect (mirrored, row 1: `js_regex` is kept and reads the
     whole of V8's flagless dialect);
-  - date parsing (what a date text may be, and no local time);
+  - date parsing (mirrored, row 2: V8's parser, and local time read in
+    the run's zone);
   - Unicode case mapping: which Unicode version the language's case tables
     follow, so neither engine's runtime decides it.
   - a hop's ORDER BY, and a `SORT`, over keys of mixed types (mirrored,

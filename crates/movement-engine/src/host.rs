@@ -484,10 +484,8 @@ pub mod clock {
     /// The instant a `clock.now` answer names, in milliseconds since the
     /// epoch; `None` for an answer that names none.
     pub fn instant_of(answer: Option<&Json>) -> Option<f64> {
-        match crate::js_date::parse(answer?.get("nowIso")?.as_str()?) {
-            crate::js_date::Parsed::Valid(ms) => Some(ms),
-            _ => None,
-        }
+        // A `toISOString` text names its offset: no zone reads it.
+        crate::js_date::parse(answer?.get("nowIso")?.as_str()?, crate::js_date::LocalZone::UTC)
     }
 }
 
