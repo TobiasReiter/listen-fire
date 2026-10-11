@@ -241,6 +241,11 @@ async function segmentInRust(
     if (error instanceof RustShimError) {
       rustRunStats.shimFaults += 1;
       noteEngine(input, 'rust', 'shim_fault');
+    } else if (endedByName(error)) {
+      // A construct this engine names and does not run, met mid-run: not a
+      // run's own ending, so not counted as one that ran whole.
+      rustRunStats.failedByName += 1;
+      noteEngine(input, 'rust', 'failed_by_name');
     } else {
       rustRunStats.ranWhole += 1;
       noteEngine(input, 'rust', ADMITTED);
@@ -257,6 +262,13 @@ async function segmentInRust(
   rustRunStats.ranWhole += 1;
   noteEngine(input, 'rust', ADMITTED);
   return outcome;
+}
+
+/** Whether a run ended by this engine naming a construct it does not run
+ *  (`MOVENG_UNSUPPORTED`), mid-run. */
+function endedByName(error: unknown): boolean {
+  const cause = error instanceof MovementRunFailed ? error.cause : error;
+  return cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED';
 }
 
 /** A `done`'s cost lines, summed by source. */

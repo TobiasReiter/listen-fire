@@ -309,7 +309,54 @@ describe("admission reads the checker's types, on both engines", () => {
     );
   });
 
+  describe('a record handed to a position parameter is held to holding none in a field, at every call', () => {
+    const DIRTY = ['  co = write crm-[:companies]-> { name: "a" }', '  write crm-[:notes]-> { body: "pre" }', '  x = graph<Co> { name: COALESCE(co, "x"), stage: "lead" }'];
+
+    it("a clean graph a helper reads field by field runs whole", async () => {
+      await wholeOnBoth(
+        withHelpers(['function hp(r: <Co>) {', '  write crm-[:notes]-> { body: "h", payload: { n: r.name } }', '}'], '  x = graph<Co> { name: "Acme", stage: "lead" }', '  hp(r: x)'),
+        [['create', { body: 'h', payload: { n: 'Acme' } }]],
+      );
+    });
+
+    it("a graph holding a record through COALESCE, handed to a helper that reads it", async () => {
+      await refusedOnBoth(withHelpers(['function hp2(r: <Co>) {', '  write crm-[:notes]-> { body: r.name }', '}'], ...DIRTY, '  hp2(r: x)'), 'position_arg_record');
+    });
+
+    it("the same graph, passed on by the helper to a closure", async () => {
+      await refusedOnBoth(
+        withHelpers(['function hp(r: <Co>) {', '  named = (q: <Co>) => {', '    write crm-[:notes]-> { body: "h", payload: { n: q.name } }', '  }', '  named(q: r)', '}'], ...DIRTY, '  hp(r: x)'),
+        'position_arg_record',
+      );
+    });
+
+    it('a graph a function built holding a record, handed back and read off a closure parameter', async () => {
+      await refusedOnBoth(
+        withHelpers(
+          ['function mk(c: <crm-[:company]->>) {', '  g = graph<Co> { name: COALESCE(c, "x"), stage: "s" }', '  return g', '}'],
+          '  co = write crm-[:companies]-> { name: "a" }',
+          '  write crm-[:notes]-> { body: "pre" }',
+          '  x = mk(c: co)',
+          '  named = (r: <Co>) => {',
+          '    write crm-[:notes]-> { body: "h", payload: { n: r.name } }',
+          '  }',
+          '  named(r: x)',
+        ),
+        'write_field_record',
+      );
+    });
+  });
+
   describe('where the checker is silent, admission still refuses by name', () => {
+    it("MULTI of a record handed to a json parameter: the TypeScript's write coerces the list to its text", async () => {
+      const source = movement('  co = write crm-[:companies]-> { name: "a" }', '  note = (t: <json>) => {', '    write crm-[:notes]-> { body: "n", payload: t }', '  }', '  note(MULTI(co))');
+      await refusedOnBoth(source, 'call_arg_record');
+      expect((await runOn('ts', source, 3)).writes).toEqual([
+        ['create', { name: 'a' }],
+        ['create', { body: 'n', payload: '[object Object]' }],
+      ]);
+    });
+
     it('a record through COALESCE into a field', async () => {
       await refusedOnBoth(movement('  co = write crm-[:companies]-> { name: "a" }', '  write crm-[:notes]-> { body: COALESCE(co, "x") }'), 'write_field_record');
     });

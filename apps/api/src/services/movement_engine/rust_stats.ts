@@ -42,7 +42,11 @@ export function resetRustEvalStats(): void {
  * - `admitted`: routed segments its admission let by (`routed` less its
  *   refusals);
  * - `ranWhole`: routed runs it ran to their end (a run's own failure
- *   included);
+ *   included, but not `failedByName`'s);
+ * - `failedByName`: routed runs it admitted that then ended mid-run naming
+ *   a construct it does not run (`MOVENG_UNSUPPORTED`): what admission
+ *   should have refused, so a divergence unless the TypeScript engine ends
+ *   the run with the same failure;
  * - `declined`: routed runs it admitted and then declined, after the check
  *   and before anything the host can see, by reason;
  * - `shimFaults`: routed runs that ended in a fault of the shim's own
@@ -61,6 +65,7 @@ export const rustRunStats: {
   routed: number;
   admitted: number;
   ranWhole: number;
+  failedByName: number;
   shimFaults: number;
   notAdmitted: Record<string, number>;
   allReasons: Record<string, number>;
@@ -71,6 +76,7 @@ export const rustRunStats: {
   routed: 0,
   admitted: 0,
   ranWhole: 0,
+  failedByName: 0,
   shimFaults: 0,
   notAdmitted: {},
   allReasons: {},
@@ -83,6 +89,7 @@ export function resetRustRunStats(): void {
   rustRunStats.routed = 0;
   rustRunStats.admitted = 0;
   rustRunStats.ranWhole = 0;
+  rustRunStats.failedByName = 0;
   rustRunStats.shimFaults = 0;
   rustRunStats.notAdmitted = {};
   rustRunStats.allReasons = {};

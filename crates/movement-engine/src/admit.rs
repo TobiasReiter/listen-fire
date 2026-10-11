@@ -1153,6 +1153,20 @@ impl<'c> Bound<'c> {
                     {
                         self.record_nodes.insert(assign.name.clone());
                     }
+                    // A node a call hands back holds a record in a field where
+                    // the callee's returns may; a second name for a node that
+                    // holds one, too.
+                    let node_kind = matches!(kind, Kind::Node | Kind::Graph | Kind::Member | Kind::Lazy);
+                    let call_span = match &assign.value {
+                        RValue::Call { call } if self.callee(&call.callee).is_some() => Some(call.span),
+                        RValue::Construct { construct } if self.callee(&construct.callee).is_some() => Some(construct.span),
+                        _ => None,
+                    };
+                    let aliases_dirty = matches!(&assign.value, RValue::Expr { expr }
+                        if matches!(lowered(&expr.raw), Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) if self.record_nodes.contains(&name)));
+                    if node_kind && (call_span.is_some_and(|span| self.call_holder(span) != Holder::Record) || aliases_dirty) {
+                        self.record_nodes.insert(assign.name.clone());
+                    }
                     match &assign.value {
                         RValue::Write { write } => self.target_alias(&write.target, scope),
                         RValue::Match { r#match } => self.target_alias(&r#match.target, scope),
@@ -1626,7 +1640,15 @@ impl<'c> Bound<'c> {
     /// one record landed on.
     fn literal_free_with(&self, node: &NodeLiteral, aliases: &BTreeSet<String>) -> bool {
         let holder = |name: &str| if aliases.contains(name) { Holder::Record } else { self.holder(name) };
-        let free = |raw: &str| lowered(raw).is_ok_and(|expr| value_holder(&expr, &holder) == Holder::Free);
+        // A nested call's value is what the callee hands back (`holds`),
+        // read where no hop alias is in scope.
+        let nested = |raw: &str| {
+            nested_rewrite(raw, &|name| self.callee(name).is_some() || self.calls_closure(name) || self.plugin_kind(name).is_some(), &|_, _| Holder::Other, &|name| self.holder(name)).is_some()
+        };
+        let free = |raw: &str| match nested(raw) {
+            true => aliases.is_empty() && self.holds(raw) == Holder::Free,
+            false => lowered(raw).is_ok_and(|expr| value_holder(&expr, &holder) == Holder::Free),
+        };
         // A spread copies a record's fields (`spreadRecordIntoGraph`), or a
         // map's keys: free where what it reads holds no record but itself.
         let spreads = node.spreads.iter().flatten().all(|spread| match &spread.path {
@@ -2062,22 +2084,56 @@ impl Names<'_> {
 
     /// A call's arguments, each walked as what it binds its parameter to.
     /// A value parameter, which the callee's body reads as free of records
-    /// (`Callees::takes_value`), takes no argument that may hold one.
+    /// (`Callees::takes_value`), takes no argument that may hold one
+    /// (`call_arg_record`). A position parameter, whose record the callee's
+    /// body reads field by field as data, takes only a record known to hold
+    /// none in a field (`position_arg_record`): so a callee's own position
+    /// parameters are clean wherever they are passed on.
     fn call_args(&self, params: &[ast::MovementParam], args: &[CallArg]) -> Admitted {
         for (position, arg) in args.iter().enumerate() {
             let name = arg.name().map(String::from).or_else(|| params.get(position).map(|p| p.name.clone()));
             let param = name.and_then(|p| params.iter().find(|d| d.name == p));
             let takes_value = param.is_some_and(|p| self.callees.takes_value(p));
-            let free = |slot: &ExprSlot| if takes_value && self.may_hold_record_slot(slot) { refuse("call_arg_record") } else { Ok(()) };
-            let returns_free = |held: Holder| if takes_value && held != Holder::Free { refuse("call_arg_record") } else { Ok(()) };
+            // An untyped parameter is a collection op's function's (the checker
+            // requires a type elsewhere), its member held where the op is.
+            let takes_position = param.is_some_and(|p| p.type_.is_some()) && !takes_value;
+            let free = |slot: &ExprSlot| {
+                if takes_value && self.may_hold_record_slot(slot) {
+                    refuse("call_arg_record")
+                } else if takes_position && !self.clean_record(slot) {
+                    refuse("position_arg_record")
+                } else {
+                    Ok(())
+                }
+            };
+            let returns_free = |held: Holder| match held {
+                Holder::Free => Ok(()),
+                Holder::Record if takes_position && self.record_nodes.is_empty() => Ok(()),
+                _ if takes_value => refuse("call_arg_record"),
+                _ if takes_position => refuse("position_arg_record"),
+                _ => Ok(()),
+            };
             match arg {
                 CallArg::Expr { expr, .. } if takes_value => {
                     self.slot(expr)?;
                     free(expr)?;
                 }
-                CallArg::Expr { expr, .. } => self.assigned(expr)?,
-                CallArg::Write { write, .. } => self.write(write)?,
-                CallArg::Node { node, .. } => self.node(node, node.graph.is_some())?,
+                CallArg::Expr { expr, .. } => {
+                    self.assigned(expr)?;
+                    free(expr)?;
+                }
+                CallArg::Write { write, .. } => {
+                    self.write(write)?;
+                    if takes_position && self.writes_into_node(&write.target) && (!write.spreads.as_deref().unwrap_or_default().is_empty() || write.fields.iter().any(|f| self.may_hold_record_slot(&f.value))) {
+                        return refuse("position_arg_record");
+                    }
+                }
+                CallArg::Node { node, .. } => {
+                    self.node(node, node.graph.is_some())?;
+                    if takes_position && !self.literal_clean(node) {
+                        return refuse("position_arg_record");
+                    }
+                }
                 CallArg::Call { call, .. } if self.callee(&call.callee).is_some() => {
                     self.call(call)?;
                     returns_free(self.call_holders.iter().rev().find(|(at, _)| *at == call.span).map_or(Holder::Other, |(_, held)| *held))?;
@@ -2091,7 +2147,11 @@ impl Names<'_> {
                     self.slot(value)?;
                     free(value)?;
                 }
-                CallArg::Call { call, .. } => self.assigned(self.builtin_value(call)?)?,
+                CallArg::Call { call, .. } => {
+                    let value = self.builtin_value(call)?;
+                    self.assigned(value)?;
+                    free(value)?;
+                }
                 CallArg::Closure { .. } => return refuse("rvalue:closure"),
                 CallArg::Type { .. } => return refuse("builtin_call_form"),
             }
@@ -2102,6 +2162,53 @@ impl Names<'_> {
     /// Whether a call names a closure bound to that name (`Callees::closure`).
     fn calls_closure(&self, written: &str) -> bool {
         self.callee(written).is_none() && self.callees.closure(written).is_some()
+    }
+
+    /// Whether what a slot hands a position parameter is a record known to
+    /// hold none in a field: a system's record, an extraction's, the event,
+    /// or a node of this body's where no node of the body holds one (a node
+    /// handed in, through a parameter, was held to this at its own call; one
+    /// a call returned, to what the callee's returns hold).
+    fn clean_record(&self, slot: &ExprSlot) -> bool {
+        if !matches!(self.text_holder(&slot.raw), Holder::Free | Holder::Record) {
+            return false;
+        }
+        if self.record_nodes.is_empty() {
+            return true;
+        }
+        matches!(
+            lowered(&slot.raw),
+            Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name })
+                if self.handles.contains(&name) || self.instances.contains(&name) || self.extracts.contains(&name) || self.events.contains(&name)
+        )
+    }
+
+    /// Whether a node literal handed to a position parameter holds no record
+    /// in a field (`Bound::literal_free`'s reading, at a call).
+    fn literal_clean(&self, node: &NodeLiteral) -> bool {
+        self.literal_clean_with(node, &BTreeSet::new())
+    }
+
+    /// `literal_clean`, with `aliases` (a traversal entry's hop aliases)
+    /// each one record a walk landed on.
+    fn literal_clean_with(&self, node: &NodeLiteral, aliases: &BTreeSet<String>) -> bool {
+        let holder = |name: &str| if aliases.contains(name) { Holder::Record } else { self.holder(name) };
+        let free = |value: &ExprSlot| match self.nested_text(&value.raw) {
+            Some(_) => aliases.is_empty() && !self.may_hold_record_slot(value),
+            None => lowered(&value.raw).is_ok_and(|expr| !may_hold_record(&expr, &holder)),
+        };
+        node.spreads.iter().flatten().all(|spread| spread.path.is_none() && matches!(holder(&spread.source), Holder::Free | Holder::Record))
+            && node.entries.iter().all(|entry| match entry {
+                NodeEntry::Value { value, .. } if node.graph.is_some() && holder(crate::js::trim(&value.raw)) == Holder::Record => true,
+                NodeEntry::Value { value, .. } => free(value),
+                NodeEntry::Nodes { nodes, .. } => nodes.iter().all(|n| self.literal_clean_with(n, aliases)),
+                NodeEntry::Traversal { head, mapping, .. } => mapping.as_ref().is_none_or(|m| {
+                    let mut inner = aliases.clone();
+                    inner.extend(crate::traverse::head_step(head).ok().and_then(|step| step.alias));
+                    self.literal_clean_with(m, &inner)
+                }),
+                NodeEntry::Declared { .. } => true,
+            })
     }
 
     /// A traversal block over an adapter edge (crate::traverse): one hop
@@ -2406,10 +2513,17 @@ impl Names<'_> {
                     Some(movement) => movement.params.iter().collect(),
                     None => self.callees.closure_bodies.get(name).into_iter().flatten().flat_map(|closure| closure.params.iter()).collect(),
                 };
+                let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
+                // A member handed to a position parameter: a record known to
+                // hold none in a field (`clean_record`).
+                if params.iter().any(|p| p.type_.is_some() && !self.callees.takes_value(p))
+                    && !(matches!(member, Holder::Free | Holder::Record) && self.record_nodes.is_empty())
+                {
+                    return refuse("position_arg_record");
+                }
                 if !params.iter().any(|p| self.callees.takes_value(p)) {
                     return Ok(());
                 }
-                let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
                 let returns_free = match self.callees.movement(name) {
                     Some(movement) if movement.params.iter().all(|p| self.callees.takes_value(p)) => {
                         self.callees.returns(movement, &vec![Kind::Value; movement.params.len()], &[]).1 == Holder::Free
@@ -4422,10 +4536,6 @@ mod tests {
         assert_eq!(refusal(&unknown, 3, &Plugins(None, None)).as_deref(), Some("plugin_call"));
     }
 
-    /// A request carries no record: where the TypeScript would hand its host
-    /// the binding object (a plugin's argument, a reading handed back, a
-    /// system write's field, a `from` datum written into the prompt), the
-    /// program is refused by name, before anything runs.
     /// What the checker holds a program to, read where admission held a
     /// value may be anything: a closure's parameter typed by a position is
     /// one record (a graph the run built among them), its field reads
@@ -4462,8 +4572,30 @@ mod tests {
         ] {
             assert_eq!(shaped(body).as_deref(), Some(reason), "{body}");
         }
+        // A record handed to a position parameter is held to holding none in
+        // a field at every call: one built here, or one a call hands back.
+        let with_helper = |helper: &str, body: &str| file(&format!("{PRELUDE}node Co {{\n  name: <text>\n}}\n{helper}\nmovement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
+        let dirty = "  co = write crm-[:companies]-> { name: \"a\" }\n  x = graph<Co> { name: COALESCE(co, \"x\") }";
+        let reads = "function hp(r: <Co>) {\n  write crm-[:notes]-> { body: r.name }\n}";
+        let passes_on = "function hp(r: <Co>) {\n  named = (q: <Co>) => {\n    write crm-[:notes]-> { body: q.name }\n  }\n  named(q: r)\n}";
+        let makes = "function mk(c: <crm-[:company]->>) {\n  g = graph<Co> { name: COALESCE(c, \"x\") }\n  return g\n}";
+        assert_eq!(with_helper(reads, &format!("{dirty}\n  hp(r: x)")).as_deref(), Some("position_arg_record"));
+        assert_eq!(with_helper(passes_on, &format!("{dirty}\n  hp(r: x)")).as_deref(), Some("position_arg_record"));
+        // The closure is walked where it is written, the node it is handed
+        // already known to hold one: its field read is refused first.
+        assert_eq!(
+            with_helper(makes, "  co = write crm-[:companies]-> { name: \"a\" }\n  x = mk(c: co)\n  named = (r: <Co>) => {\n    write crm-[:notes]-> { body: r.name }\n  }\n  named(r: x)").as_deref(),
+            Some("write_field_record")
+        );
+        assert_eq!(with_helper(&format!("{makes}\n{reads}"), "  co = write crm-[:companies]-> { name: \"a\" }\n  x = mk(c: co)\n  hp(r: x)").as_deref(), Some("position_arg_record"));
+        assert_eq!(with_helper(reads, "  x = graph<Co> { name: \"Acme\" }\n  hp(r: x)"), None);
+        assert_eq!(with_helper(passes_on, "  x = graph<Co> { name: \"Acme\" }\n  hp(r: x)"), None);
     }
 
+    /// A request carries no record: where the TypeScript would hand its host
+    /// the binding object (a plugin's argument, a reading handed back, a
+    /// system write's field, a `from` datum written into the prompt), the
+    /// program is refused by name, before anything runs.
     #[test]
     fn refuses_a_record_bound_for_a_request_by_name() {
         let specs: JsMap<PluginSpec> = serde_json::from_value(serde_json::json!({

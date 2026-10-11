@@ -398,6 +398,10 @@ function routing(): { routes: Routes; reasons: string[] } {
   if (Object.keys(rustRunStats.declined).length > 0) return { routes: 'declined', reasons: Object.keys(rustRunStats.declined) };
   // Never handed to the Rust engine (both entries refuse it first).
   if (rustRunStats.routed === 0) return { routes: 'unreached', reasons: [] };
+  // A run that ended mid-run naming a construct (MOVENG_UNSUPPORTED) ran in
+  // Rust, counted apart: whole only where it ends as the TypeScript's does,
+  // which the comparison below holds it to, and it says so.
+  if (rustRunStats.failedByName > 0) return { routes: 'whole', reasons: ['failed_by_name'] };
   // Whole means the shim saw it run whole, not only that nothing refused.
   if (rustRunStats.ranWhole === 0) return { routes: 'declined', reasons: ['did_not_run_whole'] };
   return { routes: 'whole', reasons: [] };

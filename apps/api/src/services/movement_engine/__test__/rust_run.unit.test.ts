@@ -22,6 +22,7 @@ import { openRunContext } from '../run_context';
 import { credentialIdsFor, makeTestHost, type TestHostOverrides } from '../test_host';
 import { AdapterCallFailed } from '../host_adapter';
 import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
+import { MovementEngineError } from '../errors';
 import { LOCAL_ZONE_UNVERIFIED, processLocalZone, runSegmentInRust } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 
@@ -320,7 +321,7 @@ describe('a whole run in the Rust engine', () => {
       });
       resetRustRunStats();
       const run = await runOn(engine, { ...c, host: counting });
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ...endedInRust('error' in run ? run.error : undefined), notAdmitted: {}, declined: {} });
       return { ...run, called, ended: String(runFailureCause('error' in run ? run.error : undefined)) };
     };
     /** `c` on both engines, each held to `expectOf`, the two agreeing. */
@@ -762,11 +763,11 @@ async function segmentOfMovement(source: string, movementName: string) {
  *  reason. */
 async function admission(source: string): Promise<string> {
   resetRustRunStats();
-  await segmentOf(source);
+  const { outcome } = await segmentOf(source);
   const [reason] = Object.keys(rustRunStats.notAdmitted);
   if (reason !== undefined) return reason;
   // Admitted: it ran in Rust, to its end or its own failure.
-  expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ranWhole: 1 });
+  expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ...endedInRust('error' in outcome ? outcome.error : undefined) });
   return 'admitted';
 }
 
@@ -775,4 +776,12 @@ async function admission(source: string): Promise<string> {
 function expectZoneStanding(named: string | undefined): void {
   const expected = process.env.EXPECT_LOCAL_ZONE;
   if (expected !== undefined) expect([process.env.TZ, named === undefined ? 'unverified' : 'named']).toEqual([process.env.TZ, expected]);
+}
+
+/** What the Rust run's counts say of how it ended: run to its end (its own
+ *  failure included), or, counted apart, ended mid-run naming a construct
+ *  the engine does not run (`MOVENG_UNSUPPORTED`). */
+function endedInRust(error: unknown): { ranWhole: number; failedByName: number } {
+  const cause = runFailureCause(error);
+  return cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED' ? { ranWhole: 0, failedByName: 1 } : { ranWhole: 1, failedByName: 0 };
 }

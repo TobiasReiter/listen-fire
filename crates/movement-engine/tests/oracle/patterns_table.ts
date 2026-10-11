@@ -334,6 +334,16 @@ export const PATTERNS: Pattern[] = [
     ],
   },
   {
+    reason: 'position_arg_record',
+    routes: 'refused',
+    note: "a record that may hold a record in a field handed to a position parameter, which the callee reads field by field as data: every call site holds what it hands to a record known to hold none (chunk 7A Task 6b, fix round 1). Needs the binding object as the TypeScript hands it on, as write_field_record does",
+    programs: [
+      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  write crm-[:notes]-> { body: r.name }\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: COALESCE(co, "x") }\n  hp(r: x)')}`, movementName: 'm' }),
+      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  named = (q: <Co>) => {\n    write crm-[:notes]-> { body: q.name }\n  }\n  named(q: r)\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: COALESCE(co, "x") }\n  hp(r: x)')}`, movementName: 'm' }),
+      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  write crm-[:notes]-> { body: r.name }\n}\n${m('  x = graph<Co> { name: "Acme" }\n  hp(r: x)')}`, movementName: 'm', routes: 'whole' }),
+    ],
+  },
+  {
     reason: 'extract_from_record',
     routes: 'refused',
     note: "a record in an extraction's from datum, written into the prompt as JSON.stringify writes the binding object: needs the binding object. Main's nested-record rule (forward merge 3) leaves `extract from [ … ]` inputs untyped (a record is legitimate content there), so both programs still check",
