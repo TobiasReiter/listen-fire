@@ -2321,22 +2321,6 @@ mod tests {
 
     const SLEEPS: &str = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
 
-    /// An extraction declaring a `__proto__` field is refused at admission
-    /// by name, wherever it sits (a member of an `onError` fan) and whatever
-    /// effect comes before it: nothing of the run happens here, so it never
-    /// fails mid-run where the TypeScript carries on.
-    #[test]
-    fn an_extraction_declaring_a_proto_field_is_refused_before_anything_happens() {
-        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  ys = MAP([1, 2], { onError: \"ignore\" }, (x) => {\n    d = extract from [msg.`subject`] {\n      __proto__: \"p\"\n    }\n    return d\n  })\n  return ys\n}".to_string();
-        let refused = json!({ "refused": "extract_proto_field", "reasons": ["extract_proto_field"] });
-        for before in ["", "  if 1 == 1 {\n    g = 1\n  }\n"] {
-            let source = source.replace("  ys = MAP", &format!("{before}  ys = MAP"));
-            let (done, seen) = drive(&source, json!(["o", 1, []]), plain_host(json!({})));
-            assert_eq!(done, refused, "{before}");
-            assert!(seen.is_empty(), "asked {seen:?}");
-        }
-    }
-
     /// The engine reads no clock: a sleep asks the host's `clock.now` and
     /// wakes at its answer plus the sleep.
     #[test]

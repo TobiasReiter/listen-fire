@@ -277,13 +277,19 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     }
   });
 
-  it('refuses an extraction declaring a field or node named __proto__ at admission, wherever it sits, so both engines answer as the TypeScript does', async () => {
+  // The checker's MOV_SHAPE_FIELD_PROTO: the run ends at the check on both
+  // engines, the Rust one having admitted it and asked for the check.
+  it('ends a run whose extraction declares a field or node named __proto__ at the check, on both engines alike', async () => {
     const extract = (indent: string) =>
       [`${indent}d = extract from [msg.\`text\`] {`, `${indent}  __proto__: "p"`, `${indent}  name: "n"`, `${indent}}`].join('\n');
     const fan = ['  ys = MAP([1, 2], { onError: "ignore" }, (x) => {', extract('    '), '    return d', '  })', '  return ys'].join('\n');
+    const declared = 'node Entry {\n  name: <text>\n  node __proto__ {\n    a: <text>\n  }\n}\nmovement m(msg: <inbox-[:message]->>) {\n  d = extract from [msg.`text`] {\n    node entry: <Entry>\n  }\n}';
     const reply = { 'x:extract_result#1': [{ __proto__: wrap(3), name: wrap('Acme') }] };
-    for (const body of [`${extract('  ')}\n  return d`, fan, `  if 1 == 1 {\n    g = 1\n  }\n${fan}`]) {
-      await agree({ source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, replies: [reply, reply, reply] }, { refused: 'extract_proto_field' });
+    const sources = [`${extract('  ')}\n  return d`, fan, `  if 1 == 1 {\n    g = 1\n  }\n${fan}`].map((body) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`);
+    for (const source of [...sources, declared]) {
+      const ts = await agree({ source, replies: [reply, reply, reply] }, { runsWhole: true });
+      expect('error' in ts && runFailureCause(ts.error)).toMatchObject({ code: 'MOVENG_CHECK', message: expect.stringContaining('MOV_SHAPE_FIELD_PROTO') });
+      expect(ts.asked).toEqual([]);
     }
   });
 

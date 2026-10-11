@@ -101,6 +101,7 @@ Each item applies only to an automation on Luminous Owl (4). Versions 1 to 3 kee
 These apply to every language version. Full text: the [migration guide's appendix](docs/language/luminous-owl-migration.md#appendix-every-version-changes-in-full).
 
 - The `else` arm of a null test narrows absence. It accepts only programs that were refused before.
+- A field or child node named `__proto__`, in a node declaration or an extraction, is refused (`MOV_SHAPE_FIELD_PROTO`). It used to validate, but the extracted record never held the field: JavaScript set the record's prototype from the model's answer instead. A bug fix, not a language version: an automation declaring one now fails its check on every version; rename the field.
 - An adapter edge or collection whose name starts with `@` is left out of the catalog with a note, instead of failing the connection's `describe`.
 - An Affinity identity candidate carries the organisation's or person's fields as Affinity holds them, not the asserted values.
 
