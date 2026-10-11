@@ -56,11 +56,16 @@ const path = require('node:path');
 // program was refused or handed back for a date (no `builtin_arg_record`
 // over a date member, no `builtins.function` request; the five
 // `builtins.compare` requests left in v2 and v3 are WITHIN's); the floors
-// stay those less a margin of 2. A floor
+// stay those less a margin of 2. Chunk 7A Task 6 (the burn-down: meta keys,
+// field functions, AI() and the tier table as run input, FILE/READ, IS of a
+// system's record, records-output plugins and every plugin argument form,
+// concurrent collection members, closures called by name, the extraction
+// call, nested calls, member-path write roots, 2026-10-11) runs v1 1188, v2
+// 1499, v3 2556 whole; the floors are those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 1058, v2: 1360, v3: 1916 };
+const RAN_WHOLE_FLOOR = { v1: 1186, v2: 1497, v3: 2554 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
