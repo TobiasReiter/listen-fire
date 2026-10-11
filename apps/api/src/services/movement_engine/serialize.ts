@@ -60,7 +60,7 @@ import type {
   NodeEdge,
   SourceRead,
 } from './expression';
-import { bindValue, bindingOf, isDictValue } from './expression';
+import { bindValue, binding, bindingOf, isDictValue } from './expression';
 import { settledAll } from './fans';
 import { isFileRef } from '../translation_graph/adapter';
 import { MovementEngineError } from './errors';
@@ -187,7 +187,7 @@ export function newParkReader(): ParkReader {
 function nodeNumbered(park: ParkReader, id: number): NodePosition {
   const known = park.nodes.get(id);
   if (known !== undefined) return known;
-  const node: NodePosition = { kind: 'nodePosition', fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} };
+  const node: NodePosition = binding({ kind: 'nodePosition', fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} });
   park.nodes.set(id, node);
   park.unfilled.add(id);
   return node;
@@ -517,16 +517,16 @@ async function rehydrateInPark(
   switch (descriptor.kind) {
     // ── Bucket 1 — pure data ──
     case 'event':
-      return { kind: 'event' };
+      return binding({ kind: 'event' });
     case 'handle': {
-      const binding: Extract<Binding, { kind: 'handle' }> = {
+      const written: Extract<Binding, { kind: 'handle' }> = binding({
         kind: 'handle',
         handle: { ...descriptor.handle },
         targetType: descriptor.targetType,
         graph: await rehydrateHandleGraph(descriptor.graph, ctx),
-      };
+      });
       if (descriptor.oldIsSelf === true) {
-        binding.handle.old = binding;
+        written.handle.old = written;
       } else if (descriptor.old !== undefined) {
         const old = await rehydrate(descriptor.old);
         if (old.kind !== 'handle') {
@@ -535,38 +535,38 @@ async function rehydrateInPark(
             `the parked state's record before a write is ${old.kind}, not a handle`,
           );
         }
-        binding.handle.old = old;
+        written.handle.old = old;
       }
-      return binding;
+      return written;
     }
     case 'extractRoot':
-      return { kind: 'extractRoot', emission: rehydrateEmission(descriptor.emission) };
+      return binding({ kind: 'extractRoot', emission: rehydrateEmission(descriptor.emission) });
     case 'extractPosition':
-      return { kind: 'extractPosition', emission: rehydrateEmission(descriptor.emission) };
+      return binding({ kind: 'extractPosition', emission: rehydrateEmission(descriptor.emission) });
     case 'sourcePosition':
-      return {
+      return binding({
         kind: 'sourcePosition',
         position: descriptor.position,
         ...(descriptor.edgeProperties !== undefined ? { edgeProperties: descriptor.edgeProperties } : {}),
         ...(descriptor.read !== undefined
           ? { read: await ctx.resolveSourceRead(descriptor.read.instanceName) }
           : {}),
-      };
+      });
     case 'shapePosition':
-      return {
+      return binding({
         kind: 'shapePosition',
         shape: descriptor.shape,
         node: descriptor.node,
         fields: descriptor.fields,
         fieldProvenance: descriptor.fieldProvenance,
-      };
+      });
     case 'nodePosition': {
       // Registered (and so reachable by its references) before its edges are
       // read, which is what lets an edge lead back to it.
       const node: NodePosition =
         descriptor.id !== undefined
           ? nodeNumbered(park, descriptor.id)
-          : { kind: 'nodePosition', fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} };
+          : binding({ kind: 'nodePosition', fields: {}, fieldOrder: [], fieldProvenance: {}, edges: {} });
       if (descriptor.id !== undefined) park.unfilled.delete(descriptor.id);
       node.fields = inOrder(descriptor.fields, descriptor.fieldOrder);
       node.fieldOrder = descriptor.fieldOrder ?? Object.keys(descriptor.fields);
@@ -589,14 +589,14 @@ async function rehydrateInPark(
     case 'nodeRef':
       return nodeNumbered(park, descriptor.id);
     case 'lazyWalk':
-      return { kind: 'lazyWalk', walk: await rehydrateDeferredWalk(descriptor.walk, ctx, park) };
+      return binding({ kind: 'lazyWalk', walk: await rehydrateDeferredWalk(descriptor.walk, ctx, park) });
     case 'value':
-      return {
+      return binding({
         kind: 'value',
         value: descriptor.value,
         ...(descriptor.provenance !== undefined ? { provenance: descriptor.provenance } : {}),
         ...(descriptor.many === true ? { many: true } : {}),
-      };
+      });
     // Through the one binding constructor, so a park taken while a name held
     // one record on the value plane resumes with the record bound as itself.
     case 'recordValue':
@@ -604,17 +604,17 @@ async function rehydrateInPark(
         many: descriptor.many === true,
       });
     case 'callback':
-      return {
+      return binding({
         kind: 'callback',
         callbackId: descriptor.callbackId,
         url: descriptor.url,
         params: descriptor.params,
-      };
+      });
     // ── Bucket 2 — live ref ──
     case 'instance':
       return ctx.resolveInstance(descriptor.instance);
     case 'resource':
-      return { kind: 'resource', resource: rehydrateResource(descriptor.resource) };
+      return binding({ kind: 'resource', resource: rehydrateResource(descriptor.resource) });
     // ── Bucket 3 — code refs from the re-parsed program ──
     case 'shape':
     case 'movement':
@@ -623,28 +623,28 @@ async function rehydrateInPark(
     // Its words read the running file's scope after a resume — the body
     // scope it was declared in is the one being rebuilt.
     case 'localShape':
-      return { kind: 'shape', declaration: descriptor.declaration, local: true };
+      return binding({ kind: 'shape', declaration: descriptor.declaration, local: true });
     case 'positions':
-      return {
+      return binding({
         kind: 'positions',
         landings: await settledAll(descriptor.landings.map(rehydrate)),
-      };
+      });
     case 'tuple':
-      return {
+      return binding({
         kind: 'tuple',
         slots: await settledAll(descriptor.slots.map(rehydrate)),
-      };
+      });
     case 'closure': {
       const captured = new Map<string, Binding>();
       for (const [name, entry] of Object.entries(descriptor.captured)) {
         captured.set(name, await rehydrate(entry));
       }
-      return {
+      return binding({
         kind: 'closure',
         closure: descriptor.closure,
         captured,
         ...(descriptor.self !== undefined ? { self: descriptor.self } : {}),
-      };
+      });
     }
     // ── Bucket 3 (recursive) ──
     case 'blockMeta': {
@@ -652,11 +652,11 @@ async function rehydrateInPark(
       for (const [name, descriptors] of Object.entries(descriptor.edges)) {
         edges.set(name, await settledAll(descriptors.map(rehydrate)));
       }
-      return {
+      return binding({
         kind: 'blockMeta',
         edges,
         ...(descriptor.plural === true ? { plural: true } : {}),
-      };
+      });
     }
     default:
       return assertNever(descriptor);

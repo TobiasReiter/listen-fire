@@ -210,22 +210,23 @@ export interface WriteRecord extends RecordedWrite {
  * its own in the snapshot.
  */
 export function snapshotOfHandle(
-  binding: Extract<Binding, { kind: 'handle' }>,
+  live: Extract<Binding, { kind: 'handle' }>,
 ): Extract<Binding, { kind: 'handle' }> {
-  const { writtenValues, resultData } = binding.handle;
+  const { writtenValues, resultData } = live.handle;
   // The value bags are copied, not shared: the live handle is the earlier
   // write's firing record, and a refresh through this snapshot must not
-  // rewrite what that write logged.
-  const snapshot: Extract<Binding, { kind: 'handle' }> = {
-    ...binding,
+  // rewrite what that write logged. Built through the constructor: a spread
+  // copies the fields, never the mark.
+  const snapshot: Extract<Binding, { kind: 'handle' }> = binding({
+    ...live,
     handle: {
-      ...binding.handle,
+      ...live.handle,
       writtenValues: { ...writtenValues },
       ...(resultData !== undefined ? { resultData: { ...resultData } } : {}),
       snapshot: true,
     },
-  };
-  if (binding.handle.old === binding) snapshot.handle.old = snapshot;
+  });
+  if (live.handle.old === live) snapshot.handle.old = snapshot;
   return snapshot;
 }
 
@@ -242,7 +243,7 @@ export function snapshotOfRecord(input: {
   targetType: string;
   graph: HandleGraph;
 }): Extract<Binding, { kind: 'handle' }> {
-  return {
+  return binding({
     kind: 'handle',
     handle: {
       adapterType: input.adapterType,
@@ -257,7 +258,7 @@ export function snapshotOfRecord(input: {
     },
     targetType: input.targetType,
     graph: input.graph,
-  };
+  });
 }
 
 /** Is this hop `-[:@old]->`, which the engine answers from the handle itself
@@ -362,11 +363,51 @@ export type NodeEdge =
 
 
 /**
- * One Environment binding. The instance binding carries construction
+ * The mark every engine object carries and no data can: a private field, which
+ * only an object constructed by this class has. Data reaches the engine as
+ * JSON or plain objects — an adapter's field value, a webhook body, a plugin's
+ * output — and nothing in that data can name a private field, so whatever keys
+ * it carries it is never taken for a binding. Not exported: `binding()` is the
+ * only way to make one. JSON, the park writer and a spread see only a binding's
+ * own enumerable fields, never the mark.
+ */
+class Bound {
+  readonly #brand = true;
+  // Every instance is made by `binding()` around a shape, so holding the mark
+  // IS being a binding.
+  static has(value: unknown): value is Binding {
+    return typeof value === 'object' && value !== null && #brand in value;
+  }
+}
+
+/**
+ * One Environment binding: a shape the engine itself made, carrying the mark
+ * (`binding()`). The instance binding carries construction
  * data only (slug + credential name); adapter resolution and caching are
  * the interpreter's concern (`run.ts`) so the value model stays inert.
  */
-export type Binding =
+export type Binding = Bound & BindingShape;
+
+/**
+ * The ONE constructor of a binding, and the only place a shape becomes one: a
+ * fresh marked object holding the shape's fields. A derived binding (a copy
+ * with a field changed) comes through here too, because a spread drops the
+ * mark — in the type as well as at run time — which is what lets `bindingOf`
+ * tell an engine object from data by the mark alone.
+ */
+export function binding<S extends BindingShape>(shape: S): S & Bound {
+  return Object.assign(new Bound(), shape);
+}
+
+/** One emitted entity of an extraction, as the position a hop lands on. */
+export function extractPositionOf(
+  emission: ExtractEmission,
+): Extract<Binding, { kind: 'extractPosition' }> {
+  return binding({ kind: 'extractPosition', emission });
+}
+
+/** What a binding holds, without the mark: the shapes `binding()` takes. */
+export type BindingShape =
   /** The movement parameter — the trigger's event position. */
   | { kind: 'event' }
   /**
@@ -570,13 +611,12 @@ export type Binding =
  * answer back in the currency it arrived in — a binding where the function
  * returned a position (`MAP(pieces, (p) => { return extract … })`), a plain
  * value where it returned one — so a list on the value plane can hold
- * positions, and this is what tells the two apart. Structural, like every other
- * test here: a binding is an object whose `kind` is one of the kinds.
+ * positions, and this is what tells the two apart. By the mark alone, never
+ * by the shape: data carrying a `kind` key is still data.
  */
 export function bindingOf(value: unknown): Binding | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const kind = (value as { kind?: unknown }).kind;
-  return typeof kind === 'string' && kind in describeBinding ? (value as Binding) : undefined;
+  // Only `binding()` sets the mark, so this is true of engine objects alone.
+  return Bound.has(value) ? value : undefined;
 }
 
 /**
@@ -595,7 +635,12 @@ export function bindValue(
 ): Binding {
   const record = bindingOf(value);
   if (record !== undefined) return record;
-  return { kind: 'value', value, provenance, ...(many === true ? { many: true } : {}) };
+  return binding({
+    kind: 'value',
+    value,
+    provenance,
+    ...(many === true ? { many: true as const } : {}),
+  });
 }
 
 /**
@@ -1713,10 +1758,10 @@ export async function evalMovementExpr(
       // alias-rooted form arrives as a traverse terminal (the bridge
       // wraps it — see evaluateTraverse).
       if (ctx.scope?.kind === 'position') {
-        return evaluateExists(expr, [{ kind: 'sourcePosition', position: ctx.scope.position }], ctx);
+        return evaluateExists(expr, [binding({ kind: 'sourcePosition', position: ctx.scope.position })], ctx);
       }
       if (ctx.scope?.kind === 'emission') {
-        return evaluateExists(expr, [{ kind: 'extractPosition', emission: ctx.scope.emission }], ctx);
+        return evaluateExists(expr, [binding({ kind: 'extractPosition', emission: ctx.scope.emission })], ctx);
       }
       throw unsupported(
         'rootless EXISTS()',
@@ -2486,11 +2531,7 @@ async function traverseFrom(
       const emissions = walkExtractSteps(binding.emission, expr.steps, name);
       const existsTerminal = existsTerminalOf(expr, name, { allowSteps: true });
       if (existsTerminal) {
-        return evaluateExists(
-          existsTerminal,
-          emissions.map((emission): Binding => ({ kind: 'extractPosition', emission })),
-          ctx,
-        );
+        return evaluateExists(existsTerminal, emissions.map(extractPositionOf), ctx);
       }
       return readTerminal(expr, {
         name,
@@ -2663,7 +2704,7 @@ function heldBinding(value: unknown): Binding | undefined {
   if (value.length === 0) return undefined;
   const members = value.map(bindingOf);
   return members.every((m): m is Binding => m !== undefined)
-    ? { kind: 'positions', landings: members }
+    ? binding({ kind: 'positions', landings: members })
     : undefined;
 }
 
@@ -3006,19 +3047,18 @@ async function stepExistsCursor(
         })),
       });
       return related.map(
-        (r): Binding => ({
-          kind: 'sourcePosition',
-          position: r.position,
-          ...(r.edgeProperties !== undefined ? { edgeProperties: r.edgeProperties } : {}),
-          ...(cursor.read !== undefined ? { read: cursor.read } : {}),
-        }),
+        (r): Binding =>
+          binding({
+            kind: 'sourcePosition',
+            position: r.position,
+            ...(r.edgeProperties !== undefined ? { edgeProperties: r.edgeProperties } : {}),
+            ...(cursor.read !== undefined ? { read: cursor.read } : {}),
+          }),
       );
     }
     case 'extractRoot':
     case 'extractPosition':
-      return (cursor.emission.children.get(step.edgeTypeId) ?? []).map(
-        (emission): Binding => ({ kind: 'extractPosition', emission }),
-      );
+      return (cursor.emission.children.get(step.edgeTypeId) ?? []).map(extractPositionOf);
     case 'blockMeta':
       return cursor.edges.get(step.edgeTypeId) ?? [];
     case 'nodePosition': {
@@ -3038,7 +3078,7 @@ async function stepExistsCursor(
       // graph's hop from it, the same seam a hopped read off the handle takes.
       const record = await handleRecord(cursor, describeBinding.handle, ctx);
       return stepExistsCursor(
-        { kind: 'sourcePosition', position: record.start, read: record.read },
+        binding({ kind: 'sourcePosition', position: record.start, read: record.read }),
         step,
         ctx,
       );
@@ -3127,10 +3167,10 @@ async function evaluateSort(
  * there is nothing to read a key off — such a list sorts by its members.
  */
 function memberScope(member: unknown): PositionScope | undefined {
-  const binding = bindingOf(member);
-  if (binding !== undefined) return scopeOf(binding);
+  const record = bindingOf(member);
+  if (record !== undefined) return scopeOf(record);
   if (member !== null && typeof member === 'object' && isDictValue(member)) {
-    return { kind: 'binding', binding: { kind: 'value', value: member } };
+    return { kind: 'binding', binding: binding({ kind: 'value', value: member }) };
   }
   return undefined;
 }
@@ -3479,7 +3519,7 @@ async function walkAdapterPositions(input: {
   const { read, ctx } = input;
   let cursors: SourcePosition[] = [input.start];
   let landed: Array<Extract<Binding, { kind: 'sourcePosition' }>> = [
-    { kind: 'sourcePosition', position: input.start, read },
+    binding({ kind: 'sourcePosition', position: input.start, read }),
   ];
   for (const step of input.steps) {
     if (step.type !== 'edge') {
@@ -3518,12 +3558,12 @@ async function walkAdapterPositions(input: {
       const kept: Array<Extract<Binding, { kind: 'sourcePosition' }>> = [];
       for (const r of related) {
         if (!isMember(r.position)) continue;
-        const candidate: Extract<Binding, { kind: 'sourcePosition' }> = {
+        const candidate: Extract<Binding, { kind: 'sourcePosition' }> = binding({
           kind: 'sourcePosition',
           position: r.position,
           ...(r.edgeProperties !== undefined ? { edgeProperties: r.edgeProperties } : {}),
           read,
-        };
+        });
         if (
           step.expressionFilter &&
           !(await hopFilterKeeps({ step, filter: step.expressionFilter, landed: candidate, ctx }))
@@ -3746,9 +3786,7 @@ async function walkMetaSteps(
       continue;
     }
     if (binding.kind === 'extractPosition' || binding.kind === 'extractRoot') {
-      const children = (binding.emission.children.get(step.edgeTypeId) ?? []).map(
-        (emission): Binding => ({ kind: 'extractPosition', emission }),
-      );
+      const children = (binding.emission.children.get(step.edgeTypeId) ?? []).map(extractPositionOf);
       reached.push(...(await walkMetaSteps(children, rest, name, ctx)));
       continue;
     }
@@ -3977,7 +4015,7 @@ function plainRecordOf(binding: Binding, path: Set<Binding>): unknown {
       for (const [name, children] of binding.emission.children) {
         edges.push([
           name,
-          children.map((emission) => plainRecordOf({ kind: 'extractPosition', emission }, path)),
+          children.map((emission) => plainRecordOf(extractPositionOf(emission), path)),
         ]);
       }
     }
