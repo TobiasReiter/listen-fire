@@ -406,7 +406,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'expression_closure',
     routes: 'refused',
-    note: 'a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), which the TypeScript runs as a call bound first (from version 3): needs calls bound inside expressions (the checker’s nested_calls)',
+    note: 'a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), which the TypeScript runs as a call bound first (from version 3): needs the op found again on resume (a member frame names it by its span inside the expression); the other nested calls run since chunk 7A Task 6',
     programs: [
       () => ({ body: '  names = { all: MAP([msg.`subject`, "beta"], (s) => UPPER(s)) }\n  write crm-[:notes]-> { body: COALESCE(AT(names.all, 1), "none") }' }),
       () => ({ body: '  if COUNT(FILTER([msg.`subject`], (s) => s != "")) > 0 {\n    write crm-[:notes]-> { body: "some" }\n  }' }),
@@ -935,7 +935,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'function:<id>',
     routes: 'refused',
-    note: 'CHUNKS, a namespaced member this engine lacks, or a function, movement or closure called inside an expression (bound first by the TypeScript, the checker’s nested_calls): needs CHUNKS ported and calls bound inside expressions',
+    note: "CHUNKS, or a namespaced member this engine lacks: needs CHUNKS's cut and density estimate ported (their patterns need \\p{Lu} and case-insensitive matching the engine's regex lacks); a closure's, a plugin's or an extraction's call inside an expression runs since chunk 7A Task 6 (nested_call)",
     programs: [
       (pick) => ({ body: `  pieces = CHUNKS("aaaa bbbb cccc dddd eeee ffff", { size: ${pick([8, 12])} })\n  write crm-[:notes]-> { body: "\${COUNT(pieces)}" }` }),
     ],
