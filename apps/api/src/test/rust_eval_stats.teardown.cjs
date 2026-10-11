@@ -75,11 +75,15 @@ const path = require('node:path');
 // a shape the data carries, 2026-10-11) leaves v1 1182, v2 1493, v3 2549
 // whole: the drop is the triaged corpus cases that handed the engine a
 // descriptor-shaped dict as a file (6 / 6 / 7 of them ran whole), skipped now,
-// not runs Rust newly refuses; the floors are those less a margin of 2. A floor
+// not runs Rust newly refuses; the floors are those less a margin of 2. Its fix
+// round 1 (every byte read through a document the tenant owns or an instance
+// the run holds; the store owns its key) leaves v1 1180, v2 1491, v3 2547: the
+// drop is the two triaged stdlib_file cases per corpus whose hand-built store
+// predates the store's key reader; the floors are those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.
-const RAN_WHOLE_FLOOR = { v1: 1180, v2: 1491, v3: 2547 };
+const RAN_WHOLE_FLOOR = { v1: 1178, v2: 1489, v3: 2545 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of

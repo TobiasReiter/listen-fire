@@ -23,6 +23,9 @@ const HAND_BUILT_FILE =
 const UNDECLARED_PLUGIN_FILE =
   "a plugin's undeclared file (PLAN-07A Task 4d): the test's catalog gives the plugin no output, so its records' `file` key is declared nowhere; a file is now only what an envelope declares one, and the registered plugin's output declares `file`, so a run against the real catalog carries the fetched file as before";
 
+const HAND_BUILT_STORE =
+  "a hand-built document store (PLAN-07A Task 4d fix round 1): the test's fake store predates the store's own key reader (`keyOf`), which every read and ownership check now goes through, so the store reads one key per URI and a file is the team's on that same reading; the real stores carry it, so no movement observes the difference";
+
 exports.triage = [
   {
     file: 'services/movement_engine/__test__/serialize.unit.test.ts',
@@ -65,4 +68,6 @@ exports.triage = [
   { file: "services/movement_engine/__test__/read_builtin.unit.test.ts", test: "carries a `file` provenance origin — rawTextId, handle and all", reason: HAND_BUILT_FILE },
   { file: "services/movement_engine/__test__/read_builtin.unit.test.ts", test: "extracts from the file text, and the call still sees the file origin", reason: HAND_BUILT_FILE },
   { file: "services/movement_engine/__test__/read_builtin.unit.test.ts", test: "no seam in scope fails loud — \"nothing can read it\" is not \"it had no text\"", reason: HAND_BUILT_FILE },
+  { file: "services/movement_engine/__test__/stdlib_file.unit.test.ts", test: "captures the artifact ref and the deterministic stdlib values", reason: HAND_BUILT_STORE },
+  { file: "services/movement_engine/__test__/stdlib_file.unit.test.ts", test: "streams text/plain bytes that are the digest verbatim", reason: HAND_BUILT_STORE },
 ];

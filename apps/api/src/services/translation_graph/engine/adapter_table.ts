@@ -16,6 +16,8 @@
 
 import type { TenantId } from 'engine-contracts';
 import type { Adapter } from '../adapter';
+
+import { withFileOwners, type FileOwners } from './files/file_owners';
 import type { SegmentFacts } from '../../movement_engine/host_kit';
 
 import {
@@ -137,6 +139,8 @@ function resolutionKey(resolution: AdapterResolution, dryRun: boolean): string {
 
 class SegmentInstances {
   private readonly byId = new Map<string, Adapter>();
+  /** What each instance was resolved as: what a file's owner is matched by. */
+  private readonly held: Array<{ resolution: AdapterResolution; adapter: Adapter }> = [];
   /** One id per resolution: the engine compares what it resolved, so
    *  resolving the same thing twice must answer the same id. The promise is
    *  kept, so two resolutions at once construct one instance. */
@@ -161,7 +165,7 @@ class SegmentInstances {
     const key = resolutionKey(input.resolution, input.dryRun);
     let pending = this.ids.get(key);
     if (pending === undefined) {
-      pending = this.register(input.dryRun, live);
+      pending = this.register(input.resolution, input.dryRun, live);
       this.ids.set(key, pending);
       // A failed resolution is not an instance: the next one tries again.
       pending.catch(() => {
@@ -172,11 +176,38 @@ class SegmentInstances {
     return describeInstance(id, this.instance(id));
   }
 
-  private async register(dryRun: boolean, live: () => Adapter | Promise<Adapter>): Promise<string> {
+  private async register(
+    resolution: AdapterResolution,
+    dryRun: boolean,
+    live: () => Adapter | Promise<Adapter>,
+  ): Promise<string> {
     const adapter = await live();
     const id = `${this.segmentId}:${++this.next}`;
-    this.byId.set(id, dryRun ? wrapAdapterForDryRun(adapter, this.rehearsal) : adapter);
+    const held = dryRun ? wrapAdapterForDryRun(adapter, this.rehearsal) : adapter;
+    this.byId.set(id, held);
+    this.held.push({ resolution, adapter: held });
     return id;
+  }
+
+  /**
+   * The instance this segment holds for a file's owner: of its adapter type
+   * (the slug it was resolved by, or the live adapter's own type), and — where
+   * the descriptor names one — with its credential and construction args; a
+   * descriptor naming no credential takes the type's only instance. None, or
+   * more than one to choose between: undefined, and the file is not read.
+   */
+  fileOwner(owner: { adapterType: string; credentialsId?: string; constructionArgs?: Record<string, string> }): Adapter | undefined {
+    const ofType = this.held.filter(
+      ({ resolution, adapter }) => String(resolution.adapterType) === owner.adapterType || adapter.adapterType === owner.adapterType,
+    );
+    const args = (value: Record<string, string> | undefined) =>
+      JSON.stringify(Object.entries(value ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    const matching = ofType.filter(
+      ({ resolution }) =>
+        (owner.credentialsId === undefined || resolution.credentialsId === owner.credentialsId) &&
+        (owner.constructionArgs === undefined || args(resolution.constructionArgs) === args(owner.constructionArgs)),
+    );
+    return matching.length === 1 ? matching[0]?.adapter : undefined;
   }
 
   instance(id: string): Adapter {
@@ -231,6 +262,8 @@ export interface AdapterTable extends HostAdapters {
   answer<M extends AdapterMethod>(input: AdapterCall<M>): Promise<AdapterCallMap[M]['result']>;
   /** Forget a segment's instances once the segment has closed. */
   closeSegment(segmentId: string): void;
+  /** The instances a segment holds, as a file's owner is found among them. */
+  fileOwners(segmentId: string): FileOwners;
 }
 
 export function adapterTable(options: {
@@ -270,7 +303,11 @@ export function adapterTable(options: {
       }
       const adapter = segment.instance(input.instance);
       const dispatch = DISPATCH[input.method];
-      const result = await around(input.segmentId, () => dispatch(adapter, input.args));
+      // A file the call redeems (a target's upload) is owned by an instance
+      // this segment holds, or it is not read.
+      const result = await around(input.segmentId, () =>
+        withFileOwners((owner) => segment.fileOwner(owner), () => dispatch(adapter, input.args)),
+      );
       return { result };
     } catch (error) {
       return { error: classify(error, { segmentId: input.segmentId }) };
@@ -297,6 +334,9 @@ export function adapterTable(options: {
     },
     closeSegment(segmentId) {
       instances.delete(segmentId);
+    },
+    fileOwners(segmentId) {
+      return (owner) => instances.get(segmentId)?.fileOwner(owner);
     },
   };
 }

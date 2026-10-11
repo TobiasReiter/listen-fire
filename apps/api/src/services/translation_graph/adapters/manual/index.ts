@@ -50,7 +50,7 @@ import type {
 } from '../../types';
 import type { TriggerEvent } from '../../triggers/types';
 
-import { services } from '../../../../adapters/registry';
+import { streamFileRef } from '../../engine/files/retrieve';
 import { fileHandle, ownedFileSource } from '../../adapter';
 import { uniformWalk } from '../hop';
 import { MANUAL_HANDBOOK_SECTION } from './handbook_section';
@@ -178,9 +178,7 @@ export class ManualAdapter extends BaseAdapter implements Adapter {
   /** Unstable invocation positions resolve to the invocation type. */
   readonly webhookEventTypeId = MANUAL_INVOCATION_TYPE_ID;
 
-  // teamId is accepted for parity with other adapters; manual has no
-  // per-team configuration.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // teamId: the team whose stored documents its files may be read from.
   constructor(private readonly teamId: TeamId) {
     super();
   }
@@ -416,12 +414,12 @@ export class ManualAdapter extends BaseAdapter implements Adapter {
         `${MANUAL_ADAPTER_TYPE}.resolveFileRef: FileRef has no source handle to resolve.`,
       );
     }
-    const stream = await services.document.getFileNodeStream({ objectUri: handle });
-    return {
-      stream,
-      contentType: stream.contentType ?? input.ref.contentType,
-      size: stream.size ?? input.ref.size,
-    };
+    // The handle is a stored document's key: read through the store's own
+    // ownership check, as the team's or not at all.
+    return streamFileRef(
+      { ...input.ref, source: { store: 'document', objectUri: handle } },
+      { teamId: this.teamId },
+    );
   }
 }
 

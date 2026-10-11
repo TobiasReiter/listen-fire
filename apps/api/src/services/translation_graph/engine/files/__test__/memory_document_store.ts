@@ -16,7 +16,8 @@ import type { FileRef } from '../../../adapter';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 import { services } from '../../../../../adapters/registry';
-import { isTeamDocumentKey } from '../document_store';
+import { storeKey } from '../../../../../adapters/document/interface';
+import { teamDocumentKeyPrefix } from '../document_store';
 import { useDocumentOwnership } from '../retrieve';
 
 export interface MemoryDocumentStore {
@@ -38,11 +39,14 @@ export function installMemoryDocumentStore(): MemoryDocumentStore {
     });
     return objectUri;
   };
+  const keyOf = (objectUri: string): string | undefined =>
+    objectUri.startsWith('mem://doc/') ? storeKey(objectUri.slice('mem://doc/'.length)) : undefined;
   useDocumentOwnership(async ({ objectUri, teamId }) => {
-    const entry = stored.get(objectUri);
-    if (entry === undefined) return false;
+    const key = keyOf(objectUri);
+    const entry = key !== undefined ? stored.get(objectUri) : undefined;
+    if (entry === undefined || key === undefined) return false;
     if (entry.teamId !== undefined) return entry.teamId === teamId;
-    return !/^mem:\/\/doc\/movement-files\//.test(objectUri) || isTeamDocumentKey(objectUri, teamId);
+    return !key.startsWith('movement-files/') || key.startsWith(`${teamDocumentKeyPrefix(teamId)}/`);
   });
   const read = (objectUri: string) => {
     const entry = stored.get(objectUri);
@@ -76,6 +80,7 @@ export function installMemoryDocumentStore(): MemoryDocumentStore {
         ...(entry.contentType !== undefined ? { contentType: entry.contentType } : {}),
       });
     },
+    keyOf,
     async getDownloadUrl({ objectUri }) {
       return `https://test-store.example/${encodeURIComponent(objectUri)}`;
     },

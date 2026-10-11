@@ -58,6 +58,7 @@ import { meteredArbitration } from '../engine/entity_match';
 import { adapterTable, type LiveAdapterResolver } from '../engine/adapter_table';
 import { hostSegments, segmentScopedCalls } from '../segment_scope';
 import { renderFileArtifactFor } from './file_render';
+import { withFileOwners } from '../engine/files/retrieve';
 import { teamOfTenant } from './tenant';
 import { makeFileTextResolver, type FileTextReader } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
@@ -116,7 +117,12 @@ export function productionEngineHost(input: {
     ...segmentScopedCalls,
     ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });
-  // Each segment's cross-run lock session, closed with the segment.
+  // OCR and transcription are model calls of their own.
+  const fileText = billedFileText(
+    makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId), { teamId: input.teamId }),
+    usage,
+  );
+    // Each segment's cross-run lock session, closed with the segment.
   const locks = segmentWriteLocks(input.locks ?? processWriteLocks());
   return {
     segment: {
@@ -157,11 +163,9 @@ export function productionEngineHost(input: {
     },
     control: { cancel },
     files: {
-      // OCR and transcription are model calls of their own.
-      resolveFileText: billedFileText(
-        makeFileTextResolver(input.rawText ?? postgresRawTextStore(input.teamId), { teamId: input.teamId }),
-        usage,
-      ),
+      // A file's bytes come from a document the team owns, or through an
+      // instance the run's segment holds.
+      resolveFileText: (request) => withFileOwners(adapters.fileOwners(request.segmentId), () => fileText(request)),
       render: renderFileArtifactFor(input.teamId),
     },
     lookup: {

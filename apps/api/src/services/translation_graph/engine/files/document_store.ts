@@ -8,18 +8,12 @@ import type { FileRef } from '../../adapter';
 
 /**
  * The key prefix of the documents a team's movements store themselves (a
- * `FILE()` artifact): what makes such a document the team's without a row
- * recording it (`streamFileRef`'s ownership check).
+ * `FILE()` artifact, a manual run's uploaded files): what makes such a
+ * document the team's without a row recording it (`streamFileRef`'s ownership
+ * check, on the store's own reading of the key, `keyOf`).
  */
 export function teamDocumentKeyPrefix(teamId: string): string {
   return `movement-files/${teamId}`;
-}
-
-/** Whether a store key (an `objectUri`'s path below its bucket) is under the
- *  team's prefix. */
-export function isTeamDocumentKey(objectUri: string, teamId: string): boolean {
-  const key = /^[a-z][a-z0-9+.-]*:\/\/[^/]*\/(.*)$/i.exec(objectUri)?.[1];
-  return key !== undefined && key.startsWith(`${teamDocumentKeyPrefix(teamId)}/`);
 }
 
 /** How a document-store file is spelled where a source names an OWNER TYPE —

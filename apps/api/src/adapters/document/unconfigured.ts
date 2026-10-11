@@ -45,6 +45,10 @@ class UnconfiguredDocumentProvider implements DocumentProvider {
     throw new Error(MESSAGE);
   }
 
+  keyOf(_objectUri: string): string | undefined {
+    return undefined;
+  }
+
   async delete(_uri: string): Promise<void> {
     throw new Error(MESSAGE);
   }

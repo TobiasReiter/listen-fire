@@ -37,6 +37,13 @@ jest.mock('../../../../knowledge_pipeline/output_v3/schemas', () => {
   };
 });
 
+// No document row records any of these files: only the team's key prefix
+// makes one the team's.
+jest.mock('../../../../../lib/kysely', () => {
+  const query = { select: () => query, where: () => query, executeTakeFirst: async () => undefined };
+  return { getKnowledgeQb: () => ({ selectFrom: () => query }) };
+});
+
 // Mock document storage so `resolveFileRef` can be exercised without S3.
 const getFileNodeStream = jest.fn();
 jest.mock('../../../../../adapters/registry', () => ({
@@ -45,6 +52,11 @@ jest.mock('../../../../../adapters/registry', () => ({
       get getFileNodeStream() {
         return getFileNodeStream;
       },
+      // The store's own reading of its keys (bucket `docs`).
+      keyOf: (objectUri: string) =>
+        objectUri.startsWith('s3://docs/')
+          ? jest.requireActual('../../../../../adapters/document/interface').storeKey(objectUri.slice('s3://docs/'.length))
+          : undefined,
     },
   },
 }));
@@ -283,23 +295,37 @@ describe('ManualAdapter actor parsing', () => {
 });
 
 describe('ManualAdapter.resolveFileRef', () => {
-  it('streams the file bytes back out of document storage by objectUri', async () => {
+  it("streams the file bytes back out of document storage by objectUri, under the team's own prefix", async () => {
     const adapter = new ManualAdapter(TEAM_ID);
     const fake = Object.assign(Readable.from(Buffer.from('hello')), {
       size: 5,
       contentType: 'application/pdf',
     });
     getFileNodeStream.mockResolvedValue(fake);
+    const objectUri = `s3://docs/movement-files/${TEAM_ID}/u/deck.pdf`;
 
     const result = await adapter.resolveFileRef({
       ref: {
         __brand: 'FileRef',
-        source: { adapterType: MANUAL_ADAPTER_TYPE, handle: 's3://docs/deck.pdf' },
+        source: { adapterType: MANUAL_ADAPTER_TYPE, handle: objectUri },
       },
     });
-    expect(getFileNodeStream).toHaveBeenCalledWith({ objectUri: 's3://docs/deck.pdf' });
+    expect(getFileNodeStream).toHaveBeenCalledWith({ objectUri });
     expect(result.contentType).toBe('application/pdf');
     expect(result.size).toBe(5);
+  });
+
+  it.each([
+    ["another team's prefix", 's3://docs/movement-files/another-team/u/secret.pdf'],
+    ['a dot segment out of the prefix', `s3://docs/movement-files/${TEAM_ID}/../another-team/u/secret.pdf`],
+    ['another bucket', `s3://elsewhere/movement-files/${TEAM_ID}/u/secret.pdf`],
+  ])("refuses, by name, a handle naming %s, and reads nothing", async (_what, handle) => {
+    getFileNodeStream.mockClear();
+    const adapter = new ManualAdapter(TEAM_ID);
+    await expect(
+      adapter.resolveFileRef({ ref: { __brand: 'FileRef', source: { adapterType: MANUAL_ADAPTER_TYPE, handle } } }),
+    ).rejects.toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'document' });
+    expect(getFileNodeStream).not.toHaveBeenCalled();
   });
 
   it('throws when the FileRef has no source handle', async () => {

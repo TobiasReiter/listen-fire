@@ -145,6 +145,8 @@ beforeAll(() => {
       docStore.set(objectUri, { bytes: Buffer.concat(chunks), contentType: mimeType });
       return { objectUri, checksum: 'x' };
     },
+    // The store's own reading of its keys, which every read goes through.
+    keyOf: (objectUri: string) => (objectUri.startsWith('mem://') ? objectUri.slice('mem://'.length) : undefined),
     async getFileNodeStream({ objectUri }: { objectUri: string }) {
       const entry = docStore.get(objectUri);
       if (!entry) throw new Error(`no such doc ${objectUri}`);

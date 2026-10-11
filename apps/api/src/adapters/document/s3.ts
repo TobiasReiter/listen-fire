@@ -11,7 +11,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import { ChecksumTransform } from '../../lib/utils/hash';
-import { DocumentProvider } from './interface';
+import { DocumentProvider, storeKey } from './interface';
 
 type s3AdapterProps = {
   bucket: string;
@@ -53,7 +53,9 @@ class S3Adapter implements DocumentProvider {
   }
 
   private generateObjectKey({ filename, keyPrefix }: { filename: string; keyPrefix?: string }) {
-    const base = `${randomUUID()}/${filename}`;
+    // One segment, a name: what `keyOf` reads back.
+    const named = filename.replace(/\//g, '_');
+    const base = `${randomUUID()}/${named === '' || named === '.' || named === '..' ? 'file' : named}`;
     return keyPrefix ? `${keyPrefix.replace(/\/+$/, '')}/${base}` : base;
   }
 
@@ -61,8 +63,18 @@ class S3Adapter implements DocumentProvider {
     return `s3://${this.bucket}/${key}`;
   }
 
-  private getKeyFromUri(uri: string) {
-    return uri.split(this.bucket + '/')[1];
+  /** `s3://<this bucket>/<key>` exactly, its key's segments each a name: no
+   *  other bucket, no empty segment, no `.` or `..`. */
+  keyOf(objectUri: string): string | undefined {
+    const prefix = `s3://${this.bucket}/`;
+    if (!objectUri.startsWith(prefix)) return undefined;
+    return storeKey(objectUri.slice(prefix.length));
+  }
+
+  private requireKey(objectUri: string): string {
+    const key = this.keyOf(objectUri);
+    if (key === undefined) throw new Error(`'${objectUri}' is not an object of this document store`);
+    return key;
   }
 
   async upload(
@@ -105,7 +117,7 @@ class S3Adapter implements DocumentProvider {
     ContentLength: number | undefined;
     ContentType: string | undefined;
   } | null> {
-    const key = objectUri.slice(`s3://${this.bucket}/`.length);
+    const key = this.requireKey(objectUri);
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -123,7 +135,7 @@ class S3Adapter implements DocumentProvider {
   }
 
   async getDownloadUrl({ objectUri }: { objectUri: string }) {
-    const key = objectUri.slice(`s3://${this.bucket}/`.length);
+    const key = this.requireKey(objectUri);
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -153,7 +165,7 @@ class S3Adapter implements DocumentProvider {
   async delete(uri: string) {
     const command = new DeleteObjectCommand({
       Bucket: this.bucket,
-      Key: this.getKeyFromUri(uri),
+      Key: this.requireKey(uri),
     });
     await this.client.send(command);
   }

@@ -19,6 +19,9 @@ const FILE_IDENTITY =
 const HAND_BUILT_FILE =
   "hand-built file (PLAN-07A Task 4d): the test binds a file as a plain object literal spelling a descriptor (`__brand: 'FileRef'`), which the engine once recognised by its keys; a file is now only what an envelope declares one (a field the catalog types `file`, a resource's `fileRef`, a plugin output's declared file, a parked `file`), so a data payload can never be read as one. A run reads its files from such a field, so no movement observes the difference";
 
+const HAND_BUILT_STORE =
+  "a hand-built document store (PLAN-07A Task 4d fix round 1): the test's fake store predates the store's own key reader (`keyOf`), which every read and ownership check now goes through, so the store reads one key per URI and a file is the team's on that same reading; the real stores carry it, so no movement observes the difference";
+
 exports.triage = [
   {
     file: 'services/movement_engine/__test__/serialize.unit.test.ts',
@@ -66,4 +69,6 @@ exports.triage = [
   { file: "services/movement_engine/__test__/read_builtin.unit.test.ts", test: "carries a `file` provenance origin — rawTextId, handle and all", reason: HAND_BUILT_FILE },
   { file: "services/movement_engine/__test__/read_builtin.unit.test.ts", test: "extracts from the file text, and the call still sees the file origin", reason: HAND_BUILT_FILE },
   { file: "services/movement_engine/__test__/read_builtin.unit.test.ts", test: "no seam in scope fails loud — \"nothing can read it\" is not \"it had no text\"", reason: HAND_BUILT_FILE },
+  { file: "services/movement_engine/__test__/stdlib_file.unit.test.ts", test: "captures the artifact ref and the deterministic stdlib values", reason: HAND_BUILT_STORE },
+  { file: "services/movement_engine/__test__/stdlib_file.unit.test.ts", test: "streams text/plain bytes that are the digest verbatim", reason: HAND_BUILT_STORE },
 ];

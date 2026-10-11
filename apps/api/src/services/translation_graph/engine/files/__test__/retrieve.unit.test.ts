@@ -1,8 +1,9 @@
 // Host-side byte resolution (`streamFileRef`): a descriptor names the
 // instance that owns its bytes, and that instance — resolved with the
-// descriptor's credential and construction args — serves them. Every read is
-// the run's team's: a stored document the team does not own, or an owner
-// named with another team's credential, is refused by name.
+// descriptor's credential and construction args — serves them, but only an
+// instance the run holds. Every read is the run's team's: a stored document
+// the team does not own, or an owner the run holds no instance of, is refused
+// by name.
 
 import { Readable } from 'node:stream';
 
@@ -12,13 +13,9 @@ const stored: Record<string, string> = {
   's3://bucket/movement-files/00000000-0000-0000-0000-0000000000f2/a/artifact.txt': 'theirs',
   's3://bucket/uuid-9/plugin.pdf': 'a plugin stored it',
 };
-/** The team-scoped rows the database holds: documents and credentials, by id, each with its team. */
-const rows: { document: Array<{ id: string; object_uri: string; team_id: string }>; external_service_credentials: Array<{ id: string; team_id: string }> } = {
+/** The team-scoped document rows the database holds, each with its team. */
+const rows: { document: Array<{ id: string; object_uri: string; team_id: string }> } = {
   document: [{ id: 'd-1', object_uri: 's3://bucket/uuid-9/plugin.pdf', team_id: '00000000-0000-0000-0000-0000000000f1' }],
-  external_service_credentials: [
-    { id: 'cred-ours', team_id: '00000000-0000-0000-0000-0000000000f1' },
-    { id: 'cred-theirs', team_id: '00000000-0000-0000-0000-0000000000f2' },
-  ],
 };
 /** A query builder over `rows`: `selectFrom(t).select(…).where(col, '=', v)….executeTakeFirst()`. */
 function fakeQb() {
@@ -38,30 +35,28 @@ function fakeQb() {
     },
   };
 }
-jest.mock('../../../../../lib/kysely', () => ({ getKnowledgeQb: () => fakeQb(), getAutomationsQb: () => fakeQb() }));
-const resolvedAdapters: unknown[] = [];
-jest.mock('../../../adapters/resolve', () => ({
-  resolveAdapter: async (input: unknown) => {
-    resolvedAdapters.push(input);
-    return {
-      adapterType: 'attio',
-      resolveFileRef: async () => ({ stream: Readable.from(Buffer.from('credentialed')) }),
-    };
-  },
-}));
+jest.mock('../../../../../lib/kysely', () => ({ getKnowledgeQb: () => fakeQb() }));
 jest.mock('../../../../../adapters/registry', () => ({
   services: {
     document: {
+      // The store's own reading of a URI, as the S3 store reads one (bucket
+      // `bucket`), and its in-memory `mem://` stand-in.
+      keyOf: (objectUri: string) => {
+        const { storeKey } = jest.requireActual('../../../../../adapters/document/interface');
+        for (const prefix of ['s3://bucket/', 'mem://']) {
+          if (objectUri.startsWith(prefix)) return storeKey(objectUri.slice(prefix.length));
+        }
+        return undefined;
+      },
       getFileNodeStream: async ({ objectUri }: { objectUri: string }) =>
         Object.assign(Readable.from(Buffer.from(stored[objectUri] ?? '')), { contentType: 'application/pdf' }),
     },
   },
 }));
-
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { Adapter, FileRef } from '../../../adapter';
 
-import { FileOutsideTeamError, streamFileRef, type ResolveFileOwner } from '../retrieve';
+import { FileOutsideTeamError, streamFileRef, withFileOwners, type ResolveFileOwner } from '../retrieve';
 
 const TEAM_ID = '00000000-0000-0000-0000-0000000000f1' as TeamId;
 
@@ -197,19 +192,50 @@ describe("a byte read is the run's team's", () => {
     await expect(streamFileRef(parked, { teamId: TEAM_ID })).rejects.toBeInstanceOf(FileOutsideTeamError);
   });
 
-  it("resolves an owner named with one of the team's credentials", async () => {
-    resolvedAdapters.length = 0;
+  it('reads through the instance the run holds for the type, never one the descriptor would build', async () => {
+    const held = ownerResolver({ h: 'from our instance' });
+    const ours = (await held.resolveOwner({ adapterType: 'attio', teamId: TEAM_ID })) as Adapter;
+    const asked: unknown[] = [];
     const ref: FileRef = { __brand: 'FileRef', source: { adapterType: 'attio', credentialId: 'cred-ours', handle: 'h' } };
-    const { stream } = await streamFileRef(ref, { teamId: TEAM_ID });
-    expect(await collect(stream)).toBe('credentialed');
-    expect(resolvedAdapters).toEqual([{ adapterType: 'attio', teamId: TEAM_ID, credentialsId: 'cred-ours' }]);
+    const { stream } = await withFileOwners(
+      (owner) => {
+        asked.push(owner);
+        return owner.adapterType === 'attio' && owner.credentialsId === 'cred-ours' ? ours : undefined;
+      },
+      () => streamFileRef(ref, { teamId: TEAM_ID }),
+    );
+    expect(await collect(stream)).toBe('from our instance');
+    expect(asked).toEqual([{ adapterType: 'attio', credentialsId: 'cred-ours' }]);
   });
 
-  it("refuses, by name, an owner named with another team's credential — the instance is never resolved", async () => {
-    resolvedAdapters.length = 0;
-    const ref: FileRef = { __brand: 'FileRef', source: { adapterType: 'attio', credentialId: 'cred-theirs', handle: 'h' } };
-    const read = streamFileRef(ref, { teamId: TEAM_ID });
-    await expect(read).rejects.toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'credential', named: 'cred-theirs' });
-    expect(resolvedAdapters).toEqual([]);
+  it.each([
+    ['a credential the run holds no instance with', { adapterType: 'attio', credentialId: 'cred-theirs', handle: 'h' }],
+    ['an adapter type the run holds no instance of', { adapterType: 'whatsapp', handle: 'http://169.254.169.254/latest/meta-data' }],
+    ['the earlier spelling, for a type the run does not hold', { ownerAdapterType: 'email', handle: 'https://evil.example/x' }],
+  ])('refuses, by name, %s — never fetched', async (_what, source) => {
+    const ref = { __brand: 'FileRef' as const, source };
+    const read = withFileOwners(
+      (owner) => (owner.adapterType === 'attio' && owner.credentialsId === 'cred-ours' ? ({} as Adapter) : undefined),
+      () => streamFileRef(ref, { teamId: TEAM_ID }),
+    );
+    await expect(read).rejects.toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'instance' });
+  });
+
+  it('refuses an adapter-owned file outside any run: no instance is held there', async () => {
+    const ref: FileRef = { __brand: 'FileRef', source: { adapterType: 'manual', handle: 's3://bucket/uuid-9/plugin.pdf' } };
+    await expect(streamFileRef(ref, { teamId: TEAM_ID })).rejects.toBeInstanceOf(FileOutsideTeamError);
+  });
+
+  it.each([
+    ['another bucket', 's3://other-bucket/movement-files/00000000-0000-0000-0000-0000000000f1/a/artifact.txt'],
+    ['a `..` segment out of the team prefix', 's3://bucket/movement-files/00000000-0000-0000-0000-0000000000f1/../00000000-0000-0000-0000-0000000000f2/a/artifact.txt'],
+    ['a `.` segment', 's3://bucket/movement-files/00000000-0000-0000-0000-0000000000f1/./a/artifact.txt'],
+    ['an empty segment', 's3://bucket/movement-files//00000000-0000-0000-0000-0000000000f1/a/artifact.txt'],
+    ['the team prefix in the host', 's3://movement-files/00000000-0000-0000-0000-0000000000f1/a/artifact.txt'],
+  ])('refuses a document URI the store would not read as given: %s', async (_what, objectUri) => {
+    await expect(streamFileRef(document(objectUri), { teamId: TEAM_ID })).rejects.toMatchObject({
+      code: 'FILE_OUTSIDE_TEAM',
+      owner: 'document',
+    });
   });
 });

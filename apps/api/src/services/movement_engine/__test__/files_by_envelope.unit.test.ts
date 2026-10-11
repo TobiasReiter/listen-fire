@@ -77,10 +77,18 @@ const EVENT: TriggerEvent = {
   payload: { subject: 'Acme', meta: SPELLED, deck: SPELLED },
 };
 
-/** A source that answers each field off the position's own data. */
+/** Each file a source double was asked to serve, as [its type, the handle]. */
+const served: Array<[string, string | undefined]> = [];
+
+/** A source that answers each field off the position's own data, and is
+ *  asked (and refuses) to serve any file it owns. */
 function sourceAdapter(adapterType: string, records: ReadonlyArray<Record<string, unknown>> = []): Adapter {
   return {
     adapterType,
+    async resolveFileRef({ ref }) {
+      served.push([adapterType, ref.source !== undefined && 'handle' in ref.source ? ref.source.handle : undefined]);
+      throw new Error('test: the double serves no bytes');
+    },
     supportedTriggers: [],
     runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
     listEntryPoints: async () => [],
@@ -340,4 +348,48 @@ describe("a file-kind field's descriptor is read only as the run's team's", () =
       expect(String(cause)).toContain("is not this team's, so its bytes are not read");
     }
   });
+
+  it.each([
+    ['a manual handle naming another team\'s stored object', { adapterType: 'manual', handle: 's3://bucket/movement-files/other-team/secret.pdf' }],
+    ['the same in the earlier spelling', { ownerAdapterType: 'manual', handle: 's3://bucket/movement-files/other-team/secret.pdf' }],
+    ['a WhatsApp handle that is a URL the server would fetch', { adapterType: 'whatsapp', handle: 'http://169.254.169.254/latest/meta-data' }],
+    ['the same in the earlier spelling', { ownerAdapterType: 'whatsapp', handle: 'http://169.254.169.254/latest/meta-data' }],
+  ])('refuses, by name, %s: the run holds no such instance, and nothing is fetched', async (_what, source) => {
+    const realFetch = global.fetch;
+    const fetched: unknown[] = [];
+    global.fetch = (async (url: unknown) => {
+      fetched.push(url);
+      throw new Error('test: nothing may be fetched');
+    }) as typeof fetch;
+    try {
+      const deck = { __brand: 'FileRef' as const, name: 'secret.pdf', contentType: 'application/pdf', source } as FileRef;
+      for (const engine of ['ts', 'rust'] as const) {
+        resetRustRunStats();
+        const ran = await runWith(engine, deck);
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
+        expect(ran.titles).toEqual([]);
+        expect(runFailureCause(ran.error)).toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'instance' });
+      }
+      expect(fetched).toEqual([]);
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  it.each([
+    ['its own spelling', { adapterType: 'email', handle: 'https://storage.mailgun.net/v3/x' }],
+    ['the earlier spelling', { ownerAdapterType: 'email', handle: 'https://storage.mailgun.net/v3/x' }],
+  ])("reads an email file (%s) through the run's own email instance, never another", async (_what, source) => {
+    const deck = { __brand: 'FileRef' as const, name: 'deck.pdf', contentType: 'application/pdf', source } as FileRef;
+    for (const engine of ['ts', 'rust'] as const) {
+      served.length = 0;
+      const ran = await runWith(engine, deck);
+      // The run's email instance (the test's source double) was asked for
+      // the handle, and serves no bytes: the read is absent, not refused.
+      expect(served).toEqual([['email', 'https://storage.mailgun.net/v3/x']]);
+      expect(ran.error).toBeUndefined();
+      expect(ran.titles).toEqual(['unread']);
+    }
+  });
 });
+

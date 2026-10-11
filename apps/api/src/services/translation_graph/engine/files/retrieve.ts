@@ -4,27 +4,32 @@
 // to fetch them. Whatever needs the bytes — a target adapter's write, the
 // file-to-text seam, the remote adapter exposing a file to its server — is
 // host code, and redeems the descriptor here: the document store by its key,
-// or the owning adapter INSTANCE (re-resolved with the credential and
-// construction args the descriptor names) through its `resolveFileRef`. The
-// engine never imports this module; bytes never reach it.
+// or the owning adapter INSTANCE through its `resolveFileRef`. The engine never
+// imports this module; bytes never reach it.
 //
-// Every byte read is tied to the team it is read for, whatever made the
-// descriptor: a stored document is read only when the store says the team owns
-// it, and an owning instance is resolved only with a credential of the team's.
-// A descriptor naming anything else is refused by name (`FileOutsideTeamError`),
-// never read and never answered as an empty file.
+// Every byte read is the run's tenant's, whatever made the descriptor. Bytes
+// are read only (a) from a stored document the store says the team owns, or
+// (b) through an adapter instance the run itself holds — the instance the run
+// resolved for that adapter type (its own credential), never one the
+// descriptor's credential id or handle would build. A descriptor naming
+// anything else — another team's document, an adapter type the run holds no
+// instance of — is refused by name (`FileOutsideTeamError`), never fetched and
+// never answered as an empty file.
+
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 import type { Adapter, EarlierFileSource, FileRef, FileSource, ResolveFileRefResult } from '../../adapter';
 
-import { DOCUMENT_STORE_OWNER, isTeamDocumentKey } from './document_store';
+import { DOCUMENT_STORE_OWNER, teamDocumentKeyPrefix } from './document_store';
 import { FileOutsideTeamError } from './file_outside_team';
+import { fileOwnersScope } from './file_owners';
+
+export { withFileOwners, type FileOwners } from './file_owners';
 
 export { FileOutsideTeamError } from './file_outside_team';
 
-/** How the owning instance is resolved: production's `resolveAdapter` unless a
- *  test supplies its own. */
+/** How the owning instance is found: the run's own instance of the type (the
+ *  scope `withFileOwners` sets) unless a test supplies its own. */
 export type ResolveFileOwner = (input: {
   adapterType: string;
   teamId: TeamId;
@@ -52,7 +57,12 @@ export type DocumentOwnership = (input: { objectUri: string; teamId: TeamId }) =
  * names — is not the team's.
  */
 const productionDocumentOwnership: DocumentOwnership = async ({ objectUri, teamId }) => {
-  if (isTeamDocumentKey(objectUri, teamId)) return true;
+  // The store's own reading of its key (one parser for read, delete and
+  // this check): a URI it would not read is no document of anyone's.
+  const { services } = await import('../../../../adapters/registry');
+  const key = services.document.keyOf(objectUri);
+  if (key === undefined) return false;
+  if (key.startsWith(`${teamDocumentKeyPrefix(teamId)}/`)) return true;
   // Lazy: the database client is off this module's eval-time graph, which
   // every byte-consuming adapter imports.
   const { getKnowledgeQb } = await import('../../../../lib/kysely');
@@ -94,7 +104,7 @@ export async function streamFileRef(
     }
     return streamDocument(owner.objectUri, ref);
   }
-  const resolveOwner = options.resolveOwner ?? productionResolveOwner;
+  const resolveOwner = options.resolveOwner ?? runResolveOwner;
   const adapter = await resolveOwner({
     adapterType: owner.adapterType,
     teamId: options.teamId,
@@ -167,29 +177,19 @@ async function streamDocument(objectUri: string, ref: FileRef): Promise<ResolveF
 }
 
 /**
- * The owning instance, resolved for the team. A descriptor names its owner's
- * credential by id, and nothing else ties that id to the team: the adapter
- * factory loads whatever id it is handed. So the id must be one of the team's
- * credentials before it is resolved.
+ * The owning instance: the one the run holds for the descriptor's adapter type
+ * (`withFileOwners`). Outside a run's scope there is none, so an adapter-owned
+ * file is not read there.
  */
-const productionResolveOwner: ResolveFileOwner = async (input) => {
-  if (input.credentialsId !== undefined && !(await credentialIsTeams(input.credentialsId, input.teamId))) {
-    throw new FileOutsideTeamError('credential', input.credentialsId);
+const runResolveOwner: ResolveFileOwner = (input) => {
+  const owners = fileOwnersScope.getStore();
+  const adapter = owners?.({
+    adapterType: input.adapterType,
+    ...(input.credentialsId !== undefined ? { credentialsId: input.credentialsId } : {}),
+    ...(input.constructionArgs !== undefined ? { constructionArgs: input.constructionArgs } : {}),
+  });
+  if (adapter === undefined) {
+    throw new FileOutsideTeamError('instance', input.credentialsId !== undefined ? `${input.adapterType} (credential ${input.credentialsId})` : input.adapterType);
   }
-  // Lazy: the adapter registry imports every adapter, and the adapters import
-  // this module.
-  const { resolveAdapter } = await import('../../adapters/resolve');
-  return resolveAdapter(input);
+  return adapter;
 };
-
-/** Whether a credential id is one of the team's. */
-async function credentialIsTeams(credentialsId: string, teamId: TeamId): Promise<boolean> {
-  const { getAutomationsQb } = await import('../../../../lib/kysely');
-  const row = await getAutomationsQb(['external_service_credentials'])
-    .selectFrom('external_service_credentials')
-    .select('external_service_credentials.id')
-    .where('external_service_credentials.id', '=', credentialsId as ExternalServiceCredentialsId)
-    .where('external_service_credentials.team_id', '=', teamId)
-    .executeTakeFirst();
-  return row !== undefined;
-}

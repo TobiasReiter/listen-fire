@@ -11,6 +11,7 @@ import type { EngineHost, RenderFile } from './host';
 import type { ParkSink } from './run';
 
 import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
+import { withFileOwners } from '../translation_graph/engine/files/file_owners';
 import { InMemoryWriteLocks, segmentWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import {
   actingPrincipalOf,
@@ -160,11 +161,12 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
       cancel: control.cancel ?? NEVER_CANCELLED,
     },
     files: {
-      resolveFileText:
-        files.resolveFileText ??
-        (async () => {
-          throw notProvided('files.resolveFileText');
-        }),
+      // As production reads a file: through an instance the segment holds.
+      resolveFileText: async (input) => {
+        const read = files.resolveFileText;
+        if (read === undefined) throw notProvided('files.resolveFileText');
+        return withFileOwners(table.fileOwners(input.segmentId), () => read(input));
+      },
       render: files.render ?? renderIntoNowhere(),
     },
     lookup: {

@@ -38,6 +38,7 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { TriggerEvent } from '../triggers/types';
 
+import { teamDocumentKeyPrefix } from '../engine/files/document_store';
 import { services } from '../../../adapters/registry';
 import { getQb, getAutomationsQb } from '../../../lib/kysely';
 import { costMicrodollarsToUsd, runCostSummaries } from '../../../lib/llm_usage';
@@ -783,10 +784,13 @@ async function buildManualInvocationEvent(args: {
   const files: ManualFile[] = [];
   for (const file of input.files ?? []) {
     const buffer = Buffer.from(file.contentBase64, 'base64');
+    // Under the team's key prefix: what makes the file the team's to read
+    // back (`streamFileRef`'s ownership check).
     const { objectUri } = await services.document.upload(Readable.from(buffer), {
       filename: file.filename,
       mimeType: file.contentType,
       contentLength: buffer.length,
+      keyPrefix: teamDocumentKeyPrefix(input.teamId),
     });
     files.push({
       objectUri,
