@@ -36,7 +36,7 @@ import {
   stdlibFamily,
   stdlibFunctionById,
 } from '../stdlib';
-import { markedFile } from '../file_value';
+import { fileViews, markedFile } from '../file_value';
 
 /** A pure member never looks at the instant; a clock-reading one is handed
  *  this unless the case supplies its own. */
@@ -731,7 +731,10 @@ describe('TEXT.SERIALISE', () => {
     expect(applyStdlib(pairs, [file], new Date(0))).toBe('name=a.pdf');
     const sourced = markedFile({ __brand: 'FileRef', name: 'b.pdf', source: { adapterType: 'attio', credentialId: 'cred-1', handle: 'h-1' }, url: 'https://x' });
     expect(applyStdlib(pairs, [sourced], new Date(0))).toBe('name=b.pdf | handle=h-1');
-    expect(JSON.parse(JSON.stringify({ f: sourced }))).toEqual({ f: { name: 'b.pdf', handle: 'h-1' } });
+    // Text the program sees writes the view; the value's own JSON (the host
+    // boundary) is its descriptor.
+    expect(JSON.parse(JSON.stringify({ f: sourced }, fileViews))).toEqual({ f: { name: 'b.pdf', handle: 'h-1' } });
+    expect(JSON.parse(JSON.stringify({ f: sourced }))).toEqual({ f: { __brand: 'FileRef', name: 'b.pdf', source: { adapterType: 'attio', credentialId: 'cred-1', handle: 'h-1' }, url: 'https://x' } });
   });
 
   it('a dict that spells a file is a dict: its keys print', () => {

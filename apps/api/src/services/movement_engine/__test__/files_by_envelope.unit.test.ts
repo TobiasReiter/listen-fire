@@ -50,7 +50,7 @@ function schemaOf(type: string): InstanceSchema {
 const crmSchema: InstanceSchema = {
   positions: { note: { properties: { title: 'text' }, edges: {} } },
   collections: { notes: { target: 'note' } },
-  writableRoots: { note: { fields: { title: 'text' }, resultShape: { externalId: 'text', title: 'text' } } },
+  writableRoots: { note: { fields: { title: 'text', deck: 'file' }, resultShape: { externalId: 'text', title: 'text' } } },
 };
 
 const catalog = mockCatalogSnapshot({
@@ -80,6 +80,8 @@ const EVENT: TriggerEvent = {
 
 /** Each file a source double was asked to serve, as [its type, the handle]. */
 const served: Array<[string, string | undefined]> = [];
+/** Each file a write handed the CRM, as JSON (what a remote host receives). */
+const writtenFiles: unknown[] = [];
 /** Set: the email double serves its files as the real email adapter does. */
 let realEmailOwner: Adapter | undefined;
 
@@ -155,6 +157,7 @@ function hostFor(
     ...sourceAdapter('attio'),
     async createRecord(input) {
       titles.push(input.fields.title);
+      if (input.fields.deck !== undefined) writtenFiles.push(JSON.parse(JSON.stringify(input.fields.deck)));
       return { adapterType: 'attio', externalId: `n-${titles.length}`, data: {} };
     },
   };
@@ -274,6 +277,28 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
     expect(ran.titles).toEqual(['the deck']);
     // The host is handed the descriptor as plain data.
     expect(ran.read).toEqual([SPELLED]);
+  });
+});
+
+describe('a written file crosses the host boundary as its descriptor', () => {
+  const DOC = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', source: { store: 'document', objectUri: 's3://bucket/movement-files/t/deck.pdf' } };
+
+  it("to the adapter, and in the run result's writtenValues — on both engines — while the program reads its view", async () => {
+    const write = PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', '  d = msg.`deck`', '  write crm-[:notes]-> { title: COALESCE(d.name, "-"), deck: d }', '}'].join('\n');
+    for (const engine of ['ts', 'rust'] as const) {
+      writtenFiles.length = 0;
+      resetRustRunStats();
+      const ran: Ran = { read: [], titles: [], prompts: [] };
+      await onEngine(engine, async () => {
+        const event = { ...EVENT, payload: { subject: 'Acme', meta: SPELLED, deck: DOC } };
+        ran.result = await runMovement({ ...baseInput(write), event, host: hostFor(ran.read, ran.titles, ran.prompts) });
+      });
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+      expect(ran.titles).toEqual(['deck.pdf']);
+      expect(writtenFiles).toEqual([DOC]);
+      const written = ran.result?.writes[0]?.writtenValues.deck;
+      expect(JSON.parse(JSON.stringify(written))).toEqual(DOC);
+    }
   });
 });
 

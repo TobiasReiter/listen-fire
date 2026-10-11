@@ -110,7 +110,9 @@ export function httpHost(url: string, methods: readonly string[]): EngineHost {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     });
-    const body: unknown = await response.json();
+    // Built in this realm: an answer parsed elsewhere (jest's fetch) has
+    // another realm's `Object.prototype`, which no plain-object check takes.
+    const body: unknown = JSON.parse(await response.text());
     if (response.status === 409 && isObject(body) && typeof body.divergence === 'string') {
       throw new ReplayDivergence(body.divergence);
     }

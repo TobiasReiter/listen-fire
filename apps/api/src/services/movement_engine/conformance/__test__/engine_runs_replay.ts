@@ -145,12 +145,37 @@ async function checkHarvest(corpus: keyof typeof FLOORS): Promise<void> {
   console.log(`engine-runs.${corpus}.json: kept ${kept.length}, dropped ${[...accounted.values()].reduce((a, b) => a + b, 0)}, ${Buffer.byteLength(text)} bytes`);
 }
 
+/**
+ * Recordings that encoded a behaviour since fixed as a bug, so a replay of
+ * them diverges by design — each named, with how many of each corpus's
+ * recordings it accounts for, asserted exactly (the corpora's triage, for
+ * recordings). The recordings themselves are never edited.
+ */
+const ENCODED_A_FIXED_BUG: Array<{
+  reason: string;
+  matches: (recording: HostRecording, divergence: string) => boolean;
+  count: Record<keyof typeof FLOORS, number>;
+}> = [
+  {
+    // PLAN-07A Task 4d: a file is only what an envelope declares one. The
+    // recording's catalog gives the `through` plugin no output, so its
+    // records' `file` key is declared nowhere: the plugin's fetched file is
+    // data now, and the FILE resource the recorded write carried is not made.
+    reason: "a plugin's undeclared `file` key was taken for a file (PLAN-07A Task 4d)",
+    matches: (recording, divergence) =>
+      divergence.includes('differs at args.args.resources.') &&
+      Object.values(recording.input.catalog?.plugins ?? {}).some((spec) => spec.output === undefined),
+    count: { v1: 0, v2: 1 },
+  },
+];
+
 const label = (recording: HostRecording, i: number): string =>
   `#${i + 1} ${recording.entry} ${JSON.stringify(recording.input.source.slice(0, 80))}`;
 
-async function replayAll(target: ReplayTarget, recordings: readonly HostRecording[]) {
+async function replayAll(target: ReplayTarget, recordings: readonly HostRecording[], corpus: keyof typeof FLOORS) {
   const diverged: string[] = [];
   const skipped = new Map<string, number>();
+  const fixed = new Map<string, number>();
   let same = 0;
   for (const [i, recording] of recordings.entries()) {
     const verdict = await target.replay(recording);
@@ -161,10 +186,23 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
       case 'skipped':
         skipped.set(verdict.reason, (skipped.get(verdict.reason) ?? 0) + 1);
         break;
-      case 'diverged':
-        diverged.push(`${label(recording, i)}: ${verdict.divergence}`);
+      case 'diverged': {
+        const known = ENCODED_A_FIXED_BUG.find((entry) => entry.matches(recording, verdict.divergence));
+        if (known !== undefined) fixed.set(known.reason, (fixed.get(known.reason) ?? 0) + 1);
+        else diverged.push(`${label(recording, i)}: ${verdict.divergence}`);
         break;
+      }
     }
+  }
+  const expected = Object.fromEntries(
+    ENCODED_A_FIXED_BUG.filter((entry) => entry.count[corpus] > 0).map((entry) => [entry.reason, entry.count[corpus]]),
+  );
+  // Exactly the named ones where the target runs every recording: a new
+  // divergence, or one fewer, fails until this says why. A target that skips
+  // some (the Rust engine) may meet fewer of them, never more.
+  const within = Object.entries(Object.fromEntries(fixed)).every(([reason, count]) => count <= (expected[reason] ?? 0));
+  if (skipped.size > 0 ? !within : JSON.stringify(Object.fromEntries(fixed)) !== JSON.stringify(expected)) {
+    diverged.push(`the recordings that encoded a fixed bug were ${JSON.stringify(Object.fromEntries(fixed))}, not ${JSON.stringify(expected)}`);
   }
   return { same, skipped: Object.fromEntries(skipped), diverged };
 }
@@ -201,18 +239,18 @@ export function replayCorpus(corpus: keyof typeof FLOORS): void {
   });
 
   it('replay identically against the TypeScript engine in process', async () => {
-    const { diverged } = await replayAll(typescriptTarget, recordings);
+    const { diverged } = await replayAll(typescriptTarget, recordings, corpus);
     expect(diverged).toEqual([]);
   });
 
   it('replay identically against the HTTP host double', async () => {
-    const { diverged } = await replayAll(http, recordings);
+    const { diverged } = await replayAll(http, recordings, corpus);
     expect(diverged).toEqual([]);
   });
 
   it('replay identically against the Rust engine, every recording it runs whole', async () => {
     const before = { ...rustRunStats.allReasons };
-    const { same, skipped, diverged } = await replayAll(rustTarget, recordings);
+    const { same, skipped, diverged } = await replayAll(rustTarget, recordings, corpus);
     const everyReason = Object.entries(rustRunStats.allReasons)
       .map(([reason, count]): [string, number] => [reason, count - (before[reason] ?? 0)])
       .filter(([, count]) => count > 0)

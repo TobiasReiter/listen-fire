@@ -13,7 +13,7 @@ jest.mock('../../../logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { tenantIdOf } from 'engine-contracts';
+import { fileValue, tenantIdOf } from 'engine-contracts';
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import {
   RecordedConversation,
@@ -166,6 +166,20 @@ describe('the recorder', () => {
     expect(kept[0]?.requests.find((r) => r.method === 'cancelled')).toMatchObject({
       error: { class: 'Error', message: 'the gate is down' },
     });
+  });
+
+  it('writes an engine file down as its descriptor, in the input and the result', async () => {
+    const descriptor = { __brand: 'FileRef' as const, name: 'deck.pdf', source: { adapterType: 'attio', credentialId: 'cred-1', handle: 'h-1' } };
+    const kept: HostRecording[] = [];
+    const result = { movementName: 'intake', writes: [{ writtenValues: { deck: fileValue(descriptor) } }] };
+    await recordEntry({
+      entry: 'run',
+      input: { ...input(testHost()), event: { ...input(testHost()).event, payload: { deck: fileValue(descriptor) } } },
+      run: async () => result,
+      keep: (r) => kept.push(r),
+    });
+    expect(kept[0]?.input).toMatchObject({ event: { payload: { deck: descriptor } } });
+    expect(kept[0]).toMatchObject({ result: { writes: [{ writtenValues: { deck: descriptor } }] } });
   });
 
   it('refuses a request made after the entry ended, and says so', async () => {

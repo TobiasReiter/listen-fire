@@ -3,7 +3,9 @@
 // recorder (./recorder.ts) both make of every request and answer. A value
 // JSON would drop or change — a function, a class instance, a Date, a Map, a
 // stream, a BigInt, a NaN, a -0, a lone surrogate, a hole in an array, a
-// cycle — is named by its path.
+// cycle — is named by its path. An engine file crosses as its descriptor.
+
+import { isFileValue } from 'engine-contracts';
 
 export class NotJson extends Error {
   constructor(where: string, path: string, what: string) {
@@ -77,7 +79,9 @@ function notJsonInObject(
   ancestors: Map<object, string>,
 ): { path: string; what: string } | undefined {
   const proto: unknown = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) {
+  // An engine file is the one instance that crosses: as its descriptor, its
+  // own fields, which are checked like any object's.
+  if (proto !== Object.prototype && proto !== null && !isFileValue(value)) {
     const constructor: unknown = Reflect.get(value, 'constructor');
     const name =
       typeof constructor === 'function' && constructor.name !== '' ? constructor.name : 'an object';

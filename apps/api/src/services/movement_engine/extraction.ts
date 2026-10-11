@@ -46,6 +46,7 @@ import {
   before,
   BridgeError,
   borrowedTypeSegments,
+  fileViews,
   isEnumType,
   parseFieldTypeName,
   expressionOfSlot,
@@ -601,7 +602,7 @@ function tracedValue(value: unknown): string | null {
     typeof value === 'string'
       ? value
       : typeof value === 'object'
-        ? JSON.stringify(value)
+        ? JSON.stringify(value, fileViews)
         : String(value);
   return text.length > TRACE_VALUE_CHARS ? `${text.slice(0, TRACE_VALUE_CHARS)}…` : text;
 }
@@ -2756,7 +2757,7 @@ export function renderUserMessage(
         '## CURRENT ENTITY',
         `You are extracting the remaining fields of one already-identified entity${described(entity.spec.description)}`,
         '```json',
-        JSON.stringify(entity.context, null, 2),
+        JSON.stringify(entity.context, fileViews, 2),
         '```',
       ].join('\n'),
     );
@@ -2764,7 +2765,7 @@ export function renderUserMessage(
       const lines = [`## ENRICHMENT via \`${plugin}\``];
       if (result.text) lines.push(result.text);
       if (result.data && Object.keys(result.data).length > 0) {
-        lines.push('```json', JSON.stringify(result.data, null, 2), '```');
+        lines.push('```json', JSON.stringify(result.data, fileViews, 2), '```');
       }
       if (lines.length > 1) push(`ENRICHMENT via ${plugin}`, lines.join('\n'));
     }
@@ -2795,9 +2796,10 @@ export function segmentForDatum(datum: unknown): Segment {
   return { classification: 'FRAGMENT', content: safeStringify(datum) };
 }
 
+/** A datum as the prompt reads it: a file as its opaque view. */
 function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(value, fileViews);
   } catch {
     return String(value);
   }

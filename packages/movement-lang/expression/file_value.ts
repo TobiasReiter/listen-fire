@@ -19,13 +19,18 @@ export type { FileMark };
 
 /** A fresh marked object holding `fields`, in their order: the ONE way a file
  *  value is made (`engine-contracts` `fileValue` is the typed door to it).
- *  Written out as JSON, it is its opaque view (`fileView`), never its
- *  descriptor: whatever writes a file into text — a prompt, a trace, a CRM
- *  field — writes no host internals. */
+ *  Its JSON is its descriptor — what crosses the host boundary (a request, a
+ *  result, a park, a recording). What the PROGRAM sees of it is its opaque
+ *  view (`fileView`): the engine's own print and read paths project it
+ *  (`fileViews`, a member read, TEXT.SERIALISE, TEXT.PAIRS). */
 export function markedFile<T extends object>(fields: T): T & FileMark {
-  const file = Object.assign(new FileMark(), fields);
-  Object.defineProperty(file, 'toJSON', { value: () => fileView(file), enumerable: false });
-  return file;
+  return Object.assign(new FileMark(), fields);
+}
+
+/** A `JSON.stringify` replacer for text the program sees (a prompt, a trace's
+ *  sample): each file written as its opaque view, never its descriptor. */
+export function fileViews(_key: string, value: unknown): unknown {
+  return FileMark.has(value) ? fileView(value) : value;
 }
 
 /**

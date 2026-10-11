@@ -57,7 +57,6 @@ import {
   RunAborted,
   RustShimError,
   WireOut,
-  descriptorsInParkState,
   filesInParkState,
   isCallbackParam,
   schemaFieldTypeOf,
@@ -382,7 +381,7 @@ const ROUTES: Record<string, Route> = {
     await sink.commitTimerPark({
       address: string(request.address, 'park.sink.commitTimerPark address'),
       // On the eval wire: the state's objects in the order the engine wrote them.
-      state: descriptorsInParkState(wire.read(request.state)),
+      state: wire.read(request.state),
       wakeAt: instant(request.wakeAt, 'park.sink.commitTimerPark wakeAt'),
       segmentId: segmentOf(request),
     });
@@ -396,7 +395,7 @@ const ROUTES: Record<string, Route> = {
     if (request.wire !== true) throw new RustShimError('park.sink.commitSuspension carries its state on the eval wire');
     await sink.commitSuspension({
       address: string(request.address, 'park.sink.commitSuspension address'),
-      state: descriptorsInParkState(wire.read(request.state)),
+      state: wire.read(request.state),
       segmentId: segmentOf(request),
     });
     return undefined;
@@ -425,7 +424,7 @@ const ROUTES: Record<string, Route> = {
     if (request.wire !== true) throw new RustShimError('park.sink.commitAwaitPark carries its state on the eval wire');
     await sink.commitAwaitPark({
       address: string(request.address, 'park.sink.commitAwaitPark address'),
-      state: descriptorsInParkState(wire.read(request.state)),
+      state: wire.read(request.state),
       adapterType: string(request.adapterType, 'park.sink.commitAwaitPark adapterType'),
       correlationKey: string(request.correlationKey, 'park.sink.commitAwaitPark correlationKey'),
       segmentId: segmentOf(request),
@@ -454,7 +453,7 @@ const ROUTES: Record<string, Route> = {
       frameAddress: string(request.frameAddress, 'park.sink.persistBranchExport frameAddress'),
       branchAddress: string(request.branchAddress, 'park.sink.persistBranchExport branchAddress'),
       branchIndex,
-      exports: descriptorsInParkState(wire.read(request.exports)),
+      exports: wire.read(request.exports),
       segmentId: segmentOf(request),
     });
     return undefined;
@@ -520,7 +519,7 @@ const ROUTES: Record<string, Route> = {
     const params = request.params;
     if (!Array.isArray(params) || !params.every(isCallbackParam)) throw new RustShimError('park.callbacks.mint params are {name, type} each');
     const expiresAt = request.expiresAt === undefined ? undefined : instant(request.expiresAt, 'park.callbacks.mint expiresAt');
-    const state = descriptorsInParkState(wire.read(request.state));
+    const state = wire.read(request.state);
     if (!isParkedState(state)) throw new RustShimError('park.callbacks.mint state is a parked state');
     return callbacks.mint({
       address: string(request.address, 'park.callbacks.mint address'),
