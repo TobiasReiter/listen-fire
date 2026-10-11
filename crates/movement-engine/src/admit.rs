@@ -2085,15 +2085,15 @@ impl Names<'_> {
         }
     }
 
-    /// A collection op (crate::collection): one member at a time (a setting
-    /// that runs more at once is refused by the op's own reason); its
+    /// A collection op (crate::collection): its members `concurrency` at a
+    /// time (settings this engine does not read are refused by the op's own
+    /// reason); its
     /// collection, start and closure body walked, the body as a member's —
     /// its parameters values, which may hold records. A movement handed by
     /// name is walked under every kind a member may be (`Bound::collection`).
     fn collection_op(&self, op: &CollectionOpExpression, reason: &str) -> Admitted {
-        match crate::collection::settings(op.config.as_ref()) {
-            Ok((_, concurrency, initial)) if concurrency == 1.0 && initial == 1.0 => {}
-            _ => return refuse(reason),
+        if crate::collection::settings(op.config.as_ref()).is_err() {
+            return refuse(reason);
         }
         self.slot(&op.source)?;
         if let Some(init) = &op.init {
@@ -2777,7 +2777,9 @@ impl Names<'_> {
         match fn_ {
             AggregationFunction::Llm => refuse("aggregate:llm"),
             // ONLY's failure spells its expression back; a name is what it spells.
-            AggregationFunction::Only if crate::formula::spell(inner).is_none() => refuse("aggregate:only"),
+            // A walk read as its records keeps its own readings (a binding's
+            // whole right-hand side, `selection`); anywhere else it is refused.
+            AggregationFunction::Only if crate::formula::spell(inner).is_none() || crate::eval::is_records_walk(inner) => refuse("aggregate:only"),
             AggregationFunction::Sort => {
                 if order_by.is_some_and(|key| !matches!(key, Expression::Property { .. } | Expression::AliasRef { .. })) {
                     return refuse("aggregate:sort_key");
@@ -3233,8 +3235,8 @@ mod tests {
             ("  held = { k: 1 }\n  write held.k { a: 1 }", "write_position_member_path"),
             ("  held = { k: 1 }\n  g = graph { ...held.k }", "node_spread_path"),
             ("  held = { k: 1 }\n  write held.k-[:e]-> { a: 1 }", "write_root_expression"),
-            ("  x = MAP([1], { concurrency: 4 }, (v) => { return v })", "rvalue:collection"),
-            ("  MAP([1], { concurrency: 4 }, (v) => { return v })", "statement:collection"),
+            ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
+            ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
             ("  f = (n: <number>) => n + 1\n  r = f(n: 3)", "function_call"),
         ] {
@@ -3359,6 +3361,7 @@ mod tests {
         assert_eq!(refused("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }"), None);
         assert_eq!(refused("  x = ONLY([1, 2])"), None);
         assert_eq!(refused("  x = ONLY(msg-[:_resources]->.`name`)").as_deref(), Some("aggregate:only"));
+        assert_eq!(refused("  g = graph { file: ONLY(msg-[:files]->) }").as_deref(), Some("aggregate:only"));
     }
 
     #[test]

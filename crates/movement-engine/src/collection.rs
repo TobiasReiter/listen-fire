@@ -9,14 +9,17 @@
 //! as itself — and what the function returns is the member's answer, in the
 //! currency it came in: a record as itself, anything else its value.
 //!
-//! Members run one at a time, in order: the settings admission lets by are
-//! one at a time (`concurrency` 1), where a member's trace, writes and
-//! failure land exactly where running it in place would put them. Under
+//! Members run `concurrency` at a time after a first batch of
+//! `initialConcurrency` (run.ts `runMembers`), each in a flow of its own:
+//! its trace spliced into the enclosing one in member order, its writes
+//! ordered under the op's fork by its index, its effects kept apart from
+//! the others' by the run's locks. Under
 //! `onError: "warn"` or `"ignore"` a member whose function fails is left
 //! out (`warn` traces why); a failure that is the run's (its cost cap, the
 //! call depth, the call ceiling, a quiet end) passes through whatever it
 //! says, and stops the op, as the first failure does under `"error"`.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use movement_parser::ast::{self, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, MembersExpression, MovementParam, Statement};
@@ -105,6 +108,8 @@ impl CollectionRun {
             members: self.members.clone(),
             source_trail: self.source_trail.clone(),
             init: self.init.clone(),
+            concurrency: self.concurrency,
+            initial: self.initial,
         }
     }
 }
@@ -173,6 +178,9 @@ pub(crate) struct CollectionRun {
     pub source_trail: Trail,
     /// `REDUCE`'s starting value (null for the other ops).
     pub init: Js,
+    /// How many members run at once, and how many the first batch runs.
+    pub concurrency: usize,
+    pub initial: usize,
 }
 
 /// `memberLeftOut`: the warning `onError: "warn"` leaves for a member it
@@ -275,6 +283,11 @@ pub(crate) fn reading(call: &CallStatement, binds: bool, language_version: u32) 
     Ok(Some(Reading::Collection(CollectionOpExpression { op, source, init, config, r#fn, span: call.span })))
 }
 
+/// A width the checker read as a positive whole number.
+pub(crate) fn width(n: f64) -> usize {
+    if n.is_finite() && n >= 1.0 { n as usize } else { 1 }
+}
+
 /// `readCollectionConfig` for the settings a record written in place
 /// names: what each says, or why it says nothing this engine runs.
 pub(crate) fn settings(config: Option<&ast::ExprSlot>) -> Result<(OnError, f64, f64), String> {
@@ -350,9 +363,6 @@ impl Run<'_> {
         let (on_error, concurrency, initial) = settings(expr.config.as_ref()).map_err(|problem| {
             Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{spelling}' was given settings it cannot run with — the checker should have caught this: {problem}")))
         })?;
-        if concurrency != 1.0 || initial != 1.0 {
-            return Err(Stop::Thrown(Failure::unreproduced(&format!("'{spelling}' running more than one member at a time"), "the Rust engine runs a collection op's members one at a time")));
-        }
         let function = self.collection_function(&expr.r#fn, spelling, scope, &origin.fn_path(expr))?;
         let run = CollectionRun {
             op: Rc::new(OpCode { op: expr.clone(), json: self.op_json(expr, origin).map_err(Stop::Thrown)? }),
@@ -364,47 +374,123 @@ impl Run<'_> {
             members,
             source_trail,
             init,
+            concurrency: width(concurrency),
+            initial: width(initial),
         };
         let answers = vec![None; run.members.len()];
         let indices: Vec<usize> = (0..run.members.len()).collect();
         self.run_members(&run, &indices, answers).await
     }
 
-    /// `runCollectionMembers` / `runMembers`, one member at a time: each in a
-    /// flow of its own (its trace spliced in as it finishes, its writes under
-    /// the op's fork by its index), inside its member boundary. A member that
-    /// parks stops the op's one slot: the members after it never start, and
-    /// the op parks as a join of its parked members, keeping what the others
-    /// answered. Under `onError: "warn"` or `"ignore"` a member whose function
-    /// fails is left out (`warn` traces why, after the member's own entries).
-    pub(crate) async fn run_members(&self, run: &CollectionRun, indices: &[usize], mut answers: Vec<Option<Option<Js>>>) -> Result<Binding, Stop> {
+    /// `runCollectionMembers` / `runMembers`: the members at `indices`, the
+    /// op's `concurrency` at a time, each in a flow of its own (its writes
+    /// under the op's fork by its index), inside its member boundary. The
+    /// first `initialConcurrency` members are a batch of their own, run to
+    /// the end before any other starts; the rest take the next member as a
+    /// slot frees. Each member's trace joins the enclosing one as soon as
+    /// every member before it has finished, so it reads in member order. A
+    /// member that parks holds its slot (that slot starts nothing more; the
+    /// others go on), nothing past the first batch starts once one of it has
+    /// parked, and a paused run starts nothing more once one has; the op then
+    /// parks as a join of its parked members, keeping what the others
+    /// answered. A member whose function fails under `onError: "warn"` or
+    /// `"ignore"` is left out (`warn` traces why, after the member's own
+    /// entries); any other failure stops further members starting, and once
+    /// those running have finished the earliest member's is the op's.
+    pub(crate) async fn run_members(&self, run: &CollectionRun, indices: &[usize], answers: Vec<Option<Option<Js>>>) -> Result<Binding, Stop> {
         let spelling = spelling(run.op.op.op);
         let fork = self.fork_writes();
-        let mut parked: Vec<usize> = Vec::new();
-        for &index in indices {
-            let state = self.open_flow(fork.branch(index));
-            let (outcome, mut state) = self.in_flow(state, self.member(run, index, &answers)).await;
-            let answer = match outcome {
-                Ok(value) => Some(value),
-                Err(Stop::Parked(_)) => {
-                    self.trace.extend(state.trace);
-                    parked.push(index);
-                    break;
-                }
-                Err(Stop::Thrown(failure)) if run.on_error != OnError::Error && is_member_failure(&failure) => {
-                    if run.on_error == OnError::Warn {
-                        state.trace.push(member_left_out(spelling, index, Some(run.members.len()), &failure));
+        let answers = RefCell::new(answers);
+        let parked: RefCell<Vec<usize>> = RefCell::default();
+        let failure: RefCell<Option<(usize, Stop)>> = RefCell::default();
+        let next = std::cell::Cell::new(0usize);
+        let traces: RefCell<Vec<Option<Vec<TraceEntry>>>> = RefCell::new(vec![None; indices.len()]);
+        let spliced = std::cell::Cell::new(0usize);
+        let splice = || {
+            let mut traces = traces.borrow_mut();
+            while spliced.get() < indices.len() {
+                let Some(trace) = traces[spliced.get()].take() else { break };
+                self.trace.extend(trace);
+                spliced.set(spliced.get() + 1);
+            }
+        };
+        // The member at `position` of `indices`; true when it parked.
+        let run_one = |position: usize| {
+            let fork = &fork;
+            let answers = &answers;
+            let parked = &parked;
+            let failure = &failure;
+            let traces = &traces;
+            let splice = &splice;
+            async move {
+                let index = indices[position];
+                let state = self.open_flow(fork.branch(index));
+                let snapshot = answers.borrow().clone();
+                let (outcome, mut state) = self.in_flow(state, self.member(run, index, &snapshot)).await;
+                let mut held = false;
+                match outcome {
+                    Ok(value) => answers.borrow_mut()[index] = Some(Some(value)),
+                    Err(Stop::Parked(_)) => {
+                        parked.borrow_mut().push(index);
+                        held = true;
                     }
-                    None
+                    Err(Stop::Thrown(failed)) if run.on_error != OnError::Error && is_member_failure(&failed) => {
+                        if run.on_error == OnError::Warn {
+                            state.trace.push(member_left_out(spelling, index, Some(run.members.len()), &failed));
+                        }
+                        answers.borrow_mut()[index] = Some(None);
+                    }
+                    Err(other) => {
+                        let mut failure = failure.borrow_mut();
+                        if failure.as_ref().is_none_or(|(earliest, _)| index < *earliest) {
+                            *failure = Some((index, other));
+                        }
+                    }
                 }
-                Err(other) => {
-                    self.trace.extend(state.trace);
-                    return Err(other);
-                }
-            };
-            self.trace.extend(state.trace);
-            answers[index] = Some(answer);
+                traces.borrow_mut()[position] = Some(state.trace);
+                splice();
+                held
+            }
+        };
+        // `width` slots, each taking the next member until `end`, a failure,
+        // its own member parking, or a paused run's first park.
+        let run_batch = |end: usize, width: usize| {
+            let run_one = &run_one;
+            let next = &next;
+            let failure = &failure;
+            let parked = &parked;
+            async move {
+                let slots = width.min(end.saturating_sub(next.get()));
+                let slot = || async move {
+                    while failure.borrow().is_none() && next.get() < end && !(self.limit_paused.get() && !parked.borrow().is_empty()) {
+                        let position = next.get();
+                        next.set(position + 1);
+                        if run_one(position).await {
+                            return;
+                        }
+                    }
+                };
+                crate::executor::join_all((0..slots).map(|_| slot()).collect()).await;
+            }
+        };
+        if run.initial < run.concurrency {
+            run_batch(run.initial.min(indices.len()), run.initial).await;
         }
+        if parked.borrow().is_empty() {
+            run_batch(indices.len(), run.concurrency).await;
+        }
+        // A failed op stopped starting members: what the ones that ran did
+        // still belongs on the trace, in member order.
+        for trace in traces.borrow_mut().iter_mut().skip(spliced.get()) {
+            if let Some(trace) = trace.take() {
+                self.trace.extend(trace);
+            }
+        }
+        if let Some((_, stop)) = failure.into_inner() {
+            return Err(stop);
+        }
+        let answers = answers.into_inner();
+        let parked = parked.into_inner();
         if !parked.is_empty() {
             return Err(self.park_collection_op(run, &answers, parked.len()).await);
         }

@@ -223,7 +223,7 @@ impl Run<'_> {
                     .ok_or_else(|| malformed(&format!("its collection op at call {descent_index} is not in its statement")))?;
                 let spelling = crate::collection::spelling(op.op);
                 let function = self.collection_function(&op.r#fn, spelling, &caller.scope, &origin_fn_path(&origin))?;
-                let (on_error, _, _) = crate::collection::settings(op.config.as_ref()).map_err(|problem| {
+                let (on_error, concurrency, initial) = crate::collection::settings(op.config.as_ref()).map_err(|problem| {
                     runtime(format!("'{spelling}' was given settings it cannot run with — the checker should have caught this: {problem}"))
                 })?;
                 let member_scope = function.captured_scope().child();
@@ -240,6 +240,8 @@ impl Run<'_> {
                     members: Vec::new(),
                     source_trail: Trail::default(),
                     init: Js::Null,
+                    concurrency: crate::collection::width(concurrency),
+                    initial: crate::collection::width(initial),
                 };
                 let boundary = Boundary::Member { site: site.clone(), index: descent_index, next, member, op: run.op.clone() };
                 spine.push(Spine::Member { caller, boundary, site, index: descent_index, next, member, run, scope: member_scope.clone() });

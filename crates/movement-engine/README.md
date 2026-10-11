@@ -386,7 +386,7 @@ refused where it stands (`is_test_declared_record`).
 |---|---|---|
 | `statement:call`, `movement_call`, `function_call` | a call statement of anything but a movement or a plugin (a built-in's or a collection op's); a call of a movement whose value is not one kind on every path, or whose kind is left open by a recursion; a bound call of a name the program binds that is not a movement, or of any non-movement callee before version 3 | the remaining call forms (a collection op as a statement, closures as callees) |
 | `rvalue:closure`, `rvalue:lazy`, `rvalue:inlineBlock`, `expression_closure` | closures and lazy walks as values; a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), run by the TypeScript as a call bound first (from version 3) | closure and lazy-walk binding kinds as values (a closure a combinator or a callback holds already parks and resumes) |
-| `statement:collection`, `rvalue:collection` | MAP, FILTER, … whose config asks a concurrency or an initial batch other than 1 (members run one at a time here) | bounded fan-out (fans.ts `mapConcurrent`): members run concurrently, their requests interleaved as the TypeScript's are |
+| `statement:collection`, `rvalue:collection` | MAP, FILTER, … whose settings record this engine does not read (a setting not written as a literal); any `concurrency` and `initialConcurrency` run since chunk 7A Task 6 | the settings' reading where the checker's `readCollectionConfig` reads more |
 | `statement:refresh` | `refresh` | its semantics (no corpus case runs one) |
 | `rvalue:extractCall` | the version-3 `extract(…)` call form | its prompt blocks, `llm.extractCall.call`, site ids `xc:<shape>#<n>` |
 | `rvalue:<kind>` | any other right-hand side, by its AST `kind`; for `return`, also `extract`, `write`, `match` and `link`, and in a block's iteration `node` and a record | a returned record binding (a return value that is a record, as a call's value already is) |
@@ -847,9 +847,11 @@ by identity first (`deepEqual` over two that hold themselves differently
 ends in the RangeError its recursion does). A
 collection op's `onError` never forgives this engine's own refusal
 (`ErrorClass::Unreproduced`). MAP, FILTER,
-REDUCE, GROUPBY, KEYBY and MEMBERS run one member at a time
-(`interpretCollectionOp`, its `onError` and answer shapes; as calls from
-version 3). A park writes a held record as the TypeScript's `recordValue`
+REDUCE, GROUPBY, KEYBY and MEMBERS run their members `concurrency` at a
+time after a first batch of `initialConcurrency` (`runMembers`, chunk 7A
+Task 6: each member a flow of its own, its trace spliced in member order,
+a parked member holding its slot; `interpretCollectionOp`, its `onError`
+and answer shapes; as calls from version 3). A park writes a held record as the TypeScript's `recordValue`
 descriptor and refuses a function (MOVENG_PARK_NONSERIALIZABLE). On the
 eval wire a built-in crosses as `["f", name]` and `Object.prototype` as
 `["p"]`; a record whose binding object is data (the event, a callback, a

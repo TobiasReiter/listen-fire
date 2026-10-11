@@ -406,18 +406,22 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'statement:collection',
-    routes: 'refused',
-    note: 'a collection op statement asking a concurrency or batch other than 1 (members here run one at a time): needs bounded fan-out (fans.ts mapConcurrent), members interleaved as the TypeScript interleaves them',
+    routes: 'whole',
+    note: "closed in chunk 7A Task 6: a collection op's members run `concurrency` at a time after a first batch of `initialConcurrency` (runMembers), each in a flow of its own, their traces spliced in member order; settings this engine does not read stay refused by the op's reason",
     programs: [
+      () => ({ body: '  MAP(["a", "b", "c", "d"], { concurrency: 2, initialConcurrency: 1 }, (n) => {\n    write crm-[:notes]-> { body: n }\n  })' }),
+      () => ({ body: '  MAP(["Acme", "Beta", "Acme"], { concurrency: 3, onError: "warn" }, (n) => {\n    if n == "Beta" {\n      x = ONLY(crm-[c:companies]->.`name`)\n    }\n    write crm-[:companies]-> { unique by (`name`), name: n }\n  })' }),
       (pick) => ({ body: `  MAP(["a", "b", "c"], { concurrency: ${pick([2, 3])} }, (n) => {\n    write crm-[:notes]-> { body: n }\n  })` }),
       () => ({ body: '  MAP(["Acme", "Beta"], { concurrency: 2 }, (n) => {\n    write crm-[:companies]-> { unique by (`name`), name: n }\n  })' }),
     ],
   },
   {
     reason: 'rvalue:collection',
-    routes: 'refused',
-    note: 'as statement:collection, bound',
+    routes: 'whole',
+    note: 'closed in chunk 7A Task 6: as statement:collection, bound (REDUCE carries what the members before each had answered when it started)',
     programs: [
+      () => ({ body: '  lengths = MAP(["a", "bb", "ccc", "dddd"], { concurrency: 2 }, (n) => LENGTH(n))\n  write crm-[:notes]-> { body: "${SUM(lengths)}" }' }),
+      () => ({ body: '  slow = MAP([1, 2, 3], { concurrency: 3 }, (n) => {\n    if n == 2 {\n      await sleep(1h)\n    }\n    return n * 10\n  })' }),
       (pick) => ({ body: `  done = MAP(["a", "b"], { concurrency: ${pick([2, 4])} }, (n) => {\n    write crm-[:notes]-> { body: n }\n    return n\n  })\n  write crm-[:notes]-> { body: "\${COUNT(done)}" }` }),
       () => ({ body: '  kept = FILTER(["a", "bb", "ccc"], { concurrency: 3 }, (n) => LENGTH(n) > 1)\n  write crm-[:notes]-> { body: "${COUNT(kept)}" }' }),
     ],
