@@ -495,7 +495,13 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
       }
       const names = reasons.some((r) => patternOf(r, [pattern.reason]) !== undefined);
       const expected = program.routes ?? pattern.routes;
-      if (expected === 'unreached') {
+      // A program the checker refuses ends at the check the Rust route makes
+      // before its segment opens, as the TypeScript route does: never
+      // handed to the Rust engine, whatever its pattern's other programs do.
+      const atCheck = routes === 'unreached' && checkFailed(ts);
+      if (atCheck && expected !== 'unreached') {
+        if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) problems.push(`${where}\n  the check ended the engines differently`);
+      } else if (expected === 'unreached') {
         // The checker refuses every program holding it (the Rust engine's
         // admission may name it first, and both engines end at the check),
         // or both entries refuse it before it is routed at all.
@@ -508,13 +514,8 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
         if (routes !== 'whole' && !names && program.routes === undefined) problems.push(`${where}\n  ${routes} for ${reasons.join(', ')}, not for ${pattern.reason}`);
       }
       let agreement: CaseRecord['agreement'];
-      if (expected === 'unreached') {
+      if (expected === 'unreached' || atCheck) {
         agreement = 'check';
-      } else if (routes === 'whole' && checkFailed(ts)) {
-        // Refused by the check on both engines: the TypeScript's before any
-        // segment, the Rust one's after it opened one to ask.
-        if (JSON.stringify(ending(ts)) === JSON.stringify(ending(rust))) agreement = 'check';
-        else problems.push(`${where}\n  the check ended the engines differently`);
       } else if (routes === 'whole') {
         const same = requestsOf(ts) === requestsOf(rust) && JSON.stringify(canonical(ending(ts))) === JSON.stringify(canonical(ending(rust)));
         if (process.env.PATTERNS_DEBUG !== undefined && !same) {

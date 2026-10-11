@@ -477,6 +477,15 @@ export const PATTERNS: Pattern[] = [
     ],
   },
   {
+    reason: 'statement:<kind>',
+    routes: 'refused',
+    note: 'any other statement, by its kind: a shape declared in a body (`statement:shape`); needs body-local shape declarations, and their park (`resume_state_kind:localShape`)',
+    programs: [
+      () => ({ body: '  node Tag {\n    label: <text>\n  }\n  write crm-[:notes]-> { body: msg.`subject` }' }),
+      () => ({ body: '  node Lead {\n    who: <text>\n  }\n  write crm-[:notes]-> { body: "lead" }' }),
+    ],
+  },
+  {
     reason: 'rvalue:extractCall',
     routes: 'whole',
     note: "closed by chunk 7A Task 6: `x = extract(…)` / `extractOne(…)` runs on Rust (`runExtractCall`: the prompt as blocks laid out for the cache, llm.extractCall.call at the call's settings, its own schema and one retry, site ids xc:<shape>#<n>, files read once per run); refused by name where the shape is not the file's (`extract_call_shape`) or the settings do not read (`extract_call_settings`)",
