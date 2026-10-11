@@ -468,7 +468,11 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     if let Some(resume) = &input.resume {
         reasons.extend(crate::park::resume_refusal(&resume.state));
     }
-    if !reasons.is_empty() {
+    // A slot this engine's lowering misses is, alone, the checker's to
+    // judge: one the checker refuses ends the run at the check on either
+    // engine; one it passes is declined after the check, before anything.
+    let lowering_misses: Vec<String> = reasons.iter().filter(|r| r.ends_with("_does_not_lower")).cloned().collect();
+    if lowering_misses.len() < reasons.len() {
         return Err(Stop::Refused(reasons));
     }
     let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
@@ -539,6 +543,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         wire,
         effected: std::cell::Cell::new(false),
     };
+    if let Some(reason) = lowering_misses.into_iter().next() {
+        return Err(Stop::Declined(reason));
+    }
     // What the check's stamps say this engine does not run is declined
     // before every host-visible effect, the version warning's trace entry
     // among them.
@@ -1564,10 +1571,60 @@ impl Run<'_> {
                 let value = self.meta_value(&key).await?;
                 Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
             }
+            Ask::RenderFile { content, kind } => {
+                let request = host::files::render(self.segment(), &content, &kind);
+                let answer = self.ask(request).await?.unwrap_or(Json::Null);
+                let value = self.wire.decode(&answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
+                Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
+            }
+            Ask::ReadFile { file } => self.read_file(&file).await.map(Ok),
             Ask::Ai { prompt, tier } => self.ai(&prompt, tier.as_deref()).await.map(|value| Ok(Evaluated { value, prov: Prov::Built(Trail::default()) })),
             // Asked only of a write field's evaluation, which answers it.
             Ask::FieldFunction { id, .. } => Err(Failure::engine("MOVENG_RUNTIME", format!("{id}() was asked of no write field"))),
         }
+    }
+
+    /// `READ(file)`'s host half: the text (its `file` origin minted, the
+    /// trace's entry written), or undefined for a file with none.
+    async fn read_file(&self, file: &Js) -> Result<Evaluated, Failure> {
+        let answer = self.resolve_file_text(file).await?;
+        let mut named = crate::trace::Members::default();
+        for key in ["name", "contentType"] {
+            let value = event_get(file, key);
+            if !matches!(value, Js::Undefined) {
+                named.set(key, value);
+            }
+        }
+        if let Js::String(why) = event_get(&answer, "unreadable") {
+            let mut entry = named;
+            entry.set("unreadable", Js::String(why));
+            let detail = event_get(&answer, "detail");
+            if !matches!(detail, Js::Undefined) {
+                entry.set("detail", detail);
+            }
+            self.trace.push(TraceEntry::Read(entry));
+            return Ok(Evaluated { value: Js::Undefined, prov: Prov::Built(Trail::default()) });
+        }
+        let text = event_get(&answer, "text");
+        let mut entry = named.clone();
+        entry.set("chars", Js::Number(js::utf16_len(&text.to_js_string()) as f64));
+        self.trace.push(TraceEntry::Read(entry));
+        let mut origin = vec![("kind", Js::str("file"))];
+        let raw_text_id = event_get(&answer, "rawTextId");
+        if !matches!(raw_text_id, Js::Undefined) {
+            origin.push(("rawTextId", raw_text_id));
+        }
+        if let Some(handle) = crate::extract::file_handle(file) {
+            origin.push(("handle", Js::String(handle)));
+        }
+        for key in ["name", "contentType"] {
+            let value = event_get(file, key);
+            if !matches!(value, Js::Undefined) {
+                origin.push((key, value));
+            }
+        }
+        let id = self.mint_origin(env::object_of(origin));
+        Ok(Evaluated { value: text, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
     }
 
     /// `evaluateAi`: one priced `llm.client.call` at the tier's settings,

@@ -178,6 +178,19 @@ pub enum Ask {
     FieldFunction { id: String, args: Vec<Js> },
     /// `AI(prompt[, tier])`: the model's answer (`evaluateAi`), or null.
     Ai { prompt: String, tier: Option<String> },
+    /// `FILE(content, type)`: the host's rendered artifact (`files.render`).
+    RenderFile { content: String, kind: String },
+    /// `READ(file)`: the file's text, or why there is none (`files.resolveFileText`).
+    ReadFile { file: Js },
+}
+
+/// `JSON.stringify(value)` as a template literal prints it (`undefined`
+/// for undefined).
+fn json_text(value: &Js) -> String {
+    match value {
+        Js::Undefined => "undefined".into(),
+        other => crate::js::json_stringify(other, 0),
+    }
 }
 
 /// The ambients a run reads through its host (`resolveMovementMetaKey`'s
@@ -204,6 +217,11 @@ pub trait Reader {
     /// An `AI()` answer's origin (`{kind: 'ai', prompt, inputs}`), the
     /// prompt's own origins its inputs.
     fn ai_origin(&self, _prompt: &str, _inputs: &[u32]) -> u32 {
+        0
+    }
+    /// A `READ(file)`'s origin (`{kind: 'file', rawTextId?, handle?, name?,
+    /// contentType?}`).
+    fn file_origin(&self, _origin: Js) -> u32 {
         0
     }
     /// Whether the write field this evaluation is the value of advertises a
@@ -791,6 +809,11 @@ impl<'a> Evaluator<'a> {
                 .await?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
+        if id == "file" || id == "read" {
+            if let Some(reader) = self.reader() {
+                return if id == "file" { self.render_file(reader, args).await } else { self.read_file(reader, args).await };
+            }
+        }
         if !stdlib::FLAT.contains(&id) {
             let Some(reader) = self.reader() else {
                 return Err(EvalError::Fallback(format!("{id} is not a built-in this engine runs")));
@@ -845,6 +868,60 @@ impl<'a> Evaluator<'a> {
 
     /// The taint union: every origin once, in the order first seen, and no
     /// `direct`.
+    /// `evaluateFileFunction`: the content and the type evaluated, the type
+    /// held to `pdf` or `text`, the content rendered as text by the host;
+    /// the descriptor carries both trails, transformed.
+    async fn render_file(&self, reader: &dyn Reader, args: &[Expression]) -> Eval {
+        let (Some(content_arg), Some(kind_arg)) = (args.first(), args.get(1)) else {
+            return Err(EvalError::engine("MOVENG_RUNTIME", "FILE() expects (content, \"pdf\" | \"text\") — the checker should have caught this".into()));
+        };
+        let content = self.eval(content_arg).await?;
+        let kind = self.eval(kind_arg).await?;
+        let Js::String(kind_text) = &kind.value else {
+            return Err(EvalError::engine("MOVENG_RUNTIME", format!("FILE()'s artifact type must be \"pdf\" or \"text\", got {}", json_text(&kind.value))));
+        };
+        if kind_text != "pdf" && kind_text != "text" {
+            return Err(EvalError::engine("MOVENG_RUNTIME", format!("FILE()'s artifact type must be \"pdf\" or \"text\", got {}", json_text(&kind.value))));
+        }
+        let text = if content.value.is_nullish() { String::new() } else { content.value.to_js_string() };
+        let value = reader.ask(Ask::RenderFile { content: text, kind: kind_text.clone() }).await?.value;
+        Ok(Evaluated { value, prov: self.union(&[&content.prov, &kind.prov]) })
+    }
+
+    /// `evaluateReadFunction`: absent for absent, a file's text with a
+    /// `file` origin (`direct`, the argument's trail riding along), absent
+    /// for a file with none, the reason on the trace.
+    async fn read_file(&self, reader: &dyn Reader, args: &[Expression]) -> Eval {
+        let Some(file_arg) = args.first() else {
+            return Err(EvalError::engine("MOVENG_RUNTIME", "READ(file) expects one argument — the checker should have caught this".into()));
+        };
+        let file = self.eval(file_arg).await?;
+        if file.value.is_nullish() {
+            return Ok(Evaluated { value: Js::Null, prov: self.union(&[&file.prov]) });
+        }
+        if !crate::extract::is_file_ref(&file.value) {
+            return Err(EvalError::engine(
+                "MOVENG_RUNTIME",
+                format!("READ() reads a file, and this is {} — the checker should have caught this", file.value.type_of()),
+            ));
+        }
+        let read = reader.ask(Ask::ReadFile { file: file.value.clone() }).await?;
+        match read.value {
+            // Unreadable: absent, the file's own trail.
+            Js::Undefined => Ok(Evaluated { value: Js::Null, prov: self.union(&[&file.prov]) }),
+            text => {
+                let Prov::Built(origin) = read.prov else { unreachable!("a read's text carries its file origin") };
+                let mut origins = self.trail_origins(&file.prov);
+                for id in &origin.origins {
+                    if !origins.contains(id) {
+                        origins.push(*id);
+                    }
+                }
+                Ok(Evaluated { value: text, prov: Prov::Built(Trail { origins, direct: origin.direct }) })
+            }
+        }
+    }
+
     /// The origins a value's trail holds (`provenance.origins`).
     fn trail_origins(&self, prov: &Prov) -> Vec<u32> {
         match prov {

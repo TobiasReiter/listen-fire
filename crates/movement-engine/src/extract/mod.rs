@@ -18,6 +18,8 @@ pub struct TierAssignment {
     pub effort: Option<String>,
 }
 
+pub(crate) use resources::{file_handle, is_file_ref};
+
 pub mod emission;
 pub mod prompt;
 pub(crate) mod resources;

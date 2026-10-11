@@ -178,7 +178,7 @@ function seen(outcome: Outcome) {
 
 /** What the Rust engine does with a program: runs it whole, or refuses it
  *  on its own parse for a reason. */
-type OnRust = { runsWhole: true } | { refused: string };
+type OnRust = { runsWhole: true } | { refused: string } | { declined: string };
 
 /**
  * `source` on both engines: the TypeScript run leaves `writes`; the Rust run
@@ -194,6 +194,9 @@ async function onBoth(source: string, onRust: OnRust, writes: Array<[string, unk
     const rust = await runOn('rust', source, languageVersion);
     if ('runsWhole' in onRust) {
       expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+    } else if ('declined' in onRust) {
+      // Past the check, before anything the host keeps.
+      expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 0, notAdmitted: {}, declined: { [onRust.declined]: 1 } });
     } else {
       expect(rustRunStats).toMatchObject({ routed: 1, admitted: 0, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, declined: {}, hostCalls: {} });
     }
@@ -265,8 +268,9 @@ describe("main's language changes on both engines", () => {
   it('one binding for a record, held in a list (405b9c0cf2, 5b7c0011dc): refused, the record read through the list', async () => {
     await onBoth(
       movement('  rows = crm-[c:companies]-> {', '    return c', '  }', '  held = { entries: rows }', '  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }'),
-      // A field read off a fold's answer does not lower here yet.
-      { refused: 'expression_does_not_lower' },
+      // A field read off a fold's answer does not lower here yet: the check
+      // passes it, so it is declined after the check (chunk 7A Task 6).
+      { declined: 'expression_does_not_lower' },
       [['create', { body: '2 Acme' }]],
     );
   });

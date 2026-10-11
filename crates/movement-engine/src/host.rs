@@ -532,6 +532,12 @@ pub mod files {
             args: in_segment(segment, json!({ "file": file, "budget": budget, "wire": true })),
         }
     }
+
+    /// `FILE(content, type)`'s artifact (`files.render`): answered with its
+    /// descriptor on the eval wire.
+    pub fn render(segment: &str, content: &str, kind: &str) -> Request {
+        Request { family: Family::Files, method: "render".into(), args: in_segment(segment, json!({ "content": content, "type": kind })) }
+    }
 }
 
 pub mod ids {

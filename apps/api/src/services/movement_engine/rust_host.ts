@@ -264,6 +264,16 @@ const ROUTES: Record<string, Route> = {
     if (value === REFUSED) throw new RustShimError('lookup.resolveActingUser answered a principal the eval wire cannot carry as itself');
     return new Plain(value);
   },
+  /** `FILE(content, type)`: the host renders and stores the artifact; its
+   *  descriptor comes back on the eval wire. */
+  async 'files.render'(request, { host, wire }) {
+    const type = request.type;
+    if (type !== 'pdf' && type !== 'text') throw new RustShimError('files.render type is "pdf" or "text"');
+    const ref = await host.files.render({ segmentId: segmentOf(request), content: string(request.content, 'files.render content'), type });
+    const value = wire.value(ref);
+    if (value === REFUSED) throw new RustShimError('files.render answered a descriptor the eval wire cannot carry as itself');
+    return new Plain(value);
+  },
   /** Fresh ids, for the resources an extraction carries. */
   async 'ids.mint'(request, { host }) {
     const count = request.count;
@@ -773,6 +783,8 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
       if (typeof positions !== 'number' || !Number.isInteger(positions)) throw new RustShimError('a block trace entry counts its positions');
       return { kind: 'block', root: string(entry.root, 'a block root'), positions };
     }
+    case 'read':
+      return readTraceEntry(entry);
     case 'ai':
       if (typeof entry.hasValue !== 'boolean') throw new RustShimError('an ai trace entry says whether the model answered');
       return { kind: 'ai', prompt: string(entry.prompt, 'an ai prompt'), hasValue: entry.hasValue };
@@ -811,6 +823,16 @@ const tracedFile = z.union([
     detail: z.string().optional(),
   }),
 ]);
+
+type ReadTraceEntry = Extract<MovementRunResult['trace'][number], { kind: 'read' }>;
+
+/** A `READ(file)`'s trace entry: the file as an extraction's entry names it. */
+function readTraceEntry(entry: Record<string, unknown>): ReadTraceEntry {
+  const { kind: _kind, ...file } = entry;
+  const parsed = tracedFile.safeParse(file);
+  if (!parsed.success) throw new RustShimError(`a read trace entry does not read: ${parsed.error.message}`);
+  return { kind: 'read', ...parsed.data };
+}
 
 /** An extraction's trace entry as crates/movement-engine/src/extract/run.rs
  *  writes it, held to expression.ts's type member by member. */

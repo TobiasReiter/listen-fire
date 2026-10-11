@@ -33,8 +33,8 @@ use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
 /// The flat built-ins and namespaced members the evaluator runs
 /// (crate::stdlib): an expression calling any other is refused.
-const FUNCTIONS: [&str; 32] = [
-    "isnull", "coalesce", "trim", "lower", "upper", "length", "abs", "round", "floor", "ceil", "tostring", "tonumber", "multi", "split",
+const FUNCTIONS: [&str; 34] = [
+    "file", "read", "isnull", "coalesce", "trim", "lower", "upper", "length", "abs", "round", "floor", "ceil", "tostring", "tonumber", "multi", "split",
     "date", "datetime", "number", "currency.get_number_from_figure", "currency.get_code_from_figure", "currency.format_figure", "date.parse",
     "date.add_days", "date.format", "date.format_iso", "date.today", "datetime.at", "text.regex_extract", "text.slug", "text.pairs",
     "text.serialise", "url.host", "number.format",
