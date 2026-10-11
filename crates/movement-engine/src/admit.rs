@@ -2433,11 +2433,6 @@ impl Names<'_> {
         for clause in &m.unique_by {
             unique_clause(&clause.predicate.raw)?;
         }
-        // Version 4: a match that finds nothing binds absent and the block
-        // carries on, where this engine ends the scope.
-        if since(self.language_version, 4) {
-            self.reasons.note("v4_match_absent");
-        }
         m.fields.iter().try_for_each(|field| self.slot(&field.value))?;
         self.system_fields(&m.fields, &[])
     }
@@ -3266,8 +3261,6 @@ mod tests {
             refusal(&program, version, &Plugins(None))
         };
         for (body, reason, before) in [
-            ("  co = match crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_match_absent", None),
-            ("  match crm-[:companies]-> { unique by (`name`) name: \"a\" }", "v4_match_absent", None),
             (
                 // A link's body is a match, but its from side's write is
                 // refused first.
@@ -3295,6 +3288,12 @@ mod tests {
         assert_eq!(under(body, 3), None, "{body} under version 3");
         let body = "  write crm-[:companies]-> { name: \"a\" }";
         assert_eq!(under(body, 4), None, "{body}");
+        // A match under version 4 binds absent on a miss and the block
+        // carries on (crate::verbs `OnMiss`): admitted under both.
+        for body in ["  co = match crm-[:companies]-> { unique by (`name`) name: \"a\" }", "  match crm-[:companies]-> { unique by (`name`) name: \"a\" }"] {
+            assert_eq!(under(body, 4), None, "{body}");
+            assert_eq!(under(body, 3), None, "{body} under version 3");
+        }
     }
 
     /// Main's v0.10.2–v0.10.9 language changes (the merge's port list): each

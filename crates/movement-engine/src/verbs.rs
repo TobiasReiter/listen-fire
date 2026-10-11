@@ -7,7 +7,8 @@
 //!   half of a write — the target, the fields, the identity, the shortlist
 //!   narrowed by the target's WHERE, the rules and the judge — binding what
 //!   it found (its data read whole where the adapter can), never writing. A
-//!   miss ends the enclosing scope quietly (`ScopeEndedQuietly`: a fan-out's
+//!   miss binds absent and the block carries on from version 4; before it
+//!   ends the enclosing scope quietly (`ScopeEndedQuietly`: a fan-out's
 //!   iteration skips, the movement's body stops, nothing fails);
 //! - `link a -[:e]-> b`, `link a -[:e]-> { match body }` (from version 2 the
 //!   match then the link; in version 1 a body without its own `unique by` is
@@ -86,6 +87,32 @@ struct Edge {
     to_id: Js,
 }
 
+/// `MatchMissPolicy`: what a match that found nothing does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OnMiss {
+    /// Version 4 on: the name binds absent and the block carries on.
+    Absent,
+    /// Before version 4 (and a link's body, which version 4 refuses): the
+    /// enclosing scope ends quietly.
+    EndScope,
+}
+
+/// A match's target as the author wrote it (`describeMatchTarget`).
+pub(crate) fn describe_match_target(m: &MatchExpression) -> String {
+    let spell = |path: &movement_parser::ast::PathHead| {
+        let root = match &path.root {
+            Some(movement_parser::ast::PathRoot::Name { name }) => name.as_str(),
+            _ => "",
+        };
+        format!("{root}{}", path.hops_raw)
+    };
+    match &m.target {
+        WriteTarget::Linked { path, .. } => spell(path),
+        WriteTarget::Tuple { paths, .. } => format!("({})", paths.iter().map(spell).collect::<Vec<_>>().join(", ")),
+        WriteTarget::Position { .. } => String::new(),
+    }
+}
+
 /// `ResolvedLinkStatement`: the edge, and the two handles it joins.
 struct LinkPlan {
     edge: Edge,
@@ -94,15 +121,44 @@ struct LinkPlan {
 }
 
 impl Run<'_> {
+    /// What a match statement or a bound match does when it finds nothing.
+    pub(crate) fn match_miss_policy(&self) -> OnMiss {
+        if movement_parser::version::since(self.version(), 4) { OnMiss::Absent } else { OnMiss::EndScope }
+    }
+
+    /// `missed`: a match that found nothing binds absent, or ends the
+    /// enclosing scope. Under `Absent`, a judge that never answered leaves a
+    /// warning: "not found" is then a guess, and a program that creates on
+    /// absent would duplicate.
+    pub(crate) fn missed(&self, on_miss: OnMiss, binding_name: Option<&str>, scope: &Scope, reason: String, judge_unavailable: Option<String>) -> Result<Binding, Stop> {
+        match on_miss {
+            OnMiss::Absent => {
+                if judge_unavailable.is_some() {
+                    self.trace(crate::trace::TraceEntry::Warning {
+                        code: "MOVENG_MATCH_JUDGE_UNAVAILABLE".into(),
+                        message: format!("{reason}; the judge was unavailable, so the match was treated as finding nothing"),
+                    });
+                }
+                let absent = Binding::Value(env::ValueBinding { value: Js::Null, trail: None, many: false });
+                if let Some(name) = binding_name {
+                    scope.declare(name, absent.clone());
+                }
+                Ok(absent)
+            }
+            OnMiss::EndScope => Err(Stop::EndedQuietly),
+        }
+    }
+
     /// `executeMatch`: the record found, bound as a handle (and returned:
     /// a link body links it).
-    pub(crate) async fn match_record(&self, m: &MatchExpression, binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+    pub(crate) async fn match_record(&self, m: &MatchExpression, binding_name: Option<&str>, scope: &Rc<Scope>, on_miss: OnMiss) -> Result<Binding, Stop> {
+        let at = format!("match {}", describe_match_target(m));
         // Among the landings of a node this run built.
         if let WriteTarget::Linked { path, .. } = &m.target
             && let Some(movement_parser::ast::PathRoot::Name { name }) = &path.root
             && let Some(Binding::Node(node)) = scope.resolve(name)
         {
-            return self.local_match(m, path, node, binding_name, scope).await;
+            return self.local_match(m, path, node, binding_name, scope, &at, on_miss).await;
         }
         let resolved = self.write_target(&m.target, scope, Verb::Match).await?;
         let lines: Vec<Line> = m.fields.iter().map(Line::of).collect();
@@ -113,10 +169,12 @@ impl Run<'_> {
         let native = unique::get(&evaluated.descriptor, "uniquenessConstraints");
         let constraints = unique::merge(&native, identity.branches.clone());
         let resolve_record = self.identity_record(&evaluated.fields, &identity.overlay, &constraints, &target);
-        let (matched, _) = self.resolve_identity(&target, &evaluated.fields, &resolve_record, &constraints, &identity.narrowings, scope).await?;
-        // A miss ends the enclosing scope (`ScopeEndedQuietly`, whose message
-        // nothing reads).
-        let Some(matched) = matched else { return Err(Stop::EndedQuietly) };
+        let (matched, judge_unavailable) = self.resolve_identity(&target, &evaluated.fields, &resolve_record, &constraints, &identity.narrowings, scope).await?;
+        let Some(matched) = matched else {
+            let unavailable = judge_unavailable.as_ref().map(|j| format!(" (judge unavailable: {j})")).unwrap_or_default();
+            let reason = format!("{at}: no existing {} matched{unavailable}", target.record_type);
+            return self.missed(on_miss, binding_name, scope, reason, judge_unavailable);
+        };
         let adapter = &target.adapter;
         let external_id = unique::get(&matched, "externalId");
         let mut data = candidate_data(&matched);
@@ -169,7 +227,9 @@ impl Run<'_> {
         }
         let (to_name, to) = match &link.to {
             LinkTarget::Match { r#match, .. } => {
-                let found = self.match_record(r#match, binding_name, scope).await?;
+                // Version 4 refuses this form, so a miss here always ends
+                // the scope.
+                let found = self.match_record(r#match, binding_name, scope, OnMiss::EndScope).await?;
                 (binding_name.unwrap_or("{ … }").to_string(), Some(found))
             }
             LinkTarget::Handle { name } => (name.clone(), scope.resolve(name)),

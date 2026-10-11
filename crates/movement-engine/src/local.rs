@@ -461,12 +461,21 @@ impl Run<'_> {
 
     /// `executeLocalMatch`: a match among the landings of a node this run
     /// built, by the identity a local write's means; it binds the landing.
-    pub(crate) async fn local_match(&self, m: &ast::MatchExpression, path: &ast::PathHead, node: Rc<RefCell<Node>>, binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn local_match(
+        &self,
+        m: &ast::MatchExpression,
+        path: &ast::PathHead,
+        node: Rc<RefCell<Node>>,
+        binding_name: Option<&str>,
+        scope: &Rc<Scope>,
+        at: &str,
+        on_miss: crate::verbs::OnMiss,
+    ) -> Result<Binding, Stop> {
         let root = root_name(path);
-        let at = format!("match {root}{}", path.hops_raw);
         let (edge_name, where_) = self.single_edge(path, "a linked write walks exactly one declared edge from its root")?;
-        refuse_target_where(where_.is_some(), &at)?;
-        appendable(&node, &edge_name, &at, &root)?;
+        refuse_target_where(where_.is_some(), at)?;
+        appendable(&node, &edge_name, at, &root)?;
         let store = Rc::new(TargetAdapter::local(LocalEdge::of_edge(node, &edge_name, scope)));
         let target = Target::local(store.clone(), &edge_name);
         let lines: Vec<Line> = m.fields.iter().map(Line::of).collect();
@@ -474,10 +483,12 @@ impl Run<'_> {
         let identity = self.unique_by_identity(&m.unique_by, &target)?;
         let constraints = unique::merge(&Js::Undefined, identity.branches.clone());
         let resolve_record = overlaid(&fields.fields, &identity.overlay);
-        let (matched, _) = self.resolve_identity(&target, &fields.fields, &resolve_record, &constraints, &identity.narrowings, scope).await?;
+        let (matched, judge_unavailable) = self.resolve_identity(&target, &fields.fields, &resolve_record, &constraints, &identity.narrowings, scope).await?;
         let edge = store.local_edge().expect("the store is the edge's");
         let Some(landing) = matched.and_then(|m| edge.landing_of(&unique::get(&m, "externalId"))) else {
-            return Err(Stop::EndedQuietly);
+            let unavailable = judge_unavailable.as_ref().map(|j| format!(" (judge unavailable: {j})")).unwrap_or_default();
+            let reason = format!("{at}: no landing on '{edge_name}' matched{unavailable}");
+            return self.missed(on_miss, binding_name, scope, reason, judge_unavailable);
         };
         let mut row = JsObject::new();
         row.set("kind".into(), Js::str("match"));

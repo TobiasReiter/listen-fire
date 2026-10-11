@@ -1085,7 +1085,7 @@ impl Run<'_> {
                 Ok(Flow::FellThrough)
             }
             Statement::Match(statement) => {
-                self.match_record(&statement.r#match, None, scope).await?;
+                self.match_record(&statement.r#match, None, scope, self.match_miss_policy()).await?;
                 Ok(Flow::FellThrough)
             }
             Statement::Link(statement) => {
@@ -1184,7 +1184,7 @@ impl Run<'_> {
                 self.write(write, Some(name), scope, &format!("{path}/value/write")).await?;
             }
             RValue::Match { r#match } => {
-                self.match_record(r#match, Some(name), scope).await?;
+                self.match_record(r#match, Some(name), scope, self.match_miss_policy()).await?;
             }
             RValue::Link { link } => self.link(link, Some(name), scope).await?,
             RValue::Block { block } => {
