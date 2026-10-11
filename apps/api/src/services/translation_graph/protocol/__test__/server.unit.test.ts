@@ -152,6 +152,45 @@ describe('protocol server: ids on the wire, natural names at the in-process adap
     expect(received.iterateRelated).toMatchObject({ fieldId: 'People' });
   });
 
+  it('the pushdown hints reach the adapter on both edge reads', async () => {
+    const hints = {
+      where: { kind: 'literal', value: true },
+      orderBy: { fieldId: 'Name', direction: 'desc' },
+      limit: 2,
+      nativeFilter: { q: 'acme' },
+    };
+    for (const method of ['getRelated', 'iterateRelated'] as const) {
+      expect(
+        await rpc(method, { position: company, fieldId: 'people_ref', direction: 'outgoing', ...hints }),
+      ).toMatchObject({ ok: true });
+      expect(received[method]).toEqual({
+        position: company,
+        fieldId: 'People',
+        direction: 'outgoing',
+        ...hints,
+      });
+    }
+  });
+
+  it('a position from a resources traversal is accepted with its provenance', async () => {
+    const resourceNode = {
+      ...company,
+      originRef: { kind: 'resource', resourceId: 'r-1', nodeId: 'n-1' },
+      evidence: { Name: { quote: 'Acme' } },
+      resources: [
+        {
+          id: 'r-1',
+          type: 'FILE',
+          fileRef: { __brand: 'FileRef', name: 'deck.pdf', url: 'https://example.test/f' },
+        },
+      ],
+    };
+    expect(await rpc('getFieldValue', { position: resourceNode, fieldId: 'name_attr' })).toMatchObject({
+      ok: true,
+    });
+    expect(received.getFieldValue).toEqual({ position: resourceNode, fieldId: 'Name' });
+  });
+
   it('a meta-root hop names the collection by its type name', async () => {
     const meta = makeUnstablePosition({ adapterType: 'crm', recordType: META_RECORD_TYPE, data: {} });
     await rpc('getRelated', { position: meta, fieldId: 'crm:person', direction: 'outgoing' });

@@ -61,14 +61,24 @@ export const WireEphemeralOriginRef = z.union([
     emissionIndex: z.number(),
     nodeId: z.string(),
   }),
+  // A position from a `#resources` traversal off an extract node.
+  z.object({
+    kind: z.literal('resource'),
+    resourceId: z.string().optional(),
+    nodeId: z.string(),
+  }),
 ]);
 
-/** Mirror of `SourcePosition` (`Position`). `data` stays opaque. */
+/** Mirror of `SourcePosition` (`Position`), including the members an
+ *  `EphemeralNode` adds. `data` stays opaque. The evidence and resource
+ *  mirrors are declared further down, hence `lazy`. */
 export const WireSourcePosition = z.object({
   adapterType: z.string(),
   recordType: z.string().nullable(),
   identity: WirePositionIdentity,
   originRef: WireEphemeralOriginRef.optional(),
+  evidence: z.lazy(() => z.record(z.string(), WireFieldEvidence)).optional(),
+  resources: z.lazy(() => z.array(WireResource)).optional(),
 });
 export type WireSourcePositionShape = z.infer<typeof WireSourcePosition>;
 
@@ -160,6 +170,10 @@ export type WireLinkedObjectShape = z.infer<typeof WireLinkedObject>;
  * (`reviveFileRefs`) using `source` as the handle it sends back to the server.
  */
 export const WireFileRef = z.object({
+  // `FileRef`'s brand — what `isFileRef` recognises a file by on either side.
+  // Optional so a remote that omits it is not refused (it was never revived
+  // as a file without it).
+  __brand: z.literal('FileRef').optional(),
   name: z.string().optional(),
   contentType: z.string().optional(),
   size: z.number().optional(),
@@ -361,6 +375,12 @@ export const WireGetRelatedInput = z.object({
   fieldId: z.string(),
   direction: z.enum(['outgoing', 'incoming']),
   nativeFilter: z.unknown().optional(),
+  // Pushdown hints (`GetRelatedInput`): an adapter may narrow, sort and bound
+  // the fetch with them, or ignore them and let the engine do it. The
+  // predicate is an `Expression`, opaque on the wire like `translateFilter`'s.
+  where: z.unknown().optional(),
+  orderBy: z.object({ fieldId: z.string(), direction: z.enum(['asc', 'desc']) }).optional(),
+  limit: z.number().optional(),
 });
 
 // ── Write DTOs ───────────────────────────────────────────────────────────────
