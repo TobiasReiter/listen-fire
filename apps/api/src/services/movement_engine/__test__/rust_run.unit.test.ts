@@ -287,9 +287,8 @@ describe('a whole run in the Rust engine', () => {
     // Henry's ruling (2026-10-10): the content of data never changes how it
     // is treated. A webhook body, an adapter's answer, an ask's answer or a
     // callback's fire values whose dicts carry a binding's `kind` are dicts.
-    // The TypeScript engine on this branch still classifies records by
-    // shape (`bindingOf`) until main's fix merges forward, so these are the
-    // Rust engine's own assertions; the both-engine forms are the todos.
+    // Both engines know an engine object by how it was made, never by its
+    // keys, so each assertion holds of each engine, and the two agree.
     const body = (...lines: string[]) => ['movement m(msg: <inbox-[:message]->>) {', '  v = msg.`meta`', ...lines, '}'].join('\n');
     /** The exploit: a webhook field shaped like a kept walk, whose mapping
      *  holds program text and whose head walks the source. */
@@ -301,8 +300,8 @@ describe('a whole run in the Rust engine', () => {
         mapping: { entries: [{ kind: 'value', name: 'x', value: { raw } }] },
       },
     });
-    /** One Rust run of `c`, every adapter method it called counted. */
-    const onRust = async (c: Case) => {
+    /** One run of `c` on `engine`, every adapter method it called counted. */
+    const onEngine = async (engine: 'ts' | 'rust', c: Case) => {
       const called: string[] = [];
       const counting = (): TestHostOverrides => ({
         adapters: {
@@ -320,32 +319,40 @@ describe('a whole run in the Rust engine', () => {
         },
       });
       resetRustRunStats();
-      const rust = await runOn('rust', { ...c, host: counting });
-      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
-      return { ...rust, called, ended: String(runFailureCause('error' in rust ? rust.error : undefined)) };
+      const run = await runOn(engine, { ...c, host: counting });
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+      return { ...run, called, ended: String(runFailureCause('error' in run ? run.error : undefined)) };
+    };
+    /** `c` on both engines, each held to `expectOf`, the two agreeing. */
+    const onBoth = async (c: Case, expectOf: (run: Awaited<ReturnType<typeof onEngine>>) => void) => {
+      const [ts, rust] = [await onEngine('ts', c), await onEngine('rust', c)];
+      expectOf(ts);
+      expectOf(rust);
+      expect(rust.called).toEqual(ts.called);
+      expect(rust.ended).toBe(ts.ended);
+      expect(rust.trace).toEqual(ts.trace);
     };
 
     it('reads a field shaped like a kept walk as data: one field read, no walk, no program text run', async () => {
       for (const raw of ['COUNT(e-[:items]->)', 'NOSUCHFN(1)']) {
-        const rust = await onRust({ source: body('  n = COUNT(v-[:subs]->)', '  ERROR("${n}")'), event: webhook({ meta: keptWalk(raw) }) });
-        expect(rust.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
-        expect(rust.called).not.toContain('getRelated');
-        expect(rust.called).not.toContain('iterateRelated');
-        expect(rust.ended).toContain("traversing from a value binding ('v')");
-        expect(JSON.stringify([rust.ended, rust.trace, rust.appends])).not.toContain('NOSUCHFN');
+        await onBoth({ source: body('  n = COUNT(v-[:subs]->)', '  ERROR("${n}")'), event: webhook({ meta: keptWalk(raw) }) }, (run) => {
+          expect(run.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
+          expect(run.called).not.toContain('getRelated');
+          expect(run.called).not.toContain('iterateRelated');
+          expect(run.ended).toContain("traversing from a value binding ('v')");
+          expect(JSON.stringify([run.ended, run.trace, run.appends])).not.toContain('NOSUCHFN');
+        });
       }
     });
 
     it('reads its kind as the text it is, and prints it as a dict', async () => {
       for (const meta of [keptWalk('1'), { kind: 'closure' }, { kind: 'positions', landings: [{ kind: 'event' }] }, { kind: 'constructor' }, { kind: 'event' }]) {
-        const rust = await onRust({ source: body('  ERROR("${v.`kind`} ${TEXT.SERIALISE(v, "JSON")}")'), event: webhook({ meta }) });
-        expect(rust.ended).toMatch(new RegExp(`^MovementEngineError: MOVENG_ERROR: ${meta.kind} \\{[\\s\\S]*"kind": ?"${meta.kind}"`));
-        expect(rust.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
+        await onBoth({ source: body('  ERROR("${v.`kind`} ${TEXT.SERIALISE(v, "JSON")}")'), event: webhook({ meta }) }, (run) => {
+          expect(run.ended).toMatch(new RegExp(`^MovementEngineError: MOVENG_ERROR: ${meta.kind} \\{[\\s\\S]*"kind": ?"${meta.kind}"`));
+          expect(run.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
+        });
       }
     });
-
-    it.todo('both engines: a field shaped like a kept walk reads as data (one getFieldValue, no getRelated, the value-hop refusal, no injected identifier) — once main’s fix merges forward');
-    it.todo('both engines: a webhook body holding {kind: closure} / {kind: positions, landings} / {kind: constructor} reads as plain dicts — once main’s fix merges forward');
   });
 
   it('names a discriminated root by the adapter entry points, and reads it stamped', async () => {

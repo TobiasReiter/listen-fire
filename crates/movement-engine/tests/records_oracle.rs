@@ -4,13 +4,10 @@
 //! ended. Values arrive untyped through the event's `json` fields, so the
 //! readings are the ones a checked program can make of a value it cannot
 //! type: `Object.prototype`'s names and ordinary ones read off dicts,
-//! present and absent; picked, held, walked on, tested, sorted. (The
-//! cases whose outcome turns on the TypeScript engine on this branch taking
-//! a dict for a record by its shape — a payload dict whose `kind` names a
-//! binding kind or a prototype name, read by the program; a KEYBY answer
-//! whose prototype a filing made a record — were deleted by chunk 7A Task
-//! 4b: data is never an engine object. They come back, regenerated from the
-//! fixed TypeScript engine, when main's fix merges forward.) Records the run itself holds — walked,
+//! present and absent; picked, held, walked on, tested, sorted — a payload
+//! dict whose `kind` names a binding kind or a prototype name, and a KEYBY
+//! answer whose prototype a filing made a record, included: both engines
+//! read data as data. Records the run itself holds — walked,
 //! picked, returned by a block, written, built as nodes — are compared,
 //! spread, walked on, sorted, grouped and read by key. Every language
 //! version.

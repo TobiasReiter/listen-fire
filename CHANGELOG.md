@@ -78,7 +78,9 @@ Language version 4, **Luminous Owl**, arrives. New automations are written in it
 
 ### Security
 
-- The Rust engine never takes data an automation reads (a webhook body, an adapter's answer, an answer to a question, a callback's fired values, a plugin's output) for one of the engine's own objects, whatever keys it carries. Before, a dict whose `kind` named an engine object (`lazyWalk`, `closure`, `instance`, `toString`, …) was read as that object, so a webhook body could make the run walk a system, or run expression text the body carried. Now such a dict is a plain dict on the Rust engine: its `kind` reads as text and a hop off it is refused as a hop off any value is. This covers only runs the Rust engine runs. A run it refuses at admission falls back to the TypeScript engine under `MOVEMENT_ENGINE_FALLBACK=ts` (the default), and takes the TypeScript engine's behaviour, which still reads such data as an engine object until its own fix lands (main, branch `kind-fix`). `MOVEMENT_ENGINE_FALLBACK=none` fails those runs instead. Not a language version: no construct's meaning changes, and a saved automation runs as it did unless its data impersonated an engine object.
+- The Rust engine never takes data an automation reads (a webhook body, an adapter's answer, an answer to a question, a callback's fired values, a plugin's output) for one of the engine's own objects, whatever keys it carries. Before, a dict whose `kind` named an engine object (`lazyWalk`, `closure`, `instance`, `toString`, …) was read as that object, so a webhook body could make the run walk a system, or run expression text the body carried. Now such a dict is a plain dict on the Rust engine: its `kind` reads as text and a hop off it is refused as a hop off any value is. The TypeScript engine has the same fix (the entry below), so a run the Rust engine refuses at admission and hands to the TypeScript engine reads such data as data too. Not a language version: no construct's meaning changes, and a saved automation runs as it did unless its data impersonated an engine object.
+
+- Data from a connected system or a webhook is always treated as data. Before, a value that copied the shape of one of the engine's internal objects could be run as part of the automation: a webhook body or a field answer could make the engine follow its edges and evaluate expression text it carried. The engine now marks its own objects in a way no data can carry. No automation changes, and there is no new language version.
 
 ### Language version 4, Luminous Owl: what breaks
 
@@ -105,10 +107,6 @@ These apply to every language version. Full text: the [migration guide's appendi
 - A field or child node named `__proto__`, in a node declaration or an extraction, is refused (`MOV_SHAPE_FIELD_PROTO`). It used to validate, but the extracted record never held the field: JavaScript set the record's prototype from the model's answer instead. A bug fix, not a language version: an automation declaring one now fails its check on every version; rename the field.
 - An adapter edge or collection whose name starts with `@` is left out of the catalog with a note, instead of failing the connection's `describe`.
 - An Affinity identity candidate carries the organisation's or person's fields as Affinity holds them, not the asserted values.
-
-### Security
-
-- Data from a connected system or a webhook is always treated as data. Before, a value that copied the shape of one of the engine's internal objects could be run as part of the automation: a webhook body or a field answer could make the engine follow its edges and evaluate expression text it carried. The engine now marks its own objects in a way no data can carry. No automation changes, and there is no new language version.
 
 ## [v0.10.9] - 2026-10-07
 

@@ -61,7 +61,10 @@ const path = require('node:path');
 // system's record, records-output plugins and every plugin argument form,
 // concurrent collection members, closures called by name, the extraction
 // call, nested calls, member-path write roots, 2026-10-11) runs v1 1188, v2
-// 1499, v3 2556 whole; the floors are those less a margin of 2. A floor
+// 1499, v3 2556 whole; the floors are those less a margin of 2. The second
+// forward merge of cloud-native (main's fix: data is never read as an engine
+// object, 2026-10-11) leaves v1 1188, v2 1499, v3 2556 whole; the floors stay
+// those less a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.

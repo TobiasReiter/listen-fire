@@ -519,38 +519,6 @@ const DIRECTED_BODIES = [
   '  xs = v-[s:subs]-> {\n    return s\n  }\n  ERROR("${COUNT(xs)}")',
 ];
 
-/** The templates whose outcome no payload decides: their bodies read
- *  neither `v` nor `w` (the payload's dicts), and none parks the scope. */
-const PAYLOAD_INDEPENDENT = new Set([9, 10, 14, 16, 17, 21, 23, 27, 28, 29, 31, 33, 34, 35]);
-
-/** Whether a payload holds a dict whose `kind` names a binding kind or one of
- *  `Object.prototype`'s names: what this branch's TypeScript engine reads as
- *  an engine object by its shape, and Rust as the data it is (chunk 7A Task
- *  4b). */
-function impersonates(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(impersonates);
-  if (value === null || typeof value !== 'object') return false;
-  const kind = (value as Record<string, unknown>).kind;
-  if (typeof kind === 'string' && (KINDS.includes(kind) || PROTOTYPE.includes(kind))) return true;
-  return Object.values(value).some(impersonates);
-}
-
-/**
- * The cases left out until the regeneration that follows main's brand fix
- * forward (PLAN-07A, the task that merges branch `kind-fix`): on this branch
- * the TypeScript engine takes a binding-shaped dict for an engine object, and
- * a record filed as a KEYBY answer's prototype for the answer itself, where
- * the Rust engine (and main's fixed TypeScript) reads data as data. So a
- * program reading an impersonating payload, and a template-28 program
- * reading an ordinary field off the KEYBY answer `k`, would pin the
- * unfixed reading. Skipped before they run, so the rest are written as they
- * always were.
- */
-function awaitsTheBrandFix(template: number, text: string, data: unknown): boolean {
-  if (!PAYLOAD_INDEPENDENT.has(template) && impersonates(data)) return true;
-  return template === 28 && /z = k\.(name|b|rank|a)\b/.test(text);
-}
-
 export async function writeRecordsOracle(rand: Rand, write: (name: string, text: string) => void): Promise<void> {
   const cases: unknown[] = [];
   const counts = { tried: 0, refused: 0 };
@@ -558,7 +526,6 @@ export async function writeRecordsOracle(rand: Rand, write: (name: string, text:
   const directed = DIRECTED_DICTS.flatMap((meta) => DIRECTED_BODIES.map((text) => ({ template: -2, text, data: { subject: 'Acme', meta, more: [] } })));
   const all = [...generated, ...PINNED.map((p) => ({ template: -1, text: p.text, data: p.data })), ...directed];
   for (const { template, text, data } of all) {
-    if (awaitsTheBrandFix(template, text, data)) continue;
     const source = RECORDS_PRELUDE.replace('BODY', text);
     for (const version of [1, 2, 3] as LanguageVersion[]) {
       counts.tried += 1;

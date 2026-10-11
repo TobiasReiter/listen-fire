@@ -950,9 +950,8 @@ describe('parks in the Rust engine', () => {
   ].join('\n');
 
   it('parks a dict holding a handle, whose kind names returned records, as the dict holding a record it is', async () => {
-    // Data is never an engine object (Henry's ruling, 2026-10-10): the
-    // TypeScript engine on this branch still parks the dict as a block's
-    // returned records until main's fix merges forward (the todo below).
+    // Data is never an engine object (Henry's ruling, 2026-10-10), on
+    // either engine: the dict parks as the dict it is.
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  co = write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }',
@@ -961,17 +960,15 @@ describe('parks in the Rust engine', () => {
       '  write crm-[:companies]-> { name: "after" }',
       '}',
     ].join('\n');
-    resetRustRunStats();
-    const rust = await runOn('rust', { source, event: webhook({ subject: 'Acme' }) });
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
-    expect(rust.parks).toHaveLength(1);
-    const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
-    const held = JSON.stringify(state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined));
-    expect(held).toMatch(/^\{"kind":"recordValue","value":\{"kind":"map",/);
-    expect(held).toContain('"kind":"handle"');
+    const { ts, rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    for (const run of [ts, rust]) {
+      expect(run.parks).toHaveLength(1);
+      const state = JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
+      const held = JSON.stringify(state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined));
+      expect(held).toMatch(/^\{"kind":"recordValue","value":\{"kind":"map",/);
+      expect(held).toContain('"kind":"handle"');
+    }
   });
-
-  it.todo('both engines: a dict holding a handle, whose kind names returned records, parks as the dict holding a record it is — once main’s fix merges forward');
 
   it('parks at a sleep with the state the TypeScript engine writes', async () => {
     const { ts, rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
