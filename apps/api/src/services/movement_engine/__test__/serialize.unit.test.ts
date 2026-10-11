@@ -9,7 +9,7 @@
 import type { FileRef, Resource } from '../../translation_graph/adapter';
 import type { SourcePosition } from '../../translation_graph/types';
 import type { Binding, DeferredWalk, SourceRead, WriteRecord } from '../expression';
-import { Environment } from '../expression';
+import { binding, bindingOf, Environment, isDictValue } from '../expression';
 import type { ExtractEmission } from '../extraction';
 import {
   assertJsonSerializable,
@@ -30,7 +30,7 @@ const fakeAdapter = { adapterType: 'attio' } as unknown as SourceRead['adapter']
 function makeCtx(overrides: Partial<RehydrationContext> = {}): RehydrationContext {
   const sourceRead: SourceRead = { adapter: fakeAdapter, instanceName: 'crm' };
   return {
-    resolveInstance: async (identity) => ({
+    resolveInstance: async (identity) => binding({
       kind: 'instance',
       name: identity.name,
       adapterSlug: identity.adapterSlug,
@@ -42,7 +42,7 @@ function makeCtx(overrides: Partial<RehydrationContext> = {}): RehydrationContex
       schema: { types: {} } as never,
     }),
     resolveSourceRead: async () => sourceRead,
-    resolveCodeRef: (name) => ({ kind: 'value', value: `code-ref:${name}` }),
+    resolveCodeRef: (name) => binding({ kind: 'value', value: `code-ref:${name}` }),
     ...overrides,
   };
 }
@@ -50,8 +50,8 @@ function makeCtx(overrides: Partial<RehydrationContext> = {}): RehydrationContex
 const SPAN = { start: { line: 1, col: 1 }, end: { line: 1, col: 2 } };
 
 /** serialize → wire round-trip → rehydrate. */
-async function roundTrip(binding: Binding, ctx = makeCtx()): Promise<Binding> {
-  const descriptor = serializeBinding(binding);
+async function roundTrip(bound: Binding, ctx = makeCtx()): Promise<Binding> {
+  const descriptor = serializeBinding(bound);
   const wired: BindingDescriptor = JSON.parse(JSON.stringify(descriptor));
   return rehydrateBinding(wired, ctx);
 }
@@ -60,17 +60,17 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
   // ── Bucket 1 — pure data, serialise as-is ──
   describe('Bucket 1 — pure data', () => {
     it('the event marker round-trips', async () => {
-      expect(await roundTrip({ kind: 'event' })).toEqual({ kind: 'event' });
+      expect(await roundTrip(binding({ kind: 'event' }))).toEqual({ kind: 'event' });
     });
 
     it('value (scalar + provenance) round-trips', async () => {
-      const binding: Binding = { kind: 'value', value: { n: 42, s: 'hi', arr: [1, 2] } };
-      expect(await roundTrip(binding)).toEqual(binding);
+      const bound: Binding = binding({ kind: 'value', value: { n: 42, s: 'hi', arr: [1, 2] } });
+      expect(await roundTrip(bound)).toEqual(bound);
     });
 
     it('a walk read for a field keeps that it is many values — a spread after a park reads them', async () => {
-      const binding: Binding = { kind: 'value', value: 'only.pdf', many: true };
-      expect(await roundTrip(binding)).toEqual(binding);
+      const bound: Binding = binding({ kind: 'value', value: 'only.pdf', many: true });
+      expect(await roundTrip(bound)).toEqual(bound);
     });
 
     it('handle (a WriteRecord — already-happened write) round-trips', async () => {
@@ -84,16 +84,16 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
         provenance: {},
         bindingName: 'co',
       };
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'handle',
         handle,
         targetType: 'company',
-        graph: { kind: 'instance', instance: { kind: 'instance', name: 'crm', adapterSlug: 'attio' } },
-      };
+        graph: { kind: 'instance', instance: binding({ kind: 'instance', name: 'crm', adapterSlug: 'attio' }) },
+      });
       // The instance identity is re-resolved through the seam, which re-fetches
       // the schema live rather than carrying it over the wire — so the round
       // trip matches on identity, not on the whole binding.
-      expect(await roundTrip(binding)).toMatchObject({
+      expect(await roundTrip(bound)).toMatchObject({
         kind: 'handle',
         handle,
         targetType: 'company',
@@ -102,7 +102,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     });
 
     describe("a handle's record before its write (`-[:@old]->`)", () => {
-      const graph = { kind: 'instance' as const, instance: { kind: 'instance' as const, name: 'crm', adapterSlug: 'attio' } };
+      const graph = { kind: 'instance' as const, instance: binding({ kind: 'instance', name: 'crm', adapterSlug: 'attio' }) };
       const record = (domain: string): WriteRecord => ({
         adapterType: 'attio',
         recordType: 'company',
@@ -114,20 +114,20 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       });
 
       it('the chain of snapshots survives a park', async () => {
-        const found: Extract<Binding, { kind: 'handle' }> = {
+        const found: Extract<Binding, { kind: 'handle' }> = binding({
           kind: 'handle',
           handle: { ...record('old.example'), writtenValues: {}, resultData: { domain: 'old.example' }, snapshot: true },
           targetType: 'company',
           graph,
-        };
-        const first: Extract<Binding, { kind: 'handle' }> = {
+        });
+        const first: Extract<Binding, { kind: 'handle' }> = binding({
           kind: 'handle',
           handle: { ...record('second.example'), old: found, snapshot: true },
           targetType: 'company',
           graph,
-        };
-        const binding: Binding = { kind: 'handle', handle: { ...record('third.example'), old: first }, targetType: 'company', graph };
-        const back = await roundTrip(binding);
+        });
+        const bound: Binding = binding({ kind: 'handle', handle: { ...record('third.example'), old: first }, targetType: 'company', graph });
+        const back = await roundTrip(bound);
         expect(back).toMatchObject({
           handle: {
             writtenValues: { domain: 'third.example' },
@@ -143,14 +143,14 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       });
 
       it("a rehearsed write's handle is its own @old, before and after a park", async () => {
-        const binding: Extract<Binding, { kind: 'handle' }> = {
+        const bound: Extract<Binding, { kind: 'handle' }> = binding({
           kind: 'handle',
           handle: record('new.example'),
           targetType: 'company',
           graph,
-        };
-        binding.handle.old = binding;
-        const back = await roundTrip(binding);
+        });
+        bound.handle.old = bound;
+        const back = await roundTrip(bound);
         if (back.kind !== 'handle') throw new Error('expected a handle');
         expect(back.handle.old).toBe(back);
       });
@@ -190,7 +190,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
           ],
         ]),
       };
-      const out = await roundTrip({ kind: 'extractRoot', emission });
+      const out = await roundTrip(binding({ kind: 'extractRoot', emission }));
       expect(out.kind).toBe('extractRoot');
       if (out.kind !== 'extractRoot') throw new Error('unreachable');
       // The Map children survive (flattened to a record on the wire, rebuilt).
@@ -212,40 +212,40 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
         recordType: 'company',
         identity: { kind: 'stable', recordId: 'rec_1' },
       };
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'sourcePosition',
         position,
         edgeProperties: { role: 'lead' },
-      };
-      const out = await roundTrip(binding);
-      expect(out).toEqual(binding);
+      });
+      const out = await roundTrip(bound);
+      expect(out).toEqual(bound);
     });
 
     it('shapePosition round-trips', async () => {
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'shapePosition',
         shape: 'Files',
         node: 'file',
         fields: { name: 'deck.pdf' },
         fieldProvenance: {},
-      };
-      expect(await roundTrip(binding)).toEqual(binding);
+      });
+      expect(await roundTrip(bound)).toEqual(bound);
     });
   });
 
   // ── Bucket 2 — live refs rebound on rehydrate ──
   describe('Bucket 2 — live refs', () => {
     it('instance re-resolves the live adapter + re-fetches schema (identity survives, schema is fresh)', async () => {
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'instance',
         name: 'crm',
         adapterSlug: 'attio',
         credentialName: 'acme_main',
         constructionConfig: { base: 'b1' },
         schema: { types: { stale: true } } as never,
-      };
+      });
       const ctx = makeCtx();
-      const out = await roundTrip(binding, ctx);
+      const out = await roundTrip(bound, ctx);
       expect(out.kind).toBe('instance');
       if (out.kind !== 'instance') throw new Error('unreachable');
       // Identity survives the wire …
@@ -269,7 +269,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
         edgeFieldId: () => 'field_x',
       };
       const ctx = makeCtx({ resolveSourceRead: async () => liveRead });
-      const out = await roundTrip({ kind: 'sourcePosition', position, read: { adapter: fakeAdapter, instanceName: 'crm' } }, ctx);
+      const out = await roundTrip(binding({ kind: 'sourcePosition', position, read: { adapter: fakeAdapter, instanceName: 'crm' } }), ctx);
       expect(out.kind).toBe('sourcePosition');
       if (out.kind !== 'sourcePosition') throw new Error('unreachable');
       // The read came back as a LIVE ref (with its closure), not the serialised stub.
@@ -287,7 +287,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
         source: { store: 'document', objectUri: 'doc://abc' },
       };
       const resource: Resource = { type: 'FILE', name: 'deck.pdf', fileRef };
-      const out = await roundTrip({ kind: 'resource', resource });
+      const out = await roundTrip(binding({ kind: 'resource', resource }));
       if (out.kind !== 'resource') throw new Error('unreachable');
       expect(out.resource.fileRef).toEqual(fileRef);
     });
@@ -311,10 +311,10 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     it('a node declaration re-resolves by name from the AST (declaration not serialised)', async () => {
       const root = { name: 'Files', fields: [], children: [] };
       const declaration = { kind: 'shape', name: 'Files', root } as never;
-      const descriptor = serializeBinding({ kind: 'shape', declaration });
+      const descriptor = serializeBinding(binding({ kind: 'shape', declaration }));
       expect(descriptor).toEqual({ kind: 'shape', name: 'Files' });
       const ctx = makeCtx({
-        resolveCodeRef: (name) => ({
+        resolveCodeRef: (name) => binding({
           kind: 'shape',
           declaration: { kind: 'shape', name, root: { ...root, name } } as never,
         }),
@@ -327,49 +327,49 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
 
     it('movement re-resolves by name from the AST', async () => {
       const declaration = { kind: 'movement', name: 'enrich', params: [], body: [] } as never;
-      const descriptor = serializeBinding({ kind: 'movement', declaration });
+      const descriptor = serializeBinding(binding({ kind: 'movement', declaration }));
       expect(descriptor).toEqual({ kind: 'movement', name: 'enrich' });
     });
 
     it('opaque import carries its slot name for re-resolution', async () => {
       // The bare serialiser has no slot name; the scope walk patches it. Here we
       // assert the descriptor shape + that rehydrate routes through resolveCodeRef.
-      const descriptor = serializeBinding({ kind: 'opaque', what: 'import' });
+      const descriptor = serializeBinding(binding({ kind: 'opaque', what: 'import' }));
       expect(descriptor.kind).toBe('opaque');
-      const ctx = makeCtx({ resolveCodeRef: (name) => ({ kind: 'opaque', what: `import:${name}` }) });
+      const ctx = makeCtx({ resolveCodeRef: (name) => binding({ kind: 'opaque', what: `import:${name}` }) });
       const out = await rehydrateBinding({ kind: 'opaque', what: 'import', name: 'attio' }, ctx);
       expect(out).toEqual({ kind: 'opaque', what: 'import:attio' });
     });
 
     it('a synthesised node keeps its entries and its LANDED edges', async () => {
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'nodePosition',
         fields: { title: 'Acme' },
         fieldOrder: ['title'],
         fieldProvenance: {},
         edges: {
-          people: { kind: 'landed', landings: [{ kind: 'value', value: 'ada' }] },
+          people: { kind: 'landed', landings: [binding({ kind: 'value', value: 'ada' })] },
         },
-      };
-      const out = await roundTrip(binding);
-      expect(out).toEqual(binding);
+      });
+      const out = await roundTrip(bound);
+      expect(out).toEqual(bound);
     });
 
     it('a landing keeps the edge it landed on — what makes it a record to update after a resume', async () => {
-      const landing: Binding = {
+      const landing: Binding = binding({
         kind: 'nodePosition',
         landedOn: 'entries',
         fields: { name: 'Acme' },
         fieldOrder: ['name'],
         fieldProvenance: {},
         edges: {},
-      };
+      });
       const out = await roundTrip(landing);
       expect(out).toEqual(landing);
     });
 
     it("a landed edge keeps its landings' ORDER — what `order by arrival` promises", async () => {
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'nodePosition',
         fields: {},
         fieldOrder: [],
@@ -378,14 +378,14 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
           companies: {
             kind: 'landed',
             landings: [
-              { kind: 'value', value: 'Acme' },
-              { kind: 'value', value: 'Beta' },
-              { kind: 'value', value: 'Gamma' },
+              binding({ kind: 'value', value: 'Acme' }),
+              binding({ kind: 'value', value: 'Beta' }),
+              binding({ kind: 'value', value: 'Gamma' }),
             ],
           },
         },
-      };
-      const out = await roundTrip(binding);
+      });
+      const out = await roundTrip(bound);
       if (out.kind !== 'nodePosition') throw new Error('unreachable');
       const edge = out.edges.companies;
       if (edge.kind !== 'landed') throw new Error('expected a landed edge');
@@ -397,13 +397,13 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     });
 
     it("a node's field order survives the park's jsonb, which reorders keys", async () => {
-      const descriptor = serializeBinding({
+      const descriptor = serializeBinding(binding({
         kind: 'nodePosition',
         fields: { name: 'Acme', raised: 5 },
         fieldOrder: ['name', 'stage', 'raised'],
         fieldProvenance: {},
         edges: {},
-      });
+      }));
       if (descriptor.kind !== 'nodePosition') throw new Error('unreachable');
       // What jsonb hands back: the same keys, shortest first.
       const out = await rehydrateBinding(
@@ -437,28 +437,28 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     });
 
     describe('a run-built node keeps its identity across the park', () => {
-      const node = (title: string): Extract<Binding, { kind: 'nodePosition' }> => ({
+      const node = (title: string): Extract<Binding, { kind: 'nodePosition' }> => binding({
         kind: 'nodePosition',
         fields: { title },
         fieldOrder: ['title'],
         fieldProvenance: {},
         edges: { x: { kind: 'landed', landings: [] } },
       });
-      const landingsOf = (binding: Binding | undefined, edge = 'x'): Binding[] => {
-        if (binding?.kind !== 'nodePosition') throw new Error('expected a node');
-        const found = binding.edges[edge];
+      const landingsOf = (bound: Binding | undefined, edge = 'x'): Binding[] => {
+        if (bound?.kind !== 'nodePosition') throw new Error('expected a node');
+        const found = bound.edges[edge];
         if (found?.kind !== 'landed') throw new Error('expected a landed edge');
         return found.landings;
       };
 
       it('a node reached twice is written once and comes back as one object', async () => {
         const shared = node('n');
-        const binding: Binding = { kind: 'tuple', slots: [shared, shared] };
-        const descriptor = serializeBinding(binding);
+        const bound: Binding = binding({ kind: 'tuple', slots: [shared, shared] });
+        const descriptor = serializeBinding(bound);
         if (descriptor.kind !== 'tuple') throw new Error('unreachable');
         expect(descriptor.slots[1]).toEqual({ kind: 'nodeRef', id: 0 });
 
-        const out = await roundTrip(binding);
+        const out = await roundTrip(bound);
         if (out.kind !== 'tuple') throw new Error('unreachable');
         expect(out.slots[0]).toBe(out.slots[1]);
         expect(out.slots[0]).toEqual(shared);
@@ -552,16 +552,16 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     it('a DEFERRED edge serialises the WALK, never landings', async () => {
       const walk: DeferredWalk = {
         head: { root: { kind: 'name', name: 'msg' }, hopsRaw: '-[a:files]->', span: SPAN },
-        captured: new Map<string, Binding>([['msg', { kind: 'event' }]]),
+        captured: new Map<string, Binding>([['msg', binding({ kind: 'event' })]]),
       };
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'nodePosition',
         fields: {},
         fieldOrder: [],
         fieldProvenance: {},
         edges: { files: { kind: 'deferred', walk } },
-      };
-      const descriptor = serializeBinding(binding);
+      });
+      const descriptor = serializeBinding(bound);
       if (descriptor.kind !== 'nodePosition') throw new Error('unreachable');
       const edge = descriptor.edges.files;
       if (edge.kind !== 'deferred') throw new Error('expected a deferred edge');
@@ -571,7 +571,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       expect(edge.walk.captured).toEqual({ msg: { kind: 'event' } });
       expect(JSON.stringify(descriptor)).not.toContain('landings');
 
-      const out = await roundTrip(binding);
+      const out = await roundTrip(bound);
       if (out.kind !== 'nodePosition') throw new Error('unreachable');
       const back = out.edges.files;
       if (back.kind !== 'deferred') throw new Error('expected a deferred edge');
@@ -580,17 +580,17 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     });
 
     it('a lazy binding round-trips as its walk plus the scope it captured', async () => {
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'lazyWalk',
         walk: {
           head: { root: { kind: 'name', name: 'crm' }, hopsRaw: '-[c:Companies WHERE c.`Name` == "x"]->', span: SPAN },
           captured: new Map<string, Binding>([
-            ['crm', { kind: 'instance', name: 'crm', adapterSlug: 'attio' }],
-            ['target', { kind: 'value', value: 'x' }],
+            ['crm', binding({ kind: 'instance', name: 'crm', adapterSlug: 'attio' })],
+            ['target', binding({ kind: 'value', value: 'x' })],
           ]),
         },
-      };
-      const out = await roundTrip(binding);
+      });
+      const out = await roundTrip(bound);
       if (out.kind !== 'lazyWalk') throw new Error('unreachable');
       expect(out.walk.head.hopsRaw).toBe('-[c:Companies WHERE c.`Name` == "x"]->');
       expect(out.walk.captured.get('target')).toEqual({ kind: 'value', value: 'x' });
@@ -613,20 +613,20 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
         ],
         span: SPAN,
       };
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'lazyWalk',
         walk: {
           head: { root: { kind: 'name', name: 'msg' }, hopsRaw: '-[a:files]->', span: SPAN },
-          captured: new Map<string, Binding>([['msg', { kind: 'event' }]]),
+          captured: new Map<string, Binding>([['msg', binding({ kind: 'event' })]]),
           mapping,
         },
-      };
-      const descriptor = serializeBinding(binding);
+      });
+      const descriptor = serializeBinding(bound);
       if (descriptor.kind !== 'lazyWalk') throw new Error('unreachable');
       expect(descriptor.walk.mapping).toEqual(mapping);
       expect(() => JSON.stringify(descriptor)).not.toThrow();
 
-      const out = await roundTrip(binding);
+      const out = await roundTrip(bound);
       if (out.kind !== 'lazyWalk') throw new Error('unreachable');
       expect(out.walk.mapping).toEqual(mapping);
     });
@@ -636,7 +636,7 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       // at an expression is no different: the expression rides across as the
       // slot the parser captured, and the names it reads ride in the capture.
       // The run that resumes evaluates it again, against the scope it kept.
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'lazyWalk',
         walk: {
           head: {
@@ -644,10 +644,10 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
             hopsRaw: '-[a:files]->',
             span: SPAN,
           },
-          captured: new Map<string, Binding>([['rows', { kind: 'value', value: [] }]]),
+          captured: new Map<string, Binding>([['rows', binding({ kind: 'value', value: [] })]]),
         },
-      };
-      const out = await roundTrip(binding);
+      });
+      const out = await roundTrip(bound);
       if (out.kind !== 'lazyWalk') throw new Error('unreachable');
       expect(out.walk.head.root).toEqual({
         kind: 'expression',
@@ -657,25 +657,25 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     });
 
     it('an UNMAPPED walk carries no mapping key at all', async () => {
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'lazyWalk',
         walk: {
           head: { root: { kind: 'name', name: 'msg' }, hopsRaw: '-[a:files]->', span: SPAN },
-          captured: new Map<string, Binding>([['msg', { kind: 'event' }]]),
+          captured: new Map<string, Binding>([['msg', binding({ kind: 'event' })]]),
         },
-      };
-      const out = await roundTrip(binding);
+      });
+      const out = await roundTrip(bound);
       if (out.kind !== 'lazyWalk') throw new Error('unreachable');
       expect(out.walk.mapping).toBeUndefined();
     });
 
     it('blockMeta is recursive — its contained bindings serialise per the rules', async () => {
-      const inner: Binding = { kind: 'value', value: 7 };
-      const binding: Binding = {
+      const inner: Binding = binding({ kind: 'value', value: 7 });
+      const bound: Binding = binding({
         kind: 'blockMeta',
-        edges: new Map([['rows', [inner, { kind: 'event' }]]]),
-      };
-      const out = await roundTrip(binding);
+        edges: new Map([['rows', [inner, binding({ kind: 'event' })]]]),
+      });
+      const out = await roundTrip(bound);
       expect(out.kind).toBe('blockMeta');
       if (out.kind !== 'blockMeta') throw new Error('unreachable');
       const rows = out.edges.get('rows');
@@ -684,11 +684,11 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
     });
 
     it("a block's returned records are recursive too", async () => {
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'positions',
-        landings: [{ kind: 'value', value: 'a' }, { kind: 'event' }],
-      };
-      const out = await roundTrip(binding);
+        landings: [binding({ kind: 'value', value: 'a' }), binding({ kind: 'event' })],
+      });
+      const out = await roundTrip(bound);
       if (out.kind !== 'positions') throw new Error('unreachable');
       expect(out.landings).toEqual([{ kind: 'value', value: 'a' }, { kind: 'event' }]);
     });
@@ -705,15 +705,15 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
         ],
         span: SPAN,
       };
-      const binding: Binding = {
+      const bound: Binding = binding({
         kind: 'closure',
         closure,
         captured: new Map<string, Binding>([
-          ['msg', { kind: 'event' }],
-          ['t', { kind: 'value', value: 'hello' }],
+          ['msg', binding({ kind: 'event' })],
+          ['t', binding({ kind: 'value', value: 'hello' })],
         ]),
-      };
-      const out = await roundTrip(binding);
+      });
+      const out = await roundTrip(bound);
       if (out.kind !== 'closure') throw new Error('unreachable');
       // The BODY rides across as itself — a closure has no name to re-resolve by.
       expect(out.closure).toEqual(closure);
@@ -725,9 +725,9 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
   // ── The JSON-serialisability guard (the value boundary) ──
   describe('JSON guard', () => {
     it('rejects a non-serialisable value LOUDLY at park (a closure)', () => {
-      const binding: Binding = { kind: 'value', value: () => 42 };
-      expect(() => serializeBinding(binding)).toThrow(MovementEngineError);
-      expect(() => serializeBinding(binding)).toThrow(/not JSON-serialisable/);
+      const bound: Binding = binding({ kind: 'value', value: () => 42 });
+      expect(() => serializeBinding(bound)).toThrow(MovementEngineError);
+      expect(() => serializeBinding(bound)).toThrow(/not JSON-serialisable/);
     });
 
     it('rejects a circular value LOUDLY', () => {
@@ -745,11 +745,11 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
   describe('serializeScopeChain (§4.6)', () => {
     it('captures each env OWN bindings root-first; opaque imports keyed by slot name', () => {
       const root = new Environment();
-      root.declare('graph', { kind: 'instance', name: 'graph', adapterSlug: 'kg' });
-      root.declare('crm', { kind: 'instance', name: 'crm', adapterSlug: 'attio' });
-      root.declare('mailer', { kind: 'opaque', what: 'import' });
+      root.declare('graph', binding({ kind: 'instance', name: 'graph', adapterSlug: 'kg' }));
+      root.declare('crm', binding({ kind: 'instance', name: 'crm', adapterSlug: 'attio' }));
+      root.declare('mailer', binding({ kind: 'opaque', what: 'import' }));
       const child = root.child();
-      child.declare('msg', { kind: 'value', value: 'hello' });
+      child.declare('msg', binding({ kind: 'value', value: 'hello' }));
 
       const chain = serializeScopeChain(child.chainFromRoot());
       expect(chain).toHaveLength(2);
@@ -791,14 +791,14 @@ describe('a value that holds records', () => {
   }
 
   it("a MAP's answer of extract roots comes back as extract roots, children and all", async () => {
-    const binding: Binding = {
+    const bound: Binding = binding({
       kind: 'value',
       value: [
-        { kind: 'extractRoot', emission: emissionNamed('Acme') },
-        { kind: 'extractRoot', emission: emissionNamed('Globex') },
+        binding({ kind: 'extractRoot', emission: emissionNamed('Acme') }),
+        binding({ kind: 'extractRoot', emission: emissionNamed('Globex') }),
       ],
-    };
-    const out = await roundTrip(binding);
+    });
+    const out = await roundTrip(bound);
     if (out.kind !== 'value' || !Array.isArray(out.value)) throw new Error('unreachable');
     expect(out.value).toHaveLength(2);
     for (const [index, name] of ['Acme', 'Globex'].entries()) {
@@ -812,11 +812,11 @@ describe('a value that holds records', () => {
   });
 
   it("a GROUPBY's dict of records keeps each group's records", async () => {
-    const binding: Binding = {
+    const bound: Binding = binding({
       kind: 'value',
-      value: { Infra: [{ kind: 'extractRoot', emission: emissionNamed('Acme') }] },
-    };
-    const out = await roundTrip(binding);
+      value: { Infra: [binding({ kind: 'extractRoot', emission: emissionNamed('Acme') })] },
+    });
+    const out = await roundTrip(bound);
     if (out.kind !== 'value') throw new Error('unreachable');
     const group = (out.value as Record<string, unknown[]>).Infra[0] as Binding;
     expect(group.kind).toBe('extractRoot');
@@ -825,9 +825,9 @@ describe('a value that holds records', () => {
   });
 
   it('a value holding no records travels as it always did — data, with the JSON guard', async () => {
-    const binding: Binding = { kind: 'value', value: { rows: [1, 2], name: 'hi' } };
-    expect(serializeBinding(binding).kind).toBe('value');
-    expect(await roundTrip(binding)).toEqual(binding);
+    const bound: Binding = binding({ kind: 'value', value: { rows: [1, 2], name: 'hi' } });
+    expect(serializeBinding(bound).kind).toBe('value');
+    expect(await roundTrip(bound)).toEqual(bound);
   });
 });
 
@@ -840,41 +840,80 @@ describe('a value that holds files', () => {
   });
 
   it('parks each file as its descriptor and gives the same descriptor back on resume', async () => {
-    const binding: Binding = { kind: 'value', value: ['the body', attachment()] };
-    const descriptor = serializeBinding(binding);
+    const bound: Binding = binding({ kind: 'value', value: ['the body', attachment()] });
+    const descriptor = serializeBinding(bound);
     expect(descriptor).toEqual({ kind: 'value', value: ['the body', attachment()] });
     const wired = JSON.parse(JSON.stringify(descriptor)) as BindingDescriptor;
     const out = await rehydrateBinding(wired, makeCtx());
-    expect(out).toEqual(binding);
+    expect(out).toEqual(bound);
   });
 
   it('a file beside records, and a file in a synthesised record, both come back whole', async () => {
-    const binding: Binding = {
+    const bound: Binding = binding({
       kind: 'value',
       value: [
-        { kind: 'extractRoot', emission: { nodeName: 'x', fields: {}, provenance: {}, resources: [], children: new Map() } },
+        binding({ kind: 'extractRoot', emission: { nodeName: 'x', fields: {}, provenance: {}, resources: [], children: new Map() } }),
         attachment(),
       ],
-    };
-    expect(serializeBinding(binding).kind).toBe('recordValue');
-    const out = await roundTrip(binding);
+    });
+    expect(serializeBinding(bound).kind).toBe('recordValue');
+    const out = await roundTrip(bound);
     if (out.kind !== 'value' || !Array.isArray(out.value)) throw new Error('unreachable');
     expect(out.value[1]).toEqual(attachment());
 
-    const node: Binding = {
+    const node: Binding = binding({
       kind: 'nodePosition',
       fields: { name: 'Acme', deck: attachment() },
       fieldOrder: ['name', 'deck'],
       fieldProvenance: {},
       edges: {},
-    };
+    });
     const back = await roundTrip(node);
     if (back.kind !== 'nodePosition') throw new Error('unreachable');
     expect(back.fields.deck).toEqual(attachment());
   });
 
   it('a closure inside a value is refused at park, not dropped in silence', () => {
-    const binding: Binding = { kind: 'value', value: { name: 'x', compute: () => 1 } };
-    expect(() => serializeBinding(binding)).toThrow(/'compute' is a function/);
+    const bound: Binding = binding({ kind: 'value', value: { name: 'x', compute: () => 1 } });
+    expect(() => serializeBinding(bound)).toThrow(/'compute' is a function/);
+  });
+});
+
+describe('a parked value whose data carries engine-object keys', () => {
+  it('revives as the dict it was, never as a binding', async () => {
+    const descriptor: BindingDescriptor = {
+      kind: 'value',
+      value: { kind: 'event', nested: [{ kind: 'closure', captured: {} }] },
+    };
+    const out = await rehydrateBinding(JSON.parse(JSON.stringify(descriptor)), makeCtx());
+    if (out.kind !== 'value' || !isDictValue(out.value) || !Array.isArray(out.value.nested)) {
+      throw new Error('expected a value binding holding a dict');
+    }
+    expect(out.value).toEqual({ kind: 'event', nested: [{ kind: 'closure', captured: {} }] });
+    expect(bindingOf(out.value)).toBeUndefined();
+    expect(bindingOf(out.value.nested[0])).toBeUndefined();
+  });
+
+  it("a record value's data payload revives as data beside the record", async () => {
+    const descriptor: BindingDescriptor = {
+      kind: 'recordValue',
+      value: {
+        kind: 'list',
+        of: [
+          { kind: 'record', binding: { kind: 'event' } },
+          { kind: 'data', value: { kind: 'event' } },
+        ],
+      },
+    };
+    const out = await rehydrateBinding(JSON.parse(JSON.stringify(descriptor)), makeCtx());
+    if (out.kind !== 'value' || !Array.isArray(out.value)) throw new Error('expected a list value');
+    expect(bindingOf(out.value[0])?.kind).toBe('event');
+    expect(bindingOf(out.value[1])).toBeUndefined();
+    expect(out.value[1]).toEqual({ kind: 'event' });
+  });
+
+  it('a value holding such data serialises as data, not as a record value', () => {
+    const descriptor = serializeBinding(binding({ kind: 'value', value: { kind: 'event' } }));
+    expect(descriptor).toEqual({ kind: 'value', value: { kind: 'event' } });
   });
 });

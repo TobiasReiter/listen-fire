@@ -14,6 +14,7 @@ jest.mock('../../logger', () => ({
 import type { ExprSlot, Span } from 'movement-lang';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 import {
+  binding,
   Environment,
   evalMovementExpr,
   type FileTextResolution,
@@ -47,7 +48,7 @@ async function evaluate(
   },
 ) {
   const env = new Environment();
-  env.declare('attachment', { kind: 'value', value: opts.attachment ?? null });
+  env.declare('attachment', binding({ kind: 'value', value: opts.attachment ?? null }));
   return evalMovementExpr(parseMovementExpression(text), {
     env,
     languageVersion: CURRENT_LANGUAGE_VERSION,

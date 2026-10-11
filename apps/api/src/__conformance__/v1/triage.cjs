@@ -10,6 +10,9 @@ const NODE_FIELD_ORDER =
 const FILE_DESCRIPTOR =
   "asserts the parked FileRef's byte-channel closure is rebound on rehydrate; a FileRef is now a descriptor that parks and rehydrates as it stands, its bytes redeemed on the host when something reads them, so a resumed run reads the same file and no movement observes the difference";
 
+const HAND_BUILT_RECORD_IN_VALUE =
+  "hand-built record inside a value: the test writes the records a value holds as plain object literals, which the engine once recognised by their shape; it now recognises only the objects it made itself, so a data payload can never be read as one. A run only ever holds records the engine made, so no movement observes the difference";
+
 exports.triage = [
   {
     file: 'services/movement_engine/__test__/serialize.unit.test.ts',
@@ -26,4 +29,6 @@ exports.triage = [
     test: 'an update merges into the matched landing in place',
     reason: NODE_FIELD_ORDER,
   },
+  { file: 'services/movement_engine/__test__/serialize.unit.test.ts', test: "a MAP's answer of extract roots comes back as extract roots, children and all", reason: HAND_BUILT_RECORD_IN_VALUE },
+  { file: 'services/movement_engine/__test__/serialize.unit.test.ts', test: "a GROUPBY's dict of records keeps each group's records", reason: HAND_BUILT_RECORD_IN_VALUE },
 ];

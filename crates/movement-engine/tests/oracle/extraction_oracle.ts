@@ -51,6 +51,7 @@ import {
 import { shapeChain, type ShapeBinding } from '../../../../apps/api/src/services/movement_engine/run';
 import { pricedCalls, RunLedger } from '../../../../apps/api/src/services/movement_engine/run_context';
 import type { EngineHost } from '../../../../apps/api/src/services/movement_engine/host';
+import { binding } from '../../../../apps/api/src/services/movement_engine/expression';
 
 type Rand = () => number;
 
@@ -643,8 +644,8 @@ async function programCase(rand: Rand, index: number): Promise<unknown | undefin
   }
   const rootTypes = declaredTypesIn(program);
   const rootShapes = new Map<string, ShapeBinding>();
-  for (const i of imports) rootShapes.set(i.local, { kind: 'shape', declaration: shapeOf(LIBRARY_PROGRAMS.get(i.file)!, i.name)!, library: LINKED.get(i.file)! });
-  for (const statement of program.statements) if (statement.kind === 'shape') rootShapes.set(statement.name, { kind: 'shape', declaration: statement });
+  for (const i of imports) rootShapes.set(i.local, binding({ kind: 'shape', declaration: shapeOf(LIBRARY_PROGRAMS.get(i.file)!, i.name)!, library: LINKED.get(i.file)! }));
+  for (const statement of program.statements) if (statement.kind === 'shape') rootShapes.set(statement.name, binding({ kind: 'shape', declaration: statement }));
   const link = {
     imports: imports.map((i) => ({
       local: i.local, kind: 'shape', name: i.name, file: i.file,

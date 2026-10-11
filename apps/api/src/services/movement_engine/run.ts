@@ -245,12 +245,14 @@ import {
   decideWithClock,
   describeBinding,
   evalMovementExpr,
+  extractPositionOf,
   evaluateMovementExpression,
   hopFilterKeeps,
   isCallableBinding,
   isDictValue,
   isFileUnreadable,
   hopMemberGate,
+  binding,
   hopOrderKeyReader,
   nodeEdgeLandings,
   readLandingField,
@@ -903,12 +905,12 @@ function rematerialiseAnswer(answer: unknown): Binding {
         children: new Map<string, ExtractEmission[]>(),
       })),
     );
-    return {
+    return binding({
       kind: 'extractRoot',
       emission: { nodeName: type, fields: {}, provenance: {}, resources: [], children },
-    };
+    });
   }
-  return { kind: 'value', value: answer, provenance: NO_PROVENANCE };
+  return binding({ kind: 'value', value: answer, provenance: NO_PROVENANCE });
 }
 
 /**
@@ -953,7 +955,7 @@ function boundRValueOf(statement: Statement): { name: string; value: RValue } | 
  * so a park above still carries it.
  */
 function returnFrom(env: Environment): BodyOutcome {
-  const value = env.resolveOwn(RETURN_SLOT) ?? NULL_SLOT;
+  const value = env.resolveOwn(RETURN_SLOT) ?? nullSlot();
   env.declare(RETURN_SLOT, value);
   return { returned: true, value };
 }
@@ -1052,15 +1054,15 @@ function requireCallValue(callee: string, value: Binding | undefined): Binding {
  *  yield. */
 function blockValue(returned: Binding[]): Binding {
   if (returned.length > 0 && returned.every((b) => b.kind === 'value')) {
-    return {
+    return binding({
       kind: 'value',
       value: returned.map((b) => (b.kind === 'value' ? b.value : null)),
       provenance: unionProvenance(
         returned.map((b) => (b.kind === 'value' ? (b.provenance ?? NO_PROVENANCE) : NO_PROVENANCE)),
       ),
-    };
+    });
   }
-  return { kind: 'positions', landings: returned };
+  return binding({ kind: 'positions', landings: returned });
 }
 
 /** The value a slot holds when its arm handed nothing back — a filled slot and
@@ -1082,7 +1084,14 @@ function describeHeadValue(value: unknown): string {
   }
 }
 
-const NULL_SLOT: Binding = { kind: 'value', value: null, provenance: NO_PROVENANCE };
+// Made on first use, not at load: expression.ts reaches this module through
+// the Rust evaluator (rust_engine.ts) while its own constructor is still
+// uninitialised, so a binding built at load time here would throw.
+let madeNullSlot: Binding | undefined;
+function nullSlot(): Binding {
+  madeNullSlot ??= binding({ kind: 'value', value: null, provenance: NO_PROVENANCE });
+  return madeNullSlot;
+}
 
 /** The fields `...e` writes: the list the checker resolved from `e`'s TYPE.
  *  Never read off the value — a record handed to a `<Deal>` parameter may carry
@@ -1139,6 +1148,14 @@ function setGraphEdge(
     landings,
     ...(child !== undefined ? { landingShape: declaredLandingShape(child) } : {}),
   };
+}
+
+/** Whether a value is, or anywhere holds, a record the engine made. */
+function holdsRecord(value: unknown): boolean {
+  if (bindingOf(value) !== undefined) return true;
+  if (Array.isArray(value)) return value.some(holdsRecord);
+  if (isDictValue(value)) return Object.values(value).some(holdsRecord);
+  return false;
 }
 
 /** A spread value read as child nodes: one map, or a list of nothing but maps. */
@@ -1250,12 +1267,12 @@ export type ShapeBinding = Extract<Binding, { kind: 'shape' }>;
 export function libraryShape(file: LinkedFile, name: string): ShapeBinding | undefined {
   for (const statement of file.program.statements) {
     if (statement.kind === 'shape' && statement.name === name) {
-      return { kind: 'shape', declaration: statement, library: file };
+      return binding({ kind: 'shape', declaration: statement, library: file });
     }
   }
   const imported = file.imports.get(name);
   return imported?.kind === 'shape'
-    ? { kind: 'shape', declaration: imported.declaration, library: imported.file }
+    ? binding({ kind: 'shape', declaration: imported.declaration, library: imported.file })
     : undefined;
 }
 
@@ -1322,11 +1339,7 @@ interface ArmInvocation {
 }
 
 function isClosureBinding(value: unknown): value is Extract<Binding, { kind: 'closure' }> {
-  return (
-    typeof value === 'object'
-    && value !== null
-    && (value as { kind?: unknown }).kind === 'closure'
-  );
+  return bindingOf(value)?.kind === 'closure';
 }
 
 /**
@@ -1393,7 +1406,7 @@ function buildCombinatorReceipt(
     }
     for (const [name, bucket] of grouped) {
       if (bucket.every((b) => b.kind === 'value')) {
-        push(name, {
+        push(name, binding({
           kind: 'value',
           value: bucket.map((b) => (b.kind === 'value' ? b.value : null)),
           provenance: unionProvenance(
@@ -1401,13 +1414,13 @@ function buildCombinatorReceipt(
               b.kind === 'value' ? (b.provenance ?? NO_PROVENANCE) : NO_PROVENANCE,
             ),
           ),
-        });
+        }));
         continue;
       }
       for (const binding of bucket) push(name, binding);
     }
   }
-  return { kind: 'blockMeta', edges };
+  return binding({ kind: 'blockMeta', edges });
 }
 
 function buildRaceReceipt(envs: Environment[]): Binding {
@@ -1419,7 +1432,7 @@ function buildRaceReceipt(envs: Environment[]): Binding {
       edges.set(name, bucket);
     }
   }
-  return { kind: 'blockMeta', edges };
+  return binding({ kind: 'blockMeta', edges });
 }
 
 /** The child bindings reached by traversing edge `edge` off a meta-node binding
@@ -1440,9 +1453,7 @@ function metaEdgeBindings(binding: Binding, edge: string): Binding[] {
     return nodeEdgeLandings(binding, edge);
   }
   if (binding.kind === 'extractPosition' || binding.kind === 'extractRoot') {
-    return (binding.emission.children.get(edge) ?? []).map(
-      (emission): Binding => ({ kind: 'extractPosition', emission }),
-    );
+    return (binding.emission.children.get(edge) ?? []).map(extractPositionOf);
   }
   return [];
 }
@@ -1784,7 +1795,7 @@ function serializeMemberAnswer(answer: MemberAnswer): MemberAnswerExport {
   if (!answer.kept) return { kept: false };
   return {
     kept: true,
-    answer: serializeBinding({ kind: 'value', value: answer.value, provenance: NO_PROVENANCE }),
+    answer: serializeBinding(binding({ kind: 'value', value: answer.value, provenance: NO_PROVENANCE })),
   };
 }
 
@@ -1827,18 +1838,18 @@ function memberValue(run: Pick<CollectionRun, 'expr' | 'spelling'>, outcome: Bod
 function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]): Binding {
   const { expr, spelling, members } = run;
   if (expr.op === 'reduce') {
-    return {
+    return binding({
       kind: 'value',
       value: carriedBefore(answers, members.length, run.init),
       provenance: transformed(run.sourceProvenance),
-    };
+    });
   }
   if (expr.op === 'map') {
     const out = members.flatMap((_, index) => {
       const answer = answers[index];
       return answer?.kept === true ? [answer.value] : [];
     });
-    return { kind: 'value', value: out, provenance: transformed(run.sourceProvenance) };
+    return binding({ kind: 'value', value: out, provenance: transformed(run.sourceProvenance) });
   }
   if (expr.op === 'filter') {
     // Truthiness is the language's own: the function returns a boolean, and
@@ -1849,7 +1860,7 @@ function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]):
       const answer = answers[index];
       return answer?.kept === true && answer.value === true;
     });
-    return { kind: 'value', value: out, provenance: run.sourceProvenance };
+    return binding({ kind: 'value', value: out, provenance: run.sourceProvenance });
   }
   // GROUPBY / KEYBY — the key function's answer names the slot. A key that
   // is not text at run time is a checker escape; say so rather than
@@ -1882,7 +1893,7 @@ function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]):
     if (Array.isArray(group)) group.push(member);
     else filed[key] = [member];
   });
-  return { kind: 'value', value: filed, provenance: transformed(run.sourceProvenance) };
+  return binding({ kind: 'value', value: filed, provenance: transformed(run.sourceProvenance) });
 }
 
 /**
@@ -2271,7 +2282,7 @@ function missed(input: {
           message: `${input.reason}; the judge was unavailable, so the match was treated as finding nothing`,
         });
       }
-      const absent: Binding = { kind: 'value', value: null };
+      const absent: Binding = binding({ kind: 'value', value: null });
       if (input.bindingName !== undefined) input.env.declare(input.bindingName, absent);
       return absent;
     }
@@ -3141,7 +3152,7 @@ class Interpreter {
           // race receipt (chunk C, S4). Checked first because a timer resume
           // carries no answer, yet `resumeMovement` still hands one in as null;
           // it must not shadow the marker.
-          leafEnv.declare(state.bindingName, { kind: 'value', value: true, provenance: NO_PROVENANCE });
+          leafEnv.declare(state.bindingName, binding({ kind: 'value', value: true, provenance: NO_PROVENANCE }));
         } else if (!leaf.reenter && state.bindingName !== null && leaf.answer !== undefined) {
           leafEnv.declare(state.bindingName, leaf.answer);
         }
@@ -3566,7 +3577,7 @@ class Interpreter {
     armCount: number,
     ctx: RehydrationContext,
   ): Promise<Binding> {
-    const slots: Binding[] = new Array(armCount).fill(NULL_SLOT);
+    const slots: Binding[] = new Array(armCount).fill(nullSlot());
     for (const row of rows) {
       const exports = row.exports as Record<string, BindingDescriptor>;
       const descriptor = exports[RETURN_SLOT];
@@ -3574,7 +3585,7 @@ class Interpreter {
       if (row.branchIndex < 0 || row.branchIndex >= slots.length) continue;
       slots[row.branchIndex] = await rehydrateBinding(descriptor, ctx);
     }
-    return { kind: 'tuple', slots };
+    return binding({ kind: 'tuple', slots });
   }
 
   /**
@@ -3802,7 +3813,7 @@ class Interpreter {
       );
     }
     const schema = this.catalog.instantiate(identity.adapterSlug, args);
-    return {
+    return binding({
       kind: 'instance',
       name: identity.name,
       adapterSlug: identity.adapterSlug,
@@ -3811,7 +3822,7 @@ class Interpreter {
         ? { constructionConfig: identity.constructionConfig }
         : {}),
       schema,
-    };
+    });
   }
 
   /**
@@ -3836,7 +3847,7 @@ class Interpreter {
     for (const statement of program.statements) {
       if (statement.kind === 'movement') {
         movements.push(statement);
-        fileEnv.declare(statement.name, { kind: 'movement', declaration: statement });
+        fileEnv.declare(statement.name, binding({ kind: 'movement', declaration: statement }));
       } else {
         deferredFileStatements.push(statement);
       }
@@ -3953,7 +3964,7 @@ class Interpreter {
     }
 
     const movementEnv = fileEnv.child();
-    movementEnv.declare(param.name, { kind: 'event' });
+    movementEnv.declare(param.name, binding({ kind: 'event' }));
     return { movement, movementEnv };
   }
 
@@ -4003,7 +4014,7 @@ class Interpreter {
           // name means something different from a call on a movement, and the
           // binding is what says so, exactly as the checker's scope does.
           if (statement.source.namespace === 'plugins') {
-            env.declare(alias ?? name, { kind: 'plugin', plugin: name });
+            env.declare(alias ?? name, binding({ kind: 'plugin', plugin: name }));
             continue;
           }
           // A bare adapter import is NOT an instance — instantiation is
@@ -4012,7 +4023,7 @@ class Interpreter {
           // below). The checker rejects a bare import used as a position
           // source or `listen to`, so the runtime never needs the old lazy
           // binding (spec plans/2026-06-24-required-instantiation/0_spec.md).
-          env.declare(alias ?? name, { kind: 'opaque', what: 'import' });
+          env.declare(alias ?? name, binding({ kind: 'opaque', what: 'import' }));
         }
         return;
       case 'assign': {
@@ -4068,7 +4079,7 @@ class Interpreter {
         return;
       }
       case 'shape':
-        env.declare(statement.name, { kind: 'shape', declaration: statement, fileEnv: env });
+        env.declare(statement.name, binding({ kind: 'shape', declaration: statement, fileEnv: env }));
         return;
       default:
         // Other file-level statements contribute nothing to a movement
@@ -4100,17 +4111,17 @@ class Interpreter {
         );
       }
       if (exported.kind === 'shape') {
-        env.declare(local, {
+        env.declare(local, binding({
           kind: 'shape',
           declaration: exported.declaration,
           library: exported.file,
-        });
+        }));
       } else {
-        env.declare(local, {
+        env.declare(local, binding({
           kind: 'movement',
           declaration: exported.declaration,
           fileEnv: await this.libraryEnv(exported.file),
-        });
+        }));
       }
     }
   }
@@ -4139,11 +4150,11 @@ class Interpreter {
       const deferred: Statement[] = [];
       for (const statement of file.program.statements) {
         if (statement.kind === 'movement') {
-          env.declare(statement.name, {
+          env.declare(statement.name, binding({
             kind: 'movement',
             declaration: statement,
             fileEnv: env,
-          });
+          }));
         } else {
           deferred.push(statement);
         }
@@ -4247,14 +4258,14 @@ class Interpreter {
     }
     const rawCredValue = credential?.value.raw.trim();
     const unwrappedCred = rawCredValue !== undefined ? unwrapCredentialArg(rawCredValue) : null;
-    return {
+    return binding({
       kind: 'instance',
       name,
       adapterSlug,
       ...(unwrappedCred !== null ? { credentialName: this.importOriginal(unwrappedCred) } : {}),
       ...(Object.keys(constructionConfig).length > 0 ? { constructionConfig } : {}),
       schema: this.catalog.instantiate(adapterSlug, args),
-    };
+    });
   }
 
   /** Resolves a (possibly aliased) imported local name to its catalog / workspace name. */
@@ -4357,7 +4368,7 @@ class Interpreter {
     // that already ran, finds it again here.
     for (const statement of statements) {
       if (statement.kind === 'shape' && env.resolveOwn(statement.name) === undefined) {
-        env.declare(statement.name, { kind: 'shape', declaration: statement, fileEnv: env, local: true });
+        env.declare(statement.name, binding({ kind: 'shape', declaration: statement, fileEnv: env, local: true }));
       }
     }
     for (let stmtIndex = startIndex; stmtIndex < statements.length; stmtIndex++) {
@@ -4555,7 +4566,7 @@ class Interpreter {
           value.extract,
           env,
         );
-        env.declare(name, { kind: 'extractRoot', emission });
+        env.declare(name, binding({ kind: 'extractRoot', emission }));
         break;
       }
       case 'extractCall': {
@@ -4597,13 +4608,13 @@ class Interpreter {
         // when it is CALLED. The capture is a flat snapshot of the lexical
         // chain, exactly as a `lazy` walk's is — which is what lets both cross
         // a park unchanged.
-        env.declare(name, {
+        env.declare(name, binding({
           kind: 'closure',
           closure: value.closure,
           captured: captureScope(env),
           // From version 3 its body may call it by this name (recursion).
           ...(since(this.languageVersion, 3) ? { self: name } : {}),
-        });
+        }));
         break;
       case 'callback':
         env.declare(
@@ -4621,14 +4632,14 @@ class Interpreter {
         // Nothing runs here — that is the whole point. The walk is
         // stored with the scope it was written in, and every read of
         // this name runs it afresh against the live source.
-        env.declare(name, {
+        env.declare(name, binding({
           kind: 'lazyWalk',
           walk: this.deferWalk(
             value.lazy.head,
             env,
             value.lazy.mapping,
           ),
-        });
+        }));
         break;
     }
   }
@@ -4808,12 +4819,12 @@ class Interpreter {
     const sink = this.context.host.park.sink;
     if (sink !== undefined) {
       const state: CollectionOpState = {
-        source: serializeBinding({
+        source: serializeBinding(binding({
           kind: 'value',
           value: run.members,
           provenance: run.sourceProvenance,
-        }),
-        init: serializeBinding({ kind: 'value', value: run.init, provenance: NO_PROVENANCE }),
+        })),
+        init: serializeBinding(binding({ kind: 'value', value: run.init, provenance: NO_PROVENANCE })),
       };
       await sink.persistBranchExport({
         frameAddress,
@@ -4996,24 +5007,24 @@ class Interpreter {
     env: Environment,
   ): Extract<Binding, { kind: 'closure' }> {
     if (fn.kind === 'closure') {
-      return { kind: 'closure', closure: fn.closure, captured: captureScope(env) };
+      return binding({ kind: 'closure', closure: fn.closure, captured: captureScope(env) });
     }
-    const binding = env.resolve(fn.name);
-    if (binding?.kind === 'closure') return binding;
-    if (binding?.kind === 'movement') {
-      return {
+    const named = env.resolve(fn.name);
+    if (named?.kind === 'closure') return named;
+    if (named?.kind === 'movement') {
+      return binding({
         kind: 'closure',
         closure: {
-          params: binding.declaration.params,
-          body: binding.declaration.body,
-          span: binding.declaration.span,
+          params: named.declaration.params,
+          body: named.declaration.body,
+          span: named.declaration.span,
         },
-        captured: captureScope(binding.fileEnv ?? env),
-      };
+        captured: captureScope(named.fileEnv ?? env),
+      });
     }
     throw new MovementEngineError(
       'MOVENG_RUNTIME',
-      `'${fn.name}' is ${binding ? describeBinding[binding.kind] : 'not in scope'}, and '${spelling}' runs a function — the checker should have caught this`,
+      `'${fn.name}' is ${named ? describeBinding[named.kind] : 'not in scope'}, and '${spelling}' runs a function — the checker should have caught this`,
     );
   }
 
@@ -5043,11 +5054,11 @@ class Interpreter {
       );
     }
     if (bindingName !== undefined) {
-      env.declare(bindingName, {
+      env.declare(bindingName, binding({
         kind: 'value',
         value: [...resolved.options],
         provenance: NO_PROVENANCE,
-      });
+      }));
     }
   }
 
@@ -5069,7 +5080,7 @@ class Interpreter {
         );
       }
       // A parallel over nothing ran nothing, and its receipt has no slots.
-      if (bindingName !== undefined) env.declare(bindingName, { kind: 'tuple', slots: [] });
+      if (bindingName !== undefined) env.declare(bindingName, binding({ kind: 'tuple', slots: [] }));
       return;
     }
 
@@ -5100,7 +5111,7 @@ class Interpreter {
               : await this.withinBoundary({ kind: 'arm', arm: fork.index, body: runtime }, () =>
                   this.runArm(fork.arm, fork.env, body, fork.address),
                 );
-            settled.set(fork.index, outcome.returned ? outcome.value : NULL_SLOT);
+            settled.set(fork.index, outcome.returned ? outcome.value : nullSlot());
           } catch (e) {
             if (e instanceof RunParked) {
               parked.push(fork);
@@ -5109,7 +5120,7 @@ class Interpreter {
             // A quiet scope end (find-on-missing) still COMPLETED — it ran to its
             // end, it just bound less on the way.
             if (!(e instanceof ScopeEndedQuietly)) throw e;
-            settled.set(fork.index, NULL_SLOT);
+            settled.set(fork.index, nullSlot());
           }
         }),
       ),
@@ -5124,10 +5135,10 @@ class Interpreter {
 
     const bindReceipt = (): void => {
       if (bindingName === undefined) return;
-      env.declare(bindingName, {
+      env.declare(bindingName, binding({
         kind: 'tuple',
-        slots: forks.map((fork) => settled.get(fork.index) ?? NULL_SLOT),
-      });
+        slots: forks.map((fork) => settled.get(fork.index) ?? nullSlot()),
+      }));
     };
 
     if (expr.kind === 'race') {
@@ -5568,7 +5579,7 @@ class Interpreter {
 
   /** `AND` / `OR` / `IF` / `COALESCE`, reaching only the operands it needs. */
   private async settleShortCircuit(short: ShortCircuit, staging: NestedCallStaging): Promise<Binding> {
-    const constant = (value: unknown): Binding => ({ kind: 'value', value, provenance: NO_PROVENANCE });
+    const constant = (value: unknown): Binding => binding({ kind: 'value', value, provenance: NO_PROVENANCE });
     switch (short.kind) {
       case 'and':
       case 'or': {
@@ -6164,12 +6175,12 @@ class Interpreter {
       singleUse: config.singleUse,
       ...(config.expiresAt !== undefined ? { expiresAt: config.expiresAt } : {}),
     });
-    return {
+    return binding({
       kind: 'callback',
       callbackId: minted.id,
       url: minted.url,
       params,
-    };
+    });
   }
 
   /**
@@ -6261,13 +6272,13 @@ class Interpreter {
    *  record: a callback belongs to no graph, so there is no adapter to read
    *  through. */
   private callbackCallBinding(call: CallbackCall): Binding {
-    return {
+    return binding({
       kind: 'shapePosition',
       shape: CALLBACK_LANDING_SHAPE,
       node: CALLBACK_CALLED_EDGE,
       fields: { [CALLBACK_CALL_AT]: call.at, ...call.values },
       fieldProvenance: {},
-    };
+    });
   }
 
   /**
@@ -6314,7 +6325,7 @@ class Interpreter {
       // and on the dry-run fast-forward we bind it here (interpretSleep returns).
       await this.interpretSleep({ duration: source.duration }, stmtAddress, env, bindingName);
       if (bindingName !== undefined) {
-        env.declare(bindingName, { kind: 'value', value: true, provenance: NO_PROVENANCE });
+        env.declare(bindingName, binding({ kind: 'value', value: true, provenance: NO_PROVENANCE }));
       }
       return;
     }
@@ -6669,11 +6680,11 @@ class Interpreter {
     // run, it does not hand a value to whoever minted it.
     const child = input.env.child();
     for (const param of subject.closure.params) {
-      child.declare(param.name, {
+      child.declare(param.name, binding({
         kind: 'value',
         value: input.values[param.name] ?? null,
         provenance: NO_PROVENANCE,
-      });
+      }));
     }
     await this.interpretBody(subject.closure.body, child, body);
   }
@@ -6719,7 +6730,7 @@ class Interpreter {
       if (bindingName !== undefined) {
         env.declare(
           bindingName,
-          evaluated.binding ?? { kind: 'value', value: evaluated.value, provenance: NO_PROVENANCE },
+          evaluated.binding ?? binding({ kind: 'value', value: evaluated.value, provenance: NO_PROVENANCE }),
         );
       }
       return;
@@ -6770,14 +6781,14 @@ class Interpreter {
     // called once per tick.
     if (source.condition.kind === 'closure') {
       return this.tickClosure(
-        { kind: 'closure', closure: source.condition.closure, captured: captureScope(env) },
+        binding({ kind: 'closure', closure: source.condition.closure, captured: captureScope(env) }),
         body,
       );
     }
     const named = this.namedClosure(source.condition.expr, env);
     if (named !== undefined) return this.tickClosure(named, body);
     const { value, provenance } = await this.evaluateSlot(source.condition.expr, { env });
-    return { value, binding: { kind: 'value', value, provenance } };
+    return { value, binding: binding({ kind: 'value', value, provenance }) };
   }
 
   /** One tick of a closure condition: call it, and take what it returned. */
@@ -6852,7 +6863,7 @@ class Interpreter {
   ): void {
     if (bindingName === undefined) return;
     if (fields === null || adapter === undefined) {
-      env.declare(bindingName, { kind: 'value', value: null, provenance: NO_PROVENANCE });
+      env.declare(bindingName, binding({ kind: 'value', value: null, provenance: NO_PROVENANCE }));
       return;
     }
     const position = makeUnstablePosition({
@@ -6863,7 +6874,7 @@ class Interpreter {
     // `instanceName` is the awaited head's FILE-SCOPE instance (not the local
     // binding name) — the identity a rehydrated read seam re-resolves through.
     const read: SourceRead = { adapter, instanceName };
-    env.declare(bindingName, { kind: 'sourcePosition', position, read });
+    env.declare(bindingName, binding({ kind: 'sourcePosition', position, read }));
   }
 
   // ── refresh (asks-as-adapter F5/F22) ──
@@ -7325,7 +7336,7 @@ class Interpreter {
             const child = subject.emission.children.get(name)?.[0];
             return child === undefined
               ? undefined
-              : ({ kind: 'extractPosition', emission: child } as const);
+              : binding({ kind: 'extractPosition', emission: child });
           },
         );
       case 'blockMeta':
@@ -7436,7 +7447,7 @@ class Interpreter {
     const shapeEnv = call.shape.kind === 'inline' ? env.child() : env;
     if (call.shape.kind === 'inline') {
       const { declaration } = call.shape;
-      shapeEnv.declare(declaration.name, { kind: 'shape', declaration, fileEnv: env, local: true });
+      shapeEnv.declare(declaration.name, binding({ kind: 'shape', declaration, fileEnv: env, local: true }));
     }
     if (call.shape.kind === 'computed') {
       throw new MovementEngineError(
@@ -7813,7 +7824,7 @@ class Interpreter {
           env,
         );
         return resources.map((resource) => {
-          const landing: Binding = { kind: 'resource', resource };
+          const landing: Binding = binding({ kind: 'resource', resource });
           const bindings = new Map<string, Binding>();
           if (alias !== undefined) bindings.set(alias, landing);
           return { bindings, landing };
@@ -7839,7 +7850,7 @@ class Interpreter {
           for (const child of path.emission.children.get(step.edgeTypeId) ?? []) {
             const aliases = new Map(path.aliases);
             if (step.alias !== undefined) {
-              aliases.set(step.alias, { kind: 'extractPosition', emission: child });
+              aliases.set(step.alias, binding({ kind: 'extractPosition', emission: child }));
             }
             next.push({ aliases, emission: child });
           }
@@ -7848,7 +7859,7 @@ class Interpreter {
       }
       return paths.map((p) => ({
         bindings: p.aliases,
-        landing: { kind: 'extractPosition' as const, emission: p.emission },
+        landing: binding({ kind: 'extractPosition' as const, emission: p.emission }),
       }));
     }
 
@@ -7907,7 +7918,7 @@ class Interpreter {
           env,
         );
         return resources.map((resource) => {
-          const landing: Binding = { kind: 'resource', resource };
+          const landing: Binding = binding({ kind: 'resource', resource });
           const bindings = new Map<string, Binding>();
           if (alias !== undefined) {
             bindings.set(alias, landing);
@@ -8257,12 +8268,12 @@ class Interpreter {
           if (!isMember(r.position)) continue;
           const edgeProperties =
             r.edgeProperties !== undefined ? { edgeProperties: r.edgeProperties } : {};
-          const landing: Binding = {
+          const landing: Binding = binding({
             kind: 'sourcePosition',
             position: r.position,
             ...edgeProperties,
             ...(bindingRead !== undefined ? { read: bindingRead } : {}),
-          };
+          });
           // Position-scoped, per landed record — `property` reads hit the
           // destination, `edge_property` reads the walked edge's inline
           // properties (the bracket-WHERE grammar's currency), and the hop's
@@ -8290,14 +8301,14 @@ class Interpreter {
         next.push(
           ...(await applyHopOrderLimit(kept, step.cardinality, {
             value: (item) =>
-              readOrderKey({
+              readOrderKey(binding({
                 kind: 'sourcePosition',
                 position: item.position,
                 ...(item.edgeProperties !== undefined
                   ? { edgeProperties: item.edgeProperties }
                   : {}),
                 ...(bindingRead !== undefined ? { read: bindingRead } : {}),
-              }),
+              })),
           })),
         );
       }
@@ -8307,12 +8318,12 @@ class Interpreter {
     return paths.map((p) => ({
       bindings: p.aliases,
       position: p.position,
-      landing: {
+      landing: binding({
         kind: 'sourcePosition' as const,
         position: p.position,
         ...(p.edgeProperties !== undefined ? { edgeProperties: p.edgeProperties } : {}),
         ...(bindingRead !== undefined ? { read: bindingRead } : {}),
-      },
+      }),
     }));
   }
 
@@ -9616,15 +9627,15 @@ class Interpreter {
       fields[field.name] = value;
       fieldProvenance[field.name] = provenance;
     }
-    const binding: Binding = {
+    const written: Binding = binding({
       kind: 'shapePosition',
       shape: shape.declaration.name,
       node,
       fields,
       fieldProvenance,
-    };
-    if (bindingName !== undefined) env.declare(bindingName, binding);
-    return binding;
+    });
+    if (bindingName !== undefined) env.declare(bindingName, written);
+    return written;
   }
 
   /**
@@ -9702,7 +9713,7 @@ class Interpreter {
         }
       }
     }
-    return { kind: 'nodePosition', fields, fieldOrder, fieldProvenance, edges };
+    return binding({ kind: 'nodePosition', fields, fieldOrder, fieldProvenance, edges });
   }
 
   /**
@@ -9763,13 +9774,13 @@ class Interpreter {
     env: Environment,
     shape: ShapeNode | undefined,
   ): Promise<Extract<Binding, { kind: 'nodePosition' }>> {
-    const node: Extract<Binding, { kind: 'nodePosition' }> = {
+    const node: Extract<Binding, { kind: 'nodePosition' }> = binding({
       kind: 'nodePosition',
       fields: {},
       fieldOrder: [],
       fieldProvenance: {},
       edges: {},
-    };
+    });
     // Members take effect in the order written, as in a map literal: a later
     // one overwrites an earlier one, a spread's keys included.
     const spreadsAt = (index: number): MapSpread[] =>
@@ -9874,7 +9885,7 @@ class Interpreter {
       case 'positions':
         return bound.landings;
       case 'event':
-        if (this.source !== undefined) return [{ kind: 'sourcePosition', position: this.source.position }];
+        if (this.source !== undefined) return [binding({ kind: 'sourcePosition', position: this.source.position })];
         break;
       case 'sourcePosition':
       case 'handle':
@@ -9958,6 +9969,15 @@ class Interpreter {
     shape: ShapeNode | undefined,
   ): void {
     for (const [key, value] of Object.entries(map)) {
+      // A graph built from a map holds values and nested maps; a record under
+      // a key is neither, and storing the engine's own object as a field would
+      // hand it on to whatever serialises or writes the field.
+      if (holdsRecord(value)) {
+        throw new MovementEngineError(
+          'MOVENG_RUNTIME',
+          `'${key}' holds a record, and a map spread into a graph copies values and maps — a graph field cannot hold a record (the checker should have caught this)`,
+        );
+      }
       const child = shape?.children.find((c) => c.name === key);
       const maps = asMapList(value);
       const asChild = shape !== undefined ? child !== undefined : maps !== undefined;
@@ -9982,13 +10002,13 @@ class Interpreter {
       delete node.fields[key];
       node.fieldOrder = node.fieldOrder.filter((f) => f !== key);
       const landings = maps.map((nested) => {
-        const landing: Extract<Binding, { kind: 'nodePosition' }> = {
+        const landing: Extract<Binding, { kind: 'nodePosition' }> = binding({
           kind: 'nodePosition',
           fields: {},
           fieldOrder: [],
           fieldProvenance: {},
           edges: {},
-        };
+        });
         this.spreadIntoGraph(landing, nested, child);
         return landing;
       });
@@ -10007,13 +10027,13 @@ class Interpreter {
     plan: CopyPlan,
     env: Environment,
   ): Promise<Extract<Binding, { kind: 'nodePosition' }>> {
-    const copy: Extract<Binding, { kind: 'nodePosition' }> = {
+    const copy: Extract<Binding, { kind: 'nodePosition' }> = binding({
       kind: 'nodePosition',
       fields: {},
       fieldOrder: [...plan.fields],
       fieldProvenance: {},
       edges: {},
-    };
+    });
     const ctx = this.exprContext(env);
     for (const field of plan.fields) {
       const { value, provenance } = await readLandingField(record, field, field, ctx);
@@ -10315,7 +10335,7 @@ class Interpreter {
     if (bindingName !== undefined) {
       const origin = { kind: 'write' as const, writeIndex, externalId: matched.externalId };
       this.writeLedger.cite(origin);
-      env.declare(bindingName, {
+      env.declare(bindingName, binding({
         kind: 'handle',
         handle: {
           adapterType: adapter.adapterType,
@@ -10330,7 +10350,7 @@ class Interpreter {
         },
         targetType: recordType,
         graph,
-      });
+      }));
     }
   }
 
@@ -10823,12 +10843,12 @@ class Interpreter {
       ...(record.externalId !== undefined ? { externalId: record.externalId } : {}),
     };
     this.writeLedger.append(record, this.writeOrder);
-    let binding: Extract<Binding, { kind: 'handle' }>;
+    let written: Extract<Binding, { kind: 'handle' }>;
     if (input.into !== undefined) {
-      binding = input.into;
-      binding.handle = record;
+      written = input.into;
+      written.handle = record;
     } else {
-      binding = {
+      written = binding({
         kind: 'handle',
         handle: record,
         // NATURAL currency — linked writes infer their type from the
@@ -10838,13 +10858,13 @@ class Interpreter {
         // to (a list entry is a row of ITS list).
         targetType: input.target.handleType ?? input.target.recordType,
         graph: input.target.graph,
-      };
+      });
     }
-    if (input.rehearsed === true && record.old !== undefined) record.old = binding;
+    if (input.rehearsed === true && record.old !== undefined) record.old = written;
     if (input.bindingName !== undefined) {
-      input.env.declare(input.bindingName, binding);
+      input.env.declare(input.bindingName, written);
     }
-    return binding;
+    return written;
   }
 
   /**
@@ -11409,7 +11429,7 @@ class Interpreter {
     const { position, read } = input;
     for (const { alias, filter } of input.where.filters) {
       const env = input.where.env.child();
-      if (alias !== undefined) env.declare(alias, { kind: 'sourcePosition', position, read });
+      if (alias !== undefined) env.declare(alias, binding({ kind: 'sourcePosition', position, read }));
       const keep = await evaluateMovementExpression(filter, {
         ...this.exprContext(env),
         scope: { kind: 'position', position, read },
@@ -11887,16 +11907,16 @@ class Interpreter {
     }
     const landed = path.fn === 'last' ? landings[landings.length - 1] : landings[0];
     if (landed?.position === undefined) {
-      return { kind: 'value', value: null, provenance: NO_PROVENANCE };
+      return binding({ kind: 'value', value: null, provenance: NO_PROVENANCE });
     }
     // The head's own seam rides the binding only when it is NOT the event
     // source, exactly as a block head's aliases carry it.
     const bindingRead = resolved.read === this.source ? undefined : resolved.read;
-    return {
+    return binding({
       kind: 'sourcePosition',
       position: landed.position,
       ...(bindingRead !== undefined ? { read: bindingRead } : {}),
-    };
+    });
   }
 
   /**
@@ -12442,7 +12462,7 @@ function pluginCallBinding(
   switch (output.kind) {
     case 'value': {
       const value = result.text !== undefined && result.text !== '' ? result.text : null;
-      return { binding: { kind: 'value', value, provenance }, handedBack: value !== null };
+      return { binding: binding({ kind: 'value', value, provenance }), handedBack: value !== null };
     }
     case 'records': {
       // One record per thing the plugin found, in its order — the landings of
@@ -12451,15 +12471,15 @@ function pluginCallBinding(
       const landings = (result.records ?? []).map((record): Binding => {
         const fieldProvenance: Record<string, Provenance> = {};
         for (const name of Object.keys(record)) fieldProvenance[name] = provenance;
-        return {
+        return binding({
           kind: 'nodePosition',
           fields: { ...record },
           fieldOrder: Object.keys(record),
           fieldProvenance,
           edges: {},
-        };
+        });
       });
-      return { binding: { kind: 'positions', landings }, handedBack: landings.length > 0 };
+      return { binding: binding({ kind: 'positions', landings }), handedBack: landings.length > 0 };
     }
     case 'record':
       return recordCallBinding(result, provenance);
@@ -12480,7 +12500,7 @@ function recordCallBinding(
   Object.assign(fields, result.data ?? {});
   for (const name of Object.keys(fields)) fieldProvenance[name] = provenance;
   return {
-    binding: { kind: 'nodePosition', fields, fieldOrder: Object.keys(fields), fieldProvenance, edges: {} },
+    binding: binding({ kind: 'nodePosition', fields, fieldOrder: Object.keys(fields), fieldProvenance, edges: {} }),
     handedBack: Object.keys(fields).length > 0,
   };
 }

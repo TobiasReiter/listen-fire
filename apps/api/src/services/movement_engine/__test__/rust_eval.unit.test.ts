@@ -6,7 +6,7 @@
 import { parseMovementExpression } from 'movement-lang';
 
 import { MovementEngineError } from '../errors';
-import { Environment, evalMovementExpr, type Binding, type MovementExprContext } from '../expression';
+import { binding, Environment, evalMovementExpr, type Binding, type MovementExprContext } from '../expression';
 import type { Provenance } from '../provenance';
 import { evalInRust, LOCAL_ZONE_UNVERIFIED, processLocalZone, rustCanEval } from '../rust_engine';
 import { resetRustEvalStats, rustEvalStats } from '../rust_stats';
@@ -18,7 +18,7 @@ const PIN = 3;
 
 function contextOf(bindings: Record<string, unknown>, extra: Partial<MovementExprContext> = {}): MovementExprContext {
   const env = new Environment();
-  for (const [name, value] of Object.entries(bindings)) env.declare(name, { kind: 'value', value });
+  for (const [name, value] of Object.entries(bindings)) env.declare(name, binding({ kind: 'value', value }));
   return { env, languageVersion: PIN, ...extra };
 }
 
@@ -42,8 +42,8 @@ describe('the Rust evaluator switch', () => {
   it('evaluates what it admits, value and provenance as TypeScript does', async () => {
     const trail: Provenance = { origins: [{ kind: 'meta', key: 'k' }], direct: { kind: 'meta', key: 'k' } };
     const env = new Environment();
-    env.declare('x', { kind: 'value', value: 'Acme', provenance: trail });
-    env.declare('n', { kind: 'value', value: 1_200_000 });
+    env.declare('x', binding({ kind: 'value', value: 'Acme', provenance: trail }));
+    env.declare('n', binding({ kind: 'value', value: 1_200_000 }));
     const ctx: MovementExprContext = { env, languageVersion: PIN, literalSpan: { start: { line: 1, col: 1 }, end: { line: 1, col: 4 } } };
     for (const text of ['x', 'CONCAT("Re: ", x, " ", NUMBER.FORMAT(n, "compact"))', '"lit"', 'IF n > 1 THEN x ELSE "no" END', '-n % 7']) {
       const { rust, ts } = await both(text, ctx);
@@ -103,11 +103,11 @@ describe('the Rust evaluator switch', () => {
   });
 
   it('leaves to TypeScript what it does not run', () => {
-    const position: Binding = { kind: 'event' };
+    const position: Binding = binding({ kind: 'event' });
     const env = new Environment();
     env.declare('e', position);
-    env.declare('when', { kind: 'value', value: new Date(0) });
-    env.declare('s', { kind: 'value', value: 'x😀y' });
+    env.declare('when', binding({ kind: 'value', value: new Date(0) }));
+    env.declare('s', binding({ kind: 'value', value: 'x😀y' }));
     const ctx: MovementExprContext = { env, languageVersion: PIN };
     expect(rustCanEval(parseMovementExpression('@current_date'))).toBe(false);
     expect(rustCanEval({ type: 'static', value: '\uD800' })).toBe(false);

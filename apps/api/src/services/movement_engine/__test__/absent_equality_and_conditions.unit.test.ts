@@ -8,13 +8,13 @@
 // the author cannot tell them apart. (Two reads of DIFFERENT absent spellings
 // still compare strictly — `shared_filter`'s "undefined is NOT null there".)
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { CURRENT_LANGUAGE_VERSION, parseMovementCondition, parseMovementExpression } from 'movement-lang';
 import { evaluatePredicate } from '#shared/expression/filter';
 
 async function evaluate(raw: string, bindings: Record<string, unknown>): Promise<unknown> {
   const env = new Environment();
-  for (const [name, value] of Object.entries(bindings)) env.declare(name, { kind: 'value', value });
+  for (const [name, value] of Object.entries(bindings)) env.declare(name, binding({ kind: 'value', value }));
   return (await evalMovementExpr(parseMovementExpression(raw), { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
 }
 
@@ -50,7 +50,7 @@ describe.each(ABSENT)('an absent value (%s) in the engine', (_label, absent) => 
     const condition = parseMovementCondition('x');
     if (condition.kind !== 'expr') throw new Error(`expected an expression condition, got ${condition.kind}`);
     const env = new Environment();
-    env.declare('x', { kind: 'value', value: absent });
+    env.declare('x', binding({ kind: 'value', value: absent }));
     expect(Boolean((await evalMovementExpr(condition.expr, { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value)).toBe(false);
   });
 
@@ -95,7 +95,7 @@ describe.each(ABSENT)('an absent field in an in-app WHERE (%s)', (_label, absent
 describe.each(ABSENT)('AND / OR short-circuit past a guard on an absent value (%s)', (_label, absent) => {
   async function evaluateV3(raw: string, bindings: Record<string, unknown>): Promise<unknown> {
     const env = new Environment();
-    for (const [name, value] of Object.entries(bindings)) env.declare(name, { kind: 'value', value });
+    for (const [name, value] of Object.entries(bindings)) env.declare(name, binding({ kind: 'value', value }));
     return (await evalMovementExpr(parseMovementExpression(raw), { env, languageVersion: 3 })).value;
   }
 

@@ -5,7 +5,7 @@
 
 import { isCallbackParamType, type CallbackParamSpec } from 'engine-contracts';
 import { neverAsAny } from '../../lib/utils/types';
-import type { Binding } from './expression';
+import { binding, type Binding } from './expression';
 import type { Provenance, ProvenanceOrigin } from './provenance';
 
 export class RunAborted extends Error {
@@ -142,7 +142,7 @@ export function isCallbackParam(value: unknown): value is CallbackParamSpec {
  */
 function bindingFromWire(descriptor: unknown): Binding {
   const kind = typeof descriptor === 'object' && descriptor !== null ? Reflect.get(descriptor, 'kind') : undefined;
-  if (kind === 'event') return { kind: 'event' };
+  if (kind === 'event') return binding({ kind: 'event' });
   if (kind === 'callback' && typeof descriptor === 'object' && descriptor !== null) {
     const callbackId: unknown = Reflect.get(descriptor, 'callbackId');
     const url: unknown = Reflect.get(descriptor, 'url');
@@ -150,7 +150,7 @@ function bindingFromWire(descriptor: unknown): Binding {
     if (typeof callbackId !== 'string' || typeof url !== 'string' || !Array.isArray(params) || !params.every(isCallbackParam)) {
       throw new RustShimError('the engine handed the host a callback that is not {callbackId, url, params}');
     }
-    return { kind: 'callback', callbackId, url, params };
+    return binding({ kind: 'callback', callbackId, url, params });
   }
   throw new RustShimError(`the engine handed the host a record of kind ${String(kind)}, which the shim does not rebuild`);
 }

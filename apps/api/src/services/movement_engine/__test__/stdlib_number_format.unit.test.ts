@@ -5,14 +5,14 @@
 // stdlib.ts alone is enough, and that ${NUMBER.FORMAT(x, "compact")} renders
 // inside a string interpolation.
 
-import { Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from '../expression';
 import { listUnsupportedConstructs } from '../interpretable';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {
   const env = new Environment();
   for (const [name, value] of Object.entries(bindings)) {
-    env.declare(name, { kind: 'value', value });
+    env.declare(name, binding({ kind: 'value', value }));
   }
   return (await evalMovementExpr(parseMovementExpression(text), { env, languageVersion: CURRENT_LANGUAGE_VERSION })).value;
 }
