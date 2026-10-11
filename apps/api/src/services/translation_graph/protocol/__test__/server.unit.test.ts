@@ -307,6 +307,32 @@ describe('every member the remote adapter sends passes the gate and reaches the 
     expect(received.getFieldValue).toEqual({ position: resourceNode, fieldId: 'Name' });
   });
 
+  it("a position's resources pass with the host's own file descriptors, which the remote adapter echoes unchanged", async () => {
+    const extracted = {
+      adapterType: 'paged_crm',
+      recordType: 'Company',
+      identity: { kind: 'unstable', data: {} },
+      originRef: { kind: 'extract', extractStepId: 'x-1', nodeId: 'n-2' },
+      resources: [
+        {
+          id: 'r-2',
+          type: 'FILE',
+          url: null,
+          fileRef: {
+            __brand: 'FileRef',
+            name: 'deck.pdf',
+            source: { adapterType: 'email', credentialId: 'cred-1', handle: 'att-1' },
+            url: null,
+          },
+        },
+      ],
+    };
+    expect((await rpc(handler, 'getFieldValue', { position: extracted, fieldId: 'Name' })).body).toMatchObject({
+      ok: true,
+    });
+    expect(received.getFieldValue).toEqual({ position: extracted, fieldId: 'Name' });
+  });
+
   it("a write's parent link keeps the parent's own payload", async () => {
     const write = {
       recordType: 'Company',

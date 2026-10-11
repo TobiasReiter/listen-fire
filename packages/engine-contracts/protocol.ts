@@ -90,14 +90,17 @@ export const WireEphemeralOriginRef = z.union([
 
 /** Mirror of `SourcePosition` (`Position`), including the members an
  *  `EphemeralNode` adds. `data` stays opaque. The evidence and resource
- *  mirrors are declared further down, hence `lazy`. */
+ *  mirrors are declared further down, hence `lazy`. A position's resources
+ *  are the engine's own, echoed back unchanged: their file refs are host
+ *  descriptors, not the wire's spelling, so `fileRef` stays opaque here (as
+ *  it does on evidence's `sourceResourceRef`). */
 export const WireSourcePosition = z.object({
   adapterType: z.string(),
   recordType: z.string().nullable(),
   identity: WirePositionIdentity,
   originRef: WireEphemeralOriginRef.optional(),
   evidence: z.lazy(() => z.record(z.string(), WireFieldEvidence)).optional(),
-  resources: z.lazy(() => z.array(WireResource)).optional(),
+  resources: z.lazy(() => z.array(WireResource.extend({ fileRef: z.unknown().optional() }))).optional(),
 });
 export type WireSourcePositionShape = z.infer<typeof WireSourcePosition>;
 
